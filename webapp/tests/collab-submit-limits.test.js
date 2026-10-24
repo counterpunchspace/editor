@@ -208,6 +208,32 @@ describe('commit-time hard rejection', () => {
         }
     });
 
+    test('a rejected submit rolls back by replay and keeps earlier history undoable', () => {
+        const plugin = createCloudSubmitPlugin();
+        const restore = installPlugin(plugin);
+        const bridge = new PatchSyncEngine('submit-reject-history');
+        bridge.initFromJson(makeFont());
+        window.patchSyncEngine = bridge;
+        const fat = 'p'.repeat(MAX_YJS_PACKET_BYTES);
+        try {
+            bridge.recordChange(['names'], 'familyName', 'LimitTest', 'Kept');
+            bridge.recordChange([], 'note', '', fat);
+            expect(plugin.rejections).toHaveLength(1);
+            expect(bridge.fontMap.get('note') || '').toBe('');
+            expect(bridge.getFontJsonSnapshot().note).toBe('');
+            expect(bridge.getChangeLog()).toHaveLength(1);
+
+            expect(bridge.undo()).not.toBeNull();
+            expect(bridge.getFontJsonSnapshot().names.familyName).toBe(
+                'LimitTest'
+            );
+            expect(bridge.canUndo()).toBe(false);
+        } finally {
+            restore();
+            bridge.destroy();
+        }
+    });
+
     test('settings envelope fails closed even if the cloud plugin would allow the packet', () => {
         const plugin = createCloudSubmitPlugin();
         plugin.canSubmitCollabUpdate = () => ({ allowed: true });

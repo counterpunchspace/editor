@@ -173,7 +173,7 @@ describe('memory breakdown helpers', () => {
         const { liveShardMemoryFromEngine } = require('../js/memory-breakdown');
         const report = liveShardMemoryFromEngine({
             getMemoryInspectionSnapshot() {
-                return { decodedStructs: 90_000, undoStackItems: 12 };
+                return { decodedStructs: 90_000 };
             }
         });
         expect(report.status).toBe('warning');

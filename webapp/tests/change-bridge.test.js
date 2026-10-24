@@ -4471,7 +4471,7 @@ describe('Transactions', () => {
             layerId: 'layer-1'
         });
         expect(layerItems).toHaveLength(1);
-        expect(layerItems[0].undoScope).toBe('font');
+        expect(layerItems[0].undoScope).toBe('layer');
         expect(layerItems[0].originatingGlyphName).toBe('A');
         expect(layerItems[0].originatingLayerId).toBe('layer-1');
 
@@ -4483,12 +4483,15 @@ describe('Transactions', () => {
             }
         );
         expect(dependentLayerItems).toHaveLength(0);
+        expect(
+            buildHistoryStackItems(bridge.getChangeLog(), { surface: 'font' })
+        ).toHaveLength(0);
 
         expect(bridge.undo('A', 'layer-1')).toEqual(
             expect.objectContaining({
-                scope: 'font',
-                glyphName: null,
-                layerId: null
+                scope: 'layer',
+                glyphName: 'A',
+                layerId: 'layer-1'
             })
         );
         expect(
@@ -4497,6 +4500,13 @@ describe('Transactions', () => {
         expect(
             bridge.getYValue(['glyphs', 'B', 'layers', 'layer-2', 'width'])
         ).toBe(650);
+
+        expect(bridge.redo('A', 'layer-1')).toEqual(
+            expect.objectContaining({ scope: 'layer' })
+        );
+        expect(
+            bridge.getYValue(['glyphs', 'B', 'layers', 'layer-2', 'width'])
+        ).toBe(680);
     });
 
     test('nested transactions share outermost label', () => {
@@ -5793,9 +5803,6 @@ describe('Undo / Redo', () => {
 
     test('per-glyph undo only affects that glyph', () => {
         const { bridge } = createTestBridge('test-1');
-        // Set up per-glyph undo manager for glyph A
-        bridge.getGlyphUndoManager('A');
-
         // Make changes to glyph A and glyph B
         bridge.recordChange(
             ['glyphs', 'A', 'layers', 'layer-1'],
@@ -5809,6 +5816,62 @@ describe('Undo / Redo', () => {
         expect(
             bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(600);
+    });
+
+    const widthPath = ['glyphs', 'A', 'layers', 'layer-1', 'width'];
+    const editWidth = (bridge, from, to) =>
+        bridge.recordChange(
+            ['glyphs', 'A', 'layers', 'layer-1'],
+            'width',
+            from,
+            to
+        );
+
+    test('undo and redo walk one LIFO stack per surface', () => {
+        const { bridge } = createTestBridge('test-lifo');
+        editWidth(bridge, 600, 610);
+        editWidth(bridge, 610, 620);
+        editWidth(bridge, 620, 630);
+
+        const widths = [];
+        const step = (action) => {
+            expect(bridge[action]('A', 'layer-1')).not.toBeNull();
+            widths.push(bridge.getYValue(widthPath));
+        };
+        step('undo');
+        step('undo');
+        step('undo');
+        step('redo');
+        step('redo');
+        step('undo');
+        step('redo');
+        step('redo');
+        expect(widths).toEqual([620, 610, 600, 610, 620, 610, 620, 630]);
+        expect(bridge.canRedo('A', 'layer-1')).toBe(false);
+    });
+
+    test('a new edit discards the redo branch', () => {
+        const { bridge } = createTestBridge('test-redo-branch');
+        editWidth(bridge, 600, 610);
+        editWidth(bridge, 610, 620);
+        bridge.undo('A', 'layer-1');
+        bridge.undo('A', 'layer-1');
+        editWidth(bridge, 600, 650);
+
+        expect(bridge.canRedo('A', 'layer-1')).toBe(false);
+        expect(bridge.redo('A', 'layer-1')).toBeNull();
+        expect(bridge.getYValue(widthPath)).toBe(650);
+
+        const reachability = getUndoReachabilityForContext(
+            bridge.getChangeLog(),
+            { glyphName: 'A', layerId: 'layer-1' }
+        );
+        const newEditId = bridge.getChangeLog().at(-1).historyItemId;
+        expect([...reachability.reachableHistoryItemIds]).toEqual([newEditId]);
+
+        bridge.undo('A', 'layer-1');
+        expect(bridge.getYValue(widthPath)).toBe(600);
+        expect(bridge.canUndo('A', 'layer-1')).toBe(false);
     });
 
     test('undo returns false when nothing to undo', () => {
@@ -5932,9 +5995,9 @@ describe('WindowSync', () => {
 
         expect(bridge.undo()).toEqual(
             expect.objectContaining({
-                scope: 'font',
-                glyphName: null,
-                layerId: null
+                scope: 'layer',
+                glyphName: 'A',
+                layerId: 'layer-1'
             })
         );
 
@@ -7805,94 +7868,6 @@ describe('syncGlyphFromJson', () => {
         }
     );
 
-    test('undo and redo retain downstream replay targets when history lookup falls back to the scoped stack', () => {
-        const { bridge } = createTestBridge('test-undo-history-fallback');
-        const workerUpdates = [];
-
-        bridge.setYjsWorkerCallback((update, changeLogEntries) => {
-            workerUpdates.push({ update, changeLogEntries });
-        });
-
-        bridge.applySyntheticChangeSet(
-            'Arrow key',
-            [
-                {
-                    op: 'set',
-                    path: ['glyphs', 'A', 'layers', 'layer-1'],
-                    oldValue: {
-                        id: 'layer-1',
-                        width: 600,
-                        shapes: [],
-                        anchors: [],
-                        guides: []
-                    },
-                    newValue: {
-                        id: 'layer-1',
-                        width: 640,
-                        shapes: [
-                            {
-                                closed: false,
-                                nodes: [
-                                    { x: 0, y: 0, nodetype: 'Line' },
-                                    { x: 10, y: 10, nodetype: 'Line' }
-                                ]
-                            }
-                        ],
-                        anchors: [],
-                        guides: []
-                    },
-                    workerReplayTargets: [
-                        { glyphName: 'A', layerId: 'layer-1' },
-                        { glyphName: 'B', layerId: 'layer-2' }
-                    ]
-                }
-            ],
-            { compileChangeSource: 'test-sync', compileEditType: null }
-        );
-
-        const forwardEntry = workerUpdates.at(-1).changeLogEntries[0];
-        workerUpdates.length = 0;
-
-        bridge._resolveUndoHistoryItem = jest.fn(() => null);
-
-        const result = bridge.undo('A', 'layer-1');
-
-        expect(result).toEqual(
-            expect.objectContaining({
-                scope: 'layer',
-                glyphName: 'A',
-                layerId: 'layer-1',
-                historyItem: expect.objectContaining({
-                    id: forwardEntry.historyItemId
-                })
-            })
-        );
-        expect(workerUpdates).toHaveLength(1);
-        expect(workerUpdates[0].changeLogEntries).toEqual([
-            expect.objectContaining({
-                historyAction: 'undo',
-                targetHistoryItemId: forwardEntry.historyItemId,
-                transactionLabel: forwardEntry.transactionLabel,
-                path: forwardEntry.path,
-                workerReplayTargets: forwardEntry.workerReplayTargets
-            })
-        ]);
-
-        workerUpdates.length = 0;
-        bridge._resolveUndoHistoryItem = jest.fn(() => null);
-
-        expect(bridge.redo('A', 'layer-1')).not.toBeNull();
-        expect(workerUpdates[0].changeLogEntries).toEqual([
-            expect.objectContaining({
-                historyAction: 'redo',
-                targetHistoryItemId: forwardEntry.historyItemId,
-                transactionLabel: forwardEntry.transactionLabel,
-                path: forwardEntry.path,
-                workerReplayTargets: forwardEntry.workerReplayTargets
-            })
-        ]);
-    });
-
     test('undo emits every restored automatic-composite layer snapshot', () => {
         const { bridge } = createTestBridge('test-undo-automatic-composite');
         const workerUpdates = [];
@@ -7960,7 +7935,7 @@ describe('syncGlyphFromJson', () => {
         workerUpdates.length = 0;
 
         expect(bridge.undo('A', 'layer-1')).toEqual(
-            expect.objectContaining({ scope: 'font' })
+            expect.objectContaining({ scope: 'layer' })
         );
         expect(workerUpdates.length).toBeGreaterThanOrEqual(1);
         expect(
@@ -7977,122 +7952,6 @@ describe('syncGlyphFromJson', () => {
                 })
             ])
         );
-    });
-
-    test('undo ignores native-only stale tail steps after authoritative history is exhausted', () => {
-        const { bridge } = createTestBridge('test-stale-native-undo-tail');
-        const workerUpdates = [];
-
-        bridge.setYjsWorkerCallback((update, changeLogEntries) => {
-            workerUpdates.push({ update, changeLogEntries });
-        });
-
-        bridge.applySyntheticChangeSet(
-            'Arrow key',
-            [
-                {
-                    op: 'set',
-                    path: ['glyphs', 'A', 'layers', 'layer-1'],
-                    oldValue: {
-                        id: 'layer-1',
-                        width: 600,
-                        shapes: [],
-                        anchors: [],
-                        guides: []
-                    },
-                    newValue: {
-                        id: 'layer-1',
-                        width: 610,
-                        shapes: [
-                            {
-                                closed: false,
-                                nodes: [
-                                    { x: 0, y: 0, nodetype: 'Line' },
-                                    { x: 5, y: 5, nodetype: 'Line' }
-                                ]
-                            }
-                        ],
-                        anchors: [],
-                        guides: []
-                    },
-                    workerReplayTargets: [
-                        { glyphName: 'A', layerId: 'layer-1' }
-                    ]
-                }
-            ],
-            { compileChangeSource: 'test-sync', compileEditType: null }
-        );
-
-        workerUpdates.length = 0;
-        const layerUndoManager = bridge.getLayerUndoManager('A', 'layer-1');
-        expect(layerUndoManager).not.toBeNull();
-        layerUndoManager.undoStack.push({});
-        bridge._resolveUndoHistoryItem = jest.fn(() => null);
-        bridge._peekUndoHistoryItemId = jest.fn(() => null);
-
-        expect(bridge.canUndo('A', 'layer-1')).toBe(false);
-        expect(bridge.undo('A', 'layer-1')).toBeNull();
-        expect(workerUpdates).toHaveLength(0);
-        expect(bridge.getChangeLog()).toHaveLength(1);
-    });
-
-    test('redo ignores native-only stale tail steps after authoritative history is exhausted', () => {
-        const { bridge } = createTestBridge('test-stale-native-redo-tail');
-        const workerUpdates = [];
-
-        bridge.setYjsWorkerCallback((update, changeLogEntries) => {
-            workerUpdates.push({ update, changeLogEntries });
-        });
-
-        bridge.applySyntheticChangeSet(
-            'Arrow key',
-            [
-                {
-                    op: 'set',
-                    path: ['glyphs', 'A', 'layers', 'layer-1'],
-                    oldValue: {
-                        id: 'layer-1',
-                        width: 600,
-                        shapes: [],
-                        anchors: [],
-                        guides: []
-                    },
-                    newValue: {
-                        id: 'layer-1',
-                        width: 610,
-                        shapes: [
-                            {
-                                closed: false,
-                                nodes: [
-                                    { x: 0, y: 0, nodetype: 'Line' },
-                                    { x: 5, y: 5, nodetype: 'Line' }
-                                ]
-                            }
-                        ],
-                        anchors: [],
-                        guides: []
-                    },
-                    workerReplayTargets: [
-                        { glyphName: 'A', layerId: 'layer-1' }
-                    ]
-                }
-            ],
-            { compileChangeSource: 'test-sync', compileEditType: null }
-        );
-
-        expect(bridge.undo('A', 'layer-1')).not.toBeNull();
-        workerUpdates.length = 0;
-
-        const layerUndoManager = bridge.getLayerUndoManager('A', 'layer-1');
-        expect(layerUndoManager).not.toBeNull();
-        layerUndoManager.redoStack.push({});
-        bridge._resolveUndoHistoryItem = jest.fn(() => null);
-        bridge._peekUndoHistoryItemId = jest.fn(() => null);
-
-        expect(bridge.canRedo('A', 'layer-1')).toBe(false);
-        expect(bridge.redo('A', 'layer-1')).toBeNull();
-        expect(workerUpdates).toHaveLength(0);
-        expect(bridge.getChangeLog()).toHaveLength(2);
     });
 
     test('redo after undo preserves flat original semantic metadata', () => {
@@ -8417,8 +8276,8 @@ describe('syncGlyphFromJson', () => {
             null
         );
 
-        expect(bridge.canUndo('A')).toBe(true);
-        bridge.undo('A');
+        expect(bridge.canUndo('A', 'layer-1')).toBe(true);
+        bridge.undo('A', 'layer-1');
         expect(
             bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(600);
@@ -8486,7 +8345,7 @@ describe('syncGlyphFromJson', () => {
             null
         );
 
-        bridge.undo('A');
+        bridge.undo('A', 'layer-1');
         let layerMap = bridge.getYValue(layerPath);
         expect(typeof layerMap.get('geometryTopology')).toBe('string');
         expect(layerMap.get('nodePositionsById')).toBeInstanceOf(Y.Map);
@@ -8499,7 +8358,7 @@ describe('syncGlyphFromJson', () => {
         expect(layerMap.get('anchorOrder')).toBeInstanceOf(Y.Array);
         expect(normalizeYDocValue(layerMap).shapes[0].nodes[0].x).toBe(100);
 
-        bridge.redo('A');
+        bridge.redo('A', 'layer-1');
         layerMap = bridge.getYValue(layerPath);
         expect(typeof layerMap.get('geometryTopology')).toBe('string');
         expect(layerMap.get('nodePositionsById')).toBeInstanceOf(Y.Map);
@@ -9270,18 +9129,16 @@ describe('syncGlyphFromJson', () => {
             null
         );
 
-        // stopCapturing() is called after each syncGlyphFromJson, so each sync
-        // becomes its own undo step regardless of the 500ms captureTimeout.
-        expect(bridge.canUndo('A')).toBe(true);
-        bridge.undo('A');
+        expect(bridge.canUndo('A', 'layer-1')).toBe(true);
+        bridge.undo('A', 'layer-1');
         // First undo reverts Drag 2: width goes back to 700
         expect(
             bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(700);
 
         // Second undo reverts Drag 1: width goes back to original 600
-        expect(bridge.canUndo('A')).toBe(true);
-        bridge.undo('A');
+        expect(bridge.canUndo('A', 'layer-1')).toBe(true);
+        bridge.undo('A', 'layer-1');
         expect(
             bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(600);
@@ -9638,7 +9495,7 @@ describe('syncGlyphFromJson', () => {
             bridge2.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(700);
 
-        bridge1.undo('A');
+        bridge1.undo('A', 'layer-1');
         flushTimers();
 
         // Undo should propagate
@@ -9670,7 +9527,7 @@ describe('syncGlyphFromJson', () => {
         );
 
         const logBefore = bridge.getChangeLog().length;
-        bridge.undo('A');
+        bridge.undo('A', 'layer-1');
         const logAfter = bridge.getChangeLog().length;
 
         // Undo should add a log entry
@@ -9680,7 +9537,7 @@ describe('syncGlyphFromJson', () => {
         expect(undoEntry.objectType).toBe('glyph');
         expect(undoEntry.objectId).toBe('A');
 
-        bridge.redo('A');
+        bridge.redo('A', 'layer-1');
         const logAfterRedo = bridge.getChangeLog().length;
         expect(logAfterRedo).toBe(logAfter + 1);
         const redoEntry = bridge.getChangeLog()[logAfterRedo - 1];
@@ -10738,7 +10595,11 @@ describe('syncGlyphFromJson', () => {
         expect(
             receiverFontJson.glyphs[0].layers.map((layer) => layer.id)
         ).toEqual(senderFontJson.glyphs[0].layers.map((layer) => layer.id));
-        expect(receiverBridge.canUndo('A')).toBe(true);
+        expect(receiverBridge.canUndo('A', 'master-extrathin')).toBe(true);
+        expect(receiverBridge.undo('A', 'master-extrathin')).not.toBeNull();
+        expect(
+            receiverFontJson.glyphs[0].layers.map((layer) => layer.id)
+        ).toHaveLength(senderFontJson.glyphs[0].layers.length + 1);
 
         senderBridge.destroy();
         receiverBridge.destroy();

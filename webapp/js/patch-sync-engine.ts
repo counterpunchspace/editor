@@ -2,9 +2,9 @@
  * PatchSyncEngine — Central patch-driven sync processor.
  *
  * Every mutation to the babelfont model goes through this class.
- * It keeps a Yjs Y.Doc in sync with the JSON, manages per-glyph
- * UndoManagers, maintains the change log, and broadcasts updates
- * to other windows via BroadcastChannel.
+ * It keeps a Yjs Y.Doc in sync with the JSON, maintains the change log
+ * (the only undo/redo source, replayed per history item), and broadcasts
+ * updates to other windows via BroadcastChannel.
  */
 
 import * as Y from 'yjs';
@@ -44,7 +44,6 @@ import {
     toRestingLayerJson
 } from './resting-layer-json';
 import {
-    buildHistoryStackItems,
     type ChangeLogEntry,
     type ChangeOp,
     type HistoryStackItem,
@@ -61,8 +60,12 @@ import {
     deriveLayerIdFromPath,
     deriveLayerIdsFromPaths,
     deriveObjectInfoFromPath,
+    getLayerTouchKey,
+    historyReplayValue,
+    isSnapshotRootPath,
     getPathSegments,
     invalidateHistoryStateCache,
+    isReplayableHistoryEntry,
     joinPathWithGlyphSeparator,
     normalizeWorkerReplayTargets,
     normalizeGlyphRenames,
@@ -277,7 +280,7 @@ const SYSTEM_REMOTE_ORIGIN = 'system-remote';
 const HISTORY_REPLAY_ORIGIN = 'history-replay';
 const FONT_EDIT_ORIGIN = 'font-edit';
 const GLYPH_EDIT_ORIGIN = 'glyph-edit';
-/** Remote cloud applies; not in any UndoManager trackedOrigins. */
+/** Remote cloud applies; never treated as a local edit origin. */
 export const CLOUD_REMOTE_ORIGIN = 'cloud-remote';
 
 function assertCloudAssetMutable(): void {
@@ -310,25 +313,6 @@ type UndoTarget = {
     glyphName: string | null;
     layerId: string | null;
 };
-
-type UndoHistoryStacks = {
-    active: string[];
-    undone: string[];
-};
-
-type ResolvedUndoHistorySource = {
-    historyItemId: string | null;
-    historyItem: HistoryStackItem | null;
-};
-
-const FONT_UNDO_HISTORY_KEY = '__font-undo-history__';
-
-function removeHistoryItemFromStack(stack: string[], itemId: string): void {
-    const index = stack.lastIndexOf(itemId);
-    if (index >= 0) {
-        stack.splice(index, 1);
-    }
-}
 
 function cloneChangeLogEntryForHistoryAction(
     entry: ChangeLogEntry,
@@ -409,11 +393,6 @@ export type UndoRedoResult = {
     glyphName: string | null;
     layerId: string | null;
     historyItem: HistoryStackItem | null;
-};
-
-type UndoManagerWithScope = {
-    manager: Y.UndoManager | null;
-    scope: UndoScope;
 };
 
 type LayerFingerprintTarget = {
@@ -621,17 +600,12 @@ export class PatchSyncEngine {
     private _lastEncodedShardBytes = new Map<string, number>();
     private _docUpdateUnsubscribers: Array<() => void> = [];
     private _docUpdateUnsubById = new Map<string, () => void>();
-    /** Per-glyph undo managers (keyed by glyph name) */
-    private _undoManagers = new Map<string, Y.UndoManager>();
-    /** Per-layer undo managers (keyed by glyph@@layer) */
-    private _layerUndoManagers = new Map<
-        string,
-        { manager: Y.UndoManager; target: Y.Map<unknown> }
-    >();
-    /** "Font-level" undo manager for axes/masters/instances/font properties */
-    private _fontUndoManager: Y.UndoManager | null = null;
-    /** Local history-item stacks aligned with each undo-manager scope */
-    private _undoHistoryStacks = new Map<string, UndoHistoryStacks>();
+    /** Glyph names touched by forward change-log entries (unload guard). */
+    private _historyGlyphNames: {
+        log: ChangeLogEntry[];
+        length: number;
+        names: Set<string>;
+    } | null = null;
     /** Change log of all recorded changes */
     private _changeLog: ChangeLogEntry[] = [];
     /** Unique window identifier */
@@ -1778,61 +1752,36 @@ export class PatchSyncEngine {
         if (!glyphName) {
             return false;
         }
-        const glyphUndo = this._undoManagers.get(glyphName);
-        if (
-            glyphUndo &&
-            (glyphUndo.undoStack.length > 0 || glyphUndo.redoStack.length > 0)
-        ) {
-            return true;
-        }
-        const glyphHistory = this._undoHistoryStacks.get(glyphName);
-        if (
-            glyphHistory &&
-            (glyphHistory.active.length > 0 || glyphHistory.undone.length > 0)
-        ) {
-            return true;
-        }
-        const layerPrefix = `${glyphName}@@`;
-        for (const [key, entry] of this._layerUndoManagers) {
-            if (!key.startsWith(layerPrefix)) {
-                continue;
-            }
-            if (
-                entry.manager.undoStack.length > 0 ||
-                entry.manager.redoStack.length > 0
-            ) {
-                return true;
-            }
-        }
-        for (const [key, stacks] of this._undoHistoryStacks) {
-            if (!key.startsWith(layerPrefix)) {
-                continue;
-            }
-            if (stacks.active.length > 0 || stacks.undone.length > 0) {
-                return true;
-            }
-        }
-        return false;
+        return this._glyphNamesWithHistory().has(glyphName);
     }
 
-    private _releaseGlyphLocalManagers(glyphName: string): void {
-        const glyphUndo = this._undoManagers.get(glyphName);
-        glyphUndo?.destroy();
-        this._undoManagers.delete(glyphName);
-        this._undoHistoryStacks.delete(glyphName);
-        const layerPrefix = `${glyphName}@@`;
-        for (const key of [...this._layerUndoManagers.keys()]) {
-            if (!key.startsWith(layerPrefix)) {
+    /** Undo replays into glyph documents, so glyphs with history stay resident. */
+    private _glyphNamesWithHistory(): Set<string> {
+        const cached = this._historyGlyphNames;
+        const reusable =
+            cached &&
+            cached.log === this._changeLog &&
+            cached.length <= this._changeLog.length;
+        const state = reusable
+            ? cached
+            : { log: this._changeLog, length: 0, names: new Set<string>() };
+        for (
+            let index = state.length;
+            index < this._changeLog.length;
+            index++
+        ) {
+            const entry = this._changeLog[index];
+            if (entry.historyAction !== 'change') {
                 continue;
             }
-            this._layerUndoManagers.get(key)?.manager.destroy();
-            this._layerUndoManagers.delete(key);
-        }
-        for (const key of [...this._undoHistoryStacks.keys()]) {
-            if (key.startsWith(layerPrefix)) {
-                this._undoHistoryStacks.delete(key);
+            const glyphName = deriveGlyphNameFromPath(entry.path);
+            if (glyphName) {
+                state.names.add(glyphName);
             }
         }
+        state.length = this._changeLog.length;
+        this._historyGlyphNames = state;
+        return state.names;
     }
 
     unloadCleanGlyphDocuments(
@@ -1892,7 +1841,6 @@ export class PatchSyncEngine {
             this._glyphNameById.delete(glyphId);
             if (name) {
                 this._glyphIdByName.delete(name);
-                this._releaseGlyphLocalManagers(name);
             }
             this._lastEncodedShardBytes.delete(documentId);
             unloaded.push(glyphId);
@@ -1925,7 +1873,6 @@ export class PatchSyncEngine {
             this._rebuildGlyphNameIndexFromDocs();
             this._rehydrateEntireFontJsonFromYDoc();
             this._canonicalizeFullStateRawFontJson();
-            this._setupFontUndoManager();
             this._onAfterSync?.();
             this._onRemoteChange?.([]);
         } finally {
@@ -1977,7 +1924,6 @@ export class PatchSyncEngine {
         this._rebuildGlyphNameIndexFromDocs();
         this._rehydrateEntireFontJsonFromYDoc();
         this._canonicalizeFullStateRawFontJson();
-        this._setupFontUndoManager();
         this._emitAfterSync();
         return this._fontJson;
     }
@@ -2601,30 +2547,9 @@ export class PatchSyncEngine {
         fontJson: Record<string, Unsafe> | null;
         yDocStore: unknown;
         decodedStructs: number;
-        undoStacks: unknown[];
-        undoStackItems: number;
         changeLog: ChangeLogEntry[];
         collaborationLog: CollaborationLogItem[];
     } {
-        const undoManagers: Array<{
-            undoStack?: unknown[];
-            redoStack?: unknown[];
-        }> = [
-            this._fontUndoManager,
-            ...this._undoManagers.values(),
-            ...Array.from(this._layerUndoManagers.values()).map(
-                (entry) => entry.manager
-            )
-        ].filter((manager): manager is Y.UndoManager => manager != null);
-
-        const undoStacks: unknown[] = [];
-        let undoStackItems = 0;
-        for (const manager of undoManagers) {
-            undoStacks.push(manager.undoStack, manager.redoStack);
-            undoStackItems += manager.undoStack?.length ?? 0;
-            undoStackItems += manager.redoStack?.length ?? 0;
-        }
-
         let decodedStructs = 0;
         this.yDoc.store.clients.forEach((structs) => {
             decodedStructs += structs.length;
@@ -2634,8 +2559,6 @@ export class PatchSyncEngine {
             fontJson: this._fontJson,
             yDocStore: this.yDoc.store,
             decodedStructs,
-            undoStacks,
-            undoStackItems,
             changeLog: this._changeLog,
             collaborationLog: this._collaborationLog
         };
@@ -2675,7 +2598,6 @@ export class PatchSyncEngine {
             this._isSyncing = false;
         }
         this._rehydrateEntireFontJsonFromYDoc();
-        this._setupFontUndoManager();
         this._noteBroadcastStateVector(FONT_CORE_DOCUMENT_ID);
         this._noteBroadcastStateVector(FONT_DEPS_DOCUMENT_ID);
         for (const glyphId of this._glyphDocs.keys()) {
@@ -2800,17 +2722,6 @@ export class PatchSyncEngine {
 
     /** Clean up resources. */
     destroy(): void {
-        for (const entry of this._layerUndoManagers.values()) {
-            entry.manager.destroy();
-        }
-        this._layerUndoManagers.clear();
-        for (const um of this._undoManagers.values()) {
-            um.destroy();
-        }
-        this._undoManagers.clear();
-        this._fontUndoManager?.destroy();
-        this._fontUndoManager = null;
-        this._undoHistoryStacks.clear();
         for (const unsub of this._docUpdateUnsubscribers) {
             unsub();
         }
@@ -3458,8 +3369,7 @@ export class PatchSyncEngine {
      *
      * Call this after operations that mutate `babelfontData` directly
      * (e.g. outline-editor drag) instead of going through model setters.
-     * Updates the existing Y.Map in-place so per-glyph UndoManagers
-     * keep their scope reference.
+     * Updates the existing Y.Map in-place.
      */
     syncGlyphFromJson(
         glyphName: string,
@@ -5017,11 +4927,10 @@ export class PatchSyncEngine {
     // ── Undo / Redo ──────────────────────────────────────────────
 
     /**
-     * Undo the last change for a specific glyph, or font-level if no
-     * glyph name is given.
+     * Undo the most recently applied history item on the given surface.
      *
-     * YJS_ONLY: Both the native UndoManager branch and history-replay branch
-     * emit a canonical binary Yjs update into the standard post-commit funnel.
+     * YJS_ONLY: History replay is the only undo engine; it emits a canonical
+     * binary Yjs update into the standard post-commit funnel.
      */
     undo(
         glyphName?: string,
@@ -5029,357 +4938,29 @@ export class PatchSyncEngine {
         historyTargetKey?: string | null,
         surface?: HistoryUndoSurface | null
     ): UndoRedoResult | null {
-        const targetItem = this._resolveUndoHistoryItem(
+        return this._replayHistoryAction(
+            'undo',
             glyphName,
             layerId,
-            'undo',
             historyTargetKey,
             surface
         );
-        // Explicit undo surfaces must not fall through to the font stack when
-        // the surface filter finds nothing (History bright ≡ Cmd+Z).
-        if (surface && !targetItem) {
-            return null;
-        }
-        const target = this._resolveUndoTarget(
-            glyphName,
-            layerId,
-            'undo',
-            targetItem
-        );
-        const { manager: um, scope } = this._getUndoManagerForTarget(target);
-        const shouldReplayHistoryItem = this._shouldReplayHistoryItemDirectly(
-            targetItem,
-            'undo'
-        );
-        const authoritativeHistory = this._resolveAuthoritativeUndoHistory(
-            'undo',
-            targetItem,
-            scope,
-            target.glyphName,
-            target.layerId
-        );
-        if (
-            scope !== 'font' &&
-            !shouldReplayHistoryItem &&
-            (!um ||
-                um.undoStack.length === 0 ||
-                !authoritativeHistory.historyItem)
-        ) {
-            if (!authoritativeHistory.historyItem) {
-                return null;
-            }
-        }
-        if (scope === 'font' && !authoritativeHistory.historyItem) {
-            return null;
-        }
-        const undoDocumentIds = this._documentIdsForHistoryItem(
-            authoritativeHistory.historyItem,
-            this._documentIdForUndoTarget(target)
-        );
-        const localUpdateBaselines =
-            this._captureDocumentBaselines(undoDocumentIds);
-        this._pushApplyKind(ApplyKind.UndoRedo);
-        try {
-            const targetHistoryItemId = authoritativeHistory.historyItemId;
-            const semanticHistoryItem = authoritativeHistory.historyItem;
-            const timestamp = Date.now();
-            const metadataEntries = getSemanticEntriesForHistoryItem(
-                semanticHistoryItem,
-                'undo',
-                targetHistoryItemId,
-                timestamp,
-                this.windowId,
-                this._getWindowRoleLabel()
-            );
-            if (!metadataEntries?.length && !target.glyphName) {
-                return null;
-            }
-            const workerReplayTargets = normalizeWorkerReplayTargets([
-                ...(semanticHistoryItem?.workerReplayTargets ?? []),
-                ...(target.glyphName && target.layerId
-                    ? [{ glyphName: target.glyphName, layerId: target.layerId }]
-                    : [])
-            ]);
-            // Log entry before um.undo() so it's available when the
-            // Y.Doc update event fires and WindowSync broadcasts it.
-            const entry = createLogEntry({
-                timestamp,
-                windowId: this.windowId,
-                windowRoleLabel: this._getWindowRoleLabel(),
-                historyAction: 'undo',
-                targetHistoryItemId,
-                transactionLabel: 'Undo',
-                transactionId: null,
-                op: 'set' as ChangeOp,
-                undoScope: scope,
-                path:
-                    scope === 'layer' && target.glyphName && target.layerId
-                        ? `glyphs.${target.glyphName}.layers.${target.layerId}`
-                        : scope === 'glyph' && target.glyphName
-                          ? `glyphs.${target.glyphName}`
-                          : 'font',
-                oldValue: undefined,
-                newValue: 'undo',
-                workerReplayTargets,
-                semanticChangeLogEntries: metadataEntries ?? undefined
-            });
-            this._appendChangeLogEntry(entry);
-
-            const isHistoryReplay =
-                !!targetItem && (scope === 'font' || shouldReplayHistoryItem);
-
-            const historyReplayWrittenTargets = isHistoryReplay
-                ? this._applyHistoryItem(targetItem, 'undo')
-                : [];
-            if (!isHistoryReplay) {
-                um?.undo();
-            }
-
-            const layerScopeHints = historyReplayWrittenTargets.length
-                ? historyReplayWrittenTargets
-                : !(isHistoryReplay && targetItem?.undoScope !== 'layer')
-                  ? workerReplayTargets.length > 0 &&
-                    workerReplayTargets.every(
-                        (replayTarget) =>
-                            !!replayTarget.glyphName &&
-                            !!replayTarget.layerId &&
-                            this._canPatchLayerFromYDoc(replayTarget)
-                    )
-                      ? workerReplayTargets
-                      : scope === 'layer' &&
-                          target.glyphName &&
-                          target.layerId &&
-                          this._canPatchLayerFromYDoc({
-                              glyphName: target.glyphName,
-                              layerId: target.layerId
-                          })
-                        ? {
-                              glyphName: target.glyphName,
-                              layerId: target.layerId
-                          }
-                        : null
-                  : null;
-            if (layerScopeHints) {
-                this._syncJsonFromYDoc(layerScopeHints);
-            } else if (metadataEntries?.length) {
-                this._syncRemoteJsonFromYDoc(metadataEntries);
-            } else if (target.glyphName) {
-                this._syncRemoteJsonFromYDoc([entry]);
-            } else {
-                throw new Error(
-                    'Undo requires semantic change metadata for non-layer updates.'
-                );
-            }
-
-            this._onAfterSync?.();
-            this._onDirty?.();
-            if (!this._isApplyingRemote) {
-                this._withGlyphRevisionCatchUp(
-                    this._glyphIdsFromDocumentIds(localUpdateBaselines.keys()),
-                    () =>
-                        this._emitCanonicalLocalUpdatesSince(
-                            localUpdateBaselines
-                        )
-                );
-            }
-            this._advanceUndoHistoryItem(
-                scope,
-                target.glyphName,
-                target.layerId,
-                'undo',
-                targetHistoryItemId
-            );
-            return {
-                scope,
-                glyphName: target.glyphName,
-                layerId: target.layerId,
-                historyItem: semanticHistoryItem
-            };
-        } finally {
-            this._popApplyKind();
-        }
     }
 
-    /**
-     * Redo the last undone change.
-     *
-     * YJS_ONLY: Both the native UndoManager branch and history-replay branch
-     * emit a canonical binary Yjs update into the standard post-commit funnel.
-     */
+    /** Redo the most recently undone history item on the given surface. */
     redo(
         glyphName?: string,
         layerId?: string | null,
         historyTargetKey?: string | null,
         surface?: HistoryUndoSurface | null
     ): UndoRedoResult | null {
-        const targetItem = this._resolveUndoHistoryItem(
+        return this._replayHistoryAction(
+            'redo',
             glyphName,
             layerId,
-            'redo',
             historyTargetKey,
             surface
         );
-        if (surface && !targetItem) {
-            return null;
-        }
-        const target = this._resolveUndoTarget(
-            glyphName,
-            layerId,
-            'redo',
-            targetItem
-        );
-        const { manager: um, scope } = this._getUndoManagerForTarget(target);
-        const shouldReplayHistoryItem = this._shouldReplayHistoryItemDirectly(
-            targetItem,
-            'redo'
-        );
-        const authoritativeHistory = this._resolveAuthoritativeUndoHistory(
-            'redo',
-            targetItem,
-            scope,
-            target.glyphName,
-            target.layerId
-        );
-        if (
-            scope !== 'font' &&
-            !shouldReplayHistoryItem &&
-            (!um ||
-                um.redoStack.length === 0 ||
-                !authoritativeHistory.historyItem)
-        ) {
-            if (!authoritativeHistory.historyItem) {
-                return null;
-            }
-        }
-        if (scope === 'font' && !authoritativeHistory.historyItem) {
-            return null;
-        }
-        const redoDocumentIds = this._documentIdsForHistoryItem(
-            authoritativeHistory.historyItem,
-            this._documentIdForUndoTarget(target)
-        );
-        const localUpdateBaselines =
-            this._captureDocumentBaselines(redoDocumentIds);
-        this._pushApplyKind(ApplyKind.UndoRedo);
-        try {
-            const targetHistoryItemId = authoritativeHistory.historyItemId;
-            const semanticHistoryItem = authoritativeHistory.historyItem;
-            const timestamp = Date.now();
-            const metadataEntries = getSemanticEntriesForHistoryItem(
-                semanticHistoryItem,
-                'redo',
-                targetHistoryItemId,
-                timestamp,
-                this.windowId,
-                this._getWindowRoleLabel()
-            );
-            if (!metadataEntries?.length && !target.glyphName) {
-                return null;
-            }
-            const workerReplayTargets = normalizeWorkerReplayTargets([
-                ...(semanticHistoryItem?.workerReplayTargets ?? []),
-                ...(target.glyphName && target.layerId
-                    ? [{ glyphName: target.glyphName, layerId: target.layerId }]
-                    : [])
-            ]);
-            // Log entry before um.redo() so it's available for broadcast.
-            const entry = createLogEntry({
-                timestamp,
-                windowId: this.windowId,
-                windowRoleLabel: this._getWindowRoleLabel(),
-                historyAction: 'redo',
-                targetHistoryItemId,
-                transactionLabel: 'Redo',
-                transactionId: null,
-                op: 'set' as ChangeOp,
-                undoScope: scope,
-                path:
-                    scope === 'layer' && target.glyphName && target.layerId
-                        ? `glyphs.${target.glyphName}.layers.${target.layerId}`
-                        : scope === 'glyph' && target.glyphName
-                          ? `glyphs.${target.glyphName}`
-                          : 'font',
-                oldValue: undefined,
-                newValue: 'redo',
-                workerReplayTargets,
-                semanticChangeLogEntries: metadataEntries ?? undefined
-            });
-            this._appendChangeLogEntry(entry);
-
-            const isHistoryReplay =
-                !!targetItem && (scope === 'font' || shouldReplayHistoryItem);
-
-            const historyReplayWrittenTargets = isHistoryReplay
-                ? this._applyHistoryItem(targetItem, 'redo')
-                : [];
-            if (!isHistoryReplay) {
-                um?.redo();
-            }
-
-            const layerScopeHints = historyReplayWrittenTargets.length
-                ? historyReplayWrittenTargets
-                : !(isHistoryReplay && targetItem?.undoScope !== 'layer')
-                  ? workerReplayTargets.length > 0 &&
-                    workerReplayTargets.every(
-                        (replayTarget) =>
-                            !!replayTarget.glyphName &&
-                            !!replayTarget.layerId &&
-                            this._canPatchLayerFromYDoc(replayTarget)
-                    )
-                      ? workerReplayTargets
-                      : scope === 'layer' &&
-                          target.glyphName &&
-                          target.layerId &&
-                          this._canPatchLayerFromYDoc({
-                              glyphName: target.glyphName,
-                              layerId: target.layerId
-                          })
-                        ? {
-                              glyphName: target.glyphName,
-                              layerId: target.layerId
-                          }
-                        : null
-                  : null;
-            if (layerScopeHints) {
-                this._syncJsonFromYDoc(layerScopeHints);
-            } else if (metadataEntries?.length) {
-                this._syncRemoteJsonFromYDoc(metadataEntries);
-            } else if (target.glyphName) {
-                this._syncRemoteJsonFromYDoc([entry]);
-            } else {
-                throw new Error(
-                    'Redo requires semantic change metadata for non-layer updates.'
-                );
-            }
-
-            this._onAfterSync?.();
-            this._onDirty?.();
-            if (!this._isApplyingRemote) {
-                this._withGlyphRevisionCatchUp(
-                    this._glyphIdsFromDocumentIds(localUpdateBaselines.keys()),
-                    () =>
-                        this._emitCanonicalLocalUpdatesSince(
-                            localUpdateBaselines
-                        )
-                );
-            }
-            this._advanceUndoHistoryItem(
-                scope,
-                target.glyphName,
-                target.layerId,
-                'redo',
-                targetHistoryItemId
-            );
-            return {
-                scope,
-                glyphName: target.glyphName,
-                layerId: target.layerId,
-                historyItem: semanticHistoryItem
-            };
-        } finally {
-            this._popApplyKind();
-        }
     }
 
     /** Check if undo is available. */
@@ -5389,40 +4970,12 @@ export class PatchSyncEngine {
         historyTargetKey?: string | null,
         surface?: HistoryUndoSurface | null
     ): boolean {
-        const targetItem = this._resolveUndoHistoryItem(
+        return !!this._resolveUndoHistoryItem(
             glyphName,
             layerId,
             'undo',
             historyTargetKey,
             surface
-        );
-        if (surface && !targetItem) {
-            return false;
-        }
-        const target = this._resolveUndoTarget(
-            glyphName,
-            layerId,
-            'undo',
-            targetItem
-        );
-        const { manager: um, scope } = this._getUndoManagerForTarget(target);
-        const authoritativeHistory = this._resolveAuthoritativeUndoHistory(
-            'undo',
-            targetItem,
-            scope,
-            target.glyphName,
-            target.layerId
-        );
-        if (scope === 'font') {
-            return !!authoritativeHistory.historyItem;
-        }
-        if (this._shouldReplayHistoryItemDirectly(targetItem, 'undo')) {
-            return true;
-        }
-        return (
-            !!authoritativeHistory.historyItem &&
-            !!um &&
-            um.undoStack.length > 0
         );
     }
 
@@ -5433,44 +4986,211 @@ export class PatchSyncEngine {
         historyTargetKey?: string | null,
         surface?: HistoryUndoSurface | null
     ): boolean {
-        const targetItem = this._resolveUndoHistoryItem(
+        return !!this._resolveUndoHistoryItem(
             glyphName,
             layerId,
             'redo',
             historyTargetKey,
             surface
         );
-        if (surface && !targetItem) {
-            return false;
-        }
-        const target = this._resolveUndoTarget(
+    }
+
+    private _replayHistoryAction(
+        historyAction: 'undo' | 'redo',
+        glyphName: string | undefined,
+        layerId: string | null | undefined,
+        historyTargetKey: string | null | undefined,
+        surface: HistoryUndoSurface | null | undefined
+    ): UndoRedoResult | null {
+        const historyItem = this._resolveUndoHistoryItem(
             glyphName,
             layerId,
-            'redo',
-            targetItem
+            historyAction,
+            historyTargetKey,
+            surface
         );
-        const { manager: um, scope } = this._getUndoManagerForTarget(target);
-        const authoritativeHistory = this._resolveAuthoritativeUndoHistory(
-            'redo',
-            targetItem,
-            scope,
-            target.glyphName,
-            target.layerId
+        if (!historyItem) {
+            return null;
+        }
+        if (!this._canReplayHistoryItem(historyItem, historyAction)) {
+            console.warn(
+                `Skipping ${historyAction}: history item ${historyItem.id} has no replayable values`
+            );
+            return null;
+        }
+        const target = this._targetFromHistoryItem(
+            historyItem,
+            glyphName ?? null,
+            layerId ?? null
         );
-        if (scope === 'font') {
-            return !!authoritativeHistory.historyItem;
+        const scope = this._scopeForTarget(target);
+        const documentIds = this._documentIdsForHistoryItem(
+            historyItem,
+            this._documentIdForUndoTarget(target)
+        );
+        const localUpdateBaselines =
+            this._captureDocumentBaselines(documentIds);
+        this._pushApplyKind(ApplyKind.UndoRedo);
+        try {
+            const timestamp = Date.now();
+            const metadataEntries = getSemanticEntriesForHistoryItem(
+                historyItem,
+                historyAction,
+                historyItem.id,
+                timestamp,
+                this.windowId,
+                this._getWindowRoleLabel()
+            );
+            if (!metadataEntries?.length && !target.glyphName) {
+                return null;
+            }
+            const workerReplayTargets = normalizeWorkerReplayTargets([
+                ...historyItem.workerReplayTargets,
+                ...(target.glyphName && target.layerId
+                    ? [{ glyphName: target.glyphName, layerId: target.layerId }]
+                    : [])
+            ]);
+            // Log entry before replay so it's available when the Y.Doc
+            // update event fires and WindowSync broadcasts it.
+            const entry = createLogEntry({
+                timestamp,
+                windowId: this.windowId,
+                windowRoleLabel: this._getWindowRoleLabel(),
+                historyAction,
+                targetHistoryItemId: historyItem.id,
+                transactionLabel: historyAction === 'undo' ? 'Undo' : 'Redo',
+                transactionId: null,
+                op: 'set' as ChangeOp,
+                undoScope: scope,
+                path:
+                    scope === 'layer' && target.glyphName && target.layerId
+                        ? `glyphs.${target.glyphName}.layers.${target.layerId}`
+                        : scope === 'glyph' && target.glyphName
+                          ? `glyphs.${target.glyphName}`
+                          : 'font',
+                oldValue: undefined,
+                newValue: historyAction,
+                workerReplayTargets,
+                semanticChangeLogEntries: metadataEntries ?? undefined
+            });
+            this._appendChangeLogEntry(entry);
+
+            const writtenTargets = this._applyHistoryItem(
+                historyItem,
+                historyAction
+            );
+            const layerSyncTargets = writtenTargets.length
+                ? writtenTargets
+                : this._historyReplayLayerSyncTargets(
+                      historyItem,
+                      scope,
+                      workerReplayTargets
+                  );
+            if (layerSyncTargets) {
+                this._syncJsonFromYDoc(layerSyncTargets);
+            } else if (metadataEntries?.length) {
+                this._syncRemoteJsonFromYDoc(metadataEntries);
+            } else {
+                this._syncRemoteJsonFromYDoc([entry]);
+            }
+
+            this._onAfterSync?.();
+            this._onDirty?.();
+            if (!this._isApplyingRemote) {
+                this._withGlyphRevisionCatchUp(
+                    this._glyphIdsFromDocumentIds(localUpdateBaselines.keys()),
+                    () =>
+                        this._emitCanonicalLocalUpdatesSince(
+                            localUpdateBaselines
+                        )
+                );
+            }
+            return {
+                scope,
+                glyphName: target.glyphName,
+                layerId: target.layerId,
+                historyItem
+            };
+        } finally {
+            this._popApplyKind();
+        }
+    }
+
+    /**
+     * Layer-patch the JSON shadow when every path the item touched lives
+     * under a patchable layer covered by the replay targets; otherwise the
+     * caller falls back to semantic-entry sync.
+     */
+    private _historyReplayLayerSyncTargets(
+        historyItem: HistoryStackItem,
+        scope: UndoScope,
+        workerReplayTargets: WorkerReplayTarget[]
+    ): WorkerReplayTarget[] | null {
+        if (scope !== 'layer' || !workerReplayTargets.length) {
+            return null;
         }
         if (
-            targetItem &&
-            this._shouldReplayHistoryItemDirectly(targetItem, 'redo')
+            !workerReplayTargets.every((replayTarget) =>
+                this._canPatchLayerFromYDoc(replayTarget)
+            )
         ) {
-            return true;
+            return null;
         }
-        return (
-            !!authoritativeHistory.historyItem &&
-            !!um &&
-            um.redoStack.length > 0
+        const coveredLayerKeys = new Set(
+            workerReplayTargets.map((replayTarget) =>
+                getLayerTouchKey(replayTarget.glyphName, replayTarget.layerId)
+            )
         );
+        const everyPathCovered = historyItem.touchedPaths.every((path) =>
+            coveredLayerKeys.has(
+                getLayerTouchKey(
+                    deriveGlyphNameFromPath(path),
+                    deriveLayerIdFromPath(path)
+                )
+            )
+        );
+        return everyPathCovered ? workerReplayTargets : null;
+    }
+
+    /** Public JSON of a glyph or layer root, or null when absent. */
+    private _readReplaySnapshot(entryPath: string): unknown {
+        const path = this._toYDocPath(this._parseEntryPath(entryPath));
+        if (this._isGlyphRootPath(path)) {
+            return this._readNormalizedGlyphSnapshotFromYDoc(String(path[1]), {
+                ignoreExisting: true
+            });
+        }
+        const value = this.getYValue(path);
+        return value instanceof Y.Map
+            ? cloneHistoryValue(fromYType(value))
+            : null;
+    }
+
+    /**
+     * Envelopes may omit glyph/layer snapshot bodies to stay under the
+     * packet limit. The receiver reads them from its own Y.Doc around the
+     * apply so the history item stays replayable.
+     */
+    private _withRemoteReplaySnapshots(
+        entries: ChangeLogEntry[],
+        snapshotFillEntries: ChangeLogEntry[],
+        snapshotsBefore: unknown[]
+    ): ChangeLogEntry[] {
+        if (!snapshotFillEntries.length) {
+            return entries;
+        }
+        return entries.map((entry) => {
+            const index = snapshotFillEntries.indexOf(entry);
+            if (index < 0) {
+                return entry;
+            }
+            const before = snapshotsBefore[index];
+            const after = this._readReplaySnapshot(entry.path);
+            if (JSON.stringify(before) === JSON.stringify(after)) {
+                return entry;
+            }
+            return { ...entry, replayOldValue: before, replayNewValue: after };
+        });
     }
 
     // ── Cross-window ─────────────────────────────────────────────
@@ -5538,6 +5258,17 @@ export class PatchSyncEngine {
                 targetDoc = this._docForId(resolvedDocumentId);
             }
             targetDoc = targetDoc || this.yDoc;
+            const snapshotFillEntries = captureInUndo
+                ? effectiveRemoteEntries.filter(
+                      (entry) =>
+                          entry.op === 'set' &&
+                          isSnapshotRootPath(entry.path) &&
+                          !isReplayableHistoryEntry(entry)
+                  )
+                : [];
+            const snapshotsBefore = snapshotFillEntries.map((entry) =>
+                this._readReplaySnapshot(entry.path)
+            );
             let didChange = false;
             const observeRemoteTransaction = (transaction: Y.Transaction) => {
                 didChange ||=
@@ -5548,11 +5279,6 @@ export class PatchSyncEngine {
                             clock > (transaction.beforeState.get(client) ?? 0)
                     );
             };
-            if (effectiveRemoteEntries?.length) {
-                this._ensureUndoManagersForRemoteEntries(
-                    effectiveRemoteEntries
-                );
-            }
             targetDoc.on('afterTransaction', observeRemoteTransaction);
             try {
                 Y.applyUpdate(
@@ -5594,9 +5320,12 @@ export class PatchSyncEngine {
                 effectiveRemoteEntries &&
                 effectiveRemoteEntries.length > 0
             ) {
-                this._appendChangeLogEntries(effectiveRemoteEntries);
-                this._recordUndoHistoryItemsFromRemoteEntries(
-                    effectiveRemoteEntries
+                this._appendChangeLogEntries(
+                    this._withRemoteReplaySnapshots(
+                        effectiveRemoteEntries,
+                        snapshotFillEntries,
+                        snapshotsBefore
+                    )
                 );
                 this._lastBroadcastLogIndex = this._changeLog.length;
                 this._lastLocalUpdateLogIndex = this._changeLog.length;
@@ -6547,11 +6276,6 @@ export class PatchSyncEngine {
                 mergeExistingGlyphs: true
             });
             this._canonicalizeFullStateRawFontJson();
-            // First hydrate needs an UndoManager. Later rebaselines must not
-            // silently wipe gc:false history; call truncateUndoHistory().
-            if (!this._fontUndoManager) {
-                this._setupFontUndoManager();
-            }
             this._onAfterSync?.();
             this._onRemoteChange?.([]);
             this._lastBroadcastStateVector = Y.encodeStateVector(this.yDoc);
@@ -6659,7 +6383,6 @@ export class PatchSyncEngine {
         }
 
         const scopeInfo = this._deriveBufferedScope(normalizedOperations);
-        this._prepareBatchUndoManagers(scopeInfo);
 
         const nextHistoryItemId = this._createHistoryItemId();
         const timestamp = Date.now();
@@ -6774,7 +6497,6 @@ export class PatchSyncEngine {
             }
         } finally {
             this._popApplyKind();
-            this._finishBatchUndoManagers(scopeInfo);
         }
 
         return {
@@ -6930,17 +6652,6 @@ export class PatchSyncEngine {
         this._nextHistoryItemId = 1;
         this._nextCollaborationMessageSequence = 1;
         resetLogCounter();
-        for (const entry of this._layerUndoManagers.values()) {
-            entry.manager.destroy();
-        }
-        this._layerUndoManagers.clear();
-        for (const um of this._undoManagers.values()) {
-            um.destroy();
-        }
-        this._undoManagers.clear();
-        this._fontUndoManager?.destroy();
-        this._fontUndoManager = null;
-        this._undoHistoryStacks.clear();
         this._notifyChangeLogListeners();
         this._notifyCollaborationLogListeners();
     }
@@ -7222,31 +6933,13 @@ export class PatchSyncEngine {
         );
     }
 
-    /**
-     * Setup the font-level UndoManager (everything outside glyphs).
-     * Scoped to the root fontMap but excludes the "glyphs" sub-map.
-     */
-    private _setupFontUndoManager(): void {
-        this._fontUndoManager?.destroy();
-        // Track all top-level keys in the font map
-        this._fontUndoManager = new Y.UndoManager(this.fontMap, {
-            trackedOrigins: new Set([FONT_EDIT_ORIGIN]),
-            captureTimeout: 0
-        });
-    }
-
-    /** Explicit gc:false history wipe. Rebaseline must not call this implicitly. */
+    /** Explicit history wipe: drops every undo and redo target. Rebaseline must not call this implicitly. */
     truncateUndoHistory(): void {
-        this._setupFontUndoManager();
-        for (const [glyphName, manager] of this._undoManagers) {
-            manager.destroy();
-            this._undoManagers.delete(glyphName);
-        }
-        for (const [layerKey, entry] of this._layerUndoManagers) {
-            entry.manager.destroy();
-            this._layerUndoManagers.delete(layerKey);
-        }
-        this._undoHistoryStacks.clear();
+        this._changeLog = [];
+        this._historyGlyphNames = null;
+        this._lastLocalUpdateLogIndex = 0;
+        this._lastBroadcastLogIndex = 0;
+        this._notifyChangeLogListeners();
     }
 
     mergeRemoteUpdates(updates: Uint8Array[]): void {
@@ -7264,54 +6957,6 @@ export class PatchSyncEngine {
         } finally {
             this._popApplyKind();
         }
-    }
-
-    /**
-     * Get or create a per-glyph UndoManager.
-     */
-    getGlyphUndoManager(glyphName: string): Y.UndoManager | null {
-        if (this._undoManagers.has(glyphName)) {
-            return this._undoManagers.get(glyphName)!;
-        }
-        const glyphMap = this._glyphMapForName(glyphName);
-        if (!(glyphMap instanceof Y.Map)) return null;
-
-        const um = new Y.UndoManager(glyphMap, {
-            trackedOrigins: new Set([GLYPH_EDIT_ORIGIN]),
-            captureTimeout: 0
-        });
-        this._undoManagers.set(glyphName, um);
-        return um;
-    }
-
-    getLayerUndoManager(
-        glyphName: string,
-        layerId: string
-    ): Y.UndoManager | null {
-        const managerKey = getLayerManagerKey(glyphName, layerId);
-        const glyphMap = this._glyphMapForName(glyphName);
-        if (!(glyphMap instanceof Y.Map)) return null;
-        const layersMap = glyphMap.get('layers');
-        if (!(layersMap instanceof Y.Map)) return null;
-
-        const existingEntry = this._layerUndoManagers.get(managerKey);
-        if (existingEntry) {
-            if (existingEntry.target === layersMap) {
-                return existingEntry.manager;
-            }
-            existingEntry.manager.destroy();
-            this._layerUndoManagers.delete(managerKey);
-        }
-
-        const um = new Y.UndoManager(layersMap, {
-            trackedOrigins: new Set([getLayerEditOrigin(glyphName, layerId)]),
-            captureTimeout: 0
-        });
-        this._layerUndoManagers.set(managerKey, {
-            manager: um,
-            target: layersMap
-        });
-        return um;
     }
 
     private _deriveUndoScope(
@@ -7417,70 +7062,18 @@ export class PatchSyncEngine {
         return plugin.canSubmitCollabUpdate(requests);
     }
 
-    private _undoManagersForCommitScope(scopeInfo: {
-        scope: UndoScope;
-        glyphName: string | null;
-        layerId: string | null;
-    }): Y.UndoManager[] {
-        const managers: Y.UndoManager[] = [];
-        if (
-            scopeInfo.scope === 'layer' &&
-            scopeInfo.glyphName &&
-            scopeInfo.layerId
-        ) {
-            const manager = this.getLayerUndoManager(
-                scopeInfo.glyphName,
-                scopeInfo.layerId
-            );
-            if (manager) {
-                managers.push(manager);
-            }
-            return managers;
-        }
-        if (scopeInfo.scope === 'glyph' && scopeInfo.glyphName) {
-            const manager = this.getGlyphUndoManager(scopeInfo.glyphName);
-            if (manager) {
-                managers.push(manager);
-            }
-            return managers;
-        }
-        if (this._fontUndoManager) {
-            managers.push(this._fontUndoManager);
-        }
-        return managers;
-    }
-
-    private _snapshotUndoStackMarks(scopeInfo: {
-        scope: UndoScope;
-        glyphName: string | null;
-        layerId: string | null;
-    }): Array<{ manager: Y.UndoManager; undo: number; redo: number }> {
-        return this._undoManagersForCommitScope(scopeInfo).map((manager) => ({
-            manager,
-            undo: manager.undoStack.length,
-            redo: manager.redoStack.length
-        }));
-    }
-
     private _rejectLocalCollabSubmit(
-        undoRollbackMarks: Array<{
-            manager: Y.UndoManager;
-            undo: number;
-            redo: number;
-        }>,
         changeLogEntries: ChangeLogEntry[],
         decision: CollabSubmitDecision
     ): void {
         this._pushApplyKind(ApplyKind.UndoRedo);
         try {
-            for (const mark of undoRollbackMarks) {
-                while (mark.manager.undoStack.length > mark.undo) {
-                    mark.manager.undo();
-                }
-                if (mark.manager.redoStack.length > mark.redo) {
-                    mark.manager.redoStack.splice(mark.redo);
-                }
-            }
+            this._replayHistoryEntries(
+                [...changeLogEntries]
+                    .reverse()
+                    .filter(isReplayableHistoryEntry),
+                'undo'
+            );
         } finally {
             this._popApplyKind();
         }
@@ -7868,8 +7461,6 @@ export class PatchSyncEngine {
         }
 
         const scopeInfo = this._deriveBufferedScope(effectiveOperations);
-        this._prepareBatchUndoManagers(scopeInfo);
-        const undoRollbackMarks = this._snapshotUndoStackMarks(scopeInfo);
 
         const nextHistoryItemId =
             historyItemId ?? this._getCurrentHistoryItemId();
@@ -8101,12 +7692,7 @@ export class PatchSyncEngine {
                 }))
             );
             if (!decision.allowed) {
-                this._rejectLocalCollabSubmit(
-                    undoRollbackMarks,
-                    changeLogEntries,
-                    decision
-                );
-                this._finishBatchUndoManagers(scopeInfo);
+                this._rejectLocalCollabSubmit(changeLogEntries, decision);
                 return null;
             }
             this._lastLocalUpdateLogIndex = this._changeLog.length;
@@ -8205,15 +7791,6 @@ export class PatchSyncEngine {
         }
 
         this._flushDestroyedGlyphDocs();
-
-        this._recordUndoHistoryItem(
-            scopeInfo.scope,
-            scopeInfo.glyphName,
-            scopeInfo.layerId,
-            nextHistoryItemId
-        );
-
-        this._finishBatchUndoManagers(scopeInfo);
         this._onDirty?.();
 
         if (effectiveOperations.length === 1) {
@@ -8640,34 +8217,6 @@ export class PatchSyncEngine {
         };
     }
 
-    private _prepareBatchUndoManagers(scopeInfo: {
-        scope: UndoScope;
-        glyphName: string | null;
-        layerId: string | null;
-    }): void {
-        if (
-            scopeInfo.scope === 'layer' &&
-            scopeInfo.glyphName &&
-            scopeInfo.layerId
-        ) {
-            this.getLayerUndoManager(
-                scopeInfo.glyphName,
-                scopeInfo.layerId
-            )?.stopCapturing();
-            return;
-        }
-        if (scopeInfo.scope === 'glyph' && scopeInfo.glyphName) {
-            this.getGlyphUndoManager(scopeInfo.glyphName)?.stopCapturing();
-            return;
-        }
-        this._fontUndoManager?.stopCapturing();
-        if (scopeInfo.scope === 'font') {
-            for (const glyphName of this._glyphIdByName.keys()) {
-                this.getGlyphUndoManager(glyphName)?.stopCapturing();
-            }
-        }
-    }
-
     private _ensureDocumentsForOperations(
         operations: TransactionBufferedOperation[]
     ): void {
@@ -8888,29 +8437,6 @@ export class PatchSyncEngine {
         }
     }
 
-    private _finishBatchUndoManagers(scopeInfo: {
-        scope: UndoScope;
-        glyphName: string | null;
-        layerId: string | null;
-    }): void {
-        if (
-            scopeInfo.scope === 'layer' &&
-            scopeInfo.glyphName &&
-            scopeInfo.layerId
-        ) {
-            this.getLayerUndoManager(
-                scopeInfo.glyphName,
-                scopeInfo.layerId
-            )?.stopCapturing();
-            return;
-        }
-        if (scopeInfo.scope === 'glyph' && scopeInfo.glyphName) {
-            this.getGlyphUndoManager(scopeInfo.glyphName)?.stopCapturing();
-            return;
-        }
-        this._fontUndoManager?.stopCapturing();
-    }
-
     private _getEditOrigin(
         glyphName: string | null,
         layerId: string | null,
@@ -8923,156 +8449,6 @@ export class PatchSyncEngine {
             return GLYPH_EDIT_ORIGIN;
         }
         return FONT_EDIT_ORIGIN;
-    }
-
-    private _getUndoHistoryScopeKey(
-        scope: UndoScope,
-        glyphName: string | null,
-        layerId: string | null
-    ): string {
-        if (scope === 'layer' && glyphName && layerId) {
-            return getLayerManagerKey(glyphName, layerId);
-        }
-        if (scope === 'glyph' && glyphName) {
-            return glyphName;
-        }
-        return FONT_UNDO_HISTORY_KEY;
-    }
-
-    private _getUndoHistoryStacksForScope(
-        scope: UndoScope,
-        glyphName: string | null,
-        layerId: string | null
-    ): UndoHistoryStacks {
-        const key = this._getUndoHistoryScopeKey(scope, glyphName, layerId);
-        const existing = this._undoHistoryStacks.get(key);
-        if (existing) {
-            return existing;
-        }
-
-        const created: UndoHistoryStacks = { active: [], undone: [] };
-        this._undoHistoryStacks.set(key, created);
-        return created;
-    }
-
-    private _recordUndoHistoryItem(
-        scope: UndoScope,
-        glyphName: string | null,
-        layerId: string | null,
-        historyItemId: string
-    ): void {
-        const stacks = this._getUndoHistoryStacksForScope(
-            scope,
-            glyphName,
-            layerId
-        );
-        removeHistoryItemFromStack(stacks.active, historyItemId);
-        removeHistoryItemFromStack(stacks.undone, historyItemId);
-        stacks.active.push(historyItemId);
-        stacks.undone.length = 0;
-    }
-
-    private _recordUndoHistoryItemsFromRemoteEntries(
-        remoteEntries: ChangeLogEntry[]
-    ): void {
-        const recorded = new Set<string>();
-        for (const entry of remoteEntries) {
-            if (entry.historyAction !== 'change' || !entry.historyItemId) {
-                continue;
-            }
-            if (recorded.has(entry.historyItemId)) {
-                continue;
-            }
-            recorded.add(entry.historyItemId);
-            const glyphName = this._deriveGlyphNameFromPath(entry.path);
-            const layerId =
-                entry.undoScope === 'layer'
-                    ? this._deriveLayerIdFromPath(entry.path)
-                    : null;
-            this._recordUndoHistoryItem(
-                entry.undoScope,
-                glyphName,
-                layerId,
-                entry.historyItemId
-            );
-        }
-    }
-
-    private _peekUndoHistoryItemId(
-        scope: UndoScope,
-        glyphName: string | null,
-        layerId: string | null,
-        historyAction: 'undo' | 'redo'
-    ): string | null {
-        const stacks = this._getUndoHistoryStacksForScope(
-            scope,
-            glyphName,
-            layerId
-        );
-        const sourceStack =
-            historyAction === 'undo' ? stacks.active : stacks.undone;
-        return sourceStack.length ? sourceStack[sourceStack.length - 1] : null;
-    }
-
-    private _advanceUndoHistoryItem(
-        scope: UndoScope,
-        glyphName: string | null,
-        layerId: string | null,
-        historyAction: 'undo' | 'redo',
-        historyItemId: string | null
-    ): void {
-        if (!historyItemId) {
-            return;
-        }
-
-        const stacks = this._getUndoHistoryStacksForScope(
-            scope,
-            glyphName,
-            layerId
-        );
-        const sourceStack =
-            historyAction === 'undo' ? stacks.active : stacks.undone;
-        const targetStack =
-            historyAction === 'undo' ? stacks.undone : stacks.active;
-        removeHistoryItemFromStack(sourceStack, historyItemId);
-        removeHistoryItemFromStack(targetStack, historyItemId);
-        targetStack.push(historyItemId);
-    }
-
-    private _findHistoryItemById(
-        historyItemId: string | null
-    ): HistoryStackItem | null {
-        if (!historyItemId) {
-            return null;
-        }
-
-        return (
-            buildHistoryStackItems(this._changeLog, {
-                includeUndone: true
-            }).find((item) => item.id === historyItemId) ?? null
-        );
-    }
-
-    private _resolveAuthoritativeUndoHistory(
-        historyAction: 'undo' | 'redo',
-        targetItem: HistoryStackItem | null,
-        scope: UndoScope,
-        glyphName: string | null,
-        layerId: string | null
-    ): ResolvedUndoHistorySource {
-        const historyItemId =
-            targetItem?.id ??
-            this._peekUndoHistoryItemId(
-                scope,
-                glyphName,
-                layerId,
-                historyAction
-            );
-
-        return {
-            historyItemId,
-            historyItem: targetItem ?? this._findHistoryItemById(historyItemId)
-        };
     }
 
     private _deriveBulkUndoScope(
@@ -9118,10 +8494,8 @@ export class PatchSyncEngine {
         if (remoteEntries.some((entry) => entry.undoScope === 'font')) {
             return FONT_EDIT_ORIGIN;
         }
-        // Composite/dependent layer packets still undo on the originating
-        // layer surface. Treating extra replay glyphs as FONT_EDIT_ORIGIN
-        // leaves the layer UndoManager empty, so linked windows cannot undo
-        // after collaboration envelopes omit Yjs snapshot bodies.
+        // Composite/dependent layer packets keep the originating layer's
+        // edit origin rather than FONT_EDIT_ORIGIN.
         if (
             remoteEntries.some((entry) => entry.undoScope === 'layer') &&
             !remoteEntries.some((entry) => entry.undoScope === 'glyph')
@@ -9160,55 +8534,6 @@ export class PatchSyncEngine {
             return GLYPH_EDIT_ORIGIN;
         }
         return FONT_EDIT_ORIGIN;
-    }
-
-    private _ensureUndoManagersForRemoteEntries(
-        remoteEntries: ChangeLogEntry[]
-    ): void {
-        const glyphNames = new Set<string>();
-        const layerTargets = new Map<
-            string,
-            { glyphName: string; layerId: string }
-        >();
-
-        for (const entry of remoteEntries) {
-            const glyphName = this._deriveGlyphNameFromPath(entry.path);
-            const layerId = this._deriveLayerIdFromPath(entry.path);
-            if (glyphName) {
-                glyphNames.add(glyphName);
-            }
-            if (glyphName && layerId) {
-                layerTargets.set(`${glyphName}@@${layerId}`, {
-                    glyphName,
-                    layerId
-                });
-            }
-            if (entry.originatingGlyphName && entry.originatingLayerId) {
-                layerTargets.set(
-                    `${entry.originatingGlyphName}@@${entry.originatingLayerId}`,
-                    {
-                        glyphName: entry.originatingGlyphName,
-                        layerId: entry.originatingLayerId
-                    }
-                );
-            }
-            for (const target of normalizeWorkerReplayTargets(
-                entry.workerReplayTargets
-            )) {
-                glyphNames.add(target.glyphName);
-                layerTargets.set(
-                    `${target.glyphName}@@${target.layerId}`,
-                    target
-                );
-            }
-        }
-
-        for (const glyphName of glyphNames) {
-            this.getGlyphUndoManager(glyphName);
-        }
-        for (const target of layerTargets.values()) {
-            this.getLayerUndoManager(target.glyphName, target.layerId);
-        }
     }
 
     private _getRemoteLayerSyncScopes(
@@ -9288,77 +8613,13 @@ export class PatchSyncEngine {
         historyTargetKey?: string | null,
         surface?: HistoryUndoSurface | null
     ): HistoryStackItem | null {
-        const resolvedGlyphName = glyphName ?? null;
-        const resolvedLayerId = layerId ?? null;
-        const resolvedHistoryTargetKey = historyTargetKey ?? null;
-
-        // Prefer the newest visible history item whose backing UndoManager
-        // still has stack depth. This prevents stale change-log entries from
-        // blocking undo/redo after branch edits clear a manager's stack.
-        const candidates = buildHistoryStackItems(this._changeLog, {
-            glyphName: resolvedGlyphName,
-            layerId: resolvedLayerId,
-            includeUndone: true,
-            historyTargetKey: resolvedHistoryTargetKey,
-            surface: surface ?? null
-        }).filter((item) =>
-            historyAction === 'undo' ? item.isActive : !item.isActive
-        );
-
-        for (let index = candidates.length - 1; index >= 0; index--) {
-            const candidate = candidates[index];
-            if (
-                this._shouldReplayHistoryItemDirectly(candidate, historyAction)
-            ) {
-                return candidate;
-            }
-            const target = this._targetFromHistoryItem(
-                candidate,
-                resolvedGlyphName,
-                resolvedLayerId
-            );
-            const { manager, scope } = this._getUndoManagerForTarget(target);
-            if (scope === 'font') {
-                return candidate;
-            }
-            if (!manager) {
-                continue;
-            }
-            const stackDepth =
-                historyAction === 'undo'
-                    ? manager.undoStack.length
-                    : manager.redoStack.length;
-            if (stackDepth > 0) {
-                return candidate;
-            }
-        }
-
         return resolveHistoryTargetItem(this._changeLog, {
-            glyphName: resolvedGlyphName,
-            layerId: resolvedLayerId,
+            glyphName: glyphName ?? null,
+            layerId: layerId ?? null,
             historyAction,
-            historyTargetKey: resolvedHistoryTargetKey,
+            historyTargetKey: historyTargetKey ?? null,
             surface: surface ?? null
         });
-    }
-
-    private _resolveUndoTarget(
-        glyphName: string | undefined,
-        layerId: string | null | undefined,
-        historyAction: 'undo' | 'redo',
-        targetItem?: HistoryStackItem | null
-    ): UndoTarget {
-        if (targetItem) {
-            return this._targetFromHistoryItem(
-                targetItem,
-                glyphName ?? null,
-                layerId ?? null
-            );
-        }
-        return {
-            glyphName: glyphName ?? null,
-            layerId: layerId ?? null
-        };
     }
 
     private _deriveHistoryTarget(
@@ -9471,8 +8732,9 @@ export class PatchSyncEngine {
                 item,
                 !!this._getResettleFontModel()
             );
-        const orderedEntries =
-            direction === 'undo' ? [...item.entries].reverse() : item.entries;
+        const orderedEntries = (
+            direction === 'undo' ? [...item.entries].reverse() : item.entries
+        ).filter(isReplayableHistoryEntry);
         const replayEntries = resettleDerivedLayers
             ? orderedEntries.filter(
                   (entry) =>
@@ -9483,7 +8745,17 @@ export class PatchSyncEngine {
               )
             : orderedEntries;
 
-        let writtenTargets: WorkerReplayTarget[] = [];
+        this._replayHistoryEntries(replayEntries, direction);
+        return resettleDerivedLayers
+            ? this._resettleDerivedLayersAfterOriginReplay(item)
+            : [];
+    }
+
+    /** Apply already-ordered forward entries in the given direction, one Yjs transaction per document. */
+    private _replayHistoryEntries(
+        replayEntries: ChangeLogEntry[],
+        direction: 'undo' | 'redo'
+    ): void {
         const itemRenames = this._collectGlyphRenamesFromEntries(replayEntries);
         if (direction === 'undo') {
             this._applyGlyphNameRemapsFromEntries(replayEntries, direction);
@@ -9513,11 +8785,6 @@ export class PatchSyncEngine {
         if (direction === 'redo') {
             this._applyGlyphNameRemapsFromEntries(replayEntries, direction);
         }
-        if (resettleDerivedLayers) {
-            writtenTargets = this._resettleDerivedLayersAfterOriginReplay(item);
-        }
-
-        return writtenTargets;
     }
 
     private _applyHistoryReplayEntry(
@@ -9553,15 +8820,16 @@ export class PatchSyncEngine {
             this._applyGlyphSnapshot(String(path[1]), replayValue);
             return;
         }
-        if (
-            path.length === 4 &&
-            path[0] === 'glyphs' &&
-            path[2] === 'layers' &&
-            typeof path[1] === 'string' &&
-            typeof path[3] === 'string' &&
-            replayValue !== undefined
-        ) {
-            this._applyLayerDelta(path[1], path[3], replayValue);
+        if (this._isLayerRootPath(path)) {
+            if (replayValue === null || replayValue === undefined) {
+                this._deleteRoutedYPath(path);
+            } else {
+                this._applyLayerDelta(
+                    String(path[1]),
+                    String(path[3]),
+                    replayValue
+                );
+            }
             return;
         }
         if (direction === 'undo') {
@@ -9755,10 +9023,7 @@ export class PatchSyncEngine {
         entry: ChangeLogEntry,
         direction: 'undo' | 'redo'
     ): unknown {
-        if (direction === 'undo') {
-            return entry.replayOldValue ?? entry.oldValue;
-        }
-        return entry.replayNewValue ?? entry.newValue;
+        return historyReplayValue(entry, direction);
     }
 
     private _cloneReplayValue(value: unknown): unknown {
@@ -9847,91 +9112,69 @@ export class PatchSyncEngine {
         return cloneHistoryValue(value);
     }
 
-    private _shouldReplayHistoryItemDirectly(
-        item: HistoryStackItem | null | undefined,
+    private _canReplayHistoryItem(
+        item: HistoryStackItem,
         direction: 'undo' | 'redo'
     ): boolean {
-        if (!item) {
-            return false;
-        }
         const resettleDerivedLayers =
             shouldResettleDerivedLayersOnHistoryReplay(
                 item,
                 !!this._getResettleFontModel()
             );
-        return this._canReplayHistoryItemDirectly(
-            item,
-            direction,
-            resettleDerivedLayers
+        const entries = item.entries.filter(
+            (entry) =>
+                isReplayableHistoryEntry(entry) &&
+                !(
+                    resettleDerivedLayers &&
+                    isDerivedLayerChangePath(
+                        entry.path,
+                        item.originatingGlyphName
+                    )
+                )
         );
-    }
-
-    private _canReplayHistoryItemDirectly(
-        item: HistoryStackItem,
-        direction: 'undo' | 'redo',
-        originEntriesOnly = false
-    ): boolean {
-        const entries = originEntriesOnly
-            ? item.entries.filter(
-                  (entry) =>
-                      !isDerivedLayerChangePath(
-                          entry.path,
-                          item.originatingGlyphName
-                      )
-              )
-            : item.entries;
         if (!entries.length) {
             return false;
         }
 
         return entries.every((entry) => {
-            // Direct replay supports 'set', 'add', and 'remove' ops.
-            // 'add' on undo → deleteYPath (no replay value needed).
-            // 'remove' on redo → deleteYPath (no replay value needed).
-            // 'set' needs a replay value, except undo of a newly created
-            // property (undefined old value) which deletes the path.
-            const needsReplayValue =
-                entry.op === 'set' ||
-                (entry.op === 'remove' && direction === 'undo') ||
-                (entry.op === 'add' && direction === 'redo');
-
-            if (needsReplayValue) {
-                const replayValue =
-                    direction === 'undo'
-                        ? entry.replayOldValue
-                        : entry.replayNewValue;
-                if (replayValue === undefined) {
-                    if (!(entry.op === 'set' && direction === 'undo')) {
-                        return false;
-                    }
-                    // Newly created property: undo deletes it via history replay.
-                } else {
-                    const path = this._toYDocPath(
-                        this._parseEntryPath(entry.path)
-                    );
-
-                    if (this._isGlyphRootPath(path)) {
-                        return !!replayValue && typeof replayValue === 'object';
-                    }
-
-                    if (
-                        path.length === 4 &&
-                        path[0] === 'glyphs' &&
-                        path[2] === 'layers' &&
-                        typeof path[1] === 'string' &&
-                        typeof path[3] === 'string'
-                    ) {
-                        return !!replayValue && typeof replayValue === 'object';
-                    }
-                }
+            const replayValue = this._getHistoryReplayValue(entry, direction);
+            // 'add' on undo and 'remove' on redo delete the path; undo of a
+            // newly created property (no old value) deletes it too.
+            const deletesPath =
+                (entry.op === 'add' && direction === 'undo') ||
+                (entry.op === 'remove' && direction === 'redo') ||
+                (entry.op === 'set' &&
+                    direction === 'undo' &&
+                    replayValue === undefined);
+            if (deletesPath) {
+                return true;
             }
-
+            const path = this._toYDocPath(this._parseEntryPath(entry.path));
+            if (this._isLayerRootPath(path) && replayValue == null) {
+                return true;
+            }
+            if (replayValue === undefined) {
+                return false;
+            }
+            if (this._isGlyphRootPath(path) || this._isLayerRootPath(path)) {
+                return !!replayValue && typeof replayValue === 'object';
+            }
             return true;
         });
     }
 
     private _isGlyphRootPath(path: (string | number)[]): boolean {
         return path.length === 2 && path[0] === 'glyphs' && !!path[1];
+    }
+
+    private _isLayerRootPath(path: (string | number)[]): boolean {
+        return (
+            path.length === 4 &&
+            path[0] === 'glyphs' &&
+            path[2] === 'layers' &&
+            typeof path[1] === 'string' &&
+            typeof path[3] === 'string'
+        );
     }
 
     /** Glyph names in current font JSON array order (model / `_fontJson`). */
@@ -10237,10 +9480,8 @@ export class PatchSyncEngine {
                         continue;
                     }
                     nextLayerIds.add(layerId);
-                    // Patch the existing layerMap in place to preserve the
-                    // Y.Map instance reference so layer UndoManagers (which
-                    // register on the specific Y.Map object) remain valid
-                    // after a glyph snapshot is applied.
+                    // Patch the existing layerMap in place so the snapshot
+                    // produces minimal Yjs deltas.
                     let layerMap = layersMap.get(layerId) as
                         Y.Map<unknown> | undefined;
                     if (!(layerMap instanceof Y.Map)) {
@@ -11109,8 +10350,12 @@ export class PatchSyncEngine {
         const layerIds = deriveLayerIdsFromPaths(item.touchedPaths);
         if (item.undoScope === 'layer') {
             return {
-                glyphName: glyphNames[0] ?? fallbackGlyphName,
-                layerId: layerIds[0] ?? fallbackLayerId
+                glyphName:
+                    item.originatingGlyphName ??
+                    glyphNames[0] ??
+                    fallbackGlyphName,
+                layerId:
+                    item.originatingLayerId ?? layerIds[0] ?? fallbackLayerId
             };
         }
         if (item.undoScope === 'glyph') {
@@ -11125,26 +10370,14 @@ export class PatchSyncEngine {
         };
     }
 
-    private _getUndoManagerForTarget(target: UndoTarget): UndoManagerWithScope {
+    private _scopeForTarget(target: UndoTarget): UndoScope {
         if (target.glyphName && target.layerId) {
-            return {
-                manager: this.getLayerUndoManager(
-                    target.glyphName,
-                    target.layerId
-                ),
-                scope: 'layer'
-            };
+            return 'layer';
         }
         if (target.glyphName) {
-            return {
-                manager: this.getGlyphUndoManager(target.glyphName),
-                scope: 'glyph'
-            };
+            return 'glyph';
         }
-        return {
-            manager: this._fontUndoManager,
-            scope: 'font'
-        };
+        return 'font';
     }
 
     private _appendChangeLogEntry(entry: ChangeLogEntry): void {

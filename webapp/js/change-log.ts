@@ -665,6 +665,12 @@ export interface HistoryStackItem {
     /** Glyph/layer where the forward edit started; canvas undo also includes other written layers of this glyph. */
     originatingGlyphName: string | null;
     originatingLayerId: string | null;
+    /** Change-log index of the item's first forward entry. */
+    createdSeq: number;
+    /** Change-log index of the item's latest change, undo, or redo. */
+    transitionSeq: number;
+    /** False when no entry carries replayable data (metadata-only packets). */
+    replayable: boolean;
 }
 
 const FONT_SCOPE_KEY = '__font__';
@@ -934,7 +940,9 @@ function deriveUndoScope(
 function deriveHistoryItemUndoScope(
     entries: ChangeLogEntry[],
     glyphNames: Set<string>,
-    layerIds: Set<string>
+    layerIds: Set<string>,
+    originatingGlyph: string | null,
+    originatingLayerId: string | null
 ): UndoScope {
     if (entries.some((entry) => entry.undoScope === 'font')) {
         return 'font';
@@ -943,7 +951,20 @@ function deriveHistoryItemUndoScope(
         return 'font';
     }
     if (glyphNames.size > 1) {
-        return 'font';
+        // Layer edits that cascade into dependent glyphs stay on the
+        // originating layer's stack.
+        return originatingGlyph &&
+            originatingLayerId &&
+            entries.every(
+                (entry) =>
+                    entry.undoScope === 'layer' &&
+                    (deriveGlyphNameFromPath(entry.path) !== originatingGlyph ||
+                        deriveLayerIdFromPath(entry.path) ===
+                            originatingLayerId)
+            ) &&
+            !historyItemHasFontStructuralPath(entries)
+            ? 'layer'
+            : 'font';
     }
     if (entries.some((entry) => entry.undoScope === 'glyph')) {
         return 'glyph';
@@ -1026,7 +1047,65 @@ function makeEmptyHistoryState(): HistoryState {
     };
 }
 
-function processHistoryEntry(entry: ChangeLogEntry, state: HistoryState): void {
+/**
+ * Value history replay writes for `direction`. When either replay payload is
+ * present both are authoritative; `oldValue`/`newValue` may be display labels.
+ */
+export function historyReplayValue(
+    entry: ChangeLogEntry,
+    direction: 'undo' | 'redo'
+): unknown {
+    const hasReplayPayload =
+        entry.replayOldValue !== undefined ||
+        entry.replayNewValue !== undefined;
+    if (direction === 'undo') {
+        return hasReplayPayload ? entry.replayOldValue : entry.oldValue;
+    }
+    return hasReplayPayload ? entry.replayNewValue : entry.newValue;
+}
+
+/** Glyph roots (`glyphs.A`) and layer roots (`glyphs.A:layers.L`). */
+export function isSnapshotRootPath(path: string): boolean {
+    const segments = getPathSegments(path);
+    return (
+        segments[0] === 'glyphs' &&
+        (segments.length === 2 ||
+            (segments.length === 4 && segments[2] === 'layers'))
+    );
+}
+
+/**
+ * A forward entry can be replayed when it carries the value its direction
+ * needs (`set` needs either side; `add`/`remove` carry one side and delete
+ * on the other). Snapshot roots only replay objects (null/undefined means
+ * absent): metadata-only layer packets carry label strings there instead.
+ */
+export function isReplayableHistoryEntry(entry: ChangeLogEntry): boolean {
+    const oldValue = historyReplayValue(entry, 'undo');
+    const newValue = historyReplayValue(entry, 'redo');
+    if (entry.op === 'add') {
+        return newValue !== undefined;
+    }
+    if (entry.op === 'remove') {
+        return oldValue !== undefined;
+    }
+    if (isSnapshotRootPath(entry.path)) {
+        const isSnapshot = (value: unknown) =>
+            value === undefined || value === null || typeof value === 'object';
+        return (
+            isSnapshot(oldValue) &&
+            isSnapshot(newValue) &&
+            (!!oldValue || !!newValue)
+        );
+    }
+    return oldValue !== undefined || newValue !== undefined;
+}
+
+function processHistoryEntry(
+    entry: ChangeLogEntry,
+    state: HistoryState,
+    seq: number
+): void {
     const { orderedItemIds, itemsById, activeByScope, undoneByScope } = state;
 
     const ensureItem = (entry: ChangeLogEntry): MutableHistoryStackItem => {
@@ -1055,7 +1134,10 @@ function processHistoryEntry(entry: ChangeLogEntry, state: HistoryState): void {
                 historyTargetKeys: [],
                 workerReplayTargets: [],
                 originatingGlyphName: null,
-                originatingLayerId: null
+                originatingLayerId: null,
+                createdSeq: seq,
+                transitionSeq: seq,
+                replayable: false
             };
             itemsById.set(entry.historyItemId, item);
             orderedItemIds.push(entry.historyItemId);
@@ -1078,6 +1160,10 @@ function processHistoryEntry(entry: ChangeLogEntry, state: HistoryState): void {
         item.historySummary = entry.historySummary ?? item.historySummary;
         item.isActive = true;
         item.lastAction = 'change';
+        item.transitionSeq = seq;
+        if (!item.replayable && isReplayableHistoryEntry(entry)) {
+            item.replayable = true;
+        }
         if (
             !item.undoSurfaceAffinity &&
             (entry.undoSurfaceAffinity === 'canvas' ||
@@ -1138,7 +1224,9 @@ function processHistoryEntry(entry: ChangeLogEntry, state: HistoryState): void {
         item.undoScope = deriveHistoryItemUndoScope(
             item.entries,
             item.glyphNameSet,
-            item.layerIdSet
+            item.layerIdSet,
+            item.originatingGlyphName,
+            item.originatingLayerId
         );
         // Master add/remove (and similar) mix a font-root write with many
         // glyph layer paths. Keep them on the Font undo surface — do not
@@ -1195,6 +1283,7 @@ function processHistoryEntry(entry: ChangeLogEntry, state: HistoryState): void {
         item.isActive = entry.historyAction === 'redo';
         item.lastAction = entry.historyAction;
         item.timestamp = entry.timestamp;
+        item.transitionSeq = seq;
     } else {
         removeFromStack(sourceStack, targetItemId);
         targetStack.push(targetItemId);
@@ -1229,7 +1318,7 @@ function computeHistoryState(entries: ChangeLogEntry[]): HistoryState {
         historyStateCache.set(entries, cached);
     }
     for (let i = cached.processedLength; i < entries.length; i++) {
-        processHistoryEntry(entries[i], cached.state);
+        processHistoryEntry(entries[i], cached.state, i);
     }
     cached.processedLength = entries.length;
     return cached.state;
@@ -1264,23 +1353,75 @@ export function resolveHistoryTargetItem(
     const layerId = options.layerId ?? null;
     const historyTargetKey = options.historyTargetKey ?? null;
 
-    const visibleItems = buildHistoryStackItems(entries, {
-        glyphName,
-        layerId,
-        includeUndone: true,
-        historyTargetKey,
-        surface: options.surface ?? null
-    }).filter((item) =>
-        options.historyAction === 'undo' ? item.isActive : !item.isActive
+    return selectHistoryTarget(
+        buildHistoryStackItems(entries, {
+            glyphName,
+            layerId,
+            includeUndone: true,
+            historyTargetKey,
+            surface: options.surface ?? null
+        }),
+        options.historyAction
     );
+}
 
-    return visibleItems.length ? visibleItems[visibleItems.length - 1] : null;
+type HistoryTargetCandidate = Pick<
+    HistoryStackItem,
+    'isActive' | 'createdSeq' | 'transitionSeq' | 'replayable'
+>;
+
+function latestCreatedSeq(items: HistoryTargetCandidate[]): number {
+    let latest = -1;
+    for (const item of items) {
+        if (item.replayable && item.createdSeq > latest) {
+            latest = item.createdSeq;
+        }
+    }
+    return latest;
+}
+
+/** An undone item stays redoable until a newer edit lands on the same surface. */
+function isDiscardedRedoBranch(
+    item: HistoryTargetCandidate,
+    latestCreated: number
+): boolean {
+    return !item.isActive && item.transitionSeq < latestCreated;
+}
+
+/**
+ * One LIFO stack per surface: undo takes the most recently applied
+ * (changed or redone) item, redo the most recently undone one.
+ */
+export function selectHistoryTarget<T extends HistoryTargetCandidate>(
+    surfaceItems: T[],
+    historyAction: 'undo' | 'redo'
+): T | null {
+    const latestCreated = latestCreatedSeq(surfaceItems);
+    let selected: T | null = null;
+    for (const item of surfaceItems) {
+        if (!item.replayable) {
+            continue;
+        }
+        if (historyAction === 'undo' ? !item.isActive : item.isActive) {
+            continue;
+        }
+        if (
+            historyAction === 'redo' &&
+            isDiscardedRedoBranch(item, latestCreated)
+        ) {
+            continue;
+        }
+        if (!selected || item.transitionSeq > selected.transitionSeq) {
+            selected = item;
+        }
+    }
+    return selected;
 }
 
 /**
  * History item ids that belong to the current surface’s undo/redo stack.
- * Includes inactive (undone) items so redo targets stay bright in History.
- * `nextUndoHistoryItemId` is still the newest *active* Cmd+Z target.
+ * Includes undone items that are still redoable so they stay bright in
+ * History; redo branches discarded by a newer edit are unreachable.
  */
 export function getUndoReachabilityForContext(
     entries: ChangeLogEntry[],
@@ -1305,13 +1446,20 @@ export function getUndoReachabilityForContext(
         ...filterOptions,
         includeUndone: true
     });
-    const activeItems = surfaceItems.filter((item) => item.isActive);
+    const latestCreated = latestCreatedSeq(surfaceItems);
 
     return {
-        reachableHistoryItemIds: new Set(surfaceItems.map((item) => item.id)),
-        nextUndoHistoryItemId: activeItems.length
-            ? activeItems[activeItems.length - 1].id
-            : null
+        reachableHistoryItemIds: new Set(
+            surfaceItems
+                .filter(
+                    (item) =>
+                        item.replayable &&
+                        !isDiscardedRedoBranch(item, latestCreated)
+                )
+                .map((item) => item.id)
+        ),
+        nextUndoHistoryItemId:
+            selectHistoryTarget(surfaceItems, 'undo')?.id ?? null
     };
 }
 

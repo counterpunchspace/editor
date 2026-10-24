@@ -51,17 +51,12 @@ export function liveShardMemoryFromEngine(
         return null;
     }
     return evaluateLiveShardMemory({
-        decodedStructs: snapshot.decodedStructs,
-        undoStackItems: snapshot.undoStackItems
+        decodedStructs: snapshot.decodedStructs
     });
 }
-function liveMemoryNote(bridgeSnapshot: {
-    decodedStructs?: number;
-    undoStackItems?: number;
-}): string {
+function liveMemoryNote(bridgeSnapshot: { decodedStructs?: number }): string {
     const report = evaluateLiveShardMemory({
-        decodedStructs: bridgeSnapshot.decodedStructs,
-        undoStackItems: bridgeSnapshot.undoStackItems
+        decodedStructs: bridgeSnapshot.decodedStructs
     });
     const structs =
         typeof bridgeSnapshot.decodedStructs === 'number'
@@ -367,14 +362,6 @@ function collectMainJsDomain(): MemoryDomain {
             method: 'est.',
             inSum: true,
             note: liveMemoryNote(bridgeSnapshot)
-        });
-        rows.push({
-            id: 'undo-stacks',
-            label: 'Y.UndoManager stacks',
-            bytes: estimateRowBytes(bridgeSnapshot.undoStacks),
-            method: 'est.',
-            inSum: true,
-            note: `${bridgeSnapshot.undoStackItems} stack items`
         });
         rows.push({
             id: 'change-log',

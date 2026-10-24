@@ -49,7 +49,6 @@ export type LiveShardMemoryInput = {
     encodedBytes?: number;
     decodedStructs?: number;
     pendingUnsentBytes?: number;
-    undoStackItems?: number;
     truncateHistory?: boolean;
     explicitHistoryTruncation?: boolean;
     dropUnsent?: boolean;
@@ -60,7 +59,6 @@ export type LiveShardMemoryReport = {
     encodedBytes: number;
     decodedStructs: number;
     pendingUnsentBytes: number;
-    undoStackItems: number;
     canRebaseline: boolean;
     rebaselineBlockReason: string | null;
 };
@@ -316,7 +314,6 @@ export function evaluateLiveShardMemory(
         0,
         Number(input.pendingUnsentBytes) || 0
     );
-    const undoStackItems = Math.max(0, Number(input.undoStackItems) || 0);
     const warn =
         encodedBytes >= CLIENT_LIVE_MEMORY_WARNING_ENCODED_BYTES ||
         decodedStructs >= CLIENT_LIVE_MEMORY_WARNING_STRUCTS;
@@ -334,7 +331,6 @@ export function evaluateLiveShardMemory(
         encodedBytes,
         decodedStructs,
         pendingUnsentBytes,
-        undoStackItems,
         canRebaseline: rebaselineBlockReason === null,
         rebaselineBlockReason
     };

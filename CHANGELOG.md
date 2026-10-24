@@ -20,6 +20,7 @@
 - **Cut / Copy / Paste**: Edit menu items Copy, Paste, Cut (`Cmd/Ctrl+C` / `V` / `X`) with dividers around the group. Cut and Copy enable when the focused view has a copyable selection. Paste (menu and shortcut) enables only when clipboard kind matches the focused view (glyphs → Overview, layer/SVG → outline edit, text → text mode); mismatches are ignored with no alert.
 - **Assistant editor state**: The editor state given to the assistant now includes the active glyph name and the text-run caret (`cursorPosition`).
 - **Delete anchors on variable glyphs**: Deleting an anchor now removes it from every interpolating layer and commits those layers, so fontc no longer fails with `BadAnchor NoDefault` and the canvas no longer stays frozen after the failed compile.
+- **Undo / redo order**: Each undo surface is one last-in, first-out stack, so undo, redo, undo walks back the same step. A new edit discards the redo branch. Edits that recompose dependent glyphs undo and redo with the layer they started on. History replay is the only undo engine; the per-glyph and per-layer Yjs undo managers are gone.
 - **Auto QA**: Bundled corpus tables label likely missing components and anchors. When labels fire, the Editing View property panel shows a warning-only widget; hover explains the hint. The same messages are on `Glyph.qa`. Auto QA never auto-inserts outlines, components, or anchors.
 
 # v0.3

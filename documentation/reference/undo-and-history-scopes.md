@@ -14,6 +14,14 @@ Undo follows the **focused undo surface**, not merely whatever glyph name appear
 
 Undo surfaces do not share one interleaved stack. A later font-info edit does not block undoing an earlier canvas edit. Automation is the exception while those views are focused: `Cmd/Ctrl+Z` walks only Python- and assistant-sourced items, not ordinary GUI edits from other undo surfaces.
 
+## Stack order
+
+Each undo surface is one last-in, first-out stack:
+
+- `Cmd/Ctrl+Z` reverses the most recent edit, undo, or redo on that surface that is still in effect.
+- `Cmd/Ctrl+Shift+Z` re-applies the most recently undone item. Undo, redo, undo always walks back the same step.
+- A new edit on the surface discards its redo branch. Those undone rows become unreachable in History.
+
 ## Editing View–owned font edits
 
 Some writes live under font-root paths (`masters.*.kerning`, kern groups, promoting a guide to the master) but were made from the Editing View. Those commits stamp an **undo surface affinity** of `canvas` so they stay on the Editing View stack for both History and `Cmd/Ctrl+Z`. Font Info does not claim them.
@@ -22,7 +30,7 @@ Some writes live under font-root paths (`masters.*.kerning`, kern groups, promot
 
 Canvas undo keys off where the forward edit **started**, not every layer touched afterward.
 
-- Edit layer A → cascade updates dependents → undoable on **A**, not on a dependent layer.
+- Edit layer A → cascade updates dependents → undoable on **A**, not on a dependent layer or from Font Info. Undo and redo restore the dependents together with A.
 - Paste a glyph in Overview → open it on the canvas → creation stays **overview-only**, even if the history item names that glyph.
 - In text mode (no selected layer), layer-origin edits for the caret glyph remain reachable, and affinity-stamped kerning edits are reachable too.
 
@@ -31,7 +39,7 @@ Canvas undo keys off where the forward edit **started**, not every layer touched
 - **Bright / listed (default):** items on the current undo surface’s undo **and** redo stack (including undone edits and their undo/redo rows).
 - **Hidden by default:** everything else, replaced by compact markers such as `3 hidden · other undo surface`.
 - **Title-bar toggle** (visibility icon): show unreachable rows faded. Clicking a hidden-run marker turns the toggle on.
-- Fade means “outside this undo surface”; `Cmd/Ctrl+Z` undoes the newest active bright item, and `Cmd/Ctrl+Shift+Z` can redo undone bright items.
+- Fade means “outside this undo surface” or a discarded redo branch; `Cmd/Ctrl+Z` and `Cmd/Ctrl+Shift+Z` follow the stack order above.
 - Opening **History** does **not** change the undo surface. Filtering stays on the last focused main view. Scripts / Konsole / Assistant switch to the automation undo surface while they are focused.
 
 ## Ace editors
