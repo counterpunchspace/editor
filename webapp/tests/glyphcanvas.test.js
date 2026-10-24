@@ -1523,7 +1523,7 @@ describe('GlyphCanvas renderer snap visualization', () => {
         expect(arcRadii).toContain(0.1375);
     });
 
-    test('drawSnapVisualization enlarges the snap ring when exactly back on origin', () => {
+    test('drawSnapVisualization draws the contour close bullseye when exactly back on origin', () => {
         canvas.outlineEditor.getSnapVisualizationState = jest.fn(() => ({
             debugCandidates: [{ x: 60, y: 40, source: 'origin' }],
             snapTarget: {
@@ -1537,13 +1537,15 @@ describe('GlyphCanvas renderer snap visualization', () => {
         }));
 
         canvas.renderer.ctx.arc.mockClear();
+        canvas.renderer.ctx.fill.mockClear();
 
         canvas.renderer.drawSnapVisualization();
 
         const arcRadii = canvas.renderer.ctx.arc.mock.calls.map(
             (call) => call[2]
         );
-        expect(arcRadii).toContain(0.1375);
+        expect(arcRadii).toEqual([0.1375, 0.05]);
+        expect(canvas.renderer.ctx.fill).toHaveBeenCalled();
     });
 });
 

@@ -5114,6 +5114,41 @@ export class GlyphCanvasRenderer {
     }
 
     /**
+     * Red bullseye used for an open-contour close and for a drag that has
+     * landed back on its own origin. Drawn at full opacity, outside the
+     * faded snap-guide layer.
+     */
+    private drawCloseTargetMarker(
+        x: number,
+        y: number,
+        active: boolean,
+        invScale: number,
+        color: string
+    ): void {
+        const targetRadius = 5 * invScale;
+        const ringRadius = targetRadius * (active ? 2.75 : 2);
+        this.ctx.save();
+        this.ctx.strokeStyle = color;
+        this.ctx.fillStyle = color;
+        this.ctx.lineWidth = 1 * invScale;
+        this.ctx.beginPath();
+        this.ctx.arc(x, y, ringRadius, 0, Math.PI * 2);
+        this.ctx.stroke();
+        this.ctx.beginPath();
+        this.ctx.moveTo(x - ringRadius, y);
+        this.ctx.lineTo(x + ringRadius, y);
+        this.ctx.moveTo(x, y - ringRadius);
+        this.ctx.lineTo(x, y + ringRadius);
+        this.ctx.stroke();
+        if (active) {
+            this.ctx.beginPath();
+            this.ctx.arc(x, y, targetRadius, 0, Math.PI * 2);
+            this.ctx.fill();
+        }
+        this.ctx.restore();
+    }
+
+    /**
      * Draw snap visualization:
      * - Neighboring glyph snap nodes as faint dots
      * - Highlight the snap source node and draw a faint line to it
@@ -5192,6 +5227,9 @@ export class GlyphCanvasRenderer {
                 this.ctx.lineWidth = 1 * invScale;
                 for (const c of candidates) {
                     if (c.source === 'origin') {
+                        if (exactOriginReturn) {
+                            continue;
+                        }
                         const originRadius = dotRadius * 1.75;
                         this.ctx.beginPath();
                         this.ctx.arc(c.x, c.y, originRadius, 0, Math.PI * 2);
@@ -5222,6 +5260,7 @@ export class GlyphCanvasRenderer {
         if (
             snapTarget &&
             naturalPos &&
+            !exactOriginReturn &&
             !isCloseTargetSnap(snapTarget.snappedX, snapTarget.snappedY)
         ) {
             const highlightRadius = 5 * invScale;
@@ -5363,35 +5402,26 @@ export class GlyphCanvasRenderer {
         this.ctx.restore();
 
         if (closeTargets.length > 0) {
-            const targetRadius = 5 * invScale;
-            this.ctx.save();
-            this.ctx.strokeStyle = colors.CLOSE_TARGET;
-            this.ctx.fillStyle = colors.CLOSE_TARGET;
-            this.ctx.lineWidth = 1 * invScale;
             for (const target of closeTargets) {
-                const ringRadius = targetRadius * (target.active ? 2.75 : 2);
-                this.ctx.beginPath();
-                this.ctx.arc(target.x, target.y, ringRadius, 0, Math.PI * 2);
-                this.ctx.stroke();
-                this.ctx.beginPath();
-                this.ctx.moveTo(target.x - ringRadius, target.y);
-                this.ctx.lineTo(target.x + ringRadius, target.y);
-                this.ctx.moveTo(target.x, target.y - ringRadius);
-                this.ctx.lineTo(target.x, target.y + ringRadius);
-                this.ctx.stroke();
-                if (target.active) {
-                    this.ctx.beginPath();
-                    this.ctx.arc(
-                        target.x,
-                        target.y,
-                        targetRadius,
-                        0,
-                        Math.PI * 2
-                    );
-                    this.ctx.fill();
-                }
+                this.drawCloseTargetMarker(
+                    target.x,
+                    target.y,
+                    target.active,
+                    invScale,
+                    colors.CLOSE_TARGET
+                );
             }
-            this.ctx.restore();
+        }
+
+        const originPos = snapVisualizationState?.originPos || null;
+        if (exactOriginReturn && originPos) {
+            this.drawCloseTargetMarker(
+                originPos.x,
+                originPos.y,
+                true,
+                invScale,
+                colors.CLOSE_TARGET
+            );
         }
 
         this.ctx.restore();
