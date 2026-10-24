@@ -6,7 +6,10 @@ import {
     waitForOpenSessionReady,
     openFileFromFilesView
 } from './helpers/snapshot-helper';
-import { waitForBridgeReady } from './helpers/change-bridge-cross-window';
+import {
+    alignEditorCanvas,
+    waitForBridgeReady
+} from './helpers/change-bridge-cross-window';
 import {
     acceptCloudInviteAndGetEditorHref,
     editorHrefWithTestMode,
@@ -115,6 +118,8 @@ test('a new account saves a font, invites a second account, and a nudge syncs be
         await waitForBridgeReady(inviteePage);
         await waitForCloudLiveIdle(inviteePage);
 
+        await alignEditorCanvas(ownerPage, 'A', {});
+        await alignEditorCanvas(inviteePage, 'A', {});
         const before = await glyphNodeX(ownerPage, 'A');
         await nudgeGlyphNode(ownerPage, 'A', 7, 'Preview smoke nudge');
         await waitForCloudLiveIdle(ownerPage);
