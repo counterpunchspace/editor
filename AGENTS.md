@@ -1,571 +1,160 @@
-# Counterpunch Font Editor - Coding Instructions
+# Counterpunch Editor — Agent Guide
 
-## Cloud entitlements
+Browser font editor: TypeScript webapp in `webapp/`, Rust fontc/babelfont compiled to WASM in `babelfont-fontc-build/`, Pyodide scripting, Python plugin wheels. Sibling repos, hosts and the release trio are described in the workspace `../AGENTS.md`.
 
-Website D1 is the only source of truth for cloud quotas. The subscription that
-counts is the **asset owner’s**, never the accessing collaborator’s. CloudPlugin
-and the collab Worker/DO must both enforce; client-only checks are not enough.
-Basic quotas live in website `webapp/js/pricing-config.js` (`null` = unlimited).
-Per-shard encoded Y.Doc ceiling: 5 MiB (warn at 75%; live commit asks the
-cloud plugin and reverts on reject). See
-`strategy/CLOUD_COLLABORATION_ARCHITECTURE.md`.
+## Authorities
 
-## Font-deps (sparse hydration)
+When docs disagree, this order wins:
 
-Sparse cloud hydration is only as correct as **font-deps**. Prefer keeping that
-graph current over incidental refactors in the same change. Write the full
-index on **cloud seed**; patch the edited glyph’s row on **live** component and
-metrics-key commits (parse committed paths with `getPathSegments`, not
-`String.split('.')`). Do not rebuild deps on open. Live-update tests must go
-through `recordChange` / the CloudPlugin listener and then assert sparse
-close, not only `depsNeedUpdate`. Working vs hidden partition, live-deps-first
-open, and one-shot glyph fetch: `APP.md` and
-`strategy/CLOUD_COLLABORATION_ARCHITECTURE.md`. Agent checklist:
-`.cursor/rules/font-deps-sparse-hydration.mdc`.
+1. `APP.md` — how the app must behave. Read the section for the area you touch before changing it.
+2. `developer-docs/COMPILATION_EDIT_POLICY.md` — compile scheduling and fast paths. Normative; discuss any change to the policy with the author before implementing.
+3. `strategy/CLOUD_COLLABORATION_ARCHITECTURE.md` — cloud rooms, shards, sparse hydration.
+4. This file.
 
-## Project Overview
+## Hard rules
 
-Counterpunch is a browser-based font editor with live compilation and rendering capabilities. It uses a WebAssembly-based font compilation pipeline (Rust fontc/babelfont-rs compiled to WASM) and a JavaScript/TypeScript/HTML/CSS frontend. The editor provides a Python scripting environment via Pyodide, allowing users to manipulate font data programmatically.
+- Never stage, commit, amend or push unless the user explicitly asks.
+- Fix the root cause, no band-aids. Remove temporary code and debug logs before finishing.
+- Do not run `npm run build` after ordinary edits; use the running `npm run dev` server. CI and release build for you.
+- After changing `babelfont-fontc-build/src/*.rs`, run `./build-fontc-wasm.sh` before you're done.
+- No new `any` or `unknown`. Only at I/O, parsed-JSON or plugin boundaries, narrowed right away by a type guard or parser.
+- Type new `window` properties in `webapp/js/index.d.ts`.
+- Keep comments, docs and tests proportional: comments state non-obvious invariants, tests cover real regression risk.
+- Reuse before writing: search for an existing helper (TS, Python and Rust) before adding one.
+- Be concise in chat, plans and commit messages.
 
-### Key Features
+## Code map
 
-- **Interactive outline editing** with visual feedback
-- **Live font compilation** in the browser using fontc WASM
-- **Variable font preview** with live interpolation and animation
-- **AI assistant** that generates Python code for font manipulation
-- **Python scripting** via Pyodide with a transparent JS-to-Python object model
-- **Plugin system** for canvas rendering and glyph filtering
+Paths are under `webapp/js/` unless they start at the repo root.
 
-## Technology Stack
+| Area | Start here |
+| --- | --- |
+| Boot, app shell | `bootstrap.ts`, `webapp/index.html` |
+| Font model (`window.currentFontModel`) | `babelfont-model.ts`, `babelfont.d.ts` |
+| Open, save, formats (`window.fontManager`) | `font-manager.ts`, `file-browser.ts`, `file-system-adapter.ts` |
+| Filesystem backends (Memory, Disk, Cloud) | `filesystem-plugins/`, `filesystem-plugins/plugins/cloud-plugin*.ts` |
+| Glyph editing canvas (`window.glyphCanvas`) | `glyph-canvas.ts`, `glyph-canvas/` (`outline-editor.ts`, `renderer.ts`, `textrun.ts`, `viewport.ts`) |
+| Change recording, sync, undo | `patch-sync-engine.ts` (`recordChange`), `change-log.ts` (`getPathSegments`), `change-bridge-*.ts`, `undo-redo-context.ts` |
+| Recomposition (components, metrics keys) | `recomposition-closure.ts`, `APP.md` "The Editing Pipeline" |
+| Compilation | `font-compilation.ts`, `fontc-worker.ts`, `auto-compile-manager.ts`, `compiled-edit-funnel.ts` |
+| Rust/WASM | `babelfont-fontc-build/src/` → `webapp/wasm-dist/` |
+| Cloud collaboration client | `cloud-adapter*.ts`, `cloud-live-session.ts`, `cloud-durable-wal.ts`, `cloud-website-api.ts`, `filesystem-plugins/cloud-font-deps.ts` |
+| Glyph overview, filters | `glyph-overview*.ts`, `glyph-filter-*.ts` |
+| Plugins | `*-plugin-manager.ts`, root `plugin-contracts/`, root `plugins/`, built wheels in `webapp/wheels/` |
+| Python, AI assistant (`window.pyodide`, `window.aiAssistant`) | `webapp/py/fonteditor.py`, `python-*.ts`, `ai-assistant.ts` |
+| Font info, kerning | `font-info.ts`, `kerning-*.ts`, `glyph-canvas/kerning-group-widget.ts` |
+| Other features | `clipboard/`, `auto-qa/`, `cuts/`, `language-packs/` |
+| Shared UI pieces | `tippy-utils.ts`, `ui/` (`modal-escape.ts`, `confirm-dialog.ts`) |
+| Styles | `webapp/css/style.css`, `webapp/css/ui/`, `webapp/css/tokens.json` |
+| Logging | `logger.ts` |
+| Cross-origin isolation (needed for SharedArrayBuffer) | `webapp/_headers`, `webapp/coi-serviceworker.js` |
+| Tests | `webapp/tests/*.test.js` (Jest, jsdom, WASM mocked), `webapp/tests/*.spec.ts` (Playwright, `fixtures.ts`, `helpers/`), root `tests/` (docs/graph checks) |
 
-| Component            | Technology                                                   |
-| -------------------- | ------------------------------------------------------------ |
-| **Frontend**         | TypeScript, JavaScript (ES6+), HTML5, CSS3                   |
-| **Font Compilation** | Rust (fontc/babelfont) compiled to WebAssembly via wasm-pack |
-| **Python Runtime**   | Pyodide (WASM-based Python in browser)                       |
-| **Text Shaping**     | HarfBuzz.js                                                  |
-| **Build System**     | Webpack 5, Babel, TypeScript compiler                        |
-| **Testing**          | Jest (unit), Playwright (E2E)                                |
-| **Deployment**       | Cloudflare Pages + Workers via composed cutover (tag + `trio.json`) |
-| **AI Proxy**         | Cloudflare Workers (Anthropic API relay)                     |
+## Commands
 
-## Project Structure
-
-```
-/
-├── webapp/                    # Main web application
-│   ├── js/                    # JavaScript/TypeScript source (60+ files)
-│   │   ├── glyph-canvas/      # Canvas rendering modules (9 files)
-│   │   ├── bootstrap.ts       # Application entry point
-│   │   ├── font-manager.ts    # Font loading/saving
-│   │   ├── babelfont-model.ts # Font object model
-│   │   ├── tippy-utils.ts     # Shared tippy menu utilities
-│   │   └── ...
-│   ├── css/                   # Stylesheets
-│   │   ├── style.css          # Main styles
-│   │   ├── tokens.json        # Design tokens
-│   │   └── tokens.css         # Generated CSS variables
-│   ├── py/                    # Python scripts for Pyodide
-│   │   └── fonteditor.py      # Core font editing module
-│   ├── wasm-dist/             # WASM binaries
-│   ├── tests/                 # Test files
-│   ├── examples/              # Sample font files (.babelfont, .glyphs)
-│   ├── build/                 # Webpack build output
-│   ├── index.html             # Main HTML file
-│   ├── webpack.config.js      # Webpack configuration
-│   ├── playwright.config.ts   # Playwright test config
-│   └── jest.config.js         # Jest test config
-├── babelfont-fontc-build/     # Rust/WASM source code
-│   ├── src/                   # Rust source files (4 files, ~1700 LOC)
-│   └── Cargo.toml             # Rust dependencies
-├── plugins/                   # Plugin system
-│   ├── canvas/                # Canvas drawing plugins
-│   └── glyphfilter/           # Glyph filtering plugins
-├── developer-docs/            # Generated developer reference docs
-│   ├── JS_EVENTS.md           # Generated JavaScript event reference
-│   ├── LOCALSTORAGE_SETTINGS.md # Generated localStorage settings key reference
-│   └── SESSIONSTORAGE_SETTINGS.md # Generated sessionStorage settings key reference
-├── instructions/              # Architecture documentation
-│   ├── CSS_COLOR_STYLING.md   # Color system guidelines
-│   ├── UI_ELEMENTS.md         # UI component guidelines
-│   ├── WEBAPP_OVERVIEW.md     # Webapp architecture
-│   └── UNDO_COLLABORATION_ARCHITECTURE.md
-└── .github/workflows/         # CI/CD pipelines
-    ├── ci.yml                 # CI workflow
-    └── release.yml            # Release workflow
-```
-
-## Build Commands
-
-### Webapp Development
+Run from `webapp/` unless noted. Prefer the narrowest command while iterating.
 
 ```bash
-cd webapp
-
-# Install dependencies
-npm install
-
-# Development server (https://localhost:8000)
-npm run dev
-
-# Production build
-npm run build
-
-# Generate CSS tokens from tokens.json
-npm run tokens
+npm run dev                                  # https://localhost:8000 (port from worktree-config.json)
+npx jest tests/<name>.test.js                # one Jest file
+npx playwright test tests/<name>.spec.ts     # one Playwright spec, headless
+npx playwright test -g "<title>"             # one Playwright test by title
+npm run test:tsc                             # type check
+npm run test:jest                            # all Jest
+npm test                                     # full suite: test:checks, then Playwright
+npm run test:snapshots                       # update changed Playwright snapshots
+npx prettier --write <files>                 # format (pre-commit hook also formats)
+npm run tokens                               # regenerate css/tokens.css from tokens.json
 ```
 
-### Rust/WASM Development
+From the repo root: `./build-fontc-wasm.sh` (Rust → WASM), `./update-rust-deps.sh`, `python3 plugins/languagepacks/build.py` (language-pack wheels).
 
-```bash
-# Build WASM from Rust (requires Rust nightly + wasm-pack)
-./build-fontc-wasm.sh
+Run the full suite before release-bound work that touches cross-window sync, the compile pipeline, or broadly shared UI.
 
-# Update Rust dependencies and toolchains
-./update-rust-deps.sh
-```
+## When you change X, also do Y
 
-If you change Rust code in `babelfont-fontc-build/src/`, you MUST rebuild the WebAssembly output with `./build-fontc-wasm.sh` before considering the task finished.
+Do it in the same change. Never hand-edit generated docs.
 
-### Language-pack wheels
+| You changed | Also do |
+| --- | --- |
+| Emitted JS events (add, remove, rename, payload) | `node scripts/generate-js-event-docs.mjs` → `developer-docs/JS_EVENTS.md` |
+| Glyph-filter event registry | `node scripts/generate-glyph-filter-event-docs.mjs` → `developer-docs/GLYPH_FILTER_EVENTS.md` |
+| A `localStorage` key | `node scripts/generate-localstorage-docs.mjs` → `developer-docs/LOCALSTORAGE_SETTINGS.md` |
+| A `sessionStorage` key | `node scripts/generate-sessionstorage-docs.mjs` → `developer-docs/SESSIONSTORAGE_SETTINGS.md` |
+| Font model class, method, property or parameter (`babelfont-model.ts`) | `node scripts/generate-api-docs.mjs` → `API.md` and `documentation/python/06-python-api.md` |
+| File open/save behaviour | Update "Source File I/O" in `README.md`, status for every affected format |
+| Compile scheduling, mode selection, worker cache, subsetting | Update `developer-docs/COMPILATION_EDIT_POLICY.md` (after the author agrees) |
+| How a host calls a plugin type | Bump the contract per `developer-docs/PLUGIN_CONTRACTS.md`: `contracts.json`, probes, fixtures, `node plugin-contracts/generate.mjs`, bundled-wheel preflight, `npm run sync-plugin-contracts` in website |
+| Rust in `babelfont-fontc-build/src/` | `./build-fontc-wasm.sh`, check the generated files changed |
+| Language-pack Python or data (e.g. `plugins/languagepacks/arabic/counterpunch_arabic/data/`) | `python3 plugins/languagepacks/build.py`; the editor loads `webapp/wheels/`, not `plugins/` |
 
-The editor loads language packs from the wheels in `webapp/wheels/`, not from the Python under `plugins/languagepacks/`. After the Arabic sample font changes (`plugins/languagepacks/arabic/counterpunch_arabic/data/arabic.babelfont` or `arabic.json`), recompile that bundle before considering the task finished:
+`npm run generate-docs` (repo root) runs every doc generator at once.
 
-```bash
-python3 plugins/languagepacks/build.py
-```
+## Conventions
 
-### Testing
+### TypeScript and logging
 
-```bash
-cd webapp
+- TypeScript files log through `logger.ts`: `import { Logger } from './logger'; const console = new Logger('FacilityName');`. Add new facilities to `FACILITY_REGISTRY` in `logger.ts`. `console.log` is gated per facility, `warn`/`error` always print. Plain `.js` files use `console.log('[FacilityName]', ...)`.
+- Avoid flicker: build DOM off-screen, then swap it in inside one `requestAnimationFrame`.
+- JSDoc on complex functions only.
 
-# Run Playwright E2E tests
-npm test
+### UI
 
-# Run Playwright with UI
-npm run test:ui
-
-# Run Jest unit tests
-npm run test:jest
-
-# Update Playwright JSON snapshots
-npm run test:snapshots
-```
-
-### Playwright Automation Mode
-
-- For automated development workflows, run Playwright non-interactively by default (headless CLI execution), so reports don't get stuck and require user to press Ctrl+C. The user might not be present to do that.
-- The project must enforce this by default: keep Playwright configured with `use.headless = true` and HTML reporter `open: 'never'` so `npm run test` stays machine-processable after failures without opening interactive UI.
-- Do not use Playwright UI/debug/record modes unless explicitly requested for manual investigation.
-- For narrow local work, run the affected headless Playwright spec or test title. CI (`.github/workflows/ci.yml`) and release (`.github/workflows/release.yml`) run `npm test` in `webapp`, which includes Playwright after `test:checks`. Preview-release waits for a green CI run on that commit and does not re-run the suite. Prefer focused local runs while iterating; run the full suite before release when touching cross-window, compile-pipeline, or broadly shared UI code.
-
-### Release Process
-
-```bash
-# Create and deploy a new release
-./release.sh v1.0.0
-
-# Create and deploy a preview release
-./previewrelease.sh
-```
-
-`release.sh`:
-
-1. Updates version in `webapp/coi-serviceworker.js` and `API.md`
-2. Extracts release notes from `CHANGELOG.md`
-3. Commits version changes
-4. Creates and pushes git tag `vX.Y.Z`
-5. Triggers GitHub Actions **Release**, which certifies the editor then runs composed cutover (production workers + Pages) and tags website + collab with the same version. `trio.json` is attached to the GitHub release. The script then runs `ci-watch.sh` and stays in the terminal until the CI run and the Release workflow finish (exit 0 green, 1 red with the failed job and error lines).
-
-`previewrelease.sh` pushes unpushed `main` commits and starts **Preview Release**, then watches that run the same way. You can start it before editor CI is green: the workflow waits for a green `ci.yml` push run on that SHA, freezes the editor/website/collab trio, verifies the staging e2e attestation, redeploys that trio to the staging hostnames and reruns the full cloud-collab suite, then deploys preview Cloudflare (secret-name check, validator → compactor, room version probe, then the room route, `schema.sql` on shared D1, websitepreview, signup gate, secret-name check, editorpreview), tags all three repos, and publishes the GitHub prerelease (`v0.0.N-pre.DATE`). Notes are the Unreleased changelog diff. It does not rewrite `CHANGELOG.md`. Canonical write-up: `developer-docs/COMPOSED_RELEASE.md`.
-
-### Pushing the trio (`push.sh`)
-
-`./push.sh` (editor root) pushes `collab`, `website` and `editor`, in that order, so the editor CI tests the sibling `main` branches you just pushed. Only repos with unpushed commits are pushed. If the editor has nothing to push, `push.sh` starts the editor CI with `workflow_dispatch` on `main` so staging still deploys and the cloud-collab suite still runs. `./push.sh --dry-run` shows what would go out.
-
-- It refuses to run if any of the three repos is not on `main`, is behind `origin/main`, or has uncommitted changes (unstaged, staged or untracked). The human commits first.
-- After pushing it runs `ci-watch.sh`, which shows a colored in-place overview of the CI runs for the pushed commits (refreshing every 20 seconds, `CI_WATCH_INTERVAL` to change). It exits 0 when every run and job is green, 1 on the first red (with the failed job, step, last error lines and links), and 2 on timeout or when no run appears. The run URLs are printed at the end.
-- `./ci-watch.sh [dir[:sha] ...]` can be run alone to watch existing commits. `--since <epoch>` ignores runs created before that time and includes `workflow_dispatch` as well as `push`. `previewrelease.sh` and `release.sh` use that so a rerun does not stick on an older failed run for the same commit. Their watch waits up to 6 hours (`CI_WATCH_TIMEOUT`) because sibling CI waits inside the release workflow.
-
-**Agents:** only push or wait for CI when the human explicitly instructs you to, never on your own initiative. When told to, run `./push.sh` in the background and wait for its exit; on exit 1, debug from the printed error output, fix, and report. Commits and pushes still need the explicit request described under "Git and Commits".
-
-## Code Style Guidelines
-
-### General
-
-- Fix the root cause each time, no band-aids.
-- Be extremely concise in interactions, plans, and commit messages
-- **Keep commentary, docs, and tests proportional.** Code comments should explain only
-  non-obvious current invariants—not narrate obsolete behavior or routine mechanics.
-  Keep docs concise and relevant to their audiences. Add focused tests for meaningful
-  regression risks, not exhaustive coverage of every small copy or cosmetic adjustment.
-- Scan for reusable code across languages; avoid duplicate implementations
-- Don't write spaghetti code
-- Clean up temporary code, excessive logs, and debug statements
-- Prefer command-line commands for search/replace operations
-- Run commands such that output is visible (don't route to unreadable pipelines)
-- Do not run a production Webpack build (`npm run build`) after ordinary JS/TS edits. `webapp/build/` is gitignored; CI, preview-release, and release already run `npm run build` before tests and deploy. Use the existing `npm run dev` / `npm run serve` server to see changes. Run a local production build only when you need to inspect that artifact (for example `npm run serve:ci`).
-
-### Git and Commits
-
-- **NEVER auto-commit code.** Commits must be invoked explicitly by the user. No agent shall stage, commit, amend, or push changes without an explicit user request to do so.
-
-### JavaScript/TypeScript
-
-- Use modern ES6+ syntax
-- Prefer `const` over `let`, avoid `var`
-- Use camelCase for variables and functions
-- Use PascalCase for classes
-- Add JSDoc comments for complex functions
-- When adding properties to the global `window` object, type them in `js/index.d.ts`
-- Do not introduce new `any` or `unknown` types; replace existing uses with concrete, domain-specific types wherever possible
-- Exceptions are allowed only at typed boundary adapters (I/O, parsed JSON, external/plugin data), and must be immediately narrowed via dedicated type guards or parser functions
-
-**Console Logging Convention:**
-
-All TypeScript files MUST use the Logger class from `js/logger.ts`:
-
-```typescript
-import { Logger } from "./logger";
-const console = new Logger("FacilityName");
-
-console.log("Compiling font..."); // Conditional on registry
-console.warn("Script execution failed"); // Always printed
-console.error("Critical error"); // Always printed
-```
-
-**Facility Registry Control:**
-
-The `FACILITY_REGISTRY` in `js/logger.ts` controls which facilities print normal logs:
-
-```typescript
-// Edit the registry directly in logger.ts:
-export const FACILITY_REGISTRY: Record<string, boolean> = {
-    FontCompilation: false, // Disabled - only errors/warnings print
-    GlyphCanvas: true, // Enabled - all logs print
-    // ...
-};
-```
-
-**Runtime Control (Browser Console):**
-
-```javascript
-// Toggle facilities at runtime
-Logger.disable("GlyphCanvas"); // Mute normal logs
-Logger.enable("GlyphCanvas"); // Unmute normal logs
-Logger.isEnabled("GlyphCanvas"); // Check status
-Logger.getRegistry(); // See all facilities
-Logger.enableOnly(["FontManager"]); // Enable only specific facilities
-Logger.reset(); // Enable all facilities
-
-// Or access the registry directly
-window.FACILITY_REGISTRY.GlyphCanvas = false;
-```
-
-**Adding New Facilities:**
-
-When creating a new TypeScript file that needs logging:
-
-1. Import and use Logger as shown above
-2. Add the facility name to `FACILITY_REGISTRY` in `js/logger.ts`
-3. Choose a descriptive facility name (usually the file/class name in PascalCase)
-
-**Note:** JavaScript files (`.js`) should continue using manual prefixes with the native console:
-
-```javascript
-console.log("[FacilityName]", "message");
-```
-
-**DOM Update Pattern (prevent flickering):**
-
-```javascript
-// Build off-screen first
-const tempContainer = document.createElement("div");
-// ... populate tempContainer ...
-
-// Swap in single paint cycle
-requestAnimationFrame(() => {
-    container.innerHTML = "";
-    container.appendChild(tempContainer);
-});
-```
-
-**Tippy.js Menus (Dropdowns & Context Menus):**
-
-All tippy menus MUST use the shared utilities from `js/tippy-utils.ts`:
-
-```typescript
-import {
-    getOrCreateBackdrop,
-    addTippyBackdropSupport,
-    getTheme,
-} from "./tippy-utils";
-
-// Create backdrop
-const backdrop = getOrCreateBackdrop("my-menu-backdrop");
-
-// Create tippy instance
-const tippyInstance = tippy(element, {
-    content: menuHtml,
-    allowHTML: true,
-    trigger: "manual",
-    interactive: true,
-    theme: getTheme(),
-    // ... other options
-});
-
-// Add backdrop support (enables click-outside-to-close + Escape key)
-addTippyBackdropSupport(tippyInstance, backdrop, {
-    targetElement: element, // Optional: element to add active class
-    activeClass: "menu-active", // Optional: class to add when menu shown
-    onEscape: () => {
-        /* ... */
-    }, // Optional: additional Escape handler
-});
-```
-
-**DO NOT:**
-
-- Duplicate `getOrCreateBackdrop`, `addTippyBackdropSupport`, or `getTheme` functions
-- Implement custom backdrop click handlers separately
-- Create tippy menus without backdrop support
-- Create a second submenu skin (for example `.toolbar-menu-submenu`) or offset a flyout with `left: calc(100% + Npx)` — that gap drops `:hover` while the pointer crosses it
-
-**Nested submenus:**
-
-Flyouts stay in the same Tippy content (CSS positioning, not a nested Tippy). Parent row: `.plugin-menu-item.has-submenu`. Build the chevron + `.plugin-menu-submenu` with `pluginMenuSubmenuHtml()` from `tippy-utils.ts`. Inner markup is `.plugin-menu-item` rows and separators only — never wrap another `.plugin-menu`. Shared CSS overlaps the parent by 1px and paints an 8px `::before` hover bridge. Optional click-to-pin: toggle `.submenu-open` on the parent (toolbar Font Destinations). Keep Tippy `overflow` visible when a menu contains `.has-submenu` (already in `style.css`).
-
-**Modals & Overlays:**
-
-- Centered dialogs use `.info-popup-overlay` > `.info-popup` (header/close/content). Confirm layouts add `.confirm-dialog`. Action buttons: `.dialog-button` (with `.dialog-button-primary` / `.dialog-button-danger` as needed). Shared styles live in `css/ui/dialogs.css`.
-- Every modal MUST register Escape via `bindModalEscape` from `js/ui/modal-escape.ts` on open and `release()` on every close path. Do not add per-modal Escape `keydown` listeners.
-- Tippy menus (via `addTippyBackdropSupport`) always win over modals when both are open.
-- Unsaved-changes confirms: reuse `js/ui/confirm-dialog.ts`. Anchored menus stay Tippy; blocking dialogs stay info-popup + `bindModalEscape`.
-
-**Property Panel Numeric Inputs:**
-
-- Numeric text fields in the editor property panel (for example sidebearings and component transform controls) MUST use `ArrowAdjustableTextInput` so Up/Down keyboard adjustments behave consistently.
-- Reuse the same input-step behavior and replacement-input lookup pattern already used by sidebearing fields in `webapp/js/glyph-canvas.ts`.
+- Tippy menus and context menus: use `getOrCreateBackdrop`, `addTippyBackdropSupport` and `getTheme` from `tippy-utils.ts`. Never reimplement backdrop or click-outside handling.
+- Submenus stay inside the parent Tippy (CSS, not a nested Tippy): parent row `.plugin-menu-item.has-submenu`, flyout from `pluginMenuSubmenuHtml()`, inner rows are `.plugin-menu-item` only. No second submenu skin and no `left: calc(100% + Npx)` gap, which drops `:hover`.
+- Modals: `.info-popup-overlay` > `.info-popup` (confirms add `.confirm-dialog`), buttons `.dialog-button[-primary|-danger]`, styles in `css/ui/dialogs.css`. Register Escape with `bindModalEscape` (`ui/modal-escape.ts`) and `release()` it on every close path. Unsaved-changes confirms reuse `ui/confirm-dialog.ts`. Open Tippy menus take Escape before modals.
+- Numeric fields in the property panel use `ArrowAdjustableTextInput`, following the sidebearing fields in `glyph-canvas.ts`.
+- OS notifications only through `system-notifications.ts` (`window.showSystemNotification`, Python `Notification(...)`), and only for actions the user explicitly asked to be notified about. Never for routine edits, saves or compiles.
+- Handbook pages in `documentation/` write modifiers as `Cmd/Ctrl` and `Alt/Option`.
 
 ### CSS
 
-**NEVER use hard-coded color values. ALWAYS use CSS variables.**
-
-```css
-/* WRONG */
-.button {
-    background-color: #ff00ff;
-}
-
-/* CORRECT */
-.button {
-    background-color: var(--accent-magenta);
-}
-```
-
-Colors are defined in `webapp/css/style.css` in two theme blocks:
-
-- **Dark Theme (Default)**: `:root { ... }`
-- **Light Theme**: `:root[data-theme="light"] { ... }`
-
-Variable naming: Use semantic names (purpose, not color):
-
-- ✅ `--text-primary`, `--background-hover`, `--accent-green`
-- ❌ `--dark-gray`, `--light-blue`, `--color-1`
-
-Design tokens are defined in `css/tokens.json` and generated to `css/tokens.css` via `npm run tokens`.
+- No hard-coded colours. Use semantic variables (`--text-primary`, `--background-hover`), defined in `css/style.css` under `:root` (dark, default) and `:root[data-theme="light"]`. Design tokens live in `css/tokens.json`; regenerate with `npm run tokens`.
 
 ### Rust
 
-- Follow standard Rust conventions
-- Use rustfmt for formatting
-- Write documentation comments with `///`
-- After changing `babelfont-fontc-build/src/*.rs`, rebuild the generated WASM artifacts with `./build-fontc-wasm.sh` and verify the generated files are updated as expected
+- `rustfmt`, `///` doc comments. Rebuild WASM after changes (see Hard rules).
 
-## Testing Strategy
+## Cloud: font-deps and entitlements
 
-### Unit Tests (Jest)
+- Sparse cloud open is only as correct as **font-deps**. Keeping it current beats incidental refactors in the same change. Full checklist: `.cursor/rules/font-deps-sparse-hydration.mdc`.
+  - Write the full index on cloud seed; patch the edited glyph's row on live component and metrics-key commits. Never rebuild deps on open.
+  - Committed paths are colon-separated. Parse with `getPathSegments`, never `split('.')`.
+  - Tests go through `recordChange` and the CloudPlugin listener, then assert the sparse partition, not just `depsNeedUpdate`.
+- Quotas: website D1 is the only source of truth, and the **asset owner's** subscription counts, never the collaborator's. The CloudPlugin and the collab Worker both enforce; client-only checks are not enough. Basic quotas: website `webapp/js/pricing-config.js` (`null` = unlimited). Per-shard Y.Doc ceiling 5 MiB (warn at 75%; live commits that exceed it are reverted).
 
-- Configuration: `webapp/jest.config.js`
-- Test files: `webapp/tests/*.test.js`
-- Environment: jsdom with canvas mock
-- WASM modules are mocked for Jest
+## Debugging and testing
 
-### E2E Tests (Playwright)
+- Live inspection: Chrome DevTools MCP attached to the app already running in regular Google Chrome, which the user can also see and steer. Not a VS Code browser tab and not the Playwright browser.
+- Reload through MCP non-interactively; pick paths that avoid or auto-accept confirm dialogs.
+- Text shaping and render issues: read `window.__liveTextDiagnostics.entries` (dev/test mode, latest 2,000 entries, `live-text-diagnostics.ts`) instead of adding logs.
+- Playwright stays headless with the HTML report `open: 'never'`. Don't use `--ui`, `--debug`, `--headed` or codegen unless the user asks.
 
-- Configuration: `webapp/playwright.config.ts`
-- Test files: `webapp/tests/*.spec.ts`
-- Browsers: Chromium (WebKit commented out)
-- SharedArrayBuffer required for WASM/Pyodide
-- 5-minute timeout for complex interactions
-- Screenshots/videos captured on failure
+## Push and release (agents)
 
-### Code Formatting
+Only when the user explicitly asks.
 
-Prettier configuration in `webapp/.prettierrc`:
+- `./push.sh` pushes `collab`, `website`, then `editor` (only repos with unpushed commits), then runs `ci-watch.sh`. It refuses unless all three are on a clean, up-to-date `main`. Run it in the background and wait: exit 0 means green, 1 means red with the failed job and error lines (debug, fix, report), 2 means timeout or no run. `--dry-run` previews.
+- `./previewrelease.sh` and `./release.sh vX.Y.Z` drive the composed preview and production cutovers. Details: `developer-docs/COMPOSED_RELEASE.md`, `developer-docs/DEVELOPMENT.md`.
 
-- Print width: 80
-- Tab width: 4 spaces
-- Single quotes
-- No trailing commas
-- LF line endings
+## Docs index
 
-Run formatting: `cd webapp && npx prettier --write .`
-Check formatting: `cd webapp && npx prettier -c .`
-
-## Key Architecture Details
-
-### Font Object Model
-
-The font data model is defined in `babelfont-model.ts` with classes:
-
-- `Font` - Main font class
-- `Glyph` - Individual glyphs
-- `Layer` - Master/intermediate designs
-- `Path` / `Node` - Outline contours and points
-- `Component` - Component references
-- `Axis` / `Master` / `Instance` - Variable font data
-
-The model is accessible via `window.currentFontModel` and exposed to Python through Pyodide.
-
-### File I/O
-
-Supported formats (via `font-manager.ts`):
-
-- `.babelfont` - Native JSON format
-- `.glyphs` - Glyphs.app format
-- `.vfj` - FontLab format
-- `.ufo`/`.designspace` - Planned
-
-Whenever file I/O behavior changes, update the Source File I/O overview in
-`README.md` in the same change, including every affected format's open/save
-status.
-
-### Compilation Pipeline
-
-```
-Edit → Serialize to JSON → fontc WASM → OpenType font → HarfBuzz shaping → Render
-```
-
-### Plugin System
-
-Registrable plugin types are `canvas`, `glyphfilter`, `character_set`, `compilefilter`, `composition`, `feature`, and `font_destination`. Contracts live in `plugin-contracts/`. Changing a host's call shape requires a contract bump, a probe and fixture update, `node plugin-contracts/generate.mjs`, the bundled-wheel preflight, and `npm run sync-plugin-contracts` in the website. See `developer-docs/PLUGIN_CONTRACTS.md`.
-
-Bundled wheels under `plugins/` are editor features, not the website registry. The Plugin Manager installs registry wheels into the Settings Folder `Plugins/` directory.
-
-## MCP Server for Development
-
-Use the Chrome DevTools MCP server for live app inspection. It attaches to the real Chrome runtime that is already running the webapp, which avoids the stale or wrong-session issues that came from separate browser contexts.
-
-### Live Text Diagnostics
-
-In development and test mode, `window.__liveTextDiagnostics.entries` is the supported diagnosis history for text shaping and rendering. Each entry records its source, glyph advances, offsets, cumulative positions, total advance, and event detail. It is populated by `recordLiveTextDiagnostic` for reshape, advance-refresh, canvas render, and repaint paths; use it to compare the sequence of shaping and rendering states without adding temporary logging. The history retains the latest 2,000 entries and emits `liveTextDiagnosticsRecorded` for each snapshot.
-
-When interactive debugging or joint investigation is needed, always open and use a regular Google Chrome window that both the user and the agent can control. Do not use the Playwright test browser for that work, because the user cannot directly inspect or steer that isolated browser session.
-
-When using MCP for live app inspection, always use the app instance already running in Chrome. Do not open or inspect the app in a VS Code browser tab, because that can attach MCP to the wrong runtime session and hide the real state.
-
-When reloading the live app through Chrome DevTools MCP, always do it headlessly and non-interactively. Do not rely on the user being present to confirm dialogs; choose reload/navigation paths that auto-accept or avoid confirmation prompts.
-
-## Security Considerations
-
-- CORS headers required for SharedArrayBuffer (see `webapp/_headers`)
-- COOP/COEP headers configured for cross-origin isolation
-- Cloudflare Worker proxies Anthropic API requests to avoid CORS issues
-- Service worker (`coi-serviceworker.js`) handles cache versioning
-
-## Global Window Objects
-
-Key globals exposed on `window` (see `js/index.d.ts` for full list):
-
-- `window.currentFontModel` - Current font object model
-- `window.fontManager` - Font loading/management
-- `window.glyphCanvas` - Main canvas editor
-- `window.pyodide` - Python runtime
-- `window.aiAssistant` - AI assistant integration
-
-## OS System Notifications
-
-Use the shared API in `js/system-notifications.ts`. Do not call `new Notification()` elsewhere.
-
-JavaScript:
-
-```javascript
-await window.showSystemNotification('Export complete', {
-    body: 'MyFont.otf written'
-});
-```
-
-Python (already in scope, no import):
-
-```python
-Notification('Export complete', 'MyFont.otf written')
-```
-
-The open font’s family name is prepended to the body when a font is open. Identically worded notifications close the previous matching banner and post again with a unique tag so Chrome/macOS will re-alert without stacking in Notification Center.
-
-**Policy:** implement system notifications only for actions the developer explicitly requested (for example a long-running export or script finishing). Never fire them automatically as confirmation of routine edits, saves, compiles, or other implicit success.
-
-## Deployment
-
-- **Production**: https://editor.counterpunch.space, https://counterpunch.space, production room worker
-- **Staging**: https://staging.editor.counterpunch.space, https://staging.counterpunch.space, https://staging.rooms.counterpunch.space (cloud-collab e2e from `./push.sh` and again before cutover)
-- **Preview**: https://preview.editor.counterpunch.space, https://preview.counterpunch.space, https://preview.rooms.counterpunch.space (`./previewrelease.sh`)
-- Platform: Cloudflare Pages (editor + website) and Workers (validator, compactor, room). One composed cutover ships the matching trio (tag + `trio.json`). Website/collab `main` do not auto-deploy.
-- CI/CD: GitHub Actions. See `developer-docs/COMPOSED_RELEASE.md`.
-
-## Documentation Files
-
-- `APP.md` - Principal authority for how the app functions. This file must always be read and followed.
-- `API.md` - Font Object Model API documentation (auto-generated)
-- `developer-docs/COMPILATION_EDIT_POLICY.md` - Authoritative compilation scheduling and fast-path policy. Its conduct must always be followed, and any change to that policy must be discussed with the author before implementation.
-- `developer-docs/FILESYSTEM_PLUGINS.md` - Filesystem plugin backends (Memory, Disk, Cloud) and how to add one
-- `developer-docs/JS_EVENTS.md` - JavaScript event reference (auto-generated by `node scripts/generate-js-event-docs.mjs`)
-- `developer-docs/GLYPH_FILTER_EVENTS.md` - Glyph filter event reference (auto-generated by `node scripts/generate-glyph-filter-event-docs.mjs`)
-- `developer-docs/LOCALSTORAGE_SETTINGS.md` - localStorage settings key reference (auto-generated by `node scripts/generate-localstorage-docs.mjs`)
-- `developer-docs/SESSIONSTORAGE_SETTINGS.md` - sessionStorage settings key reference (auto-generated by `node scripts/generate-sessionstorage-docs.mjs`)
-- `CHANGELOG.md` - Release notes
-- `instructions/*.md` - Architecture and style guides. `GRAPHICAL_CODE_GRAPHS.md` is the standard for code-path snapshots (story swimlanes, shared chokepoints, consumer fan-out, Material Symbols). Standalone HTML graphs live under `strategy/graphs/`.
-- `developer-docs/COMPOSED_RELEASE.md` - Preview/production composed cutover (trio tag + `trio.json`; no pin files)
-
-Treat `APP.md` as the principal authority for application behavior in all implementation decisions.
-
-When writing user handbook pages in `documentation/`, always spell modifiers as `Cmd/Ctrl` and `Alt/Option`. The in-app Docs viewer reduces those tokens to the current OS (Cmd/Option on macOS, Ctrl/Alt elsewhere). Do not write platform-only modifier names in the source markdown.
-
-When introducing, removing, renaming, or changing emitted JavaScript events, regenerate `developer-docs/JS_EVENTS.md` using `node scripts/generate-js-event-docs.mjs` (from repo root) so the event reference stays current.
-
-When changing the glyph filter event registry, regenerate `developer-docs/GLYPH_FILTER_EVENTS.md` using `node scripts/generate-glyph-filter-event-docs.mjs` (from repo root) so the event reference stays current.
-
-When a `localStorage` key is added, removed, or changed, `developer-docs/LOCALSTORAGE_SETTINGS.md` MUST be regenerated in the same change using `node scripts/generate-localstorage-docs.mjs` (from repo root). Do not edit that file by hand. That command is also included in `npm run generate-docs`.
-
-When a `sessionStorage` key is added, removed, or changed, `developer-docs/SESSIONSTORAGE_SETTINGS.md` MUST be regenerated in the same change using `node scripts/generate-sessionstorage-docs.mjs` (from repo root). Do not edit that file by hand. That command is also included in `npm run generate-docs`.
-
-When changing compilation scheduling, compile-mode selection, worker cache invalidation, subset handling, or any other editing compile behavior, update `developer-docs/COMPILATION_EDIT_POLICY.md` in the same change and follow it as the normative policy document.
-
-When introducing, removing, renaming, or changing any class, method, property, or parameter in the font object model (`babelfont-model.ts`), regenerate `API.md` using `node scripts/generate-api-docs.mjs` (from repo root) so the API reference stays current. That script also writes the handbook mirror at `documentation/python/06-python-api.md`. The same command is also available as `npm run generate-api-docs` from the repo root, or together with event docs via `npm run generate-docs`.
-
-## Useful Resources
-
-- fontc: https://github.com/googlefonts/fontc
-- babelfont-rs: https://github.com/simoncozens/babelfont-rs
-- Pyodide: https://pyodide.org/
-- HarfBuzz.js: https://github.com/harfbuzz/harfbuzzjs
-
-## Sibling Repositories
-
-The `editor` repo lives inside `/Users/yanone/Code/Counterpunch/` alongside several related repositories. These are all separate git repos that together form the Counterpunch ecosystem:
-
-| Directory                         | Description                                                                                                                                                                                                                                        |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `babelfont-rs/`                   | Rust workspace providing a unified font source file library. Loads, manipulates, and converts fonts between UFO, DesignSpace, Glyphs, FontLab VFJ, and its own JSON format. Includes sub-crates for font merging (`fontmerge`) and SR-AEF support. |
-| `cf-compactor/`                   | Legacy checkout of the old compaction Worker. Production compact now lives in `collab/collab/workers/compactor` (Cloudflare script `compactor`).                                                                                                   |
-| `collab/`                         | Canonical collab Workers (`room`, `compactor`, `validator`) plus shared protocol. Local `npm run dev` starts all three.                                                                                                                              |
-| `glyphslib-rs/`                   | Rust workspace (with `glyphslib` and `openstep-plist` sub-crates) for reading, writing, and converting Glyphs.app font source files (`.glyphs` and `.glyphspackage`, v2 and v3). The Rust counterpart of the Python `glyphslib` library.           |
-| `marketing/`                      | Marketing assets, including a feature-benefit matrix image.                                                                                                                                                                                        |
-| `norad/`                          | Rust crate (from the Linebender project) for reading, writing, and manipulating UFO (Unified Font Object) files. Provides typed data structures corresponding to the UFO 3 specification.                                                          |
-| `website/`                        | Counterpunch's public-facing website and user dashboard. Cloudflare Pages application with a full backend (D1 database, Stripe subscriptions, API endpoints) and a frontend providing account management, documentation, and editor integration.   |
-| `fontdestination-example-plugin/` | Reference Font Destination plugin: a versioned Python wheel plus a GitHub Pages receiver for Counterpunch binary-font export messages.                                                                                                             |
+| Doc | Open when |
+| --- | --- |
+| `APP.md` | Any behaviour change (authority) |
+| `README.md` | File format support status |
+| `developer-docs/DEVELOPMENT.md` | Local dev, Pyodide runtimes, WASM type drift, release overview |
+| `developer-docs/COMPILATION_EDIT_POLICY.md` | Anything that schedules or skips a compile |
+| `developer-docs/FILESYSTEM_PLUGINS.md` | Adding or changing a Memory/Disk/Cloud backend |
+| `developer-docs/PLUGIN_CONTRACTS.md`, `PLUGIN_SETTINGS.md`, `FONT_DESTINATION_PLUGINS.md` | Plugin hosts, settings, export destinations |
+| `developer-docs/BINARY_FONT_EXPORT.md` | File → Export binary font |
+| `developer-docs/RTL_KERNING_STRATEGY.md` | RTL kerning |
+| `developer-docs/APP_UPDATE_RECOVERY.md`, `STUCK_EDITING_RECOVERY.md` | A client stuck on an old cut or a dead editing session |
+| `developer-docs/COMPOSED_RELEASE.md` | Preview/production cutover |
+| `developer-docs/JS_EVENTS.md`, `GLYPH_FILTER_EVENTS.md`, `LOCALSTORAGE_SETTINGS.md`, `SESSIONSTORAGE_SETTINGS.md`, `API.md` | Generated references (see "When you change X") |
+| `strategy/*.md` | Design rationale: cloud collaboration, cuts, language packs, kerning rules, marketplace |
+| `instructions/GRAPHICAL_CODE_GRAPHS.md` | Drawing code-path graphs (`strategy/graphs/`) |
+| `CHANGELOG.md` | Release notes (Unreleased section feeds releases) |
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
