@@ -175,8 +175,12 @@ import {
     affineToDecomposedAffine,
     calculateGlyphPathBounds,
     calculateGlyphShapeBounds,
+    createIdentityAffine,
     createIdentityDecomposedAffine,
-    decomposedAffineToAffine
+    decomposedAffineToAffine,
+    flattenShapesToPaths,
+    normalizeAffineTransform,
+    type ComponentShapeResolver
 } from './glyph-path-geometry';
 import { LayerDataNormalizer } from './layer-data-normalizer';
 import { extendAxesForDesignspaceLocation } from './locations';
@@ -5601,6 +5605,45 @@ export class Path extends ArrayElementBase<PathData, Layer | Shape> {
 /**
  * Component reference to another glyph
  */
+function componentShapeResolver(
+    sourceLayer: Layer | undefined,
+    font?: Font,
+    masterId?: string
+): ComponentShapeResolver {
+    return (component) => {
+        const reference = component.reference;
+        if (!reference) {
+            return null;
+        }
+        if (!font) {
+            return null;
+        }
+        const fontModel = font;
+        const componentGlyph = fontModel.findGlyph(reference);
+        if (!componentGlyph?.layers?.length) {
+            return null;
+        }
+        let layer = sourceLayer?.getMatchingLayerOnGlyph(reference);
+        if (!layer && masterId) {
+            layer = componentGlyph.layers.find(
+                (candidate) =>
+                    candidate.data.master &&
+                    (candidate.data.master as Unsafe).master === masterId
+            );
+        }
+        if (!layer) {
+            layer = componentGlyph.layers[0];
+        }
+        if (!layer) {
+            return null;
+        }
+        return {
+            shapes: layer.toJSON()?.shapes,
+            resolve: componentShapeResolver(layer, fontModel, masterId)
+        };
+    };
+}
+
 export class Component extends ArrayElementBase<ComponentData, Shape> {
     /** Stable identifier for CRDT addressing. Generated on load; preserved across edits. */
     get id(): string | undefined {
@@ -5860,113 +5903,38 @@ export class Component extends ArrayElementBase<ComponentData, Shape> {
      * @returns Array of transformed path data objects
      */
     getTransformedPaths(): Babelfont.Path[] {
-        const paths: Babelfont.Path[] = [];
-        const componentTransform =
-            this.transform ||
-            ({
-                translation: [0, 0],
-                scale: [1, 1],
-                rotation: 0,
-                skew: [0, 0]
-            } as Babelfont.DecomposedAffine);
-
-        // Get the Font object to look up component glyphs
-        // Component -> Shape -> Layer -> Glyph -> Font
         const shape = this.parent() as Shape;
-        if (!shape) return paths;
+        if (!shape) return [];
 
         const layer = shape.parent() as Layer;
-        if (!layer) return paths;
+        if (!layer) return [];
 
         const glyph = layer.parent() as Glyph;
-        if (!glyph) return paths;
+        if (!glyph) return [];
 
         const font = glyph.parent() as Font;
-        if (!font) return paths;
+        if (!font) return [];
 
-        // Helper to transform a node
-        const transformNode = (node: Unsafe, transform: number[]): Unsafe => {
-            const [a, b, c, d, tx, ty] = transform;
-            const result: Unsafe = {
-                x: a * node.x + c * node.y + tx,
-                y: b * node.x + d * node.y + ty
-            };
-            if (node.type !== undefined) result.type = node.type;
-            if (node.nodetype !== undefined) result.nodetype = node.nodetype;
-            if (node.smooth !== undefined) result.smooth = node.smooth;
-            return result;
-        };
-
-        // Helper to combine two transform matrices
-        const combineTransforms = (t1: number[], t2: number[]): number[] => {
-            const [a1, b1, c1, d1, tx1, ty1] = t1;
-            const [a2, b2, c2, d2, tx2, ty2] = t2;
-            return [
-                a1 * a2 + c1 * b2,
-                b1 * a2 + d1 * b2,
-                a1 * c2 + c1 * d2,
-                b1 * c2 + d1 * d2,
-                a1 * tx2 + c1 * ty2 + tx1,
-                b1 * tx2 + d1 * ty2 + ty1
-            ];
-        };
-
-        // Look up the component glyph and get the matching layer
         const componentGlyph = font.findGlyph(this.reference);
-        if (!componentGlyph || !componentGlyph.layers) return paths;
+        if (!componentGlyph || !componentGlyph.layers) return [];
 
         const componentLayer =
             layer.getMatchingLayerOnGlyph(this.reference) ??
             componentGlyph.layers[0];
-        if (!componentLayer) return paths;
+        if (!componentLayer) return [];
 
-        // Process shapes from the component layer
-        if (componentLayer.shapes) {
-            for (const shape of componentLayer.shapes) {
-                if (shape.isComponent()) {
-                    // Recursively get paths from nested components
-                    const nestedComponent = shape.asComponent();
-                    const nestedPaths = nestedComponent.getTransformedPaths();
-
-                    // Apply this component's transform to all nested paths
-                    const transformArray =
-                        DecomposedAffineTransform.toAffine(componentTransform);
-                    for (const nestedPath of nestedPaths) {
-                        const transformedNodes = nestedPath.nodes.map(
-                            (node: Unsafe) =>
-                                transformNode(node, transformArray)
-                        );
-                        paths.push({
-                            nodes: transformedNodes,
-                            closed: nestedPath.closed
-                        });
-                    }
-                } else if (shape.isPath()) {
-                    // Transform the path nodes
-                    const pathData = shape.asPath().toJSON();
-                    const nodes = pathData.nodes;
-
-                    if (Array.isArray(nodes) && nodes.length > 0) {
-                        const transformArray =
-                            DecomposedAffineTransform.toAffine(
-                                componentTransform
-                            );
-                        const transformedNodes = nodes.map((node: Unsafe) =>
-                            transformNode(node, transformArray)
-                        );
-                        paths.push({
-                            nodes: transformedNodes,
-                            closed:
-                                pathData.closed !== undefined
-                                    ? pathData.closed
-                                    : true
-                        });
-                    }
-                }
+        return flattenShapesToPaths(
+            componentLayer.toJSON()?.shapes,
+            normalizeAffineTransform(
+                this.transform || DecomposedAffineTransform.identity()
+            ),
+            {
+                resolveComponentShapes: componentShapeResolver(
+                    componentLayer,
+                    font
+                )
             }
-        }
-
-        return paths;
+        );
     }
 }
 
@@ -10245,151 +10213,13 @@ export class Layer extends ArrayElementBase {
         masterId?: string,
         matchingSource?: Layer
     ): Babelfont.Path[] {
-        const flattenedPaths: Babelfont.Path[] = [];
-
-        // Helper function to apply transform to a node
-        const transformNode = (node: Unsafe, transform: number[]): Unsafe => {
-            const [a, b, c, d, tx, ty] = transform;
-            const result: Unsafe = {
-                x: a * node.x + c * node.y + tx,
-                y: b * node.x + d * node.y + ty
-            };
-            // Preserve node type field (either 'type' or 'nodetype')
-            if (node.type !== undefined) result.type = node.type;
-            if (node.nodetype !== undefined) result.nodetype = node.nodetype;
-            if (node.smooth !== undefined) result.smooth = node.smooth;
-            return result;
-        };
-
-        // Helper to convert DecomposedAffine to affine matrix array
-        const toAffineArray = (
-            transform: Babelfont.DecomposedAffine | number[] | undefined
-        ): number[] => {
-            if (!transform) return [1, 0, 0, 1, 0, 0];
-            if (Array.isArray(transform)) return transform;
-            // Use the proper transform composition from DecomposedAffineTransform
-            return Array.from(DecomposedAffineTransform.toAffine(transform));
-        };
-
-        // Helper function to combine two transform matrices
-        const combineTransforms = (t1: number[], t2: number[]): number[] => {
-            const [a1, b1, c1, d1, tx1, ty1] = t1;
-            const [a2, b2, c2, d2, tx2, ty2] = t2;
-            return [
-                a1 * a2 + c1 * b2,
-                b1 * a2 + d1 * b2,
-                a1 * c2 + c1 * d2,
-                b1 * c2 + d1 * d2,
-                a1 * tx2 + c1 * ty2 + tx1,
-                b1 * tx2 + d1 * ty2 + ty1
-            ];
-        };
-
-        // Helper function to process shapes recursively (for components)
-        const processShapes = (
-            shapes: Unsafe[],
-            transform: number[] = [1, 0, 0, 1, 0, 0],
-            sourceLayer?: Layer
-        ) => {
-            if (!shapes || !Array.isArray(shapes)) return;
-
-            for (const shape of shapes) {
-                // Handle both nested { Component: { reference, transform } } and flat { reference, transform }
-                const isNestedComponent = 'Component' in shape;
-                const componentData = isNestedComponent
-                    ? (shape as Unsafe).Component
-                    : shape;
-
-                if ('reference' in componentData) {
-                    // Component - recursively process its outline shapes with accumulated transform
-                    const compTransform = toAffineArray(
-                        componentData.transform
-                    );
-                    const combinedTransform = combineTransforms(
-                        transform,
-                        compTransform
-                    );
-
-                    // Get component's layer data - either from pre-populated layerData
-                    // or by looking up the component glyph in the font
-                    let componentLayerData = componentData.layerData;
-                    let nestedSource = sourceLayer;
-
-                    if (!componentLayerData && font) {
-                        const componentGlyph = font.findGlyph(
-                            componentData.reference
-                        );
-                        if (componentGlyph && componentGlyph.layers) {
-                            let layer = sourceLayer?.getMatchingLayerOnGlyph(
-                                componentData.reference
-                            );
-                            if (!layer && masterId) {
-                                layer = componentGlyph.layers.find(
-                                    (l) =>
-                                        l.data.master &&
-                                        (l.data.master as Unsafe).master ===
-                                            masterId
-                                );
-                            }
-                            if (!layer) {
-                                layer = componentGlyph.layers[0];
-                            }
-                            if (layer) {
-                                componentLayerData = layer.toJSON();
-                                nestedSource = layer;
-                            }
-                        }
-                    }
-
-                    // Recursively process the component's actual outline shapes
-                    if (componentLayerData && componentLayerData.shapes) {
-                        processShapes(
-                            componentLayerData.shapes,
-                            combinedTransform,
-                            nestedSource
-                        );
-                    }
-                } else if ('Path' in shape && shape.Path?.nodes) {
-                    const nodes = Array.isArray(shape.Path.nodes)
-                        ? shape.Path.nodes
-                        : [];
-
-                    if (nodes.length > 0) {
-                        // Transform all nodes and create a new path
-                        const transformedNodes = nodes.map((node: Unsafe) =>
-                            transformNode(node, transform)
-                        );
-
-                        flattenedPaths.push({
-                            nodes: transformedNodes,
-                            closed: shape.Path.closed
-                        });
-                    }
-                } else if ('nodes' in shape && Array.isArray(shape.nodes)) {
-                    const nodes = shape.nodes;
-
-                    if (nodes.length > 0) {
-                        // Transform all nodes and create a new path
-                        const transformedNodes = nodes.map((node: Unsafe) =>
-                            transformNode(node, transform)
-                        );
-
-                        flattenedPaths.push({
-                            nodes: transformedNodes,
-                            closed:
-                                shape.closed !== undefined ? shape.closed : true
-                        });
-                    }
-                }
-            }
-        };
-
-        // Process all shapes
-        if (layerData.shapes) {
-            processShapes(layerData.shapes, [1, 0, 0, 1, 0, 0], matchingSource);
-        }
-
-        return flattenedPaths;
+        return flattenShapesToPaths(layerData?.shapes, createIdentityAffine(), {
+            resolveComponentShapes: componentShapeResolver(
+                matchingSource,
+                font,
+                masterId
+            )
+        });
     }
 
     /**
@@ -10593,25 +10423,15 @@ export class Layer extends ArrayElementBase {
     }
 
     /**
-     * Calculate intersections between a line segment and all paths in this layer
-     * @param p1 - First point {x, y} of the line segment
-     * @param p2 - Second point {x, y} of the line segment
-     * @param includeComponents - If true, include component paths (default: false)
-     * @returns Array of intersection points sorted by distance from p1, each with {x, y, t} where t is the parameter along the line (0 at p1, 1 at p2)
+     * Intersections of a line segment with already-flattened paths.
+     * Points are sorted by t along the line (0 at p1, 1 at p2).
      */
-    getIntersectionsOnLine(
+    static intersectPathsWithLine(
+        paths: Array<{ nodes?: Unsafe[]; closed?: boolean }>,
         p1: { x: number; y: number },
-        p2: { x: number; y: number },
-        includeComponents: boolean = false
+        p2: { x: number; y: number }
     ): Array<{ x: number; y: number; t: number }> {
         const intersections: Array<{ x: number; y: number; t: number }> = [];
-
-        // Get all paths including components if requested
-        const paths = includeComponents
-            ? this.getAllPaths()
-            : this.getDirectPaths();
-
-        // Create a line object for intersections
         const line = {
             p1: { x: p1.x, y: p1.y },
             p2: { x: p2.x, y: p2.y }
@@ -10792,6 +10612,24 @@ export class Layer extends ArrayElementBase {
         uniqueIntersections.sort((a, b) => a.t - b.t);
 
         return uniqueIntersections;
+    }
+
+    /**
+     * Calculate intersections between a line segment and all paths in this layer
+     * @param p1 - First point {x, y} of the line segment
+     * @param p2 - Second point {x, y} of the line segment
+     * @param includeComponents - If true, include component paths (default: false)
+     * @returns Array of intersection points sorted by distance from p1, each with {x, y, t} where t is the parameter along the line (0 at p1, 1 at p2)
+     */
+    getIntersectionsOnLine(
+        p1: { x: number; y: number },
+        p2: { x: number; y: number },
+        includeComponents: boolean = false
+    ): Array<{ x: number; y: number; t: number }> {
+        const paths = includeComponents
+            ? this.getAllPaths()
+            : this.getDirectPaths();
+        return Layer.intersectPathsWithLine(paths, p1, p2);
     }
 
     /**

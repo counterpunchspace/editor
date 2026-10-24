@@ -34,6 +34,7 @@ import { StackPreviewAnimator } from './glyph-canvas/stack-preview-animator';
 import { get_glyph_name } from '../wasm-dist/babelfont_fontc_web';
 import fontManager from './font-manager';
 import { OutlineEditor } from './glyph-canvas/outline-editor';
+import { transformBoundsWithAffine } from './glyph-path-geometry';
 import { shortcutKeyToStickyEditTool } from './glyph-canvas/edit-tools';
 import {
     isPointerCommandModifier,
@@ -11323,41 +11324,16 @@ class GlyphCanvas {
             this.textRunEditor!.selectedGlyphIndex
         );
 
-        // If editing inside a component, transform the bounding box to glyph space
         let transformedBounds = bounds;
         if (this.outlineEditor.isEditingComponent()) {
-            const transform = this.outlineEditor.getAccumulatedTransform();
-            const [a, b, c, d, tx, ty] = transform;
-
-            // Transform all four corners of the bbox
-            const corners = [
-                { x: bounds.minX, y: bounds.minY },
-                { x: bounds.maxX, y: bounds.minY },
-                { x: bounds.minX, y: bounds.maxY },
-                { x: bounds.maxX, y: bounds.maxY }
-            ];
-
-            let minX = Infinity;
-            let minY = Infinity;
-            let maxX = -Infinity;
-            let maxY = -Infinity;
-
-            for (const corner of corners) {
-                const transformedX = a * corner.x + c * corner.y + tx;
-                const transformedY = b * corner.x + d * corner.y + ty;
-                minX = Math.min(minX, transformedX);
-                minY = Math.min(minY, transformedY);
-                maxX = Math.max(maxX, transformedX);
-                maxY = Math.max(maxY, transformedY);
-            }
-
+            const mapped = transformBoundsWithAffine(
+                bounds,
+                this.outlineEditor.getAccumulatedTransform()
+            );
             transformedBounds = {
-                minX,
-                minY,
-                maxX,
-                maxY,
-                width: maxX - minX,
-                height: maxY - minY
+                ...mapped,
+                width: mapped.maxX - mapped.minX,
+                height: mapped.maxY - mapped.minY
             };
         }
 

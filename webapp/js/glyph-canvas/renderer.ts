@@ -24,7 +24,10 @@ import {
     normalizeAffineTransform,
     transformPointWithAffine as applyAffineToPoint,
     multiplyAffineTransforms,
-    createIdentityAffine
+    createIdentityAffine,
+    flattenShapesToPaths,
+    invertAffine,
+    invertLinearAffine
 } from '../glyph-path-geometry';
 
 const console = new Logger('Renderer');
@@ -711,26 +714,21 @@ export class GlyphCanvasRenderer {
             return false;
         }
 
-        // Get the accumulated transform from the current layerData (which may be interpolated)
-        const transform =
-            this.glyphCanvas.outlineEditor.getAccumulatedTransform();
-
-        const [a, b, c, d, tx, ty] = transform;
-        const det = a * d - b * c;
-
-        if (Math.abs(det) > 0.0001) {
-            // Apply inverse of only the linear transformation (a, b, c, d)
-            // to cancel out scaling/rotation/skewing, but keep translation at 0
-            // since we translate to the point position separately
-            const invA = d / det;
-            const invB = -b / det;
-            const invC = -c / det;
-            const invD = a / det;
-            this.ctx.transform(invA, invB, invC, invD, 0, 0);
-            return true;
+        const inverse = invertLinearAffine(
+            this.glyphCanvas.outlineEditor.getAccumulatedTransform()
+        );
+        if (!inverse) {
+            return false;
         }
-
-        return false;
+        this.ctx.transform(
+            inverse[0],
+            inverse[1],
+            inverse[2],
+            inverse[3],
+            0,
+            0
+        );
+        return true;
     }
 
     private getFeatureChangeOutlineFadeAlpha(): number {
@@ -2532,13 +2530,9 @@ export class GlyphCanvasRenderer {
                     layerData?: { shapes?: unknown[] };
                 };
                 const inner = component.Component || component;
-                const transformRaw =
-                    inner.transform || DecomposedAffineTransform.identity();
                 const childAffine = multiplyAffineTransforms(
                     affine,
-                    Array.isArray(transformRaw)
-                        ? transformRaw
-                        : DecomposedAffineTransform.toAffine(transformRaw)
+                    normalizeAffineTransform(inner.transform)
                 );
                 const childFill = componentFillForIndex
                     ? componentFillForIndex(index)
@@ -3196,19 +3190,16 @@ export class GlyphCanvasRenderer {
         if (this.glyphCanvas.outlineEditor.isEditingComponent()) {
             this.ctx.save();
 
-            // Apply inverse transform to draw parent in original (untransformed) position
-            const [a, b, c, d, tx, ty] = transform;
-            const det = a * d - b * c;
-
-            if (Math.abs(det) > 0.0001) {
-                // Apply inverse transform to cancel out component transform
-                const invA = d / det;
-                const invB = -b / det;
-                const invC = -c / det;
-                const invD = a / det;
-                const invTx = (c * ty - d * tx) / det;
-                const invTy = (b * tx - a * ty) / det;
-                this.ctx.transform(invA, invB, invC, invD, invTx, invTy);
+            const inverse = invertAffine(transform);
+            if (inverse) {
+                this.ctx.transform(
+                    inverse[0],
+                    inverse[1],
+                    inverse[2],
+                    inverse[3],
+                    inverse[4],
+                    inverse[5]
+                );
             }
 
             // Draw the compiled HarfBuzz outline of the parent glyph
@@ -5427,6 +5418,29 @@ export class GlyphCanvasRenderer {
         this.ctx.restore();
     }
 
+    /**
+     * Intersections of a glyph-space line with the outlines currently drawn
+     * by the outline editor, including nested component transforms.
+     */
+    intersectEditedOutlinesOnLine(
+        p1: { x: number; y: number },
+        p2: { x: number; y: number }
+    ): Array<{ x: number; y: number; t: number }> {
+        const editor = this.glyphCanvas.outlineEditor;
+        const currentLayerData = editor.getCurrentLayerDataFromStack();
+        if (!currentLayerData?.shapes) {
+            return [];
+        }
+        return Layer.intersectPathsWithLine(
+            flattenShapesToPaths(
+                currentLayerData.shapes,
+                editor.getAccumulatedTransform()
+            ),
+            p1,
+            p2
+        );
+    }
+
     drawMeasurementIntersections() {
         // Only draw when the measurement key is pressed, in editing mode, and we have layer data
         if (
@@ -5445,52 +5459,6 @@ export class GlyphCanvasRenderer {
             return;
         }
 
-        // Use the same coordinate transformation as hit detection
-        // This accounts for component nesting via transformMouseToComponentSpace
-        const { glyphX: localX, glyphY: localY } =
-            this.glyphCanvas.outlineEditor.transformMouseToComponentSpace();
-
-        // Use the raw layerData from outlineEditor which has nested components properly populated
-        // via Rust WASM interpolation - this is already at the correct nesting level
-        const layerData = this.glyphCanvas.outlineEditor.layerData;
-
-        // Create a temporary Layer wrapper to use getIntersectionsOnLine()
-        // Get the current glyph wrapper from the font model to enable component lookups
-        const glyphName = this.glyphCanvas.outlineEditor.currentGlyphName;
-        const glyphWrapper = glyphName
-            ? (window as any).currentFontModel.findGlyph(glyphName)
-            : null;
-
-        // Find the matching Layer wrapper on the glyph to borrow stable metadata such as master.
-        // The intersection math itself must use the live edited layerData so drag updates render immediately.
-        let layerWrapper: Layer | null = null;
-        if (glyphWrapper && glyphWrapper.layers) {
-            const currentLayerId =
-                this.glyphCanvas.outlineEditor.selectedLayerId;
-            for (const layer of glyphWrapper.layers) {
-                if (layer.id === currentLayerId) {
-                    layerWrapper = layer;
-                    break;
-                }
-            }
-        }
-
-        const measurementLayerData = {
-            ...(layerWrapper?.toJSON?.() || {}),
-            ...layerData,
-            id: layerData.id || layerWrapper?.id,
-            master: layerData.master || layerWrapper?.master,
-            width: layerData.width ?? layerWrapper?.width ?? layerData.width,
-            shapes: layerData.shapes,
-            anchors: layerData.anchors,
-            guides: layerData.guides,
-            format_specific:
-                layerData.format_specific || layerWrapper?.format_specific
-        };
-
-        const tempLayer = new Layer([measurementLayerData], 0, glyphWrapper);
-
-        // Define line endpoints in component-local space
         let horizontalIntersections: Array<{
             x: number;
             y: number;
@@ -5500,69 +5468,31 @@ export class GlyphCanvasRenderer {
             [];
 
         if (this.glyphCanvas.measurementTool.isDragging) {
-            // User-defined line: get intersections along the line from origin to current mouse
-            // Transform origin CSS coordinates to glyph-local space using the same method as current mouse
-            let { glyphX: originGlyphX, glyphY: originGlyphY } =
-                this.glyphCanvas.toGlyphLocal(
-                    this.glyphCanvas.measurementTool.originX,
-                    this.glyphCanvas.measurementTool.originY
-                );
-
-            // Transform current mouse position to component-local space
-            const currentTransformed =
-                this.glyphCanvas.outlineEditor.transformMouseToComponentSpace();
-            let currentLocalX = currentTransformed.glyphX;
-            let currentLocalY = currentTransformed.glyphY;
-
-            // Apply the same component transform to origin if in component mode
-            let originLocalX = originGlyphX;
-            let originLocalY = originGlyphY;
-
-            if (this.glyphCanvas.outlineEditor.isEditingComponent()) {
-                const compTransform =
-                    this.glyphCanvas.outlineEditor.getAccumulatedTransform();
-                const [a, b, c, d, tx, ty] = compTransform;
-                const det = a * d - b * c;
-
-                if (Math.abs(det) > 0.0001) {
-                    // Inverse transform for origin point
-                    const localX = originGlyphX - tx;
-                    const localY = originGlyphY - ty;
-                    originLocalX = (d * localX - c * localY) / det;
-                    originLocalY = (a * localY - b * localX) / det;
-                }
-            }
-
-            // Get intersections along the user-defined line
-            const lineIntersections = tempLayer.getIntersectionsOnLine(
-                { x: originLocalX, y: originLocalY },
-                { x: currentLocalX, y: currentLocalY },
-                true // include nested components
+            const origin = this.glyphCanvas.toGlyphLocal(
+                this.glyphCanvas.measurementTool.originX,
+                this.glyphCanvas.measurementTool.originY
             );
-
-            // Use the same intersections for both (we'll handle them as a single line)
-            horizontalIntersections = lineIntersections;
-            verticalIntersections = []; // No vertical intersections for user-defined line
+            const current = this.glyphCanvas.toGlyphLocal(
+                this.glyphCanvas.mouseX,
+                this.glyphCanvas.mouseY
+            );
+            horizontalIntersections = this.intersectEditedOutlinesOnLine(
+                { x: origin.glyphX, y: origin.glyphY },
+                { x: current.glyphX, y: current.glyphY }
+            );
         } else {
-            // Crosshair mode: get intersections along horizontal and vertical lines
-            const largeDistance = 100000;
-
-            // Get intersections along horizontal line at crosshair Y (in component-local coords)
-            const horizontalP1 = { x: -largeDistance, y: localY };
-            const horizontalP2 = { x: largeDistance, y: localY };
-            horizontalIntersections = tempLayer.getIntersectionsOnLine(
-                horizontalP1,
-                horizontalP2,
-                true // include nested components
+            const { glyphX, glyphY } = this.glyphCanvas.toGlyphLocal(
+                this.glyphCanvas.mouseX,
+                this.glyphCanvas.mouseY
             );
-
-            // Get intersections along vertical line at crosshair X (in component-local coords)
-            const verticalP1 = { x: localX, y: -largeDistance };
-            const verticalP2 = { x: localX, y: largeDistance };
-            verticalIntersections = tempLayer.getIntersectionsOnLine(
-                verticalP1,
-                verticalP2,
-                true // include nested components
+            const largeDistance = 100000;
+            horizontalIntersections = this.intersectEditedOutlinesOnLine(
+                { x: -largeDistance, y: glyphY },
+                { x: largeDistance, y: glyphY }
+            );
+            verticalIntersections = this.intersectEditedOutlinesOnLine(
+                { x: glyphX, y: -largeDistance },
+                { x: glyphX, y: largeDistance }
             );
         }
 
@@ -5589,37 +5519,10 @@ export class GlyphCanvasRenderer {
         const glyphWorldX = layout.xPosition + xOffset;
         const glyphWorldY = layout.yOffset;
 
-        // If we're in component editing mode, apply the accumulated component transform
-        // to convert from component-local coords to glyph-local coords
-        const isInComponentMode =
-            this.glyphCanvas.outlineEditor.isEditingComponent();
-        let accumulatedTransform: number[] | null = null;
-
-        if (isInComponentMode) {
-            accumulatedTransform =
-                this.glyphCanvas.outlineEditor.getAccumulatedTransform();
-        }
-
-        // Helper function to transform a point from component-local to world coords
-        const transformToWorld = (point: { x: number; y: number }) => {
-            let x = point.x;
-            let y = point.y;
-
-            // Apply accumulated component transform if in component mode
-            if (accumulatedTransform) {
-                const [a, b, c, d, tx, ty] = accumulatedTransform;
-                const transformedX = a * x + c * y + tx;
-                const transformedY = b * x + d * y + ty;
-                x = transformedX;
-                y = transformedY;
-            }
-
-            // Convert from glyph-local to world coords
-            return {
-                x: x + glyphWorldX,
-                y: y + glyphWorldY
-            };
-        };
+        const transformToWorld = (point: { x: number; y: number }) => ({
+            x: point.x + glyphWorldX,
+            y: point.y + glyphWorldY
+        });
 
         // Draw measurement lines and dots first, then labels on top
         this.ctx.strokeStyle = colors.MEASUREMENT_TOOL_LINE;
@@ -6948,12 +6851,9 @@ export class GlyphCanvasRenderer {
                     continue;
                 }
 
-                const transformRaw =
-                    (shape as any).transform ||
-                    DecomposedAffineTransform.identity();
-                const transform = Array.isArray(transformRaw)
-                    ? transformRaw
-                    : DecomposedAffineTransform.toAffine(transformRaw);
+                const transform = normalizeAffineTransform(
+                    (shape as any).transform
+                );
 
                 this.ctx.save();
                 this.ctx.transform(
@@ -7126,12 +7026,9 @@ export class GlyphCanvasRenderer {
             const componentShapes = this.shapesForComponentDraw(shape);
             if (!componentShapes.length) return;
 
-            const transformRaw =
-                shape.transform || DecomposedAffineTransform.identity();
-            const transform = Array.isArray(transformRaw)
-                ? transformRaw
-                : DecomposedAffineTransform.toAffine(transformRaw);
-            const [a, b, c, d, tx, ty] = transform;
+            const [a, b, c, d, tx, ty] = normalizeAffineTransform(
+                shape.transform
+            );
 
             this.ctx.save();
             this.ctx.transform(a, b, c, d, tx, ty);
@@ -7205,13 +7102,9 @@ export class GlyphCanvasRenderer {
                     index
                 );
 
-            // Get component transform
-            const transformRaw =
-                shape.transform || DecomposedAffineTransform.identity();
-            const transform = Array.isArray(transformRaw)
-                ? transformRaw
-                : DecomposedAffineTransform.toAffine(transformRaw);
-            const [a, b, c, d, tx, ty] = transform;
+            const [a, b, c, d, tx, ty] = normalizeAffineTransform(
+                shape.transform
+            );
 
             this.ctx.save();
             this.ctx.transform(a, b, c, d, tx, ty);
@@ -7262,41 +7155,12 @@ export class GlyphCanvasRenderer {
 
             shapes.forEach((componentShape) => {
                 if ('reference' in componentShape) {
-                    let nestedTransform = transform;
-                    if (componentShape.transform) {
-                        const transformRaw = componentShape.transform;
-                        const t = Array.isArray(transformRaw)
-                            ? transformRaw
-                            : DecomposedAffineTransform.toAffine(transformRaw);
-                        if (transform) {
-                            const [a1, b1, c1, d1, tx1, ty1] = transform;
-                            const [a2, b2, c2, d2, tx2, ty2] = [
-                                t[0] || 1,
-                                t[1] || 0,
-                                t[2] || 0,
-                                t[3] || 1,
-                                t[4] || 0,
-                                t[5] || 0
-                            ];
-                            nestedTransform = [
-                                a1 * a2 + b1 * c2,
-                                a1 * b2 + b1 * d2,
-                                c1 * a2 + d1 * c2,
-                                c1 * b2 + d1 * d2,
-                                a1 * tx2 + c1 * ty2 + tx1,
-                                b1 * tx2 + d1 * ty2 + ty1
-                            ];
-                        } else {
-                            nestedTransform = [
-                                t[0] || 1,
-                                t[1] || 0,
-                                t[2] || 0,
-                                t[3] || 1,
-                                t[4] || 0,
-                                t[5] || 0
-                            ];
-                        }
-                    }
+                    const nestedTransform = componentShape.transform
+                        ? multiplyAffineTransforms(
+                              transform || createIdentityAffine(),
+                              normalizeAffineTransform(componentShape.transform)
+                          )
+                        : transform;
 
                     const nestedShapes = componentShape.layerData?.shapes;
                     const nested = Array.isArray(nestedShapes)

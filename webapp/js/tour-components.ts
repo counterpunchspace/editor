@@ -4,7 +4,9 @@
 
 import {
     calculateGlyphShapeBounds,
-    normalizeAffineTransform
+    multiplyAffineTransforms,
+    normalizeAffineTransform,
+    transformBoundsWithAffine
 } from './glyph-path-geometry';
 import {
     viewportFrameBottom,
@@ -51,19 +53,6 @@ function delay(ms: number): Promise<void> {
     return new Promise((resolve) => {
         window.setTimeout(resolve, ms);
     });
-}
-
-function multiplyAffine(parent: number[], child: number[]): number[] {
-    const [pa, pb, pc, pd, ptx, pty] = parent;
-    const [ca, cb, cc, cd, ctx, cty] = child;
-    return [
-        pa * ca + pc * cb,
-        pb * ca + pd * cb,
-        pa * cc + pc * cd,
-        pb * cc + pd * cd,
-        pa * ctx + pc * cty + ptx,
-        pb * ctx + pd * cty + pty
-    ];
 }
 
 function getSelectedGlyphOrigin(): { x: number; y: number } {
@@ -359,7 +348,7 @@ export function getTourComponentCutout(
         typeof editor.getAccumulatedTransform === 'function'
             ? editor.getAccumulatedTransform()
             : IDENTITY;
-    const composed = multiplyAffine(parentTransform, childTransform);
+    const composed = multiplyAffineTransforms(parentTransform, childTransform);
     const bounds =
         calculateGlyphShapeBounds(nestedShapes, composed) ||
         fallbackComponentBounds(component.layerData, composed);
@@ -394,26 +383,13 @@ function fallbackComponentBounds(
 }
 
 function applyAffineToRect(rect: FontRect, transform: number[]): FontRect {
-    const [a, b, c, d, tx, ty] = transform;
-    const corners = [
-        { x: rect.minX, y: rect.minY },
-        { x: rect.maxX, y: rect.minY },
-        { x: rect.minX, y: rect.maxY },
-        { x: rect.maxX, y: rect.maxY }
-    ];
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    for (const corner of corners) {
-        const x = a * corner.x + c * corner.y + tx;
-        const y = b * corner.x + d * corner.y + ty;
-        minX = Math.min(minX, x);
-        minY = Math.min(minY, y);
-        maxX = Math.max(maxX, x);
-        maxY = Math.max(maxY, y);
-    }
-    return { minX, maxX, minY, maxY };
+    const bounds = transformBoundsWithAffine(rect, transform);
+    return {
+        minX: bounds.minX,
+        maxX: bounds.maxX,
+        minY: bounds.minY,
+        maxY: bounds.maxY
+    };
 }
 
 export function getTourCurrentEditingGlyphCutout(): TourCutoutRect | null {

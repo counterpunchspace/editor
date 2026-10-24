@@ -93,6 +93,9 @@ import { userspaceToDesignspace, designspaceToUserspace } from '../locations';
 import type { DesignspaceLocation, UserspaceLocation } from '../locations';
 import { SavedVariationState } from '../saved-variation-state';
 import {
+    invertAffine,
+    invertLinearAffine,
+    multiplyAffineTransforms,
     normalizeAffineTransform,
     transformPointWithAffine
 } from '../glyph-path-geometry';
@@ -907,31 +910,6 @@ function realignSmoothHandles(
     }
 
     return false;
-}
-
-function transformPoint(
-    x: number,
-    y: number,
-    transform: Transform
-): { x: number; y: number } {
-    return {
-        x: transform[0] * x + transform[2] * y + transform[4],
-        y: transform[1] * x + transform[3] * y + transform[5]
-    };
-}
-
-function multiplyAffineTransforms(
-    left: Transform,
-    right: Transform
-): Transform {
-    return [
-        left[0] * right[0] + left[2] * right[1],
-        left[1] * right[0] + left[3] * right[1],
-        left[0] * right[2] + left[2] * right[3],
-        left[1] * right[2] + left[3] * right[3],
-        left[0] * right[4] + left[2] * right[5] + left[4],
-        left[1] * right[4] + left[3] * right[5] + left[5]
-    ];
 }
 
 function createAffineScaleAboutPoint(
@@ -6279,17 +6257,12 @@ export class OutlineEditor {
         deltaY: number,
         transform: number[]
     ): { localDeltaX: number; localDeltaY: number } {
-        const [a, b, c, d] = transform;
-        const det = a * d - b * c;
-
-        if (Math.abs(det) < 0.0001) {
+        const inverse = invertLinearAffine(transform);
+        if (!inverse) {
             return { localDeltaX: deltaX, localDeltaY: deltaY };
         }
-
-        return {
-            localDeltaX: (d * deltaX - c * deltaY) / det,
-            localDeltaY: (-b * deltaX + a * deltaY) / det
-        };
+        const local = transformPointWithAffine(inverse, deltaX, deltaY);
+        return { localDeltaX: local.x, localDeltaY: local.y };
     }
 
     getVisibleGuides(): VisibleGuide[] {
@@ -11145,28 +11118,10 @@ export class OutlineEditor {
                 typeof componentData === 'object' &&
                 'reference' in componentData
             ) {
-                const nestedTransformRaw = componentData.transform || [
-                    1, 0, 0, 1, 0, 0
-                ];
-                const nestedTransform = Array.isArray(nestedTransformRaw)
-                    ? nestedTransformRaw
-                    : DecomposedAffineTransform.toAffine(nestedTransformRaw);
-                const combinedTransform: Transform = [
-                    parentTransform[0] * nestedTransform[0] +
-                        parentTransform[2] * nestedTransform[1],
-                    parentTransform[1] * nestedTransform[0] +
-                        parentTransform[3] * nestedTransform[1],
-                    parentTransform[0] * nestedTransform[2] +
-                        parentTransform[2] * nestedTransform[3],
-                    parentTransform[1] * nestedTransform[2] +
-                        parentTransform[3] * nestedTransform[3],
-                    parentTransform[0] * nestedTransform[4] +
-                        parentTransform[2] * nestedTransform[5] +
-                        parentTransform[4],
-                    parentTransform[1] * nestedTransform[4] +
-                        parentTransform[3] * nestedTransform[5] +
-                        parentTransform[5]
-                ];
+                const combinedTransform = multiplyAffineTransforms(
+                    parentTransform,
+                    normalizeAffineTransform(componentData.transform)
+                );
 
                 let componentShapes = componentData.layerData?.shapes;
                 if (!componentShapes && fontModel && componentData.reference) {
@@ -11210,7 +11165,11 @@ export class OutlineEditor {
                 if (!isOnCurveNode(node)) {
                     continue;
                 }
-                const point = transformPoint(node.x, node.y, parentTransform);
+                const point = transformPointWithAffine(
+                    parentTransform,
+                    node.x,
+                    node.y
+                );
                 candidates.push({ x: point.x, y: point.y, source });
             }
         }
@@ -11702,11 +11661,10 @@ export class OutlineEditor {
         }
         // Filter out active-glyph nodes: they are identical to the visible
         // node handles already drawn by the outline editor.
-        const transform = this._editedSpaceTransform();
         return this._snapCandidateCache.debugCandidates
             .filter((c) => c.source !== 'active')
             .map((candidate) =>
-                this._neighborCandidateInEditedSpace(candidate, transform)
+                this._neighborCandidateInEditedSpace(candidate)
             );
     }
 
@@ -12265,51 +12223,14 @@ export class OutlineEditor {
      * Neighbor candidates are stored in the root glyph's space. While editing
      * inside a component, drag coordinates are in that component's space.
      */
-    private _editedSpaceTransform(): {
-        a: number;
-        b: number;
-        c: number;
-        d: number;
-        tx: number;
-        ty: number;
-        det: number;
-    } | null {
-        if (!this.isEditingComponent()) {
-            return null;
-        }
-        const [a, b, c, d, tx, ty] = this.getAccumulatedTransform();
-        const det = a * d - b * c;
-        if (Math.abs(det) <= 0.0001) {
-            return null;
-        }
-        return { a, b, c, d, tx, ty, det };
-    }
-
     private _neighborCandidateInEditedSpace(
-        candidate: SnapCandidate,
-        transform: {
-            a: number;
-            b: number;
-            c: number;
-            d: number;
-            tx: number;
-            ty: number;
-            det: number;
-        } | null
+        candidate: SnapCandidate
     ): SnapCandidate {
-        if (
-            !transform ||
-            (candidate.source !== 'left' && candidate.source !== 'right')
-        ) {
+        if (candidate.source !== 'left' && candidate.source !== 'right') {
             return candidate;
         }
-        const localX = candidate.x - transform.tx;
-        const localY = candidate.y - transform.ty;
-        return {
-            ...candidate,
-            x: (transform.d * localX - transform.c * localY) / transform.det,
-            y: (transform.a * localY - transform.b * localX) / transform.det
-        };
+        const local = this.rootToEditedSpace(candidate.x, candidate.y);
+        return { ...candidate, x: local.x, y: local.y };
     }
 
     private _resolveSnappedPosition(
@@ -12324,7 +12245,6 @@ export class OutlineEditor {
         ySource: SnapCandidate | null;
     } {
         const snapDist = snapCandidateCache.snapDistFontUnits;
-        const editedSpace = this._editedSpaceTransform();
 
         const allCandidates = snapCandidateCache.allDragCandidates;
         let bestSnapPoint: SnapCandidate | null = null;
@@ -12337,10 +12257,8 @@ export class OutlineEditor {
         let bestDistY = snapDist;
 
         for (const rawCandidate of allCandidates) {
-            const candidate = this._neighborCandidateInEditedSpace(
-                rawCandidate,
-                editedSpace
-            );
+            const candidate =
+                this._neighborCandidateInEditedSpace(rawCandidate);
             const distX = Math.abs(naturalX - candidate.x);
             const distY = Math.abs(naturalY - candidate.y);
 
@@ -13094,10 +13012,10 @@ export class OutlineEditor {
                 continue;
             }
 
-            const transformed = transformPoint(
+            const transformed = transformPointWithAffine(
+                selectionTransform,
                 pointSnapshot.x,
-                pointSnapshot.y,
-                selectionTransform
+                pointSnapshot.y
             );
             node.x = transformed.x;
             node.y = transformed.y;
@@ -13110,10 +13028,10 @@ export class OutlineEditor {
                 continue;
             }
 
-            const transformed = transformPoint(
+            const transformed = transformPointWithAffine(
+                selectionTransform,
                 anchorSnapshot.x,
-                anchorSnapshot.y,
-                selectionTransform
+                anchorSnapshot.y
             );
             anchor.x = transformed.x;
             anchor.y = transformed.y;
@@ -16717,30 +16635,10 @@ export class OutlineEditor {
                   e.clientY - rect.top
               )
             : this.transformMouseToComponentSpace();
-        const clickedPoint = this.isEditingComponent()
-            ? (() => {
-                  const compTransform = this.getAccumulatedTransform();
-                  const [a, b, c, d, tx, ty] = compTransform;
-                  const det = a * d - b * c;
-
-                  if (Math.abs(det) <= 0.0001) {
-                      return {
-                          x: canvasPoint.glyphX,
-                          y: canvasPoint.glyphY
-                      };
-                  }
-
-                  const localX = canvasPoint.glyphX - tx;
-                  const localY = canvasPoint.glyphY - ty;
-                  return {
-                      x: (d * localX - c * localY) / det,
-                      y: (a * localY - b * localX) / det
-                  };
-              })()
-            : {
-                  x: canvasPoint.glyphX,
-                  y: canvasPoint.glyphY
-              };
+        const clickedPoint = this.rootToEditedSpace(
+            canvasPoint.glyphX,
+            canvasPoint.glyphY
+        );
 
         this.canvasContextMenuPoint = clickedPoint;
         this.canvasContextMenuTarget =
@@ -21303,6 +21201,108 @@ export class OutlineEditor {
     }
 
     /**
+     * Walk glyphStack once. `layerData` is the edited level (null if a
+     * component on the path has no layer data). `transform` maps that
+     * level's local space into the root glyph, and keeps every component
+     * applied before a broken step.
+     */
+    resolveStackLevel(): {
+        layerData: Babelfont.Layer | null;
+        transform: Transform;
+    } {
+        const identity: Transform = [1, 0, 0, 1, 0, 0];
+        if (!this.layerData) {
+            return { layerData: null, transform: identity };
+        }
+        if (!this.glyphStack) {
+            return { layerData: this.layerData, transform: identity };
+        }
+
+        const parsed = this.parseGlyphStack();
+        if (parsed.length === 0) {
+            return { layerData: this.layerData, transform: identity };
+        }
+
+        let layerData: Babelfont.Layer | null = this.layerData;
+        let transform: Transform = identity;
+
+        for (let i = 0; i < parsed.length; i++) {
+            const item = parsed[i];
+            if (item.componentIndex === undefined) {
+                continue;
+            }
+
+            if (
+                !layerData ||
+                !layerData.shapes ||
+                !layerData.shapes[item.componentIndex]
+            ) {
+                console.error(
+                    '[GlyphStack] Invalid navigation at index',
+                    i,
+                    'componentIndex:',
+                    item.componentIndex
+                );
+                layerData = null;
+                break;
+            }
+
+            const shape: Babelfont.Shape =
+                layerData.shapes[item.componentIndex];
+            if (!('reference' in shape)) {
+                console.error(
+                    '[GlyphStack] Shape at index',
+                    item.componentIndex,
+                    'is not a component'
+                );
+                layerData = null;
+                break;
+            }
+
+            if (shape.transform) {
+                transform = multiplyAffineTransforms(
+                    transform,
+                    normalizeAffineTransform(shape.transform)
+                );
+            }
+
+            const nextLayerData = shape.layerData || null;
+            if (!nextLayerData) {
+                console.error(
+                    '[GlyphStack] Component at index',
+                    item.componentIndex,
+                    'has no layerData'
+                );
+                layerData = null;
+                break;
+            }
+            layerData = nextLayerData;
+        }
+
+        return { layerData, transform };
+    }
+
+    /** Map a point from root-glyph space into the edited component's space. */
+    rootToEditedSpace(x: number, y: number): { x: number; y: number } {
+        if (!this.isEditingComponent()) {
+            return { x, y };
+        }
+        const inverse = invertAffine(this.getAccumulatedTransform());
+        if (!inverse) {
+            return { x, y };
+        }
+        return transformPointWithAffine(inverse, x, y);
+    }
+
+    /** Map a point from the edited component's space into root-glyph space. */
+    editedToRootSpace(x: number, y: number): { x: number; y: number } {
+        if (!this.isEditingComponent()) {
+            return { x, y };
+        }
+        return transformPointWithAffine(this.getAccumulatedTransform(), x, y);
+    }
+
+    /**
      * Get the layer data for the current position in glyph_stack
      * Always starts from root layerData and navigates through components
      * @returns The layer data at the current glyph_stack position
@@ -21311,63 +21311,17 @@ export class OutlineEditor {
         if (!this.layerData || !this.glyphStack) {
             return this.layerData;
         }
-
-        const parsed = this.parseGlyphStack();
-        if (parsed.length === 0) {
+        if (this.parseGlyphStack().length === 0) {
             return this.layerData;
         }
+        return this.resolveStackLevel().layerData;
+    }
 
-        // Start with root layer data
-        let currentLayerData: Babelfont.Layer | null = this.layerData;
-
-        // Navigate through each component in the stack (skip the first root item)
-        for (let i = 0; i < parsed.length; i++) {
-            const item = parsed[i];
-
-            // Skip root item (has no componentIndex)
-            if (item.componentIndex === undefined) {
-                continue;
-            }
-
-            // Navigate to the component
-            if (
-                !currentLayerData ||
-                !currentLayerData.shapes ||
-                !currentLayerData.shapes[item.componentIndex]
-            ) {
-                console.error(
-                    '[GlyphStack] Invalid navigation at index',
-                    i,
-                    'componentIndex:',
-                    item.componentIndex
-                );
-                return null;
-            }
-
-            const shape: Babelfont.Shape =
-                currentLayerData.shapes[item.componentIndex];
-            if (!('reference' in shape)) {
-                console.error(
-                    '[GlyphStack] Shape at index',
-                    item.componentIndex,
-                    'is not a component'
-                );
-                return null;
-            }
-
-            // Move to the component's layer data
-            currentLayerData = shape.layerData || null;
-            if (!currentLayerData) {
-                console.error(
-                    '[GlyphStack] Component at index',
-                    item.componentIndex,
-                    'has no layerData'
-                );
-                return null;
-            }
+    getAccumulatedTransform(): Transform {
+        if (!this.layerData || !this.glyphStack) {
+            return [1, 0, 0, 1, 0, 0];
         }
-
-        return currentLayerData;
+        return this.resolveStackLevel().transform;
     }
 
     async fetchLayerData(
@@ -22467,232 +22421,13 @@ export class OutlineEditor {
         return !!owning?.glyph?.findLayerById?.(layerId)?.is_background;
     }
 
-    extractComponentTransformFromInterpolatedLayer(
-        parentLayer: any
-    ): number[] | null {
-        // Navigate through the glyphStack accumulating interpolated transforms
-        // This matches how getAccumulatedTransform() works for master layers
-
-        const parsed = this.parseGlyphStack();
-        console.log(
-            '[extractComponentTransform] Called with glyphStack depth:',
-            parsed.length
-        );
-
-        let a = 1,
-            b = 0,
-            c = 0,
-            d = 1,
-            tx = 0,
-            ty = 0;
-        let currentLayer = parentLayer;
-
-        // Skip the first item (root glyph), process remaining items (components)
-        for (let i = 1; i < parsed.length; i++) {
-            const stackItem = parsed[i];
-            if (
-                !currentLayer?.shapes ||
-                stackItem.componentIndex === undefined
-            ) {
-                console.error(
-                    '[OutlineEditor] Cannot navigate glyphStack - missing shapes or invalid index',
-                    { stackItem, currentLayer }
-                );
-                return null;
-            }
-
-            const componentShape =
-                currentLayer.shapes[stackItem.componentIndex];
-            if (!componentShape || !('reference' in componentShape)) {
-                console.error(
-                    '[OutlineEditor] Component shape not found at index',
-                    stackItem.componentIndex
-                );
-                return null;
-            }
-
-            // Get this component's interpolated transform and accumulate it
-            const t = componentShape.transform || [1, 0, 0, 1, 0, 0];
-            console.log(
-                '[extractComponentTransform] Stack level',
-                i,
-                'component:',
-                componentShape.reference,
-                'transform:',
-                t
-            );
-
-            // Multiply transforms: new = current * level
-            const newA = a * t[0] + c * t[1];
-            const newB = b * t[0] + d * t[1];
-            const newC = a * t[2] + c * t[3];
-            const newD = b * t[2] + d * t[3];
-            const newTx = a * t[4] + c * t[5] + tx;
-            const newTy = b * t[4] + d * t[5] + ty;
-
-            a = newA;
-            b = newB;
-            c = newC;
-            d = newD;
-            tx = newTx;
-            ty = newTy;
-
-            // Get the component's layer data to continue navigating (unless this is the last level)
-            if (i < parsed.length - 1) {
-                if (!componentShape.layerData) {
-                    console.error(
-                        '[OutlineEditor] Component has no layerData',
-                        componentShape.reference
-                    );
-                    return null;
-                }
-
-                // Move to the next level
-                currentLayer = componentShape.layerData;
-            }
-        }
-
-        // Return the accumulated transform
-        console.log(
-            '[extractComponentTransform] Final accumulated transform:',
-            [a, b, c, d, tx, ty]
-        );
-        return [a, b, c, d, tx, ty];
-    }
-
-    /**
-     * Get accumulated transform from glyphStack by navigating through root layerData
-     * This replaces the old componentStack-based approach
-     */
-    getAccumulatedTransformFromStack(): number[] {
-        let a = 1,
-            b = 0,
-            c = 0,
-            d = 1,
-            tx = 0,
-            ty = 0;
-
-        if (!this.layerData || !this.glyphStack) {
-            return [a, b, c, d, tx, ty];
-        }
-
-        const parsed = this.parseGlyphStack();
-        console.log(
-            `[getAccumulatedTransformFromStack] Stack: ${this.glyphStack}`
-        );
-        console.log(
-            `[getAccumulatedTransformFromStack] Parsed depth: ${parsed.length - 1}`,
-            parsed
-        );
-
-        // Start at root and navigate through components
-        let currentLayerData: Babelfont.Layer | null = this.layerData;
-
-        for (let i = 0; i < parsed.length; i++) {
-            const item = parsed[i];
-
-            // Skip root (no transform to apply)
-            if (item.componentIndex === undefined) {
-                continue;
-            }
-
-            // Get the component shape
-            if (
-                !currentLayerData ||
-                !currentLayerData.shapes ||
-                !currentLayerData.shapes[item.componentIndex]
-            ) {
-                console.error(
-                    '[getAccumulatedTransformFromStack] Invalid navigation at index',
-                    i,
-                    'componentIndex:',
-                    item.componentIndex
-                );
-                break;
-            }
-
-            const shape: Babelfont.Shape =
-                currentLayerData.shapes[item.componentIndex];
-            if (!('reference' in shape)) {
-                console.error(
-                    '[getAccumulatedTransformFromStack] Shape at index',
-                    item.componentIndex,
-                    'is not a component'
-                );
-                break;
-            }
-
-            console.log(
-                `[getAccumulatedTransformFromStack] Level ${i}: component "${shape.reference}", transform:`,
-                shape.transform
-            );
-
-            // Apply this component's transform
-            if (shape.transform) {
-                // Convert to array format if needed
-                const t = Array.isArray(shape.transform)
-                    ? shape.transform
-                    : DecomposedAffineTransform.toAffine(shape.transform);
-                const newA = a * t[0] + c * t[1];
-                const newB = b * t[0] + d * t[1];
-                const newC = a * t[2] + c * t[3];
-                const newD = b * t[2] + d * t[3];
-                const newTx = a * t[4] + c * t[5] + tx;
-                const newTy = b * t[4] + d * t[5] + ty;
-                a = newA;
-                b = newB;
-                c = newC;
-                d = newD;
-                tx = newTx;
-                ty = newTy;
-            }
-
-            // Move to next level
-            currentLayerData = shape.layerData || null;
-        }
-
-        const result = [a, b, c, d, tx, ty];
-        console.log('[getAccumulatedTransformFromStack] Result:', result);
-        return result;
-    }
-
-    /**
-     * @deprecated Use getAccumulatedTransformFromStack() instead
-     * Legacy method kept for backward compatibility during migration
-     */
-    getAccumulatedTransform(): number[] {
-        // For now, delegate to new implementation
-        return this.getAccumulatedTransformFromStack();
-    }
-
     transformMouseToComponentSpace(): { glyphX: number; glyphY: number } {
-        // Transform mouse coordinates from canvas to component local space
-        let { glyphX, glyphY } = this.glyphCanvas.toGlyphLocal(
+        const { glyphX, glyphY } = this.glyphCanvas.toGlyphLocal(
             this.glyphCanvas.mouseX,
             this.glyphCanvas.mouseY
         );
-
-        // Apply inverse component transform if editing a component
-        if (this.isEditingComponent()) {
-            const glyphXBeforeInverse = glyphX;
-            const glyphYBeforeInverse = glyphY;
-            const compTransform = this.getAccumulatedTransform();
-            const [a, b, c, d, tx, ty] = compTransform;
-            const det = a * d - b * c;
-
-            if (Math.abs(det) > 0.0001) {
-                // Inverse transform: (x', y') = inverse(T) * (x - tx, y - ty)
-                const localX = glyphX - tx;
-                const localY = glyphY - ty;
-                glyphX = (d * localX - c * localY) / det;
-                glyphY = (a * localY - b * localX) / det;
-            }
-            console.log(
-                `[transformMouseToComponentSpace] before inverse=(${glyphXBeforeInverse}, ${glyphYBeforeInverse}), after inverse=(${glyphX}, ${glyphY}), accumulated transform=[${compTransform}], det=${det}`
-            );
-        }
-
-        return { glyphX, glyphY };
+        const local = this.rootToEditedSpace(glyphX, glyphY);
+        return { glyphX: local.x, glyphY: local.y };
     }
 
     calculateGlyphBoundingBox(): {

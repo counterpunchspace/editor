@@ -3,6 +3,7 @@ import type { Babelfont } from '../babelfont';
 import type { GlyphCanvas } from '../glyph-canvas';
 import {
     createIdentityAffine,
+    flattenShapesToPaths,
     multiplyAffineTransforms,
     normalizeAffineTransform
 } from '../glyph-path-geometry';
@@ -331,18 +332,6 @@ export class StackPreviewAnimator {
         }
     }
 
-    /** Transform point using affine matrix */
-    private transformPoint(
-        x: number,
-        y: number,
-        m: number[]
-    ): { x: number; y: number } {
-        return {
-            x: m[0] * x + m[2] * y + m[4],
-            y: m[1] * x + m[3] * y + m[5]
-        };
-    }
-
     getTiltAngleRadians(): number {
         return (this.currentTiltAngle * Math.PI) / 180;
     }
@@ -499,48 +488,14 @@ export class StackPreviewAnimator {
         diagYOffset: number,
         bounds: { minX: number; minY: number; maxX: number; maxY: number }
     ): void {
-        for (const shape of shapes) {
-            // Unwrapped format: Component has 'reference' field
-            if ('reference' in shape) {
-                const compTransform =
-                    (shape as any).transform || IDENTITY_TRANSFORM;
-                const transformArray = normalizeAffineTransform(compTransform);
-                const combinedTransform = multiplyAffineTransforms(
-                    transform,
-                    transformArray
-                );
-                const compLayerData = (shape as any).layerData;
-                if (compLayerData?.shapes) {
-                    this.addShapeBounds(
-                        compLayerData.shapes,
-                        combinedTransform,
-                        baseX,
-                        baseY,
-                        diagXOffset,
-                        diagYOffset,
-                        bounds
-                    );
-                }
-                continue;
-            }
-
-            // Unwrapped format: Path has 'nodes' field directly
-            let nodes = 'nodes' in shape ? (shape as any).nodes : undefined;
-            if (!nodes) {
-                console.warn('Shape has no nodes:', shape);
-                continue;
-            }
-
-            if (nodes?.length) {
-                for (const n of nodes) {
-                    const p = this.transformPoint(n.x, n.y, transform);
-                    const worldX = p.x + baseX + diagXOffset;
-                    const worldY = p.y + baseY + diagYOffset;
-                    bounds.minX = Math.min(bounds.minX, worldX);
-                    bounds.maxX = Math.max(bounds.maxX, worldX);
-                    bounds.minY = Math.min(bounds.minY, worldY);
-                    bounds.maxY = Math.max(bounds.maxY, worldY);
-                }
+        for (const path of flattenShapesToPaths(shapes, transform)) {
+            for (const node of path.nodes) {
+                const worldX = node.x + baseX + diagXOffset;
+                const worldY = node.y + baseY + diagYOffset;
+                bounds.minX = Math.min(bounds.minX, worldX);
+                bounds.maxX = Math.max(bounds.maxX, worldX);
+                bounds.minY = Math.min(bounds.minY, worldY);
+                bounds.maxY = Math.max(bounds.maxY, worldY);
             }
         }
     }

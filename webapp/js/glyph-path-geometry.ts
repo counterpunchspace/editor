@@ -62,6 +62,74 @@ export function transformPointWithAffine(
     };
 }
 
+/** Below this |determinant| an affine is treated as non-invertible. */
+export const AFFINE_SINGULAR_EPSILON = 0.0001;
+
+export type BoundsRect = {
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+};
+
+/**
+ * Full inverse, including translation. Null when the linear part is singular.
+ */
+export function invertAffine(
+    transform: number[]
+): [number, number, number, number, number, number] | null {
+    const [a, b, c, d, tx, ty] = transform;
+    const det = a * d - b * c;
+    if (!Number.isFinite(det) || Math.abs(det) <= AFFINE_SINGULAR_EPSILON) {
+        return null;
+    }
+    return [
+        d / det,
+        -b / det,
+        -c / det,
+        a / det,
+        (c * ty - d * tx) / det,
+        (b * tx - a * ty) / det
+    ];
+}
+
+/**
+ * Inverse of the linear part only. Translation is zero so a later
+ * translate-to-point is not shifted. Used for screen-constant UI.
+ */
+export function invertLinearAffine(
+    transform: number[]
+): [number, number, number, number, number, number] | null {
+    const inverse = invertAffine(transform);
+    if (!inverse) {
+        return null;
+    }
+    return [inverse[0], inverse[1], inverse[2], inverse[3], 0, 0];
+}
+
+export function transformBoundsWithAffine(
+    rect: BoundsRect,
+    transform: number[]
+): BoundsRect {
+    const corners = [
+        transformPointWithAffine(transform, rect.minX, rect.minY),
+        transformPointWithAffine(transform, rect.maxX, rect.minY),
+        transformPointWithAffine(transform, rect.minX, rect.maxY),
+        transformPointWithAffine(transform, rect.maxX, rect.maxY)
+    ];
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const corner of corners) {
+        minX = Math.min(minX, corner.x);
+        minY = Math.min(minY, corner.y);
+        maxX = Math.max(maxX, corner.x);
+        maxY = Math.max(maxY, corner.y);
+    }
+    return { minX, minY, maxX, maxY };
+}
+
 export type GlyphStandInContour = {
     nodes: Array<{ x: number; y: number; nodetype?: string }>;
     closed: boolean;
@@ -245,6 +313,15 @@ export function decomposedAffineToAffine(
     ) as [number, number, number, number, number, number];
 }
 
+/** Finite coefficients stay, including 0. Missing or non-numeric values use fallback. */
+function affineNumber(value: unknown, fallback: number): number {
+    if (value === null || value === undefined || value === '') {
+        return fallback;
+    }
+    const parsed = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 export function normalizeAffineTransform(
     transformRaw: unknown
 ): [number, number, number, number, number, number] {
@@ -254,12 +331,12 @@ export function normalizeAffineTransform(
 
     if (Array.isArray(transformRaw) && transformRaw.length >= 6) {
         return [
-            Number(transformRaw[0]) || 1,
-            Number(transformRaw[1]) || 0,
-            Number(transformRaw[2]) || 0,
-            Number(transformRaw[3]) || 1,
-            Number(transformRaw[4]) || 0,
-            Number(transformRaw[5]) || 0
+            affineNumber(transformRaw[0], 1),
+            affineNumber(transformRaw[1], 0),
+            affineNumber(transformRaw[2], 0),
+            affineNumber(transformRaw[3], 1),
+            affineNumber(transformRaw[4], 0),
+            affineNumber(transformRaw[5], 0)
         ];
     }
 
@@ -281,12 +358,12 @@ export function normalizeAffineTransform(
     ) {
         const affine = transformRaw as Record<string, unknown>;
         return [
-            Number(affine.a) || 1,
-            Number(affine.b) || 0,
-            Number(affine.c) || 0,
-            Number(affine.d) || 1,
-            Number(affine.e) || 0,
-            Number(affine.f) || 0
+            affineNumber(affine.a, 1),
+            affineNumber(affine.b, 0),
+            affineNumber(affine.c, 0),
+            affineNumber(affine.d, 1),
+            affineNumber(affine.e, 0),
+            affineNumber(affine.f, 0)
         ];
     }
 
@@ -296,12 +373,12 @@ export function normalizeAffineTransform(
     ) {
         const affine = transformRaw as Record<string, unknown>;
         return [
-            Number(affine.xx) || 1,
-            Number(affine.yx) || 0,
-            Number(affine.xy) || 0,
-            Number(affine.yy) || 1,
-            Number(affine.x0) || 0,
-            Number(affine.y0) || 0
+            affineNumber(affine.xx, 1),
+            affineNumber(affine.yx, 0),
+            affineNumber(affine.xy, 0),
+            affineNumber(affine.yy, 1),
+            affineNumber(affine.x0, 0),
+            affineNumber(affine.y0, 0)
         ];
     }
 
@@ -311,12 +388,12 @@ export function normalizeAffineTransform(
             : undefined;
     if (Array.isArray(coeffs) && coeffs.length >= 6) {
         return [
-            Number(coeffs[0]) || 1,
-            Number(coeffs[1]) || 0,
-            Number(coeffs[2]) || 0,
-            Number(coeffs[3]) || 1,
-            Number(coeffs[4]) || 0,
-            Number(coeffs[5]) || 0
+            affineNumber(coeffs[0], 1),
+            affineNumber(coeffs[1], 0),
+            affineNumber(coeffs[2], 0),
+            affineNumber(coeffs[3], 1),
+            affineNumber(coeffs[4], 0),
+            affineNumber(coeffs[5], 0)
         ];
     }
 
@@ -673,6 +750,159 @@ export function calculateGlyphPathBounds(pathData: {
     return boundsFromMinMax(minX, minY, maxX, maxY);
 }
 
+export type FlattenedGlyphPath = {
+    nodes: Unsafe[];
+    closed: boolean;
+};
+
+export type ComponentShapeResolver = (component: { reference?: string }) =>
+    | {
+          shapes?: Unsafe[] | null;
+          resolve?: ComponentShapeResolver;
+      }
+    | null
+    | undefined;
+
+export type FlattenShapesOptions = {
+    /**
+     * Used when a component has no pre-populated layerData.
+     * `resolve` replaces the resolver for shapes returned from that component,
+     * so deeper references are looked up from the component's own layer.
+     */
+    resolveComponentShapes?: ComponentShapeResolver;
+    /** Fall back to stand-in contours when a component contributes no paths. */
+    useStandIns?: boolean;
+};
+
+function componentDataOf(shape: Unsafe): Unsafe | null {
+    if (!shape || typeof shape !== 'object') {
+        return null;
+    }
+    if ('reference' in shape) {
+        return shape;
+    }
+    if (
+        'Component' in shape &&
+        shape.Component &&
+        typeof shape.Component === 'object'
+    ) {
+        return shape.Component;
+    }
+    return null;
+}
+
+function pathDataOf(
+    shape: Unsafe
+): { nodes: Unsafe[]; closed: boolean } | null {
+    if (!shape || typeof shape !== 'object') {
+        return null;
+    }
+    const wrapped =
+        'Path' in shape && shape.Path
+            ? shape.Path
+            : 'Contour' in shape && shape.Contour
+              ? shape.Contour
+              : 'nodes' in shape
+                ? shape
+                : null;
+    const nodes = wrapped?.nodes;
+    if (!Array.isArray(nodes) || nodes.length === 0) {
+        return null;
+    }
+    return {
+        nodes,
+        closed: wrapped.closed !== false
+    };
+}
+
+/**
+ * Flatten paths and nested components into paths in the parent transform's space.
+ * Component geometry comes from layerData.shapes when present, otherwise from
+ * resolveComponentShapes, otherwise from stand-in contours when requested.
+ */
+export function flattenShapesToPaths(
+    shapes: Unsafe[] | undefined,
+    parentTransform: number[] = createIdentityAffine(),
+    options: FlattenShapesOptions = {}
+): FlattenedGlyphPath[] {
+    const flattened: FlattenedGlyphPath[] = [];
+    if (!Array.isArray(shapes)) {
+        return flattened;
+    }
+
+    for (const shape of shapes) {
+        const componentData = componentDataOf(shape);
+        if (componentData && 'reference' in componentData) {
+            const composed = multiplyAffineTransforms(
+                parentTransform,
+                normalizeAffineTransform(
+                    componentData.transform || createIdentityDecomposedAffine()
+                )
+            );
+            const layerData = componentData.layerData;
+            const before = flattened.length;
+            if (layerData && typeof layerData === 'object') {
+                flattened.push(
+                    ...flattenShapesToPaths(
+                        layerData.shapes as Unsafe[] | undefined,
+                        composed,
+                        options
+                    )
+                );
+            } else if (options.resolveComponentShapes) {
+                const resolved = options.resolveComponentShapes(componentData);
+                const nested = resolved?.shapes;
+                if (Array.isArray(nested) && nested.length > 0) {
+                    flattened.push(
+                        ...flattenShapesToPaths(nested, composed, {
+                            ...options,
+                            resolveComponentShapes:
+                                resolved?.resolve ||
+                                options.resolveComponentShapes
+                        })
+                    );
+                }
+            }
+            if (flattened.length === before && options.useStandIns) {
+                const reference =
+                    typeof componentData.reference === 'string'
+                        ? componentData.reference
+                        : '';
+                const standIn = reference
+                    ? glyphStandInContours?.(reference)
+                    : null;
+                if (standIn?.length) {
+                    for (const contour of standIn) {
+                        if (!contour.nodes?.length) {
+                            continue;
+                        }
+                        flattened.push({
+                            nodes: contour.nodes.map((node) =>
+                                transformNode(node, composed)
+                            ),
+                            closed: contour.closed !== false
+                        });
+                    }
+                }
+            }
+            continue;
+        }
+
+        const pathData = pathDataOf(shape);
+        if (!pathData) {
+            continue;
+        }
+        flattened.push({
+            nodes: pathData.nodes.map((node) =>
+                transformNode(node, parentTransform)
+            ),
+            closed: pathData.closed
+        });
+    }
+
+    return flattened;
+}
+
 export function calculateGlyphShapeBounds(
     shapes: Unsafe[] | undefined,
     parentTransform: number[] = IDENTITY_AFFINE as unknown as number[]
@@ -684,7 +914,10 @@ export function calculateGlyphShapeBounds(
     width: number;
     height: number;
 } | null {
-    if (!Array.isArray(shapes) || shapes.length === 0) {
+    const paths = flattenShapesToPaths(shapes, parentTransform, {
+        useStandIns: true
+    });
+    if (paths.length === 0) {
         return null;
     }
 
@@ -692,105 +925,15 @@ export function calculateGlyphShapeBounds(
     let minY = Infinity;
     let maxX = -Infinity;
     let maxY = -Infinity;
-
-    const includeBounds = (
-        bounds:
-            | {
-                  minX: number;
-                  minY: number;
-                  maxX: number;
-                  maxY: number;
-              }
-            | null
-            | undefined
-    ) => {
+    for (const path of paths) {
+        const bounds = calculateGlyphPathBounds(path);
         if (!bounds) {
-            return;
+            continue;
         }
         minX = Math.min(minX, bounds.minX);
         minY = Math.min(minY, bounds.minY);
         maxX = Math.max(maxX, bounds.maxX);
         maxY = Math.max(maxY, bounds.maxY);
-    };
-
-    for (const shape of shapes) {
-        if (!shape || typeof shape !== 'object') {
-            continue;
-        }
-
-        const pathData =
-            'nodes' in shape
-                ? shape
-                : 'Path' in shape && shape.Path
-                  ? shape.Path
-                  : 'Contour' in shape && shape.Contour
-                    ? shape.Contour
-                    : null;
-
-        if (pathData?.nodes) {
-            const nodes = pathData.nodes as Babelfont.Node[];
-            if (Array.isArray(nodes) && nodes.length > 0) {
-                const transformedNodes = nodes.map((node: Unsafe) =>
-                    transformNode(node, parentTransform)
-                );
-                includeBounds(
-                    calculateGlyphPathBounds({
-                        nodes: transformedNodes,
-                        closed: pathData.closed
-                    })
-                );
-            }
-            continue;
-        }
-
-        const componentData =
-            'reference' in shape
-                ? shape
-                : 'Component' in shape && shape.Component
-                  ? shape.Component
-                  : null;
-
-        if (!componentData) {
-            continue;
-        }
-
-        const reference =
-            typeof componentData.reference === 'string'
-                ? componentData.reference
-                : '';
-        const nestedShapes = componentData.layerData?.shapes as
-            Unsafe[] | undefined;
-        const componentTransform = Array.isArray(componentData.transform)
-            ? normalizeAffineTransform(componentData.transform)
-            : normalizeAffineTransform(
-                  componentData.transform || createIdentityDecomposedAffine()
-              );
-        const composed = composeTransforms(parentTransform, componentTransform);
-        const nestedBounds =
-            Array.isArray(nestedShapes) && nestedShapes.length
-                ? calculateGlyphShapeBounds(nestedShapes, composed)
-                : null;
-        if (nestedBounds) {
-            includeBounds(nestedBounds);
-            continue;
-        }
-        const standIn = reference ? glyphStandInContours?.(reference) : null;
-        if (!standIn?.length) {
-            continue;
-        }
-        for (const contour of standIn) {
-            if (!contour.nodes?.length) {
-                continue;
-            }
-            includeBounds(
-                calculateGlyphPathBounds({
-                    nodes: contour.nodes.map((node) =>
-                        transformNode(node, composed)
-                    ),
-                    closed: contour.closed
-                })
-            );
-        }
     }
 
     return boundsFromMinMax(minX, minY, maxX, maxY);
