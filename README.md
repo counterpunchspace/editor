@@ -77,9 +77,11 @@ Coverage: 🟢 Should work · 🟡 Partial · 🔴 Missing
 | Binary font export | 🟢 | Only VF, no static instances yet |
 | Language database | 🟢 | Ships with Hyperglot temporarily as a demo, later as user-installable plugins |
 | Glyph composition | 🟢 | |
+| Commercial plugin marketplace | 🟢 | |
+| Language Packs | 🟡 | Infrastructure and basic Arabic demo exists |
 | Documentation | 🟡 | Incomplete, bad screenshots |
 | Glyph overview and filters | 🟡 | Glyph categorization missing |
-| Source file I/O | 🟡 | UFO/DS and `.glyphspackage` writing is missing |
+| Source file I/O | 🟡 | UFO/DS and `.glyphspackage` writing is missing, Glyphs 4 is still missing |
 | Plugin system | 🟡 | Most plugin types not yet implemented, no auto-update yet |
-| OpenType feature code generator | 🔴 | |
-| Live online collaboration | 🟡 | Protocol 4 rooms: opaque-byte journal, sparse glyph hydrate (`OT(seeds) ∪ reverse*(seeds)` then forward-close), reconnect with `checkpointLogId` + `appliedLogId` (advances only after the client applied the bytes). Mixed v3/v4 writers are rejected. Rebaseline after compaction that truncates behind `appliedLogId`. Seed and live commit hard-cap at 5 MiB per shard/packet. |
+| OpenType feature code generator | 🟡 | Infrastructure and basic demos exist |
+| Live online collaboration | 🟡 | Basic implementation exists |
