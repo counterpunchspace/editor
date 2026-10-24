@@ -11927,31 +11927,77 @@ export class OutlineEditor {
         const activeDragged: SnapCandidate[] = [];
 
         const activeLayerData = this.getCurrentLayerDataFromStack();
-        if (includeGeneralSnapCandidates && activeLayerData?.shapes) {
-            activeLayerData.shapes.forEach((shape, ci) => {
-                const contour = getEditableContour(shape);
-                if (!contour) return;
-                contour.nodes.forEach((node, ni) => {
-                    if (!isOnCurveNode(node)) return;
+        if (includeGeneralSnapCandidates && activeLayerData) {
+            if (activeLayerData.shapes) {
+                activeLayerData.shapes.forEach((shape, ci) => {
+                    const contour = getEditableContour(shape);
+                    if (!contour) return;
+                    contour.nodes.forEach((node, ni) => {
+                        if (!isOnCurveNode(node)) return;
+                        if (
+                            drawingTip &&
+                            drawingTip.contourIndex === ci &&
+                            drawingTip.nodeIndex === ni
+                        ) {
+                            return;
+                        }
+                        const c: SnapCandidate = {
+                            x: node.x,
+                            y: node.y,
+                            source: 'active'
+                        };
+                        if (draggedKeys.has(`${ci}:${ni}`)) {
+                            activeDragged.push(c);
+                        } else {
+                            activeNonDragged.push(c);
+                        }
+                    });
+                });
+            }
+            const draggedAnchorIndices = this.isDraggingAnchor
+                ? new Set(this.selectedAnchors)
+                : null;
+            (activeLayerData.anchors || []).forEach(
+                (anchor: { x?: number; y?: number }, index: number) => {
+                    const x = anchor?.x;
+                    const y = anchor?.y;
                     if (
-                        drawingTip &&
-                        drawingTip.contourIndex === ci &&
-                        drawingTip.nodeIndex === ni
+                        typeof x !== 'number' ||
+                        typeof y !== 'number' ||
+                        !Number.isFinite(x) ||
+                        !Number.isFinite(y)
                     ) {
                         return;
                     }
-                    const c: SnapCandidate = {
-                        x: node.x,
-                        y: node.y,
+                    const candidate: SnapCandidate = {
+                        x,
+                        y,
                         source: 'active'
                     };
-                    if (draggedKeys.has(`${ci}:${ni}`)) {
-                        activeDragged.push(c);
+                    if (draggedAnchorIndices?.has(index)) {
+                        activeDragged.push(candidate);
                     } else {
-                        activeNonDragged.push(c);
+                        activeNonDragged.push(candidate);
                     }
+                }
+            );
+            for (const anchor of this._transientAnchors) {
+                if (
+                    this._transientDrag &&
+                    anchor.pluginId === this._transientDrag.pluginId &&
+                    anchor.name === this._transientDrag.name
+                ) {
+                    continue;
+                }
+                if (!Number.isFinite(anchor.x) || !Number.isFinite(anchor.y)) {
+                    continue;
+                }
+                activeNonDragged.push({
+                    x: anchor.x,
+                    y: anchor.y,
+                    source: 'active'
                 });
-            });
+            }
         }
 
         const pairedCandidates: SnapCandidate[] = [];

@@ -473,6 +473,95 @@ describe('Outline Editing canonical behavior', () => {
         pointerSpy.mockRestore();
     });
 
+    test('snap candidates include every anchor of the active glyph except the one being dragged', () => {
+        activateEditableLayer(canvas, {
+            width: 520,
+            shapes: [
+                {
+                    nodes: [
+                        { x: 0, y: 0, nodetype: 'Move', smooth: false },
+                        { x: 40, y: 80, nodetype: 'Line', smooth: false }
+                    ],
+                    closed: false
+                }
+            ],
+            anchors: [
+                { name: 'top', x: 15, y: 15 },
+                { name: 'bottom', x: 90, y: 40 }
+            ]
+        });
+        canvas.viewportManager.scale = 1;
+        canvas.outlineEditor._transientAnchors = [
+            {
+                pluginId: 'de.yanone.harakat',
+                name: 'harakat',
+                x: 110,
+                y: 70,
+                defaultX: 90
+            }
+        ];
+        canvas.outlineEditor.isDraggingAnchor = true;
+        canvas.outlineEditor.selectedAnchors = [0];
+
+        const whileDragging = canvas.outlineEditor._buildSnapCandidateCache({
+            x: 15,
+            y: 15
+        });
+        const activeWhileDragging = whileDragging.allDragCandidates.filter(
+            (candidate) => candidate.source === 'active'
+        );
+        expect(activeWhileDragging).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ x: 90, y: 40 }),
+                expect.objectContaining({ x: 110, y: 70 })
+            ])
+        );
+        expect(
+            activeWhileDragging.some(
+                (candidate) => candidate.x === 15 && candidate.y === 15
+            )
+        ).toBe(false);
+
+        canvas.outlineEditor._transientDrag = {
+            pluginId: 'de.yanone.harakat',
+            name: 'harakat',
+            x: 200,
+            y: 200,
+            defaultX: 90
+        };
+        const whileDraggingBlue = canvas.outlineEditor._buildSnapCandidateCache(
+            { x: 15, y: 15 }
+        );
+        expect(
+            whileDraggingBlue.allDragCandidates.some(
+                (candidate) =>
+                    candidate.source === 'active' &&
+                    candidate.x === 110 &&
+                    candidate.y === 70
+            )
+        ).toBe(false);
+
+        canvas.outlineEditor.isDraggingAnchor = false;
+        canvas.outlineEditor.selectedAnchors = [];
+        canvas.outlineEditor._transientDrag = null;
+        canvas.outlineEditor.isDraggingPoint = true;
+        canvas.outlineEditor.selectedPoints = [
+            { contourIndex: 0, nodeIndex: 1 }
+        ];
+        canvas.outlineEditor._snapDragStartMouseX = 40;
+        canvas.outlineEditor._snapDragStartMouseY = 80;
+        canvas.outlineEditor._snapDragStartNodePos = { x: 40, y: 80 };
+        canvas.outlineEditor._snapCandidateCache =
+            canvas.outlineEditor._buildSnapCandidateCache({ x: 40, y: 80 });
+
+        expect(
+            canvas.outlineEditor._applySnapToDelta(48, -40, 88, 40, 40, 80)
+        ).toEqual({ deltaX: 50, deltaY: -40 });
+        expect(
+            canvas.outlineEditor._applySnapToDelta(68, -10, 108, 70, 40, 80)
+        ).toEqual({ deltaX: 70, deltaY: -10 });
+    });
+
     test('alt toggling during smooth on-curve dragging freezes the handles and slides only the on-curve point between them', () => {
         const saveLayerDataSpy = jest
             .spyOn(canvas.outlineEditor, 'saveLayerData')
