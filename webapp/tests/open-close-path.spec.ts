@@ -1523,7 +1523,7 @@ test.describe('Cut title-bar tool', () => {
             outlineEditor.setCommandKeyPressed(false, false);
             return snapshot;
         });
-        expect(cmdHoverBadge.highlightedTool).toBe('select');
-        expect(cmdHoverBadge.pointerBadge).toBeNull();
+        expect(cmdHoverBadge.highlightedTool).toBe('pen');
+        expect(cmdHoverBadge.pointerBadge).toBe('cut');
     });
 });

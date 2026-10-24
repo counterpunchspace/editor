@@ -4,7 +4,7 @@ import { focusView, waitForCanvasReady } from './helpers/snapshot-helper';
 /**
  * Live browser coverage for the outline-editor gap fixes:
  * axis snap of open ends, Shift-drag on the drag-origin axis, empty-selection
- * Cmd/Ctrl toggle, macOS Ctrl+click, 100× nudge, shortcuts while
+ * Shift toggle, macOS Ctrl+click, 100× nudge, shortcuts while
  * the canvas is not focused, and Space preview clearing on blur.
  */
 
@@ -188,6 +188,11 @@ async function enterOutlineEditing(page: Page) {
         outlineEditor.selectedLayerId = 'L1';
         outlineEditor.glyphStack = 'A@L1';
         await outlineEditor.fetchLayerData?.(true, 'A');
+        // Glyph selection starts a 10-frame zoom-and-pan animation that would
+        // overwrite the fixed viewport below between pointer events.
+        for (let frame = 0; frame < 20; frame++) {
+            await new Promise((resolve) => requestAnimationFrame(resolve));
+        }
         const viewport = gc.viewportManager;
         viewport.scale = 1;
         viewport.panX = 500;
@@ -310,10 +315,10 @@ test.describe('Outline editor gap fixes', () => {
         await page.evaluate(() => {
             (window as any).glyphCanvas.outlineEditor.selectedPoints = [];
         });
-        await pointerAt(page, 'mousemove', 220, 220, { metaKey: true });
-        await pointerAt(page, 'mousedown', 220, 220, { metaKey: true });
-        await pointerAt(page, 'mouseup', 220, 220, { metaKey: true });
-        const afterCommandClick = await page.evaluate(() => {
+        await pointerAt(page, 'mousemove', 220, 220, { shiftKey: true });
+        await pointerAt(page, 'mousedown', 220, 220, { shiftKey: true });
+        await pointerAt(page, 'mouseup', 220, 220, { shiftKey: true });
+        const afterShiftClick = await page.evaluate(() => {
             const oe = (window as any).glyphCanvas.outlineEditor;
             return {
                 selected: oe.selectedPoints,
@@ -321,9 +326,9 @@ test.describe('Outline editor gap fixes', () => {
                 shapeCount: oe.layerData.shapes.length
             };
         });
-        expect(afterCommandClick.closed).toBe(true);
-        expect(afterCommandClick.shapeCount).toBe(2);
-        expect(afterCommandClick.selected).toEqual([
+        expect(afterShiftClick.closed).toBe(true);
+        expect(afterShiftClick.shapeCount).toBe(2);
+        expect(afterShiftClick.selected).toEqual([
             { contourIndex: 0, nodeIndex: 2 }
         ]);
 
