@@ -4804,13 +4804,49 @@ export class GlyphCanvasRenderer {
                 const diagonal = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
 
                 this.ctx.save();
-                this.ctx.globalAlpha *=
-                    APP_SETTINGS.OUTLINE_EDITOR
-                        .MEASUREMENT_TOOL_GUIDE_LINES_OPACITY *
-                    this.glyphCanvas.previewChromeOpacity;
-                this.ctx.fillStyle = isDarkTheme ? '#FFFFFF' : '#000000';
-                this.ctx.font = '18px system-ui, -apple-system, sans-serif';
-                this.ctx.textBaseline = 'bottom';
+                this.ctx.globalAlpha = this.glyphCanvas.previewChromeOpacity;
+                const labelStyle = getComputedStyle(document.documentElement);
+                const labelBackground = labelStyle
+                    .getPropertyValue('--background-primary')
+                    .trim();
+                const labelText = labelStyle
+                    .getPropertyValue('--text-primary')
+                    .trim();
+                const dragLabelFont =
+                    '18px system-ui, -apple-system, sans-serif';
+                const drawDragDistanceLabel = (
+                    text: string,
+                    x: number,
+                    y: number,
+                    align: CanvasTextAlign,
+                    baseline: CanvasTextBaseline
+                ) => {
+                    this.ctx.font = dragLabelFont;
+                    this.ctx.textAlign = align;
+                    this.ctx.textBaseline = baseline;
+                    const textWidth = this.ctx.measureText(text).width;
+                    const fontSize = 18;
+                    const padX = 5;
+                    const padY = 3;
+                    const chipWidth = textWidth + padX * 2;
+                    const chipHeight = fontSize + padY * 2;
+                    let left = x - padX;
+                    if (align === 'center') {
+                        left = x - chipWidth / 2;
+                    } else if (align === 'right') {
+                        left = x - chipWidth + padX;
+                    }
+                    let top = y - padY;
+                    if (baseline === 'middle') {
+                        top = y - chipHeight / 2;
+                    } else if (baseline === 'bottom') {
+                        top = y - chipHeight + padY;
+                    }
+                    this.ctx.fillStyle = labelBackground;
+                    this.ctx.fillRect(left, top, chipWidth, chipHeight);
+                    this.ctx.fillStyle = labelText;
+                    this.ctx.fillText(text, x, y);
+                };
 
                 // Width label on top (centered between origin and mouse X)
                 const widthLabelX =
@@ -4819,11 +4855,12 @@ export class GlyphCanvasRenderer {
                     originCanvasY,
                     this.glyphCanvas.mouseCanvasY
                 );
-                this.ctx.textAlign = 'center';
-                this.ctx.fillText(
+                drawDragDistanceLabel(
                     `${Math.round(deltaX)}`,
                     widthLabelX,
-                    widthLabelY - 9
+                    widthLabelY - 9,
+                    'center',
+                    'bottom'
                 );
 
                 // Height label on the right (centered between origin and mouse Y)
@@ -4833,35 +4870,27 @@ export class GlyphCanvasRenderer {
                 );
                 const heightLabelY =
                     (originCanvasY + this.glyphCanvas.mouseCanvasY) / 2;
-                this.ctx.textAlign = 'left';
-                this.ctx.textBaseline = 'middle';
-                this.ctx.fillText(
+                drawDragDistanceLabel(
                     `${Math.round(deltaY)}`,
                     heightLabelX + 9,
-                    heightLabelY
+                    heightLabelY,
+                    'left',
+                    'middle'
                 );
 
                 // Diagonal distance at mouse position (outer corner)
-                const diagonalLabelX = this.glyphCanvas.mouseCanvasX;
-                const diagonalLabelY = this.glyphCanvas.mouseCanvasY;
-
-                // Align left if mouse is right of origin, right if mouse is left of origin
                 const mouseIsRightOfOrigin =
                     this.glyphCanvas.mouseCanvasX > originCanvasX;
-                this.ctx.textAlign = mouseIsRightOfOrigin ? 'left' : 'right';
-
-                // Position above if mouse is above origin, below if mouse is below origin
                 const mouseIsAboveOrigin =
                     this.glyphCanvas.mouseCanvasY < originCanvasY;
-                this.ctx.textBaseline = mouseIsAboveOrigin ? 'bottom' : 'top';
-
-                const diagonalOffsetX = mouseIsRightOfOrigin ? 9 : -9;
-                const diagonalOffsetY = mouseIsAboveOrigin ? -9 : 9;
-
-                this.ctx.fillText(
+                drawDragDistanceLabel(
                     `⌀${Math.round(diagonal)}`,
-                    diagonalLabelX + diagonalOffsetX,
-                    diagonalLabelY + diagonalOffsetY
+                    this.glyphCanvas.mouseCanvasX +
+                        (mouseIsRightOfOrigin ? 9 : -9),
+                    this.glyphCanvas.mouseCanvasY +
+                        (mouseIsAboveOrigin ? -9 : 9),
+                    mouseIsRightOfOrigin ? 'left' : 'right',
+                    mouseIsAboveOrigin ? 'bottom' : 'top'
                 );
 
                 this.ctx.restore();
