@@ -6947,6 +6947,62 @@ describe('WindowSync', () => {
         linkedBridge.destroy();
     });
 
+    test('linked window can undo an anchor drag relayed as a collaboration envelope', () => {
+        const mainFontJson = makeAAdieresisFont();
+        const linkedFontJson = cloneValue(mainFontJson);
+        const mainBridge = new ChangeBridge('envelope-undo-main');
+        const linkedBridge = new ChangeBridge('envelope-undo-linked');
+        const layerId = 'master-regular';
+        mainBridge.initFromJson(mainFontJson);
+        linkedBridge.setFontJson(linkedFontJson);
+        linkedBridge.applyDocumentSetState(mainBridge.encodeDocumentSet());
+        const mainSync = new WindowSync(mainBridge, 'font-channel-env-undo');
+        const linkedSync = new WindowSync(
+            linkedBridge,
+            'font-channel-env-undo'
+        );
+
+        const aLayer = findGlyphLayer(mainFontJson, 'a', layerId);
+        const adieresisLayer = findGlyphLayer(
+            mainFontJson,
+            'adieresis',
+            layerId
+        );
+        aLayer.anchors[0].x -= 10;
+        aLayer.anchors[0].y += 80;
+        adieresisLayer.shapes[1].transform.translation[1] = aLayer.anchors[0].y;
+        const targets = [
+            { glyphName: 'a', layerId },
+            { glyphName: 'adieresis', layerId }
+        ];
+        mainBridge.syncLayersFromJson(
+            targets,
+            'Drag anchor',
+            undefined,
+            undefined,
+            undefined,
+            targets,
+            'mouse-drag-anchor',
+            'mouse-drag-anchor',
+            null
+        );
+        flushTimers();
+
+        expect(linkedBridge.canUndo('a', layerId)).toBe(true);
+        expect(linkedBridge.undo('a', layerId)).not.toBeNull();
+        flushTimers();
+        const anchorX = (bridge) =>
+            fromYType(bridge.getYValue(['glyphs', 'a', 'layers', layerId]))
+                .anchors[0].x;
+        expect(anchorX(linkedBridge)).toBe(300);
+        expect(anchorX(mainBridge)).toBe(300);
+
+        mainSync.destroy();
+        linkedSync.destroy();
+        mainBridge.destroy();
+        linkedBridge.destroy();
+    });
+
     // Regression: bundling the full Yjs state on every yjs-update used
     // to add 100-200 ms of synchronous work per local edit (full-doc
     // encode + typed-array \u2192 plain-array copy of ~3 MB). Ordinary

@@ -1554,19 +1554,27 @@ test.describe('three-window sync scenarios', () => {
                 glyphNames
             );
 
-            const canUndoAfterOwnerEdit = await inviteePage.evaluate(() => {
-                const bridge = (window as any).changeBridge;
-                return {
-                    inviteeCanUndo: !!bridge?.canUndo?.('a'),
-                    path: (window as any).fontManager?.currentFont?.path ?? null
-                };
-            });
+            const canUndoAfterOwnerEdit = await inviteePage.evaluate(
+                (layerId) => {
+                    const bridge = (window as any).changeBridge;
+                    return {
+                        inviteeCanUndo: !!bridge?.canUndo?.('a', layerId),
+                        path:
+                            (window as any).fontManager?.currentFont?.path ??
+                            null
+                    };
+                },
+                thinLayerId
+            );
             expect(canUndoAfterOwnerEdit.inviteeCanUndo).toBe(false);
 
-            const linkedCanUndoOwnerEdit = await linkedPage.evaluate(() => {
-                const bridge = (window as any).changeBridge;
-                return !!bridge?.canUndo?.('a');
-            });
+            const linkedCanUndoOwnerEdit = await linkedPage.evaluate(
+                (layerId) => {
+                    const bridge = (window as any).changeBridge;
+                    return !!bridge?.canUndo?.('a', layerId);
+                },
+                thinLayerId
+            );
             expect(linkedCanUndoOwnerEdit).toBe(true);
 
             const inviteeBSync = await getLastFontModelSyncTime(mainPage);
@@ -1595,7 +1603,12 @@ test.describe('three-window sync scenarios', () => {
                     'test-sync',
                     null
                 );
-                return { glyphName: glyph.name, oldX, newX: node.x };
+                return {
+                    glyphName: glyph.name,
+                    layerId: layer.id,
+                    oldX,
+                    newX: node.x
+                };
             });
             expect(inviteeEdit.newX).toBe(inviteeEdit.oldX + 21);
             await waitForRemoteChange(mainPage, inviteeBSync);
@@ -1611,17 +1624,11 @@ test.describe('three-window sync scenarios', () => {
             );
 
             const ownerCannotUndoInvitee = await mainPage.evaluate(
-                (glyphName) => {
+                ({ glyphName, layerId }) => {
                     const bridge = (window as any).changeBridge;
-                    const before = bridge.getYValue([
-                        'glyphs',
-                        glyphName,
-                        'layers'
-                    ]);
-                    void before;
-                    return !!bridge?.canUndo?.(glyphName);
+                    return !!bridge?.canUndo?.(glyphName, layerId);
                 },
-                inviteeEdit.glyphName
+                inviteeEdit
             );
             // Owner may still undo their own earlier edits; undoing must not revert invitee-only delta.
             const ownerWidthBeforeUndo = await mainPage.evaluate(
@@ -1632,9 +1639,9 @@ test.describe('three-window sync scenarios', () => {
                 },
                 inviteeEdit.glyphName
             );
-            await mainPage.evaluate((glyphName) => {
-                (window as any).changeBridge?.undo?.(glyphName);
-            }, inviteeEdit.glyphName);
+            await mainPage.evaluate(({ glyphName, layerId }) => {
+                (window as any).changeBridge?.undo?.(glyphName, layerId);
+            }, inviteeEdit);
             const ownerWidthAfterUndo = await mainPage.evaluate((glyphName) => {
                 const fontModel = (window as any).currentFontModel;
                 const glyph = fontModel.findGlyph(glyphName);
