@@ -8395,10 +8395,9 @@ describe('GlyphCanvas measurement overlay', () => {
         };
 
         const intersectionSpy = jest
-            .spyOn(Layer.prototype, 'getIntersectionsOnLine')
-            .mockImplementation(function () {
-                expect(this.toJSON().width).toBe(530);
-                expect(this.toJSON().shapes[0].nodes[1].x).toBe(430);
+            .spyOn(Layer, 'intersectPathsWithLine')
+            .mockImplementation((paths) => {
+                expect(paths[0].nodes[1].x).toBe(430);
                 return [];
             });
 
