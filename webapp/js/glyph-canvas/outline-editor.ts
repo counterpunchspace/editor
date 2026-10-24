@@ -3461,7 +3461,8 @@ export class OutlineEditor {
     private usesSharedSnapDrag(): boolean {
         return (
             (this.isDraggingPoint && !this.isSlidingSmoothPointAlongCurve) ||
-            this.isDraggingAnchor
+            this.isDraggingAnchor ||
+            this.isDraggingTransientAnchor
         );
     }
 
@@ -10687,6 +10688,9 @@ export class OutlineEditor {
             this._hasMoved = false;
             this._dragType = 'transient-anchor';
             this._transientDrag = { ...this.hoveredTransientAnchor };
+            this.glyphCanvas.lastMouseX = e.clientX;
+            this.glyphCanvas.lastMouseY = e.clientY;
+            this.resetDragGestureState();
             this.glyphCanvas.render();
             return;
         }
@@ -12171,6 +12175,9 @@ export class OutlineEditor {
      * layer data, or null if none is available.
      */
     private _getPrimaryDragNodePos(): { x: number; y: number } | null {
+        if (this.isDraggingTransientAnchor && this._transientDrag) {
+            return { x: this._transientDrag.x, y: this._transientDrag.y };
+        }
         const currentLayerData = this.getCurrentLayerDataFromStack();
         if (!currentLayerData) return null;
         if (this.isDraggingAnchor) {
@@ -13122,6 +13129,23 @@ export class OutlineEditor {
     }
 
     /**
+     * Clear the pointer origin, per-frame delta baseline, and snap session
+     * so the next drag — of any object — starts from its own position.
+     */
+    private resetDragGestureState(): void {
+        this.lastGlyphX = null;
+        this.lastGlyphY = null;
+        this._shiftDragOriginX = null;
+        this._shiftDragOriginY = null;
+        this.activeSnapTarget = null;
+        this.snapDraggedNaturalPos = null;
+        this._snapDragStartMouseX = null;
+        this._snapDragStartMouseY = null;
+        this._snapDragStartNodePos = null;
+        this._snapCandidateCache = null;
+    }
+
+    /**
      * The first pointer sample of a drag is the selection's origin. Shift
      * projects the pointer onto the horizontal or vertical line through that
      * origin, including when Shift goes down after the drag has started.
@@ -13174,18 +13198,6 @@ export class OutlineEditor {
             return;
         }
 
-        if (this.isDraggingTransientAnchor && this._transientDrag) {
-            const point = this.constrainShiftDragPointer(
-                this.transformMouseToComponentSpace(),
-                e.shiftKey
-            );
-            this._transientDrag.x = point.glyphX;
-            this._transientDrag.y = point.glyphY;
-            this._hasMoved = true;
-            this.glyphCanvas.render();
-            return;
-        }
-
         const rawPointer = this.isDraggingGuide
             ? this.transformMouseToRootSpace()
             : this.transformMouseToComponentSpace();
@@ -13227,7 +13239,9 @@ export class OutlineEditor {
 
         if (
             this.usesSharedSnapDrag() &&
-            (this.selectedPoints.length > 0 || this.selectedAnchors.length > 0)
+            (this.selectedPoints.length > 0 ||
+                this.selectedAnchors.length > 0 ||
+                (this.isDraggingTransientAnchor && this._transientDrag))
         ) {
             // Read primary node position once for this frame (avoids a
             // redundant getCurrentLayerDataFromStack inside _applySnapToDelta)
@@ -13320,6 +13334,7 @@ export class OutlineEditor {
             this.updatePointDragDeltaX(effectiveDeltaX);
         }
         this._updateDraggedAnchors(effectiveDeltaX, effectiveDeltaY);
+        this._updateDraggedTransientAnchor(effectiveDeltaX, effectiveDeltaY);
         this._updateDraggedSidebearing(effectiveDeltaX);
 
         const now = performance.now();
@@ -13333,7 +13348,11 @@ export class OutlineEditor {
             this.updateComponentDragDeltaX(deltaX);
         }
 
-        if (this.isDraggingComponent || this.usesSharedSnapDrag()) {
+        if (
+            this.isDraggingComponent ||
+            (this.isDraggingPoint && !this.isSlidingSmoothPointAlongCurve) ||
+            this.isDraggingAnchor
+        ) {
             this.schedulePendingDragMetricsUpdate();
         }
 
@@ -13352,7 +13371,11 @@ export class OutlineEditor {
         } else if (this.isSlidingSmoothPointAlongCurve) {
             // Sliding a smooth point is applied directly to the model so linked
             // layers stay in sync. Persist once on mouse up.
-        } else if (!this.isDraggingAnchor && !this.isDraggingSidebearing) {
+        } else if (
+            !this.isDraggingAnchor &&
+            !this.isDraggingSidebearing &&
+            !this.isDraggingTransientAnchor
+        ) {
             if (
                 shouldPersistDragFrame &&
                 !this._pendingDragMetricsUpdate &&
@@ -13640,6 +13663,14 @@ export class OutlineEditor {
         this._snappedOpenPathEndpointTarget = bestTarget;
     }
 
+    _updateDraggedTransientAnchor(deltaX: number, deltaY: number): void {
+        if (!this.isDraggingTransientAnchor || !this._transientDrag) {
+            return;
+        }
+        this._transientDrag.x += deltaX;
+        this._transientDrag.y += deltaY;
+    }
+
     _updateDraggedAnchors(deltaX: number, deltaY: number): void {
         const currentLayerData = this.getCurrentLayerDataFromStack();
         if (!currentLayerData) return;
@@ -13720,6 +13751,7 @@ export class OutlineEditor {
                     this.reloadTransientAnchors();
                 });
             }
+            this.resetDragGestureState();
             this.glyphCanvas.render();
             return;
         }
@@ -13778,21 +13810,13 @@ export class OutlineEditor {
         this.isDraggingGuide = false;
         this.isResizingSelection = false;
         this.lastPointDragShiftKey = null;
-        this._shiftDragOriginX = null;
-        this._shiftDragOriginY = null;
         this._pointDragPreserveHandlePositions = false;
         this._offCurveAltDragConstraint = null;
         this._smoothOnCurveAltDragConstraint = null;
         const selectionResizeSnapshot = this.selectionResizeSnapshot;
         this.selectionResizeSnapshot = null;
 
-        // Reset node snap state
-        this.activeSnapTarget = null;
-        this.snapDraggedNaturalPos = null;
-        this._snapDragStartMouseX = null;
-        this._snapDragStartMouseY = null;
-        this._snapDragStartNodePos = null;
-        this._snapCandidateCache = null;
+        this.resetDragGestureState();
         this._lastDragSaveTime = 0;
         this._lastLiveAnchorRefreshTime = 0;
         this._lastPropertyPanelUpdateTime = 0;
@@ -14953,6 +14977,27 @@ export class OutlineEditor {
         this.rememberTransientAnchor(selected);
         this.glyphCanvas.render();
         this.scheduleTransientAnchorKeyboardCommit();
+    }
+
+    private getArrowKeyNudgeDelta(e: KeyboardEvent): {
+        dx: number;
+        dy: number;
+    } | null {
+        const multiplier =
+            e.shiftKey && (e.metaKey || e.ctrlKey) ? 100 : e.shiftKey ? 10 : 1;
+        if (e.key === 'ArrowLeft') {
+            return { dx: -multiplier, dy: 0 };
+        }
+        if (e.key === 'ArrowRight') {
+            return { dx: multiplier, dy: 0 };
+        }
+        if (e.key === 'ArrowUp') {
+            return { dx: 0, dy: multiplier };
+        }
+        if (e.key === 'ArrowDown') {
+            return { dx: 0, dy: -multiplier };
+        }
+        return null;
     }
 
     private scheduleTransientAnchorKeyboardCommit(): void {
@@ -20401,32 +20446,15 @@ export class OutlineEditor {
         }
 
         // Handle arrow keys for the plugin anchor without touching font anchors.
-        if (
-            this.selectedTransientAnchor &&
-            (e.key === 'ArrowLeft' ||
-                e.key === 'ArrowRight' ||
-                e.key === 'ArrowUp' ||
-                e.key === 'ArrowDown')
-        ) {
+        const transientNudge = this.selectedTransientAnchor
+            ? this.getArrowKeyNudgeDelta(e)
+            : null;
+        if (transientNudge) {
             e.preventDefault();
-            const multiplier =
-                e.shiftKey && (e.metaKey || e.ctrlKey)
-                    ? 100
-                    : e.shiftKey
-                      ? 10
-                      : 1;
-            let dx = 0;
-            let dy = 0;
-            if (e.key === 'ArrowLeft') {
-                dx = -multiplier;
-            } else if (e.key === 'ArrowRight') {
-                dx = multiplier;
-            } else if (e.key === 'ArrowUp') {
-                dy = multiplier;
-            } else if (e.key === 'ArrowDown') {
-                dy = -multiplier;
-            }
-            this.nudgeSelectedTransientAnchor(dx, dy);
+            this.nudgeSelectedTransientAnchor(
+                transientNudge.dx,
+                transientNudge.dy
+            );
             return;
         }
 
@@ -20438,32 +20466,13 @@ export class OutlineEditor {
                 this.selectedComponents.length > 0 ||
                 this.selectedSidebearingHandle)
         ) {
-            const multiplier =
-                e.shiftKey && (e.metaKey || e.ctrlKey)
-                    ? 100
-                    : e.shiftKey
-                      ? 10
-                      : 1;
+            const nudge = this.getArrowKeyNudgeDelta(e);
             const preMoveDesc = this.getCurrentKeyboardSelectionHistoryDesc();
-            if (
-                e.key === 'ArrowLeft' ||
-                e.key === 'ArrowRight' ||
-                e.key === 'ArrowUp' ||
-                e.key === 'ArrowDown'
-            ) {
+            if (nudge) {
                 e.preventDefault();
                 this.queueKeyboardPreviewMovement(() => {
-                    let dx = 0;
-                    let dy = 0;
-                    if (e.key === 'ArrowLeft') {
-                        dx = -multiplier;
-                    } else if (e.key === 'ArrowRight') {
-                        dx = multiplier;
-                    } else if (e.key === 'ArrowUp') {
-                        dy = multiplier;
-                    } else if (e.key === 'ArrowDown') {
-                        dy = -multiplier;
-                    }
+                    const dx = nudge.dx;
+                    const dy = nudge.dy;
 
                     let anchorMoved = false;
                     let sidebearingMoved = false;

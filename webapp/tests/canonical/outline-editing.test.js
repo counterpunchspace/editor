@@ -320,6 +320,159 @@ describe('Outline Editing canonical behavior', () => {
         }
     });
 
+    function beginTransientAnchorDrag(anchor) {
+        canvas.outlineEditor.hoveredTransientAnchor = { ...anchor };
+        canvas.outlineEditor._transientAnchors = [{ ...anchor }];
+        canvas.outlineEditor.onSingleClick({
+            clientX: 10,
+            clientY: 20,
+            detail: 1,
+            shiftKey: false,
+            altKey: false,
+            metaKey: false,
+            ctrlKey: false
+        });
+    }
+
+    function movePointer(pointer, shiftKey) {
+        canvas.outlineEditor.onMouseMove({
+            clientX: 11,
+            clientY: 21,
+            shiftKey,
+            altKey: false,
+            metaKey: false,
+            ctrlKey: false
+        });
+    }
+
+    test('shift lock on a blue anchor keeps the anchor start line, not the click', () => {
+        activateEditableLayer(canvas, { shapes: [], anchors: [] });
+        canvas.viewportManager.scale = 1;
+        const anchor = {
+            pluginId: 'de.yanone.harakat',
+            name: 'harakat',
+            x: 100,
+            y: 400,
+            defaultX: 100
+        };
+        let pointer = { glyphX: 103, glyphY: 406 };
+        const pointerSpy = jest
+            .spyOn(canvas.outlineEditor, 'transformMouseToComponentSpace')
+            .mockImplementation(() => pointer);
+
+        beginTransientAnchorDrag(anchor);
+        movePointer(pointer, false);
+        pointer = { glyphX: 150, glyphY: 408 };
+        movePointer(pointer, false);
+        pointer = { glyphX: 180, glyphY: 412 };
+        movePointer(pointer, true);
+
+        expect(canvas.outlineEditor._transientDrag.y).toBe(400);
+        expect(canvas.outlineEditor._transientDrag.x).not.toBe(100);
+        pointerSpy.mockRestore();
+    });
+
+    test('a blue anchor drag does not leave its shift origin for the next object', async () => {
+        activateEditableLayer(canvas, {
+            shapes: [
+                {
+                    nodes: [
+                        { x: 0, y: 0, nodetype: 'Move', smooth: false },
+                        { x: 20, y: 40, nodetype: 'Line', smooth: false },
+                        { x: 80, y: 40, nodetype: 'Line', smooth: false }
+                    ],
+                    closed: false
+                }
+            ],
+            anchors: []
+        });
+        canvas.viewportManager.scale = 1;
+        const anchor = {
+            pluginId: 'de.yanone.harakat',
+            name: 'harakat',
+            x: 100,
+            y: 400,
+            defaultX: 100
+        };
+        let pointer = { glyphX: 103, glyphY: 406 };
+        const pointerSpy = jest
+            .spyOn(canvas.outlineEditor, 'transformMouseToComponentSpace')
+            .mockImplementation(() => pointer);
+
+        beginTransientAnchorDrag(anchor);
+        movePointer(pointer, false);
+        pointer = { glyphX: 150, glyphY: 406 };
+        movePointer(pointer, true);
+        await canvas.outlineEditor.onMouseUp({
+            clientX: 12,
+            clientY: 22,
+            shiftKey: true,
+            altKey: false,
+            metaKey: false,
+            ctrlKey: false
+        });
+
+        canvas.outlineEditor.hoveredTransientAnchor = null;
+        canvas.outlineEditor.hoveredPointIndex = {
+            contourIndex: 0,
+            nodeIndex: 1
+        };
+        canvas.outlineEditor.onSingleClick({
+            clientX: 30,
+            clientY: 40,
+            detail: 1,
+            shiftKey: false,
+            altKey: false,
+            metaKey: false,
+            ctrlKey: false
+        });
+        pointer = { glyphX: 20, glyphY: 40 };
+        movePointer(pointer, false);
+        pointer = { glyphX: 50, glyphY: 70 };
+        movePointer(pointer, true);
+
+        const dragged = canvas.outlineEditor.layerData.shapes[0].nodes[1];
+        expect(dragged.y).toBe(40);
+        expect(dragged.x).toBe(50);
+        pointerSpy.mockRestore();
+    });
+
+    test('a blue anchor snaps to an on-curve node like a font anchor', () => {
+        activateEditableLayer(canvas, {
+            shapes: [
+                {
+                    nodes: [
+                        { x: 0, y: 0, nodetype: 'Move', smooth: false },
+                        { x: 250, y: 400, nodetype: 'Line', smooth: false }
+                    ],
+                    closed: false
+                }
+            ],
+            anchors: []
+        });
+        canvas.viewportManager.scale = 1;
+        const anchor = {
+            pluginId: 'de.yanone.harakat',
+            name: 'harakat',
+            x: 200,
+            y: 400,
+            defaultX: 200
+        };
+        let pointer = { glyphX: 203, glyphY: 406 };
+        const pointerSpy = jest
+            .spyOn(canvas.outlineEditor, 'transformMouseToComponentSpace')
+            .mockImplementation(() => pointer);
+
+        beginTransientAnchorDrag(anchor);
+        movePointer(pointer, false);
+        pointer = { glyphX: 251, glyphY: 406 };
+        movePointer(pointer, false);
+
+        expect(canvas.outlineEditor._transientDrag.x).toBe(250);
+        expect(canvas.outlineEditor._transientDrag.y).toBe(400);
+        pointerSpy.mockRestore();
+    });
+
     test('alt toggling during smooth on-curve dragging freezes the handles and slides only the on-curve point between them', () => {
         const saveLayerDataSpy = jest
             .spyOn(canvas.outlineEditor, 'saveLayerData')
