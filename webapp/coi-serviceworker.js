@@ -437,8 +437,8 @@ if (typeof window === 'undefined') {
             scope += '/';
         }
 
-        // The reload exists only to gain cross-origin isolation. Staging
-        // already sends those headers, so SharedArrayBuffer is live and a
+        // The reload exists only to gain cross-origin isolation. Pages
+        // sends those headers from _headers, so SharedArrayBuffer is live and a
         // reload is a no-op that, while the browser is offline, becomes
         // Chrome's network error page and drops the open font.
         const reloadForCoiBootstrap = () => {
