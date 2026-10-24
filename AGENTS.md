@@ -133,6 +133,7 @@ Do it in the same change. Never hand-edit generated docs.
 - Reload through MCP non-interactively; pick paths that avoid or auto-accept confirm dialogs.
 - Text shaping and render issues: read `window.__liveTextDiagnostics.entries` (dev/test mode, latest 2,000 entries, `live-text-diagnostics.ts`) instead of adding logs.
 - Playwright stays headless with the HTML report `open: 'never'`. Don't use `--ui`, `--debug`, `--headed` or codegen unless the user asks.
+- Add a Playwright spec only when the behavior absolutely cannot be proven with Jest unit tests. Playwright specs add a lot of CI runtime. Prove model, sync, and math logic with Jest unit tests instead.
 
 ## Push and release (agents)
 
