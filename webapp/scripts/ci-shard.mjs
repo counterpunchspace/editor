@@ -149,7 +149,8 @@ const GROUPS = {
             'tests/automatic-adieresis-anchor-browser.spec.ts',
             'tests/anchor-drag-no-shape-corruption.spec.ts',
             'tests/glyph-selection-restore.spec.ts',
-            'tests/keyboard-after-drag-handoff.spec.ts'
+            'tests/keyboard-after-drag-handoff.spec.ts',
+            'tests/nested-component-measurement.spec.ts'
         ],
         'python-sync-compile': [
             'tests/change-bridge-cross-window.spec.ts',
@@ -168,7 +169,10 @@ const GROUPS = {
         'quota': ['tests/cloud-collab-quota.spec.ts'],
         'deletion': ['tests/cloud-collab-deletion.spec.ts'],
         'deletion-glyph': ['tests/cloud-collab-deletion-glyph.spec.ts'],
-        'sparse-closure': ['tests/cloud-collab-sparse-closure.spec.ts'],
+        'sparse-closure': [
+            'tests/cloud-collab-sparse-closure.spec.ts',
+            'tests/cloud-collab-master-topology.spec.ts'
+        ],
         'three-window-sync': ['tests/cloud-collab-three-window-sync.spec.ts'],
         'three-window-relay': ['tests/cloud-collab-three-window-relay.spec.ts'],
         'reconnect': ['tests/cloud-collab-three-window-reconnect.spec.ts']
