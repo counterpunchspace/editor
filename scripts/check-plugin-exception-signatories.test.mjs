@@ -121,3 +121,20 @@ test("a Cursor co-author passes without being listed", () => {
     });
     assert.deepEqual(failures, []);
 });
+
+test("a Claude co-author passes without being listed", () => {
+    const failures = evaluate({
+        baseLogins: ["yanone"],
+        headLogins: ["yanone"],
+        commits: [
+            {
+                sha: "h",
+                login: "yanone",
+                email: "post@yanone.de",
+                coauthors: [{ login: null, email: "noreply@anthropic.com" }],
+                addedLogins: [],
+            },
+        ],
+    });
+    assert.deepEqual(failures, []);
+});

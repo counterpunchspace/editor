@@ -16,6 +16,7 @@ const EXEMPT_EMAILS = new Set([
     "138933559+factory-droid[bot]@users.noreply.github.com",
     "223556219+copilot@users.noreply.github.com",
     "cursoragent@cursor.com",
+    "noreply@anthropic.com",
 ]);
 
 function norm(login) {
