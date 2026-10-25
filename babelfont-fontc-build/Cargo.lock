@@ -90,7 +90,7 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 [[package]]
 name = "babelfont"
 version = "0.2.4"
-source = "git+https://github.com/yanone/babelfont-rs?rev=fbd87bf732a4e1c406fa588341f7a80ddd8c9d37#fbd87bf732a4e1c406fa588341f7a80ddd8c9d37"
+source = "git+https://github.com/yanone/babelfont-rs?rev=ac98c2d99252c1bfdf5b7bd2b35c6138cc8a211e#ac98c2d99252c1bfdf5b7bd2b35c6138cc8a211e"
 dependencies = [
  "chrono",
  "csv",
@@ -1875,7 +1875,7 @@ dependencies = [
 [[package]]
 name = "sr-aef"
 version = "0.1.1"
-source = "git+https://github.com/yanone/babelfont-rs?rev=fbd87bf732a4e1c406fa588341f7a80ddd8c9d37#fbd87bf732a4e1c406fa588341f7a80ddd8c9d37"
+source = "git+https://github.com/yanone/babelfont-rs?rev=ac98c2d99252c1bfdf5b7bd2b35c6138cc8a211e#ac98c2d99252c1bfdf5b7bd2b35c6138cc8a211e"
 dependencies = [
  "fea-rs-ast",
  "fontdrasil",

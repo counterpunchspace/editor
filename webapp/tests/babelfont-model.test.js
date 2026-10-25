@@ -3722,7 +3722,10 @@ describe('Babelfont Object Model', () => {
                 )
             ).toEqual([
                 undefined,
-                { 'com.schriftgestalt.Glyphs.alignment': -1 }
+                {
+                    'com.schriftgestalt.Glyphs.alignment': -1,
+                    'com.schriftgestalt.Glyphs.componentAlignmentExplicit': true
+                }
             ]);
             expect(
                 layer.components.map((component) =>
