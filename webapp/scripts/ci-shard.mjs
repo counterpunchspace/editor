@@ -149,8 +149,7 @@ const GROUPS = {
             'tests/automatic-adieresis-anchor-browser.spec.ts',
             'tests/anchor-drag-no-shape-corruption.spec.ts',
             'tests/glyph-selection-restore.spec.ts',
-            'tests/keyboard-after-drag-handoff.spec.ts',
-            'tests/nested-component-measurement.spec.ts'
+            'tests/keyboard-after-drag-handoff.spec.ts'
         ],
         'python-sync-compile': [
             'tests/change-bridge-cross-window.spec.ts',
