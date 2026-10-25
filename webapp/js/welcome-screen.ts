@@ -8,7 +8,7 @@ import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
 
 const console = new Logger('WelcomeScreen');
 
-export const WELCOME_VERSION = 1;
+export const WELCOME_VERSION = 2;
 
 /**
  * Version of the welcome screen last dismissed by the user.
@@ -73,7 +73,7 @@ function showWelcomeModal(): void {
                 </button>
             </div>
             <div class="info-popup-content confirm-dialog-content">
-                <p>This font editor is still in <strong>alpha</strong> stage. Features, code quality, and usability are still under development. See <a href="https://github.com/counterpunchspace/editor#feature-overview" target="_blank" rel="noopener noreferrer">this overview</a> for details.</p>
+                <p>This font editor is in <strong>early beta</strong>. The main features are in place, but some still need finishing, and the interface and workflows still need polish. See <a href="https://github.com/counterpunchspace/editor#feature-overview" target="_blank" rel="noopener noreferrer">this overview</a> for details.</p>
                 <p>Help to improve the experience by <a href="https://github.com/counterpunchspace/editor/issues" target="_blank" rel="noopener noreferrer">reporting bugs or requesting features</a> or <a href="https://github.com/counterpunchspace/editor/discussions" target="_blank" rel="noopener noreferrer">discuss issues</a>.</p>
                 <p>Create awesome fonts!</p>
                 <div class="confirm-dialog-actions">

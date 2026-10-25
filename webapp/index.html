@@ -313,19 +313,13 @@
                                     displayVersion;
                                 const stageLabel =
                                     document.getElementById('app-stage-label');
-                                if (isPreview) {
-                                    if (stageLabel) {
-                                        stageLabel.hidden = true;
-                                    }
-                                    versionSpan.textContent = 'Preview';
-                                    versionSpan.removeAttribute('title');
-                                } else {
-                                    if (stageLabel) {
-                                        stageLabel.hidden = false;
-                                    }
-                                    versionSpan.textContent = version;
-                                    versionSpan.removeAttribute('title');
+                                if (stageLabel) {
+                                    stageLabel.hidden = false;
                                 }
+                                versionSpan.textContent = isPreview
+                                    ? 'Preview'
+                                    : version;
+                                versionSpan.removeAttribute('title');
                             }
                         }
                     })
@@ -412,7 +406,7 @@
                 <h1 class="app-name">
                     Counterpunch
                     <span style="opacity: 0.4"
-                        ><span id="app-stage-label">Alpha </span
+                        ><span id="app-stage-label">Beta </span
                         ><span id="app-version"></span
                     ></span>
                 </h1>

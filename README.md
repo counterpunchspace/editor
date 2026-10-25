@@ -12,7 +12,7 @@ Plugin authors: the marketplace accepts the license expressions listed in the [p
 
 ## Develpoment Stage
 
-Development is in **Alpha** stage (features not complete).
+Development is in **early Beta** stage (main features in place, some still need finishing, UI and UX need polish).
 See [Feature Overview](#feature-overview) for details.
 
 ## Live App
@@ -55,7 +55,7 @@ Run the app locally with `cd webapp && npm run dev`, test with `npm run test`. F
 
 ## Feature Overview
 
-Remember that we’re in **Alpha** stage. "Should work" means you could still encounter problems. [Report them](https://github.com/counterpunchspace/editor/issues).
+Remember that we’re in **Beta** stage. "Should work" means you could still encounter problems. [Report them](https://github.com/counterpunchspace/editor/issues).
 
 Coverage: 🟢 Should work · 🟡 Partial · 🔴 Missing
 
