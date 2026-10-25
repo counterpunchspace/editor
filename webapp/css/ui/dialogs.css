@@ -279,6 +279,43 @@
     margin: 0;
 }
 
+.confirm-dialog-option-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+}
+
+.confirm-dialog-option-row .confirm-dialog-option {
+    flex: 1;
+    align-items: flex-start;
+}
+
+.confirm-dialog-option-row .confirm-dialog-option input {
+    margin-top: 2px;
+}
+
+.confirm-dialog-option-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.confirm-dialog-option-title {
+    font-weight: 600;
+}
+
+.confirm-dialog-option-count {
+    color: var(--text-secondary);
+}
+
+.confirm-dialog-option-description {
+    color: var(--text-secondary);
+}
+
+.confirm-dialog-option-row .confirm-dialog-info-btn {
+    margin-top: 1px;
+}
+
 /* ── Dialog action buttons (Unsaved Changes baseline) ──────────────────────── */
 
 /* Bottom action rows: keep buttons separated from content above. */

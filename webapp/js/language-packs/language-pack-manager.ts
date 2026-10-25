@@ -196,6 +196,37 @@ json.dumps([
         return JSON.parse(String(result));
     }
 
+    /**
+     * Optional `rename_suggestions(glyphs, renames)` hook: each loaded provider
+     * proposes `{old: new}` renames for glyphs it recognises by legacy name.
+     */
+    async renameSuggestions(
+        glyphs: ReadonlyArray<{
+            name: string;
+            codepoints: readonly number[] | undefined;
+            components: readonly string[];
+        }>,
+        renames: Record<string, string>
+    ): Promise<Record<string, string>> {
+        await this.ensureReady();
+        const result = await runHostPythonAsync(`
+import json, builtins
+${ENSURE_COMPOSITION_PROVIDERS}
+glyphs = json.loads(${JSON.stringify(JSON.stringify(glyphs))})
+renames = json.loads(${JSON.stringify(JSON.stringify(renames))})
+found = {}
+for provider in builtins._cp_composition_providers.values():
+    suggest = getattr(provider, "rename_suggestions", None)
+    if not callable(suggest):
+        continue
+    payload = suggest(glyphs, {**renames, **found}) or {}
+    for key, value in payload.items():
+        found.setdefault(key, value)
+json.dumps(found)
+`);
+        return JSON.parse(String(result));
+    }
+
     glyphNameForCodepoint(codepoint: number): string | undefined {
         return glyphDataIndex.getGlyphDataForUnicode([codepoint])?.glyph_name;
     }

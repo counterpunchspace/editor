@@ -13,17 +13,15 @@ function isWhitespaceCharacter(char: string): boolean {
  * Rewrite raw text-buffer syntax for a simultaneous glyph rename map.
  *
  * - `/oldName` explicit tokens become `/newName` (terminator preserved).
- * - Encoded Unicode characters whose codepoint belonged to a renamed glyph
- *   become `/newName`, with a trailing space when a following encoded
- *   character would otherwise glue onto the token.
+ * - Encoded characters stay characters: the renamed glyph keeps its
+ *   codepoints, and only shaped characters get GPOS/GSUB.
  * - `//` literal-slash escapes are left intact.
  */
 export function rewriteTextBufferForGlyphRenames(
     text: string,
-    renames: ReadonlyMap<string, string>,
-    codepointToNewName: ReadonlyMap<number, string>
+    renames: ReadonlyMap<string, string>
 ): string {
-    if (!text || (renames.size === 0 && codepointToNewName.size === 0)) {
+    if (!text || renames.size === 0) {
         return text;
     }
 
@@ -61,27 +59,8 @@ export function rewriteTextBufferForGlyphRenames(
             continue;
         }
 
-        const codePoint = text.codePointAt(index);
-        if (codePoint === undefined) {
-            break;
-        }
-        const charLength = codePoint > 0xffff ? 2 : 1;
-        const newName = codepointToNewName.get(codePoint);
-        if (newName) {
-            result += `/${newName}`;
-            index += charLength;
-            if (
-                index < text.length &&
-                text[index] !== '/' &&
-                !isWhitespaceCharacter(text[index])
-            ) {
-                result += ' ';
-            }
-            continue;
-        }
-
-        result += text.slice(index, index + charLength);
-        index += charLength;
+        result += text[index];
+        index += 1;
     }
 
     return result;
@@ -120,49 +99,21 @@ export function rewriteGlyphStackForGlyphRenames(
         .join('>');
 }
 
-export function buildCodepointToNewNameMap(
-    renames: ReadonlyMap<string, string>,
-    codepointsByOldName: ReadonlyMap<string, readonly number[]>
-): Map<number, string> {
-    const codepointToNewName = new Map<number, string>();
-    for (const [oldName, codepoints] of codepointsByOldName) {
-        const newName = renames.get(oldName);
-        if (!newName || !codepoints?.length) {
-            continue;
-        }
-        for (const codepoint of codepoints) {
-            if (Number.isFinite(codepoint)) {
-                codepointToNewName.set(codepoint, newName);
-            }
-        }
-    }
-    return codepointToNewName;
-}
-
 /**
  * Update live editor text buffer + glyph stack after a rename commits.
  */
 export function applyGlyphRenameUiContext(
-    renames: ReadonlyMap<string, string>,
-    codepointsByOldName: ReadonlyMap<string, readonly number[]>
+    renames: ReadonlyMap<string, string>
 ): void {
     if (renames.size === 0) {
         return;
     }
 
-    const codepointToNewName = buildCodepointToNewNameMap(
-        renames,
-        codepointsByOldName
-    );
     const canvas = window.glyphCanvas;
     const textRun = canvas?.textRunEditor;
     if (textRun) {
         const currentText = textRun.textBuffer || '';
-        const nextText = rewriteTextBufferForGlyphRenames(
-            currentText,
-            renames,
-            codepointToNewName
-        );
+        const nextText = rewriteTextBufferForGlyphRenames(currentText, renames);
         if (nextText !== currentText) {
             textRun.setTextBuffer(nextText);
         } else {

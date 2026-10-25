@@ -13080,6 +13080,8 @@ export type GlyphRenameOptions = {
 };
 
 const FONT_PLUGIN_SETTINGS_KEY = 'com.counterpunch.plugin-settings';
+const AUTOMATIC_FEATURES_KEY = 'com.counterpunch.automatic-features';
+const GENERATOR_STAMP_KEY = 'com.counterpunch.generator';
 
 function pluginValuesBag(
     owner: { format_specific?: Record<string, Unsafe> | undefined },
@@ -13677,40 +13679,59 @@ export class Font extends ModelBase {
      * `compositeGlyphCount` is how many glyphs have at least one component.
      * `convertedGlyphNames` is the subset that this run marked automatic.
      */
-    convertMatchingManualComponentsToAutomatic(): {
-        convertedGlyphNames: Set<string>;
+    preflightManualComponentConversion(): {
+        convertibleGlyphNames: string[];
         compositeGlyphCount: number;
     } {
-        assertModelMutationAllowed();
         const sourceDataCache = new WeakMap<
             object,
             AutomaticCompositionSourceData
         >();
-        const convertedGlyphNames = new Set<string>();
+        const convertibleGlyphNames: string[] = [];
         let compositeGlyphCount = 0;
-
         for (const glyph of this.glyphs) {
             const layers = (glyph.layers || []).filter(
                 (layer) =>
                     !layer.is_background && (layer.shapes?.length ?? 0) > 0
             );
-            if (layers.length === 0) {
-                continue;
-            }
-            if (!layers.some((layer) => layer.components.length > 0)) {
+            if (
+                layers.length === 0 ||
+                !layers.some((layer) => layer.components.length > 0)
+            ) {
                 continue;
             }
             compositeGlyphCount += 1;
-            if (layers.every((layer) => layer.isAutomaticAlignedLayer())) {
-                continue;
-            }
             if (
+                layers.every((layer) => layer.isAutomaticAlignedLayer()) ||
                 !layers.every((layer) =>
                     layer.matchesAutomaticCompositionPreflight(sourceDataCache)
                 )
             ) {
                 continue;
             }
+            convertibleGlyphNames.push(glyph.name);
+        }
+        return { convertibleGlyphNames, compositeGlyphCount };
+    }
+
+    convertMatchingManualComponentsToAutomatic(): {
+        convertedGlyphNames: Set<string>;
+        compositeGlyphCount: number;
+    } {
+        assertModelMutationAllowed();
+        const preflight = this.preflightManualComponentConversion();
+        const convertedGlyphNames = new Set<string>();
+        const eligible = new Set(preflight.convertibleGlyphNames);
+        const compositeGlyphCount = preflight.compositeGlyphCount;
+
+        for (const glyph of this.glyphs) {
+            if (!eligible.has(glyph.name)) {
+                continue;
+            }
+            const layers = (glyph.layers || []).filter(
+                (layer) =>
+                    !layer.is_background && (layer.shapes?.length ?? 0) > 0
+            );
 
             let changed = false;
             for (const layer of layers) {
@@ -14314,6 +14335,43 @@ export class Font extends ModelBase {
         );
     }
 
+    /**
+     * Whether Counterpunch regenerates automatic OpenType features after glyph
+     * operations. An unset font infers it from existing generator stamps.
+     */
+    get counterpunchManagesFeatures(): boolean {
+        const stored = this._data.format_specific?.[AUTOMATIC_FEATURES_KEY];
+        if (typeof stored === 'boolean') {
+            return stored;
+        }
+        const features = this._data.features;
+        if (!features) {
+            return false;
+        }
+        const stamped = (entry: Babelfont.PossiblyAutomaticCode | undefined) =>
+            !!entry?.format_specific &&
+            GENERATOR_STAMP_KEY in entry.format_specific;
+        const blocks: Babelfont.PossiblyAutomaticCode[] = [
+            ...Object.values(features.classes || {}),
+            ...Object.values(features.prefixes || {}),
+            ...(features.features || []).map(
+                (entry: [string, Babelfont.PossiblyAutomaticCode]) => entry[1]
+            )
+        ];
+        return blocks.some(stamped);
+    }
+
+    /** Set the switch as an undoable edit. */
+    setCounterpunchManagesFeatures(on: boolean): void {
+        if (this._data.format_specific?.[AUTOMATIC_FEATURES_KEY] === on) {
+            return;
+        }
+        this.format_specific = {
+            ...(this._data.format_specific || {}),
+            [AUTOMATIC_FEATURES_KEY]: on
+        };
+    }
+
     get source(): string | null {
         return this._data.source;
     }
@@ -14412,18 +14470,6 @@ export class Font extends ModelBase {
                         : replaceName(token)
             );
         };
-
-        const codepointsByOldName = new Map<string, number[]>();
-        for (const oldName of renames.keys()) {
-            const glyph = this.findGlyph(oldName);
-            const codepoints = Array.isArray(glyph?.codepoints)
-                ? glyph.codepoints.filter(
-                      (value: unknown): value is number =>
-                          typeof value === 'number' && Number.isFinite(value)
-                  )
-                : [];
-            codepointsByOldName.set(oldName, codepoints);
-        }
 
         withBridgeTransaction('Rename glyphs', 'model-edit', null, () => {
             assertModelMutationAllowed();
@@ -14553,7 +14599,13 @@ export class Font extends ModelBase {
             this.invalidateReverseComponentIndex();
         });
 
-        applyGlyphRenameUiContext(renames, codepointsByOldName);
+        const applyUiContext = (): void => applyGlyphRenameUiContext(renames);
+        const bridge = getPatchSyncEngine();
+        if (bridge) {
+            bridge.runAfterOutermostCommit(applyUiContext);
+        } else {
+            applyUiContext();
+        }
     }
 
     /**

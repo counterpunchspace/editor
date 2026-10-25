@@ -2541,14 +2541,24 @@ function componentTranslations(layer) {
 describe('Convert matching manual components to automatic', () => {
     test('summarizes converted composites for the system notification', () => {
         const {
-            formatConvertToCounterpunchNotificationBody
+            formatConvertToCounterpunchSummary
         } = require('../../js/convert-to-counterpunch-dialog.ts');
 
-        expect(formatConvertToCounterpunchNotificationBody(12, 48)).toBe(
-            'Converted 12 of 48 composite glyphs to automatic.'
-        );
-        expect(formatConvertToCounterpunchNotificationBody(1, 1)).toBe(
-            'Converted 1 of 1 composite glyph to automatic.'
+        expect(
+            formatConvertToCounterpunchSummary({
+                convertedCount: 12,
+                compositeCount: 48
+            })
+        ).toBe('Converted 12 of 48 composite glyphs to automatic.');
+        expect(
+            formatConvertToCounterpunchSummary({
+                renamedCount: 34,
+                convertedCount: 1,
+                compositeCount: 1,
+                replacedFeatureCount: 5
+            })
+        ).toBe(
+            'Renamed 34 glyphs. Converted 1 of 1 composite glyph to automatic. Replaced 5 automatic features.'
         );
     });
 

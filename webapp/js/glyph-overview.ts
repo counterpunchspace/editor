@@ -5,6 +5,7 @@
 import tippy, { Instance as TippyInstance } from 'tippy.js';
 import 'tippy.js/dist/tippy.css';
 import { fastGlyphTileRenderer } from './glyph-tile-renderer-fast';
+import { attachGlyphDataPopup } from './glyph-data-popup';
 import {
     glyphNameMatchesSearchTerms,
     parseGlyphSearchTerms,
@@ -310,6 +311,7 @@ function formatNameList(names: readonly string[]): string {
 class GlyphOverview {
     private container: HTMLDivElement | null = null;
     private propertyPanel: HTMLElement | null = null;
+    private glyphDataPopup: TippyInstance | null = null;
     private propertyPanelUpdateRafId: number | null = null;
     private propertyPanelDeferredUntilDragEnd = false;
     private selectionUiFlushPending = false;
@@ -5104,6 +5106,8 @@ class GlyphOverview {
         }
 
         const activeInputState = this.getActiveOverviewPropertyInputState();
+        this.glyphDataPopup?.destroy();
+        this.glyphDataPopup = null;
         this.propertyPanel.textContent = '';
         this.propertyPanel.classList.remove('glyph-kerning-groups-panel');
 
@@ -5153,7 +5157,24 @@ class GlyphOverview {
         unicodeLabel.className = 'glyph-property-control-label';
         unicodeLabel.textContent = 'Unicode';
         unicodeLabel.title = 'Unicode codepoints (comma-separated hex)';
-        unicodeControl.appendChild(unicodeLabel);
+        const unicodeLabelRow = document.createElement('div');
+        unicodeLabelRow.className = 'glyph-property-control-label-row';
+        unicodeLabelRow.appendChild(unicodeLabel);
+        const glyphDataButton = document.createElement('button');
+        glyphDataButton.type = 'button';
+        glyphDataButton.className =
+            'glyph-property-info-btn material-symbols-outlined';
+        glyphDataButton.textContent = 'info';
+        glyphDataButton.title = 'Glyph data';
+        glyphDataButton.setAttribute('aria-label', 'Show glyph data');
+        glyphDataButton.disabled = !singleGlyph;
+        const glyphDataName = singleGlyph?.name ?? null;
+        this.glyphDataPopup = attachGlyphDataPopup(
+            glyphDataButton,
+            () => glyphDataName
+        );
+        unicodeLabelRow.appendChild(glyphDataButton);
+        unicodeControl.appendChild(unicodeLabelRow);
 
         const unicodeInput = document.createElement('input');
         unicodeInput.type = 'text';

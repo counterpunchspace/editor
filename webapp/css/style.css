@@ -6673,14 +6673,16 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     line-height: 1.3;
 }
 
-.tippy-box.delete-glyphs-preview-tippy {
+/* The class sits on the Tippy root (popper), so the box is its child. */
+.delete-glyphs-preview-tippy > .tippy-box {
     max-height: min(360px, 70vh);
     color: var(--text-primary);
 }
 
-.tippy-box.delete-glyphs-preview-tippy > .tippy-content {
+.delete-glyphs-preview-tippy > .tippy-box > .tippy-content {
     max-height: min(360px, 70vh);
     overflow-y: auto;
+    overflow-x: hidden;
     overscroll-behavior: contain;
     padding: 8px !important;
 }
@@ -6789,6 +6791,7 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     border-bottom: 1px solid var(--border-primary);
     vertical-align: top;
     color: var(--text-primary);
+    overflow-wrap: anywhere;
 }
 
 .delete-glyphs-preview-table th {
@@ -8629,6 +8632,18 @@ select.glyph-property-input {
     color: var(--text-secondary);
     opacity: 0.6;
     flex-shrink: 0;
+}
+
+.feature-auto-icon.is-managed {
+    color: var(--accent-cyan);
+    opacity: 1;
+    font-weight: 700;
+    filter: brightness(1.3) saturate(1.4);
+}
+
+.feature-manage-checkbox {
+    padding: 6px 10px;
+    font-size: 12px;
 }
 
 .feature-error-icon {

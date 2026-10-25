@@ -1,55 +1,36 @@
 const {
     rewriteTextBufferForGlyphRenames,
     rewriteGlyphStackForGlyphRenames,
-    buildCodepointToNewNameMap,
     applyGlyphRenameUiContext
 } = require('../js/rename-glyphs-ui-context');
 
 describe('rename glyphs UI context', () => {
-    test('rewrites explicit glyph tokens and unicode characters in the text buffer', () => {
+    test('rewrites explicit glyph tokens and keeps encoded characters', () => {
         const renames = new Map([
             ['a', 'aaa'],
-            ['fi', 'f_i']
+            ['fi', 'f_i'],
+            ['fathatan-ar', 'fathaTanween-ar']
         ]);
-        const codepointToNewName = buildCodepointToNewNameMap(
-            renames,
-            new Map([
-                ['a', [0x61]],
-                ['fi', []]
-            ])
-        );
 
+        expect(rewriteTextBufferForGlyphRenames('Hamburge', renames)).toBe(
+            'Hamburge'
+        );
+        expect(rewriteTextBufferForGlyphRenames('/a /fi def', renames)).toBe(
+            '/aaa /f_i def'
+        );
+        expect(rewriteTextBufferForGlyphRenames('/a/fi', renames)).toBe(
+            '/aaa/f_i'
+        );
+        expect(rewriteTextBufferForGlyphRenames('0//10', renames)).toBe(
+            '0//10'
+        );
+        // A mark stays a shaped character so GPOS still attaches it.
         expect(
-            rewriteTextBufferForGlyphRenames(
-                'Hamburge',
-                renames,
-                codepointToNewName
-            )
-        ).toBe('H/aaa mburge');
+            rewriteTextBufferForGlyphRenames('\u0628\u0627\u064B', renames)
+        ).toBe('\u0628\u0627\u064B');
         expect(
-            rewriteTextBufferForGlyphRenames(
-                '/a /fi def',
-                renames,
-                codepointToNewName
-            )
-        ).toBe('/aaa /f_i def');
-        expect(
-            rewriteTextBufferForGlyphRenames(
-                '/a/fi',
-                renames,
-                codepointToNewName
-            )
-        ).toBe('/aaa/f_i');
-        expect(
-            rewriteTextBufferForGlyphRenames(
-                '0//10',
-                renames,
-                codepointToNewName
-            )
-        ).toBe('0//10');
-        expect(
-            rewriteTextBufferForGlyphRenames('a!', renames, codepointToNewName)
-        ).toBe('/aaa !');
+            rewriteTextBufferForGlyphRenames('\u{1F600}/fathatan-ar', renames)
+        ).toBe('\u{1F600}/fathaTanween-ar');
     });
 
     test('rewrites glyph names inside glyph_stack segments', () => {
@@ -103,11 +84,10 @@ describe('rename glyphs UI context', () => {
                 new Map([
                     ['a', 'aaa'],
                     ['fi', 'f_i']
-                ]),
-                new Map([['a', [0x61]]])
+                ])
             );
 
-            expect(setTextBuffer).toHaveBeenCalledWith('/aaa/f_i');
+            expect(setTextBuffer).toHaveBeenCalledWith('a/f_i');
             expect(window.glyphCanvas.outlineEditor.glyphStack).toBe(
                 'aaa@layer-1>0:f_i@layer-2'
             );

@@ -3122,67 +3122,86 @@ function initializeBridge(detail: {
         }
     });
 
-    bridge.setYjsWorkerCallback((update, changeLogEntries, documentId) => {
-        // Extract affected glyph names from the change-log entries so Rust can
-        // perform a targeted partial update instead of a full JSON rebuild.
-        // ChangeLogEntry.path uses dot-delimited format: "glyphs.A.layers.uuid.shapes.0.nodes"
-        const changedGlyphs = deriveGlyphNamesFromPaths(
-            changeLogEntries.map((e) => e.path).filter(Boolean)
-        );
-        const nonGlyphChangeHints =
-            collectNonGlyphChangeHints(changeLogEntries);
-        const layerTargets =
-            collectWorkerLayerTargetsFromChangeLogEntries(changeLogEntries);
-        const glyphRenames = changeLogEntries.flatMap(
-            (entry) => entry.glyphRenames
-        );
-        const invalidateLayoutClosure =
-            shouldInvalidateLayoutClosureForCommittedEntries(changeLogEntries);
-        const hasWorkerCacheMetadata =
-            changedGlyphs.length > 0 ||
-            nonGlyphChangeHints.length > 0 ||
-            layerTargets.length > 0 ||
-            glyphRenames.length > 0;
-        if (!hasWorkerCacheMetadata) {
-            latestWorkerForward = Promise.resolve();
-            return;
-        }
+    bridge.setYjsWorkerCallback(
+        (update, changeLogEntries, documentId, options) => {
+            // The worker validates a rename against every renamed shard at once,
+            // so a multi-document rename commit reseeds it from the bridge once
+            // all of the commit's packets exist.
+            if (options?.renameBatch === 'partial') {
+                return;
+            }
+            if (options?.renameBatch === 'last') {
+                const reseeded =
+                    window.fontManager?.reseedWorkerFromBridge?.(
+                        'multi-document glyph rename commit'
+                    ) ?? Promise.resolve(false);
+                latestWorkerForward = reseeded.then(() => undefined);
+                fullFontCompilation.setWorkerCacheDocumentReady(false);
+                return;
+            }
+            // Extract affected glyph names from the change-log entries so Rust can
+            // perform a targeted partial update instead of a full JSON rebuild.
+            // ChangeLogEntry.path uses dot-delimited format: "glyphs.A.layers.uuid.shapes.0.nodes"
+            const changedGlyphs = deriveGlyphNamesFromPaths(
+                changeLogEntries.map((e) => e.path).filter(Boolean)
+            );
+            const nonGlyphChangeHints =
+                collectNonGlyphChangeHints(changeLogEntries);
+            const layerTargets =
+                collectWorkerLayerTargetsFromChangeLogEntries(changeLogEntries);
+            const glyphRenames = changeLogEntries.flatMap(
+                (entry) => entry.glyphRenames
+            );
+            const invalidateLayoutClosure =
+                shouldInvalidateLayoutClosureForCommittedEntries(
+                    changeLogEntries
+                );
+            const hasWorkerCacheMetadata =
+                changedGlyphs.length > 0 ||
+                nonGlyphChangeHints.length > 0 ||
+                layerTargets.length > 0 ||
+                glyphRenames.length > 0;
+            if (!hasWorkerCacheMetadata) {
+                latestWorkerForward = Promise.resolve();
+                return;
+            }
 
-        const forwarded =
-            window.fontManager?.forwardWorkerYjsUpdate?.(
-                update,
-                changedGlyphs,
-                {
-                    invalidateLayoutClosure,
-                    nonGlyphChangeHints,
-                    ...(glyphRenames.length ? { glyphRenames } : undefined),
-                    ...(layerTargets.length ? { layerTargets } : undefined),
-                    documentId
-                }
-            ) ?? Promise.resolve(false);
-        latestWorkerForward = forwarded.then(() => undefined);
-
-        if (fullFontCompilation.hasWorkerCacheDocument()) {
-            void fullFontCompilation
-                .sendMessage({
-                    type: 'applyYjsUpdate',
+            const forwarded =
+                window.fontManager?.forwardWorkerYjsUpdate?.(
                     update,
                     changedGlyphs,
-                    nonGlyphChangeHints,
-                    ...(glyphRenames.length ? { glyphRenames } : undefined),
-                    ...(layerTargets.length ? { layerTargets } : undefined),
-                    invalidateLayoutClosure,
-                    documentId
-                })
-                .catch((error) => {
-                    console.warn(
-                        'Failed to mirror Yjs update to full compile worker',
-                        error
-                    );
-                    fullFontCompilation.setWorkerCacheDocumentReady(false);
-                });
+                    {
+                        invalidateLayoutClosure,
+                        nonGlyphChangeHints,
+                        ...(glyphRenames.length ? { glyphRenames } : undefined),
+                        ...(layerTargets.length ? { layerTargets } : undefined),
+                        documentId
+                    }
+                ) ?? Promise.resolve(false);
+            latestWorkerForward = forwarded.then(() => undefined);
+
+            if (fullFontCompilation.hasWorkerCacheDocument()) {
+                void fullFontCompilation
+                    .sendMessage({
+                        type: 'applyYjsUpdate',
+                        update,
+                        changedGlyphs,
+                        nonGlyphChangeHints,
+                        ...(glyphRenames.length ? { glyphRenames } : undefined),
+                        ...(layerTargets.length ? { layerTargets } : undefined),
+                        invalidateLayoutClosure,
+                        documentId
+                    })
+                    .catch((error) => {
+                        console.warn(
+                            'Failed to mirror Yjs update to full compile worker',
+                            error
+                        );
+                        fullFontCompilation.setWorkerCacheDocumentReady(false);
+                    });
+            }
         }
-    });
+    );
 
     // Seed the Rust Y.Doc immediately after bridge initialisation so that the
     // YJS_ONLY: Binary Yjs state sent to worker for seedYdoc (N3).

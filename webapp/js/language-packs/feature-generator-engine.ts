@@ -15,7 +15,12 @@ import { withSuppressedModelRecording } from '../babelfont-model';
 import {
     applyGeneratorBlocks,
     applyGeneratorClasses,
+    blockDefinesAny,
     generatorStamp,
+    listGeneratedBlocks,
+    stripAutomaticBlocks,
+    undefinedFeaReferences,
+    type FeatureBlockSummary,
     type FeaturesDocument,
     type GeneratedBlock
 } from './managed-features';
@@ -46,6 +51,27 @@ export interface FeatureBatch {
     settingPluginId?: string;
     featureListChanged?: boolean;
 }
+
+interface GeneratorDiagnostics {
+    generatorId: string;
+    messages: string[];
+}
+
+export interface TakeoverPreview {
+    diagnostics: GeneratorDiagnostics[];
+    removed: FeatureBlockSummary[];
+    /** Automatic blocks left in place because remaining code still uses them. */
+    kept: FeatureBlockSummary[];
+    generated: FeatureBlockSummary[];
+    features: FeaturesDocument;
+}
+
+const MANUAL_BATCH = (): FeatureBatch => ({
+    changes: [],
+    lifecycle: [{ kind: 'created', glyphName: '*' }],
+    intents: {},
+    trigger: 'manual'
+});
 
 interface DiagnosticEntry {
     trigger: string;
@@ -153,10 +179,18 @@ export function featureTagsChanged(
     return false;
 }
 
+/**
+ * With `managed` false (Counterpunch does not own automatic features) only an
+ * explicit user intent selects a generator; glyph and setting events do not.
+ */
 export function generatorMatches(
     generator: FeatureGeneratorInfo,
-    batch: FeatureBatch
+    batch: FeatureBatch,
+    managed = true
 ): boolean {
+    if (!managed) {
+        return generator.intentKeys.some((key) => batch.intents[key] != null);
+    }
     if (generator.followsFeatures && batch.featureListChanged) {
         return true;
     }
@@ -207,6 +241,12 @@ class FeatureGeneratorEngine {
         }
         const batch = operationsToBatch(operations, context.intents || {});
         this.noteSettingTrigger(operations, batch);
+        if (
+            !window.currentFontModel?.counterpunchManagesFeatures &&
+            !Object.keys(batch.intents).length
+        ) {
+            return [];
+        }
         if (!window.pyodide || !this.generators.length) {
             if (batch.lifecycle.length || Object.keys(batch.intents).length) {
                 this.pending.push(batch);
@@ -227,13 +267,7 @@ class FeatureGeneratorEngine {
             compileEditType: null
         });
         try {
-            const batch: FeatureBatch = {
-                changes: [],
-                lifecycle: [{ kind: 'created', glyphName: '*' }],
-                intents: {},
-                trigger: 'manual'
-            };
-            const operations = this.runGenerators(batch, generatorId);
+            const operations = this.runGenerators(MANUAL_BATCH(), generatorId);
             if (operations[0]) {
                 font.features = operations[0].newValue as typeof font.features;
             }
@@ -269,25 +303,124 @@ class FeatureGeneratorEngine {
         }
     }
 
+    /** Features as plain data, or an empty document. */
+    private snapshotFeatures(): FeaturesDocument {
+        const font = window.currentFontModel;
+        return JSON.parse(
+            JSON.stringify(
+                font?.features || { classes: {}, prefixes: {}, features: [] }
+            )
+        ) as FeaturesDocument;
+    }
+
+    /**
+     * Automatic blocks that a takeover would delete, and the features the
+     * generators would write in their place. Does not touch the model.
+     */
+    previewTakeover(): TakeoverPreview | null {
+        if (!window.currentFontModel || !this.generators.length) {
+            return null;
+        }
+        const original = this.snapshotFeatures();
+        // An automatic block that no generator replaces may still define a
+        // class or lookup that manual code uses. Keep those, so the features
+        // still compile, until nothing that remains has a dangling reference.
+        const retain = new Set<string>();
+        for (;;) {
+            const stripped = stripAutomaticBlocks(original, retain);
+            const result = this.computeGeneratedFeatures(
+                MANUAL_BATCH(),
+                stripped.features
+            );
+            if (result.failed) {
+                return null;
+            }
+            const missing = undefinedFeaReferences(result.features);
+            const needed = stripped.removed.filter((block) =>
+                blockDefinesAny(block, missing)
+            );
+            if (!needed.length) {
+                return {
+                    diagnostics: result.diagnostics,
+                    removed: stripped.removed,
+                    kept: stripped.kept,
+                    generated: listGeneratedBlocks(result.features),
+                    features: result.features
+                };
+            }
+            needed.forEach((block) => retain.add(block.key));
+        }
+    }
+
+    /** Replace every automatic block with generated output. Caller owns the transaction. */
+    applyTakeover(): boolean {
+        const font = window.currentFontModel;
+        const preview = this.previewTakeover();
+        if (!font || !preview) {
+            return false;
+        }
+        this.reportDiagnostics(preview.diagnostics);
+        font.features = preview.features as typeof font.features;
+        window.dispatchEvent(new CustomEvent('generatedFeaturesChanged'));
+        return true;
+    }
+
     private runGenerators(
         batch: FeatureBatch,
         onlyGeneratorId?: string
     ): TransactionBufferedOperation[] {
-        const started = performance.now();
         const font = window.currentFontModel;
         if (!font) {
             return [];
         }
+        const result = this.computeGeneratedFeatures(
+            batch,
+            this.snapshotFeatures(),
+            onlyGeneratorId
+        );
+        this.reportDiagnostics(result.diagnostics);
+        if (!result.changed || result.failed) {
+            return [];
+        }
+        const features = result.features;
+        const oldValue = font.features;
+        // The returned operation updates the sync document. The Features panel
+        // reads the live model, which the setters never touched.
+        withSuppressedModelRecording(() => {
+            font.features = features as typeof font.features;
+        });
+        // The Features list only reloads on fontModelSync, which local
+        // commits do not send. Tell that panel the model changed.
+        window.dispatchEvent(new CustomEvent('generatedFeaturesChanged'));
+        return [
+            {
+                op: 'set',
+                path: ['features'],
+                oldValue,
+                newValue: features
+            }
+        ];
+    }
+
+    private computeGeneratedFeatures(
+        batch: FeatureBatch,
+        baseFeatures: FeaturesDocument,
+        onlyGeneratorId?: string
+    ): {
+        features: FeaturesDocument;
+        changed: boolean;
+        failed: boolean;
+        diagnostics: GeneratorDiagnostics[];
+    } {
+        const started = performance.now();
+        const diagnostics: GeneratorDiagnostics[] = [];
+        const font = window.currentFontModel;
+        const managed =
+            batch.trigger === 'manual' ||
+            Boolean(font?.counterpunchManagesFeatures);
         const ran: string[] = [];
         const skipped: string[] = [];
-        const sourceFeatures = font.features || {
-            classes: {},
-            prefixes: {},
-            features: []
-        };
-        let features = JSON.parse(
-            JSON.stringify(sourceFeatures)
-        ) as FeaturesDocument;
+        let features = baseFeatures;
         let changed = false;
         const ordered = [...this.generators].sort(
             (left, right) =>
@@ -300,14 +433,14 @@ class FeatureGeneratorEngine {
                 !generator.followsFeatures &&
                 (!onlyGeneratorId ||
                     generator.generatorId === onlyGeneratorId) &&
-                generatorMatches(generator, batch)
+                generatorMatches(generator, batch, managed)
         );
         for (const generator of ordered) {
             if (onlyGeneratorId && generator.generatorId !== onlyGeneratorId) {
                 continue;
             }
             const selected =
-                generatorMatches(generator, batch) ||
+                generatorMatches(generator, batch, managed) ||
                 (generator.followsFeatures && primaryWillRun);
             if (!selected) {
                 skipped.push(generator.generatorId);
@@ -335,10 +468,10 @@ class FeatureGeneratorEngine {
                 );
                 ran.push(generator.generatorId);
                 if (outcome.diagnostics.length) {
-                    console.warn(
-                        `${generator.generatorId} reported ${outcome.diagnostics.length} diagnostic${outcome.diagnostics.length === 1 ? '' : 's'}`,
-                        outcome.diagnostics.slice(0, 3).join(' ')
-                    );
+                    diagnostics.push({
+                        generatorId: generator.generatorId,
+                        messages: outcome.diagnostics
+                    });
                 }
                 if (nextClasses) {
                     features = nextClasses;
@@ -355,30 +488,25 @@ class FeatureGeneratorEngine {
                     message
                 );
                 this.record(batch.trigger, ran, skipped, message, started);
-                return [];
+                return {
+                    features: baseFeatures,
+                    changed: false,
+                    failed: true,
+                    diagnostics
+                };
             }
         }
         this.record(batch.trigger, ran, skipped, undefined, started);
-        if (!changed) {
-            return [];
+        return { features, changed, failed: false, diagnostics };
+    }
+
+    private reportDiagnostics(diagnostics: GeneratorDiagnostics[]): void {
+        for (const { generatorId, messages } of diagnostics) {
+            console.warn(
+                `${generatorId} reported ${messages.length} diagnostic${messages.length === 1 ? '' : 's'}`,
+                messages.slice(0, 3).join(' ')
+            );
         }
-        const oldValue = font.features;
-        // The returned operation updates the sync document. The Features panel
-        // reads the live model, which the setters never touched.
-        withSuppressedModelRecording(() => {
-            font.features = features as typeof font.features;
-        });
-        // The Features list only reloads on fontModelSync, which local
-        // commits do not send. Tell that panel the model changed.
-        window.dispatchEvent(new CustomEvent('generatedFeaturesChanged'));
-        return [
-            {
-                op: 'set',
-                path: ['features'],
-                oldValue,
-                newValue: features
-            }
-        ];
     }
 
     private callGenerator(

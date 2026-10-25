@@ -3,6 +3,7 @@
  * Shared utilities for tippy menus across the application
  */
 
+import tippy, { type Instance as TippyInstance } from 'tippy.js';
 import { Logger } from './logger';
 import {
     formatMenuShortcut,
@@ -147,6 +148,31 @@ export function getOrCreateBackdrop(className: string): HTMLElement {
 /**
  * Get current theme for tippy menus
  */
+/**
+ * Hover/focus outcome preview on a dialog info button. Shared by the Delete
+ * Glyphs and Convert to Counterpunch dialogs; styled by `.delete-glyphs-preview*`.
+ */
+export function attachOutcomePreviewTippy(
+    button: HTMLElement,
+    content: string
+): TippyInstance {
+    return tippy(button, {
+        content,
+        allowHTML: true,
+        interactive: true,
+        trigger: 'mouseenter focus',
+        delay: [80, 80],
+        appendTo: () => document.body,
+        maxWidth: 560,
+        placement: 'right-start',
+        theme: getTheme(),
+        zIndex: 10003,
+        onCreate(instance) {
+            instance.popper.classList.add('delete-glyphs-preview-tippy');
+        }
+    });
+}
+
 export function getTheme(): string {
     const root = document.documentElement;
     const theme = root.getAttribute('data-theme');

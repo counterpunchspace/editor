@@ -597,3 +597,27 @@ def test_connection_feature_follows_glyph_names():
     assert all(item["block"] != "conn_high1" for item in other["blocks"])
     assert other["classes"][0]["block"] == "conn_low2"
 
+
+
+def test_rename_suggestions_fix_legacy_mark_names():
+    glyphs = [
+        {"name": "fathatan-ar", "codepoints": [], "components": []},
+        {"name": "shadda_kasratan-ar", "codepoints": [], "components": []},
+        {"name": "fathatan-ar.alt", "codepoints": [], "components": []},
+        {"name": "kasraTanween-ar", "codepoints": [0x064D], "components": []},
+        {"name": "beh-ar", "codepoints": [0x0628], "components": []},
+    ]
+    found = ArabicCompositionProvider().rename_suggestions(glyphs, {})
+    assert found == {
+        "fathatan-ar": "fathaTanween-ar",
+        "shadda_kasratan-ar": "shadda_kasraTanween-ar",
+        "fathatan-ar.alt": "fathaTanween-ar.alt",
+    }
+
+
+def test_rename_suggestions_never_collide_with_existing_names():
+    glyphs = [
+        {"name": "fathatan-ar", "codepoints": [], "components": []},
+        {"name": "fathaTanween-ar", "codepoints": [0x064B], "components": []},
+    ]
+    assert ArabicCompositionProvider().rename_suggestions(glyphs, {}) == {}

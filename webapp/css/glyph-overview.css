@@ -804,3 +804,105 @@
     opacity: 0.55;
     cursor: default;
 }
+
+#overview-property-panel .glyph-property-control-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+}
+
+.glyph-property-info-btn.material-symbols-outlined {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    color: var(--text-faint);
+    font-size: 12px;
+    line-height: 1;
+    width: 12px;
+    height: 12px;
+    padding: 0;
+    overflow: hidden;
+    cursor: pointer;
+}
+
+#overview-property-panel .glyph-property-control-label-row {
+    height: 12px;
+}
+
+.glyph-property-info-btn:hover,
+.glyph-property-info-btn:focus-visible,
+.glyph-property-info-btn[aria-expanded='true'] {
+    color: var(--text-primary);
+}
+
+.glyph-property-info-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+/* Glyph Data popup (overview property panel info button) */
+.glyph-data-popup-tippy > .tippy-box {
+    color: var(--text-primary);
+}
+
+.glyph-data-popup-tippy > .tippy-box > .tippy-content {
+    max-height: min(420px, 70vh);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 8px !important;
+}
+
+.glyph-data-popup-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+}
+
+.glyph-data-popup-character {
+    font-size: 28px;
+    line-height: 1;
+    min-width: 28px;
+    text-align: center;
+}
+
+.glyph-data-popup-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.glyph-data-popup-note,
+.glyph-data-popup-empty {
+    margin: 0 0 6px 0;
+    font-size: 12px;
+    color: var(--text-faint);
+}
+
+.glyph-data-popup-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.glyph-data-popup-table th,
+.glyph-data-popup-table td {
+    text-align: left;
+    padding: 3px 8px;
+    border-bottom: 1px solid var(--border-primary);
+    vertical-align: top;
+    overflow-wrap: anywhere;
+}
+
+.glyph-data-popup-table th {
+    color: var(--text-faint);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.glyph-data-popup-table td {
+    color: var(--text-primary);
+}

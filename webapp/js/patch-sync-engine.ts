@@ -166,6 +166,19 @@ export type CommittedUiBatch = {
     count: number;
 };
 
+/**
+ * Position of a packet inside a commit that renames glyphs across several
+ * documents. The worker cannot validate such a rename one shard at a time.
+ */
+export type WorkerRenameBatchPart = 'partial' | 'last';
+
+export type YjsWorkerCallback = (
+    update: YjsUpdate,
+    changeLogEntries: ChangeLogEntry[],
+    documentId?: string,
+    options?: { renameBatch?: WorkerRenameBatchPart }
+) => void;
+
 export type CommittedChangeListener = (
     entries: ChangeLogEntry[],
     context: {
@@ -654,6 +667,7 @@ export class PatchSyncEngine {
     /** Optional explicit history target for the current transaction */
     private _txHistoryTarget: TransactionHistoryTarget | null = null;
     private _txIntents: Record<string, unknown> = {};
+    private _afterOutermostCommit: Array<() => void> = [];
     /** Compact state-vector captured at the start of the outermost transaction. */
     private _txStartStateVector: Uint8Array | null = null;
     /** Buffered operations for the current outermost transaction */
@@ -668,13 +682,7 @@ export class PatchSyncEngine {
      * can maintain its own Y.Doc without receiving the full font JSON on every
      * edit. Set via `setYjsWorkerCallback`.
      */
-    private _yjsWorkerCallback:
-        | ((
-              update: YjsUpdate,
-              changeLogEntries: ChangeLogEntry[],
-              documentId?: string
-          ) => void)
-        | null = null;
+    private _yjsWorkerCallback: YjsWorkerCallback | null = null;
     /**
      * Catch-up snapshots replace a worker shard instead of applying as a
      * delta. Incremental `applyYjsUpdate` needs cache metadata that a full
@@ -2289,15 +2297,28 @@ export class PatchSyncEngine {
         const count = packets.length;
         const id =
             count > 1 ? `ui-batch:${this._nextUiBatchSerial++}` : undefined;
+        const isRenameBatch =
+            count > 1 &&
+            packets.some((packet) =>
+                packet.entries.some(
+                    (entry) => normalizeGlyphRenames(entry.glyphRenames).length
+                )
+            );
         for (let index = 0; index < packets.length; index += 1) {
             const packet = packets[index];
+            const renameBatch: WorkerRenameBatchPart | undefined = isRenameBatch
+                ? index === count - 1
+                    ? 'last'
+                    : 'partial'
+                : undefined;
             this._emitLocalUpdate(
                 packet.update,
                 packet.entries,
                 packet.documentId,
                 {
                     ...packet.options,
-                    ...(id ? { uiBatch: { id, index, count } } : {})
+                    ...(id ? { uiBatch: { id, index, count } } : {}),
+                    ...(renameBatch ? { renameBatch } : {})
                 }
             );
         }
@@ -2311,6 +2332,7 @@ export class PatchSyncEngine {
             dependsOn?: string[];
             skipCollaborationLog?: boolean;
             uiBatch?: CommittedUiBatch;
+            renameBatch?: WorkerRenameBatchPart;
         }
     ): void {
         // Undo/redo may append a coarse control entry for history-stack state,
@@ -2359,7 +2381,11 @@ export class PatchSyncEngine {
             for (const cb of this._localUpdateListeners) {
                 cb(update, collaborationMessage, emissionEntries, documentId);
             }
-            if (emissionEntries.length > 0) {
+            if (options?.renameBatch) {
+                this._yjsWorkerCallback?.(update, emissionEntries, documentId, {
+                    renameBatch: options.renameBatch
+                });
+            } else if (emissionEntries.length > 0) {
                 this._yjsWorkerCallback?.(update, emissionEntries, documentId);
             }
             for (const cb of this._committedChangeListeners) {
@@ -3282,8 +3308,25 @@ export class PatchSyncEngine {
             this._txHistoryTarget = null;
             this._txStartStateVector = null;
             this._txIntents = {};
+            const afterCommit = this._afterOutermostCommit;
+            this._afterOutermostCommit = [];
+            for (const callback of afterCommit) {
+                callback();
+            }
         }
         return commitResult;
+    }
+
+    /**
+     * Run `callback` once the outermost transaction has committed, or now
+     * when no transaction is open.
+     */
+    runAfterOutermostCommit(callback: () => void): void {
+        if (this._txDepth > 0) {
+            this._afterOutermostCommit.push(callback);
+            return;
+        }
+        callback();
     }
 
     /** Whether a transaction is currently open. */
@@ -6341,15 +6384,7 @@ export class PatchSyncEngine {
      * worker so it can maintain its own Rust Y.Doc without receiving the full
      * font JSON on every edit.
      */
-    setYjsWorkerCallback(
-        cb:
-            | ((
-                  update: YjsUpdate,
-                  changeLogEntries: ChangeLogEntry[],
-                  documentId?: string
-              ) => void)
-            | null
-    ): void {
+    setYjsWorkerCallback(cb: YjsWorkerCallback | null): void {
         this._yjsWorkerCallback = cb;
     }
 
@@ -7560,9 +7595,11 @@ export class PatchSyncEngine {
 
         this._appendChangeLogEntries(changeLogEntries);
 
-        this._ensureDocumentsForOperations(effectiveOperations);
+        const routedOperations =
+            this._routeOperationsThroughPendingRenames(effectiveOperations);
+        this._ensureDocumentsForOperations(routedOperations);
 
-        const glyphNameRemaps = effectiveOperations.flatMap((operation) => {
+        const glyphNameRemaps = routedOperations.flatMap((operation) => {
             const applyPath = this._toYDocPath(
                 operation.applyPath ?? operation.path
             );
@@ -7589,7 +7626,7 @@ export class PatchSyncEngine {
 
         const localUpdateBaselineByDoc = new Map<string, Uint8Array>();
         const docsTouched = new Set<string>();
-        for (const operation of effectiveOperations) {
+        for (const operation of routedOperations) {
             const applyPath = this._toYDocPath(
                 operation.applyPath ?? operation.path
             );
@@ -7616,7 +7653,7 @@ export class PatchSyncEngine {
         const revisionTokensForCommit = this._isApplyingRemote
             ? []
             : this._allocateGlyphRevisionTokens(
-                  this._glyphIdsTouchedByOperations(effectiveOperations)
+                  this._glyphIdsTouchedByOperations(routedOperations)
               );
         const revisionByGlyphId = new Map(
             revisionTokensForCommit.map((token) => [
@@ -7631,7 +7668,7 @@ export class PatchSyncEngine {
                 if (!doc) {
                     continue;
                 }
-                const opsForDoc = effectiveOperations.filter((operation) => {
+                const opsForDoc = routedOperations.filter((operation) => {
                     const applyPath = this._toYDocPath(
                         operation.applyPath ?? operation.path
                     );
@@ -7692,9 +7729,12 @@ export class PatchSyncEngine {
                     packetBytes: exactCommitUpdate.byteLength,
                     encodeFullShard: () => Y.encodeStateAsUpdate(doc).byteLength
                 });
-                const docEntries = changeLogEntries.filter((entry) => {
-                    const segments = getPathSegments(entry.path);
-                    return this.documentIdForPath(segments) === documentId;
+                const docEntries = changeLogEntries.filter((_entry, index) => {
+                    const operation = routedOperations[index];
+                    const applyPath = this._toYDocPath(
+                        operation.applyPath ?? operation.path
+                    );
+                    return this.documentIdForPath(applyPath) === documentId;
                 });
                 pendingPackets.push({
                     documentId,
@@ -7723,7 +7763,7 @@ export class PatchSyncEngine {
                     pendingPackets
                 );
                 this._withGlyphRevisionCatchUp(
-                    this._glyphIdsTouchedByOperations(effectiveOperations),
+                    this._glyphIdsTouchedByOperations(routedOperations),
                     () => {
                         const uiPackets: Array<{
                             update: YjsUpdate;
@@ -8259,6 +8299,67 @@ export class PatchSyncEngine {
             const glyphId = ensureImmutableGlyphId(snapshot);
             this._ensureGlyphDoc(glyphId, glyphName);
         }
+    }
+
+    /**
+     * Address operations recorded after an in-transaction rename by the
+     * glyph's pre-commit name. The name index only moves to the new names
+     * once the commit has been applied, so `glyphs.<newName>…` would
+     * otherwise route to a fresh, empty glyph doc. Name sets in one run are
+     * simultaneous (swaps record both against the original names).
+     */
+    private _routeOperationsThroughPendingRenames(
+        operations: TransactionBufferedOperation[]
+    ): TransactionBufferedOperation[] {
+        const liveNameByPendingName = new Map<string, string>();
+        let pendingRun: Array<{ liveName: string; newName: string }> = [];
+        const flushRun = (): void => {
+            for (const { liveName } of pendingRun) {
+                for (const [pending, live] of liveNameByPendingName) {
+                    if (live === liveName) {
+                        liveNameByPendingName.delete(pending);
+                    }
+                }
+            }
+            for (const { liveName, newName } of pendingRun) {
+                if (newName !== liveName) {
+                    liveNameByPendingName.set(newName, liveName);
+                }
+            }
+            pendingRun = [];
+        };
+        return operations.map((operation) => {
+            const applyPath = this._toYDocPath(
+                operation.applyPath ?? operation.path
+            );
+            const isNameSet =
+                applyPath.length === 3 &&
+                applyPath[0] === 'glyphs' &&
+                applyPath[2] === 'name' &&
+                operation.op === 'set' &&
+                typeof operation.newValue === 'string';
+            if (!isNameSet) {
+                flushRun();
+            }
+            if (applyPath[0] !== 'glyphs' || applyPath.length < 2) {
+                return operation;
+            }
+            const pathName = String(applyPath[1]);
+            const liveName = liveNameByPendingName.get(pathName) ?? pathName;
+            if (isNameSet) {
+                pendingRun.push({
+                    liveName,
+                    newName: String(operation.newValue)
+                });
+            }
+            if (liveName === pathName) {
+                return operation;
+            }
+            return {
+                ...operation,
+                applyPath: ['glyphs', liveName, ...applyPath.slice(2)]
+            };
+        });
     }
 
     private _originForDocument(

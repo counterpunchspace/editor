@@ -15,7 +15,7 @@
   - [Shape](#shape) - Shape wrapper that can contain either a Component or a Path
   - [Path](#path) - Path (contour) in a layer
   - [Node](#node) - Point in a path
-  - [Component](#component) - Component reference to another glyph
+  - [Component](#component) - 
   - [Anchor](#anchor) - Anchor point in a layer
   - [Guide](#guide) - Guideline in a layer or master
   - [Axis](#axis) - Variation axis in a variable font
@@ -183,6 +183,8 @@ font.features.features[0][0]  # feature tag
 #### Read-Only Properties
 
 - **`glyphs`** (list[[Glyph](#glyph)])
+- **`counterpunchManagesFeatures`** (bool): Whether Counterpunch regenerates automatic OpenType features after glyph
+operations. An unset font infers it from existing generator stamps.
 
 ### Methods
 
@@ -195,7 +197,7 @@ to this kerning pair (glyph or `@group` keys, overlay precedence).
 Rebuild automatic ligatures that use one of these glyphs as the
 corresponding unattached-base operand after a kern-group membership edit.
 
-#### `convertMatchingManualComponentsToAutomatic() -> { convertedGlyphNames: Set<string>; compositeGlyphCount: number; }`
+#### `preflightManualComponentConversion() -> { convertibleGlyphNames: string[]; compositeGlyphCount: number; }`
 Enable automatic alignment only on glyphs where every non-empty
 foreground layer preflights: the composition engine can place every
 component (anchor attachment, unattached non-mark bases including
@@ -207,6 +209,7 @@ change, stay manual.
 `compositeGlyphCount` is how many glyphs have at least one component.
 `convertedGlyphNames` is the subset that this run marked automatic.
 
+#### `convertMatchingManualComponentsToAutomatic() -> { convertedGlyphNames: Set<string>; compositeGlyphCount: number; }`
 #### `collectMetricsKeyDependentGlyphs(sourceGlyphNames: Iterable<string>) -> Set<string>`
 Collect glyphs whose metrics keys / automatic-offset edges depend on the
 given source glyphs, whether or not their stored sidebearings currently
@@ -228,6 +231,9 @@ Read one font-scoped plugin setting. Missing and invalid values return
 
 #### `setPluginSetting(pluginId: str, settingId: str, value: unknown) -> None`
 Write one font-scoped plugin setting as its own undoable edit.
+
+#### `setCounterpunchManagesFeatures(on: bool) -> None`
+Set the switch as an undoable edit.
 
 #### `findGlyph(name: str) -> [Glyph](#glyph) | None`
 Find a glyph by name
@@ -317,6 +323,10 @@ weight_axis = font.findAxisByTag("wght")
 
 #### `findMaster(id: str) -> [Master](#master) | None`
 Find a master by ID
+
+#### `getMasterTopologyGate() -> MasterTopologyGate`
+Whether masters may be added, removed, or reinterpolated now. Cloud
+fonts refuse while some glyphs are not downloaded.
 
 #### `addMaster(master: Babelfont.Master | None = None, options: AddMasterOptions | None = None) -> Promise<Master | null>`
 #### `removeMastersByIds(masterIds: list[str]) -> Promise<boolean>`
@@ -699,6 +709,8 @@ anchors = layer.computedAnchors()
 top = anchors["top"]
 ```
 
+#### `getPluginSetting(pluginId: str, settingId: str) -> unknown`
+#### `setPluginSetting(pluginId: str, settingId: str, value: unknown) -> None`
 #### `addShape(shape: Babelfont.Shape) -> [Shape](#shape)`
 Add a new shape to the layer
 
@@ -777,6 +789,10 @@ Calculate bounding box for layer data
 
 #### `getBoundingBox(includeAnchors: bool) -> { minX: number; minY: number; maxX: number; maxY: number; width: number; height: number; } | None`
 Calculate bounding box for this layer
+
+#### `intersectPathsWithLine(paths: Array<{ nodes?: Unsafe[]; closed?: boolean }>, p1: { x: number; y: number }, p2: { x: number; y: number }) -> Array<{ x: number; y: number; t: number }>`
+Intersections of a line segment with already-flattened paths.
+Points are sorted by t along the line (0 at p1, 1 at p2).
 
 #### `getIntersectionsOnLine(p1: { x: number; y: number }, p2: { x: number; y: number }, includeComponents: bool) -> Array<{ x: number; y: number; t: number }>`
 Calculate intersections between a line segment and all paths in this layer
@@ -907,8 +923,6 @@ node = path.nodes[0]
 
 
 ## Component
-
-Component reference to another glyph
 
 **Access:**
 ```python

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from counterpunch_arabic.font_source import ArabicFontSource
+from counterpunch_arabic.renames import ArabicRenames
 
 
 class ArabicCompositionProvider:
@@ -57,6 +58,11 @@ class ArabicCompositionProvider:
 
     def anchor_positions(self, requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return self._font.anchor_positions(requests)
+
+    def rename_suggestions(
+        self, glyphs: list[dict[str, Any]], renames: dict[str, str] | None = None
+    ) -> dict[str, str]:
+        return ArabicRenames().rename_suggestions(glyphs, renames)
 
 
 def _identity(codepoint: int) -> str:

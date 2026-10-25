@@ -5257,6 +5257,31 @@ class FontManager {
         return queuedSend;
     }
 
+    /**
+     * Replace the editing worker's Y.Doc set with the bridge's, in order
+     * after any incremental packets already queued.
+     */
+    reseedWorkerFromBridge(reason: string): Promise<boolean> {
+        const queuedReseed = this.workerYjsSendQueue
+            .catch(() => undefined)
+            .then(async () => {
+                await this.workerPreviewSendQueue.catch(() => undefined);
+                await fontCompilation?.awaitWorkerDocumentSync();
+                return this.recoverWorkerCacheFromAuthoritativeState(reason, {
+                    quiet: true
+                });
+            });
+        this.workerYjsSendQueue = queuedReseed.catch(() => undefined);
+        const cacheUpdatePromise = queuedReseed.then(() => undefined);
+        this.workerCacheUpdatePromise = cacheUpdatePromise;
+        void cacheUpdatePromise.finally(() => {
+            if (this.workerCacheUpdatePromise === cacheUpdatePromise) {
+                this.workerCacheUpdatePromise = null;
+            }
+        });
+        return queuedReseed;
+    }
+
     private enqueueWorkerPreviewSend<T>(runSend: () => Promise<T>): Promise<T> {
         const queuedSend = this.workerPreviewSendQueue
             .catch(() => undefined)

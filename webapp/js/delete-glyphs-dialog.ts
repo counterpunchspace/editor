@@ -6,9 +6,9 @@
  * hover preview panels via info buttons.
  */
 
-import tippy, { Instance as TippyInstance } from 'tippy.js';
+import type { Instance as TippyInstance } from 'tippy.js';
 import { Logger } from './logger';
-import { getTheme } from './tippy-utils';
+import { attachOutcomePreviewTippy } from './tippy-utils';
 import type { GlyphDeletePreflight } from './delete-glyphs-preflight';
 import { bindModalEscape } from './ui/modal-escape';
 
@@ -413,23 +413,7 @@ export class DeleteGlyphsDialog {
                         content = `<div class="delete-glyphs-preview">${buildKerningPreviewHtml(preflight)}</div>`;
                     }
                     previewTippyInstances.push(
-                        tippy(button, {
-                            content,
-                            allowHTML: true,
-                            interactive: true,
-                            trigger: 'mouseenter focus',
-                            delay: [80, 80],
-                            appendTo: () => document.body,
-                            maxWidth: 560,
-                            placement: 'right-start',
-                            theme: getTheme(),
-                            zIndex: 10003,
-                            onCreate(instance) {
-                                instance.popper.classList.add(
-                                    'delete-glyphs-preview-tippy'
-                                );
-                            }
-                        })
+                        attachOutcomePreviewTippy(button, content)
                     );
                 });
 

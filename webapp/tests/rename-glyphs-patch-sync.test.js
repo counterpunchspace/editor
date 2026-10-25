@@ -469,6 +469,57 @@ describe('PatchSyncEngine.renameGlyphs integrity', () => {
         }
     });
 
+    test('edits after an in-transaction rename reach the renamed glyph', () => {
+        const fontData = createRenameFontData();
+        const font = Font.fromData(fontData);
+        const bridge = new PatchSyncEngine('rename-then-edit-test');
+        const previousBridge = window.patchSyncEngine;
+        const workerCalls = [];
+        bridge.initFromJson(fontData);
+        bridge.setYjsWorkerCallback((update, entries, documentId, options) => {
+            workerCalls.push({ documentId, renameBatch: options?.renameBatch });
+        });
+        window.patchSyncEngine = bridge;
+        const afterCommit = jest.fn();
+
+        try {
+            bridge.beginTransaction('Rename then edit', null, {
+                compileChangeSource: 'model-edit',
+                compileEditType: null
+            });
+            font.renameGlyphs(new Map([['A', 'A.alt']]));
+            bridge.runAfterOutermostCommit(afterCommit);
+            font.findGlyph('A.alt').layers[0].width = 640;
+            expect(afterCommit).not.toHaveBeenCalled();
+            bridge.endTransaction();
+
+            expect(afterCommit).toHaveBeenCalledTimes(1);
+            expect(
+                bridge.getYValue([
+                    'glyphs',
+                    'A.alt',
+                    'layers',
+                    'layer-1',
+                    'width'
+                ])
+            ).toBe(640);
+            expectYDocGlyphKeys(bridge, ['A.alt']);
+            const glyphCalls = workerCalls.filter((call) =>
+                call.documentId?.startsWith('glyph:')
+            );
+            expect(
+                new Set(glyphCalls.map((call) => call.documentId)).size
+            ).toBe(1);
+            expect(workerCalls.map((call) => call.renameBatch)).toEqual([
+                ...workerCalls.slice(0, -1).map(() => 'partial'),
+                'last'
+            ]);
+        } finally {
+            window.patchSyncEngine = previousBridge;
+            bridge.destroy();
+        }
+    });
+
     test('throws when a source glyph is absent from the Y.Doc', () => {
         const fontData = createRenameFontData();
         const bridge = new PatchSyncEngine('rename-missing-test');
