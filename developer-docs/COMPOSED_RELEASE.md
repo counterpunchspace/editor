@@ -97,6 +97,8 @@ A rollback restores code, not data. So:
 - Room storage, Durable Object storage and R2 layouts stay readable by the previous release.
 - A Durable Object migration (new class, rename, delete) cannot be rolled back by redeploying the previous version. Ship it in a release of its own, preview it, and expect a manual fix if it has to be undone.
 
+- Collaboration envelopes stay under the room's 64 KiB metadata cap. The shared fit function lives in the collab protocol package (`metadata-budget.js`, generated into `webapp/js/generated/collab-protocol-metadata-budget.ts`); the editor fits in `cloud-envelope-budget.ts` before persisting or sending, and the room fits what older editors send. Changing the fit steps changes what peers see, so keep every step one that receivers converge on (see `webapp/tests/cloud-envelope-budget.test.js`).
+
 ## Preview vs production hosts
 
 | Role | Staging | Preview | Production |

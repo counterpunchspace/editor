@@ -14,6 +14,7 @@ import {
 import { allocateClientTransactionId } from './generated/collab-protocol-durability-contract';
 import { pushCollabIntegrityEvent } from './cloud-collab-integrity-debug';
 import { encodeLiveUpdateFrame } from './cloud-adapter-frames';
+import { fitEnvelopeForWire } from './cloud-envelope-budget';
 import type { PatchSyncEngine } from './patch-sync-engine';
 
 export type CloudOutboundUpdatePacket = {
@@ -60,11 +61,14 @@ export type CloudOutboxHost = {
 export function enqueueOutboundPacket(
     host: CloudOutboxHost,
     update: Uint8Array,
-    collaborationMessage?: CollaborationMessageEnvelope | null
+    rawCollaborationMessage?: CollaborationMessageEnvelope | null
 ): void {
     if (!update.length) {
         return;
     }
+    const collaborationMessage = fitEnvelopeForWire(rawCollaborationMessage, {
+        documentId: host.documentId
+    });
     if (
         host.accessRevoked ||
         host.getCachedAssetRole(host.assetId) === 'viewer'
@@ -116,7 +120,11 @@ export function buildLiveUpdateBinaryFrame(
         update: packet.update,
         clientTransactionId,
         collaborationMessages: packet.collaborationMessage
-            ? [packet.collaborationMessage]
+            ? [
+                  fitEnvelopeForWire(packet.collaborationMessage, {
+                      documentId: host.documentId
+                  })
+              ]
             : null
     });
     if (clientTransactionId) {

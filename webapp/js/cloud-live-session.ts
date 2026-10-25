@@ -5,6 +5,7 @@
  * the active editor glyph. Dependent glyph shards publish over HTTP POST
  * and peers pull them with GET `/live` after font-core revision signals.
  */
+import { fitEnvelopeForWire } from './cloud-envelope-budget';
 import {
     CloudAdapter,
     catchUpCloudDocument,
@@ -641,7 +642,9 @@ export class CloudLiveSession {
                 dependsOn: dependsOn || existing?.dependsOn || [],
                 updateBytes: update,
                 collaborationMessage:
-                    collaborationMessage || existing?.collaborationMessage,
+                    fitEnvelopeForWire(collaborationMessage, {
+                        documentId: resolvedDocumentId
+                    }) || existing?.collaborationMessage,
                 collaborationMetadata:
                     collaborationMessage?.metadata ??
                     existing?.collaborationMessage?.metadata,
@@ -918,7 +921,9 @@ export class CloudLiveSession {
                 documentId,
                 clientTransactionId,
                 updateBytes: update,
-                collaborationMessage: collaborationMessage || undefined,
+                collaborationMessage:
+                    fitEnvelopeForWire(collaborationMessage, { documentId }) ||
+                    undefined,
                 createdAt: Date.now(),
                 attempts: 0,
                 state: 'applied'

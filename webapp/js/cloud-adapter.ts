@@ -15,6 +15,10 @@
  * sync-chunk, update-chunk, or state-vector exchange.
  */
 
+import {
+    fitEnvelopeForWire,
+    mergeEnvelopesForWire
+} from './cloud-envelope-budget';
 import * as Y from 'yjs';
 import {
     MetadataFreeRemoteUpdateError,
@@ -1980,6 +1984,16 @@ export class CloudAdapter implements FileSystemAdapter {
                 if (msg.code === 'tail_full' || detail === 'tail_full') {
                     this._compactStatus = 'tail_full';
                     this._setStatus('connected', 'tail_full');
+                } else if (code === 'metadata_too_large') {
+                    // Only the description was too large; the socket is fine.
+                    // Outbound envelopes are fitted before sending, so keep the
+                    // session open instead of resending the same packet in a
+                    // reconnect loop.
+                    pushCollabIntegrityEvent('metadata-too-large', {
+                        documentId: this._documentId,
+                        seq: typeof msg.seq === 'number' ? msg.seq : null
+                    });
+                    break;
                 } else if (detail === 'Access epoch is stale') {
                     // Access-epoch bumps are expected during membership changes.
                     // Reconnect with a fresh room token without surfacing a user
@@ -2553,9 +2567,13 @@ export class CloudAdapter implements FileSystemAdapter {
                         windowId: this._bridge?.windowId
                     }
                 );
+            // One Yjs update can span several history items; send them as
+            // one merged envelope instead of dropping all but the first.
             this._enqueueOutboundPacket(
                 update,
-                collaborationMessages[0] ?? null
+                mergeEnvelopesForWire(collaborationMessages, {
+                    documentId: this._documentId
+                })
             );
         };
         this._bridge.onGlyphRevisionSignal?.(sendRevisionSignal);
@@ -2622,7 +2640,11 @@ export class CloudAdapter implements FileSystemAdapter {
             const packet = packets[packetIndex];
             const seq = ++this._seq;
             const collaborationMessages = packet.collaborationMessage
-                ? [packet.collaborationMessage]
+                ? [
+                      fitEnvelopeForWire(packet.collaborationMessage, {
+                          documentId: this._documentId
+                      })
+                  ]
                 : [];
             const broadcastEntryCount = collaborationMessages.reduce(
                 (count, message) => count + message.changes.length,

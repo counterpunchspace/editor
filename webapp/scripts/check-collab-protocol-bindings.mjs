@@ -29,7 +29,8 @@ const REQUIRED = [
     'collab-protocol-durability-contract.ts',
     'collab-protocol-pack.ts',
     'collab-protocol-pack-grant.ts',
-    'collab-protocol-timing-safe.ts'
+    'collab-protocol-timing-safe.ts',
+    'collab-protocol-metadata-budget.ts'
 ];
 
 function stripTsNocheck(source) {
