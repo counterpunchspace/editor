@@ -101,6 +101,7 @@ fn shape_bytes(shape: &Shape) -> u64 {
     match shape {
         Shape::Path(path) => path_bytes(path),
         Shape::Component(component) => component_bytes(component),
+        Shape::FormatSpecific(format_specific) => format_specific_bytes(format_specific),
     }
 }
 

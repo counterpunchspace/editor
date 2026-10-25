@@ -308,6 +308,8 @@ fn layer_is_automatic_aligned(layer: &babelfont::Layer) -> bool {
                 }
             }
             babelfont::Shape::Path(_) => return false,
+            // Opaque format-specific data is not an outline; it doesn't affect alignment.
+            babelfont::Shape::FormatSpecific(_) => {}
         }
     }
     saw_component
@@ -2211,7 +2213,7 @@ fn drop_unresolved_components(font: &mut babelfont::Font) {
         for layer in glyph.layers.iter_mut() {
             layer.shapes.retain(|shape| match shape {
                 babelfont::Shape::Component(component) => names.contains(&component.reference),
-                babelfont::Shape::Path(_) => true,
+                babelfont::Shape::Path(_) | babelfont::Shape::FormatSpecific(_) => true,
             });
         }
     }
@@ -2771,6 +2773,10 @@ fn normalize_signature_node_type(node_type: NodeType) -> &'static str {
         NodeType::OffCurve => "OffCurve",
         NodeType::Curve => "Curve",
         NodeType::QCurve => "QCurve",
+        NodeType::Quartic => "Quartic",
+        NodeType::Hobby => "Hobby",
+        NodeType::Spiro => "Spiro",
+        NodeType::RaphNewSpiral => "RaphNewSpiral",
     }
 }
 

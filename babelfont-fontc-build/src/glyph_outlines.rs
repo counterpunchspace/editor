@@ -542,6 +542,8 @@ fn flatten_layer_components_cached(
             Shape::Path(_) => {
                 flattened_shapes.push(shape.clone());
             }
+            // Opaque format-specific data has no outline.
+            Shape::FormatSpecific(_) => {}
             Shape::Component(component) => {
                 // Check cache first (convert SmolStr to String for cache key)
                 let ref_key = component.reference.to_string();
