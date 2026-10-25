@@ -104,10 +104,15 @@ def test_data_identities_and_pack_names():
             assert root in SOURCE.unencoded
     entries = DATA["leaves"][0]["entries"]
     assert DATA["leaves"][0]["id"] == "arabic"
-    assert [leaf["id"] for leaf in DATA["leaves"]] == ["arabic", "conn-high1"]
+    assert [leaf["id"] for leaf in DATA["leaves"]] == ["arabic", "conn-high1", "conn-hah"]
     assert [entry["glyph_name"] for entry in DATA["leaves"][1]["entries"]] == [
         "behDotless-ar.medi.conn-high1-1",
         "reh-ar.fina.conn-high1-2",
+    ]
+    assert [entry["glyph_name"] for entry in DATA["leaves"][2]["entries"]] == [
+        "behDotless-ar.init.conn-hah-1",
+        "lam-ar.init.conn-hah-1",
+        "hah-ar.medi.conn-hah-2",
     ]
     dot_names = {
         entry["glyph_name"]
@@ -502,9 +507,12 @@ def test_character_set_and_recipe_round_trip():
     assert provider.metadata()["tree"] == [
         {"id": "arabic", "label": "Arabic", "selectable": True},
         {"id": "conn-high1", "label": "High connection", "selectable": True},
+        {"id": "conn-hah", "label": "Hah connection", "selectable": True},
     ]
     assert provider.metadata()["set_details"]["conn-high1"]["title"] == "High connection"
     assert "<svg" in provider.metadata()["set_details"]["conn-high1"]["image"]
+    assert provider.metadata()["set_details"]["conn-hah"]["title"] == "Hah connection"
+    assert "<svg" in provider.metadata()["set_details"]["conn-hah"]["image"]
     assert provider.metadata()["glyph_categories"][0] == {
         "id": "bases",
         "label": "Bases",

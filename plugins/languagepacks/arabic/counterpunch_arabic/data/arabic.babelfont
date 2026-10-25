@@ -10017,6 +10017,195 @@
       "id": "a75f640e-19ea-448a-ba16-b21a0e5d8dd0"
     },
     {
+      "name": "hah-ar.medi.conn-hah-2",
+      "category": "Base",
+      "exported": true,
+      "layers": [
+        {
+          "width": 292,
+          "id": "5c3cd6aa-a626-4a30-95f6-d674ec25139d",
+          "master": {
+            "type": "DefaultForMaster",
+            "master": "Regular"
+          },
+          "shapes": [
+            {
+              "closed": true,
+              "nodes": [
+                {
+                  "x": 578,
+                  "y": 237,
+                  "nodetype": "Line",
+                  "smooth": false
+                },
+                {
+                  "x": 339,
+                  "y": 245,
+                  "nodetype": "OffCurve",
+                  "smooth": false
+                },
+                {
+                  "x": 199,
+                  "y": 257,
+                  "nodetype": "OffCurve",
+                  "smooth": false
+                },
+                {
+                  "x": 115,
+                  "y": 362,
+                  "nodetype": "Curve",
+                  "smooth": false
+                },
+                {
+                  "x": 108,
+                  "y": 362,
+                  "nodetype": "Line",
+                  "smooth": false
+                },
+                {
+                  "x": 53,
+                  "y": 318,
+                  "nodetype": "Line",
+                  "smooth": false
+                },
+                {
+                  "x": 169,
+                  "y": 172,
+                  "nodetype": "OffCurve",
+                  "smooth": false
+                },
+                {
+                  "x": 321,
+                  "y": 172,
+                  "nodetype": "OffCurve",
+                  "smooth": false
+                },
+                {
+                  "x": 575,
+                  "y": 157,
+                  "nodetype": "Curve",
+                  "smooth": false
+                },
+                {
+                  "x": 585,
+                  "y": 227,
+                  "nodetype": "Line",
+                  "smooth": false
+                }
+              ]
+            },
+            {
+              "closed": true,
+              "nodes": [
+                {
+                  "x": 539,
+                  "y": 179,
+                  "nodetype": "Curve",
+                  "smooth": false
+                },
+                {
+                  "x": 425,
+                  "y": 192,
+                  "nodetype": "Line",
+                  "smooth": false
+                },
+                {
+                  "x": 344,
+                  "y": 84,
+                  "nodetype": "OffCurve",
+                  "smooth": false
+                },
+                {
+                  "x": 176,
+                  "y": 75,
+                  "nodetype": "OffCurve",
+                  "smooth": false
+                },
+                {
+                  "x": 91,
+                  "y": 75,
+                  "nodetype": "Curve",
+                  "smooth": true
+                },
+                {
+                  "x": 0,
+                  "y": 75,
+                  "nodetype": "Line",
+                  "smooth": true
+                },
+                {
+                  "x": -14.999999999999995,
+                  "y": 75,
+                  "nodetype": "OffCurve",
+                  "smooth": false
+                },
+                {
+                  "x": -20,
+                  "y": 60,
+                  "nodetype": "OffCurve",
+                  "smooth": false
+                },
+                {
+                  "x": -20,
+                  "y": 38,
+                  "nodetype": "Curve",
+                  "smooth": true
+                },
+                {
+                  "x": -20,
+                  "y": 16,
+                  "nodetype": "OffCurve",
+                  "smooth": false
+                },
+                {
+                  "x": -15,
+                  "y": 0,
+                  "nodetype": "OffCurve",
+                  "smooth": false
+                },
+                {
+                  "x": 0,
+                  "y": 0,
+                  "nodetype": "Curve",
+                  "smooth": false
+                },
+                {
+                  "x": 192,
+                  "y": 0,
+                  "nodetype": "OffCurve",
+                  "smooth": false
+                },
+                {
+                  "x": 384,
+                  "y": 0,
+                  "nodetype": "OffCurve",
+                  "smooth": false
+                }
+              ]
+            }
+          ],
+          "anchors": [
+            {
+              "name": "bottom",
+              "x": 132,
+              "y": -96,
+              "id": "910b6b5f-b52d-4a5e-90e2-b2aaecc4dc18"
+            },
+            {
+              "name": "top",
+              "x": 107,
+              "y": 445,
+              "id": "597101c4-0b22-4af5-a258-d3c01e66d8ab"
+            }
+          ],
+          "guides": [],
+          "format_specific": {}
+        }
+      ],
+      "format_specific": {},
+      "id": "f31619f5-5a78-46ca-bac4-71811fd77e88"
+    },
+    {
       "name": "hahHamzaAbove-ar",
       "category": "Base",
       "codepoints": [
@@ -19525,6 +19714,145 @@
       ],
       "format_specific": {},
       "id": "556af802-7660-4ac9-8476-4886185b53a0"
+    },
+    {
+      "name": "lam-ar.init.conn-hah-1",
+      "category": "Base",
+      "exported": true,
+      "layers": [
+        {
+          "width": 316,
+          "id": "ecdb0fe4-a02b-4bed-ab8b-61dc0b0ae5fa",
+          "master": {
+            "type": "DefaultForMaster",
+            "master": "Regular"
+          },
+          "shapes": [
+            {
+              "closed": true,
+              "nodes": [
+                {
+                  "x": 73,
+                  "y": 213,
+                  "nodetype": "Line",
+                  "smooth": false
+                },
+                {
+                  "x": 73,
+                  "y": 747,
+                  "nodetype": "Line",
+                  "smooth": false
+                },
+                {
+                  "x": 70,
+                  "y": 755,
+                  "nodetype": "Line",
+                  "smooth": false
+                },
+                {
+                  "x": -2,
+                  "y": 746,
+                  "nodetype": "Line",
+                  "smooth": false
+                },
+                {
+                  "x": -2,
+                  "y": 227,
+                  "nodetype": "Line",
+                  "smooth": false
+                }
+              ]
+            }
+          ],
+          "anchors": [
+            {
+              "name": "bottom",
+              "x": 131,
+              "y": -62,
+              "id": "34bba3e9-da16-445e-82e7-0154a2f5e293"
+            },
+            {
+              "name": "top",
+              "x": 38,
+              "y": 852,
+              "id": "8776531e-5301-48fa-ae95-580952b8baad"
+            }
+          ],
+          "guides": []
+        }
+      ],
+      "format_specific": {},
+      "id": "a03aeb98-c6e7-4bc0-a84b-c4d542c59ecb"
+    },
+    {
+      "name": "behDotless-ar.init.conn-hah-1",
+      "category": "Base",
+      "exported": true,
+      "layers": [
+        {
+          "width": 316,
+          "id": "adb1e124-86ef-4737-bf4f-ad95bacf3a8a",
+          "master": {
+            "type": "DefaultForMaster",
+            "master": "Regular"
+          },
+          "shapes": [
+            {
+              "closed": true,
+              "nodes": [
+                {
+                  "x": 73,
+                  "y": 213,
+                  "nodetype": "Line",
+                  "smooth": false
+                },
+                {
+                  "x": 73,
+                  "y": 458,
+                  "nodetype": "Line",
+                  "smooth": false
+                },
+                {
+                  "x": 70,
+                  "y": 466,
+                  "nodetype": "Line",
+                  "smooth": false
+                },
+                {
+                  "x": -2,
+                  "y": 457,
+                  "nodetype": "Line",
+                  "smooth": false
+                },
+                {
+                  "x": -2,
+                  "y": 227,
+                  "nodetype": "Line",
+                  "smooth": false
+                }
+              ]
+            }
+          ],
+          "anchors": [
+            {
+              "name": "bottom",
+              "x": 131,
+              "y": -62,
+              "id": "34bba3e9-da16-445e-82e7-0154a2f5e293"
+            },
+            {
+              "name": "top",
+              "x": 38,
+              "y": 563,
+              "id": "8776531e-5301-48fa-ae95-580952b8baad"
+            }
+          ],
+          "guides": [],
+          "format_specific": {}
+        }
+      ],
+      "format_specific": {},
+      "id": "ad8e7283-0d30-4491-a7cd-f873d1cd1436"
     },
     {
       "name": "lam-ar.medi",
@@ -40384,6 +40712,6 @@
   "first_kern_groups": {},
   "second_kern_groups": {},
   "format_specific": {
-    "org.context.fonteditor.display_string": "/reh-ar.fina.conn-high1-2 /behDotless-ar.medi.conn-high1-1 "
+    "org.context.fonteditor.display_string": "/hah-ar.init /hah-ar.medi.conn-hah-2 /lam-ar.init.conn-hah-1 /behDotless-ar.init.conn-hah-1 "
   }
 }

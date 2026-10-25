@@ -59,7 +59,7 @@ PACKAGES = (
     {
         "name": "counterpunch_arabic",
         "distribution": "counterpunch-arabic",
-        "version": "1.4.0",
+        "version": "1.5.0",
         "root": EDITOR / "plugins" / "languagepacks" / "arabic" / "counterpunch_arabic",
         "files": [
             "__init__.py",
@@ -73,6 +73,7 @@ PACKAGES = (
             "data/arabic.json",
             "data/arabic.babelfont",
             "data/conn-high1.svg",
+            "data/conn-hah.svg",
         ],
         "entry_points": (
             "[counterpunch_composition_plugins]\n"

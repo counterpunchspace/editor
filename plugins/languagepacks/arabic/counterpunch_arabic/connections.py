@@ -23,6 +23,20 @@ CONNECTIONS: tuple[dict[str, Any], ...] = (
             "reh-ar.fina.conn-high1-2",
         ),
     },
+    {
+        "id": "hah",
+        "title": "Hah connection",
+        "description": (
+            "Initial beh and lam join a following medial hah at the top "
+            "of its stroke."
+        ),
+        "image": "conn-hah.svg",
+        "glyphs": (
+            "behDotless-ar.init.conn-hah-1",
+            "lam-ar.init.conn-hah-1",
+            "hah-ar.medi.conn-hah-2",
+        ),
+    },
 )
 
 

@@ -642,6 +642,40 @@
           ]
         }
       ]
+    },
+    {
+      "id": "conn-hah",
+      "label": "Hah connection",
+      "level": "essential",
+      "entries": [
+        {
+          "glyph_name": "behDotless-ar.init.conn-hah-1",
+          "category": "Letter",
+          "level": "essential",
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
+        },
+        {
+          "glyph_name": "lam-ar.init.conn-hah-1",
+          "category": "Letter",
+          "level": "essential",
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
+        },
+        {
+          "glyph_name": "hah-ar.medi.conn-hah-2",
+          "category": "Letter",
+          "level": "essential",
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
+        }
+      ]
     }
   ]
 }
