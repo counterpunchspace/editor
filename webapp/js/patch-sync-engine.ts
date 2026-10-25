@@ -1043,25 +1043,6 @@ export class PatchSyncEngine {
         return this.documentIdForPath(segments);
     }
 
-    /**
-     * Entries that belong to one document's packet. Every packet of a
-     * multi-document commit used to carry the whole commit's entries, which
-     * multiplied the envelope by the number of touched glyphs. Falls back to
-     * all entries when nothing maps, so a packet never loses its metadata.
-     */
-    private _entriesForDocument(
-        entries: ChangeLogEntry[],
-        documentId: string
-    ): ChangeLogEntry[] {
-        const renames = this._collectGlyphRenamesFromEntries(entries);
-        const own = entries.filter((entry) =>
-            !entry.path || entry.path === 'font'
-                ? documentId === FONT_CORE_DOCUMENT_ID
-                : this._documentIdForHistoryEntry(entry, renames) === documentId
-        );
-        return own.length ? own : entries;
-    }
-
     private _docForId(documentId: string): Y.Doc | null {
         if (documentId === FONT_CORE_DOCUMENT_ID) {
             return this.yDoc;
@@ -6528,10 +6509,7 @@ export class PatchSyncEngine {
                 this._emitLocalUpdateBatch(
                     packetsToApply.map((packet) => ({
                         update: packet.update,
-                        entries: this._entriesForDocument(
-                            changeLogEntries,
-                            packet.documentId
-                        ),
+                        entries: changeLogEntries,
                         documentId: packet.documentId
                     }))
                 );
