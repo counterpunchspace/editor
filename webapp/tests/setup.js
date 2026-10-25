@@ -97,10 +97,20 @@ if (hasWindow) {
     global.ViewportManager =
         require('../js/glyph-canvas/viewport').ViewportManager;
 
-    // Mock browser-specific APIs that are not available in JSDOM by default
-    if (typeof window.requestAnimationFrame === 'undefined') {
-        window.requestAnimationFrame = (cb) => setTimeout(cb, 0);
-    }
+    // Mock browser-specific APIs that are not available in JSDOM by default.
+    // Browsers ship both halves; tippy's destroy() calls cancelAnimationFrame.
+    // Re-installed before every test: a test that assigns its own stubs while
+    // fake timers are on loses them (and these) at jest.useRealTimers().
+    const ensureAnimationFrameStubs = () => {
+        if (typeof window.requestAnimationFrame === 'undefined') {
+            window.requestAnimationFrame = (cb) => setTimeout(cb, 0);
+        }
+        if (typeof window.cancelAnimationFrame === 'undefined') {
+            window.cancelAnimationFrame = (id) => clearTimeout(id);
+        }
+    };
+    ensureAnimationFrameStubs();
+    beforeEach(ensureAnimationFrameStubs);
     if (typeof window.ResizeObserver === 'undefined') {
         window.ResizeObserver = class ResizeObserver {
             observe() {}
