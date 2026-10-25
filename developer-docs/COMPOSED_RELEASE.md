@@ -40,7 +40,7 @@ Preview Release and Release both call `.github/workflows/composed-cutover.yml`:
 1. **freeze:** records the editor, website and collab commits (`trio.json`).
 2. **sibling-ci:** waits for green website and collab `deploy.yml` push runs on those commits.
 3. **verify-e2e:** waits until no editor CI run on `main` is still running for the editor commit, then needs a successful one (push, or `push.sh`'s workflow_dispatch) whose `cloud-e2e-trio` names exactly the frozen website and collab commits. Production checks the preview's editor commit instead (see below).
-4. **staging-current:** if staging still serves the frozen commits, the staging redeploy and suite are skipped: CI already ran that suite on exactly those commits.
+4. **tested-build:** `scripts/same-build.mjs` checks that the frozen editor commit builds the same app as the commit `verify-e2e` accepted (see "Same build" below). If it does, CI already passed the suite on that build with exactly these website and collab commits, so the staging redeploy and suite are skipped. A preview always skips here, since it ships the tested commit itself.
 5. Otherwise **staging-deploy** puts the trio on staging and waits until staging reports it, **staging-e2e** runs the full cloud-collab suite, and **staging-check** removes the suite's data and fails if staging changed during the run.
 6. **preflight:** builds the website and the editor (version already injected), bundles the website functions, runs `wrangler deploy --dry-run` for validator, compactor, room, plugins and cron, and checks the target's secret names. Its builds are what the deploy job ships. A dry run stops here.
 7. **deploy:** records the live Worker versions and Pages deployments (`scripts/cutover-snapshot.mjs`, artifact `cutover-snapshot-<target>`), then deploys validator, compactor, the room (followed by a pairing check on its `workers.dev` URL), the D1 schema, website, plugins, cron (production only) and editor.
@@ -76,7 +76,16 @@ Production may only ship what a preview already shipped:
 
 It then sets the version, turns `# Unreleased` into `# vX.Y.Z`, commits, pushes `main` and starts **Release** with `gh workflow run release.yml -f version=vX.Y.Z`. A rerun with the same version reuses those commits. `--dry-run` commits nothing and starts Release with `dry_run=true`.
 
-The Release workflow repeats the version and preview-first checks, then runs the cutover against the preview's website and collab commits. Its `verify-e2e` uses the CI results of the preview's editor commit, since the release commit only changes versions.
+The Release workflow repeats the version and preview-first checks, then runs the cutover against the preview's website and collab commits. Its `verify-e2e` uses the CI results of the preview's editor commit, since the release commit only changes versions. Editor CI on the release commit and the cutover's staging suite are skipped when the release commit is the same build as the preview's (see below).
+
+## Same build
+
+Work that already passed is not repeated. `scripts/same-build.mjs` proves that two editor commits build the same app: every changed file is one release.sh rewrites, and each is identical once its version string is masked (`VERSION` and `DISPLAY_VERSION` in `webapp/coi-serviceworker.js`, which every build overwrites anyway; the `**Version:**` line in `API.md` and `documentation/python/06-python-api.md`). `CHANGELOG.md` is neither shipped nor tested. Anything else, including API docs that were regenerated with new text, is a different build, and the tests run.
+
+- **Editor CI** (`ci.yml`, job `tested-build`): on a push to `main`, it walks back the first-parent history while the commits are the same build. If one has a successful CI run whose `cloud-e2e-trio` names the website and collab commits CI would test now, the test, Playwright and staging jobs are skipped. The signatory check still runs. `workflow_dispatch` runs (from `push.sh` after sibling pushes) never skip.
+- **Cutover** (`tested-build`, step 4 above): skips the staging redeploy and suite for the same build as the attested commit.
+
+Keep `API.md` and the Python API handbook page current on `main` (`npm run generate-api-docs`). Otherwise the release commit regenerates them with new text, and production repeats the tests.
 
 After the first successful production cutover, set the editor repository variable `PLUGINS_WORKER_LOCKED=production` so later preview cutovers do not roll that Worker back.
 

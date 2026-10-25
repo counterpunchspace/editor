@@ -203,53 +203,37 @@ jobs:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: bash scripts/verify-cloud-e2e-attestation.sh "${{ inputs.attested_editor_sha || needs.freeze.outputs.editor_sha }}" "${{ needs.freeze.outputs.website_sha }}" "${{ needs.freeze.outputs.collab_sha }}"
 
-    # CI deploys these exact commits to staging and runs the suite there. If
-    # staging still serves them and that run passed, the cutover does not
-    # repeat it.
-    staging-current:
+    # verify-e2e proved that CI passed the cloud-collab suite on the attested
+    # editor commit with exactly these website and collab commits. When the
+    # frozen editor commit builds the same app (scripts/same-build.mjs), the
+    # staging redeploy and suite are not repeated. Otherwise they run here.
+    tested-build:
         needs: [freeze, verify-e2e]
         runs-on: ubuntu-latest
         outputs:
-            skip: ${{ steps.decide.outputs.skip }}
+            skip: ${{ steps.prove.outputs.same_build }}
         steps:
             - name: Checkout editor
               uses: actions/checkout@v4
               with:
                   ref: ${{ needs.freeze.outputs.editor_sha }}
+                  fetch-depth: 0
 
             - name: Set up Node.js
               uses: actions/setup-node@v4
               with:
                   node-version: "24"
 
-            - name: Check what staging serves
-              id: check
-              run: |
-                  node scripts/wait-for-stack.mjs \
-                    --editor https://staging.editor.counterpunch.space \
-                    --website https://staging.counterpunch.space \
-                    --expect-editor "${{ needs.freeze.outputs.editor_sha }}" \
-                    --expect-website "${{ needs.freeze.outputs.website_sha }}" \
-                    --expect-collab "${{ needs.freeze.outputs.collab_sha }}" \
-                    --check
-
-            - name: Decide whether to rerun staging
-              id: decide
+            - name: Prove the frozen editor is the tested build
+              id: prove
               env:
-                  MATCH: ${{ steps.check.outputs.match }}
                   ATTESTED: ${{ inputs.attested_editor_sha }}
                   EDITOR_SHA: ${{ needs.freeze.outputs.editor_sha }}
-              run: |
-                  skip=false
-                  if [ "$MATCH" = "true" ] && { [ -z "$ATTESTED" ] || [ "$ATTESTED" = "$EDITOR_SHA" ]; }; then
-                    skip=true
-                  fi
-                  echo "skip=$skip" >> "$GITHUB_OUTPUT"
-                  echo "Skip the staging redeploy and suite: $skip"
+              run: node scripts/same-build.mjs "${ATTESTED:-$EDITOR_SHA}" "$EDITOR_SHA"
 
     staging-deploy:
-        needs: [freeze, staging-current]
-        if: ${{ needs.staging-current.outputs.skip != 'true' }}
+        needs: [freeze, tested-build]
+        if: ${{ needs.tested-build.outputs.skip != 'true' }}
         runs-on: ubuntu-latest
         timeout-minutes: 90
         steps:
@@ -460,7 +444,7 @@ jobs:
     # Everything that can fail without touching the target: builds, Worker
     # bundles and secret names. Its builds are what the deploy job ships.
     preflight:
-        needs: [freeze, staging-current, staging-e2e, staging-check]
+        needs: [freeze, tested-build, staging-e2e, staging-check]
         if: ${{ !failure() && !cancelled() }}
         runs-on: ubuntu-latest
         steps:

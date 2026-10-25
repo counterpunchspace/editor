@@ -21,8 +21,47 @@ concurrency:
     cancel-in-progress: true
 
 jobs:
+    # A push to main that builds the same app as an earlier main commit whose
+    # CI passed with the same website and collab commits (for example
+    # release.sh's version commits) skips the test and staging jobs below.
+    # scripts/same-build.mjs decides; when in doubt, they run.
+    tested-build:
+        runs-on: ubuntu-latest
+        timeout-minutes: 10
+        permissions:
+            contents: read
+            actions: read
+        outputs:
+            skip: ${{ steps.find.outputs.skip }}
+        steps:
+            - name: Checkout repository
+              if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Set up Node.js
+              if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "22"
+
+            - name: Look for green CI on the same build
+              id: find
+              if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  SIBLING_TOKEN: ${{ secrets.CLOUD_E2E_PAT || github.token }}
+                  WEBSITE_REPOSITORY: ${{ vars.WEBSITE_REPOSITORY || format('{0}/website', github.repository_owner) }}
+                  WEBSITE_REF: ${{ vars.WEBSITE_SHA != '' && vars.WEBSITE_SHA || 'main' }}
+                  COLLAB_REPOSITORY: ${{ vars.COLLAB_REPOSITORY || format('{0}/collab', github.repository_owner) }}
+                  COLLAB_REF: ${{ vars.COLLAB_SHA != '' && vars.COLLAB_SHA || 'main' }}
+              run: node scripts/same-build.mjs --green-ancestor "$GITHUB_SHA"
+
     # Graph chokepoints, type drift, protocol bindings, tsc, jest, and Prettier.
     checks:
+        needs: tested-build
+        if: needs.tested-build.outputs.skip != 'true'
         runs-on: ubuntu-latest
         timeout-minutes: 30
         steps:
@@ -58,7 +97,7 @@ jobs:
               run: sudo apt-get update && sudo apt-get install -y python3-pytest
 
             - name: Preflight bundled plugin wheels
-              run: node plugin-contracts/generate.mjs && node plugin-contracts/preflight-bundled.mjs && node --test plugin-contracts/supervisor.test.mjs scripts/check-plugin-exception-signatories.test.mjs scripts/wait-for-stack.test.mjs scripts/cutover-snapshot.test.mjs scripts/check-preview-first.test.mjs
+              run: node plugin-contracts/generate.mjs && node plugin-contracts/preflight-bundled.mjs && node --test plugin-contracts/supervisor.test.mjs scripts/check-plugin-exception-signatories.test.mjs scripts/wait-for-stack.test.mjs scripts/cutover-snapshot.test.mjs scripts/check-preview-first.test.mjs scripts/same-build.test.mjs
 
             - name: Run static checks and jest
               run: npm run test:checks --prefix webapp
@@ -92,6 +131,8 @@ jobs:
               run: node scripts/check-plugin-exception-signatories.mjs
 
     rust-wasm:
+        needs: tested-build
+        if: needs.tested-build.outputs.skip != 'true'
         runs-on: ubuntu-latest
         timeout-minutes: 30
         steps:
@@ -132,6 +173,8 @@ jobs:
     # Chromium Playwright, one named file group per job (scripts/ci-shard.mjs).
     build:
         name: chromium · ${{ matrix.group }}
+        needs: tested-build
+        if: needs.tested-build.outputs.skip != 'true'
         runs-on: ubuntu-latest
         timeout-minutes: 30
         strategy:
@@ -210,8 +253,10 @@ jobs:
                   if-no-files-found: ignore
 
     # Deploys the trio to the staging hostnames, then the shard job runs the
-    # suite there. previewrelease and release repeat that suite before cutover.
+    # suite there. A release cutover reuses that result for the same build.
     cloud-collab-staging-deploy:
+        needs: tested-build
+        if: needs.tested-build.outputs.skip != 'true'
         runs-on: ubuntu-latest
         timeout-minutes: 90
         steps:
@@ -401,8 +446,8 @@ jobs:
                   if-no-files-found: ignore
 
     cloud-collab-staging-leftovers:
-        needs: cloud-collab-e2e
-        if: always() && needs.cloud-collab-e2e.result != 'cancelled'
+        needs: [tested-build, cloud-collab-e2e]
+        if: always() && needs.tested-build.outputs.skip != 'true' && needs.cloud-collab-e2e.result != 'cancelled'
         runs-on: ubuntu-latest
         steps:
             - name: Checkout editor
