@@ -6,6 +6,7 @@ import {
     cloudCollabOperatorHeaders,
     makeCloudCollabEmails
 } from './helpers/cloud-collab-session';
+import { WELCOME_VERSION } from '../js/welcome-screen';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -23,8 +24,10 @@ const FIXTURE_PACKAGES = [
 ];
 
 async function prepareEditorPluginStorage(page: Page) {
-    await page.addInitScript(() => {
-        localStorage.setItem('welcomeDismissedVersion', '1');
+    // A welcome screen the user has not dismissed holds back the folder
+    // dialog that linkStartupFolders handles, so dismiss the current one.
+    await page.addInitScript((welcomeVersion) => {
+        localStorage.setItem('welcomeDismissedVersion', welcomeVersion);
         localStorage.setItem('tourSkipped', 'true');
         const storage = window as unknown as {
             showDirectoryPicker: () => Promise<FileSystemDirectoryHandle>;
@@ -40,7 +43,7 @@ async function prepareEditorPluginStorage(page: Page) {
             handle.requestPermission = allow;
             return root;
         };
-    });
+    }, String(WELCOME_VERSION));
 }
 
 async function linkStartupFolders(page: Page, waitForDialog: boolean) {
