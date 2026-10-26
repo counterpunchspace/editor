@@ -630,6 +630,11 @@ test('register, buy, and install the free and commercial plugins', async ({
             await expect(priced).toContainText('incl.');
             await expect(priced).toContainText('VAT');
             await priced.getByRole('button', { name: 'Buy' }).click();
+            const quote = editorPage.locator('.plugin-purchase-summary');
+            await expect(quote).toContainText('VAT');
+            await expect(quote.locator('.plugin-purchase-total')).toContainText(
+                'Total'
+            );
             await editorPage
                 .locator('.plugin-purchase-card')
                 .getByRole('button', { name: /^Pay / })

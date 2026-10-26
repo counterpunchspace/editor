@@ -6544,45 +6544,212 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     margin: 0;
 }
 
+.plugin-manager-loading {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.plugin-manager-spinner {
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--border-primary);
+    border-top-color: var(--text-primary);
+    border-radius: 50%;
+    animation: assistant-spin 0.8s linear infinite;
+}
+
 .plugin-purchase-sheet {
     position: fixed;
     inset: 0;
     z-index: 10000;
     display: grid;
     place-items: center;
-    background: rgba(0, 0, 0, 0.45);
+    background: var(--modal-overlay);
+    animation: infoPopupFadeIn 0.2s ease;
 }
 
 .plugin-purchase-card {
     display: grid;
-    gap: 8px;
-    width: min(420px, calc(100% - 32px));
-    padding: 20px;
-    border-radius: 8px;
-    background: var(--background-primary);
+    gap: 16px;
+    width: min(400px, calc(100% - 32px));
+    padding: 24px;
+    border: 1px solid var(--border-primary);
+    border-radius: 10px;
+    background: var(--modal-bg);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
     color: var(--text-primary);
+    font-size: 13px;
+    animation: infoPopupSlideUp 0.3s ease;
 }
 
 .plugin-purchase-card h4,
-.plugin-purchase-card p {
+.plugin-purchase-card p,
+.plugin-purchase-card dl,
+.plugin-purchase-card dd {
     margin: 0;
+}
+
+.plugin-purchase-header {
+    display: grid;
+    gap: 4px;
+}
+
+.plugin-purchase-eyebrow,
+.plugin-purchase-label {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.plugin-purchase-header h4 {
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+}
+
+.plugin-purchase-meta {
+    color: var(--text-secondary);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.plugin-purchase-summary {
+    display: grid;
+    gap: 8px;
+    padding: 14px 16px;
+    border: 1px solid var(--border-primary);
+    border-radius: 8px;
+    background: var(--background-secondary);
+}
+
+.plugin-purchase-line {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    color: var(--text-secondary);
+}
+
+.plugin-purchase-line dd {
+    font-variant-numeric: tabular-nums;
+}
+
+.plugin-purchase-total {
+    margin-top: 4px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-primary);
+    color: var(--text-primary);
+    font-size: 15px;
+    font-weight: 600;
+}
+
+.plugin-purchase-method {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--border-primary);
+    border-radius: 8px;
+}
+
+.plugin-purchase-method-icon {
+    color: var(--text-secondary);
+    font-size: 22px;
+}
+
+.plugin-purchase-method-text {
+    display: grid;
+    flex: 1;
+    gap: 2px;
+    min-width: 0;
+    overflow-wrap: anywhere;
 }
 
 .plugin-purchase-actions {
     display: flex;
+    justify-content: flex-end;
     gap: 8px;
+}
+
+.plugin-purchase-actions .dialog-button {
+    padding: 8px 18px;
+    font-size: 13px;
+}
+
+.plugin-purchase-actions .dialog-button-primary {
+    font-weight: 600;
+}
+
+.plugin-purchase-invoice {
+    text-decoration: none;
 }
 
 .plugin-purchase-link {
     border: 0;
     padding: 0;
     background: none;
-    color: var(--accent-blue, #00aeef);
+    color: var(--accent-lightblue);
+    font: inherit;
     cursor: pointer;
 }
 
+.plugin-purchase-link:hover,
+.plugin-purchase-footnote a:hover {
+    text-decoration: underline;
+}
+
+.plugin-purchase-footnote {
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.5;
+    text-align: center;
+}
+
+.plugin-purchase-footnote a {
+    color: inherit;
+    text-decoration: underline;
+    text-decoration-color: var(--border-primary);
+}
+
 .plugin-purchase-error {
-    color: var(--accent-red, #c0392b);
+    padding: 10px 12px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--accent-red) 12%, transparent);
+    color: var(--accent-red);
+    line-height: 1.4;
+}
+
+.plugin-purchase-error[hidden] {
+    display: none;
+}
+
+.plugin-purchase-success {
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+    padding: 8px 0 4px;
+    text-align: center;
+}
+
+.plugin-purchase-success-icon {
+    color: var(--accent-green);
+    font-size: 40px;
+}
+
+.plugin-purchase-success h4 {
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.plugin-purchase-success p {
+    color: var(--text-secondary);
 }
 
 .plugin-manager-row {
@@ -6629,6 +6796,7 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
 
 .plugin-manager-title {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 6px;
 }
@@ -6636,13 +6804,101 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
 .plugin-screened {
     display: inline-flex;
     flex: 0 0 auto;
+    border-radius: 3px;
     color: var(--accent-blue);
-    cursor: help;
+}
+
+.plugin-screened:focus-visible {
+    outline: 2px solid var(--border-focus-outline);
+    outline-offset: 1px;
 }
 
 .plugin-screened svg {
-    width: 14px;
-    height: 14px;
+    width: 17px;
+    height: 17px;
+}
+
+.plugin-screened-panel {
+    display: grid;
+    gap: 8px;
+    padding: 6px 4px;
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.plugin-screened-panel-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.plugin-screened-panel-header h5 {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.plugin-screened-panel-icon {
+    display: inline-flex;
+    color: var(--accent-blue);
+}
+
+.plugin-screened-panel-icon svg {
+    width: 18px;
+    height: 18px;
+}
+
+.plugin-screened-panel p {
+    margin: 0;
+    color: var(--text-secondary);
+}
+
+.plugin-screened-panel ul {
+    display: grid;
+    gap: 4px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.plugin-screened-panel li {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+}
+
+.plugin-screened-panel li .material-symbols-outlined {
+    color: var(--accent-green);
+    font-size: 16px;
+}
+
+.plugin-installed-badge {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 4px;
+    margin-left: 4px;
+    padding: 2px 8px 2px 5px;
+    border: 1px solid color-mix(in srgb, var(--accent-green) 45%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent-green) 14%, transparent);
+    color: var(--accent-green);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.4;
+    white-space: nowrap;
+}
+
+.plugin-installed-badge .material-symbols-outlined {
+    font-size: 14px;
+    font-variation-settings: 'FILL' 1;
+}
+
+.plugin-update-badge {
+    margin-left: 0;
+    border-color: color-mix(in srgb, var(--accent-orange) 45%, transparent);
+    background: color-mix(in srgb, var(--accent-orange) 14%, transparent);
+    color: var(--accent-orange);
 }
 
 .plugin-manager-details p {

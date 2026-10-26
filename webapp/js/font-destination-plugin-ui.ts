@@ -14,6 +14,8 @@ import {
     type CatalogPlugin
 } from './installed-plugin-manager';
 import { resolveWebsiteURL } from './website-url';
+import tippy, { type Instance as TippyInstance } from 'tippy.js';
+import { getTheme } from './tippy-utils';
 import { Logger } from './logger';
 import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
 import { createFolderSetupCallout } from './folder-permissions-dialog';
@@ -114,6 +116,7 @@ function getModalElements(): {
 function closePluginManager(): void {
     pluginManagerEscapeBinding?.release();
     pluginManagerEscapeBinding = null;
+    for (const instance of screenedTippies) instance.hide();
     const overlay = document.getElementById('plugin-manager-modal');
     if (overlay) {
         overlay.style.display = 'none';
@@ -121,9 +124,15 @@ function closePluginManager(): void {
 }
 
 async function renderPluginManager(content: HTMLElement): Promise<void> {
-    content.replaceChildren(
-        createTextElement('p', 'Searching Font Destinations…')
-    );
+    const loading = document.createElement('div');
+    loading.className = 'plugin-manager-loading';
+    loading.setAttribute('role', 'status');
+    const spinner = document.createElement('span');
+    spinner.className = 'plugin-manager-spinner';
+    spinner.setAttribute('aria-hidden', 'true');
+    loading.append(spinner, 'Searching for plugins…');
+    destroyScreenedTippies();
+    content.replaceChildren(loading);
     try {
         const settingsAccess = await settingsFolder.getAccessState();
         if (settingsAccess !== 'ready') {
@@ -291,35 +300,61 @@ function openPurchaseSheet(
     };
     const renderQuote = (current: CatalogPlugin) => {
         card.replaceChildren();
-        card.appendChild(createTextElement('h4', current.name));
-        if (current.creatorName) {
-            card.appendChild(
-                createTextElement('p', `By ${current.creatorName}`)
+        const header = document.createElement('header');
+        header.className = 'plugin-purchase-header';
+        header.appendChild(
+            createTextElement('p', 'Buy plugin', 'plugin-purchase-eyebrow')
+        );
+        header.appendChild(createTextElement('h4', current.name));
+        const meta = [
+            current.creatorName ? `By ${current.creatorName}` : '',
+            current.package,
+            current.version ? `v${current.version}` : ''
+        ].filter(Boolean);
+        header.appendChild(
+            createTextElement('p', meta.join(' · '), 'plugin-purchase-meta')
+        );
+        card.appendChild(header);
+
+        const country =
+            countryLabel(current.country) || current.countryName || '';
+        const summary = document.createElement('dl');
+        summary.className = 'plugin-purchase-summary';
+        const addLine = (label: string, value: string, className = '') => {
+            const row = document.createElement('div');
+            row.className = `plugin-purchase-line ${className}`.trim();
+            row.append(
+                createTextElement('dt', label),
+                createTextElement('dd', value)
             );
-        }
-        card.appendChild(
-            createTextElement(
-                'p',
-                `${current.package}${current.version ? ` · v${current.version}` : ''}`
-            )
+            summary.appendChild(row);
+        };
+        addLine('Price', formatEuro(current.netCents || 0));
+        addLine(
+            country ? `VAT (${country})` : 'VAT',
+            formatEuro(current.taxCents || 0)
         );
-        card.appendChild(
-            createTextElement('p', `Price ${formatEuro(current.netCents || 0)}`)
+        addLine(
+            'Total',
+            formatEuro(current.grossCents || 0),
+            'plugin-purchase-total'
         );
-        card.appendChild(
-            createTextElement(
-                'p',
-                `VAT ${formatEuro(current.taxCents || 0)} (${countryLabel(current.country) || current.countryName || ''})`
-            )
+        card.appendChild(summary);
+
+        const method = document.createElement('div');
+        method.className = 'plugin-purchase-method';
+        const methodIcon = createTextElement(
+            'span',
+            'credit_card',
+            'material-symbols-outlined plugin-purchase-method-icon'
         );
-        card.appendChild(
-            createTextElement(
-                'p',
-                `Total ${formatEuro(current.grossCents || 0)}`
-            )
+        methodIcon.setAttribute('aria-hidden', 'true');
+        const methodText = document.createElement('div');
+        methodText.className = 'plugin-purchase-method-text';
+        methodText.append(
+            createTextElement('span', 'Pay with', 'plugin-purchase-label'),
+            createTextElement('span', paymentMethodText(billing))
         );
-        const cardLine = document.createElement('p');
-        cardLine.append(`${paymentMethodText(billing)} `);
         const change = document.createElement('button');
         change.type = 'button';
         change.className = 'plugin-purchase-link';
@@ -330,24 +365,16 @@ function openPurchaseSheet(
                 '_blank'
             );
         });
-        cardLine.append(change);
-        card.appendChild(cardLine);
-        card.appendChild(
-            createTextElement('p', 'You will receive an invoice by email.')
-        );
-        const refunds = document.createElement('a');
-        refunds.href = `${resolveWebsiteURL()}/account#purchases`;
-        refunds.target = '_blank';
-        refunds.rel = 'noopener';
-        refunds.textContent = 'Refunds within 14 days';
-        card.appendChild(refunds);
-        const error = createTextElement('p', '');
-        error.className = 'plugin-purchase-error';
+        method.append(methodIcon, methodText, change);
+        card.appendChild(method);
+
+        const error = createTextElement('p', '', 'plugin-purchase-error');
         error.hidden = true;
         card.appendChild(error);
+
         const pay = document.createElement('button');
         pay.type = 'button';
-        pay.className = 'dialog-button';
+        pay.className = 'dialog-button dialog-button-primary';
         pay.textContent = `Pay ${formatEuro(current.grossCents || 0)}`;
         const cancel = document.createElement('button');
         cancel.type = 'button';
@@ -359,8 +386,16 @@ function openPurchaseSheet(
         });
         const actions = document.createElement('div');
         actions.className = 'plugin-purchase-actions';
-        actions.append(pay, cancel);
+        actions.append(cancel, pay);
         card.appendChild(actions);
+
+        card.appendChild(
+            createTextElement(
+                'p',
+                'The invoice is sent to you by email. Refunds within 14 days.',
+                'plugin-purchase-footnote'
+            )
+        );
     };
     renderQuote(plugin);
     sheet.addEventListener('click', (event) => {
@@ -567,26 +602,42 @@ async function showPurchased(
         console.warn('Plugin installed after purchase failed:', error);
     }
     card.replaceChildren();
-    card.appendChild(createTextElement('h4', 'Purchased'));
-    card.appendChild(createTextElement('p', `${plugin.name} is ready to use.`));
+    const success = document.createElement('div');
+    success.className = 'plugin-purchase-success';
+    const check = createTextElement(
+        'span',
+        'check_circle',
+        'material-symbols-outlined plugin-purchase-success-icon'
+    );
+    check.setAttribute('aria-hidden', 'true');
+    success.append(
+        check,
+        createTextElement('h4', 'Purchased'),
+        createTextElement('p', `${plugin.name} is installed and ready to use.`)
+    );
+    card.appendChild(success);
+    const actions = document.createElement('div');
+    actions.className = 'plugin-purchase-actions';
     const invoiceUrl = purchase.invoicePdf || purchase.hostedInvoiceUrl;
     if (invoiceUrl) {
         const link = document.createElement('a');
+        link.className = 'dialog-button plugin-purchase-invoice';
         link.href = invoiceUrl;
         link.target = '_blank';
         link.rel = 'noopener';
         link.textContent = 'View invoice';
-        card.appendChild(link);
+        actions.appendChild(link);
     }
     const done = document.createElement('button');
     done.type = 'button';
-    done.className = 'dialog-button';
+    done.className = 'dialog-button dialog-button-primary';
     done.textContent = 'Done';
     done.addEventListener('click', () => {
         close();
         void renderPluginManager(content);
     });
-    card.appendChild(done);
+    actions.appendChild(done);
+    card.appendChild(actions);
 }
 
 function renderCatalog(
@@ -653,6 +704,12 @@ function renderCatalog(
         title.className = 'plugin-manager-title';
         title.appendChild(document.createTextNode(plugin.name));
         title.appendChild(screenedMark());
+        if (installed) {
+            title.appendChild(installedBadge(installed));
+        }
+        if (actionName === 'update' && plugin.version) {
+            title.appendChild(updateBadge(plugin.version));
+        }
         details.appendChild(title);
         details.appendChild(createTextElement('p', plugin.description));
         if (
@@ -683,13 +740,21 @@ function renderCatalog(
             price.textContent = `${formatEuro(plugin.grossCents)} incl. ${formatEuro(plugin.taxCents || 0)} VAT`;
             actions.appendChild(price);
         }
+        const uninstallInstalled = async () => {
+            const path = installedPaths.find((item) =>
+                (item.split('/').pop() || '').startsWith(
+                    plugin.package.replaceAll('-', '_') + '-'
+                )
+            );
+            if (path) await fontDestinationPluginManager.uninstall(path);
+        };
         const action = document.createElement('button');
         action.type = 'button';
         if (actionName === 'payment-method') {
             action.className = 'plugin-manager-pay-hint';
             action.textContent = 'Add a payment method to see the price';
         } else {
-            action.className = 'dialog-button plugin-manager-action';
+            action.className = `dialog-button plugin-manager-action${pluginActionTone(actionName)}`;
             const labels: Record<string, string> = {
                 'buy': 'Buy',
                 'sign-in': 'Sign in',
@@ -717,13 +782,7 @@ function renderCatalog(
                     action.disabled = false;
                     return;
                 } else if (actionName === 'uninstall' && installed) {
-                    const path = installedPaths.find((item) =>
-                        (item.split('/').pop() || '').startsWith(
-                            plugin.package.replaceAll('-', '_') + '-'
-                        )
-                    );
-                    if (path)
-                        await fontDestinationPluginManager.uninstall(path);
+                    await uninstallInstalled();
                 } else {
                     await downloadPluginWheel(plugin);
                     await discoverCompileFilters();
@@ -752,7 +811,29 @@ function renderCatalog(
             );
             if (reason) await reportPlugin(plugin.package, reason);
         });
-        actions.append(action, report);
+        actions.append(action);
+        if (actionName === 'update') {
+            const uninstall = document.createElement('button');
+            uninstall.type = 'button';
+            uninstall.className = `dialog-button plugin-manager-action${pluginActionTone('uninstall')}`;
+            uninstall.textContent = 'Uninstall';
+            uninstall.addEventListener('click', async () => {
+                uninstall.disabled = true;
+                try {
+                    await uninstallInstalled();
+                    await renderPluginManager(content);
+                } catch (error: unknown) {
+                    window.alert(
+                        error instanceof Error
+                            ? error.message
+                            : 'Could not uninstall the plugin.'
+                    );
+                    uninstall.disabled = false;
+                }
+            });
+            actions.append(uninstall);
+        }
+        actions.append(report);
         row.appendChild(actions);
         section.appendChild(row);
         rows.push(row);
@@ -771,17 +852,117 @@ function renderCatalog(
     return section;
 }
 
-const SCREENED_TOOLTIP =
-    'From the Counterpunch catalog. Before publication, the release is run in a sandbox and screened for sending data off your computer, changing the font outside that plugin type contract, and crashing or hanging the editor.';
+const SHIELD_SVG =
+    '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 1.2 2.5 3.4v4.2c0 3.3 2.3 5.6 5.5 6.8 3.2-1.2 5.5-3.5 5.5-6.8V3.4L8 1.2Zm0 1.7 3.8 1.5v3.1c0 2.4-1.6 4.2-3.8 5.2-2.2-1-3.8-2.8-3.8-5.2V4.4L8 2.9Z"/></svg>';
+
+const SCREENED_CHECKS = [
+    'Sending data off your computer',
+    'Changing the font outside its plugin type contract',
+    'Crashing or hanging the editor'
+];
+
+let screenedTippies: TippyInstance[] = [];
+
+function destroyScreenedTippies(): void {
+    for (const instance of screenedTippies) instance.destroy();
+    screenedTippies = [];
+}
+
+function screenedPanel(): HTMLElement {
+    const panel = document.createElement('div');
+    panel.className = 'plugin-screened-panel';
+    const header = document.createElement('div');
+    header.className = 'plugin-screened-panel-header';
+    const icon = document.createElement('span');
+    icon.className = 'plugin-screened-panel-icon';
+    icon.innerHTML = SHIELD_SVG;
+    header.append(icon, createTextElement('h5', 'Screened by Counterpunch'));
+    panel.appendChild(header);
+    panel.appendChild(
+        createTextElement(
+            'p',
+            'Before publication, every release in the Counterpunch catalog runs in a sandbox and is checked for:'
+        )
+    );
+    const list = document.createElement('ul');
+    for (const check of SCREENED_CHECKS) {
+        const item = document.createElement('li');
+        const mark = createTextElement(
+            'span',
+            'check',
+            'material-symbols-outlined'
+        );
+        mark.setAttribute('aria-hidden', 'true');
+        item.append(mark, check);
+        list.appendChild(item);
+    }
+    panel.appendChild(list);
+    return panel;
+}
 
 function screenedMark(): HTMLElement {
     const mark = document.createElement('span');
     mark.className = 'plugin-screened';
-    mark.title = SCREENED_TOOLTIP;
-    mark.setAttribute('aria-label', SCREENED_TOOLTIP);
-    mark.innerHTML =
-        '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 1.2 2.5 3.4v4.2c0 3.3 2.3 5.6 5.5 6.8 3.2-1.2 5.5-3.5 5.5-6.8V3.4L8 1.2Zm0 1.7 3.8 1.5v3.1c0 2.4-1.6 4.2-3.8 5.2-2.2-1-3.8-2.8-3.8-5.2V4.4L8 2.9Z"/></svg>';
+    mark.tabIndex = 0;
+    mark.setAttribute(
+        'aria-label',
+        `Screened by Counterpunch. Checked in a sandbox for: ${SCREENED_CHECKS.join(', ')}.`
+    );
+    mark.innerHTML = SHIELD_SVG;
+    screenedTippies.push(
+        tippy(mark, {
+            content: screenedPanel(),
+            interactive: true,
+            trigger: 'mouseenter focus',
+            delay: [80, 80],
+            appendTo: () => document.body,
+            placement: 'bottom-start',
+            arrow: false,
+            offset: [0, 6],
+            theme: getTheme(),
+            maxWidth: 320,
+            zIndex: 10003,
+            onShow: (instance) => {
+                instance.setProps({ theme: getTheme() });
+            }
+        })
+    );
     return mark;
+}
+
+/** Blue for adding a plugin, red for removing it. */
+function pluginActionTone(actionName: string): string {
+    if (actionName === 'install' || actionName === 'update') {
+        return ' dialog-button-primary';
+    }
+    if (actionName === 'uninstall') return ' dialog-button-danger';
+    return '';
+}
+
+function updateBadge(version: string): HTMLElement {
+    const badge = document.createElement('span');
+    badge.className = 'plugin-installed-badge plugin-update-badge';
+    const icon = createTextElement(
+        'span',
+        'arrow_circle_up',
+        'material-symbols-outlined'
+    );
+    icon.setAttribute('aria-hidden', 'true');
+    badge.append(icon, `Update · v${version}`);
+    return badge;
+}
+
+function installedBadge(version?: string): HTMLElement {
+    const badge = document.createElement('span');
+    badge.className = 'plugin-installed-badge';
+    const icon = createTextElement(
+        'span',
+        'check_circle',
+        'material-symbols-outlined'
+    );
+    icon.setAttribute('aria-hidden', 'true');
+    badge.append(icon, version ? `Installed · v${version}` : 'Installed');
+    return badge;
 }
 
 function createPluginRow(
@@ -797,7 +978,15 @@ function createPluginRow(
 
     const details = document.createElement('div');
     details.className = 'plugin-manager-details';
-    details.appendChild(createTextElement('h5', manifest.name));
+    const title = createTextElement(
+        'h5',
+        manifest.name,
+        'plugin-manager-title'
+    );
+    if (isInstalled) {
+        title.appendChild(installedBadge());
+    }
+    details.appendChild(title);
     details.appendChild(createTextElement('p', manifest.description));
     if (manifest.imageUrl) {
         const image = document.createElement('img');
@@ -818,7 +1007,7 @@ function createPluginRow(
     row.appendChild(details);
 
     const action = document.createElement('button');
-    action.className = 'dialog-button plugin-manager-action';
+    action.className = `dialog-button plugin-manager-action${pluginActionTone(isInstalled ? 'uninstall' : 'install')}`;
     action.type = 'button';
     action.textContent = isInstalled ? 'Uninstall' : 'Install';
     action.addEventListener('click', async () => {
