@@ -917,8 +917,6 @@ function screenedMark(): HTMLElement {
             delay: [80, 80],
             appendTo: () => document.body,
             placement: 'bottom-start',
-            arrow: false,
-            offset: [0, 6],
             theme: getTheme(),
             maxWidth: 320,
             zIndex: 10003,

@@ -4878,6 +4878,57 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     color: var(--text-primary);
 }
 
+/* Arrows take the box's fill and border. Tippy draws the arrow in
+   currentColor, which defaults to #333. The ::after triangle sits one pixel
+   further out, behind the box, and shows as the arrow's border. */
+.tippy-box[data-theme='dark'],
+.tippy-box[data-theme='light'] {
+    --tippy-arrow-fill: var(--background-secondary);
+    --tippy-arrow-border: var(--border-primary);
+}
+
+.tippy-box[data-theme='dark'] > .tippy-arrow,
+.tippy-box[data-theme='light'] > .tippy-arrow {
+    color: var(--tippy-arrow-fill);
+}
+
+.tippy-box[data-theme='dark'] > .tippy-arrow::after,
+.tippy-box[data-theme='light'] > .tippy-arrow::after {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    border-color: transparent;
+    border-style: solid;
+}
+
+.tippy-box[data-placement^='top'] > .tippy-arrow::after {
+    bottom: -8px;
+    left: -1px;
+    border-width: 9px 9px 0;
+    border-top-color: var(--tippy-arrow-border);
+}
+
+.tippy-box[data-placement^='bottom'] > .tippy-arrow::after {
+    top: -8px;
+    left: -1px;
+    border-width: 0 9px 9px;
+    border-bottom-color: var(--tippy-arrow-border);
+}
+
+.tippy-box[data-placement^='left'] > .tippy-arrow::after {
+    right: -8px;
+    top: -1px;
+    border-width: 9px 0 9px 9px;
+    border-left-color: var(--tippy-arrow-border);
+}
+
+.tippy-box[data-placement^='right'] > .tippy-arrow::after {
+    left: -8px;
+    top: -1px;
+    border-width: 9px 9px 9px 0;
+    border-right-color: var(--tippy-arrow-border);
+}
+
 .tippy-content {
     padding: 1px !important;
 }
