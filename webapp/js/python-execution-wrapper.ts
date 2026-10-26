@@ -235,57 +235,6 @@
             '[PythonExec]',
             '✅ Python execution wrapper installed successfully'
         );
-
-        // For console commands, intercept when window.term is set
-        // Use a property descriptor to hook into the assignment
-        let _term: any = null;
-        Object.defineProperty(window, 'term', {
-            get: function () {
-                return _term;
-            },
-            set: function (newTerm: any) {
-                _term = newTerm;
-
-                if (newTerm && newTerm.get_command) {
-                    console.log(
-                        '[PythonExec]',
-                        '🔧 Terminal assigned, wrapping interpreter...'
-                    );
-
-                    // Get the current interpreter
-                    const originalInterpreter = newTerm.get_command();
-
-                    // Create a wrapped interpreter
-                    const wrappedInterpreter = async function (
-                        this: any,
-                        command: string
-                    ) {
-                        if (command && command.trim()) {
-                            executionCounter++;
-                            const execId = executionCounter;
-
-                            console.group(
-                                `🐍 Python Console Command #${execId}`
-                            );
-                            console.log('[PythonExec]', command);
-                            console.groupEnd();
-                        }
-
-                        // Call the original interpreter
-                        return originalInterpreter.call(this, command);
-                    };
-
-                    // Replace the interpreter
-                    newTerm.set_interpreter(wrappedInterpreter);
-
-                    console.log(
-                        '[PythonExec]',
-                        '✅ Terminal interpreter wrapped successfully'
-                    );
-                }
-            },
-            configurable: true
-        });
     }
 
     // Start initialization when DOM is ready

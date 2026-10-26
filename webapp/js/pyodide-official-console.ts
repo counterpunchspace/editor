@@ -120,81 +120,94 @@ async function initPyodideConsole() {
 
             const unlock = await lock();
             term.pause();
-            // multiline should be split (useful when pasting)
-            for (const c of command.split('\n')) {
-                const escaped = c.replaceAll(/\u00a0/g, ' ');
-                const fut = pyconsole.push(escaped);
-                term.set_prompt(fut.syntax_check === 'incomplete' ? ps2 : ps1);
-                switch (fut.syntax_check) {
-                    case 'syntax-error':
-                        term.error(fut.formatted_error.trimEnd());
-                        continue;
-                    case 'incomplete':
-                        continue;
-                    case 'complete':
-                        break;
-                    default:
-                        throw new Error(`Unexpected type ${fut.syntax_check}`);
-                }
-                // In JavaScript, await automatically also awaits any results of
-                // awaits, so if an async function returns a future, it will await
-                // the inner future too. This is not what we want so we
-                // temporarily put it into a list to protect it.
-                const wrapped = await_fut(fut);
-                // complete case, get result / error and print it.
-                try {
-                    const [value] = await wrapped;
-                    if (value !== undefined) {
-                        echo(
-                            repr_shorten.callKwargs(value, {
-                                separator: '\n<long output truncated>\n'
-                            })
+            // False once any line fails to parse or raises, so history marks the
+            // run as partial. The finally closes what beforePythonExecution opened.
+            let succeeded = true;
+            try {
+                // multiline should be split (useful when pasting)
+                for (const c of command.split('\n')) {
+                    const escaped = c.replaceAll(/\u00a0/g, ' ');
+                    const fut = pyconsole.push(escaped);
+                    term.set_prompt(
+                        fut.syntax_check === 'incomplete' ? ps2 : ps1
+                    );
+                    switch (fut.syntax_check) {
+                        case 'syntax-error':
+                            succeeded = false;
+                            term.error(fut.formatted_error.trimEnd());
+                            continue;
+                        case 'incomplete':
+                            continue;
+                        case 'complete':
+                            break;
+                        default:
+                            throw new Error(
+                                `Unexpected type ${fut.syntax_check}`
+                            );
+                    }
+                    // In JavaScript, await automatically also awaits any results of
+                    // awaits, so if an async function returns a future, it will await
+                    // the inner future too. This is not what we want so we
+                    // temporarily put it into a list to protect it.
+                    const wrapped = await_fut(fut);
+                    // complete case, get result / error and print it.
+                    try {
+                        const [value] = await wrapped;
+                        if (value !== undefined) {
+                            echo(
+                                repr_shorten.callKwargs(value, {
+                                    separator: '\n<long output truncated>\n'
+                                })
+                            );
+                        }
+                        if (value instanceof pyodide.ffi.PyProxy) {
+                            value.destroy();
+                        }
+
+                        // Log completion to browser console
+                        console.log(
+                            '[PyodideConsole]',
+                            '✅ Console command completed successfully'
                         );
+                    } catch (e) {
+                        succeeded = false;
+                        const errorMessage =
+                            e instanceof Error ? e.message : String(e);
+                        // Log error to browser console
+                        console.error(
+                            '[PyodideConsole]',
+                            '❌ Console command failed:',
+                            errorMessage
+                        );
+                        if (
+                            (e as { constructor?: { name?: string } })
+                                .constructor?.name === 'PythonError'
+                        ) {
+                            const message = fut.formatted_error || errorMessage;
+                            const cleanedMessage =
+                                window.cleanPythonTraceback(message);
+                            term.error(cleanedMessage.trimEnd());
+                        } else {
+                            throw e;
+                        }
+                    } finally {
+                        fut.destroy();
+                        wrapped.destroy();
                     }
-                    if (value instanceof pyodide.ffi.PyProxy) {
-                        value.destroy();
-                    }
-
-                    // Log completion to browser console
-                    console.log(
-                        '[PyodideConsole]',
-                        '✅ Console command completed successfully'
-                    );
-                } catch (e) {
-                    const errorMessage =
-                        e instanceof Error ? e.message : String(e);
-                    // Log error to browser console
-                    console.error(
-                        '[PyodideConsole]',
-                        '❌ Console command failed:',
-                        errorMessage
-                    );
-                    if (
-                        (e as { constructor?: { name?: string } }).constructor
-                            ?.name === 'PythonError'
-                    ) {
-                        const message = fut.formatted_error || errorMessage;
-                        const cleanedMessage =
-                            window.cleanPythonTraceback(message);
-                        term.error(cleanedMessage.trimEnd());
-                    } else {
-                        throw e;
-                    }
-                } finally {
-                    fut.destroy();
-                    wrapped.destroy();
                 }
-            }
-            term.resume();
-            await sleep(10);
-            unlock();
-
-            // Call after-execution hook (always, after all commands processed)
-            if (window.afterPythonExecution) {
-                await window.afterPythonExecution(
-                    { succeeded: true },
-                    historyContext
-                );
+            } catch (e) {
+                succeeded = false;
+                throw e;
+            } finally {
+                term.resume();
+                await sleep(10);
+                unlock();
+                if (window.afterPythonExecution) {
+                    await window.afterPythonExecution(
+                        { succeeded },
+                        historyContext
+                    );
+                }
             }
         }
 
