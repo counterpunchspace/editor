@@ -17,6 +17,7 @@ function healthyStack() {
       ok: true,
       commit: "website-sha",
       schema: { ok: true },
+      ai: { ok: true },
       room: {
         ok: true,
         commit: "collab-sha",
@@ -43,14 +44,24 @@ test("schema, room and fetch failures are reported", () => {
   const stack = healthyStack();
   stack.editor = { error: "HTTP 404" };
   stack.website.schema = { ok: false, reason: "missing tables x" };
+  stack.website.ai = { ok: false, reason: "OPENROUTER_API_KEY is not set" };
   stack.website.room = { ok: false, reason: "status-503" };
   assert.deepEqual(stackMismatches(stack, expected), [
     "editor build-info: HTTP 404",
     "website schema: missing tables x",
+    "website AI: OPENROUTER_API_KEY is not set",
     "room health: status-503",
     "room commit is missing, expected collab-sha",
     "validator commit is missing, expected collab-sha",
     "compactor commit is missing, expected collab-sha",
+  ]);
+});
+
+test("a website that does not report AI health is not ready", () => {
+  const stack = healthyStack();
+  delete stack.website.ai;
+  assert.deepEqual(stackMismatches(stack, expected), [
+    "website AI: not reported",
   ]);
 });
 

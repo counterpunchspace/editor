@@ -7,8 +7,9 @@
  *     [--expect-version <tag>] (--check | --wait <seconds>)
  *
  * Reads the editor's /build-info.json and the website's /api/health, which
- * also reports the D1 schema and the deep health of the room it is wired to
- * (room, validator and compactor commits).
+ * also reports the D1 schema, whether the Assistant's OpenRouter key works,
+ * and the deep health of the room it is wired to (room, validator and
+ * compactor commits).
  *
  * --check asks once, prints match=true|false and exits 0 either way.
  * --wait polls until everything matches and exits 1 on timeout.
@@ -49,6 +50,9 @@ export function stackMismatches(observed, expected) {
     problems.push(
       `website schema: ${website?.schema?.reason ?? "not reported"}`,
     );
+  }
+  if (website?.ai?.ok !== true) {
+    problems.push(`website AI: ${website?.ai?.reason ?? "not reported"}`);
   }
   const room = website?.room;
   if (!room || room.ok !== true) {
