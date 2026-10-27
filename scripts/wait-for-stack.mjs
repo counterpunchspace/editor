@@ -6,7 +6,7 @@
  *     --expect-editor <sha> --expect-website <sha> --expect-collab <sha> \
  *     [--expect-version <tag>] (--check | --wait <seconds>)
  *
- * Reads the editor's /build-info.json and the website's /api/health, which
+ * Reads the editor's /build-info.json and the website's /api/health?ai=1, which
  * also reports the D1 schema, whether the Assistant's OpenRouter key works,
  * and the deep health of the room it is wired to (room, validator and
  * compactor commits).
@@ -123,7 +123,7 @@ async function fetchJson(url) {
 async function observe(options) {
   const [editor, website] = await Promise.all([
     fetchJson(`${options.editorOrigin.replace(/\/$/, "")}/build-info.json`),
-    fetchJson(`${options.websiteOrigin.replace(/\/$/, "")}/api/health`),
+    fetchJson(`${options.websiteOrigin.replace(/\/$/, "")}/api/health?ai=1`),
   ]);
   return { editor, website };
 }
