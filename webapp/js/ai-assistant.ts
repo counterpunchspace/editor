@@ -92,6 +92,22 @@ function findHandbookPath(
 }
 
 const console = new Logger('AIAssistant');
+
+/**
+ * Turn an error body from /api/ai/assistant into readable text. `error` may
+ * be a string or an OpenRouter-style `{ message, code }` object.
+ */
+export function assistantErrorMessage(
+    body: any,
+    status?: number,
+    fallback = 'Request failed'
+): string {
+    const err = body?.error;
+    if (typeof err === 'string' && err) return err;
+    if (typeof err?.message === 'string' && err.message) return err.message;
+    if (typeof body?.message === 'string' && body.message) return body.message;
+    return status ? `${fallback} (HTTP ${status})` : fallback;
+}
 const DEFAULT_PROMPT_HISTORY_SUMMARY = 'Assistant changes';
 
 type BinaryFontWorkerState = {
@@ -4166,7 +4182,7 @@ if '_assistant_original_stdout' in dir():
             const errBody = await response
                 .json()
                 .catch(() => ({ error: 'Request failed' }));
-            throw new Error(errBody.error || `HTTP ${response.status}`);
+            throw new Error(assistantErrorMessage(errBody, response.status));
         }
 
         const reader = response.body?.getReader();
@@ -4206,8 +4222,13 @@ if '_assistant_original_stdout' in dir():
                 const t = line.trim();
                 if (!t.startsWith('data: ')) continue;
                 const data = t.slice(6);
+                let parsed: any;
                 try {
-                    const parsed = JSON.parse(data);
+                    parsed = JSON.parse(data);
+                } catch {
+                    continue; // skip unparseable
+                }
+                {
                     // Capture OpenRouter generationId from every event
                     if (parsed.generationId) {
                         generationId = parsed.generationId;
@@ -4230,10 +4251,14 @@ if '_assistant_original_stdout' in dir():
                             done: true
                         };
                     } else if (parsed.type === 'error') {
-                        throw new Error(parsed.error || 'Stream error');
+                        throw new Error(
+                            assistantErrorMessage(
+                                parsed,
+                                undefined,
+                                'Stream error'
+                            )
+                        );
                     }
-                } catch {
-                    /* skip unparseable */
                 }
             }
         }
