@@ -78,6 +78,40 @@ describe('fitted envelopes still converge receivers', () => {
         }
     );
 
+    test('a layer-scoped edit collapsed to its glyph without targets still converges', () => {
+        // Past TRUNCATE_TARGETS a glyph keeps only its `glyphs.X:` path, and
+        // the history scope of a layer edit stays `layer`.
+        const senderFont = makeFont();
+        const receiverFont = JSON.parse(JSON.stringify(senderFont));
+        const sender = new PatchSyncEngine('sender-budget-glyph-root');
+        const receiver = new PatchSyncEngine('receiver-budget-glyph-root');
+        sender.initFromJson(senderFont);
+        receiver.setFontJson(receiverFont);
+        receiver.applyDocumentSetState(sender.encodeDocumentSet());
+
+        const { update, message } = sendWidthEdit(sender, senderFont, 733);
+        const collapsed = {
+            ...message,
+            changes: [{ path: 'glyphs.A:', op: 'set' }],
+            metadata: {
+                ...message.metadata,
+                undoScope: 'layer',
+                workerReplayTargets: []
+            }
+        };
+        receiver.applyRemoteUpdate(
+            update,
+            undefined,
+            [collapsed],
+            sender.documentIdForPath(['glyphs', 'A']),
+            { captureInUndo: false }
+        );
+        expect(receiverFont.glyphs[0].layers[0].width).toBe(733);
+
+        sender.destroy();
+        receiver.destroy();
+    });
+
     test('an envelope inside the budget is sent as it is', () => {
         const font = makeFont();
         const sender = new PatchSyncEngine('sender-budget-small');

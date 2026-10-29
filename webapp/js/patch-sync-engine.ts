@@ -2408,7 +2408,7 @@ export class PatchSyncEngine {
                               replayNewValue: undefined,
                               workerReplayTargets: [],
                               glyphRenames: [],
-                              // Receivers skip a glyph-root path in layer scope.
+                              // A whole-glyph re-read, not a layer edit.
                               undoScope: 'glyph'
                           }
                       ]
@@ -5732,7 +5732,12 @@ export class PatchSyncEngine {
                 continue;
             }
 
-            const isWholeGlyphChange = !layerId && entry.undoScope !== 'layer';
+            // A bare `glyphs.X:` set means "re-read this glyph": envelope
+            // fitting collapses changes to it, whatever the history scope.
+            const isGlyphRootSet =
+                pathSegments.length === 2 && entry.op === 'set';
+            const isWholeGlyphChange =
+                !layerId && (entry.undoScope !== 'layer' || isGlyphRootSet);
             const isWholeLayerChange =
                 layerId !== null &&
                 pathSegments.length === 4 &&

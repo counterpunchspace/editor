@@ -958,10 +958,19 @@ async function dragTopAnchorThroughUi(page: Page, screenDeltaY: number) {
                 ? [Number(translation[0]), Number(translation[1])]
                 : null;
         };
+        // The mouse moved in several steps, each with its own preview
+        // compile. Read the editing font only once those have settled, or
+        // the bytes can belong to an earlier step than the translation.
         const deadline = Date.now() + 8000;
         let previewEvent: { compilationMode?: string } | null = null;
+        let lastEventCount = -1;
+        let stableSince = Date.now();
         while (Date.now() < deadline) {
             const events = win.__automaticAdieresisCompileEvents || [];
+            if (events.length !== lastEventCount) {
+                lastEventCount = events.length;
+                stableSince = Date.now();
+            }
             previewEvent =
                 [...events]
                     .reverse()
@@ -969,7 +978,14 @@ async function dragTopAnchorThroughUi(page: Page, screenDeltaY: number) {
                         (event: { compilationMode?: string }) =>
                             event?.compilationMode === 'anchor-only'
                     ) ?? null;
-            if (previewEvent && readTranslation()) {
+            const compiling =
+                win.autoCompileManager?.getStatus?.()?.isCompiling === true;
+            if (
+                previewEvent &&
+                readTranslation() &&
+                !compiling &&
+                Date.now() - stableSince >= 400
+            ) {
                 break;
             }
             await new Promise((resolve) => setTimeout(resolve, 50));

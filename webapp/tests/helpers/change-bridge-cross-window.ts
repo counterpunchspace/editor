@@ -973,14 +973,51 @@ export async function setAxisSliderValue(
     axisTag: string,
     value: number
 ): Promise<void> {
-    await page
-        .locator(`.editor-axis-slider[data-axis-tag="${axisTag}"]`)
-        .evaluate((element, nextValue) => {
-            const slider = element as HTMLInputElement;
-            slider.value = String(nextValue);
-            slider.dispatchEvent(new Event('input', { bubbles: true }));
-            slider.dispatchEvent(new Event('change', { bubbles: true }));
+    // The axes panel is rebuilt inside a requestAnimationFrame, and edit
+    // mode can leave it without sliders, so never wait for the slider
+    // without a limit. Without one, drive the same AxesManager path the
+    // slider's input handler uses.
+    const slider = page.locator(
+        `.editor-axis-slider[data-axis-tag="${axisTag}"]`
+    );
+    const hasSlider = await slider
+        .first()
+        .waitFor({ state: 'attached', timeout: 5000 })
+        .then(() => true)
+        .catch(() => false);
+    if (hasSlider) {
+        await slider.first().evaluate((element, nextValue) => {
+            const input = element as HTMLInputElement;
+            input.value = String(nextValue);
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
         }, value);
+    } else {
+        console.log(
+            '[setAxisSliderValue] no slider; using AxesManager',
+            await page.evaluate(() => ({
+                mode: (window as any).glyphCanvas?.outlineEditor?.active
+                    ? 'edit'
+                    : 'text',
+                sliders: document.querySelectorAll('.editor-axis-slider')
+                    .length,
+                axesSectionChildren:
+                    (window as any).glyphCanvas?.axesManager?.axesSection
+                        ?.childElementCount ?? null
+            }))
+        );
+        await page.evaluate(
+            ([tag, nextValue]) => {
+                const axesManager = (window as any).glyphCanvas?.axesManager;
+                if (!axesManager) {
+                    throw new Error('No axes manager to set ' + tag);
+                }
+                axesManager.setVariation(tag, nextValue);
+                axesManager.call?.('onSliderChange', tag, nextValue);
+            },
+            [axisTag, value] as const
+        );
+    }
     await page.waitForTimeout(500);
 }
 
