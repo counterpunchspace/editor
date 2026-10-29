@@ -2432,20 +2432,30 @@ export class CloudPlugin extends FilesystemPlugin {
                     .filter((name): name is string => Boolean(name))
             )
         ];
-        this._enqueueCatalogProjection({
-            catalogDirty,
-            deletedGlyphIds,
-            catalogGlyphs,
-            depsGlyphs
-        });
+        // Every packet of a multi-document commit carries the whole commit,
+        // and rebuilding the projection reads the whole font. Queue until the
+        // commit's last packet instead of rebuilding once per glyph shard.
+        const batch = context.uiBatch;
+        this._enqueueCatalogProjection(
+            {
+                catalogDirty,
+                deletedGlyphIds,
+                catalogGlyphs,
+                depsGlyphs
+            },
+            { holdForBatch: !!batch && batch.index < batch.count - 1 }
+        );
     };
 
-    private _enqueueCatalogProjection(update: {
-        catalogDirty: boolean;
-        deletedGlyphIds: string[];
-        catalogGlyphs: string[];
-        depsGlyphs: Set<string>;
-    }): void {
+    private _enqueueCatalogProjection(
+        update: {
+            catalogDirty: boolean;
+            deletedGlyphIds: string[];
+            catalogGlyphs: string[];
+            depsGlyphs: Set<string>;
+        },
+        options?: { holdForBatch?: boolean }
+    ): void {
         if (this._pendingCatalogProjection) {
             const pending = this._pendingCatalogProjection;
             pending.catalogDirty = pending.catalogDirty || update.catalogDirty;
@@ -2469,7 +2479,7 @@ export class CloudPlugin extends FilesystemPlugin {
                 depsGlyphs: new Set(update.depsGlyphs)
             };
         }
-        if (this._isSyncingCatalog) {
+        if (this._isSyncingCatalog || options?.holdForBatch) {
             return;
         }
         if (window.patchSyncEngine?.deferCatalogProjection) {

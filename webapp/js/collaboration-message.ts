@@ -252,21 +252,23 @@ export function collaborationWireReplayValue(value: unknown): unknown {
     return undefined;
 }
 
-function haveMatchingReplayTargets(
-    left: WorkerReplayTarget[] | undefined,
-    right: WorkerReplayTarget[] | undefined
+/**
+ * Both lists must already be normalized. The envelope builder compares every
+ * entry against the commit-wide list, so normalizing here again made a
+ * per-glyph add-master commit quadratic in the number of glyphs.
+ */
+function haveMatchingNormalizedReplayTargets(
+    left: WorkerReplayTarget[],
+    right: WorkerReplayTarget[]
 ): boolean {
-    const normalizedLeft = normalizeWorkerReplayTargets(left);
-    const normalizedRight = normalizeWorkerReplayTargets(right);
-
-    if (normalizedLeft.length !== normalizedRight.length) {
+    if (left.length !== right.length) {
         return false;
     }
 
-    return normalizedLeft.every(
+    return left.every(
         (target, index) =>
-            target.glyphName === normalizedRight[index]?.glyphName &&
-            target.layerId === normalizedRight[index]?.layerId
+            target.glyphName === right[index]?.glyphName &&
+            target.layerId === right[index]?.layerId
     );
 }
 
@@ -327,7 +329,7 @@ export function createCollaborationMessageEnvelopeFromChangeLogEntries(
                 replayNewValue: collaborationWireReplayValue(
                     entry.replayNewValue
                 ),
-                workerReplayTargets: haveMatchingReplayTargets(
+                workerReplayTargets: haveMatchingNormalizedReplayTargets(
                     entryReplayTargets,
                     workerReplayTargets
                 )

@@ -773,8 +773,18 @@ class HistoryViewController {
         button: HTMLButtonElement,
         item: CollaborationLogItem
     ): void {
+        // Built on first open: an add-master commit logs one item per glyph,
+        // each listing every changed layer, and building all tooltips up
+        // front blocked the UI for many seconds.
+        let contentBuilt = false;
         const tooltip = tippy(button, {
-            content: this.buildMetadataTooltip(item),
+            content: '',
+            onShow: (instance) => {
+                if (!contentBuilt) {
+                    instance.setContent(this.buildMetadataTooltip(item));
+                    contentBuilt = true;
+                }
+            },
             allowHTML: true,
             interactive: true,
             trigger: 'click',

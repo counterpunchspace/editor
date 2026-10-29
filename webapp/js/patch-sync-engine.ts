@@ -172,6 +172,15 @@ export type CommittedUiBatch = {
  */
 export type WorkerRenameBatchPart = 'partial' | 'last';
 
+/** Per-commit work shared by the packets of one multi-document emit. */
+type SharedLocalEmission = {
+    /** First packet's envelope; later packets copy it with their sequence. */
+    envelope?: CollaborationMessageEnvelope | null;
+    forwardChanges?: DerivedForwardChange[];
+    /** Entries that describe each packet; null keeps the full commit. */
+    entriesByDocument: Map<string, ChangeLogEntry[]> | null;
+};
+
 export type YjsWorkerCallback = (
     update: YjsUpdate,
     changeLogEntries: ChangeLogEntry[],
@@ -2304,6 +2313,28 @@ export class PatchSyncEngine {
                     (entry) => normalizeGlyphRenames(entry.glyphRenames).length
                 )
             );
+        // A multi-document commit hands every packet the same entries. Each
+        // packet is described by its own document's entries only: the room
+        // caps every description at 64 KiB, and one packet per glyph that
+        // each listed the whole commit (add master) could not fit, so the
+        // room refused those writes. It also kept every receiver re-reading
+        // every glyph once per packet. Rename batches keep the full list:
+        // the worker validates those against every renamed shard at once.
+        const sharedEntries =
+            count > 1 &&
+            packets.every((packet) => packet.entries === packets[0].entries)
+                ? packets[0].entries
+                : null;
+        const sharedEmission: SharedLocalEmission | undefined = sharedEntries
+            ? {
+                  entriesByDocument: isRenameBatch
+                      ? null
+                      : this._splitCommitEntriesByPacket(
+                            getEffectiveEmissionEntries(sharedEntries),
+                            packets.map((packet) => packet.documentId)
+                        )
+              }
+            : undefined;
         for (let index = 0; index < packets.length; index += 1) {
             const packet = packets[index];
             const renameBatch: WorkerRenameBatchPart | undefined = isRenameBatch
@@ -2318,10 +2349,73 @@ export class PatchSyncEngine {
                 {
                     ...packet.options,
                     ...(id ? { uiBatch: { id, index, count } } : {}),
-                    ...(renameBatch ? { renameBatch } : {})
+                    ...(renameBatch ? { renameBatch } : {}),
+                    ...(sharedEmission ? { sharedEmission } : {})
                 }
             );
         }
+    }
+
+    /**
+     * Splits one commit's entries across its packets by the document each
+     * entry lives in. Entries whose document has no packet go with the font
+     * core packet (or the first packet). Receivers re-read only the paths a
+     * packet lists after applying it, so a glyph packet left without entries
+     * lists its whole glyph instead; any other empty packet keeps the full
+     * list, as before.
+     */
+    private _splitCommitEntriesByPacket(
+        entries: ChangeLogEntry[],
+        documentIds: string[]
+    ): Map<string, ChangeLogEntry[]> {
+        const byDocument = new Map<string, ChangeLogEntry[]>(
+            documentIds.map((documentId) => [documentId, []])
+        );
+        if (!entries.length) {
+            return byDocument;
+        }
+        const fallbackDocumentId = byDocument.has(FONT_CORE_DOCUMENT_ID)
+            ? FONT_CORE_DOCUMENT_ID
+            : documentIds[0];
+        const renames = this._collectGlyphRenamesFromEntries(entries);
+        for (const entry of entries) {
+            const documentId = this._documentIdForHistoryEntry(entry, renames);
+            (
+                byDocument.get(documentId) ?? byDocument.get(fallbackDocumentId)
+            )?.push(entry);
+        }
+        for (const [documentId, own] of byDocument) {
+            if (own.length) {
+                continue;
+            }
+            const glyphName = documentId.startsWith('glyph:')
+                ? this._glyphNameById.get(documentId.slice('glyph:'.length))
+                : undefined;
+            byDocument.set(
+                documentId,
+                glyphName
+                    ? [
+                          {
+                              ...entries[0],
+                              path: joinPathWithGlyphSeparator([
+                                  'glyphs',
+                                  glyphName
+                              ]),
+                              op: 'set',
+                              oldValue: undefined,
+                              newValue: undefined,
+                              replayOldValue: undefined,
+                              replayNewValue: undefined,
+                              workerReplayTargets: [],
+                              glyphRenames: [],
+                              // Receivers skip a glyph-root path in layer scope.
+                              undoScope: 'glyph'
+                          }
+                      ]
+                    : entries
+            );
+        }
+        return byDocument;
     }
 
     private _emitLocalUpdate(
@@ -2333,6 +2427,7 @@ export class PatchSyncEngine {
             skipCollaborationLog?: boolean;
             uiBatch?: CommittedUiBatch;
             renameBatch?: WorkerRenameBatchPart;
+            sharedEmission?: SharedLocalEmission;
         }
     ): void {
         // Undo/redo may append a coarse control entry for history-stack state,
@@ -2341,24 +2436,51 @@ export class PatchSyncEngine {
         // rows here so worker/cache/compile/broadcast consumers never need an
         // undo-specific path.
         const emissionEntries = getEffectiveEmissionEntries(changeLogEntries);
-        const collaborationMessage =
-            createCollaborationMessageEnvelopeFromChangeLogEntries(
-                emissionEntries,
-                {
-                    localSequence: this._nextCollaborationMessageSequence++,
-                    source: 'change-bridge',
-                    windowId: this.windowId
-                }
-            );
+        const shared = options?.sharedEmission;
+        // Entries describing this packet alone (multi-document commits);
+        // otherwise every packet carries the commit's entries.
+        const packetEntries =
+            shared?.entriesByDocument?.get(documentId) ?? null;
+        // Body reused across packets only when they all carry the same list.
+        const reuseBody = shared && !packetEntries ? shared : null;
+        const describedEntries = packetEntries ?? emissionEntries;
+        const localSequence = this._nextCollaborationMessageSequence++;
+        let collaborationMessage: CollaborationMessageEnvelope | null;
+        if (reuseBody && reuseBody.envelope !== undefined) {
+            collaborationMessage = reuseBody.envelope
+                ? { ...reuseBody.envelope, localSequence }
+                : null;
+        } else {
+            collaborationMessage =
+                createCollaborationMessageEnvelopeFromChangeLogEntries(
+                    describedEntries,
+                    {
+                        localSequence,
+                        source: 'change-bridge',
+                        windowId: this.windowId
+                    }
+                );
+            if (reuseBody) {
+                reuseBody.envelope = collaborationMessage;
+            }
+        }
         if (collaborationMessage && !options?.skipCollaborationLog) {
+            let forwardChanges = reuseBody?.forwardChanges;
+            if (!forwardChanges) {
+                forwardChanges =
+                    this._deriveForwardChangesFromChangeLogEntries(
+                        describedEntries
+                    );
+                if (reuseBody) {
+                    reuseBody.forwardChanges = forwardChanges;
+                }
+            }
             this._appendCollaborationLogItems([
                 this._createCollaborationLogItem(
                     collaborationMessage,
                     update,
                     'local',
-                    this._deriveForwardChangesFromChangeLogEntries(
-                        emissionEntries
-                    )
+                    forwardChanges
                 )
             ]);
         }
@@ -2379,15 +2501,17 @@ export class PatchSyncEngine {
                 entries: emissionEntries.length
             });
             for (const cb of this._localUpdateListeners) {
-                cb(update, collaborationMessage, emissionEntries, documentId);
+                cb(update, collaborationMessage, describedEntries, documentId);
             }
             if (options?.renameBatch) {
                 this._yjsWorkerCallback?.(update, emissionEntries, documentId, {
                     renameBatch: options.renameBatch
                 });
-            } else if (emissionEntries.length > 0) {
-                this._yjsWorkerCallback?.(update, emissionEntries, documentId);
+            } else if (describedEntries.length > 0) {
+                this._yjsWorkerCallback?.(update, describedEntries, documentId);
             }
+            // This window's UI listeners coalesce a uiBatch and still see
+            // the whole commit on every packet.
             for (const cb of this._committedChangeListeners) {
                 cb(emissionEntries, {
                     origin: 'local',
@@ -6521,9 +6645,18 @@ export class PatchSyncEngine {
                               update
                           }
                       ];
+            // State before the worker's packets, so glyph packets can be
+            // re-encoded with the revision stamp added below.
+            const baselineByDocument = new Map<string, Uint8Array>();
             for (const packet of packetsToApply) {
                 const targetDoc =
                     this._docForId(packet.documentId) || this.yDoc;
+                if (!baselineByDocument.has(packet.documentId)) {
+                    baselineByDocument.set(
+                        packet.documentId,
+                        Y.encodeStateVector(targetDoc)
+                    );
+                }
                 Y.applyUpdate(
                     targetDoc,
                     packet.update,
@@ -6541,13 +6674,46 @@ export class PatchSyncEngine {
                 !this._isApplyingRemote
             ) {
                 this._lastLocalUpdateLogIndex = this._changeLog.length;
-                this._emitLocalUpdateBatch(
-                    packetsToApply.map((packet) => ({
-                        update: packet.update,
-                        entries: changeLogEntries,
-                        documentId: packet.documentId
-                    }))
-                );
+                // Peers fetch glyph shards outside their live set only when
+                // the shard's revision changes, like for any other edit.
+                // Stamp every touched glyph, re-encode its packet so the stamp
+                // travels with it, and publish the revisions on font-core
+                // after the glyph packets.
+                const glyphIds = [
+                    ...new Set(
+                        packetsToApply
+                            .map((packet) => packet.documentId)
+                            .filter((documentId) =>
+                                documentId.startsWith('glyph:')
+                            )
+                            .map((documentId) =>
+                                documentId.slice('glyph:'.length)
+                            )
+                    )
+                ];
+                this._withGlyphRevisionCatchUp(glyphIds, () => {
+                    this._emitLocalUpdateBatch(
+                        packetsToApply.map((packet) => {
+                            const doc = packet.documentId.startsWith('glyph:')
+                                ? this._docForId(packet.documentId)
+                                : null;
+                            const baseline = baselineByDocument.get(
+                                packet.documentId
+                            );
+                            const stampedUpdate =
+                                doc && baseline
+                                    ? Y.encodeStateAsUpdate(doc, baseline)
+                                    : packet.update;
+                            return {
+                                update: stampedUpdate.length
+                                    ? stampedUpdate
+                                    : packet.update,
+                                entries: changeLogEntries,
+                                documentId: packet.documentId
+                            };
+                        })
+                    );
+                });
             }
         } finally {
             this._popApplyKind();

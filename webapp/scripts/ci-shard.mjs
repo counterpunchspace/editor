@@ -155,7 +155,8 @@ const GROUPS = {
             'tests/change-bridge-cross-window.spec.ts',
             'tests/feature-subset-fustat.spec.ts',
             'tests/python-model-mapping-access.spec.ts',
-            'tests/python-node-history-fustat.spec.ts'
+            'tests/python-node-history-fustat.spec.ts',
+            'tests/add-master-large-font.spec.ts'
         ]
     },
     'cloud-collab': {
@@ -168,10 +169,9 @@ const GROUPS = {
         'quota': ['tests/cloud-collab-quota.spec.ts'],
         'deletion': ['tests/cloud-collab-deletion.spec.ts'],
         'deletion-glyph': ['tests/cloud-collab-deletion-glyph.spec.ts'],
-        'sparse-closure': [
-            'tests/cloud-collab-sparse-closure.spec.ts',
-            'tests/cloud-collab-master-topology.spec.ts'
-        ],
+        'sparse-closure': ['tests/cloud-collab-sparse-closure.spec.ts'],
+        // Includes adding a master to a ~1,000-glyph font: ~4 minutes alone.
+        'master-topology': ['tests/cloud-collab-master-topology.spec.ts'],
         'three-window-sync': ['tests/cloud-collab-three-window-sync.spec.ts'],
         'three-window-relay': ['tests/cloud-collab-three-window-relay.spec.ts'],
         'reconnect': ['tests/cloud-collab-three-window-reconnect.spec.ts']

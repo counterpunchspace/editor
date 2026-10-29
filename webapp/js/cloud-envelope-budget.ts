@@ -17,6 +17,24 @@ import {
 export const OUTBOUND_METADATA_BUDGET_BYTES =
     MAX_METADATA_BYTES - METADATA_BUDGET_MARGIN_BYTES;
 
+type FittedBody = {
+    metadata: CollaborationMessageEnvelope['metadata'];
+    label: CollaborationMessageEnvelope['label'];
+    summary: CollaborationMessageEnvelope['summary'];
+    /** null when the body already fits. */
+    fitted: Pick<
+        CollaborationMessageEnvelope,
+        'changes' | 'metadata' | 'label' | 'summary'
+    > | null;
+};
+
+/**
+ * Packets of one multi-document commit share the envelope body and differ
+ * only in their sequence. Measuring means serializing the whole body, so the
+ * fit is cached by the shared change list instead of redone per packet.
+ */
+const fittedBodies = new WeakMap<object, FittedBody>();
+
 export function fitEnvelopeForWire(
     message: CollaborationMessageEnvelope,
     context?: { documentId?: string }
@@ -32,11 +50,35 @@ export function fitEnvelopeForWire(
     if (!message) {
         return message;
     }
+    const cached = fittedBodies.get(message.changes);
+    if (
+        cached &&
+        cached.metadata === message.metadata &&
+        cached.label === message.label &&
+        cached.summary === message.summary
+    ) {
+        return cached.fitted ? { ...message, ...cached.fitted } : message;
+    }
     const fit = fitCollaborationMessagesToBudget(
         [message],
         OUTBOUND_METADATA_BUDGET_BYTES
     );
-    if (fit.messages[0] === message) {
+    const fittedMessage = fit.messages[0] as CollaborationMessageEnvelope;
+    fittedBodies.set(message.changes, {
+        metadata: message.metadata,
+        label: message.label,
+        summary: message.summary,
+        fitted:
+            fittedMessage === message
+                ? null
+                : {
+                      changes: fittedMessage.changes,
+                      metadata: fittedMessage.metadata,
+                      label: fittedMessage.label,
+                      summary: fittedMessage.summary
+                  }
+    });
+    if (fittedMessage === message) {
         return message;
     }
     pushCollabIntegrityEvent('metadata-compacted', {

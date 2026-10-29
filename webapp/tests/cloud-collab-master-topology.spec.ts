@@ -42,7 +42,10 @@ async function settleCloudEdit(page: Page): Promise<void> {
     await waitForCloudLiveIdle(page, 20000).catch(() => undefined);
 }
 
-async function waitForCloudDurable(page: Page): Promise<void> {
+async function waitForCloudDurable(
+    page: Page,
+    timeout = 120000
+): Promise<void> {
     await expect
         .poll(
             () =>
@@ -52,7 +55,7 @@ async function waitForCloudDurable(page: Page): Promise<void> {
                     ).cloudPlugin.waitForCloudGlyphDurability();
                     return durability?.durable === true;
                 }),
-            { timeout: 120000 }
+            { timeout }
         )
         .toBe(true);
 }
@@ -259,6 +262,111 @@ test('adding and removing a master reaches every catalog glyph for every client'
                 present: [],
                 glyphCount: catalog.length
             });
+    } finally {
+        await ownerContext?.close();
+        await inviteeContext?.close();
+        await cleanupCloudCollabUsers(request, [emails.owner, emails.invitee]);
+    }
+});
+
+/**
+ * A master added to a ~1,000-glyph font writes one packet per glyph shard.
+ * Every packet must stay under the room's 64 KiB description cap (the room
+ * refuses the write otherwise), and peers must fetch the shards they do not
+ * hold live through the glyph revision signal.
+ */
+test('adding a master to a 1,000-glyph cloud font reaches every glyph for a peer', async ({
+    browser,
+    request
+}) => {
+    test.setTimeout(900000);
+    await assertCloudStackReachable(request);
+    const runId = `masters-large-${Date.now().toString(36)}`;
+    const emails = makeCloudCollabEmails(runId);
+    let ownerContext: BrowserContext | null = null;
+    let inviteeContext: BrowserContext | null = null;
+    try {
+        const ownerSession = await bootstrapCloudCollabSession(
+            request,
+            emails.owner,
+            'owner'
+        );
+        ownerContext = await browser.newContext();
+        await installCrossWindowTrackersOnContext(ownerContext);
+        await attachCloudCollabCookies(ownerContext, ownerSession);
+        const ownerPage = await ownerContext.newPage();
+        await collectPageErrors(ownerPage);
+        await ownerPage.goto('/?test=true&examples=core');
+        await waitForCanvasReady(ownerPage);
+        await openFileFromFilesView(ownerPage, 'Fustat.glyphs');
+        await waitForOpenSessionReady(ownerPage, 'Fustat.glyphs');
+        await waitForBridgeReady(ownerPage);
+        const assetId = await saveCurrentFontToCloud(
+            ownerPage,
+            `Master-topology-large-${runId}`
+        );
+        await waitForOpenSessionReady(ownerPage, assetId);
+        await waitForCloudLiveIdle(ownerPage, 120000);
+        const catalog = await catalogGlyphNames(ownerPage);
+        expect(catalog.length).toBeGreaterThan(1000);
+
+        const invitee = await openInviteeOnAsset(
+            browser,
+            request,
+            ownerPage,
+            emails,
+            assetId
+        );
+        inviteeContext = invitee.inviteeContext;
+        const { inviteePage } = invitee;
+
+        const masterId = await ownerPage.evaluate(async () => {
+            const created = await (window as any).currentFontModel.addMaster(
+                undefined,
+                { location: { wght: 150 } }
+            );
+            return created?.id as string;
+        });
+        expect(masterId).toBeTruthy();
+        await settleCloudEdit(ownerPage);
+        // About 1,000 shard writes: the room needs a couple of minutes.
+        await waitForCloudDurable(ownerPage, 300000);
+
+        const ownerAfterAdd = await masterCoverage(ownerPage, masterId);
+        expect(ownerAfterAdd.missing).toEqual([]);
+        expect(ownerAfterAdd.present.length).toBe(catalog.length);
+
+        // The peer holds only its editing glyphs live; every other shard
+        // arrives through revision catch-up.
+        await expect
+            .poll(
+                async () => {
+                    const coverage = await masterCoverage(
+                        inviteePage,
+                        masterId
+                    );
+                    return {
+                        hasMaster: coverage.masterIds.includes(masterId),
+                        missing: coverage.missing.length
+                    };
+                },
+                { timeout: 300000, intervals: [2000] }
+            )
+            .toEqual({ hasMaster: true, missing: 0 });
+
+        await inviteePage.reload();
+        await waitForCanvasReady(inviteePage);
+        await waitForFontLoaded(inviteePage);
+        await waitForOpenSessionReady(inviteePage, assetId);
+        await waitForBridgeReady(inviteePage);
+        await expect
+            .poll(
+                async () =>
+                    (await masterCoverage(inviteePage, masterId)).missing
+                        .length,
+                { timeout: 300000, intervals: [2000] }
+            )
+            .toBe(0);
     } finally {
         await ownerContext?.close();
         await inviteeContext?.close();

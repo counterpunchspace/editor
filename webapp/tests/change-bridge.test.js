@@ -7831,6 +7831,225 @@ describe('syncGlyphFromJson', () => {
         );
     });
 
+    test('a glyph packet without its own entry still makes peers re-read that glyph', () => {
+        const fontJson = makeMinimalFont();
+        const glyphB = JSON.parse(JSON.stringify(fontJson.glyphs[0]));
+        glyphB.name = 'Zmulti';
+        glyphB.codepoints = [0xe000];
+        glyphB.layers[0].id = 'layer-b';
+        delete glyphB.layers[0].background_layer_id;
+        fontJson.glyphs.push(glyphB);
+        const bridge = new ChangeBridge('test-multi-doc-bare');
+        bridge.initFromJson(fontJson);
+        window.changeBridge = bridge;
+        const messages = [];
+        bridge.onLocalUpdate((update, message, entries, documentId) => {
+            messages.push({ update, message, documentId });
+        });
+
+        const shards = bridge.encodeDocumentSet();
+        const peerBaseline = JSON.parse(JSON.stringify(fontJson));
+        const encodeWidth = (glyphName, layerId) => {
+            const documentId = bridge.documentIdForPath(['glyphs', glyphName]);
+            const shard = shards.find((s) => s.documentId === documentId);
+            const doc = new Y.Doc({ gc: false });
+            Y.applyUpdate(doc, shard.bytes);
+            const baseline = Y.encodeStateVector(doc);
+            const glyph = fontJson.glyphs.find((g) => g.name === glyphName);
+            doc.transact(() => {
+                setYPath(doc.getMap('glyph'), ['layers', layerId], {
+                    ...JSON.parse(JSON.stringify(glyph.layers[0])),
+                    width: 888
+                });
+            });
+            return {
+                documentId,
+                update: Y.encodeStateAsUpdate(doc, baseline)
+            };
+        };
+        const documentUpdates = [
+            encodeWidth('A', 'layer-1'),
+            encodeWidth('Zmulti', 'layer-b')
+        ];
+        const oldLayer = JSON.parse(
+            JSON.stringify(fontJson.glyphs[0].layers[0])
+        );
+
+        // Only glyph A has an entry; Zmulti's packet has none of its own.
+        bridge.applyLocalGeneratedYjsUpdate(
+            documentUpdates[0].update,
+            [
+                {
+                    op: 'set',
+                    path: ['glyphs', 'A', 'layers', 'layer-1'],
+                    oldValue: oldLayer,
+                    newValue: { ...oldLayer, width: 888 },
+                    applyMode: 'layer-snapshot',
+                    workerReplayTargets: [
+                        { glyphName: 'A', layerId: 'layer-1' }
+                    ]
+                }
+            ],
+            'Remove master',
+            null,
+            documentUpdates
+        );
+
+        expect(messages[1].message.changes.map((c) => c.path)).toEqual([
+            joinPathWithGlyphSeparator(['glyphs', 'Zmulti'])
+        ]);
+
+        const peerJson = JSON.parse(JSON.stringify(peerBaseline));
+        const peer = new ChangeBridge('test-multi-doc-bare-peer');
+        peer.setFontJson(peerJson);
+        peer.applyDocumentSetState(shards);
+        for (const { update, message, documentId } of messages) {
+            peer.applyRemoteUpdate(update, undefined, [message], documentId, {
+                captureInUndo: false
+            });
+        }
+        expect(
+            peerJson.glyphs.find((g) => g.name === 'Zmulti').layers[0].width
+        ).toBe(888);
+        peer.destroy?.();
+    });
+
+    test('a multi-document commit describes and forwards each packet by its own document', () => {
+        const fontJson = makeMinimalFont();
+        const glyphB = JSON.parse(JSON.stringify(fontJson.glyphs[0]));
+        glyphB.name = 'Zmulti';
+        glyphB.codepoints = [0xe000];
+        glyphB.layers[0].id = 'layer-b';
+        delete glyphB.layers[0].background_layer_id;
+        fontJson.glyphs.push(glyphB);
+        const bridge = new ChangeBridge('test-multi-doc');
+        bridge.initFromJson(fontJson);
+        window.changeBridge = bridge;
+
+        const localUpdates = [];
+        const workerUpdates = [];
+        const committedChanges = [];
+        bridge.onLocalUpdate((update, message, entries, documentId) => {
+            localUpdates.push({ message, entries, documentId });
+        });
+        bridge.setYjsWorkerCallback((update, entries, documentId) => {
+            workerUpdates.push({ entries, documentId });
+        });
+        bridge.onCommittedChange((entries, context) => {
+            committedChanges.push({ entries, context });
+        });
+
+        const shards = bridge.encodeDocumentSet();
+        const peerBaseline = JSON.parse(JSON.stringify(fontJson));
+        const operations = [];
+        const documentUpdates = [];
+        for (const [glyphName, layerId] of [
+            ['A', 'layer-1'],
+            ['Zmulti', 'layer-b']
+        ]) {
+            const glyph = fontJson.glyphs.find((g) => g.name === glyphName);
+            const oldLayer = JSON.parse(JSON.stringify(glyph.layers[0]));
+            const newLayer = { ...oldLayer, width: 777 };
+            const documentId = bridge.documentIdForPath(['glyphs', glyphName]);
+            const shard = shards.find((s) => s.documentId === documentId);
+            const doc = new Y.Doc({ gc: false });
+            Y.applyUpdate(doc, shard.bytes);
+            const baseline = Y.encodeStateVector(doc);
+            doc.transact(() => {
+                setYPath(doc.getMap('glyph'), ['layers', layerId], newLayer);
+            });
+            documentUpdates.push({
+                documentId,
+                update: Y.encodeStateAsUpdate(doc, baseline)
+            });
+            operations.push({
+                op: 'set',
+                path: ['glyphs', glyphName, 'layers', layerId],
+                oldValue: oldLayer,
+                newValue: newLayer,
+                applyMode: 'layer-snapshot',
+                workerReplayTargets: [{ glyphName, layerId }]
+            });
+        }
+
+        bridge.applyLocalGeneratedYjsUpdate(
+            documentUpdates[0].update,
+            operations,
+            'Add master',
+            null,
+            documentUpdates
+        );
+
+        for (const name of ['A', 'Zmulti']) {
+            expect(
+                fontJson.glyphs.find((g) => g.name === name).layers[0].width
+            ).toBe(777);
+        }
+
+        // Each packet is described by its own glyph only, so the room's
+        // per-write description cap holds however many glyphs a commit has.
+        expect(localUpdates).toHaveLength(2);
+        expect(
+            localUpdates.map(({ message, documentId }) => [
+                documentId,
+                message.changes.map((change) => change.path)
+            ])
+        ).toEqual([
+            [
+                documentUpdates[0].documentId,
+                [
+                    joinPathWithGlyphSeparator([
+                        'glyphs',
+                        'A',
+                        'layers',
+                        'layer-1'
+                    ])
+                ]
+            ],
+            [
+                documentUpdates[1].documentId,
+                [
+                    joinPathWithGlyphSeparator([
+                        'glyphs',
+                        'Zmulti',
+                        'layers',
+                        'layer-b'
+                    ])
+                ]
+            ]
+        ]);
+        expect(localUpdates[0].message.localSequence).not.toBe(
+            localUpdates[1].message.localSequence
+        );
+
+        // A peer applying the packets with their own descriptions converges.
+        const peerJson = JSON.parse(JSON.stringify(peerBaseline));
+        const peer = new ChangeBridge('test-multi-doc-peer');
+        peer.setFontJson(peerJson);
+        peer.applyDocumentSetState(shards);
+        for (const [index, { message }] of localUpdates.entries()) {
+            peer.applyRemoteUpdate(
+                documentUpdates[index].update,
+                undefined,
+                [message],
+                documentUpdates[index].documentId,
+                { captureInUndo: false }
+            );
+        }
+        for (const name of ['A', 'Zmulti']) {
+            expect(
+                peerJson.glyphs.find((g) => g.name === name).layers[0].width
+            ).toBe(777);
+        }
+        peer.destroy?.();
+
+        // Committed listeners keep the full commit on every packet.
+        expect(committedChanges).toHaveLength(2);
+        for (const { entries } of committedChanges) {
+            expect(entries).toHaveLength(2);
+        }
+    });
+
     test.each([
         {
             label: 'anchor movement',

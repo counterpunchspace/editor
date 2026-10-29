@@ -109,4 +109,36 @@ describe('fitted envelopes still converge receivers', () => {
         ]);
         sender.destroy();
     });
+
+    test('packets that share an envelope body are fitted once and keep their own sequence', () => {
+        const font = makeFont();
+        const sender = new PatchSyncEngine('sender-budget-shared');
+        sender.initFromJson(font);
+        const { message } = sendWidthEdit(sender, font, 650);
+        const changes = Array.from({ length: 4000 }, (_, n) => ({
+            path: `glyphs.A:layers.L1:shapes.0.nodes.${n}.x`,
+            op: 'set',
+            replayOldValue: n,
+            replayNewValue: n + 1
+        }));
+        const first = { ...message, changes, localSequence: 1 };
+        const second = { ...first, localSequence: 2 };
+
+        const fittedFirst = fitEnvelopeForWire(first);
+        const fittedSecond = fitEnvelopeForWire(second);
+
+        expect(fittedFirst.localSequence).toBe(1);
+        expect(fittedSecond.localSequence).toBe(2);
+        expect(fittedSecond.changes).toBe(fittedFirst.changes);
+        expect(fittedSecond.metadata).toBe(fittedFirst.metadata);
+
+        // A different body is fitted on its own.
+        const other = {
+            ...first,
+            changes: [...changes],
+            label: 'Other'
+        };
+        expect(fitEnvelopeForWire(other).changes).not.toBe(fittedFirst.changes);
+        sender.destroy();
+    });
 });

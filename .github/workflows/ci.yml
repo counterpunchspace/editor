@@ -394,6 +394,7 @@ jobs:
                     - deletion
                     - deletion-glyph
                     - sparse-closure
+                    - master-topology
                     - three-window-sync
                     - three-window-relay
                     - reconnect

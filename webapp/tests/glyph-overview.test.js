@@ -946,6 +946,8 @@ describe('GlyphOverview syncGlyphs incremental updates', () => {
 
         resident.add('n');
         window.dispatchEvent(new CustomEvent('fontModelSync'));
+        // The overview refreshes once per frame, not once per sync event.
+        jest.advanceTimersByTime(1);
 
         expect(
             overview.tiles
@@ -984,6 +986,8 @@ describe('GlyphOverview syncGlyphs incremental updates', () => {
         window.patchSyncEngine.isSparseWorkingGlyphName = (name) =>
             name === 'a' || name === 'n';
         window.dispatchEvent(new CustomEvent('fontModelSync'));
+        // The overview refreshes once per frame, not once per sync event.
+        jest.advanceTimersByTime(1);
 
         expect(
             overview.tiles

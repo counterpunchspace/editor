@@ -358,13 +358,28 @@ class GlyphOverview {
     private contextMenuRequest = 0;
     private onContainerScrollBound = this.onContainerScroll.bind(this);
     private onCapturedScrollBound = this.onCapturedScroll.bind(this);
+    private fontModelSyncFrame: number | null = null;
+    // A cloud commit fetches or publishes one glyph shard at a time, and
+    // each one fires fontModelSync. Every refresh walks all tiles, so
+    // refresh once per frame instead of once per shard.
     private onFontModelSyncBound = (): void => {
-        if (window.cloudPlugin?.isHydratingOverviewGlyphs?.()) {
+        if (this.fontModelSyncFrame !== null) {
             return;
         }
-        this.reconcileTileHydration();
-        this.refreshCcmpTiles();
-        this.updatePropertyPanel();
+        const schedule =
+            typeof requestAnimationFrame === 'function'
+                ? requestAnimationFrame
+                : (callback: FrameRequestCallback) =>
+                      setTimeout(() => callback(performance.now()), 16);
+        this.fontModelSyncFrame = schedule(() => {
+            this.fontModelSyncFrame = null;
+            if (window.cloudPlugin?.isHydratingOverviewGlyphs?.()) {
+                return;
+            }
+            this.reconcileTileHydration();
+            this.refreshCcmpTiles();
+            this.updatePropertyPanel();
+        }) as unknown as number;
     };
     private lastOverviewFontKey = '';
     private lazyBatchSize = 240;
