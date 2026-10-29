@@ -23396,6 +23396,18 @@ describe('AxesManager coordinate fields', () => {
         canvas.destroy();
     });
 
+    test('keeps only font axes, clamped into range, in the variation location', async () => {
+        // A stale axis (removed in Font Info, or from a URL) plus an
+        // out-of-range value must not reach interpolation.
+        canvas.axesManager.variationSettings = { wght: 500, wdth: 0 };
+        await canvas.axesManager.updateAxesUI();
+        expect(canvas.axesManager.variationSettings).toEqual({ wght: 100 });
+
+        canvas.axesManager.setAxisValue('wdth', 50);
+        canvas.axesManager.setAxisValue('wght', -20);
+        expect(canvas.axesManager.variationSettings).toEqual({ wght: 0 });
+    });
+
     test('keeps userspace and designspace axis inputs synchronized', async () => {
         const originalRequestAnimationFrame = global.requestAnimationFrame;
         global.requestAnimationFrame = (callback) => {

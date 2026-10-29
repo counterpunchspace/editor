@@ -4,7 +4,7 @@
 import { readUrlState, decodeLocation, decodeFeatures } from './url-state';
 import { Logger } from './logger';
 import type { GlyphCanvas } from './glyph-canvas';
-import type { UserspaceLocation } from './locations';
+import { userspaceLocationsEqual, type UserspaceLocation } from './locations';
 import { enableSync, initStateSync, disableSync } from './state-sync';
 import { textLayoutControls } from './glyph-canvas/text-layout-controls';
 import { userTextBufferHasBeenWritten } from './glyph-canvas/text-buffer-session';
@@ -244,16 +244,18 @@ async function applyStateToManagers(glyphCanvas: GlyphCanvas): Promise<void> {
     }
 
     // 2. Apply userspace variation location
-    const location = window.stateManager.editor_variation_location;
-    if (location && glyphCanvas.axesManager) {
-        console.log('Applying location:', location);
+    const restoredLocation = window.stateManager.editor_variation_location;
+    if (restoredLocation && glyphCanvas.axesManager) {
+        // A URL can name axes this font lacks or values outside its ranges.
+        const appliedLocation =
+            glyphCanvas.axesManager.reconcileLocation(restoredLocation);
+        if (!userspaceLocationsEqual(appliedLocation, restoredLocation)) {
+            window.stateManager.editor_variation_location = appliedLocation;
+        }
+        console.log('Applying location:', appliedLocation);
 
-        const appliedLocation: UserspaceLocation = {};
-
-        for (const [tag, value] of Object.entries(location)) {
-            const numericValue = Number(value);
-            appliedLocation[tag] = numericValue;
-            glyphCanvas.axesManager.setAxisValue(tag, numericValue);
+        for (const [tag, value] of Object.entries(appliedLocation)) {
+            glyphCanvas.axesManager.setAxisValue(tag, Number(value));
         }
 
         // Update UI and trigger layer selection if in editing mode

@@ -282,3 +282,70 @@ export function extendAxesForDesignspaceLocation(
 
     return { axes: nextAxes, changed };
 }
+
+export type UserspaceAxisRange = {
+    tag: string;
+    min: number;
+    max: number;
+    default: number;
+};
+
+/** Userspace ranges of a font's axes, hidden axes included. */
+export function userspaceAxisRanges(
+    axes: Babelfont.Axis[]
+): UserspaceAxisRange[] {
+    return normalizeAxes(axes).map((axis) => ({
+        tag: axis.tag,
+        min: Math.min(Number(axis.min), Number(axis.max)),
+        max: Math.max(Number(axis.min), Number(axis.max)),
+        default: Number(axis.default)
+    }));
+}
+
+/** Clamps `value` into the axis range; non-finite values become the default. */
+export function clampToAxisRange(
+    value: number,
+    axis: UserspaceAxisRange
+): number {
+    if (!Number.isFinite(value)) {
+        return axis.default;
+    }
+    return Math.min(axis.max, Math.max(axis.min, value));
+}
+
+/**
+ * Restricts a userspace location to the font's axes. Tags the font does not
+ * define are dropped, values are clamped into each axis range, and missing
+ * axes get their default. Locations arrive from URLs, saved state and other
+ * fonts; interpolation rejects unknown axes and extrapolates out-of-range
+ * values into unusable outlines.
+ */
+export function reconcileUserspaceLocation(
+    location: UserspaceLocation,
+    axes: readonly UserspaceAxisRange[]
+): UserspaceLocation {
+    const reconciled: UserspaceLocation = {};
+    for (const axis of axes) {
+        const raw = location[axis.tag];
+        reconciled[axis.tag] = asUserspaceCoordinate(
+            raw === undefined
+                ? axis.default
+                : clampToAxisRange(Number(raw), axis)
+        );
+    }
+    return reconciled;
+}
+
+/** True when both locations hold the same tags with the same values. */
+export function userspaceLocationsEqual(
+    left: UserspaceLocation,
+    right: UserspaceLocation
+): boolean {
+    const leftTags = Object.keys(left);
+    if (leftTags.length !== Object.keys(right).length) {
+        return false;
+    }
+    return leftTags.every(
+        (tag) => tag in right && Number(left[tag]) === Number(right[tag])
+    );
+}

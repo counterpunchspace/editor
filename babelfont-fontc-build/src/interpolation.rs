@@ -39,32 +39,25 @@ pub(crate) fn parse_userspace_location(
     let location_map: HashMap<String, f64> = serde_json::from_str(location_json)
         .map_err(|e| JsValue::from_str(&format!("Location parse error: {}", e)))?;
 
-    // Convert user space to design space using axis mappings
-    let design_location: DesignLocation = location_map
-        .iter()
-        .map(|(tag_str, user_value)| {
-            let tag = Tag::from_str(tag_str)
-                .map_err(|e| JsValue::from_str(&format!("Invalid tag '{}': {}", tag_str, e)))?;
-
-            // Find the axis and convert user space to design space
-            let design_value = if let Some(axis) = font.axes.iter().find(|a| a.tag == tag) {
-                match axis.userspace_to_designspace(UserCoord::new(*user_value)) {
-                    Ok(design_coord) => design_coord,
-                    Err(e) => {
-                        web_sys::console::warn_1(&format!("[Rust] Warning: Could not convert user space value {} for axis {}: {:?}. Using value as-is.", user_value, tag_str, e).into());
-                        DesignCoord::new(*user_value)
-                    }
-                }
-            } else {
-                // No axis found, use value as-is
+    // Convert user space to design space using axis mappings. Axes the font
+    // does not define are skipped: normalize_location rejects them, and they
+    // are stale data (another font, a removed axis, an old URL).
+    let mut design_location = DesignLocation::new();
+    for (tag_str, user_value) in &location_map {
+        let tag = Tag::from_str(tag_str)
+            .map_err(|e| JsValue::from_str(&format!("Invalid tag '{}': {}", tag_str, e)))?;
+        let Some(axis) = font.axes.iter().find(|a| a.tag == tag) else {
+            continue;
+        };
+        let design_value = match axis.userspace_to_designspace(UserCoord::new(*user_value)) {
+            Ok(design_coord) => design_coord,
+            Err(e) => {
+                web_sys::console::warn_1(&format!("[Rust] Warning: Could not convert user space value {} for axis {}: {:?}. Using value as-is.", user_value, tag_str, e).into());
                 DesignCoord::new(*user_value)
-            };
-
-            Ok((tag, design_value))
-        })
-        .collect::<Result<Vec<_>, JsValue>>()?
-        .into_iter()
-        .collect();
+            }
+        };
+        design_location.insert(tag, design_value);
+    }
 
     Ok((location_map, design_location))
 }

@@ -3,7 +3,7 @@
 
 import { Logger } from './logger';
 import type { GlyphCanvas } from './glyph-canvas';
-import type { UserspaceLocation } from './locations';
+import { userspaceLocationsEqual, type UserspaceLocation } from './locations';
 
 const console = new Logger('StateSync');
 
@@ -66,7 +66,13 @@ export function enableSync() {
         const hasExisting = !!existing && Object.keys(existing).length > 0;
 
         if (hasExisting) {
-            for (const [tag, value] of Object.entries(existing)) {
+            // URL sync is on again, so writing the reconciled location back
+            // also drops unknown axes and out-of-range values from the URL.
+            const location = axesManager.reconcileLocation(existing);
+            if (!userspaceLocationsEqual(location, existing)) {
+                window.stateManager.editor_variation_location = location;
+            }
+            for (const [tag, value] of Object.entries(location)) {
                 axesManager.setAxisValue(tag, Number(value));
             }
             axesManager.updateAxisSliders();

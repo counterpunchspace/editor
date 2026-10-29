@@ -3,8 +3,12 @@ import Babelfont from '../babelfont';
 import { ensureWasmInitialized } from '../wasm-init';
 import { Logger } from '../logger';
 import {
+    clampToAxisRange,
     designspaceToUserspace,
+    reconcileUserspaceLocation,
+    userspaceAxisRanges,
     userspaceToDesignspace,
+    type UserspaceAxisRange,
     type UserspaceCoordinate,
     type UserspaceLocation
 } from '../locations';
@@ -459,14 +463,67 @@ export class AxesManager {
     }
 
     setAxisValue(axisTag: string, value: number): void {
+        const ranges = this.getModelAxisRanges();
+        if (ranges) {
+            const axis = ranges.find((range) => range.tag === axisTag);
+            if (!axis) {
+                return;
+            }
+            value = clampToAxisRange(value, axis);
+        }
         this.variationSettings[axisTag] = value;
         this.updateAxisSliders();
+    }
+
+    /**
+     * Axis ranges of the loaded font model, or null before a model exists.
+     * A static font yields an empty list, so every axis tag is unknown.
+     */
+    private getModelAxisRanges(): UserspaceAxisRange[] | null {
+        const fontModel = window.currentFontModel as
+            | { axes?: Parameters<typeof userspaceAxisRanges>[0] }
+            | null
+            | undefined;
+        if (!fontModel || !Array.isArray(fontModel.axes)) {
+            return null;
+        }
+        return userspaceAxisRanges(fontModel.axes);
+    }
+
+    /**
+     * Restricts `location` to the loaded font's axes (see
+     * `reconcileUserspaceLocation`). Without a font model the axes are not
+     * known yet, so `fallbackAxes` is used, or the location is kept as-is.
+     */
+    reconcileLocation(
+        location: UserspaceLocation,
+        fallbackAxes?: readonly UserspaceAxisRange[]
+    ): UserspaceLocation {
+        const ranges = this.getModelAxisRanges() ?? fallbackAxes;
+        return ranges
+            ? reconcileUserspaceLocation(location, ranges)
+            : { ...location };
     }
 
     async updateAxesUI() {
         if (!this.axesSection) return;
 
         const axes = await this.getVariationAxes();
+
+        // Drop axes the font no longer has (removed in Font Info, restored
+        // from a URL or left over from another font) and clamp the rest.
+        // The 'updated' event below carries the result into the URL.
+        this.variationSettings = this.reconcileLocation(
+            this.variationSettings,
+            axes.length > 0
+                ? axes.map((axis) => ({
+                      tag: axis.tag,
+                      min: Number(axis.min),
+                      max: Number(axis.max),
+                      default: Number(axis.default)
+                  }))
+                : undefined
+        );
 
         if (axes.length === 0) {
             await this.call('updated');
@@ -566,20 +623,8 @@ export class AxesManager {
             slider.step = '1';
             slider.setAttribute('data-axis-tag', axis.tag);
 
-            // Restore value if it exists, otherwise use default. Clamp into the
-            // current model range so shrinking max/min cannot leave a stale
-            // out-of-range variation setting driving interpolation.
-            let initialValue =
-                this.variationSettings[axis.tag] !== undefined
-                    ? Number(this.variationSettings[axis.tag])
-                    : Number(axis.default);
-            if (!Number.isFinite(initialValue)) {
-                initialValue = Number(axis.default);
-            }
-            initialValue = Math.min(
-                Number(axis.max),
-                Math.max(Number(axis.min), initialValue)
-            );
+            // Reconciled above: present and inside the axis range.
+            const initialValue = Number(this.variationSettings[axis.tag]);
 
             slider.value = initialValue.toString();
 

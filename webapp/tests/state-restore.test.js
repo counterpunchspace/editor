@@ -32,6 +32,7 @@ describe('ensureStartupStateReady', () => {
         const render = jest.fn();
         const glyphCanvas = {
             axesManager: {
+                reconcileLocation: (location) => ({ ...location }),
                 setAxisValue,
                 updateAxisSliders
             },
@@ -80,6 +81,48 @@ describe('ensureStartupStateReady', () => {
         );
         delete global.requestAnimationFrame;
         delete global.cancelAnimationFrame;
+    });
+
+    test('drops unknown axes and clamps out-of-range values from a URL location', async () => {
+        jest.doMock('../js/state-sync', () => ({
+            initStateSync: jest.fn(),
+            enableSync: jest.fn(),
+            disableSync: jest.fn()
+        }));
+
+        const { restoreStateFromUrl } = require('../js/state-restore');
+        const { reconcileUserspaceLocation } = require('../js/locations');
+
+        window.history.replaceState({}, '', '/?location=wght:5000,wdth:0');
+
+        const setAxisValue = jest.fn();
+        const glyphCanvas = {
+            axesManager: {
+                reconcileLocation: (location) =>
+                    reconcileUserspaceLocation(location, [
+                        { tag: 'wght', min: 200, max: 800, default: 400 }
+                    ]),
+                setAxisValue,
+                updateAxisSliders: jest.fn()
+            },
+            featuresManager: null,
+            textRunEditor: null,
+            outlineEditor: null
+        };
+        window.stateManager = {
+            editor_file: '',
+            editor_mode: 'text',
+            editor_variation_location: {},
+            editor_opentype_features_in_subset: {},
+            editor_opentype_features_not_in_subset: {}
+        };
+
+        await restoreStateFromUrl(glyphCanvas);
+
+        expect(window.stateManager.editor_variation_location).toEqual({
+            wght: 800
+        });
+        expect(setAxisValue.mock.calls).toEqual([['wght', 800]]);
     });
 
     test('restores edit mode from URL without premature overview highlight sync', async () => {

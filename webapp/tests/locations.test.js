@@ -1,4 +1,32 @@
-const { extendAxesForDesignspaceLocation } = require('../js/locations');
+const {
+    extendAxesForDesignspaceLocation,
+    reconcileUserspaceLocation,
+    userspaceAxisRanges
+} = require('../js/locations');
+
+describe('reconcileUserspaceLocation', () => {
+    const axes = userspaceAxisRanges([
+        { tag: 'wght', min: 200, default: 400, max: 800 },
+        { tag: 'opsz', min: 8, default: 12, max: 72, hidden: true }
+    ]);
+
+    test('drops unknown axes, clamps values and fills defaults', () => {
+        expect(
+            reconcileUserspaceLocation({ wght: 2000, wdth: 0 }, axes)
+        ).toEqual({ wght: 800, opsz: 12 });
+        expect(
+            reconcileUserspaceLocation({ wght: -500, opsz: 30 }, axes)
+        ).toEqual({ wght: 200, opsz: 30 });
+        expect(reconcileUserspaceLocation({ wght: NaN }, axes)).toEqual({
+            wght: 400,
+            opsz: 12
+        });
+    });
+
+    test('a static font keeps no axes', () => {
+        expect(reconcileUserspaceLocation({ wght: 400 }, [])).toEqual({});
+    });
+});
 
 describe('extendAxesForDesignspaceLocation', () => {
     test('extends unmapped axis min/max to cover an out-of-range designspace location', () => {
