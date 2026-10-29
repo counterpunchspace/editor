@@ -45,7 +45,11 @@ export const CLOUD_ASSET_DELETED_MESSAGE = 'Cloud asset was deleted';
 export const CLOUD_GLYPH_CATCH_UP_MAX_ATTEMPTS = 8;
 export const CLOUD_GLYPH_CATCH_UP_RETRY_MS = 50;
 export const CLOUD_GLYPH_CATCH_UP_CONCURRENCY = 4;
-export const CLOUD_GLYPH_PUBLISH_CONCURRENCY = 2;
+// Shards without a live socket publish over HTTP, and each request waits
+// for a cold shard room to load its baseline. A master change publishes
+// every glyph shard, so two at a time took ~15 minutes for ~1,000 glyphs
+// on staging.
+export const CLOUD_GLYPH_PUBLISH_CONCURRENCY = 6;
 export const CLOUD_PING_INTERVAL_MS = 10_000;
 export const CLOUD_LIVENESS_STALE_MS = 25_000;
 export const CLOUD_RECONNECT_BASE_MS = 1_000;

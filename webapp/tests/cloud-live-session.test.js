@@ -771,13 +771,20 @@ describe('CloudLiveSession', () => {
             inflight -= 1;
             return durableLiveAck(opts);
         });
-        session.sendForwardedUpdate(new Uint8Array([1]), null, 'glyph:1');
-        session.sendForwardedUpdate(new Uint8Array([1]), null, 'glyph:2');
-        session.sendForwardedUpdate(new Uint8Array([1]), null, 'glyph:3');
-        session.sendForwardedUpdate(new Uint8Array([1]), null, 'glyph:4');
+        const {
+            CLOUD_GLYPH_PUBLISH_CONCURRENCY
+        } = require('../js/cloud-adapter-support');
+        const publishCount = CLOUD_GLYPH_PUBLISH_CONCURRENCY * 2;
+        for (let index = 1; index <= publishCount; index += 1) {
+            session.sendForwardedUpdate(
+                new Uint8Array([1]),
+                null,
+                `glyph:${index}`
+            );
+        }
         await session.flushPendingHttpPublishes();
-        expect(global.fetch).toHaveBeenCalledTimes(4);
-        expect(maxInflight).toBe(2);
+        expect(global.fetch).toHaveBeenCalledTimes(publishCount);
+        expect(maxInflight).toBe(CLOUD_GLYPH_PUBLISH_CONCURRENCY);
     }, 15000);
 
     test('does not open glyph rooms when the subset has no document ids', async () => {

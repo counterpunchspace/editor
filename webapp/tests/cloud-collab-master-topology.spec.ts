@@ -46,16 +46,36 @@ async function waitForCloudDurable(
     page: Page,
     timeout = 120000
 ): Promise<void> {
+    const startedAt = Date.now();
     await expect
         .poll(
-            () =>
-                page.evaluate(async () => {
-                    const durability = await (
-                        window as any
-                    ).cloudPlugin.waitForCloudGlyphDurability();
-                    return durability?.durable === true;
-                }),
-            { timeout }
+            async () => {
+                const durability = await page.evaluate(async () => {
+                    const plugin = (window as any).cloudPlugin;
+                    // The durability check blocks until every HTTP publish
+                    // drains, so ask only once nothing is pending.
+                    const pending = plugin?._liveSession?.pendingSyncCount;
+                    if (typeof pending === 'number' && pending > 0) {
+                        return { durable: false, pending, reason: 'draining' };
+                    }
+                    const result = await plugin.waitForCloudGlyphDurability();
+                    return {
+                        durable: result?.durable === true,
+                        pending: result?.pendingCount ?? null,
+                        reason: result?.reason ?? null
+                    };
+                });
+                if (!durability.durable) {
+                    // Progress in CI logs: a slow drain versus a stuck one.
+                    console.log(
+                        `[waitForCloudDurable] ${Math.round(
+                            (Date.now() - startedAt) / 1000
+                        )}s pending=${durability.pending} reason=${durability.reason}`
+                    );
+                }
+                return durability.durable;
+            },
+            { timeout, intervals: [5000] }
         )
         .toBe(true);
 }
@@ -279,7 +299,7 @@ test('adding a master to a 1,000-glyph cloud font reaches every glyph for a peer
     browser,
     request
 }) => {
-    test.setTimeout(900000);
+    test.setTimeout(1500000);
     await assertCloudStackReachable(request);
     const runId = `masters-large-${Date.now().toString(36)}`;
     const emails = makeCloudCollabEmails(runId);
@@ -329,8 +349,8 @@ test('adding a master to a 1,000-glyph cloud font reaches every glyph for a peer
         });
         expect(masterId).toBeTruthy();
         await settleCloudEdit(ownerPage);
-        // About 1,000 shard writes: the room needs a couple of minutes.
-        await waitForCloudDurable(ownerPage, 300000);
+        // About 1,000 shard writes; on staging each loads a cold shard room.
+        await waitForCloudDurable(ownerPage, 720000);
 
         const ownerAfterAdd = await masterCoverage(ownerPage, masterId);
         expect(ownerAfterAdd.missing).toEqual([]);
