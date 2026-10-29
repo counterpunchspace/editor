@@ -1,6 +1,10 @@
 describe('binary font export', () => {
     let awaitStableWorkerStateMock;
     let bootstrapWorkerCacheFromFontStateMock;
+    let seedWorkerDocumentSetMock;
+    let showProceedDialogMock;
+    let alertSpy;
+    let documentSet;
     let compileCachedMock;
     let resolvePicker;
     let createWritableMock;
@@ -48,6 +52,14 @@ describe('binary font export', () => {
         bootstrapWorkerCacheFromFontStateMock = jest
             .fn()
             .mockResolvedValue(undefined);
+        seedWorkerDocumentSetMock = jest.fn().mockResolvedValue(undefined);
+        showProceedDialogMock = jest.fn().mockResolvedValue(true);
+        alertSpy = jest.spyOn(window, 'alert').mockImplementation();
+        documentSet = [
+            { documentId: 'font-core', bytes: new Uint8Array([4, 5, 6]) },
+            { documentId: 'font-deps', bytes: new Uint8Array([7]) },
+            { documentId: 'glyph:a', bytes: new Uint8Array([8]) }
+        ];
         compileCachedMock = jest.fn().mockResolvedValue({
             result: new Uint8Array([1, 2, 3]),
             filename: 'Example.ttf',
@@ -68,7 +80,9 @@ describe('binary font export', () => {
         window.fontManager = {
             currentFont,
             workerCacheUpdatePromise: null,
-            buildWorkerSeedYjsState: jest.fn(() => new Uint8Array([4, 5, 6]))
+            buildWorkerSeedYjsState: jest.fn(() => new Uint8Array([4, 5, 6])),
+            buildWorkerSeedDocumentSet: jest.fn(() => documentSet),
+            getGlyphResidency: jest.fn(() => ({ resident: 3, total: 3 }))
         };
         window.showSaveFilePicker = showSaveFilePickerMock;
 
@@ -81,6 +95,7 @@ describe('binary font export', () => {
             fullFontCompilation: {
                 bootstrapWorkerCacheFromFontState:
                     bootstrapWorkerCacheFromFontStateMock,
+                seedWorkerDocumentSet: seedWorkerDocumentSetMock,
                 compileCached: compileCachedMock,
                 setCompileFeatureOverlay: jest.fn(),
                 sendMessage: jest.fn().mockResolvedValue(undefined)
@@ -103,16 +118,21 @@ describe('binary font export', () => {
                 deliverExportedFont: deliverExportedFontMock
             }
         }));
+        jest.doMock('../js/ui/confirm-dialog', () => ({
+            showProceedDialog: showProceedDialogMock
+        }));
     });
 
     afterEach(() => {
         postMessageSpy.mockRestore();
+        alertSpy.mockRestore();
         delete window.showSaveFilePicker;
         delete window.fontManager;
         jest.dontMock('../js/font-compilation');
         jest.dontMock('../js/logger');
         jest.dontMock('idb-keyval');
         jest.dontMock('../js/font-destination-plugin-manager');
+        jest.dontMock('../js/ui/confirm-dialog');
     });
 
     function finishPicker() {
@@ -145,7 +165,7 @@ describe('binary font export', () => {
 
         expect(showSaveFilePickerMock).toHaveBeenCalledTimes(1);
         expect(awaitStableWorkerStateMock).toHaveBeenCalledTimes(2);
-        expect(bootstrapWorkerCacheFromFontStateMock).toHaveBeenCalledTimes(2);
+        expect(seedWorkerDocumentSetMock).toHaveBeenCalledTimes(2);
         expect(compileCachedMock).toHaveBeenNthCalledWith(
             1,
             'user',
@@ -299,5 +319,94 @@ describe('binary font export', () => {
 
         expect(dirtyIndicator.classList.contains('visible')).toBe(true);
         expect(dirtyIndicator.classList.contains('exporting')).toBe(false);
+    });
+    test('seeds the export compiler with every glyph shard, not the core snapshot', async () => {
+        const { exportBinaryFont } = require('../js/binary-font-export.ts');
+
+        const exportPromise = exportBinaryFont();
+        await flushAsyncWork();
+        finishPicker();
+        await exportPromise;
+
+        expect(seedWorkerDocumentSetMock).toHaveBeenCalledWith(documentSet);
+        expect(bootstrapWorkerCacheFromFontStateMock).not.toHaveBeenCalled();
+        expect(
+            seedWorkerDocumentSetMock.mock.invocationCallOrder[0]
+        ).toBeLessThan(compileCachedMock.mock.invocationCallOrder[0]);
+        expect(showProceedDialogMock).not.toHaveBeenCalled();
+    });
+
+    test('seeds the single snapshot when no sync bridge exists', async () => {
+        window.fontManager.buildWorkerSeedDocumentSet.mockReturnValue(null);
+        const { exportBinaryFont } = require('../js/binary-font-export.ts');
+
+        const exportPromise = exportBinaryFont();
+        await flushAsyncWork();
+        finishPicker();
+        await exportPromise;
+
+        expect(bootstrapWorkerCacheFromFontStateMock).toHaveBeenCalledWith(
+            new Uint8Array([4, 5, 6])
+        );
+        expect(seedWorkerDocumentSetMock).not.toHaveBeenCalled();
+    });
+
+    test('blocks exporting a font without glyphs', async () => {
+        window.fontManager.getGlyphResidency.mockReturnValue({
+            resident: 0,
+            total: 0
+        });
+        const { exportBinaryFont } = require('../js/binary-font-export.ts');
+
+        await exportBinaryFont();
+
+        expect(alertSpy).toHaveBeenCalledWith(
+            'Unable to export binary font: The font has no glyphs to export.'
+        );
+        expect(showSaveFilePickerMock).not.toHaveBeenCalled();
+        expect(compileCachedMock).not.toHaveBeenCalled();
+    });
+
+    test('asks before exporting a partially loaded font', async () => {
+        window.fontManager.getGlyphResidency.mockReturnValue({
+            resident: 2,
+            total: 5
+        });
+        const { exportBinaryFont } = require('../js/binary-font-export.ts');
+
+        const exportPromise = exportBinaryFont();
+        await flushAsyncWork();
+        await flushAsyncWork();
+        finishPicker();
+        await exportPromise;
+
+        expect(showProceedDialogMock).toHaveBeenCalledWith(
+            'Export partial font',
+            expect.stringContaining('Only 2 of 5 glyphs are loaded')
+        );
+        expect(showProceedDialogMock.mock.invocationCallOrder[0]).toBeLessThan(
+            showSaveFilePickerMock.mock.invocationCallOrder[0]
+        );
+        expect(compileCachedMock).toHaveBeenCalledTimes(1);
+    });
+
+    test('cancelling the partial export prompt exports nothing', async () => {
+        window.fontManager.getGlyphResidency.mockReturnValue({
+            resident: 2,
+            total: 5
+        });
+        showProceedDialogMock.mockResolvedValue(false);
+        const { exportBinaryFont } = require('../js/binary-font-export.ts');
+
+        await exportBinaryFont();
+
+        expect(showSaveFilePickerMock).not.toHaveBeenCalled();
+        expect(compileCachedMock).not.toHaveBeenCalled();
+        expect(alertSpy).not.toHaveBeenCalled();
+        expect(
+            document
+                .getElementById('file-dirty-indicator')
+                .classList.contains('exporting')
+        ).toBe(false);
     });
 });

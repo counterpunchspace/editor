@@ -3,10 +3,12 @@ import {
     fontCompilation,
     fullFontCompilation
 } from './font-compilation';
+import { seedCompilerFromCommittedFont } from './committed-font-seed';
 import { del, get, set } from 'idb-keyval';
 import { fontDestinationPluginManager } from './font-destination-plugin-manager';
 import { prepareCompileFilters } from './compile-filter-host';
 import { Logger } from './logger';
+import { showProceedDialog } from './ui/confirm-dialog';
 
 const console = new Logger('BinaryFontExport');
 
@@ -244,16 +246,12 @@ async function compileFullFont(): Promise<{
         }
     );
 
-    const workerSeedState = fontManager.buildWorkerSeedYjsState?.();
-    if (!workerSeedState?.length) {
-        throw new Error(
+    await seedCompilerFromCommittedFont(fontManager, fullFontCompilation, {
+        unavailable:
+            'Binary font export is unavailable until the compiler worker is ready.',
+        noSnapshot:
             'Binary font export could not snapshot the committed font state.'
-        );
-    }
-
-    await fullFontCompilation.bootstrapWorkerCacheFromFontState(
-        workerSeedState
-    );
+    });
     const compileFilters = await prepareCompileFilters(null);
     if (compileFilters.layerUpdates.length > 0) {
         await fullFontCompilation.sendMessage({
@@ -302,6 +300,24 @@ function beginExportFeedback(): (() => void) | null {
     };
 }
 
+/**
+ * Block an export with no glyphs and let the user decide on a partial one.
+ * Sparse cloud sessions compile only the glyphs they have loaded.
+ */
+async function confirmExportableGlyphs(): Promise<boolean> {
+    const { resident, total } = window.fontManager.getGlyphResidency();
+    if (resident === 0) {
+        throw new Error('The font has no glyphs to export.');
+    }
+    if (resident >= total) {
+        return true;
+    }
+    return showProceedDialog(
+        'Export partial font',
+        `Only ${resident} of ${total} glyphs are loaded in this session. The exported font will contain just these glyphs.`
+    );
+}
+
 async function runBinaryFontExport(
     alwaysChooseDestination: boolean
 ): Promise<void> {
@@ -314,6 +330,9 @@ async function runBinaryFontExport(
     exportFeedbackReset = beginExportFeedback();
     try {
         const currentFont = getCurrentFont();
+        if (!(await confirmExportableGlyphs())) {
+            return;
+        }
         const storageKey = getExportDestinationStorageKey(currentFont);
         const previousDestination = alwaysChooseDestination
             ? null

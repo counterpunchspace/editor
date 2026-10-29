@@ -2666,6 +2666,17 @@ class FontManager {
     }
 
     isHydrationSparse(): boolean {
+        const { resident, total } = this.getGlyphResidency();
+        return total > resident;
+    }
+
+    /**
+     * Glyphs whose bodies are loaded versus every glyph the font defines.
+     * Locally opened fonts load every glyph; sparse cloud sessions only hold
+     * the working set, and the catalog, revision tokens and core glyph order
+     * name the rest.
+     */
+    getGlyphResidency(): { resident: number; total: number } {
         const hydratedCount = this.getHydratedGlyphNames().length;
         const fontJson = this.currentFont?.babelfontData as
             Record<string, unknown> | undefined;
@@ -2695,7 +2706,10 @@ class FontManager {
               ? (yGlyphOrder as { toArray: () => unknown[] }).toArray().length
               : 0;
         const universe = Math.max(catalogCount, tokenCount, coreOrderCount);
-        return universe > hydratedCount;
+        return {
+            resident: hydratedCount,
+            total: Math.max(universe, hydratedCount)
+        };
     }
 
     constrainSubsetToHydratedGlyphs(glyphNames: string[]): string[] {

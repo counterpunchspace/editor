@@ -30,6 +30,27 @@ chain to settle. It snapshots the committed Yjs state, seeds the separate
 `fullFontCompilation` worker, and compiles the `user` target. Export never
 mutates or recompiles the editing worker.
 
+While the sync bridge is active, glyph bodies live only in per-glyph shards.
+Export (like the assistant's binary analysis) seeds the worker through
+`seedCompilerFromCommittedFont` (`committed-font-seed.ts`), which sends every
+shard: `font-core`, `font-deps` and each `glyph:<id>`. The `font-core` snapshot
+alone has masters and features but no glyphs, so it is used only when there
+is no bridge.
+
+Before choosing a destination, export checks
+`fontManager.getGlyphResidency()`:
+
+- **No loaded glyphs**: export stops with an error.
+- **Some glyphs loaded** (a sparse cloud session): a confirm dialog states how
+  many of the font's glyphs are loaded; on Proceed the font is compiled from
+  the loaded glyphs only. The compiler stubs the unloaded names so the feature
+  code still parses, then drops them.
+- **All glyphs loaded** (every locally opened font): export proceeds directly.
+
+`tests/binary-font-export-compile.test.js` runs this path on Fustat with the
+real compiler: the worker messages export sends are replayed against
+`wasm-dist` in a Node child process (`tests/helpers/compile-worker-seed.mjs`).
+
 This same isolated full-font worker is also used by assistant binary-analysis tools.
 It is not an automatic quality-control or background compilation lane.
 

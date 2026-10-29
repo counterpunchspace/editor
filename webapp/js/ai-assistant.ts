@@ -31,6 +31,7 @@ import {
     runAssistantPythonExecution
 } from './assistant-execution-context';
 import { awaitStableWorkerState } from './font-compilation';
+import { seedCompilerFromCommittedFont } from './committed-font-seed';
 import { SETTINGS_FOLDER_PATHS, settingsFolder } from './settings-folder';
 import {
     getPythonDocumentKindInfo,
@@ -746,32 +747,11 @@ async function prepareBinaryFontAnalysisWorker(
         return;
     }
 
-    const documentSet = fontManager.buildWorkerSeedDocumentSet?.() || null;
-    if (
-        documentSet?.length &&
-        typeof analysisCompiler.seedWorkerDocumentSet === 'function'
-    ) {
-        // Glyph outlines live in per-glyph shards. The core snapshot has
-        // features and masters but no glyph bodies, so a core-only seed
-        // compiles an empty glyph set and traps in the metrics pass.
-        await analysisCompiler.seedWorkerDocumentSet(documentSet);
-        return;
-    }
-
-    if (
-        typeof analysisCompiler.bootstrapWorkerCacheFromFontState !== 'function'
-    ) {
-        throw new Error(
-            'Binary-font analysis isolated compiler is not ready yet.'
-        );
-    }
-    const workerSeedState = fontManager.buildWorkerSeedYjsState?.();
-    if (!workerSeedState?.length) {
-        throw new Error(
+    await seedCompilerFromCommittedFont(fontManager, analysisCompiler, {
+        unavailable: 'Binary-font analysis isolated compiler is not ready yet.',
+        noSnapshot:
             'Binary-font analysis could not snapshot the committed font state.'
-        );
-    }
-    await analysisCompiler.bootstrapWorkerCacheFromFontState(workerSeedState);
+    });
 }
 
 function getBinaryFontAnalysisWorkerState(

@@ -9,7 +9,7 @@ describe('FontManager sparse hydration', () => {
 
     test('treats an empty glyph array with a live catalog as sparse', () => {
         window.patchSyncEngine = undefined;
-        const sparse = fontManager.isHydrationSparse.call({
+        const residency = fontManager.getGlyphResidency.call({
             getHydratedGlyphNames() {
                 return [];
             },
@@ -23,12 +23,12 @@ describe('FontManager sparse hydration', () => {
                 }
             }
         });
-        expect(sparse).toBe(true);
+        expect(residency).toEqual({ resident: 0, total: 1 });
     });
 
     test('is not sparse when every live catalog glyph is hydrated', () => {
         window.patchSyncEngine = undefined;
-        const sparse = fontManager.isHydrationSparse.call({
+        const residency = fontManager.getGlyphResidency.call({
             getHydratedGlyphNames() {
                 return ['a'];
             },
@@ -41,7 +41,7 @@ describe('FontManager sparse hydration', () => {
                 }
             }
         });
-        expect(sparse).toBe(false);
+        expect(residency).toEqual({ resident: 1, total: 1 });
     });
 
     test('deriveSubsetGlyphsFromText includes catalog cmap glyphs that are not hydrated yet', () => {
