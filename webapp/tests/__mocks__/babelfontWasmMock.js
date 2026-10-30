@@ -185,6 +185,15 @@ initBabelfontWasm.add_master_with_interpolated_layers_yjs = jest.fn(() => ({
         mastersOperation: null
     })
 }));
+initBabelfontWasm.add_axis_with_master_copies_yjs = jest.fn(() => ({
+    update: new Uint8Array([1]),
+    metadataJson: JSON.stringify({
+        changedGlyphs: [],
+        layerTargets: [],
+        layerOperations: [],
+        mastersOperation: null
+    })
+}));
 initBabelfontWasm.refine_layer_snapshots_yjs = jest.fn((baseUpdate) => ({
     update: baseUpdate instanceof Uint8Array ? baseUpdate : new Uint8Array([1]),
     metadataJson: JSON.stringify({

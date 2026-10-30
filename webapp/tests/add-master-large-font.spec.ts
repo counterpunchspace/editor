@@ -98,4 +98,51 @@ test('adding a master to a 1,000-glyph font finishes and keeps the page responsi
     }, result.id);
     expect(coverage.masters).toBe(before.masters + 1);
     expect(coverage.missing).toEqual([]);
+
+    // Undo and redo must leave the compile worker in step. The editor writes
+    // glyph-revision stamps into the core document that the worker gets no
+    // packet of its own for; when those bytes were dropped, every later core
+    // update stayed pending in the worker, so undo left it without masters
+    // and compiling failed.
+    await page.evaluate(() => {
+        const w = window as any;
+        w.__compiles = [];
+        window.addEventListener('editingFontCompiled', (event) => {
+            w.__compiles.push((event as CustomEvent).detail?.error ?? null);
+        });
+    });
+    for (const [action, masters] of [
+        ['undo', before.masters],
+        ['redo', before.masters + 1]
+    ] as const) {
+        const compiledBefore = await page.evaluate(
+            () => (window as any).__compiles.length
+        );
+        await page.evaluate(
+            (action) => (window as any).toolbarWindowActions[action](),
+            action
+        );
+        await expect
+            .poll(() =>
+                page.evaluate(
+                    () => (window as any).currentFontModel.masters.length
+                )
+            )
+            .toBe(masters);
+        await expect
+            .poll(
+                () => page.evaluate(() => (window as any).__compiles.length),
+                { timeout: 60_000 }
+            )
+            .toBeGreaterThan(compiledBefore);
+        const errors = await page.evaluate(() =>
+            (window as any).__compiles.filter(Boolean).map(String)
+        );
+        expect(errors).toEqual([]);
+        expect(
+            await page.evaluate(() =>
+                /Compilation Error/.test(document.body.innerText)
+            )
+        ).toBe(false);
+    }
 });

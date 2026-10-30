@@ -329,6 +329,11 @@ Whether masters may be added, removed, or reinterpolated now. Cloud
 fonts refuse while some glyphs are not downloaded.
 
 #### `addMaster(master: Babelfont.Master | None = None, options: AddMasterOptions | None = None) -> Promise<Master | null>`
+#### `addAxisWithMasterCopies(plan: AxisMasterCopyPlan, label: str) -> Promise<void>`
+Adds an axis and copies existing masters along it as one undo step.
+The worker writes the core document once and each glyph's new layers
+in a single transaction per glyph.
+
 #### `removeMastersByIds(masterIds: list[str]) -> Promise<boolean>`
 #### `findInsertIndexAfterName(baseName: str) -> float | int`
 Index at which to insert a new glyph that belongs with `baseName`.

@@ -1,6 +1,13 @@
 /* tslint:disable */
 /* eslint-disable */
 
+/**
+ * Adds an axis and copies existing masters along it in one batch: one core
+ * update (axes, masters, instances) plus one transaction per glyph that
+ * writes all of that glyph's new and adjusted layers.
+ */
+export function add_axis_with_master_copies_yjs(plan_json: string): any;
+
 export function add_master_with_interpolated_layers_yjs(master_json: string): any;
 
 /**
@@ -499,17 +506,18 @@ export interface InitOutput {
     readonly store_font: (a: number, b: number) => [number, number];
     readonly validate_feature_source_with_full_filter_pipeline: (a: any) => [number, number];
     readonly version: () => [number, number];
-    readonly add_master_with_interpolated_layers_yjs: (a: number, b: number) => [number, number, number];
-    readonly refine_layer_snapshots_yjs: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly reinterpolate_layer_yjs: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly reinterpolate_master_layers_yjs: (a: number, b: number) => [number, number, number];
-    readonly remove_masters_yjs: (a: number, b: number) => [number, number, number];
     readonly get_font_axes: (a: number, b: number) => [number, number, number, number];
     readonly get_font_features: (a: number, b: number) => [number, number, number, number];
     readonly get_font_features_with_tables: (a: number, b: number) => [number, number, number, number];
     readonly get_glyph_name: (a: number, b: number, c: number) => [number, number, number, number];
     readonly get_glyph_order: (a: number, b: number) => [number, number, number, number];
     readonly get_stylistic_set_names: (a: number, b: number) => [number, number, number, number];
+    readonly add_axis_with_master_copies_yjs: (a: number, b: number) => [number, number, number];
+    readonly add_master_with_interpolated_layers_yjs: (a: number, b: number) => [number, number, number];
+    readonly refine_layer_snapshots_yjs: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly reinterpolate_layer_yjs: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly reinterpolate_master_layers_yjs: (a: number, b: number) => [number, number, number];
+    readonly remove_masters_yjs: (a: number, b: number) => [number, number, number];
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;

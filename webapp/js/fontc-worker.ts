@@ -21,6 +21,7 @@ import init, {
     dump_worker_cache_state_json,
     get_cache_memory_stats,
     add_master_with_interpolated_layers_yjs,
+    add_axis_with_master_copies_yjs,
     refine_layer_snapshots_yjs,
     remove_masters_yjs,
     get_debug_cached_font_bytes,
@@ -2152,6 +2153,40 @@ self.onmessage = async (event) => {
                 });
             } finally {
                 timelineSpanEnd(addMasterSpanId);
+            }
+            return;
+        }
+
+        if (data.type === 'addAxisWithMasterCopiesYjs') {
+            const spanId = timelineSpanStart(
+                'font.worker.addAxisWithMasterCopiesYjs'
+            );
+            const { id, plan } = data;
+            try {
+                const result = add_axis_with_master_copies_yjs(
+                    JSON.stringify(plan)
+                ) as RustYjsBatchResult;
+                self.postMessage({
+                    id,
+                    type: 'addAxisWithMasterCopiesYjs',
+                    success: true,
+                    update: result.update ?? new Uint8Array(),
+                    updates: result.updates,
+                    metadataJson: result.metadataJson ?? '{}'
+                });
+            } catch (e) {
+                console.error(
+                    '[Fontc Worker] addAxisWithMasterCopiesYjs error:',
+                    e
+                );
+                self.postMessage({
+                    id,
+                    type: 'addAxisWithMasterCopiesYjs',
+                    success: false,
+                    error: String(e)
+                });
+            } finally {
+                timelineSpanEnd(spanId);
             }
             return;
         }

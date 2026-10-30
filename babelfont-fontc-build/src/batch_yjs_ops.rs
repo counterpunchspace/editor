@@ -45,6 +45,7 @@ struct BatchMetadata {
     layer_operations: Vec<BatchLayerOperation>,
     masters_operation: Option<BatchMastersOperation>,
     axes_operation: Option<BatchAxesOperation>,
+    instances_operation: Option<BatchAxesOperation>,
 }
 
 #[derive(Clone, Debug)]
@@ -821,6 +822,12 @@ fn encode_result_packets(
                 "newValue": operation.new_value,
             })
         }),
+        "instancesOperation": metadata.instances_operation.as_ref().map(|operation| {
+            serde_json::json!({
+                "oldValue": operation.old_value,
+                "newValue": operation.new_value,
+            })
+        }),
     });
     let first_update = packets
         .first()
@@ -869,6 +876,7 @@ pub fn reinterpolate_master_layers_yjs(master_id: &str) -> Result<JsValue, JsVal
                 layer_operations: Vec::new(),
                 masters_operation: None,
                 axes_operation: None,
+                instances_operation: None,
             },
         );
     }
@@ -943,6 +951,7 @@ pub fn reinterpolate_master_layers_yjs(master_id: &str) -> Result<JsValue, JsVal
                 layer_operations,
                 masters_operation: None,
                 axes_operation: None,
+                instances_operation: None,
             },
         );
     }
@@ -1023,6 +1032,7 @@ pub fn reinterpolate_master_layers_yjs(master_id: &str) -> Result<JsValue, JsVal
             layer_operations,
             masters_operation: None,
             axes_operation: None,
+            instances_operation: None,
         },
     )
 }
@@ -1041,6 +1051,7 @@ fn build_reinterpolate_layer_batch(
                 layer_operations: Vec::new(),
                 masters_operation: None,
                 axes_operation: None,
+                instances_operation: None,
             },
         ));
     };
@@ -1067,6 +1078,7 @@ fn build_reinterpolate_layer_batch(
                     layer_operations: Vec::new(),
                     masters_operation: None,
                     axes_operation: None,
+                    instances_operation: None,
                 },
             ));
         };
@@ -1107,6 +1119,7 @@ fn build_reinterpolate_layer_batch(
                 }],
                 masters_operation: None,
                 axes_operation: None,
+                instances_operation: None,
             },
         ));
     }
@@ -1155,6 +1168,7 @@ fn build_reinterpolate_layer_batch(
             }],
             masters_operation: None,
             axes_operation: None,
+            instances_operation: None,
         },
     ))
 }
@@ -1330,6 +1344,7 @@ pub fn add_master_with_interpolated_layers_yjs(master_json: &str) -> Result<JsVa
                     new_value: next_masters_json,
                 }),
                 axes_operation,
+                instances_operation: None,
             },
         );
     }
@@ -1346,6 +1361,7 @@ pub fn add_master_with_interpolated_layers_yjs(master_json: &str) -> Result<JsVa
                 new_value: next_masters_json,
             }),
             axes_operation,
+            instances_operation: None,
         },
     )
 }
@@ -1368,6 +1384,7 @@ pub fn refine_layer_snapshots_yjs(
                 layer_operations: Vec::new(),
                 masters_operation: None,
                 axes_operation: None,
+                instances_operation: None,
             },
         );
     }
@@ -1433,6 +1450,7 @@ pub fn refine_layer_snapshots_yjs(
                 layer_operations,
                 masters_operation: None,
                 axes_operation: None,
+                instances_operation: None,
             },
         );
     }
@@ -1480,6 +1498,7 @@ pub fn refine_layer_snapshots_yjs(
             layer_operations,
             masters_operation: None,
             axes_operation: None,
+            instances_operation: None,
         },
     )
 }
@@ -1507,6 +1526,7 @@ pub fn remove_masters_yjs(master_ids_json: &str) -> Result<JsValue, JsValue> {
                 layer_operations: Vec::new(),
                 masters_operation: None,
                 axes_operation: None,
+                instances_operation: None,
             },
         );
     }
@@ -1536,6 +1556,7 @@ pub fn remove_masters_yjs(master_ids_json: &str) -> Result<JsValue, JsValue> {
                 layer_operations: Vec::new(),
                 masters_operation: None,
                 axes_operation: None,
+                instances_operation: None,
             },
         );
     }
@@ -1627,6 +1648,7 @@ pub fn remove_masters_yjs(master_ids_json: &str) -> Result<JsValue, JsValue> {
                     new_value: next_masters_json,
                 }),
                 axes_operation: None,
+                instances_operation: None,
             },
         );
     }
@@ -1643,7 +1665,344 @@ pub fn remove_masters_yjs(master_ids_json: &str) -> Result<JsValue, JsValue> {
                 new_value: next_masters_json,
             }),
             axes_operation: None,
+            instances_operation: None,
         },
+    )
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MasterCopy {
+    source_master_id: String,
+    new_master_id: String,
+    /// Designspace position of the copy on the new axis.
+    value: f64,
+}
+
+/// A new axis plus copies of existing masters along it, written as one batch.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AxisMasterCopyPlan {
+    /// Full next axes list, including the new axis.
+    axes: JsonValue,
+    /// Full next masters list: existing masters with the new tag, then the copies.
+    masters: JsonValue,
+    /// Full next instances list, when instances change.
+    #[serde(default)]
+    instances: Option<JsonValue>,
+    axis_tag: String,
+    /// Designspace position of the existing masters on the new axis.
+    existing_value: f64,
+    #[serde(default)]
+    copies: Vec<MasterCopy>,
+    #[serde(default)]
+    copy_intermediate_layers: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct LayerEdit {
+    layer_id: String,
+    old_value: Option<JsonValue>,
+    new_value: JsonValue,
+}
+
+fn layer_master_link(layer: &JsonValue) -> Option<(&str, &str)> {
+    let master = layer.get("master")?;
+    Some((
+        master.get("type")?.as_str()?,
+        master.get("master")?.as_str()?,
+    ))
+}
+
+fn set_location_coordinate(layer: &mut JsonValue, tag: &str, value: f64) {
+    if let Some(location) = layer.get_mut("location").and_then(JsonValue::as_object_mut) {
+        location.insert(tag.to_string(), serde_json::json!(value));
+    }
+}
+
+/// Edits one glyph needs for an axis-with-master-copies plan.
+///
+/// Existing layers with an explicit location (intermediate layers) get the new
+/// axis coordinate of the existing masters, so they stay where they are even
+/// when a copy becomes the default master. Each copy duplicates the layers of
+/// its source master: the default layer becomes the copy's default layer (id =
+/// new master id), associated layers get derived ids, and background layers
+/// referenced by copied layers are copied too so no two layers share one.
+fn layer_copy_edits(layers: &[(String, JsonValue)], plan: &AxisMasterCopyPlan) -> Vec<LayerEdit> {
+    let mut edits = Vec::new();
+    for (layer_id, layer) in layers {
+        let has_location = layer.get("location").is_some_and(JsonValue::is_object);
+        if has_location && layer["location"].get(&plan.axis_tag).is_none() {
+            let mut next = layer.clone();
+            set_location_coordinate(&mut next, &plan.axis_tag, plan.existing_value);
+            edits.push(LayerEdit {
+                layer_id: layer_id.clone(),
+                old_value: Some(layer.clone()),
+                new_value: next,
+            });
+        }
+    }
+
+    let by_id: HashMap<&str, &JsonValue> = layers
+        .iter()
+        .map(|(id, layer)| (id.as_str(), layer))
+        .collect();
+    for copy in &plan.copies {
+        // Background layers are only copied with the layer that references them.
+        let mut selected: Vec<&str> = layers
+            .iter()
+            .filter(|(_, layer)| layer.get("is_background") != Some(&JsonValue::Bool(true)))
+            .filter(|(_, layer)| match layer_master_link(layer) {
+                Some(("DefaultForMaster", master)) => master == copy.source_master_id,
+                Some(("AssociatedWithMaster", master)) => {
+                    master == copy.source_master_id
+                        && (plan.copy_intermediate_layers || layer.get("location").is_none())
+                }
+                _ => false,
+            })
+            .map(|(id, _)| id.as_str())
+            .collect();
+        // Pull in background layers referenced by anything selected so far.
+        let mut index = 0;
+        while index < selected.len() {
+            let background = by_id[selected[index]]
+                .get("background_layer_id")
+                .and_then(JsonValue::as_str);
+            if let Some(background) = background {
+                if by_id.contains_key(background) && !selected.contains(&background) {
+                    selected.push(background);
+                }
+            }
+            index += 1;
+        }
+
+        let new_ids: HashMap<&str, String> = selected
+            .iter()
+            .map(|&old_id| {
+                let is_default = layer_master_link(by_id[old_id]).is_some_and(|(kind, master)| {
+                    kind == "DefaultForMaster" && master == copy.source_master_id
+                });
+                let new_id = if is_default {
+                    copy.new_master_id.clone()
+                } else {
+                    format!("{}-{}", copy.new_master_id, old_id)
+                };
+                (old_id, new_id)
+            })
+            .collect();
+
+        for &old_id in &selected {
+            let mut next = by_id[old_id].clone();
+            let Some(object) = next.as_object_mut() else {
+                continue;
+            };
+            object.insert("id".into(), JsonValue::String(new_ids[old_id].clone()));
+            if let Some(master) = object.get_mut("master").and_then(JsonValue::as_object_mut) {
+                if master.get("master").and_then(JsonValue::as_str) == Some(&copy.source_master_id)
+                {
+                    master.insert(
+                        "master".into(),
+                        JsonValue::String(copy.new_master_id.clone()),
+                    );
+                }
+            }
+            match object
+                .get("background_layer_id")
+                .and_then(JsonValue::as_str)
+            {
+                Some(background) => match new_ids.get(background) {
+                    Some(new_background) => {
+                        object.insert(
+                            "background_layer_id".into(),
+                            JsonValue::String(new_background.clone()),
+                        );
+                    }
+                    None => {
+                        object.remove("background_layer_id");
+                    }
+                },
+                None => {}
+            }
+            set_location_coordinate(&mut next, &plan.axis_tag, copy.value);
+            edits.push(LayerEdit {
+                layer_id: new_ids[old_id].clone(),
+                old_value: None,
+                new_value: next,
+            });
+        }
+    }
+    edits
+}
+
+fn record_layer_edits(
+    glyph_name: &str,
+    edits: Vec<LayerEdit>,
+    changed_glyphs: &mut HashSet<String>,
+    layer_targets: &mut Vec<BatchLayerTarget>,
+    layer_operations: &mut Vec<BatchLayerOperation>,
+) {
+    if !edits.is_empty() {
+        changed_glyphs.insert(glyph_name.to_string());
+    }
+    for edit in edits {
+        layer_targets.push(BatchLayerTarget {
+            glyph_name: glyph_name.to_string(),
+            layer_id: edit.layer_id.clone(),
+        });
+        layer_operations.push(BatchLayerOperation {
+            glyph_name: glyph_name.to_string(),
+            layer_id: edit.layer_id,
+            old_value: edit.old_value,
+            new_value: Some(edit.new_value),
+        });
+    }
+}
+
+/// Adds an axis and copies existing masters along it in one batch: one core
+/// update (axes, masters, instances) plus one transaction per glyph that
+/// writes all of that glyph's new and adjusted layers.
+#[wasm_bindgen]
+pub fn add_axis_with_master_copies_yjs(plan_json: &str) -> Result<JsValue, JsValue> {
+    let plan: AxisMasterCopyPlan = serde_json::from_str(plan_json).map_err(|error| {
+        JsValue::from_str(&format!("Axis master copy plan parse failed: {}", error))
+    })?;
+    let font = get_or_rebuild_font_cache()?;
+    let (clone_doc, base_state_vector) = clone_current_ydoc()?;
+    let (old_masters, old_axes, old_instances) = {
+        let guard = Y_DOC.lock().unwrap();
+        let doc = guard
+            .as_ref()
+            .ok_or_else(|| JsValue::from_str("Y.Doc not initialized"))?;
+        let txn = doc.transact();
+        (
+            ydoc_get_top_level_json_with_txn("masters", &txn),
+            ydoc_get_top_level_json_with_txn("axes", &txn),
+            ydoc_get_top_level_json_with_txn("instances", &txn),
+        )
+    };
+    let glyph_layer_ids: Vec<(String, Vec<String>)> = font
+        .glyphs
+        .iter()
+        .filter(|glyph| !glyph.name.is_empty())
+        .map(|glyph| {
+            (
+                glyph.name.to_string(),
+                glyph.layers.iter().filter_map(layer_id_for_batch).collect(),
+            )
+        })
+        .collect();
+
+    let mut changed_glyphs = HashSet::new();
+    let mut layer_targets = Vec::new();
+    let mut layer_operations = Vec::new();
+    let sharded = glyph_shards_active();
+
+    {
+        let mut txn = clone_doc.transact_mut();
+        let font_map = txn
+            .get_map("font")
+            .ok_or_else(|| JsValue::from_str("Missing font map in cloned Y.Doc"))?;
+        set_json_map_entry(&mut txn, &font_map, "axes", &plan.axes)?;
+        set_json_map_entry(&mut txn, &font_map, "masters", &plan.masters)?;
+        if let Some(instances) = plan.instances.as_ref() {
+            set_json_map_entry(&mut txn, &font_map, "instances", instances)?;
+        }
+        if !sharded {
+            for (glyph_name, layer_ids) in &glyph_layer_ids {
+                let layers: Vec<(String, JsonValue)> = layer_ids
+                    .iter()
+                    .filter_map(|id| {
+                        ydoc_get_layer_json_with_txn(glyph_name, id, &txn)
+                            .map(|json| (id.clone(), json))
+                    })
+                    .collect();
+                let edits = layer_copy_edits(&layers, &plan);
+                for edit in &edits {
+                    upsert_layer_json(
+                        &mut txn,
+                        &font_map,
+                        glyph_name,
+                        &edit.layer_id,
+                        &edit.new_value,
+                    )?;
+                }
+                record_layer_edits(
+                    glyph_name,
+                    edits,
+                    &mut changed_glyphs,
+                    &mut layer_targets,
+                    &mut layer_operations,
+                );
+            }
+        }
+    }
+
+    let metadata = |changed_glyphs: HashSet<String>,
+                    layer_targets: Vec<BatchLayerTarget>,
+                    layer_operations: Vec<BatchLayerOperation>| BatchMetadata {
+        changed_glyphs: changed_glyphs.into_iter().collect(),
+        layer_targets,
+        layer_operations,
+        masters_operation: Some(BatchMastersOperation {
+            old_value: old_masters.clone(),
+            new_value: plan.masters.clone(),
+        }),
+        axes_operation: Some(BatchAxesOperation {
+            old_value: old_axes.clone(),
+            new_value: plan.axes.clone(),
+        }),
+        instances_operation: plan.instances.as_ref().map(|instances| BatchAxesOperation {
+            old_value: old_instances.clone(),
+            new_value: instances.clone(),
+        }),
+    };
+
+    if sharded {
+        let clones = clone_all_glyph_docs()?;
+        let clone_index: HashMap<String, usize> = clones
+            .iter()
+            .enumerate()
+            .map(|(index, clone)| (clone.glyph_name.clone(), index))
+            .collect();
+        for (glyph_name, layer_ids) in &glyph_layer_ids {
+            let Some(&index) = clone_index.get(glyph_name) else {
+                continue;
+            };
+            let edits = {
+                let mut txn = clones[index].doc.transact_mut();
+                let layers: Vec<(String, JsonValue)> = layer_ids
+                    .iter()
+                    .filter_map(|id| {
+                        layer_json_from_glyph_root(&txn, id).map(|json| (id.clone(), json))
+                    })
+                    .collect();
+                let edits = layer_copy_edits(&layers, &plan);
+                for edit in &edits {
+                    upsert_layer_on_glyph_root(&mut txn, &edit.layer_id, &edit.new_value)?;
+                }
+                edits
+            };
+            record_layer_edits(
+                glyph_name,
+                edits,
+                &mut changed_glyphs,
+                &mut layer_targets,
+                &mut layer_operations,
+            );
+        }
+        let core_update = clone_doc.transact().encode_diff_v1(&base_state_vector);
+        let mut packets = vec![(FONT_CORE_DOCUMENT_ID.to_string(), core_update)];
+        packets.extend(encode_glyph_diffs(&clones));
+        return encode_result_packets(
+            packets,
+            &metadata(changed_glyphs, layer_targets, layer_operations),
+        );
+    }
+
+    let update = clone_doc.transact().encode_diff_v1(&base_state_vector);
+    encode_result(
+        update,
+        &metadata(changed_glyphs, layer_targets, layer_operations),
     )
 }
 
@@ -1705,6 +2064,109 @@ mod tests {
             "glyphs": []
         }))
         .unwrap()
+    }
+
+    fn copy_plan(copy_intermediate_layers: bool) -> AxisMasterCopyPlan {
+        serde_json::from_value(json!({
+            "axes": [], "masters": [], "axisTag": "wdth", "existingValue": 100,
+            "copies": [{ "sourceMasterId": "M1", "newMasterId": "M1w", "value": 125 }],
+            "copyIntermediateLayers": copy_intermediate_layers
+        }))
+        .unwrap()
+    }
+
+    fn copy_test_layers() -> Vec<(String, JsonValue)> {
+        vec![
+            (
+                "M0".into(),
+                json!({ "id": "M0", "width": 400, "master": { "type": "DefaultForMaster", "master": "M0" } }),
+            ),
+            (
+                "M1".into(),
+                json!({
+                    "id": "M1", "width": 800, "background_layer_id": "bg1",
+                    "master": { "type": "DefaultForMaster", "master": "M1" }
+                }),
+            ),
+            (
+                "bg1".into(),
+                json!({
+                    "id": "bg1", "width": 800, "is_background": true, "background_layer_id": "M1",
+                    "master": { "type": "AssociatedWithMaster", "master": "M1" }
+                }),
+            ),
+            (
+                "brace".into(),
+                json!({
+                    "id": "brace", "width": 650,
+                    "master": { "type": "AssociatedWithMaster", "master": "M1" },
+                    "location": { "wght": 650 }
+                }),
+            ),
+        ]
+    }
+
+    #[test]
+    fn copies_default_and_background_layers_with_new_ids() {
+        let edits = layer_copy_edits(&copy_test_layers(), &copy_plan(false));
+        let created: Vec<&LayerEdit> = edits
+            .iter()
+            .filter(|edit| edit.old_value.is_none())
+            .collect();
+        assert_eq!(created.len(), 2);
+        let default = created.iter().find(|edit| edit.layer_id == "M1w").unwrap();
+        assert_eq!(default.new_value["id"], json!("M1w"));
+        assert_eq!(default.new_value["width"], json!(800));
+        assert_eq!(
+            default.new_value["master"],
+            json!({ "type": "DefaultForMaster", "master": "M1w" })
+        );
+        assert_eq!(default.new_value["background_layer_id"], json!("M1w-bg1"));
+        let background = created
+            .iter()
+            .find(|edit| edit.layer_id == "M1w-bg1")
+            .unwrap();
+        assert_eq!(
+            background.new_value["master"],
+            json!({ "type": "AssociatedWithMaster", "master": "M1w" })
+        );
+        // The background points back at its foreground copy, not the original.
+        assert_eq!(background.new_value["background_layer_id"], json!("M1w"));
+    }
+
+    #[test]
+    fn existing_intermediate_layers_get_the_existing_axis_position() {
+        let edits = layer_copy_edits(&copy_test_layers(), &copy_plan(false));
+        let patched = edits.iter().find(|edit| edit.layer_id == "brace").unwrap();
+        assert_eq!(
+            patched.new_value["location"],
+            json!({ "wght": 650, "wdth": 100.0 })
+        );
+        assert!(patched.old_value.is_some());
+        assert!(!edits.iter().any(|edit| edit.layer_id == "M1w-brace"));
+    }
+
+    #[test]
+    fn intermediate_layers_are_copied_at_the_copy_position_when_requested() {
+        let edits = layer_copy_edits(&copy_test_layers(), &copy_plan(true));
+        let copied = edits
+            .iter()
+            .find(|edit| edit.layer_id == "M1w-brace")
+            .unwrap();
+        assert_eq!(
+            copied.new_value["location"],
+            json!({ "wght": 650, "wdth": 125.0 })
+        );
+        assert_eq!(
+            copied.new_value["master"],
+            json!({ "type": "AssociatedWithMaster", "master": "M1w" })
+        );
+    }
+
+    #[test]
+    fn layers_of_other_masters_are_not_copied() {
+        let edits = layer_copy_edits(&copy_test_layers(), &copy_plan(true));
+        assert!(!edits.iter().any(|edit| edit.layer_id.contains("M0")));
     }
 
     #[test]

@@ -1,0 +1,661 @@
+/* Add axis dialog (js/add-axis-dialog.ts): three steps on the left, a
+ * ladder preview and summary on the right, footer with step navigation. */
+
+.add-axis-dialog {
+    max-width: min(1240px, 96vw);
+    width: 96vw;
+}
+
+.add-axis-main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 330px;
+    min-height: 0;
+    overflow: auto;
+    font-family: var(--font-families-sans);
+    font-size: 13px;
+    color: var(--text-primary);
+}
+
+.add-axis-left {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    min-width: 0;
+    border-right: 1px solid var(--border-primary);
+}
+
+/* ---------- step tabs ---------- */
+
+.add-axis-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--border-primary);
+}
+
+.add-axis-tabs button {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: -1px;
+    padding: 11px 10px;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: none;
+    color: var(--text-muted);
+    font: 500 13px var(--font-families-sans);
+    cursor: pointer;
+}
+
+.add-axis-tabs button:hover {
+    color: var(--text-primary);
+}
+
+.add-axis-tabs button[aria-selected='true'] {
+    color: var(--text-primary);
+    border-bottom-color: var(--font-context-focused-bg);
+}
+
+.add-axis-tab-n {
+    display: inline-grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    border: 1px solid currentColor;
+    border-radius: 50%;
+    font-size: 11px;
+}
+
+.add-axis-tabs button[aria-selected='true'] .add-axis-tab-n {
+    background: var(--font-context-focused-bg);
+    border-color: var(--font-context-focused-bg);
+    color: var(--font-context-focused-text);
+}
+
+.add-axis-tab-err {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent-red);
+}
+
+.add-axis-tabs-optional {
+    align-self: center;
+    margin-left: 14px;
+    padding-left: 14px;
+    border-left: 1px solid var(--border-primary);
+    color: var(--text-faint);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+/* ---------- pages: all share one cell, so the dialog keeps the tallest height ---------- */
+
+.add-axis-pages {
+    display: grid;
+    min-width: 0;
+    padding: 16px 18px;
+}
+
+.add-axis-page {
+    grid-area: 1 / 1;
+    display: grid;
+    align-content: start;
+    gap: 16px;
+    min-width: 0;
+    visibility: hidden;
+}
+
+.add-axis-page.is-active {
+    visibility: visible;
+}
+
+.add-axis-page-1 {
+    display: flex;
+    flex-direction: column;
+}
+
+.add-axis-explain {
+    display: grid;
+    gap: 8px;
+    max-width: 72ch;
+    margin-top: auto;
+    color: var(--text-secondary);
+}
+
+.add-axis-explain p,
+.add-axis-hint {
+    margin: 0;
+}
+
+.add-axis-explain b {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.add-axis-cols {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 12px 32px;
+}
+
+.add-axis-cols > * {
+    min-width: 0;
+}
+
+.add-axis-col {
+    display: grid;
+    align-content: start;
+    gap: 8px;
+}
+
+.add-axis-col-hint {
+    flex: 1 1 260px;
+    max-width: 46ch;
+}
+
+.add-axis-block {
+    display: grid;
+    align-content: start;
+    gap: 8px;
+}
+
+.add-axis-grow {
+    flex: 1 1 280px;
+}
+
+.add-axis-subtitle {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.add-axis-field {
+    display: grid;
+    gap: 4px;
+}
+
+.add-axis-field label {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.add-axis-field-row,
+.add-axis-name-tag {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px 14px;
+}
+
+.add-axis-field-row {
+    flex-wrap: wrap;
+}
+
+.add-axis-name-tag {
+    flex-wrap: nowrap;
+}
+
+.add-axis-note,
+.add-axis-hint,
+.add-axis-muted {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.add-axis-note {
+    color: var(--text-faint);
+    font-size: 11px;
+}
+
+.add-axis-dialog select.dialog-input {
+    width: 300px;
+    max-width: 100%;
+}
+
+.add-axis-w-name {
+    width: 160px;
+}
+
+.add-axis-w-tag {
+    width: 64px;
+    font-family: var(--font-families-mono);
+}
+
+.add-axis-num {
+    width: 76px;
+    font-family: var(--font-families-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+.add-axis-pos {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.add-axis-stylename {
+    min-width: 10ch;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.add-axis-dialog .dialog-input.is-custom {
+    border-color: var(--font-context-focused-bg);
+}
+
+.add-axis-dialog .dialog-input.is-bad {
+    border-color: var(--accent-red);
+    background: var(--ai-error-bg);
+}
+
+.add-axis-dialog .dialog-input:disabled {
+    opacity: 0.45;
+}
+
+/* ---------- segmented controls ---------- */
+
+.add-axis-seg {
+    display: inline-flex;
+    justify-self: start;
+    align-self: start;
+    max-width: 100%;
+    overflow: hidden;
+    border: 1px solid var(--input-border);
+    border-radius: 5px;
+}
+
+.add-axis-seg button {
+    padding: 6px 11px;
+    border: 0;
+    background: transparent;
+    color: var(--text-secondary);
+    font: 500 12px var(--font-families-sans);
+    cursor: pointer;
+}
+
+.add-axis-seg button + button {
+    border-left: 1px solid var(--input-border);
+}
+
+.add-axis-seg button[aria-pressed='true'] {
+    background: var(--font-context-focused-bg);
+    color: var(--font-context-focused-text);
+}
+
+.add-axis-seg button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.add-axis-default-row {
+    flex-wrap: nowrap;
+    align-items: center;
+}
+
+.add-axis-default-row .add-axis-seg {
+    flex: none;
+    align-self: center;
+}
+
+.add-axis-default-row .add-axis-hint {
+    flex: 1 1 auto;
+}
+
+/* ---------- tables ---------- */
+
+.add-axis-table-scroll {
+    overflow: auto;
+    border: 1px solid var(--border-primary);
+    border-radius: 6px;
+}
+
+.add-axis-page[data-page='2'] .add-axis-table-scroll {
+    max-height: 360px;
+}
+
+.add-axis-table,
+.add-axis-map {
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.add-axis-table th,
+.add-axis-table td,
+.add-axis-map th,
+.add-axis-map td {
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--border-primary);
+    text-align: left;
+    vertical-align: middle;
+}
+
+.add-axis-map th,
+.add-axis-map td {
+    padding: 5px 8px;
+    font-size: 12px;
+}
+
+.add-axis-table tr:last-child td,
+.add-axis-map tr:last-child td {
+    border-bottom: 0;
+}
+
+.add-axis-table thead th,
+.add-axis-map thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--background-secondary);
+    color: var(--text-secondary);
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.add-axis-col-head {
+    display: grid;
+    gap: 6px;
+}
+
+.add-axis-col-top,
+.add-axis-col-sub {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.add-axis-col-sub {
+    gap: 6px;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.add-axis-col-sub .dialog-input {
+    width: 120px;
+    padding: 3px 6px;
+    font-size: 12px;
+}
+
+.add-axis-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.add-axis-cell.is-off .add-axis-cell-name,
+.add-axis-cell.is-off .add-axis-num {
+    opacity: 0.35;
+}
+
+.add-axis-cell-name {
+    width: 180px;
+}
+
+.add-axis-cell .add-axis-num {
+    width: 66px;
+}
+
+.add-axis-reset {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--font-context-focused-bg);
+    font-size: 11px;
+    cursor: pointer;
+}
+
+.add-axis-src-name {
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.add-axis-src-loc,
+.add-axis-mono {
+    color: var(--text-faint);
+    font-family: var(--font-families-mono);
+    font-size: 12px;
+}
+
+.add-axis-mono {
+    color: var(--text-secondary);
+}
+
+.add-axis-who {
+    max-width: 24ch;
+    color: var(--text-secondary);
+}
+
+.add-axis-dialog input[type='checkbox'] {
+    width: 15px;
+    height: 15px;
+    margin: 0;
+    accent-color: var(--font-context-focused-bg);
+    cursor: pointer;
+}
+
+.add-axis-opt {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+}
+
+.add-axis-opt input {
+    margin-top: 3px;
+}
+
+.add-axis-opt small {
+    display: block;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.add-axis-count {
+    color: var(--text-faint);
+    font-family: var(--font-families-mono);
+    font-size: 11px;
+}
+
+.add-axis-notes {
+    display: grid;
+    gap: 6px;
+}
+
+.add-axis-note-err,
+.add-axis-note-warn {
+    padding: 7px 10px;
+    border-left: 3px solid var(--accent-red);
+    border-radius: 5px;
+    background: var(--ai-error-bg);
+    font-size: 12px;
+}
+
+.add-axis-note-warn {
+    border-left-color: var(--accent-orange);
+    background: var(--input-bg);
+}
+
+/* ---------- preview column ---------- */
+
+.add-axis-side {
+    display: grid;
+    align-content: start;
+    gap: 12px;
+    min-width: 0;
+    padding: 16px;
+}
+
+.add-axis-plot {
+    padding: 8px;
+    border: 1px solid var(--border-primary);
+    border-radius: 6px;
+    background: var(--background-secondary);
+}
+
+.add-axis-plot-scroll {
+    max-height: 380px;
+    overflow-y: auto;
+}
+
+.add-axis-plot svg {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.add-axis-plot-text {
+    fill: var(--text-secondary);
+}
+
+.add-axis-plot-muted {
+    fill: var(--text-muted);
+}
+
+.add-axis-plot-faint {
+    fill: var(--text-faint);
+}
+
+.add-axis-plot-accent {
+    fill: var(--font-context-focused-bg);
+}
+
+.add-axis-plot-axis {
+    stroke: var(--border-secondary);
+}
+
+.add-axis-plot-guide {
+    stroke: var(--border-primary);
+}
+
+.add-axis-plot-link {
+    stroke: var(--text-primary);
+    stroke-opacity: 0.3;
+}
+
+.add-axis-plot-link-off {
+    stroke: var(--text-faint);
+    stroke-dasharray: 2 3;
+}
+
+.add-axis-plot-dot-exist {
+    fill: var(--background-secondary);
+    stroke: var(--text-faint);
+    stroke-width: 1.5;
+}
+
+.add-axis-plot-dot-new {
+    fill: var(--text-primary);
+}
+
+.add-axis-plot-dot-off {
+    fill: var(--background-secondary);
+    stroke: var(--text-faint);
+    stroke-width: 1.5;
+    stroke-dasharray: 2 2;
+}
+
+.add-axis-plot-ring {
+    fill: none;
+    stroke: var(--font-context-focused-bg);
+}
+
+.add-axis-legend {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 4px 14px;
+    margin-top: 6px;
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.add-axis-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.add-axis-dot {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+}
+
+.add-axis-dot-exist {
+    border: 1.5px solid var(--text-faint);
+}
+
+.add-axis-dot-new {
+    background: var(--text-primary);
+}
+
+.add-axis-dot-off {
+    border: 1.5px dashed var(--text-faint);
+}
+
+.add-axis-dot-def {
+    width: 13px;
+    height: 13px;
+    border: 2px solid var(--font-context-focused-bg);
+}
+
+.add-axis-summary {
+    display: grid;
+    gap: 7px;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+.add-axis-summary p {
+    margin: 0;
+}
+
+.add-axis-summary b {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.add-axis-flag {
+    color: var(--accent-orange);
+}
+
+/* ---------- footer ---------- */
+
+.add-axis-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 12px 18px;
+    border-top: 1px solid var(--border-primary);
+}
+
+.add-axis-foot-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.add-axis-foot-end {
+    justify-content: flex-end;
+}
+
+.add-axis-foot-why {
+    color: var(--accent-red);
+    font-size: 12px;
+}
+
+@media (max-width: 860px) {
+    .add-axis-main {
+        grid-template-columns: 1fr;
+    }
+
+    .add-axis-left {
+        border-right: 0;
+        border-bottom: 1px solid var(--border-primary);
+    }
+}

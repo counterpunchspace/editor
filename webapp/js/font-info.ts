@@ -54,7 +54,10 @@ import {
     normalizeLocalizedStringValue,
     type LocalizedStringEditorHandle
 } from './localized-string-editor';
-import { designspaceToUserspace } from './locations';
+import { designspaceToUserspace, userspaceToDesignspace } from './locations';
+import type { UserspaceLocation } from './locations';
+import { openAddAxisDialog } from './add-axis-dialog';
+import type { AxisDialogFont } from './add-axis-plan';
 import { AxisMapEditor } from './axis-map-editor';
 import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
 import {
@@ -644,6 +647,11 @@ function asSummaryLines(summary: string | string[]): string[] {
  */
 function rawArray<T>(arr: T[] | undefined): T[] {
     return JSON.parse(JSON.stringify(arr ?? []));
+}
+
+/** Plain JSON records from model wrappers (or plain data): axes, masters, instances. */
+function plainRecords<T>(items: readonly object[] | undefined): T[] {
+    return JSON.parse(JSON.stringify(items ?? []));
 }
 
 function cloneKerningValue(value: unknown): unknown {
@@ -7186,34 +7194,6 @@ class FontInfoManager {
 
     // ── Axes list operations ──────────────────────────────────────────────────
 
-    private createDefaultAxisRecord(): Babelfont.Axis {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
-        const existingTags = new Set((font?.axes ?? []).map((a) => a.tag));
-        const candidates = [
-            'wght',
-            'wdth',
-            'ital',
-            'slnt',
-            'opsz',
-            'GRAD',
-            'XOPQ',
-            'YOPQ'
-        ];
-        const tag =
-            candidates.find((t) => !existingTags.has(t)) ??
-            `AX${String((font?.axes?.length ?? 0) + 1).padStart(2, '0')}`;
-        const nextIndex = (font?.axes?.length ?? 0) + 1;
-
-        return {
-            name: { dflt: `Axis ${nextIndex}` },
-            tag,
-            min: 0,
-            default: 0,
-            max: 1000
-        };
-    }
-
     private applyLocalAxesList(nextAxes: Babelfont.Axis[]) {
         const font = window.currentFontModel as any;
         if (!font) {
@@ -7247,14 +7227,127 @@ class FontInfoManager {
         });
     }
 
-    private addAxisRecord() {
+    private async addAxisRecord() {
+        const font = window.currentFontModel;
+        if (!font) {
+            return;
+        }
+
+        const gate = this.getMasterTopologyGate();
+        const result = await openAddAxisDialog({
+            font: this.buildAxisDialogFont(font),
+            blockedNotice: gate.allowed
+                ? null
+                : this.createMasterTopologyBlockedNotice(
+                      gate.reason ||
+                          'Masters cannot be added to this font right now.',
+                      gate.canReopenWithAllGlyphs === true
+                  )
+        });
+        if (result.kind === 'cancel') {
+            return;
+        }
+
+        const axisCount = rawArray(font.axes).length;
+        if (result.kind === 'axis-only') {
+            this.commitNewAxis(
+                result.model.axisRecord(false),
+                result.model.existingAt
+            );
+            return;
+        }
+
+        const { plan, masterCount } = result.model.buildPlan(
+            plainRecords<Babelfont.Axis>(font.axes),
+            plainRecords<Babelfont.Master>(font.masters),
+            plainRecords<Babelfont.Instance>(font.instances),
+            () => this.createFontInfoRecordId('master')
+        );
+        await font.addAxisWithMasterCopies(
+            plan,
+            `Add ${result.model.name.trim()} axis with ${masterCount} master${masterCount === 1 ? '' : 's'}`
+        );
+        this.selectedAxisIndex = axisCount;
+        this.selectedAxisIndices = new Set([axisCount]);
+        this.forceRefreshVisibleAxesContent();
+        this.forceRefreshVisibleMastersContent();
+        void window.glyphCanvas?.axesManager?.updateAxesUI?.();
+    }
+
+    /** What the Add axis dialog needs to know about the open font. */
+    private buildAxisDialogFont(font: BabelfontModelFont): AxisDialogFont {
+        const axes = plainRecords<Babelfont.Axis>(font.axes);
+        const masters = plainRecords<Babelfont.Master>(font.masters).map(
+            (master) => ({
+                id: master.id,
+                name:
+                    (typeof master.name === 'string'
+                        ? master.name
+                        : master.name?.dflt) || 'Master',
+                location: Object.fromEntries(
+                    Object.entries(master.location ?? {}).map(
+                        ([tag, value]) => [tag, Number(value)]
+                    )
+                )
+            })
+        );
+        // The default master sits at every axis default (see babelfont's
+        // Font::default_master); a single master is always the default.
+        const defaults = userspaceToDesignspace(
+            Object.fromEntries(
+                axes.map((axis) => [axis.tag, axis.default ?? 0])
+            ) as UserspaceLocation,
+            axes
+        ) as Record<string, number>;
+        const defaultMaster =
+            masters.find((master) =>
+                axes.every(
+                    (axis) =>
+                        (master.location[axis.tag] ?? 0) ===
+                        (defaults[axis.tag] ?? 0)
+                )
+            ) ?? masters[0];
+
+        let braceGlyphCount = 0;
+        let braceLayerCount = 0;
+        const glyphs = font.glyphs ?? [];
+        for (const glyph of glyphs) {
+            const braces = (glyph.layers ?? []).filter(
+                (layer) =>
+                    !layer.is_background &&
+                    Object.keys(layer.location ?? {}).length > 0
+            ).length;
+            if (braces) {
+                braceGlyphCount += 1;
+                braceLayerCount += braces;
+            }
+        }
+
+        return {
+            axes: axes.map((axis) => ({
+                tag: axis.tag,
+                name:
+                    (typeof axis.name === 'string'
+                        ? axis.name
+                        : axis.name?.dflt) || axis.tag
+            })),
+            masters,
+            defaultMasterId: defaultMaster?.id ?? '',
+            glyphCount: glyphs.length,
+            braceGlyphCount,
+            braceLayerCount,
+            instanceCount: rawArray(font.instances).length
+        };
+    }
+
+    /** Adds an axis on its own; masters and instances sit at `designspaceValue` on it. */
+    private commitNewAxis(newAxis: Babelfont.Axis, designspaceValue: number) {
         const font = window.currentFontModel as unknown as
             Babelfont.Font | undefined;
         if (!font) {
             return;
         }
 
-        const newAxis = this.createDefaultAxisRecord();
         const nextAxes = [...rawArray(font.axes).map(cloneAxisRecord), newAxis];
         this.selectedAxisIndex = nextAxes.length - 1;
         this.selectedAxisIndices = new Set([this.selectedAxisIndex]);
@@ -7262,7 +7355,6 @@ class FontInfoManager {
         const previousAxes = rawArray(font.axes).map(cloneAxisRecord);
         const clonedNextAxes = rawArray(nextAxes).map(cloneAxisRecord);
         const tag = newAxis.tag;
-        const designspaceDefault = newAxis.default ?? 0;
 
         const changes: Array<{
             path: (string | number)[];
@@ -7284,7 +7376,7 @@ class FontInfoManager {
             changes.push({
                 path: ['masters', index, 'location'],
                 oldValue: Object.keys(prevLoc).length > 0 ? prevLoc : undefined,
-                newValue: { ...prevLoc, [tag]: designspaceDefault }
+                newValue: { ...prevLoc, [tag]: designspaceValue }
             });
         });
 
@@ -7296,12 +7388,12 @@ class FontInfoManager {
             changes.push({
                 path: ['instances', index, 'location'],
                 oldValue: Object.keys(prevLoc).length > 0 ? prevLoc : undefined,
-                newValue: { ...prevLoc, [tag]: designspaceDefault }
+                newValue: { ...prevLoc, [tag]: designspaceValue }
             });
         });
 
         this.commitMultipleFontPathChanges({
-            label: 'Add axis',
+            label: `Add ${typeof newAxis.name === 'string' ? newAxis.name : newAxis.name?.dflt || tag} axis`,
             changes,
             applyLocal: () => {
                 this.applyLocalAxesList(clonedNextAxes);
@@ -7309,7 +7401,7 @@ class FontInfoManager {
                     (master: any) => {
                         master.location = {
                             ...(master.location ?? {}),
-                            [tag]: designspaceDefault
+                            [tag]: designspaceValue
                         };
                     }
                 );
@@ -7317,7 +7409,7 @@ class FontInfoManager {
                     (instance: any) => {
                         instance.location = {
                             ...(instance.location ?? {}),
-                            [tag]: designspaceDefault
+                            [tag]: designspaceValue
                         };
                     }
                 );

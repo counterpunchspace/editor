@@ -46,8 +46,8 @@ mod interpolation;
 mod batch_yjs_ops;
 
 pub use batch_yjs_ops::{
-    add_master_with_interpolated_layers_yjs, refine_layer_snapshots_yjs,
-    reinterpolate_master_layers_yjs, remove_masters_yjs,
+    add_axis_with_master_copies_yjs, add_master_with_interpolated_layers_yjs,
+    refine_layer_snapshots_yjs, reinterpolate_master_layers_yjs, remove_masters_yjs,
 };
 
 // Glyph outlines module
@@ -2220,27 +2220,25 @@ fn drop_unresolved_components(font: &mut babelfont::Font) {
 }
 
 fn apply_compile_feature_overlay(font: &mut babelfont::Font) {
-    let extra = COMPILE_FEATURE_OVERLAY
-        .lock()
-        .unwrap()
-        .clone();
+    let extra = COMPILE_FEATURE_OVERLAY.lock().unwrap().clone();
     if extra.trim().is_empty() {
         return;
     }
     let Ok(mut value) = serde_json::to_value(&font.features) else {
         return;
     };
-    let Some(features) = value.get_mut("features").and_then(|item| item.as_array_mut()) else {
+    let Some(features) = value
+        .get_mut("features")
+        .and_then(|item| item.as_array_mut())
+    else {
         return;
     };
     const MARKER: &str = "# Automatic Code";
     let block = format!("\n{extra}\n");
-    if let Some(entry) = features.iter_mut().find(|entry| {
-        entry
-            .get(0)
-            .and_then(|tag| tag.as_str())
-            == Some("mkmk")
-    }) {
+    if let Some(entry) = features
+        .iter_mut()
+        .find(|entry| entry.get(0).and_then(|tag| tag.as_str()) == Some("mkmk"))
+    {
         if let Some(code) = entry.get_mut(1).and_then(|item| item.get_mut("code")) {
             if let Some(text) = code.as_str().map(str::to_string) {
                 let mut next = text;
@@ -7654,12 +7652,8 @@ mod tests {
             group.insert(&mut txn, "a-lat", true);
         }
 
-        let json =
-            ydoc_get_top_level_json_with_txn("first_kern_groups", &doc.transact()).unwrap();
-        assert_eq!(
-            json["a-lat"],
-            json!(["a-lat", "aDiaeresis-lat"])
-        );
+        let json = ydoc_get_top_level_json_with_txn("first_kern_groups", &doc.transact()).unwrap();
+        assert_eq!(json["a-lat"], json!(["a-lat", "aDiaeresis-lat"]));
     }
 
     #[test]

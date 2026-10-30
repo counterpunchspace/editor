@@ -27,7 +27,8 @@ import {
     FIP001_BOOLEAN_SUBTRACTION,
     GLYPHS_ATTR_KEY,
     pathHasSubtractionFlag,
-    withSuppressedModelRecording
+    withSuppressedModelRecording,
+    type AxisMasterCopyPlan
 } from './babelfont-model';
 import { canonicalizeImportedFontJson } from './font-import-canonicalization';
 import { compilationPlan, type CompileEditStamp } from './edit-intent';
@@ -227,6 +228,10 @@ export type RustBatchMetadata = {
         newValue: unknown;
     } | null;
     axesOperation?: {
+        oldValue?: unknown;
+        newValue: unknown;
+    } | null;
+    instancesOperation?: {
         oldValue?: unknown;
         newValue: unknown;
     } | null;
@@ -1349,13 +1354,22 @@ class FontManager {
                       newValue: unknown;
                   })
                 : null;
+        const instancesOperation =
+            rawMetadata.instancesOperation &&
+            typeof rawMetadata.instancesOperation === 'object'
+                ? (rawMetadata.instancesOperation as {
+                      oldValue?: unknown;
+                      newValue: unknown;
+                  })
+                : null;
 
         return {
             changedGlyphs,
             layerTargets,
             layerOperations,
             mastersOperation,
-            axesOperation
+            axesOperation,
+            instancesOperation
         };
     }
 
@@ -1411,6 +1425,15 @@ class FontManager {
             master,
             interpolationLocations: interpolationLocations ?? [],
             ...(axes ? { axes } : {})
+        });
+    }
+
+    async buildWorkerAddAxisWithMasterCopiesBatch(
+        plan: AxisMasterCopyPlan
+    ): Promise<RustBatchResult> {
+        return this.requestRustBatchFromWorker({
+            type: 'addAxisWithMasterCopiesYjs',
+            plan
         });
     }
 

@@ -47,6 +47,18 @@ beforeAll(() => {
     }
 });
 
+async function addAxisThroughDialog(addButton, buttonRole) {
+    addButton.click();
+    jest.advanceTimersByTime(20);
+    const dialog = document.querySelector('.add-axis-dialog');
+    expect(dialog).not.toBeNull();
+    dialog.querySelector(`[data-role="${buttonRole}"]`).click();
+    // Let the dialog promise and the commit that follows settle.
+    for (let i = 0; i < 5; i += 1) {
+        await Promise.resolve();
+    }
+}
+
 describe('FontInfo feature code compilation scheduling', () => {
     let originalReadyState;
     let originalAce;
@@ -2796,7 +2808,7 @@ describe('FontInfo feature code compilation scheduling', () => {
         ).toBe('wght:720/720');
     });
 
-    test('axes list controls add, remove, and reorder through the patch funnel', () => {
+    test('axes list controls add, remove, and reorder through the patch funnel', async () => {
         document.body.innerHTML = `
                 <div id="view-fontinfo" class="view view-fontinfo focused">
                     <div class="view-title-bar">
@@ -2853,10 +2865,10 @@ describe('FontInfo feature code compilation scheduling', () => {
             '[data-fontinfo-list-action="axes-add"]'
         );
         addAxesButton.focus();
-        addAxesButton.click();
+        await addAxisThroughDialog(addAxesButton, 'commit');
 
         expect(applySyntheticChangeSet).toHaveBeenCalledWith(
-            'Add axis',
+            'Add Optical Size axis',
             [
                 {
                     op: 'set',
@@ -2864,7 +2876,8 @@ describe('FontInfo feature code compilation scheduling', () => {
                     oldValue: expect.any(Array),
                     newValue: expect.arrayContaining([
                         expect.objectContaining({
-                            name: { dflt: 'Axis 3' }
+                            name: { dflt: 'Optical Size' },
+                            tag: 'opsz'
                         })
                     ])
                 }
@@ -3198,7 +3211,102 @@ describe('FontInfo feature code compilation scheduling', () => {
         ).toBe('Custom Weight');
     });
 
-    test('adding and removing axes syncs master and instance location fields', () => {
+    test('adding an axis with masters sends one plan to the model', async () => {
+        document.body.innerHTML = `
+                <div id="view-fontinfo" class="view view-fontinfo focused">
+                    <div class="view-title-bar">
+                        <div class="view-title-right">
+                            <div id="fontinfo-search-control" style="display: none;">
+                                <input id="fontinfo-search-input" />
+                            </div>
+                        </div>
+                    </div>
+                    <div class="view-content">
+                        <div id="browser-compat"></div>
+                    </div>
+                </div>
+            `;
+
+        const fontInfoManager = loadFontInfoManager();
+        const beginTransaction = jest.fn();
+        const endTransaction = jest.fn();
+        const applySyntheticChangeSet = jest.fn();
+        const runWithoutRecording = jest.fn((fn) => fn());
+
+        window.currentFontModel = {
+            axes: [
+                {
+                    name: { dflt: 'Weight' },
+                    tag: 'wght',
+                    min: 100,
+                    default: 400,
+                    max: 900
+                }
+            ],
+            names: {},
+            features: { features: [] },
+            masters: [
+                {
+                    id: 'M1',
+                    name: { dflt: 'Regular' },
+                    location: { wght: 400 },
+                    metrics: { ascender: 800 },
+                    kerning: {}
+                }
+            ],
+            addAxisWithMasterCopies: jest.fn(async () => {}),
+            instances: [
+                {
+                    id: 'I1',
+                    name: { dflt: 'Regular' },
+                    location: { wght: 400 },
+                    custom_names: {}
+                }
+            ]
+        };
+        window.patchSyncEngine = {
+            beginTransaction,
+            endTransaction,
+            applySyntheticChangeSet,
+            runWithoutRecording
+        };
+
+        fontInfoManager.init();
+        jest.runOnlyPendingTimers();
+        fontInfoManager.switchTab('axes');
+
+        const addAxesButton = document.querySelector(
+            '[data-fontinfo-list-action="axes-add"]'
+        );
+        await addAxisThroughDialog(addAxesButton, 'commit');
+
+        const addAxisWithMasterCopies =
+            window.currentFontModel.addAxisWithMasterCopies;
+        expect(addAxisWithMasterCopies).toHaveBeenCalledTimes(1);
+        const [plan, label] = addAxisWithMasterCopies.mock.calls[0];
+        expect(label).toBe('Add Width axis with 1 master');
+        expect(plan.axisTag).toBe('wdth');
+        expect(plan.existingValue).toBe(100);
+        expect(plan.axes.map((axis) => axis.tag)).toEqual(['wght', 'wdth']);
+        expect(plan.masters).toHaveLength(2);
+        expect(plan.masters[0].location).toEqual({ wght: 400, wdth: 100 });
+        expect(plan.masters[1]).toMatchObject({
+            name: { dflt: 'Expanded' },
+            location: { wght: 400, wdth: 125 },
+            metrics: { ascender: 800 }
+        });
+        expect(plan.copies).toEqual([
+            {
+                sourceMasterId: 'M1',
+                newMasterId: plan.masters[1].id,
+                value: 125
+            }
+        ]);
+        expect(plan.instances[0].location).toEqual({ wght: 400, wdth: 100 });
+        expect(applySyntheticChangeSet).not.toHaveBeenCalled();
+    });
+
+    test('adding and removing axes syncs master and instance location fields', async () => {
         document.body.innerHTML = `
                 <div id="view-fontinfo" class="view view-fontinfo focused">
                     <div class="view-title-bar">
@@ -3266,10 +3374,10 @@ describe('FontInfo feature code compilation scheduling', () => {
             '[data-fontinfo-list-action="axes-add"]'
         );
         addAxesButton.focus();
-        addAxesButton.click();
+        await addAxisThroughDialog(addAxesButton, 'axis-only');
 
         const addCall = applySyntheticChangeSet.mock.calls.find(
-            ([label]) => label === 'Add axis'
+            ([label]) => label === 'Add Width axis'
         );
         expect(addCall).toBeDefined();
         const addChanges = addCall[1];

@@ -60,8 +60,11 @@ Full-document transport is reserved for bootstrap from external sources only, su
 
 Font data is a **document set**: `font-core`, `font-deps`, and one Y.Doc per
 `glyph:<id>`. Outlines live only on glyph docs. The compilation worker is
-seeded and updated per `documentId`; glyph-revision-only core packets are
-not forwarded to the worker.
+seeded and updated per `documentId`; glyph-revision-only core packets get no packet
+of their own in the worker: they, and any packet without change metadata,
+are held per document and merged in front of the next packet for that
+document, because Yjs leaves an update with missing earlier clocks pending
+forever.
 
 Only the main window holds cloud Durable Object sockets (`font-core`,
 `font-deps`, and the sticky live glyph). Linked windows talk to main over document-scoped
@@ -209,6 +212,18 @@ All committed interactive edits enter the pipeline in `_syncCurrentGlyphToYDoc()
 `_syncCurrentGlyphToYDoc()` forwards to the Yjs bridge, which applies the operation to its Y.Doc, from which the binary Yjs diffs are created.
 
 Here, undo, redo, and remote Yjs packets converge with forward GUI edits to be processed at `_emitLocalUpdate`.
+
+## Axes and Masters
+
+### Adding an axis
+
+**+ Axis** in Font info opens the Add axis dialog. It adds the axis and, optionally, a copy of each existing master along it, as one undo step. Nothing is written until the user confirms.
+
+- The existing masters stay where they are and get the new axis coordinate they sit at. Copies are placed below, above, or on both sides of them, each at its own position. Any subset of masters may be copied.
+- Copies duplicate their source master record (metrics always; kerning and guides optionally) and every layer that belongs to it: the default layer becomes the copy's default layer, associated layers get derived IDs, background layers are copied with their foreground and both reciprocal `background_layer_id` links point at the copies. Intermediate (brace) layers are copied at the copy's position when requested. Existing intermediate layers always get the existing masters' coordinate on the new axis, so they stay put if a copy becomes the default master.
+- The axis default decides the default master. It is the existing default master unless the user picks one of its copies. Axis min, default and max are userspace values. The dialog always writes an axis `map` with one entry per master position (Font info reads designspace coordinates from it); it is the identity unless the user sets separate userspace values.
+- The worker writes the core document once (axes, masters, instances) and each glyph's new and adjusted layers in a single transaction per glyph, through the same multi-document commit as Add master. Copying is exact; layers are not interpolated.
+- Copying masters is subject to the master topology gate, like Add master. When it is closed (for example a partly downloaded cloud font), only **Add axis without masters** is available, which writes the axis and the existing masters' coordinate without touching glyphs.
 
 ## Glyphs
 

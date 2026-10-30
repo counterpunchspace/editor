@@ -16,7 +16,9 @@ import {
     type CommittedChangeOrigin,
     type CommittedUiBatch
 } from './patch-sync-engine';
+import * as Y from 'yjs';
 import { fromYType } from './change-bridge-ydoc';
+import { FONT_CORE_DOCUMENT_ID } from './filesystem-plugins/cloud-document-set';
 import { Font } from './babelfont-model';
 import { WindowSync, windowSyncChannelName } from './window-sync';
 import type { FilesystemPlugin } from './filesystem-plugins';
@@ -3112,7 +3114,41 @@ function initializeBridge(detail: {
     // stay current without the expensive full-JSON round-trip.
     // YJS_ONLY: Binary Yjs update forwarded to worker — no full JSON
     // crossing. changedGlyphs hint enables targeted Rust-side cache patching.
+    // The worker's Y.Docs must see every byte of each document's history, in
+    // order: Yjs keeps an update whose earlier clocks are missing pending
+    // forever, so one dropped packet silently stalls every later edit of that
+    // document in the worker. Packets the worker needs no cache work for
+    // (glyph-revision stamps, packets without change metadata) are therefore
+    // held per document and merged in front of the next packet sent for it.
+    const heldWorkerUpdates = new Map<string, Uint8Array[]>();
+    const holdWorkerUpdate = (documentId: string, update: Uint8Array) => {
+        if (!update.length) {
+            return;
+        }
+        const held = heldWorkerUpdates.get(documentId);
+        if (held) {
+            held.push(update);
+        } else {
+            heldWorkerUpdates.set(documentId, [update]);
+        }
+    };
+    const withHeldWorkerUpdates = (
+        documentId: string,
+        update: Uint8Array
+    ): Uint8Array => {
+        const held = heldWorkerUpdates.get(documentId);
+        if (!held?.length) {
+            return update;
+        }
+        heldWorkerUpdates.delete(documentId);
+        return Y.mergeUpdates([...held, update]);
+    };
+    bridge.onGlyphRevisionSignal((update) => {
+        holdWorkerUpdate(FONT_CORE_DOCUMENT_ID, update);
+    });
+
     bridge.setWorkerDocumentReplaceCallback((documentId, state) => {
+        heldWorkerUpdates.delete(documentId);
         fontCompilation.scheduleReplaceWorkerDocument(documentId, state);
         if (fullFontCompilation.hasWorkerCacheDocument()) {
             fullFontCompilation.scheduleReplaceWorkerDocument(
@@ -3131,6 +3167,7 @@ function initializeBridge(detail: {
                 return;
             }
             if (options?.renameBatch === 'last') {
+                heldWorkerUpdates.clear();
                 const reseeded =
                     window.fontManager?.reseedWorkerFromBridge?.(
                         'multi-document glyph rename commit'
@@ -3161,14 +3198,17 @@ function initializeBridge(detail: {
                 nonGlyphChangeHints.length > 0 ||
                 layerTargets.length > 0 ||
                 glyphRenames.length > 0;
+            const heldKey = documentId ?? FONT_CORE_DOCUMENT_ID;
             if (!hasWorkerCacheMetadata) {
+                holdWorkerUpdate(heldKey, update);
                 latestWorkerForward = Promise.resolve();
                 return;
             }
+            const workerUpdate = withHeldWorkerUpdates(heldKey, update);
 
             const forwarded =
                 window.fontManager?.forwardWorkerYjsUpdate?.(
-                    update,
+                    workerUpdate,
                     changedGlyphs,
                     {
                         invalidateLayoutClosure,
@@ -3184,7 +3224,7 @@ function initializeBridge(detail: {
                 void fullFontCompilation
                     .sendMessage({
                         type: 'applyYjsUpdate',
-                        update,
+                        update: workerUpdate,
                         changedGlyphs,
                         nonGlyphChangeHints,
                         ...(glyphRenames.length ? { glyphRenames } : undefined),

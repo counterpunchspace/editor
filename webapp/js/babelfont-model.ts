@@ -727,6 +727,32 @@ export type InterpolationRustBatchMetadata = {
         oldValue?: unknown;
         newValue: unknown;
     } | null;
+    instancesOperation?: {
+        oldValue?: unknown;
+        newValue: unknown;
+    } | null;
+};
+
+/**
+ * A new axis plus copies of existing masters along it, committed as one
+ * batch. Positions are designspace values on the new axis.
+ */
+export type AxisMasterCopyPlan = {
+    /** Full next axes list, including the new axis. */
+    axes: Babelfont.Axis[];
+    /** Full next masters list: existing masters with the new tag, then the copies. */
+    masters: Babelfont.Master[];
+    /** Full next instances list, when instances change. */
+    instances?: Babelfont.Instance[];
+    axisTag: string;
+    /** Where the existing masters sit on the new axis. */
+    existingValue: number;
+    copies: Array<{
+        sourceMasterId: string;
+        newMasterId: string;
+        value: number;
+    }>;
+    copyIntermediateLayers: boolean;
 };
 
 type AddMasterInterpolationLocation = {
@@ -3216,6 +3242,15 @@ export function buildInterpolationRustBatchOperations(
             path: ['masters'],
             oldValue: metadata.mastersOperation.oldValue,
             newValue: metadata.mastersOperation.newValue
+        });
+    }
+
+    if (metadata.instancesOperation) {
+        operations.push({
+            op: 'set',
+            path: ['instances'],
+            oldValue: metadata.instancesOperation.oldValue,
+            newValue: metadata.instancesOperation.newValue
         });
     }
 
@@ -15488,6 +15523,68 @@ export class Font extends ModelBase {
         currentFont?.markDirty?.('font-info-masters-list');
 
         return this.findMaster(clonedMaster.id || '') || null;
+    }
+
+    /**
+     * Adds an axis and copies existing masters along it as one undo step.
+     * The worker writes the core document once and each glyph's new layers
+     * in a single transaction per glyph.
+     */
+    async addAxisWithMasterCopies(
+        plan: AxisMasterCopyPlan,
+        label: string = 'Add axis'
+    ): Promise<void> {
+        assertModelMutationAllowed();
+        if (plan.copies.length) {
+            assertMasterTopologyChangeAllowed(this);
+        }
+        const bridge = getPatchSyncEngine() as
+            | (PatchSyncEngine & {
+                  applyLocalGeneratedYjsUpdate?: (
+                      update: Uint8Array,
+                      operations: TransactionBufferedOperation[],
+                      label: string | null,
+                      historyTarget?: TransactionHistoryTarget | null,
+                      documentUpdates?: Array<{
+                          documentId: string;
+                          update: Uint8Array;
+                      }>
+                  ) => unknown;
+              })
+            | null;
+        if (
+            getCurrentWindowFontModel() !== this ||
+            !bridge?.applyLocalGeneratedYjsUpdate
+        ) {
+            throw new Error(
+                'Adding an axis with masters needs the font that is open in this window.'
+            );
+        }
+
+        beginLoadingCursor();
+        beginStartupInteractionLock();
+        try {
+            const batch =
+                await window.fontManager.buildWorkerAddAxisWithMasterCopiesBatch(
+                    this.clonePlainValue(plan)
+                );
+            applyWorkerGeneratedYjsUpdate(
+                bridge as Parameters<typeof applyWorkerGeneratedYjsUpdate>[0],
+                batch.update,
+                buildInterpolationRustBatchOperations(batch.metadata).map(
+                    (operation) => ({
+                        ...operation,
+                        compileChangeSource: 'master-topology',
+                        compileEditType: 'master-topology'
+                    })
+                ),
+                label,
+                batch.updates?.length ? batch.updates : undefined
+            );
+        } finally {
+            endStartupInteractionLock();
+            endLoadingCursor();
+        }
     }
 
     async removeMastersByIds(masterIds: string[]): Promise<boolean> {

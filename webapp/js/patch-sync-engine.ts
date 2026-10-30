@@ -2507,7 +2507,9 @@ export class PatchSyncEngine {
                 this._yjsWorkerCallback?.(update, emissionEntries, documentId, {
                     renameBatch: options.renameBatch
                 });
-            } else if (describedEntries.length > 0) {
+            } else {
+                // Undescribed packets still go to the worker callback, which
+                // holds them so the worker's document history stays complete.
                 this._yjsWorkerCallback?.(update, describedEntries, documentId);
             }
             // This window's UI listeners coalesce a uiBatch and still see

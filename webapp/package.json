@@ -33,6 +33,7 @@
         "tutorial:outline:assemble": "node scripts/tutorial/assemble-outline-tutorial.mjs",
         "tutorial:outline:make": "node scripts/tutorial/make-outline-tutorial.mjs",
         "tokens": "node scripts/generate-css-tokens.js",
+        "axis-registry": "node scripts/generate-axis-registry.mjs",
         "glyph-data": "python3 scripts/build-glyph-data.py",
         "ensure:local-https": "node scripts/ensure-local-https.cjs",
         "dev": "npm run ensure:local-https && npm run tokens && webpack serve",

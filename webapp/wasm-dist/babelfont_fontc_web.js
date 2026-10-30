@@ -1,6 +1,23 @@
 /* @ts-self-types="./babelfont_fontc_web.d.ts" */
 
 /**
+ * Adds an axis and copies existing masters along it in one batch: one core
+ * update (axes, masters, instances) plus one transaction per glyph that
+ * writes all of that glyph's new and adjusted layers.
+ * @param {string} plan_json
+ * @returns {any}
+ */
+export function add_axis_with_master_copies_yjs(plan_json) {
+    const ptr0 = passStringToWasm0(plan_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.add_axis_with_master_copies_yjs(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * @param {string} master_json
  * @returns {any}
  */
