@@ -770,8 +770,13 @@ function renderCatalog(
             action.disabled = true;
             try {
                 if (actionName === 'sign-in') {
-                    void window.authManager?.login();
-                    return;
+                    const user = await window.authManager?.signIn({
+                        reason: 'Sign in to get plugins.'
+                    });
+                    if (!user) {
+                        action.disabled = false;
+                        return;
+                    }
                 } else if (actionName === 'payment-method') {
                     window.open(
                         `${resolveWebsiteURL()}/account/payment?return=editor`,

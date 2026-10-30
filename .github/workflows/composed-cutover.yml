@@ -309,16 +309,17 @@ jobs:
                   COMMIT_SHA: ${{ needs.freeze.outputs.collab_sha }}
               run: bash scripts/deploy-cloud-staging.sh site
 
-            - name: Real-email signup on staging
+            - name: Real-email sign-in code check on staging
               working-directory: _cutover/website
               env:
                   SIGNUP_E2E_ORIGIN: https://staging.counterpunch.space
+                  SIGNUP_E2E_EDITOR_ORIGIN: https://staging.editor.counterpunch.space
                   SIGNUP_E2E_D1_NAME: context_users_staging
                   SIGNUP_E2E_IMAP_USER: ${{ secrets.SIGNUP_E2E_IMAP_USER }}
                   SIGNUP_E2E_IMAP_PASS: ${{ secrets.SIGNUP_E2E_IMAP_PASS }}
                   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
                   CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-              run: node scripts/e2e-magic-link-signup.mjs
+              run: node scripts/e2e-login-code-signup.mjs
 
             - name: Deploy staging editor
               env:
@@ -336,6 +337,31 @@ jobs:
                     --expect-website "${{ needs.freeze.outputs.website_sha }}" \
                     --expect-collab "${{ needs.freeze.outputs.collab_sha }}" \
                     --wait 300
+
+            - name: Install Playwright Chromium for the sign-in check
+              run: npx --prefix webapp playwright install --with-deps chromium
+
+            - name: Sign in on the staging website and editor with real email
+              working-directory: webapp
+              env:
+                  SIGN_IN_LIVE_E2E: "1"
+                  SIGN_IN_LIVE_WEBSITE_URL: https://staging.counterpunch.space
+                  SIGN_IN_LIVE_EDITOR_URL: https://staging.editor.counterpunch.space
+                  SIGN_IN_LIVE_MAILBOX_MODULE: ${{ github.workspace }}/_cutover/website/scripts/mailbox-imap.mjs
+                  SIGNUP_E2E_IMAP_USER: ${{ secrets.SIGNUP_E2E_IMAP_USER }}
+                  SIGNUP_E2E_IMAP_PASS: ${{ secrets.SIGNUP_E2E_IMAP_PASS }}
+              run: npx playwright test --project=sign-in-live --reporter=list
+
+            - name: Remove the sign-in check accounts and their mail
+              if: ${{ always() }}
+              working-directory: _cutover/website
+              env:
+                  SIGNUP_E2E_D1_NAME: context_users_staging
+                  SIGNUP_E2E_IMAP_USER: ${{ secrets.SIGNUP_E2E_IMAP_USER }}
+                  SIGNUP_E2E_IMAP_PASS: ${{ secrets.SIGNUP_E2E_IMAP_PASS }}
+                  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+              run: node scripts/e2e-login-code-signup.mjs cleanup --roles website,editor
 
     staging-e2e:
         name: staging · ${{ matrix.group }}

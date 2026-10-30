@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 import { waitForCanvasReady } from './helpers/snapshot-helper';
 
 /**
- * Minimal post-deploy smoke for production: a real magic-link account loads
+ * Minimal post-deploy smoke for production: a real account (signed in with an emailed code) loads
  * the editor signed in. wait-for-stack.mjs already checked every commit, the
  * D1 schema and the room wiring. Not part of `npm run test:cloud-collab`.
  *   CLOUD_COLLAB_PRODUCT_SMOKE=1

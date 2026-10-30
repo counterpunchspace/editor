@@ -10,10 +10,11 @@ IndexedDB keys such as directory handles and export destinations are not include
 
 | Keys | Literal | Pattern |
 | ---: | ---: | ---: |
-| 31 | 28 | 3 |
+| 35 | 32 | 3 |
 
 | Key | Purpose | Operations | Files |
 | --- | --- | --- | --- |
+| [`addGlyphsCharacterSetProvider`](#key-addglyphscharactersetprovider) | Persists add glyphs character set provider. | getItem, setItem | `webapp/js/add-glyphs-dialog.ts` |
 | [`animationFrames`](#key-animationframes) | Persists animation frames. | getItem | `webapp/js/glyph-canvas/variations.ts` |
 | [`assistantAllowFontEdits`](#key-assistantallowfontedits) | Persists assistant allow font edits. | getItem, setItem | `webapp/js/ai-assistant.ts` |
 | [`canvasPlugin.CurvatureCombPlugin.exponent`](#key-canvasplugin-curvaturecombplugin-exponent) | Canvas plugin setting for `CurvatureCombPlugin` parameter `exponent`. | getItem, setItem | `plugins/canvas/curvature/curvature_comb_plugin/plugin.py` |
@@ -23,9 +24,11 @@ IndexedDB keys such as directory handles and export destinations are not include
 | [`canvasPlugin.ExampleCanvasPlugin.labelText`](#key-canvasplugin-examplecanvasplugin-labeltext) | Canvas plugin setting for `ExampleCanvasPlugin` parameter `labelText`. | getItem, setItem | `plugins/canvas/example/example_canvas_plugin/plugin.py` |
 | [`canvasPlugin.ExampleCanvasPlugin.opacity`](#key-canvasplugin-examplecanvasplugin-opacity) | Canvas plugin setting for `ExampleCanvasPlugin` parameter `opacity`. | getItem, setItem | `plugins/canvas/example/example_canvas_plugin/plugin.py` |
 | [`canvasPlugin.ExampleCanvasPlugin.showInfo`](#key-canvasplugin-examplecanvasplugin-showinfo) | Canvas plugin setting for `ExampleCanvasPlugin` parameter `showInfo`. | getItem, setItem | `plugins/canvas/example/example_canvas_plugin/plugin.py` |
+| [`convertToCounterpunchOptions`](#key-converttocounterpunchoptions) | Persists convert to counterpunch options. | getItem, setItem | `webapp/js/convert-to-counterpunch-dialog.ts` |
+| [`counterpunch.plugin-updates.dismissed`](#key-counterpunch-plugin-updates-dismissed) | Persists counterpunch plugin updates dismissed. | getItem, setItem | `webapp/js/installed-plugin-manager.ts` |
 | [`editorNodeSnapping`](#key-editornodesnapping) | Preference: snap outline points while dragging or drawing. | getItem, setItem | `webapp/js/node-snapping-pref.ts` |
 | [`editorPairedLayerVisible`](#key-editorpairedlayervisible) | Preference: show master and layer guidelines on the canvas. | getItem, setItem | `webapp/js/glyph-canvas/outline-editor.ts` |
-| [`editorPathFillOpacity`](#key-editorpathfillopacity) | Preference: opacity of editable outline fills and subtraction cutter fills. | getItem, setItem | `webapp/js/path-fill-opacity-pref.ts` |
+| [`editorPathFillOpacity`](#key-editorpathfillopacity) | Preference: opacity of editable outline fills, placeholder fills, and subtraction cutter fills. | getItem, setItem | `webapp/js/path-fill-opacity-pref.ts` |
 | [`editorScreenUnitScale`](#key-editorscreenunitscale) | Persists editor screen unit scale. | getItem, setItem, removeItem | `webapp/js/glyph-canvas/point-size.ts` |
 | [`glyphCanvasTextBuffer`](#key-glyphcanvastextbuffer) | Persists glyph canvas text buffer. | getItem, setItem, removeItem | `webapp/js/font-manager.ts`, `webapp/js/glyph-canvas/textrun.ts` |
 | [`lastFilesystemContext`](#key-lastfilesystemcontext) | Persists last filesystem context. | getItem, setItem | `webapp/js/file-browser.ts` |
@@ -36,6 +39,7 @@ IndexedDB keys such as directory handles and export destinations are not include
 | [`pythonScriptUri`](#key-pythonscripturi) | Persists python script uri. | getItem, setItem, removeItem | `webapp/js/script-editor.ts` |
 | [`runPythonScriptLastRun`](#key-runpythonscriptlastrun) | Persists run python script last run. | getItem, setItem | `webapp/js/run-python-script-dialog.ts` |
 | [`runPythonScriptSelectedPath`](#key-runpythonscriptselectedpath) | Persists run python script selected path. | getItem, setItem, removeItem | `webapp/js/run-python-script-dialog.ts` |
+| [`signInEmail`](#key-signinemail) | Persists sign in email. | getItem, setItem | `webapp/js/auth-manager.ts` |
 | [`tabKeepAliveTimestamp`](#key-tabkeepalivetimestamp) | Persists tab keep alive timestamp. | setItem | `webapp/js/tab-lifecycle.ts` |
 | [`tourCompleted`](#key-tourcompleted) | Set when the user finishes the tour. | getItem, setItem | `webapp/js/tour.ts` |
 | [`tourLaunchButtonDismissed`](#key-tourlaunchbuttondismissed) | Set when the user dismisses the title-bar Take a Tour chip. | getItem, setItem | `webapp/js/tour.ts` |
@@ -46,6 +50,17 @@ IndexedDB keys such as directory handles and export destinations are not include
 | [`linkedWindowOccupancy.${sessionId}`](#key-linkedwindowoccupancy-sessionid-) | Persists linked window occupancy. | getItem, setItem, removeItem | `webapp/js/window-role.ts` |
 | [`windowUi.${slot}`](#key-windowui-slot-) | Persists window ui. | getItem, setItem | `webapp/js/window-ui-state.ts` |
 
+<a id="key-addglyphscharactersetprovider"></a>
+
+## `addGlyphsCharacterSetProvider`
+
+- Purpose: Persists add glyphs character set provider.
+- Kind: literal
+- Operations: `getItem`, `setItem`
+- Sites:
+  - webapp/js/add-glyphs-dialog.ts:55 `getItem` via function `loadSavedProviderId`
+  - webapp/js/add-glyphs-dialog.ts:64 `setItem` via function `saveProviderId`
+
 <a id="key-animationframes"></a>
 
 ## `animationFrames`
@@ -55,7 +70,7 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Operations: `getItem`
 - Default when unset: `10`
 - Sites:
-  - webapp/js/glyph-canvas/variations.ts:129 `getItem` via constructor `constructor`
+  - webapp/js/glyph-canvas/variations.ts:133 `getItem` via constructor `constructor`
 
 <a id="key-assistantallowfontedits"></a>
 
@@ -66,8 +81,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Operations: `getItem`, `setItem`
 - Default when unset: `false`
 - Sites:
-  - webapp/js/ai-assistant.ts:795 `getItem` via constructor `constructor`
-  - webapp/js/ai-assistant.ts:947 `setItem` via method `initUI`
+  - webapp/js/ai-assistant.ts:823 `getItem` via constructor `constructor`
+  - webapp/js/ai-assistant.ts:972 `setItem` via method `initUI`
 
 <a id="key-canvasplugin-curvaturecombplugin-exponent"></a>
 
@@ -146,6 +161,30 @@ IndexedDB keys such as directory handles and export destinations are not include
   - plugins/canvas/example/example_canvas_plugin/plugin.py:26 `getItem` via class `ExampleCanvasPlugin`
   - plugins/canvas/example/example_canvas_plugin/plugin.py:26 `setItem` via class `ExampleCanvasPlugin`
 
+<a id="key-converttocounterpunchoptions"></a>
+
+## `convertToCounterpunchOptions`
+
+- Purpose: Persists convert to counterpunch options.
+- Kind: literal
+- Operations: `getItem`, `setItem`
+- Default when unset: `{}`
+- Sites:
+  - webapp/js/convert-to-counterpunch-dialog.ts:234 `getItem` via function `loadSavedOptions`
+  - webapp/js/convert-to-counterpunch-dialog.ts:254 `setItem` via function `saveOptions`
+
+<a id="key-counterpunch-plugin-updates-dismissed"></a>
+
+## `counterpunch.plugin-updates.dismissed`
+
+- Purpose: Persists counterpunch plugin updates dismissed.
+- Kind: literal
+- Operations: `getItem`, `setItem`
+- Default when unset: `{}`
+- Sites:
+  - webapp/js/installed-plugin-manager.ts:308 `getItem` via function `dismissedUpdates`
+  - webapp/js/installed-plugin-manager.ts:318 `setItem` via function `dismissUpdate`
+
 <a id="key-editornodesnapping"></a>
 
 ## `editorNodeSnapping`
@@ -167,14 +206,14 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Operations: `getItem`, `setItem`
 - Default when unset: `false`
 - Sites:
-  - webapp/js/glyph-canvas/outline-editor.ts:1835 `getItem` via method `loadPairedLayerVisible`
-  - webapp/js/glyph-canvas/outline-editor.ts:2262 `setItem` via method `setPairedLayerVisible`
+  - webapp/js/glyph-canvas/outline-editor.ts:1938 `getItem` via method `loadPairedLayerVisible`
+  - webapp/js/glyph-canvas/outline-editor.ts:2365 `setItem` via method `setPairedLayerVisible`
 
 <a id="key-editorpathfillopacity"></a>
 
 ## `editorPathFillOpacity`
 
-- Purpose: Preference: opacity of editable outline fills and subtraction cutter fills.
+- Purpose: Preference: opacity of editable outline fills, placeholder fills, and subtraction cutter fills.
 - Kind: literal
 - Operations: `getItem`, `setItem`
 - Sites:
@@ -202,12 +241,12 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Operations: `getItem`, `setItem`, `removeItem`
 - Default when unset: `Hamburgevons`
 - Sites:
-  - webapp/js/font-manager.ts:2186 `removeItem` via method `handleNewFont`
-  - webapp/js/font-manager.ts:2310 `getItem` via method `resolveEditingTextForCompile`
-  - webapp/js/glyph-canvas/textrun.ts:137 `getItem` via constructor `constructor`
-  - webapp/js/glyph-canvas/textrun.ts:476 `setItem` via method `setTextBuffer`
-  - webapp/js/glyph-canvas/textrun.ts:2195 `setItem` via method `loadTextBufferFromFont`
-  - webapp/js/glyph-canvas/textrun.ts:2232 `setItem` via method `saveTextBuffer`
+  - webapp/js/font-manager.ts:2471 `removeItem` via method `handleNewFont`
+  - webapp/js/font-manager.ts:2605 `getItem` via method `resolveEditingTextForCompile`
+  - webapp/js/glyph-canvas/textrun.ts:154 `getItem` via constructor `constructor`
+  - webapp/js/glyph-canvas/textrun.ts:498 `setItem` via method `setTextBuffer`
+  - webapp/js/glyph-canvas/textrun.ts:2350 `setItem` via method `loadTextBufferFromFont`
+  - webapp/js/glyph-canvas/textrun.ts:2387 `setItem` via method `saveTextBuffer`
 
 <a id="key-lastfilesystemcontext"></a>
 
@@ -217,8 +256,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: literal
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/file-browser.ts:2279 `setItem` via function `switchContext`
-  - webapp/js/file-browser.ts:3981 `getItem` via function `initFileBrowser`
+  - webapp/js/file-browser.ts:2336 `setItem` via function `switchContext`
+  - webapp/js/file-browser.ts:4041 `getItem` via function `initFileBrowser`
 
 <a id="key-preferredtheme"></a>
 
@@ -229,8 +268,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Operations: `getItem`, `setItem`
 - Default when unset: `auto`
 - Sites:
-  - webapp/js/font-info.ts:2519 `getItem` via function `getInitialTheme`
-  - webapp/js/script-editor.ts:339 `getItem` via function `getInitialTheme`
+  - webapp/js/font-info.ts:2957 `getItem` via function `getInitialTheme`
+  - webapp/js/script-editor.ts:348 `getItem` via function `getInitialTheme`
   - webapp/js/theme-switcher.ts:56 `getItem` via method `init`
   - webapp/js/theme-switcher.ts:58 `setItem` via method `init`
   - webapp/js/theme-switcher.ts:105 `getItem` via method `init`
@@ -246,11 +285,11 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Operations: `getItem`, `setItem`
 - Default when unset: `# Write your Python script here...`
 - Sites:
-  - webapp/js/script-editor.ts:301 `getItem` via function `init`
-  - webapp/js/script-editor.ts:424 `setItem` via function `init`
-  - webapp/js/script-editor.ts:1151 `setItem` via function `handleNew`
-  - webapp/js/script-editor.ts:1391 `setItem` via function `openFile`
-  - webapp/js/script-editor.ts:1781 `setItem` via function `reloadFileFromDisk`
+  - webapp/js/script-editor.ts:310 `getItem` via function `init`
+  - webapp/js/script-editor.ts:433 `setItem` via function `init`
+  - webapp/js/script-editor.ts:1160 `setItem` via function `handleNew`
+  - webapp/js/script-editor.ts:1400 `setItem` via function `openFile`
+  - webapp/js/script-editor.ts:1792 `setItem` via function `reloadFileFromDisk`
 
 <a id="key-pythonscriptsavedcontent"></a>
 
@@ -260,8 +299,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: literal
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/script-editor.ts:120 `setItem` via function `persistSavedContent`
-  - webapp/js/script-editor.ts:303 `getItem` via function `init`
+  - webapp/js/script-editor.ts:129 `setItem` via function `persistSavedContent`
+  - webapp/js/script-editor.ts:312 `getItem` via function `init`
 
 <a id="key-pythonscripttimestamp"></a>
 
@@ -271,10 +310,10 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: literal
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/script-editor.ts:662 `getItem` via function `tryStartWatcher`
-  - webapp/js/script-editor.ts:1267 `setItem` via function `handleSave`
-  - webapp/js/script-editor.ts:1400 `setItem` via function `openFile`
-  - webapp/js/script-editor.ts:1787 `setItem` via function `reloadFileFromDisk`
+  - webapp/js/script-editor.ts:671 `getItem` via function `tryStartWatcher`
+  - webapp/js/script-editor.ts:1276 `setItem` via function `handleSave`
+  - webapp/js/script-editor.ts:1409 `setItem` via function `openFile`
+  - webapp/js/script-editor.ts:1798 `setItem` via function `reloadFileFromDisk`
 
 <a id="key-pythonscripturi"></a>
 
@@ -284,12 +323,12 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: literal
 - Operations: `getItem`, `setItem`, `removeItem`
 - Sites:
-  - webapp/js/script-editor.ts:231 `setItem` via function `updateFilePath`
-  - webapp/js/script-editor.ts:308 `getItem` via function `init`
-  - webapp/js/script-editor.ts:319 `setItem` via function `init`
-  - webapp/js/script-editor.ts:1150 `removeItem` via function `handleNew`
-  - webapp/js/script-editor.ts:1392 `setItem` via function `openFile`
-  - webapp/js/script-editor.ts:1838 `removeItem` via module `top-level module code`
+  - webapp/js/script-editor.ts:240 `setItem` via function `updateFilePath`
+  - webapp/js/script-editor.ts:317 `getItem` via function `init`
+  - webapp/js/script-editor.ts:328 `setItem` via function `init`
+  - webapp/js/script-editor.ts:1159 `removeItem` via function `handleNew`
+  - webapp/js/script-editor.ts:1401 `setItem` via function `openFile`
+  - webapp/js/script-editor.ts:1849 `removeItem` via module `top-level module code`
 
 <a id="key-runpythonscriptlastrun"></a>
 
@@ -313,6 +352,17 @@ IndexedDB keys such as directory handles and export destinations are not include
   - webapp/js/run-python-script-dialog.ts:84 `getItem` via function `loadLastSelectedPath`
   - webapp/js/run-python-script-dialog.ts:89 `removeItem` via function `saveLastSelectedPath`
   - webapp/js/run-python-script-dialog.ts:92 `setItem` via function `saveLastSelectedPath`
+
+<a id="key-signinemail"></a>
+
+## `signInEmail`
+
+- Purpose: Persists sign in email.
+- Kind: literal
+- Operations: `getItem`, `setItem`
+- Sites:
+  - webapp/js/auth-manager.ts:570 `getItem` via method `rememberedSignInEmail`
+  - webapp/js/auth-manager.ts:578 `setItem` via method `rememberSignInEmail`
 
 <a id="key-tabkeepalivetimestamp"></a>
 
@@ -392,10 +442,10 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: pattern
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/file-browser.ts:2338 `getItem` via function `switchContext`
-  - webapp/js/file-browser.ts:3434 `setItem` via function `navigateToPath`
-  - webapp/js/file-browser.ts:4053 `getItem` via function `initFileBrowser`
-  - webapp/js/file-browser.ts:4474 `setItem` via module `top-level module code`
+  - webapp/js/file-browser.ts:2395 `getItem` via function `switchContext`
+  - webapp/js/file-browser.ts:3494 `setItem` via function `navigateToPath`
+  - webapp/js/file-browser.ts:4113 `getItem` via function `initFileBrowser`
+  - webapp/js/file-browser.ts:4593 `setItem` via module `top-level module code`
 
 <a id="key-linkedwindowoccupancy-sessionid-"></a>
 
@@ -417,7 +467,7 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: pattern
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/window-ui-state.ts:648 `getItem` via function `loadSlotIntoRuntime`
-  - webapp/js/window-ui-state.ts:661 `setItem` via function `loadSlotIntoRuntime`
-  - webapp/js/window-ui-state.ts:687 `setItem` via function `persistWindowUi`
+  - webapp/js/window-ui-state.ts:651 `getItem` via function `loadSlotIntoRuntime`
+  - webapp/js/window-ui-state.ts:664 `setItem` via function `loadSlotIntoRuntime`
+  - webapp/js/window-ui-state.ts:690 `setItem` via function `persistWindowUi`
 

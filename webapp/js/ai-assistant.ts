@@ -947,19 +947,16 @@ class AIAssistant {
         const loginBtn = document.getElementById('assistant-login-btn');
         if (loginBtn)
             loginBtn.addEventListener('click', () => {
-                window.location.href =
-                    this.getWebsiteURL() +
-                    '/login?returnTo=' +
-                    encodeURIComponent(window.location.href);
+                void window.authManager?.signIn({
+                    reason: 'Sign in to use the Assistant.'
+                });
             });
 
         const accountBtn = document.getElementById('assistant-account-btn');
         if (accountBtn)
+            // A new tab, so open fonts stay open.
             accountBtn.addEventListener('click', () => {
-                window.location.href =
-                    this.getWebsiteURL() +
-                    '/account?returnTo=' +
-                    encodeURIComponent(window.location.href);
+                window.open(`${this.getWebsiteURL()}/account`, '_blank');
             });
 
         document

@@ -24,7 +24,7 @@ export const cloudPluginMeasureMethods = {
         glyphCount: number;
     }> {
         const user = await this._ensureCloudUser({
-            allowLoginRedirect: true
+            allowSignInPrompt: true
         });
         if (!user) {
             throw new Error('Authentication required');

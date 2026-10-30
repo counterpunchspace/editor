@@ -4,6 +4,27 @@
  */
 
 import { resolveWebsiteURL } from './website-url';
+import {
+    describeLoginCodeError,
+    parseLoginCodeErrorBody
+} from './sign-in-code';
+import {
+    showSignInDialog,
+    type RequestCodeOutcome,
+    type VerifyCodeOutcome
+} from './sign-in-dialog';
+
+const SIGN_IN_EMAIL_KEY = 'signInEmail';
+const AUTH_CHANNEL_NAME = 'counterpunch-auth';
+const NETWORK_ERROR_MESSAGE =
+    'Network error. Check your connection and try again.';
+
+type AuthChannelMessage = { type: 'signed-in' | 'signed-out' };
+
+export type SignInOptions = {
+    /** Why sign-in is needed, shown in the dialog. */
+    reason?: string;
+};
 
 type AuthUser = {
     email?: string;
@@ -39,7 +60,9 @@ type LocalCloudBootstrapResponse = {
 
 type EnsureCloudSessionOptions = {
     localEmail?: string;
-    allowLoginRedirect?: boolean;
+    /** Open the sign-in dialog when nobody is signed in (default true). */
+    allowSignInPrompt?: boolean;
+    reason?: string;
 };
 
 class AuthManager {
@@ -50,6 +73,9 @@ class AuthManager {
     sessionToken: string | null = null;
     private localCloudBootstrapPromise: Promise<AuthUser | null> | null = null;
     private initialAuthBootstrapPromise: Promise<void> | null = null;
+    private signInPromise: Promise<AuthUser | null> | null = null;
+    private authChannel: BroadcastChannel | null = null;
+    private announcedAuthenticated: boolean | null = null;
 
     constructor() {
         this.websiteURL = this.getWebsiteURL();
@@ -65,6 +91,7 @@ class AuthManager {
             });
 
         this.checkAuthStatus();
+        this.listenToOtherTabs();
 
         // Re-check auth status when tab becomes visible
         // (in case user subscribed in another tab and returns)
@@ -390,8 +417,8 @@ class AuthManager {
             return this.user;
         }
 
-        if (options.allowLoginRedirect !== false) {
-            await this.login();
+        if (options.allowSignInPrompt !== false) {
+            return await this.signIn({ reason: options.reason });
         }
 
         return null;
@@ -419,11 +446,161 @@ class AuthManager {
     }
 
     /**
-     * Redirect to website for login
+     * Sign in without leaving the page: a dialog asks for the email, then
+     * the emailed code. Resolves with the user, or null when cancelled.
+     * Calls while the dialog is open share it.
      */
-    async login() {
-        const returnURL = encodeURIComponent(window.location.href);
-        window.location.href = `${this.websiteURL}/login?returnTo=${returnURL}`;
+    signIn(options: SignInOptions = {}): Promise<AuthUser | null> {
+        if (this.user) {
+            return Promise.resolve(this.user);
+        }
+        if (!this.signInPromise) {
+            this.signInPromise = showSignInDialog({
+                reason: options.reason,
+                initialEmail: this.rememberedSignInEmail(),
+                onEmailUsed: (email) => this.rememberSignInEmail(email),
+                api: {
+                    requestCode: (email) => this.requestSignInCode(email),
+                    verifyCode: (email, code) =>
+                        this.verifySignInCode(email, code)
+                }
+            })
+                .then((signedIn) => (signedIn ? this.user : null))
+                .finally(() => {
+                    this.signInPromise = null;
+                });
+        }
+        return this.signInPromise;
+    }
+
+    private async requestSignInCode(
+        email: string
+    ): Promise<RequestCodeOutcome> {
+        try {
+            const response = await fetch(
+                `${this.websiteURL}/api/auth/request-code`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email })
+                }
+            );
+            const body: unknown = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                const error = parseLoginCodeErrorBody(body);
+                return {
+                    ok: false,
+                    message: describeLoginCodeError(error, response.status),
+                    retryAfterSeconds: error.retryAfterSeconds ?? null
+                };
+            }
+            const data =
+                body && typeof body === 'object'
+                    ? (body as Record<string, unknown>)
+                    : {};
+            return {
+                ok: true,
+                resendAfterSeconds:
+                    typeof data.resendAfterSeconds === 'number'
+                        ? data.resendAfterSeconds
+                        : 30,
+                devCode: typeof data.devCode === 'string' ? data.devCode : null
+            };
+        } catch {
+            return {
+                ok: false,
+                message: NETWORK_ERROR_MESSAGE,
+                retryAfterSeconds: null
+            };
+        }
+    }
+
+    private async verifySignInCode(
+        email: string,
+        code: string
+    ): Promise<VerifyCodeOutcome> {
+        let response: Response;
+        let body: unknown;
+        try {
+            response = await fetch(`${this.websiteURL}/api/auth/verify-code`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, code })
+            });
+            body = await response.json().catch(() => ({}));
+        } catch {
+            return { ok: false, message: NETWORK_ERROR_MESSAGE, locked: false };
+        }
+        if (!response.ok) {
+            const error = parseLoginCodeErrorBody(body);
+            return {
+                ok: false,
+                message: describeLoginCodeError(error, response.status),
+                locked: error.code === 'too_many_attempts'
+            };
+        }
+        const token =
+            body && typeof body === 'object'
+                ? (body as Record<string, unknown>).sessionToken
+                : null;
+        if (typeof token !== 'string' || !token) {
+            return {
+                ok: false,
+                message:
+                    'The website did not return a session for the editor. Try again.',
+                locked: false
+            };
+        }
+        this.storeEditorSessionToken(token);
+        const user = await this.checkAuthStatus();
+        if (!user) {
+            return {
+                ok: false,
+                message:
+                    'Signed in, but the account could not be loaded. Try again.',
+                locked: false
+            };
+        }
+        this.postToOtherTabs({ type: 'signed-in' });
+        return { ok: true };
+    }
+
+    private rememberedSignInEmail(): string {
+        try {
+            return localStorage.getItem(SIGN_IN_EMAIL_KEY) ?? '';
+        } catch {
+            return '';
+        }
+    }
+
+    private rememberSignInEmail(email: string): void {
+        try {
+            localStorage.setItem(SIGN_IN_EMAIL_KEY, email);
+        } catch {
+            // Private mode or blocked storage: prefilling is a convenience.
+        }
+    }
+
+    /** Other editor tabs share the cookie but not the in-memory user. */
+    private listenToOtherTabs(): void {
+        if (typeof BroadcastChannel === 'undefined') {
+            return;
+        }
+        this.authChannel = new BroadcastChannel(AUTH_CHANNEL_NAME);
+        this.authChannel.onmessage = (
+            event: MessageEvent<AuthChannelMessage>
+        ) => {
+            if (event.data?.type === 'signed-out') {
+                this.resetSignedOutState();
+            } else if (event.data?.type === 'signed-in') {
+                void this.checkAuthStatus();
+            }
+        };
+    }
+
+    private postToOtherTabs(message: AuthChannelMessage): void {
+        this.authChannel?.postMessage(message);
     }
 
     /**
@@ -456,6 +633,15 @@ class AuthManager {
             subscription
         );
         this.updateSettingsUI(isAuthenticated, user, subscription);
+        // Only on a change: checkAuthStatus runs on every tab focus.
+        if (this.announcedAuthenticated !== isAuthenticated) {
+            this.announcedAuthenticated = isAuthenticated;
+            window.dispatchEvent(
+                new CustomEvent('authStateChanged', {
+                    detail: { isAuthenticated }
+                })
+            );
+        }
     }
 
     /**
@@ -524,6 +710,11 @@ class AuthManager {
      */
     async logout() {
         this.clearLocalSessionToken();
+        this.resetSignedOutState();
+        this.postToOtherTabs({ type: 'signed-out' });
+    }
+
+    private resetSignedOutState() {
         this.user = null;
         this.subscription = null;
         this.credits = null;
@@ -550,7 +741,7 @@ function initSettingsAuth() {
 
     if (loginBtn) {
         loginBtn.addEventListener('click', () => {
-            window.authManager.login();
+            void window.authManager.signIn();
         });
     }
 

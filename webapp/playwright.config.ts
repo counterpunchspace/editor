@@ -183,7 +183,8 @@ export default defineConfig({
             name: 'chromium',
             testIgnore: [
                 '**/cloud-collab*.spec.ts',
-                '**/plugin-marketplace.spec.ts'
+                '**/plugin-marketplace.spec.ts',
+                '**/sign-in-live.spec.ts'
             ],
             use: {
                 ...devices['Desktop Chrome'],
@@ -251,6 +252,13 @@ export default defineConfig({
                 enabled: process.env.CLOUD_COLLAB_PRODUCT_SMOKE === '1',
                 name: 'cloud-collab-product-smoke',
                 spec: '**/cloud-collab-product-smoke.spec.ts'
+            },
+            // Real email: a retry would hit the resend cooldown and the
+            // account's wrong-code budget.
+            {
+                enabled: process.env.SIGN_IN_LIVE_E2E === '1',
+                name: 'sign-in-live',
+                spec: '**/sign-in-live.spec.ts'
             }
         ]
             .filter((smoke) => smoke.enabled)

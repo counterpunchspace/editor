@@ -5,7 +5,7 @@
 #   deploy-cloud-staging.sh site     workers, staging D1 schema, websitestaging
 #   deploy-cloud-staging.sh editor   editorstaging
 #
-# site runs before the magic-link check. editor runs after that check passes.
+# site runs before the sign-in code check. editor runs after that check passes.
 # Compactor's Durable Object binding names the script room-staging, so that
 # script has to exist before the first compactor deploy.
 # Requires CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID.

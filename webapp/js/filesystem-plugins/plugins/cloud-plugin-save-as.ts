@@ -16,7 +16,7 @@ import {
 export const cloudPluginSaveAsMethods = {
     async saveAs(name: string): Promise<string> {
         const user = await this._ensureCloudUser({
-            allowLoginRedirect: true
+            allowSignInPrompt: true
         });
         if (!user) {
             throw new Error('Authentication required');

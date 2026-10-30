@@ -22,7 +22,7 @@ import {
 
 /**
  * Post-deploy smoke for the preview stack a cutover just shipped, with real
- * magic-link accounts from website/scripts/e2e-product-sessions.mjs.
+ * real sign-in-code accounts from website/scripts/e2e-product-sessions.mjs.
  * Not part of `npm run test:cloud-collab`. Run with:
  *   CLOUD_COLLAB_PREVIEW_SMOKE=1
  *   CLOUD_SMOKE_EDITOR_URL=https://preview.editor.counterpunch.space

@@ -209,13 +209,16 @@ declare global {
             } | null>;
             ensureCloudSession: (options?: {
                 localEmail?: string;
-                allowLoginRedirect?: boolean;
+                allowSignInPrompt?: boolean;
             }) => Promise<{
                 email?: string;
                 [key: string]: unknown;
             } | null>;
             getSessionToken: () => string | null;
-            login: () => Promise<void>;
+            signIn: (options?: { reason?: string }) => Promise<{
+                email?: string;
+                [key: string]: unknown;
+            } | null>;
             logout: () => Promise<void>;
             isAuthenticated: () => boolean;
             getUser: () => { email?: string; [key: string]: unknown } | null;

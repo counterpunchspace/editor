@@ -32,6 +32,12 @@ Every function must be accompanied by a human-readable description, which must a
 
 Wherever the `cmd` key is mentioned, on Windows and Linux the `ctrl` key is to be used instead.
 
+## Signing In
+
+Signing in never navigates the editor page, so open and unsaved fonts stay open. Everything that needs an account (Cloud, the Assistant, plugins, Settings) opens the same sign-in dialog, and callers that ask at the same time share one dialog. The dialog asks for an email, then the 6-digit code the website emails. The code is one unbroken word in the email so a double-click selects it. Pasting or autofilling a whole code submits it right away; pasted text such as the email's subject line is fine. A wrong code keeps the dialog open, says how many tries are left and selects the field for the next try. Resend is available after 30 seconds, and the previous code keeps working, in case its email arrives late. After 10 wrong codes in 24 hours the account stops accepting codes for a while.
+
+The website returns the session to the editor in the verify-code response, and the editor keeps it in its own `editor_session` cookie. Other open editor tabs sign in and out with it. Signing in from anywhere replaces the signed-out Cloud panel with the font list. Website pages that need the account, such as **Account** in the Assistant, open in a new tab. The website login page uses the same codes.
+
 ## Document Collaboration
 
 Yjs is the single source of truth for all edits. Reliable document convergence is the primary design goal.

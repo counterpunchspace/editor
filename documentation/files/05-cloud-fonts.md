@@ -4,7 +4,7 @@ Files can keep a font in **Memory** (this browser), on **Disk** (a folder you gr
 
 A local font stays on your computer. It is uploaded only when you **Save As** into Cloud, or when you open a cloud font you were invited to. After that, you and invited people can edit it together.
 
-You must be signed in. The owner’s plan limits how many cloud fonts and glyphs that account can host (Basic: one font and 1 000 glyphs).
+You must be signed in. Opening Cloud while signed out asks for your email and sends you a 6-digit code; paste it into the dialog and you are signed in without leaving the editor, so open fonts stay open. The owner’s plan limits how many cloud fonts and glyphs that account can host (Basic: one font and 1 000 glyphs).
 
 ## How a cloud font is stored
 

@@ -21,7 +21,7 @@ export const cloudPluginSharingMethods = {
 
     async getShareState(assetId?: string): Promise<CloudShareState> {
         const user = await this._ensureCloudUser({
-            allowLoginRedirect: true
+            allowSignInPrompt: true
         });
         if (!user) {
             throw new Error('Authentication required');
@@ -57,7 +57,7 @@ export const cloudPluginSharingMethods = {
         inviteUrl?: string;
     }> {
         const user = await this._ensureCloudUser({
-            allowLoginRedirect: true
+            allowSignInPrompt: true
         });
         if (!user) {
             throw new Error('Authentication required');
@@ -104,7 +104,7 @@ export const cloudPluginSharingMethods = {
         transferUrl?: string;
     }> {
         const user = await this._ensureCloudUser({
-            allowLoginRedirect: true
+            allowSignInPrompt: true
         });
         if (!user) {
             throw new Error('Authentication required');
@@ -148,7 +148,7 @@ export const cloudPluginSharingMethods = {
 
     async cancelOwnershipTransfer(assetId?: string): Promise<void> {
         const user = await this._ensureCloudUser({
-            allowLoginRedirect: true
+            allowSignInPrompt: true
         });
         if (!user) {
             throw new Error('Authentication required');
@@ -182,7 +182,7 @@ export const cloudPluginSharingMethods = {
         assetId?: string
     ): Promise<void> {
         const user = await this._ensureCloudUser({
-            allowLoginRedirect: true
+            allowSignInPrompt: true
         });
         if (!user) {
             throw new Error('Authentication required');
@@ -212,7 +212,7 @@ export const cloudPluginSharingMethods = {
         assetId?: string
     ): Promise<void> {
         const user = await this._ensureCloudUser({
-            allowLoginRedirect: true
+            allowSignInPrompt: true
         });
         if (!user) {
             throw new Error('Authentication required');
@@ -241,7 +241,7 @@ export const cloudPluginSharingMethods = {
 
     async removeMember(userId: string, assetId?: string): Promise<void> {
         const user = await this._ensureCloudUser({
-            allowLoginRedirect: true
+            allowSignInPrompt: true
         });
         if (!user) {
             throw new Error('Authentication required');

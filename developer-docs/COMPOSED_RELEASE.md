@@ -91,7 +91,7 @@ After the first successful production cutover, set the editor repository variabl
 
 ## Smoke accounts
 
-`website/scripts/e2e-product-sessions.mjs` signs in `<local>+cp-e2e-<run>-<role>@gmail.com` through the real magic-link mail (IMAP secrets below) and writes a Playwright storage state per role. Its `cleanup` mode always runs afterwards: it deletes the fonts those users own through the website (the same purge the app runs), then their D1 rows and the sign-in mail, and fails if any asset row or R2 object is left. Every delete is guarded by the plus-address check.
+`website/scripts/e2e-product-sessions.mjs` signs in `<local>+cp-e2e-<run>-<role>@gmail.com` with the sign-in code from the real mail (IMAP secrets below) and writes a Playwright storage state per role. Its `cleanup` mode always runs afterwards: it deletes the fonts those users own through the website (the same purge the app runs), then their D1 rows and the sign-in mail, and fails if any asset row or R2 object is left. Every delete is guarded by the plus-address check.
 
 - **Preview** (`cloud-collab-preview` project, `tests/cloud-collab-preview-smoke.spec.ts`): an owner on the free trial saves a font, invites the invitee, the invitee accepts, and a nudge syncs between both browsers. Then the owner deletes the font.
 - **Production** (`cloud-collab-product-smoke` project): one account loads the editor signed in without page errors. `wait-for-stack.mjs` already checked every commit, the schema and the room wiring.
@@ -146,9 +146,14 @@ Composed cutover deploys Pages with `cloudflare/wrangler-action` (`pages deploy 
 
 This is not the same as `CLOUD_E2E_PAT`. The PAT never talks to Cloudflare. Missing IMAP secrets fail the cutover closed (no silent skip).
 
-## Real-email signup on staging
+## Real-email sign-in on staging
 
-Push CI and the cutover's staging deploy `POST` `/api/auth/request-login` to `https://staging.counterpunch.space` before the Playwright suite (`SIGNUP_E2E_D1_NAME=context_users_staging`), then delete the `+cp-e2e-{run_id}` user. On preview and production the smoke accounts cover sign-in. Local `npm run test:cloud-collab` still uses `AUTH_TOKEN_ALLOW_INSECURE_LOCAL_FALLBACK`.
+Sign-in uses six-digit codes sent by email. Push CI and the cutover's staging deploy check it twice with real mail (IMAP secrets below, `SIGNUP_E2E_D1_NAME=context_users_staging`):
+
+- **Before the staging editor deploy**, `website/scripts/e2e-login-code-signup.mjs` signs up `+cp-e2e-{run_id}`: it reads the code from the inbox, checks that a wrong code is refused with tries left, signs in on the website, then asks for a second code from the staging editor origin and checks that the editor gets a working session token. It deletes the user and the mail.
+- **After the staging editor deploy**, the `sign-in-live` Playwright project (`tests/sign-in-live.spec.ts`) signs in through the real UI: `+cp-e2e-{run_id}-website` on the website login page (a wrong code, then the pasted code), and `+cp-e2e-{run_id}-editor` from the editor's Cloud tab (resend, a wrong code, then the first code). The editor must sign in without a reload, keep the open font, and a second editor tab must follow. `e2e-login-code-signup.mjs cleanup --roles website,editor` always runs afterwards.
+
+The project never retries: a second attempt would hit the resend cooldown and the account's wrong-code budget. On preview and production the smoke accounts sign in the same way. Local `npm run test:cloud-collab` still uses `AUTH_TOKEN_ALLOW_INSECURE_LOCAL_FALLBACK`.
 
 ## Staging secrets you set once
 

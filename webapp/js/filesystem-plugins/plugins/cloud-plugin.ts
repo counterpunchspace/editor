@@ -392,6 +392,23 @@ export class CloudPlugin extends FilesystemPlugin {
         setCollabIntegritySnapshotProvider((glyphName) =>
             this.captureCollabIntegritySnapshot(glyphName)
         );
+        // Signing in from anywhere replaces the signed-out cloud panel
+        // with the font list, without a page reload.
+        window.addEventListener('authStateChanged', (event) => {
+            const detail = (event as CustomEvent<{ isAuthenticated: boolean }>)
+                .detail;
+            const panel = document.getElementById('cloud-panel');
+            if (
+                detail?.isAuthenticated &&
+                panel?.classList.contains('visible')
+            ) {
+                void (
+                    window as Window & {
+                        switchContext?: (pluginId: string) => Promise<void>;
+                    }
+                ).switchContext?.(this.getId());
+            }
+        });
     }
 
     captureCollabIntegritySnapshot(
@@ -2171,7 +2188,7 @@ export class CloudPlugin extends FilesystemPlugin {
 
         try {
             const user = await this._ensureCloudUser({
-                allowLoginRedirect: true
+                allowSignInPrompt: true
             });
             if (!user) return false;
 
@@ -2300,7 +2317,7 @@ export class CloudPlugin extends FilesystemPlugin {
     async checkEligibility(): Promise<CloudEligibility | null> {
         if (this._eligibility) return this._eligibility;
         const user = await this._ensureCloudUser({
-            allowLoginRedirect: true
+            allowSignInPrompt: true
         });
         if (!user) {
             return null;
@@ -2610,7 +2627,7 @@ export class CloudPlugin extends FilesystemPlugin {
      */
     async getAssets(): Promise<CloudAsset[]> {
         const user = await this._ensureCloudUser({
-            allowLoginRedirect: true
+            allowSignInPrompt: true
         });
         if (!user) {
             return [];
@@ -2741,7 +2758,7 @@ export class CloudPlugin extends FilesystemPlugin {
 
     async deleteAsset(assetId?: string): Promise<void> {
         const user = await this._ensureCloudUser({
-            allowLoginRedirect: true
+            allowSignInPrompt: true
         });
         if (!user) {
             throw new Error('Authentication required');
@@ -3307,7 +3324,7 @@ export class CloudPlugin extends FilesystemPlugin {
     }
 
     private async _ensureCloudUser(options?: {
-        allowLoginRedirect?: boolean;
+        allowSignInPrompt?: boolean;
     }): Promise<Record<string, unknown> | null> {
         const authMgr = window.authManager;
         if (!authMgr) {
@@ -3317,7 +3334,7 @@ export class CloudPlugin extends FilesystemPlugin {
         if (typeof authMgr.ensureCloudSession === 'function') {
             return await authMgr.ensureCloudSession({
                 localEmail: this._cloudSessionBootstrapEmail,
-                allowLoginRedirect: options?.allowLoginRedirect
+                allowSignInPrompt: options?.allowSignInPrompt
             });
         }
 
@@ -3326,8 +3343,8 @@ export class CloudPlugin extends FilesystemPlugin {
             return user;
         }
 
-        if (options?.allowLoginRedirect !== false) {
-            await authMgr.login();
+        if (options?.allowSignInPrompt !== false) {
+            return await authMgr.signIn();
         }
 
         return null;
