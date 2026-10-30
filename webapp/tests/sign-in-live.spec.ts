@@ -6,8 +6,8 @@ import { waitForCanvasReady } from './helpers/snapshot-helper';
  * Real sign-in with emailed codes on the staging website and editor: the
  * code is read from the real inbox over IMAP, typed wrong once, then pasted.
  * The editor signs in from the dialog without a reload, keeps the open font,
- * shows the account in Preferences and the Assistant, and a second editor tab
- * follows. Not part of any other project.
+ * shows the account in Preferences, opens the Assistant with the free AI
+ * credit, and a second editor tab follows. Not part of any other project.
  *
  *   SIGN_IN_LIVE_E2E=1
  *   SIGN_IN_LIVE_WEBSITE_URL=https://staging.counterpunch.space
@@ -127,20 +127,55 @@ async function accountPanels(page: Page) {
     });
 }
 
-/** Signed in as `email`: Preferences shows it, and the Assistant offers chat or a plan. */
+/** Signed in as `email`: Preferences shows it, and the Assistant is open. */
 async function expectAccountPanelsSignedIn(page: Page, email: string) {
     await expect
         .poll(() => accountPanels(page), { timeout: 30_000 })
         .toMatchObject({
             preferencesSignedIn: true,
             preferencesSignedOut: false,
-            assistantSignInBox: false
+            assistantSignInBox: false,
+            assistantSubscriptionBox: false,
+            assistantInputEnabled: true
         });
-    const panels = await accountPanels(page);
-    expect(panels.preferencesEmail).toContain(email);
-    expect(
-        panels.assistantSubscriptionBox || panels.assistantInputEnabled
-    ).toBe(true);
+    expect((await accountPanels(page)).preferencesEmail).toContain(email);
+}
+
+/**
+ * A new account has its free AI credit right after sign-in: Preferences
+ * shows a positive balance, and the Assistant endpoint accepts the editor's
+ * token and credit. The probe sends an empty conversation, which is refused
+ * only for being empty, so no AI call is made or billed.
+ */
+async function expectFreeAiCreditUsable(page: Page) {
+    const credits = page.locator('#settings-credits');
+    await expect(credits).toHaveText(/^€\d+\.\d{2} credits remaining/, {
+        timeout: 30_000
+    });
+    const euros = Number(
+        (await credits.textContent())?.match(/€(\d+\.\d{2})/)?.[1]
+    );
+    expect(euros).toBeGreaterThan(0);
+
+    const probe = await page.evaluate(async (website) => {
+        const token = (window as any).authManager.getSessionToken();
+        const response = await fetch(`${website}/api/ai/assistant`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ messages: [] })
+        });
+        return {
+            status: response.status,
+            body: await response.json().catch(() => null)
+        };
+    }, websiteOrigin);
+    expect(probe).toEqual({
+        status: 400,
+        body: { error: 'Messages are required' }
+    });
 }
 
 test.describe.configure({ mode: 'serial' });
@@ -277,6 +312,7 @@ test('the editor signs in from the dialog and keeps the open font', async ({
         await expect(page.locator('#cloud-panel')).not.toHaveClass(/visible/);
 
         await expectAccountPanelsSignedIn(page, email);
+        await expectFreeAiCreditUsable(page);
 
         await otherTab.waitForFunction(
             () => (window as any).authManager?.isAuthenticated?.() === true,
