@@ -6,10 +6,12 @@
  *     --expect-editor <sha> --expect-website <sha> --expect-collab <sha> \
  *     [--expect-version <tag>] (--check | --wait <seconds>)
  *
- * Reads the editor's /build-info.json and the website's /api/health?ai=1, which
- * also reports the D1 schema, whether the Assistant's OpenRouter key works,
- * and the deep health of the room it is wired to (room, validator and
- * compactor commits).
+ * Reads the editor's /build-info.json and the website's
+ * /api/health?ai=1&config=1, which also reports the D1 schema, whether the
+ * Assistant's OpenRouter key works, whether every secret and binding the site
+ * and the plugins Worker need works (see website/utils/deploy-checks.js), and
+ * the deep health of the room it is wired to (room, validator and compactor
+ * commits).
  *
  * --check asks once, prints match=true|false and exits 0 either way.
  * --wait polls until everything matches and exits 1 on timeout.
@@ -53,6 +55,22 @@ export function stackMismatches(observed, expected) {
   }
   if (website?.ai?.ok !== true) {
     problems.push(`website AI: ${website?.ai?.reason ?? "not reported"}`);
+  }
+  // Secrets and bindings: Stripe (payments and payouts), the GitHub App,
+  // the plugin catalog token, Resend, the plugin queues and buckets, and the
+  // plugins Worker with its own GitHub App key and review key.
+  const config = website?.config;
+  if (!config) {
+    problems.push("website config: not reported");
+  } else {
+    for (const [name, check] of Object.entries(config.checks || {})) {
+      if (check?.ok !== true) {
+        problems.push(`website config ${name}: ${check?.reason ?? "not ok"}`);
+      }
+    }
+    if (config.ok !== true && !Object.keys(config.checks || {}).length) {
+      problems.push("website config: not ok");
+    }
   }
   const room = website?.room;
   if (!room || room.ok !== true) {
@@ -123,7 +141,7 @@ async function fetchJson(url) {
 async function observe(options) {
   const [editor, website] = await Promise.all([
     fetchJson(`${options.editorOrigin.replace(/\/$/, "")}/build-info.json`),
-    fetchJson(`${options.websiteOrigin.replace(/\/$/, "")}/api/health?ai=1`),
+    fetchJson(`${options.websiteOrigin.replace(/\/$/, "")}/api/health?ai=1&config=1`),
   ]);
   return { editor, website };
 }

@@ -18,6 +18,11 @@ function healthyStack() {
       commit: "website-sha",
       schema: { ok: true },
       ai: { ok: true },
+      config: {
+        ok: true,
+        failed: [],
+        checks: { stripe: { ok: true }, pluginsWorker: { ok: true } },
+      },
       room: {
         ok: true,
         commit: "collab-sha",
@@ -62,6 +67,31 @@ test("a website that does not report AI health is not ready", () => {
   delete stack.website.ai;
   assert.deepEqual(stackMismatches(stack, expected), [
     "website AI: not reported",
+  ]);
+});
+
+test("each failed secret or binding check is named", () => {
+  const stack = healthyStack();
+  stack.website.config = {
+    ok: false,
+    failed: ["stripe", "pluginsWorker"],
+    checks: {
+      stripe: { ok: false, reason: "missing STRIPE_PUBLISHABLE_KEY" },
+      pluginsWorker: { ok: false, reason: "plugins Worker: openrouter" },
+      githubApp: { ok: true },
+    },
+  };
+  assert.deepEqual(stackMismatches(stack, expected), [
+    "website config stripe: missing STRIPE_PUBLISHABLE_KEY",
+    "website config pluginsWorker: plugins Worker: openrouter",
+  ]);
+});
+
+test("a website that does not report its config checks is not ready", () => {
+  const stack = healthyStack();
+  delete stack.website.config;
+  assert.deepEqual(stackMismatches(stack, expected), [
+    "website config: not reported",
   ]);
 });
 

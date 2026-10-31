@@ -13,6 +13,8 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 const mode = process.argv[2];
@@ -32,6 +34,9 @@ if (!collabRoot) {
 const websiteProject = target === "preview" ? "websitepreview" : "website";
 const workerEnv = target === "preview" ? "preview" : "";
 
+// Secrets or plain variables on the Pages project. The cutover deploys with
+// wrangler.toml hidden, so its [vars] never reach the site: every value here
+// must be stored on the project itself.
 const WEBSITE_SECRETS = [
   "RESEND_API_KEY",
   "AUTH_TOKEN_SECRET",
@@ -41,6 +46,36 @@ const WEBSITE_SECRETS = [
   "CLOUD_SHARD_OPS_SERVICE_TOKEN",
   "COMPACTOR_SHARED_TOKEN",
   "ROOM_STATUS_SERVICE_TOKEN",
+  "ADMIN_USER_IDS",
+  "OPENROUTER_API_KEY",
+  "STRIPE_SECRET_KEY",
+  "STRIPE_PUBLISHABLE_KEY",
+  "STRIPE_WEBHOOK_SECRET",
+  "STRIPE_CONNECT_WEBHOOK_SECRET",
+  "STRIPE_PLUGIN_PMC_ID",
+  "GITHUB_APP_SLUG",
+  "GITHUB_APP_ID",
+  "GITHUB_APP_PRIVATE_KEY",
+  "GITHUB_APP_CLIENT_ID",
+  "GITHUB_APP_CLIENT_SECRET",
+  "GITHUB_PLUGIN_CATALOG_TOKEN",
+  "PLUGINS_WORKER_URL",
+];
+// Bindings the Pages project must store for its production deployment.
+const WEBSITE_BINDINGS = [
+  "DB",
+  "ROOM_STATE_BUCKET",
+  "PLUGIN_WHEELS_BUCKET",
+  "PLUGIN_IMPORT_QUEUE",
+  "PLUGIN_PREFLIGHT_QUEUE",
+];
+// The plugins Worker deploys with its toml, so only its secrets can be absent.
+const PLUGINS_WORKER = "plugins";
+const PLUGINS_WORKER_SECRETS = [
+  "GITHUB_APP_ID",
+  "GITHUB_APP_PRIVATE_KEY",
+  "GITHUB_APP_WEBHOOK_SECRET",
+  "OPENROUTER_API_KEY",
 ];
 const ROOM_SECRETS = [
   "AUTH_TOKEN_SECRET",
@@ -59,6 +94,54 @@ function wrangler(args, cwd) {
     encoding: "utf8",
     env: process.env,
   });
+}
+
+// Variable and binding names stored on a Pages project for its production
+// deployment. `pages download config` writes them as a wrangler.toml (without
+// secret values) into an empty folder.
+function productionNamesFromConfig(toml) {
+  const production = toml.includes("[env.production")
+    ? toml.slice(toml.indexOf("[env.production"))
+    : toml;
+  const vars = [];
+  const bindings = [];
+  let section = "";
+  for (const line of production.split("\n")) {
+    const header = line.match(/^\s*\[\[?([^\]]+)\]\]?\s*$/);
+    if (header) {
+      section = header[1];
+      continue;
+    }
+    const binding = line.match(/^\s*binding\s*=\s*"([^"]+)"/);
+    if (binding) {
+      bindings.push(binding[1]);
+      continue;
+    }
+    const variable = line.match(/^\s*([A-Z][A-Z0-9_]*)\s*=/);
+    if (variable && section.endsWith("vars")) vars.push(variable[1]);
+  }
+  return { vars, bindings };
+}
+
+function pagesProductionConfig(project) {
+  const dir = mkdtempSync(path.join(tmpdir(), "pages-config-"));
+  execFileSync(
+    "npx",
+    [
+      "--prefix",
+      collabRoot,
+      "wrangler",
+      "pages",
+      "download",
+      "config",
+      project,
+      "--force",
+    ],
+    { cwd: dir, encoding: "utf8", env: process.env },
+  );
+  return productionNamesFromConfig(
+    readFileSync(path.join(dir, "wrangler.toml"), "utf8"),
+  );
 }
 
 function secretNamesFromList(output) {
@@ -115,7 +198,31 @@ function checkNames() {
     ["pages", "secret", "list", "--project-name", websiteProject],
     collabRoot,
   );
-  note(websiteProject, secretNamesFromList(websiteOut), WEBSITE_SECRETS);
+  const stored = pagesProductionConfig(websiteProject);
+  note(
+    websiteProject,
+    [...secretNamesFromList(websiteOut), ...stored.vars],
+    WEBSITE_SECRETS,
+  );
+  const bindingsMissing = WEBSITE_BINDINGS.filter(
+    (name) => !stored.bindings.includes(name),
+  );
+  if (bindingsMissing.length) {
+    problems.push(
+      `${websiteProject} is missing bindings: ${bindingsMissing.join(", ")} (Pages → Settings → Bindings, Production)`,
+    );
+  } else {
+    console.log(`${websiteProject}: required bindings are present`);
+  }
+  const pluginsOut = wrangler(
+    ["secret", "list", "--name", PLUGINS_WORKER],
+    collabRoot,
+  );
+  note(
+    `${PLUGINS_WORKER} Worker`,
+    secretNamesFromList(pluginsOut),
+    PLUGINS_WORKER_SECRETS,
+  );
 
   const checks = [
     ["workers/room", ROOM_SECRETS],
