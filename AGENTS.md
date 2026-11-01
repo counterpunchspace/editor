@@ -139,6 +139,8 @@ Do it in the same change. Never hand-edit generated docs.
 
 Only when the user explicitly asks.
 
+- Never push with `git push`, in any of the three repos, not even for one commit. Use `./push.sh`. It pushes the siblings first and starts the editor CI that deploys staging and runs the cloud-collab e2e against what was pushed. A plain push of `website` or `collab` skips that, and the next `./previewrelease.sh` then fails its e2e check.
+- Never release with `gh workflow run`, `wrangler deploy` or `wrangler pages deploy`. Use `./previewrelease.sh` and `./release.sh`, after `./push.sh` is green.
 - `./push.sh` pushes `collab`, `website`, then `editor` (only repos with unpushed commits), then runs `ci-watch.sh`. It refuses unless all three are on a clean, up-to-date `main`. Run it in the background and wait: exit 0 means green, 1 means red with the failed job and error lines (debug, fix, report), 2 means timeout or no run. `--dry-run` previews.
 - `./previewrelease.sh` and `./release.sh vX.Y.Z` drive the composed preview and production cutovers; both take `--dry-run` (stop after preflight, deploy nothing). The cutover smoke-tests the real domains and rolls back from a snapshot on failure; tags are created only after that. Production only ships what the newest preview shipped. Details: `developer-docs/COMPOSED_RELEASE.md`, `developer-docs/DEVELOPMENT.md`.
 - A rollback restores code, not data: D1 changes only add tables and columns, and room/R2 storage stays readable by the previous release.
