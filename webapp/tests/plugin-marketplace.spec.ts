@@ -123,6 +123,10 @@ async function searchPlugins(page: Page, query: string) {
     await search.dispatchEvent('input');
 }
 
+// The security review reads the editor map, specs and host code before the
+// plugin, so a release can take well over ten minutes to settle.
+const RELEASE_CHECK_MS = 15 * 60 * 1000;
+
 const cleanupEmails: { current: string[] } = { current: [] };
 
 test.afterEach(async ({ request }, testInfo) => {
@@ -164,7 +168,7 @@ async function waitForReady(
     let latest: any = null;
     let plugin: any = null;
     let checked = started;
-    while (Date.now() - started < 540000) {
+    while (Date.now() - started < RELEASE_CHECK_MS) {
         const body = await pluginOverview(request, sessionToken);
         plugin = (body.plugins || []).find(
             (item: any) => item.package === packageName
@@ -209,7 +213,7 @@ async function waitForSecurityFailed(
 ) {
     const started = Date.now();
     let latest: any = null;
-    while (Date.now() - started < 360000) {
+    while (Date.now() - started < RELEASE_CHECK_MS) {
         const body = await pluginOverview(request, sessionToken);
         const plugin = (body.plugins || []).find(
             (item: any) => item.package === packageName
@@ -258,7 +262,7 @@ test('register, buy, and install the free and commercial plugins', async ({
     browser,
     request
 }) => {
-    test.setTimeout(600000);
+    test.setTimeout(20 * 60 * 1000);
     const resume =
         process.env.PLUGIN_E2E_KEEP === '1' &&
         Boolean(process.env.PLUGIN_E2E_RUN_ID);
