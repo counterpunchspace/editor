@@ -215,8 +215,22 @@ async function waitForSecurityFailed(
             (item: any) => item.package === packageName
         );
         latest = plugin?.versions?.[0] || null;
-        const decision = latest?.checks?.security?.report?.decision;
+        const report = latest?.checks?.security?.report;
+        const decision = report?.decision;
         if (latest?.status === 'security_failed' || decision === 'block') {
+            // The fixture's description falsely claims it makes no network
+            // requests. The description check must catch that on its own,
+            // not only the exfiltration finding.
+            if (!(Number(report?.scores?.misleading) >= 0.7)) {
+                throw new Error(
+                    `${packageName} was blocked, but its false description was not flagged: ${JSON.stringify(report)}`
+                );
+            }
+            if (!report?.descriptionCheck?.reviewerDescription?.summary) {
+                throw new Error(
+                    `${packageName} has no reviewer description: ${JSON.stringify(report)}`
+                );
+            }
             return latest;
         }
         if (

@@ -155,6 +155,7 @@ Only when the user explicitly asks.
 | `developer-docs/COMPILATION_EDIT_POLICY.md` | Anything that schedules or skips a compile |
 | `developer-docs/FILESYSTEM_PLUGINS.md` | Adding or changing a Memory/Disk/Cloud backend |
 | `developer-docs/PLUGIN_CONTRACTS.md`, `PLUGIN_SETTINGS.md`, `FONT_DESTINATION_PLUGINS.md` | Plugin hosts, settings, export destinations |
+| `developer-docs/PLUGIN_REVIEW_MAP.md` | Moving or renaming a plugin host file or symbol (the marketplace security review reads it) |
 | `developer-docs/BINARY_FONT_EXPORT.md` | File → Export binary font |
 | `developer-docs/RTL_KERNING_STRATEGY.md` | RTL kerning |
 | `developer-docs/APP_UPDATE_RECOVERY.md`, `STUCK_EDITING_RECOVERY.md` | A client stuck on an old cut or a dead editing session |

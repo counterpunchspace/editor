@@ -97,7 +97,7 @@ jobs:
               run: sudo apt-get update && sudo apt-get install -y python3-pytest
 
             - name: Preflight bundled plugin wheels
-              run: node plugin-contracts/generate.mjs && node plugin-contracts/preflight-bundled.mjs && node --test plugin-contracts/supervisor.test.mjs scripts/check-plugin-exception-signatories.test.mjs scripts/wait-for-stack.test.mjs scripts/cutover-snapshot.test.mjs scripts/check-preview-first.test.mjs scripts/same-build.test.mjs
+              run: node plugin-contracts/generate.mjs && node plugin-contracts/preflight-bundled.mjs && node --test plugin-contracts/supervisor.test.mjs tests/plugin-review-map.test.mjs scripts/check-plugin-exception-signatories.test.mjs scripts/wait-for-stack.test.mjs scripts/cutover-snapshot.test.mjs scripts/check-preview-first.test.mjs scripts/same-build.test.mjs
 
             - name: Run static checks and jest
               run: npm run test:checks --prefix webapp
