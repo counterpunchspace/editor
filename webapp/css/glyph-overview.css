@@ -427,17 +427,33 @@
 .glyph-filter-legend {
     display: flex;
     flex-wrap: wrap;
-    gap: 3px 3px;
+    gap: 2px 2px;
     padding: 7px;
     border-bottom: 1px solid var(--border-primary);
     user-select: none;
+}
+
+/* In the overview, a long group list stops at a third of the overview's
+   height and scrolls, so the glyph tiles keep most of the space. */
+#overview-group-legend {
+    flex-shrink: 0;
+    max-height: 33%;
+    overflow-y: auto;
+}
+
+/* Group lists that scroll (here and in the filter editor) use a quiet
+   scrollbar like the glyph tiles: thin, with no visible track. */
+#overview-group-legend,
+.gfe-strip-head .glyph-filter-legend {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 .glyph-filter-legend-item {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 3px 6px;
+    padding: 2px 6px;
     border-radius: 4px;
     border: 1px solid transparent;
     user-select: none;

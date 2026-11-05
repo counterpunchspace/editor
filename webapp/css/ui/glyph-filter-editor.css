@@ -335,6 +335,8 @@
 
 /* Strips: conversation (Simple) and results (both modes) */
 .gfe-strip {
+    /* Height of the glyph tiles; the group chips stop at a third of it. */
+    --gfe-tiles-height: 340px;
     border-top: 1px solid var(--border-primary);
     background-color: var(--code-bg);
     flex-shrink: 0;
@@ -422,6 +424,9 @@
 .gfe-strip-head .glyph-filter-legend {
     padding: 0;
     border-bottom: 0;
+    /* A long group list scrolls instead of pushing the glyphs down. */
+    max-height: calc(var(--gfe-tiles-height) * 0.33);
+    overflow-y: auto;
 }
 
 .gfe-strip-body {
@@ -442,7 +447,7 @@
 }
 
 .gfe-glyphs-tiles {
-    height: 340px;
+    height: var(--gfe-tiles-height);
     min-height: 0;
     position: relative;
 }
