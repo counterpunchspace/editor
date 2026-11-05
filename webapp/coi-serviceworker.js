@@ -3,8 +3,8 @@
 let coepCredentialless = false;
 
 // VERSION and DISPLAY_VERSION are rewritten by release and CI scripts.
-const VERSION = 'v0.3';
-const DISPLAY_VERSION = 'v0.3';
+const VERSION = 'v0.4.0';
+const DISPLAY_VERSION = 'v0.4.0';
 // Filled in at build time by PrecacheManifestPlugin (webpack.config.js).
 const BUILD_ID = '__BUILD_ID__';
 const PRECACHE_ASSETS = '__PRECACHE_ASSETS__';
