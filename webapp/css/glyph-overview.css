@@ -753,7 +753,8 @@
 }
 
 /* New filter button */
-.glyph-filter-new-btn {
+.glyph-filter-new-btn,
+.glyph-filter-new-folder-btn {
     background: none;
     border: none;
     cursor: pointer;
@@ -766,13 +767,32 @@
     transition: background-color 0.1s ease;
 }
 
-.glyph-filter-new-btn:hover {
+.glyph-filter-new-btn:hover,
+.glyph-filter-new-folder-btn:hover {
     background-color: var(--background-hover);
     color: var(--text-primary);
 }
 
-.glyph-filter-new-btn .material-symbols-outlined {
+.glyph-filter-new-btn .material-symbols-outlined,
+.glyph-filter-new-folder-btn .material-symbols-outlined {
     font-size: 16px;
+}
+
+/* Moving user filters between folders */
+.glyph-filter-item.dragging {
+    opacity: 0.5;
+}
+
+.glyph-filter-user-tree.drop-target,
+.glyph-filter-user-header.drop-target,
+.glyph-filter-node.drop-target {
+    background-color: var(--background-hover);
+    border-radius: 4px;
+}
+
+.glyph-filter-new-folder .glyph-filter-rename-input {
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
 /* Rename input */

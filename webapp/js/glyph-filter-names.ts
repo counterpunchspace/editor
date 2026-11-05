@@ -19,7 +19,8 @@ export function normalizeFilterName(name: string): string {
 export function validateFilterName(
     name: string,
     existingNames: Iterable<string>,
-    currentName?: string
+    currentName?: string,
+    noun: 'filter' | 'folder' = 'filter'
 ): string | null {
     const normalized = normalizeFilterName(name);
     if (!normalized) {
@@ -39,7 +40,7 @@ export function validateFilterName(
     for (const existing of existingNames) {
         const existingName = normalizeFilterName(existing).toLowerCase();
         if (existingName === wanted && existingName !== current) {
-            return `A filter named “${normalized}” already exists.`;
+            return `A ${noun} named “${normalized}” already exists.`;
         }
     }
     return null;
