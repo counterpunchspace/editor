@@ -667,18 +667,6 @@
     color: var(--text-muted);
 }
 
-.gfe-confirm {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-}
-
-.gfe-confirm span {
-    font-size: 12.5px;
-    color: var(--text-primary);
-}
-
 @media (max-width: 760px) {
     .gfe-expert-grid {
         grid-template-columns: minmax(0, 1fr);

@@ -27,7 +27,11 @@ function escapeHtml(value: string): string {
 export function showProceedDialog(
     title: string,
     message: string,
-    options: { proceedLabel?: string; danger?: boolean } = {}
+    options: {
+        proceedLabel?: string;
+        cancelLabel?: string;
+        danger?: boolean;
+    } = {}
 ): Promise<boolean> {
     const proceedClass = options.danger
         ? 'dialog-button dialog-button-danger'
@@ -49,7 +53,7 @@ export function showProceedDialog(
                 <div class="info-popup-content confirm-dialog-content">
                     <p>${escapeHtml(message)}</p>
                     <div class="confirm-dialog-actions">
-                        <button type="button" class="dialog-button" data-action="cancel">Cancel</button>
+                        <button type="button" class="dialog-button" data-action="cancel">${escapeHtml(options.cancelLabel ?? 'Cancel')}</button>
                         <button type="button" class="${proceedClass}" data-action="proceed">${escapeHtml(options.proceedLabel ?? 'Proceed')}</button>
                     </div>
                 </div>

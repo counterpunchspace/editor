@@ -7,6 +7,7 @@ import tippy, { type Instance as TippyInstance } from 'tippy.js';
 import { Logger } from './logger';
 import { getTheme } from './tippy-utils';
 import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
+import { showProceedDialog } from './ui/confirm-dialog';
 import { AssistantChatView, formatPythonLineDiff } from './assistant/chat-view';
 import {
     AcePythonDocumentTarget,
@@ -210,7 +211,8 @@ class GlyphFilterEditor {
     private conversationOpen = false;
     private glyphsOpen = false;
     private activeGroup: string | null = null;
-    private asking: 'cancel' | 'ok' | null = null;
+    /** An OK or Cancel question is open on top of the dialog. */
+    private asking = false;
     /** The user typed a name in this dialog; the Assistant keeps it. */
     private nameChosenByUser = false;
     private saving = false;
@@ -353,7 +355,7 @@ class GlyphFilterEditor {
         });
         widthObserver.observe(legend);
         this.unsubscribers.push(() => widthObserver.disconnect());
-        this.escapeBinding = bindModalEscape(() => this.cancel(), {
+        this.escapeBinding = bindModalEscape(() => void this.cancel(), {
             isOpen: () => !this.closed
         });
 
@@ -476,16 +478,6 @@ class GlyphFilterEditor {
             <span data-ref="pending"></span>
             <span class="gfe-hint" data-ref="events-hint" hidden>This filter updates only when glyphs are added, renamed or removed.</span>
         </div>
-        <div class="gfe-confirm" data-ref="confirm-cancel" hidden>
-            <span>Discard your changes and this part of the chat?</span>
-            <button type="button" class="dialog-button" data-ref="keep-editing">Keep editing</button>
-            <button type="button" class="dialog-button dialog-button-danger" data-ref="discard">Discard</button>
-        </div>
-        <div class="gfe-confirm" data-ref="confirm-ok" hidden>
-            <span>Update the filter from your new description before saving?</span>
-            <button type="button" class="dialog-button" data-ref="ok-back">Cancel</button>
-            <button type="button" class="dialog-button dialog-button-primary" data-ref="ok-go">Update and save</button>
-        </div>
         <button type="button" class="dialog-button" data-ref="cancel">Cancel</button>
         <button type="button" class="dialog-button dialog-button-primary" data-ref="ok">OK</button>
     </div>
@@ -580,9 +572,9 @@ class GlyphFilterEditor {
                     this.setMode(button.dataset.mode as EditorMode)
                 )
             );
-        this.$('[data-ref="close"]').addEventListener('click', () =>
-            this.cancel()
-        );
+        this.$('[data-ref="close"]').addEventListener('click', () => {
+            void this.cancel();
+        });
 
         const desc = this.$<HTMLTextAreaElement>('[data-ref="desc"]');
         desc.value = this.draft;
@@ -645,26 +637,11 @@ class GlyphFilterEditor {
             void this.renderGlyphs();
         });
 
-        this.$('[data-ref="cancel"]').addEventListener('click', () =>
-            this.cancel()
-        );
-        this.$('[data-ref="keep-editing"]').addEventListener('click', () => {
-            this.asking = null;
-            this.renderFooter();
+        this.$('[data-ref="cancel"]').addEventListener('click', () => {
+            void this.cancel();
         });
-        this.$('[data-ref="discard"]').addEventListener('click', () =>
-            this.cancel(true)
-        );
         this.$('[data-ref="ok"]').addEventListener('click', () => {
-            void this.applyOK(false);
-        });
-        this.$('[data-ref="ok-back"]').addEventListener('click', () => {
-            this.asking = null;
-            this.renderFooter();
-            this.$('[data-ref="ok"]').focus();
-        });
-        this.$('[data-ref="ok-go"]').addEventListener('click', () => {
-            void this.applyOK(true);
+            void this.applyOK();
         });
 
         this.setupTippies();
@@ -927,21 +904,22 @@ class GlyphFilterEditor {
 
     // ── OK and Cancel ──────────────────────────────────────────────────
 
-    private async applyOK(confirmed: boolean): Promise<void> {
-        if (this.saving || this.blockingError()) return;
+    private async applyOK(): Promise<void> {
+        if (this.saving || this.asking || this.blockingError()) return;
         if (!this.isDirty()) {
             this.close();
             return;
         }
         // An unsent description costs an Assistant request: ask first.
-        // Cancel there only closes the question.
-        if (!confirmed && this.unsentDescription()) {
-            this.asking = 'ok';
-            this.renderFooter();
-            this.$('[data-ref="ok-go"]').focus();
-            return;
+        // Cancel there only closes the question; the dialog stays open.
+        if (this.unsentDescription()) {
+            const proceed = await this.ask(
+                'Update the filter before saving?',
+                'Your new description has not been applied yet. The Assistant will update the filter from it, then save.',
+                { proceedLabel: 'Update and Save' }
+            );
+            if (!proceed || this.closed) return;
         }
-        this.asking = null;
         this.saving = true;
         this.saveError = null;
         this.render();
@@ -1001,16 +979,36 @@ class GlyphFilterEditor {
         }
     }
 
-    private cancel(force = false): void {
-        if (this.saving) return;
-        if (!force && this.isDirty() && (!this.isNew || this.hasNewWork())) {
-            this.asking = 'cancel';
-            this.renderFooter();
-            this.$('[data-ref="keep-editing"]').focus();
-            return;
+    private async cancel(): Promise<void> {
+        if (this.saving || this.asking) return;
+        if (this.isDirty() && (!this.isNew || this.hasNewWork())) {
+            const discard = await this.ask(
+                'Discard your changes?',
+                'Your changes to this filter and this part of the chat will be lost.',
+                {
+                    proceedLabel: 'Discard',
+                    cancelLabel: 'Keep Editing',
+                    danger: true
+                }
+            );
+            if (!discard || this.closed) return;
         }
         this.session.stop();
         this.close();
+    }
+
+    /** A normal popup on top of the dialog; one at a time. */
+    private async ask(
+        title: string,
+        message: string,
+        options: Parameters<typeof showProceedDialog>[2]
+    ): Promise<boolean> {
+        this.asking = true;
+        try {
+            return await showProceedDialog(title, message, options);
+        } finally {
+            this.asking = false;
+        }
     }
 
     /** A new filter only asks before Cancel once there is something to lose. */
@@ -1374,20 +1372,11 @@ class GlyphFilterEditor {
                 : 'Unsaved changes';
         this.$('[data-ref="pending"]').textContent = pending;
 
-        const asking = this.asking !== null;
-        this.$('[data-ref="confirm-cancel"]').hidden = this.asking !== 'cancel';
-        this.$('[data-ref="confirm-ok"]').hidden = this.asking !== 'ok';
-        this.$('[data-ref="cancel"]').hidden = asking;
-        this.$('[data-ref="pending"]').hidden = asking;
         // EVENT_TYPES = [] is valid, but a filter that reads outlines or
         // Unicode values would then go stale: say what it reacts to.
         this.$('[data-ref="events-hint"]').hidden =
-            asking ||
-            !!error ||
-            this.eventTypes === null ||
-            this.eventTypes.length > 0;
+            !!error || this.eventTypes === null || this.eventTypes.length > 0;
         const ok = this.$<HTMLButtonElement>('[data-ref="ok"]');
-        ok.hidden = asking;
         ok.disabled = !!this.blockingError() || this.saving;
     }
 }
