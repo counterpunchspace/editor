@@ -159,15 +159,73 @@ async function pluginOverview(request: any, sessionToken: string) {
     }
 }
 
+// A check that failed on our side (the reviewer returned nothing, or ran out
+// of time) says nothing about the plugin. Creators press "Check again" for
+// these, so the test does the same, once per version.
+const OUR_SIDE_STATUSES = ['check_failed', 'security_timed_out'];
+
+type Recheck = { done: boolean; failedRun: number | null };
+
+async function recheckOurSideFailure(
+    request: any,
+    sessionToken: string,
+    packageName: string,
+    latest: any,
+    recheck: Recheck
+): Promise<boolean> {
+    if (
+        !OUR_SIDE_STATUSES.includes(latest?.status) ||
+        latest?.retryable === false
+    ) {
+        return false;
+    }
+    const run = Number(latest.checksStartedAt) || 0;
+    // The rerun has not replaced the failed result yet.
+    if (recheck.done && run === recheck.failedRun) return true;
+    if (recheck.done) {
+        throw new Error(
+            `${packageName} failed on our side twice: ${JSON.stringify(latest.report)}`
+        );
+    }
+    console.log(
+        `${packageName} ${latest.status} on our side, checking again: ${JSON.stringify(latest.report).slice(0, 400)}`
+    );
+    const response = await request.post(
+        `${website()}/api/creator/plugins/${packageName}/versions/${encodeURIComponent(latest.version)}/checks`,
+        {
+            headers: {
+                cookie: `session=${sessionToken}`,
+                origin: website()
+            },
+            failOnStatusCode: false
+        }
+    );
+    expect(response.ok(), await response.text()).toBeTruthy();
+    recheck.done = true;
+    recheck.failedRun = run;
+    return true;
+}
+
+// A release held for a person never becomes ready on its own.
+function throwIfHeldForReview(packageName: string, latest: any) {
+    const report = latest?.checks?.security?.report;
+    if (report?.decision === 'review') {
+        throw new Error(
+            `${packageName} was held for a person to review: ${JSON.stringify(report)}`
+        );
+    }
+}
+
 async function waitForReady(
     request: any,
     sessionToken: string,
     packageName: string
 ) {
-    const started = Date.now();
+    let started = Date.now();
     let latest: any = null;
     let plugin: any = null;
     let checked = started;
+    const recheck: Recheck = { done: false, failedRun: null };
     while (Date.now() - started < RELEASE_CHECK_MS) {
         const body = await pluginOverview(request, sessionToken);
         plugin = (body.plugins || []).find(
@@ -175,6 +233,21 @@ async function waitForReady(
         );
         latest = plugin?.versions?.[0] || null;
         if (latest?.status === 'ready') return latest;
+        throwIfHeldForReview(packageName, latest);
+        const wasDone = recheck.done;
+        if (
+            await recheckOurSideFailure(
+                request,
+                sessionToken,
+                packageName,
+                latest,
+                recheck
+            )
+        ) {
+            if (!wasDone) started = Date.now();
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            continue;
+        }
         // Registration can store the plugin yet fail to queue its import;
         // creators then press "Check for a new release".
         if (!latest && Date.now() - checked > 45000) {
@@ -192,8 +265,7 @@ async function waitForReady(
         if (
             latest?.status === 'static_failed' ||
             latest?.status === 'preflight_failed' ||
-            latest?.status === 'security_failed' ||
-            latest?.status === 'security_timed_out'
+            latest?.status === 'security_failed'
         ) {
             throw new Error(
                 `${packageName} preflight failed: ${JSON.stringify(latest.report)}`
@@ -211,14 +283,29 @@ async function waitForSecurityFailed(
     sessionToken: string,
     packageName: string
 ) {
-    const started = Date.now();
+    let started = Date.now();
     let latest: any = null;
+    const recheck: Recheck = { done: false, failedRun: null };
     while (Date.now() - started < RELEASE_CHECK_MS) {
         const body = await pluginOverview(request, sessionToken);
         const plugin = (body.plugins || []).find(
             (item: any) => item.package === packageName
         );
         latest = plugin?.versions?.[0] || null;
+        const wasDone = recheck.done;
+        if (
+            await recheckOurSideFailure(
+                request,
+                sessionToken,
+                packageName,
+                latest,
+                recheck
+            )
+        ) {
+            if (!wasDone) started = Date.now();
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            continue;
+        }
         const report = latest?.checks?.security?.report;
         const decision = report?.decision;
         if (latest?.status === 'security_failed' || decision === 'block') {
@@ -262,7 +349,8 @@ test('register, buy, and install the free and commercial plugins', async ({
     browser,
     request
 }) => {
-    test.setTimeout(20 * 60 * 1000);
+    // Room for one rerun of a check that failed on our side.
+    test.setTimeout(25 * 60 * 1000);
     const resume =
         process.env.PLUGIN_E2E_KEEP === '1' &&
         Boolean(process.env.PLUGIN_E2E_RUN_ID);
