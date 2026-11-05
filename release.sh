@@ -2,7 +2,13 @@
 
 # Cut a production release of what the newest preview shipped.
 # Usage: ./release.sh <version-tag> [--dry-run]
+#        ./release.sh --services [--dry-run]
 # Example: ./release.sh v1.2.3
+#
+# --services ships the website and collab commits of the newest preview and
+# keeps the editor production serves, so its users see no update. It takes
+# no version: the tag is <production editor version>+s.N, and the release is
+# published on the website repo. It commits nothing in the editor.
 #
 # Sets the version in the service worker and API docs, turns "# Unreleased" in
 # CHANGELOG.md into the version section, pushes main, then starts release.yml
@@ -18,17 +24,37 @@ cd "$(dirname "$0")"
 EDITOR_DIR="$(pwd)"
 WORKSPACE="$(cd "$EDITOR_DIR/.." && pwd)"
 
-VERSION_TAG="${1:-}"
+VERSION_TAG=""
 DRY_RUN=0
-[ "${2:-}" = "--dry-run" ] && DRY_RUN=1
+SERVICES=0
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run) DRY_RUN=1 ;;
+        --services) SERVICES=1 ;;
+        -*)
+            echo "Error: unknown option $arg"
+            exit 1
+            ;;
+        *) VERSION_TAG="$arg" ;;
+    esac
+done
 
-if [ -z "$VERSION_TAG" ]; then
-    echo "Error: Version tag required"
+usage() {
     echo "Usage: ./release.sh <version-tag> [--dry-run]"
+    echo "       ./release.sh --services [--dry-run]"
     echo "Example: ./release.sh v1.2.3"
+}
+if [ "$SERVICES" -eq 1 ] && [ -n "$VERSION_TAG" ]; then
+    echo "Error: --services takes no version; it keeps the production editor's"
+    usage
     exit 1
 fi
-if ! [[ "$VERSION_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+if [ "$SERVICES" -eq 0 ] && [ -z "$VERSION_TAG" ]; then
+    echo "Error: Version tag required"
+    usage
+    exit 1
+fi
+if [ "$SERVICES" -eq 0 ] && ! [[ "$VERSION_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     echo "Error: Version tag must look like v1.2.3"
     exit 1
 fi
@@ -68,6 +94,28 @@ for entry in "editor:$EDITOR_DIR" "website:$WORKSPACE/website" "collab:$WORKSPAC
     fi
 done
 
+# Runs created before this are an earlier attempt on the same SHA.
+WATCH_SINCE=$(date +%s)
+: "${CI_WATCH_TIMEOUT:=21600}"
+export CI_WATCH_TIMEOUT
+
+if [ "$SERVICES" -eq 1 ]; then
+    echo "Services release: website and collab only. The production editor stays:"
+    node scripts/resolve-services-release.mjs production
+    echo "Checking the website and collab commits the newest preview shipped..."
+    node scripts/check-preview-first.mjs --services
+    if [ "$DRY_RUN" -eq 1 ]; then
+        echo "Dry run: starting release.yml up to the preflight checks..."
+        gh workflow run release.yml --ref main -f services=true -f dry_run=true
+    else
+        echo "Starting release.yml for a services release..."
+        gh workflow run release.yml --ref main -f services=true
+    fi
+    echo ""
+    echo "Services release started. Watching until it finishes..."
+    exec "$EDITOR_DIR/ci-watch.sh" --since "$WATCH_SINCE" "$EDITOR_DIR"
+fi
+
 existing=$(git ls-remote origin "refs/tags/${VERSION_TAG}" "refs/tags/${VERSION_TAG}^{}" | tail -1 | cut -f1)
 if [ -n "$existing" ]; then
     echo "Error: tag $VERSION_TAG already exists on $existing"
@@ -76,11 +124,6 @@ fi
 
 echo "Checking that the newest preview shipped this editor..."
 node scripts/check-preview-first.mjs HEAD
-
-# Runs created before this are an earlier attempt on the same SHA.
-WATCH_SINCE=$(date +%s)
-: "${CI_WATCH_TIMEOUT:=21600}"
-export CI_WATCH_TIMEOUT
 
 if [ "$DRY_RUN" -eq 1 ]; then
     if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then

@@ -41,6 +41,14 @@ on:
                 required: false
                 type: string
                 default: ""
+            services_only:
+                description: >-
+                    Ship website and collab only. editor_sha and editor_version
+                    must be what the target's editor serves now; the editor is
+                    not rebuilt or redeployed, so users see no update.
+                required: false
+                type: boolean
+                default: false
         outputs:
             editor_sha:
                 description: Frozen editor SHA
@@ -154,9 +162,31 @@ jobs:
                     --arg editor "$EDITOR_SHA" \
                     --arg website "$WEBSITE_SHA" \
                     --arg collab "$COLLAB_SHA" \
-                    '{environment:$env,tag:$tag,editor:$editor,website:$website,collab:$collab}' \
+                    --arg version "$VERSION" \
+                    --argjson services "${{ inputs.services_only && 'true' || 'false' }}" \
+                    '{environment:$env,tag:$tag,editor:$editor,editor_version:$version,website:$website,collab:$collab,services_only:$services}' \
                     > artifacts/trio.json
                   cat artifacts/trio.json
+
+            # A services release keeps the editor that is live. Refuse if the
+            # target's editor is not the one this cutover was started for.
+            - name: Require the live editor
+              if: ${{ inputs.services_only }}
+              env:
+                  EDITOR_ORIGIN: ${{ steps.shas.outputs.editor_origin }}
+                  EDITOR_SHA: ${{ steps.shas.outputs.editor_sha }}
+                  EDITOR_VERSION: ${{ steps.shas.outputs.editor_version }}
+              run: |
+                  set -euo pipefail
+                  info=$(curl --fail --silent --show-error "$EDITOR_ORIGIN/build-info.json?t=$(date +%s)")
+                  live_commit=$(printf '%s' "$info" | jq -r '.commit')
+                  live_version=$(printf '%s' "$info" | jq -r '.version')
+                  if [ "$live_commit" != "$EDITOR_SHA" ] || [ "$live_version" != "$EDITOR_VERSION" ]; then
+                    echo "$EDITOR_ORIGIN serves $live_version at $live_commit, not $EDITOR_VERSION at $EDITOR_SHA."
+                    echo "Start the services release again."
+                    exit 1
+                  fi
+                  echo "Editor stays at $EDITOR_VERSION ($EDITOR_SHA)."
 
             - name: Upload trio.json
               uses: actions/upload-artifact@v4
@@ -188,10 +218,16 @@ jobs:
     # Production checks the CI results of the preview's editor commit: the
     # release commit only changes versions, and its own CI may have tested
     # newer website and collab commits.
+    #
+    # A services release may have no CI run for the live editor with these
+    # website and collab commits. Then attested=false, and the staging suite
+    # runs in this cutover instead.
     verify-e2e:
         needs: [freeze, sibling-ci]
         runs-on: ubuntu-latest
         timeout-minutes: 90
+        outputs:
+            attested: ${{ steps.attest.outputs.attested }}
         steps:
             - name: Checkout editor
               uses: actions/checkout@v4
@@ -199,9 +235,18 @@ jobs:
                   ref: ${{ needs.freeze.outputs.editor_sha }}
 
             - name: Verify cloud-collab e2e attestation
+              id: attest
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-              run: bash scripts/verify-cloud-e2e-attestation.sh "${{ inputs.attested_editor_sha || needs.freeze.outputs.editor_sha }}" "${{ needs.freeze.outputs.website_sha }}" "${{ needs.freeze.outputs.collab_sha }}"
+              run: |
+                  if bash scripts/verify-cloud-e2e-attestation.sh "${{ inputs.attested_editor_sha || needs.freeze.outputs.editor_sha }}" "${{ needs.freeze.outputs.website_sha }}" "${{ needs.freeze.outputs.collab_sha }}"; then
+                    echo "attested=true" >> "$GITHUB_OUTPUT"
+                  elif [ "${{ inputs.services_only }}" = "true" ]; then
+                    echo "No CI run covers this trio. The staging suite runs in this cutover instead."
+                    echo "attested=false" >> "$GITHUB_OUTPUT"
+                  else
+                    exit 1
+                  fi
 
     # verify-e2e proved that CI passed the cloud-collab suite on the attested
     # editor commit with exactly these website and collab commits. When the
@@ -226,6 +271,7 @@ jobs:
 
             - name: Prove the frozen editor is the tested build
               id: prove
+              if: ${{ needs.verify-e2e.outputs.attested == 'true' }}
               env:
                   ATTESTED: ${{ inputs.attested_editor_sha }}
                   EDITOR_SHA: ${{ needs.freeze.outputs.editor_sha }}
@@ -539,7 +585,9 @@ jobs:
               env:
                   EDITOR_ROOT: ${{ github.workspace }}
 
+            # A services release does not rebuild or redeploy the editor.
             - name: Inject editor version
+              if: ${{ !inputs.services_only }}
               run: |
                   TAG="${{ needs.freeze.outputs.editor_version }}"
                   sed -i.bak "s/const VERSION = '[^']*'/const VERSION = '${TAG}'/" webapp/coi-serviceworker.js
@@ -547,9 +595,11 @@ jobs:
                   rm webapp/coi-serviceworker.js.bak
 
             - name: Install editor webapp dependencies
+              if: ${{ !inputs.services_only }}
               run: npm install --prefix webapp
 
             - name: Build editor
+              if: ${{ !inputs.services_only }}
               run: npm run build --prefix webapp
               env:
                   EDITOR_VERSION: ${{ needs.freeze.outputs.editor_version }}
@@ -594,6 +644,7 @@ jobs:
                   overwrite: true
 
             - name: Upload editor build
+              if: ${{ !inputs.services_only }}
               uses: actions/upload-artifact@v4
               with:
                   name: cutover-editor-build-${{ inputs.target }}
@@ -662,6 +713,7 @@ jobs:
                   path: _cutover/website/dist
 
             - name: Download editor build
+              if: ${{ !inputs.services_only }}
               uses: actions/download-artifact@v4
               with:
                   name: cutover-editor-build-${{ inputs.target }}
@@ -788,6 +840,7 @@ jobs:
                   command: deploy
 
             - name: Deploy editor Pages
+              if: ${{ !inputs.services_only }}
               uses: cloudflare/wrangler-action@v3
               with:
                   apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}

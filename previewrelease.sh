@@ -7,14 +7,26 @@
 # prerelease. See developer-docs/COMPOSED_RELEASE.md.
 # --dry-run runs the cutover up to its preflight checks and deploys nothing
 # to preview.
-# Usage: ./previewrelease.sh [--dry-run]
+# --services ships website and collab only. The preview editor stays as it
+# is, so its users see no update. Tag: <preview editor version>+s.N.
+# Usage: ./previewrelease.sh [--services] [--dry-run]
 
 set -e
 
 cd "$(dirname "$0")"
 
 DRY_RUN=false
-[ "${1:-}" = "--dry-run" ] && DRY_RUN=true
+SERVICES=false
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run) DRY_RUN=true ;;
+        --services) SERVICES=true ;;
+        *)
+            echo "Usage: ./previewrelease.sh [--services] [--dry-run]"
+            exit 1
+            ;;
+    esac
+done
 
 if ! command -v gh >/dev/null 2>&1; then
     echo "Error: GitHub CLI (gh) is required to start the preview release"
@@ -51,8 +63,13 @@ else
     echo "main is already up to date with origin/main"
 fi
 
+if [ "$SERVICES" = true ]; then
+    echo "Services release: website and collab only. The preview editor stays:"
+    node scripts/resolve-services-release.mjs preview
+fi
+
 echo "Starting Preview Release workflow on main..."
-gh workflow run preview-release.yml --ref main -f dry_run="$DRY_RUN"
+gh workflow run preview-release.yml --ref main -f dry_run="$DRY_RUN" -f services="$SERVICES"
 
 echo ""
 echo "Preview Release started. Watching until it finishes..."

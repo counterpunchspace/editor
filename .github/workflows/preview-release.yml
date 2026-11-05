@@ -11,6 +11,10 @@ on:
                 description: Wrong editor commit for the post-deploy wait, to rehearse the rollback
                 type: string
                 default: ""
+            services:
+                description: Website and collab only; the preview editor stays as it is (tag <editor version>+s.N)
+                type: boolean
+                default: false
 
 concurrency:
     group: preview-release
@@ -25,9 +29,9 @@ jobs:
     prepare:
         runs-on: ubuntu-latest
         outputs:
-            TAG: ${{ steps.version.outputs.TAG }}
-            COMMIT_SHA: ${{ steps.version.outputs.COMMIT_SHA }}
-            COMMIT_SHORT: ${{ steps.version.outputs.COMMIT_SHORT }}
+            TAG: ${{ inputs.services && steps.services.outputs.tag || steps.version.outputs.TAG }}
+            COMMIT_SHA: ${{ inputs.services && steps.services.outputs.editor_sha || steps.version.outputs.COMMIT_SHA }}
+            EDITOR_VERSION: ${{ inputs.services && steps.services.outputs.editor_version || steps.version.outputs.TAG }}
         steps:
             - name: Checkout
               uses: actions/checkout@v4
@@ -35,15 +39,25 @@ jobs:
                   fetch-depth: 0
 
             - name: Wait for green CI
+              if: ${{ !inputs.services }}
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: bash scripts/wait-for-green-ci.sh
 
             - name: Resolve preview version
               id: version
+              if: ${{ !inputs.services }}
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: bash scripts/resolve-preview-release.sh
+
+            # The cutover keeps the editor that preview serves now.
+            - name: Resolve services release
+              id: services
+              if: ${{ inputs.services }}
+              run: |
+                  node scripts/resolve-services-release.mjs preview
+                  printf 'Website and collab update. The preview editor is unchanged.\n' > release-notes.md
 
             - name: Upload release notes
               uses: actions/upload-artifact@v4
@@ -61,9 +75,10 @@ jobs:
             website_ref: ${{ vars.WEBSITE_SHA != '' && vars.WEBSITE_SHA || 'main' }}
             collab_ref: ${{ vars.COLLAB_SHA != '' && vars.COLLAB_SHA || 'main' }}
             release_tag: ${{ needs.prepare.outputs.TAG }}
-            editor_version: ${{ needs.prepare.outputs.TAG }}
+            editor_version: ${{ needs.prepare.outputs.EDITOR_VERSION }}
             dry_run: ${{ inputs.dry_run }}
             smoke_expect_editor: ${{ inputs.smoke_expect_editor }}
+            services_only: ${{ inputs.services }}
         secrets: inherit
 
     github-prerelease:
@@ -88,6 +103,7 @@ jobs:
                   name: trio-preview
 
             - name: Publish GitHub prerelease
+              if: ${{ !inputs.services }}
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                   TAG: ${{ needs.prepare.outputs.TAG }}
@@ -110,6 +126,17 @@ jobs:
                         --prerelease \
                         trio.json
                   fi
+
+            # Editors read the editor repo's releases to offer updates, so a
+            # services release is published on the website repo instead.
+            - name: Publish services prerelease on the website repo
+              if: ${{ inputs.services }}
+              env:
+                  GH_TOKEN: ${{ secrets.CLOUD_E2E_PAT }}
+                  TAG: ${{ needs.prepare.outputs.TAG }}
+                  REPO: ${{ vars.WEBSITE_REPOSITORY || format('{0}/website', github.repository_owner) }}
+                  WEBSITE_SHA: ${{ needs.cutover.outputs.website_sha }}
+              run: bash scripts/publish-services-release.sh "$REPO" "$TAG" "$WEBSITE_SHA" prerelease
 
             - name: Deployment summary
               run: |

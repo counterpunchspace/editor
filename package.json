@@ -14,6 +14,7 @@
         "generate-docs": "npm run generate-api-docs && npm run generate-event-docs && npm run generate-glyph-filter-event-docs && npm run generate-localstorage-docs && npm run generate-sessionstorage-docs && npm run generate-docs-manifest",
         "check:graph-chokepoints": "node scripts/check-graph-chokepoints.mjs",
         "test:graph-chokepoints": "node --test tests/check-graph-chokepoints.test.mjs",
+        "test:release-scripts": "node --test tests/services-release.test.mjs",
         "prepare": "husky"
     },
     "lint-staged": {

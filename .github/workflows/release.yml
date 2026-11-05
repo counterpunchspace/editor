@@ -2,13 +2,22 @@ name: Release
 
 # Started by release.sh after it pushed the version commit to main. The tag
 # job of the cutover creates the vX.Y.Z tags only after the smoke test passed.
+# With services=true (release.sh --services) it ships the website and collab
+# commits of the newest preview and keeps the editor that production serves,
+# tagged <editor version>+s.N. That release goes on the website repo, so
+# editors see no update.
 on:
     workflow_dispatch:
         inputs:
             version:
-                description: Release version, e.g. v0.1.0
-                required: true
+                description: Release version, e.g. v0.1.0 (empty for a services release)
+                required: false
                 type: string
+                default: ""
+            services:
+                description: Website and collab only; the production editor stays as it is
+                type: boolean
+                default: false
             dry_run:
                 description: Stop after the preflight checks; deploy nothing to production
                 type: boolean
@@ -27,9 +36,10 @@ jobs:
     certify:
         runs-on: ubuntu-latest
         outputs:
-            VERSION: ${{ steps.version.outputs.VERSION }}
-            COMMIT_SHA: ${{ steps.version.outputs.COMMIT_SHA }}
-            PREVIEW_EDITOR_SHA: ${{ steps.preview.outputs.preview_editor_sha }}
+            VERSION: ${{ inputs.services && steps.services.outputs.tag || steps.version.outputs.VERSION }}
+            COMMIT_SHA: ${{ inputs.services && steps.services.outputs.editor_sha || steps.version.outputs.COMMIT_SHA }}
+            EDITOR_VERSION: ${{ inputs.services && steps.services.outputs.editor_version || steps.version.outputs.VERSION }}
+            PREVIEW_EDITOR_SHA: ${{ !inputs.services && steps.preview.outputs.preview_editor_sha || '' }}
             WEBSITE_SHA: ${{ steps.preview.outputs.website_sha }}
             COLLAB_SHA: ${{ steps.preview.outputs.collab_sha }}
         steps:
@@ -38,8 +48,25 @@ jobs:
               with:
                   fetch-depth: 0
 
+            - name: Resolve services release
+              id: services
+              if: ${{ inputs.services }}
+              run: |
+                  set -euo pipefail
+                  if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+                    echo "Run the release from main, not $GITHUB_REF"
+                    exit 1
+                  fi
+                  if [ -n "${{ inputs.version }}" ]; then
+                    echo "A services release takes no version; it keeps the production editor's."
+                    exit 1
+                  fi
+                  node scripts/resolve-services-release.mjs production
+                  printf 'Website and collab update. The editor is unchanged.\n' > release-notes.md
+
             - name: Validate version and release commit
               id: version
+              if: ${{ !inputs.services }}
               env:
                   VERSION: ${{ inputs.version }}
               run: |
@@ -69,9 +96,17 @@ jobs:
               id: preview
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-              run: node scripts/check-preview-first.mjs "${{ steps.version.outputs.COMMIT_SHA }}"
+                  WEBSITE_GH_TOKEN: ${{ secrets.CLOUD_E2E_PAT }}
+                  WEBSITE_REPOSITORY: ${{ vars.WEBSITE_REPOSITORY || format('{0}/website', github.repository_owner) }}
+              run: |
+                  if [ "${{ inputs.services }}" = "true" ]; then
+                    node scripts/check-preview-first.mjs --services
+                  else
+                    node scripts/check-preview-first.mjs "${{ steps.version.outputs.COMMIT_SHA }}"
+                  fi
 
             - name: Extract release notes from CHANGELOG
+              if: ${{ !inputs.services }}
               run: |
                   # Extract content between second and third # headlines (skipping "# Unreleased")
                   awk '/^# / {if (++count == 3) exit} count == 2 && !/^# / {print}' CHANGELOG.md > release-notes.md
@@ -81,6 +116,7 @@ jobs:
             # Editor CI already ran on this commit when main was pushed. The
             # release does not repeat any of it.
             - name: Wait for green CI
+              if: ${{ !inputs.services }}
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: bash scripts/wait-for-green-ci.sh "" "${{ steps.version.outputs.COMMIT_SHA }}" ci.yml
@@ -101,9 +137,10 @@ jobs:
             website_ref: ${{ needs.certify.outputs.WEBSITE_SHA }}
             collab_ref: ${{ needs.certify.outputs.COLLAB_SHA }}
             release_tag: ${{ needs.certify.outputs.VERSION }}
-            editor_version: ${{ needs.certify.outputs.VERSION }}
+            editor_version: ${{ needs.certify.outputs.EDITOR_VERSION }}
             attested_editor_sha: ${{ needs.certify.outputs.PREVIEW_EDITOR_SHA }}
             dry_run: ${{ inputs.dry_run }}
+            services_only: ${{ inputs.services }}
         secrets: inherit
 
     github-release:
@@ -129,6 +166,7 @@ jobs:
                   path: .
 
             - name: Create GitHub Release
+              if: ${{ !inputs.services }}
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                   VERSION: ${{ needs.certify.outputs.VERSION }}
@@ -150,6 +188,17 @@ jobs:
                         --notes-file "$NOTES" \
                         trio.json
                   fi
+
+            # Editors read the editor repo's releases to offer updates, so a
+            # services release is published on the website repo instead.
+            - name: Publish services release on the website repo
+              if: ${{ inputs.services }}
+              env:
+                  GH_TOKEN: ${{ secrets.CLOUD_E2E_PAT }}
+                  TAG: ${{ needs.certify.outputs.VERSION }}
+                  REPO: ${{ vars.WEBSITE_REPOSITORY || format('{0}/website', github.repository_owner) }}
+                  WEBSITE_SHA: ${{ needs.certify.outputs.WEBSITE_SHA }}
+              run: bash scripts/publish-services-release.sh "$REPO" "$TAG" "$WEBSITE_SHA" release
 
             - name: Deployment summary
               run: |

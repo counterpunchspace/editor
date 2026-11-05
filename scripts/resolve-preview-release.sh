@@ -56,7 +56,8 @@ trap cleanup EXIT
 if [ -n "$PREV_TAG" ]; then
     git show "${PREV_TAG}:CHANGELOG.md" > "$OLD_CHANGELOG"
 else
-    STABLE_TAG=$(git tag -l 'v*' | grep -vE 'preview|-pre\.' | sort -V | tail -1 || true)
+    # Services tags (<version>+s.N) point at a release's editor commit.
+    STABLE_TAG=$(git tag -l 'v*' | grep -vE 'preview|-pre\.|\+s\.' | sort -V | tail -1 || true)
     if [ -n "$STABLE_TAG" ]; then
         echo "First preview notes vs last stable tag $STABLE_TAG"
         git show "${STABLE_TAG}:CHANGELOG.md" > "$OLD_CHANGELOG"

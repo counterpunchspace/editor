@@ -78,6 +78,23 @@ It then sets the version, turns `# Unreleased` into `# vX.Y.Z`, commits, pushes 
 
 The Release workflow repeats the version and preview-first checks, then runs the cutover against the preview's website and collab commits. Its `verify-e2e` uses the CI results of the preview's editor commit, since the release commit only changes versions. Editor CI on the release commit and the cutover's staging suite are skipped when the release commit is the same build as the preview's (see below).
 
+## Services releases (website and collab only)
+
+Editors offer an update when their service worker changes or the editor repo publishes a newer release. A services release does neither, so users see no update notice:
+
+```bash
+./push.sh                         # CI tests live editor + new website/collab on staging
+./previewrelease.sh --services    # or --dry-run
+./release.sh --services           # or --dry-run; takes no version
+```
+
+- **Editor stays.** The workflow reads the target's live editor from `/build-info.json` (`scripts/resolve-services-release.mjs`) and freezes that commit and version. The cutover does not inject a version, build or deploy the editor, and refuses if the live editor changed since the start.
+- **Tag.** `<live editor version>+s.N`, counting up per editor version: production `v0.4.0` gets `v0.4.0+s.1`, then `v0.4.0+s.2`; preview `v0.0.42-pre.20261105` gets `v0.0.42-pre.20261105+s.1`. The tag job puts it on all three repos; the editor tag points at the live editor commit.
+- **Release and `trio.json`.** Published on the **website** repo (prerelease for preview, release for production), never on the editor repo. Editors and the marketing site read the editor repo's releases. `trio.json` adds `editor_version` and `services_only`.
+- **Tests.** `verify-e2e` looks for an editor CI run on the live editor commit that tested these website and collab commits (`push.sh` starts one when editor `main` is at the live commit). Without one, the cutover runs its staging deploy and full cloud-collab suite on exactly that trio. Smoke and rollback work as for any cutover; rollback leaves the untouched editor alone.
+- **Preview first.** `check-preview-first.mjs` takes website and collab from the newest preview of either kind (editor prerelease or services prerelease). `--services` skips the editor checks. A full release does the same, so it never ships older website or collab commits than a services release already did.
+- **Needs build-info.** The target's editor must serve `/build-info.json`. Production gets it with its first full composed release.
+
 ## Same build
 
 Work that already passed is not repeated. `scripts/same-build.mjs` proves that two editor commits build the same app: every changed file is one release.sh rewrites, and each is identical once its version string is masked (`VERSION` and `DISPLAY_VERSION` in `webapp/coi-serviceworker.js`, which every build overwrites anyway; the `**Version:**` line in `API.md` and `documentation/python/06-python-api.md`). `CHANGELOG.md` is neither shipped nor tested. Anything else, including API docs that were regenerated with new text, is a different build, and the tests run.
