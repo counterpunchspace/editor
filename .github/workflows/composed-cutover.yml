@@ -625,8 +625,15 @@ jobs:
                   done
                   for worker in plugins-worker cron-worker; do
                     echo "::group::$worker"
-                    (cd "$WEBSITE_ROOT/$worker" && npx --prefix "$WEBSITE_ROOT" wrangler deploy --dry-run --outdir "$RUNNER_TEMP/dry/$worker")
+                    (cd "$WEBSITE_ROOT/$worker" && npx --prefix "$WEBSITE_ROOT" wrangler deploy --dry-run --outdir "$RUNNER_TEMP/dry/$worker") 2>&1 | tee "$RUNNER_TEMP/dry-$worker.log"
                     echo "::endgroup::"
+                    # A dry run only warns about this, but Cloudflare rejects a
+                    # service-worker build that binds D1. Only production deploys
+                    # the cron Worker, so catch it here, in preview too.
+                    if grep -q 'service-worker" format' "$RUNNER_TEMP/dry-$worker.log"; then
+                      echo "::error::$worker builds as a service worker. Give its entry a default export."
+                      exit 1
+                    fi
                   done
 
             - name: Require product secret names
