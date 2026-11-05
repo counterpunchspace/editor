@@ -4,30 +4,33 @@
  *
  *   node scripts/probe-product-secrets.mjs check-names preview|production
  *   node scripts/probe-product-secrets.mjs deploy-room preview|production
+ *   node scripts/probe-product-secrets.mjs pair-room preview|production
  *
  * check-names fails if a required secret is missing. It does not deploy.
- * deploy-room deploys the room, then POSTs /internal/cutover-pairing on its
- * workers.dev URL and exits non-zero if pairing fails, so the cutover rolls
- * back.
+ * deploy-room deploys the room and writes its workers.dev URL to
+ * GITHUB_OUTPUT as workers_dev_url.
+ * pair-room POSTs /internal/cutover-pairing on ROOM_WORKERS_DEV_URL and exits
+ * non-zero if pairing fails, so the cutover rolls back. The room checks its
+ * tokens against the live website, so this runs after the website deploy.
  * Collab root: COLLAB_ROOT. Never prints secret values.
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 const mode = process.argv[2];
 const target = process.argv[3];
-if (!["check-names", "deploy-room"].includes(mode)) {
-  throw new Error("mode must be check-names or deploy-room");
+if (!["check-names", "deploy-room", "pair-room"].includes(mode)) {
+  throw new Error("mode must be check-names, deploy-room or pair-room");
 }
 if (target !== "preview" && target !== "production") {
   throw new Error("target must be preview or production");
 }
 
 const collabRoot = process.env.COLLAB_ROOT;
-if (!collabRoot) {
+if (!collabRoot && mode !== "pair-room") {
   throw new Error("COLLAB_ROOT is required");
 }
 
@@ -255,6 +258,25 @@ function deployRoom() {
   if (!workersDevUrl) {
     throw new Error("wrangler deploy did not report a workers.dev URL");
   }
+  if (process.env.GITHUB_OUTPUT) {
+    appendFileSync(
+      process.env.GITHUB_OUTPUT,
+      `workers_dev_url=${workersDevUrl}\n`,
+    );
+  }
+  console.log(`room workers.dev URL: ${workersDevUrl}`);
+}
+
+function pairRoom() {
+  const workersDevUrl = String(process.env.ROOM_WORKERS_DEV_URL || "").replace(
+    /\/$/,
+    "",
+  );
+  if (!/^https:\/\/[a-z0-9-]+\.[a-z0-9-]+\.workers\.dev$/i.test(workersDevUrl)) {
+    throw new Error("ROOM_WORKERS_DEV_URL must be the room's workers.dev URL");
+  }
+  // The website was just deployed, so give its new build up to two minutes
+  // to answer on the real domain.
   const probe = execFileSync(
     "curl",
     [
@@ -264,17 +286,24 @@ function deployRoom() {
       "--max-time",
       "60",
       "--retry",
-      "5",
+      "12",
       "--retry-all-errors",
       "--retry-delay",
-      "5",
+      "10",
       "-X",
       "POST",
       `${workersDevUrl}/internal/cutover-pairing`,
     ],
     { encoding: "utf8" },
   );
-  const body = JSON.parse(probe);
+  // curl prints the body of every retried attempt, so read the last one.
+  const last = probe.match(/\{[^{}]*\}/g)?.at(-1) ?? "";
+  let body = null;
+  try {
+    body = JSON.parse(last);
+  } catch {
+    body = null;
+  }
   if (body?.ok !== true) {
     throw new Error(`cutover pairing failed: ${probe}`);
   }
@@ -283,6 +312,8 @@ function deployRoom() {
 
 if (mode === "check-names") {
   checkNames();
-} else {
+} else if (mode === "deploy-room") {
   deployRoom();
+} else {
+  pairRoom();
 }

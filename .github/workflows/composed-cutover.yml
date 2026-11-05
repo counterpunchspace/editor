@@ -703,7 +703,11 @@ jobs:
                   command: ${{ inputs.target == 'preview' && 'deploy --env preview' || 'deploy' }}
                   vars: COMMIT_SHA
 
-            - name: Deploy room and check secret pairing
+            # The pairing check runs after the website deploy: the room
+            # checks its token against the live website, and a new website
+            # route is not there until this cutover ships it.
+            - name: Deploy room
+              id: room
               env:
                   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
                   CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -755,6 +759,11 @@ jobs:
                   }
                   trap restore_config EXIT
                   npx wrangler pages deploy dist --project-name="$project" --branch main --commit-dirty=true
+
+            - name: Check room secret pairing
+              env:
+                  ROOM_WORKERS_DEV_URL: ${{ steps.room.outputs.workers_dev_url }}
+              run: node scripts/probe-product-secrets.mjs pair-room "${{ inputs.target }}"
 
             - name: Deploy plugins Worker
               if: ${{ inputs.target == 'production' || vars.PLUGINS_WORKER_LOCKED != 'production' }}
