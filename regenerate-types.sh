@@ -46,7 +46,7 @@ fi
 
 if [ -d "$BABELFONT_RS_DIR/.git" ]; then
     LOCAL_COMMIT_FULL=$(git -C "$BABELFONT_RS_DIR" rev-parse HEAD)
-    LOCAL_COMMIT_SHORT=$(git -C "$BABELFONT_RS_DIR" rev-parse --short HEAD)
+    LOCAL_COMMIT_SHORT=$(git -C "$BABELFONT_RS_DIR" rev-parse --short=7 HEAD)
     LOCAL_REPO_URL=$(git -C "$BABELFONT_RS_DIR" remote get-url origin 2>/dev/null || true)
 
     if [ -n "$PINNED_COMMIT" ] && [ "$LOCAL_COMMIT_FULL" != "$PINNED_COMMIT" ]; then
@@ -90,7 +90,7 @@ if [ "$USE_PINNED_CHECKOUT" = "true" ]; then
         echo "❌ Failed to checkout pinned commit $PINNED_COMMIT from $PIN_FILE"
         exit 1
     fi
-    COMMIT=$(git -C "$BABELFONT_RS_DIR" rev-parse --short HEAD)
+    COMMIT=$(git -C "$BABELFONT_RS_DIR" rev-parse --short=7 HEAD)
     echo "✅ Using pinned babelfont-rs at $BABELFONT_RS_DIR@$COMMIT"
 fi
 echo ""
