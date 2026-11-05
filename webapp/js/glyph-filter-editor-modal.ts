@@ -201,6 +201,8 @@ class GlyphFilterEditor {
     private name: string;
     /** The Simple text box; differs from the docstring until sent. */
     private draft: string;
+    /** The docstring the Simple box last showed. */
+    private shownDescription: string;
     /** Code whose docstring is known to describe it. */
     private syncedCode: string;
     private mode: EditorMode;
@@ -251,6 +253,7 @@ class GlyphFilterEditor {
         this.existingNames = init.existingNames;
         this.name = init.name;
         this.draft = readFilterDescription(init.code);
+        this.shownDescription = this.draft;
         this.syncedCode = init.code;
         this.ai = assistantAvailable();
         this.mode = this.ai ? readStoredMode() : 'expert';
@@ -753,11 +756,31 @@ class GlyphFilterEditor {
 
     private onCodeChanged(): void {
         if (this.closed) return;
+        this.followDescription();
         this.saveError = null;
         this.scheduleValidation(VALIDATE_DELAY_MS);
         // Dry runs wait for the Assistant's turn to finish.
         if (!this.streaming) this.schedulePreview(PREVIEW_DELAY_MS);
         this.render();
+    }
+
+    /**
+     * The Simple box follows the docstring, whoever changed it (the chat, a
+     * hand edit, a code sync), unless it holds words the user has not sent.
+     */
+    private followDescription(): void {
+        const description = this.description;
+        if (description === this.shownDescription) return;
+        if (this.draft.trim() === this.shownDescription.trim()) {
+            this.setDraft(description);
+        }
+        this.shownDescription = description;
+    }
+
+    private setDraft(text: string): void {
+        this.draft = text;
+        const box = this.$<HTMLTextAreaElement>('[data-ref="desc"]');
+        if (box.value !== text) box.value = text;
     }
 
     private scheduleValidation(delay: number): void {
@@ -870,7 +893,8 @@ class GlyphFilterEditor {
 
     /** Simple mode: put the user's words in the docstring, then ask for code. */
     private async updateFromDescription(): Promise<AssistantTurnEndReason | null> {
-        const next = this.draft.trim();
+        const typed = this.draft;
+        const next = typed.trim();
         if (!this.unsentDescription() || this.streaming) return null;
         const codeBefore = this.code;
         const previous = this.description.trim();
@@ -884,6 +908,7 @@ class GlyphFilterEditor {
         if (reason !== 'done' && !this.closed) {
             // Nothing applied: the code goes back, the words stay in the box.
             this.ace.setValue(codeBefore, -1);
+            this.setDraft(typed);
             this.render();
         }
         return reason;
