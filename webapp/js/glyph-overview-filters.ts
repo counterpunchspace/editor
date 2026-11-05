@@ -20,10 +20,20 @@ import {
     getTheme,
     setupMenuKeyboardNav
 } from './tippy-utils';
-import { createGlyphFilterTemplate } from './glyph-filter-template';
+import {
+    buildGlyphFilterLegendGroups,
+    countGlyphsPerGroup,
+    renderGlyphFilterLegend
+} from './glyph-filter-legend';
+import {
+    nextFreeFilterName,
+    normalizeFilterName,
+    validateFilterName
+} from './glyph-filter-names';
 import {
     MANAGED_FILE_CHANGED_EVENT,
     cancelManagedFileInternalWrite,
+    dispatchManagedFileChanged,
     extractManagedChangedPaths,
     markManagedFileInternalWrite,
     normalizeManagedPath,
@@ -44,6 +54,7 @@ import {
     type GlyphFilterLifecycleChange
 } from './glyph-filter-change-derivation';
 import { getGlyphFilterIds, setGlyphFilterIds } from './window-ui-state';
+import { filterChatRegistry } from './glyph-filter-chat';
 
 const console = new Logger('GlyphOverviewFilters');
 
@@ -173,6 +184,54 @@ interface RefreshPluginsOptions {
 }
 
 const ALL_GLYPHS_FILTER_KEYWORD = 'com.context.allglyphs';
+
+/** A problem in unsaved filter code. `line` is 1-based when known. */
+export interface GlyphFilterSourceError {
+    kind: 'syntax' | 'contract' | 'runtime' | 'timeout';
+    message: string;
+    line?: number;
+}
+
+export interface GlyphFilterSourceValidation {
+    eventTypes: GlyphFilterEventType[];
+    errors: GlyphFilterSourceError[];
+}
+
+export interface GlyphFilterPreviewGroup {
+    name: string;
+    /** CSS color; empty when the group has none. */
+    color: string;
+    count: number;
+}
+
+/** Dry run of unsaved filter code on the open font. */
+export interface GlyphFilterPreviewResult {
+    ok: boolean;
+    /** Matching glyphs in font order (overview glyph ids are names). */
+    glyphNames: string[];
+    /**
+     * One entry per matching glyph with its group keywords and resolved
+     * colors; pass to `GlyphOverviewView.setGroups`.
+     */
+    results: FilterResult[];
+    /** Groups in first-seen order with their glyph counts. */
+    groups: GlyphFilterPreviewGroup[];
+    eventTypes: GlyphFilterEventType[];
+    errors: GlyphFilterSourceError[];
+}
+
+/** Namespace keyword for dry runs; never collides with `user.*` filters. */
+const PREVIEW_FILTER_KEYWORD = 'preview';
+
+const FILTER_SYNTAX_CHECK = [
+    'def _cp_filter_syntax_error(source):',
+    '    try:',
+    "        compile(source, '<filter>', 'exec')",
+    '    except SyntaxError as error:',
+    "        return f'{error.lineno or 0}\\n{error.msg}'",
+    "    return ''",
+    '_cp_filter_syntax_error(__glyph_filter_check_source)'
+].join('\n');
 
 /** Empty batch requests a host-owned full cache rebuild. */
 const FULL_FILTER_REBUILD_BATCH: GlyphFilterChangeBatch = { changes: [] };
@@ -1410,9 +1469,12 @@ export class GlyphOverviewFilterManager {
         eventTypes: GlyphFilterEventType[];
         diagnostic?: string;
     } {
-        const eventTypesMatch = code.match(
-            /^\s*EVENT_TYPES\s*=\s*([\[\(\{])([\s\S]*?)[\]\)\}]/m
-        );
+        // An empty list is valid: a filter that only reads glyph names has no
+        // content events, and the host re-checks created, renamed and deleted
+        // glyphs for every filter.
+        const eventTypesMatch =
+            code.match(/^\s*EVENT_TYPES\s*=\s*([\[\(\{])([\s\S]*?)[\]\)\}]/m) ??
+            code.match(/^\s*EVENT_TYPES\s*=\s*set\s*\(()()\s*\)/m);
         if (!eventTypesMatch) {
             return {
                 eventTypes: [],
@@ -1422,8 +1484,11 @@ export class GlyphOverviewFilterManager {
         const quotedEvents = [
             ...eventTypesMatch[2].matchAll(/['"]([^'"]+)['"]/g)
         ].map((match) => match[1]);
+        const onlyQuotedEvents =
+            eventTypesMatch[2].replace(/['"][^'"]*['"]|#[^\n]*|[\s,]/g, '') ===
+            '';
         if (
-            quotedEvents.length === 0 ||
+            !onlyQuotedEvents ||
             quotedEvents.some((eventType) => !isGlyphFilterEventType(eventType))
         ) {
             return {
@@ -1448,6 +1513,171 @@ export class GlyphOverviewFilterManager {
         }
         return {
             eventTypes: [...new Set(quotedEvents)] as GlyphFilterEventType[]
+        };
+    }
+
+    /**
+     * Check unsaved filter code: Python syntax (when Pyodide is loaded), a
+     * literal EVENT_TYPES and classify_glyph(glyph). Runs nothing.
+     */
+    validateFilterSource(code: string): GlyphFilterSourceValidation {
+        const errors: GlyphFilterSourceError[] = [];
+        const pyodide = window.pyodide as FilterPyodide | undefined;
+        if (pyodide) {
+            pyodide.globals.set('__glyph_filter_check_source', code);
+            const syntax = this.runFilterPython(FILTER_SYNTAX_CHECK);
+            if (typeof syntax === 'string' && syntax) {
+                const newline = syntax.indexOf('\n');
+                const line = Number(syntax.slice(0, newline));
+                errors.push({
+                    kind: 'syntax',
+                    message: syntax.slice(newline + 1),
+                    ...(line > 0 ? { line } : {})
+                });
+            }
+        }
+        const inspection = this.inspectUserFilterSource(code);
+        if (inspection.diagnostic) {
+            errors.push({ kind: 'contract', message: inspection.diagnostic });
+        }
+        return { eventTypes: inspection.eventTypes, errors };
+    }
+
+    /**
+     * Dry run: classify every glyph of the open font with unsaved `code`
+     * through the same Python path as a saved user filter. Leaves the plugin
+     * cache, the active filter, the overview and the sidebar alone.
+     */
+    private dropFilterNamespace(namespace: string): void {
+        try {
+            this.getFilterPyodide().globals.set(
+                '__glyph_filter_namespace',
+                namespace
+            );
+            this.runFilterPython(
+                'globals().pop(__glyph_filter_namespace, None)'
+            );
+        } catch (error) {
+            console.warn('Could not drop filter namespace:', error);
+        }
+    }
+
+    async previewFilter(code: string): Promise<GlyphFilterPreviewResult> {
+        const empty = (
+            errors: GlyphFilterSourceError[],
+            eventTypes: GlyphFilterEventType[] = []
+        ): GlyphFilterPreviewResult => ({
+            ok: false,
+            glyphNames: [],
+            results: [],
+            groups: [],
+            eventTypes,
+            errors
+        });
+
+        let validation: GlyphFilterSourceValidation;
+        try {
+            validation = this.validateFilterSource(code);
+        } catch (error) {
+            return empty([
+                {
+                    kind: 'runtime',
+                    message:
+                        error instanceof Error ? error.message : String(error)
+                }
+            ]);
+        }
+        if (validation.errors.length > 0) {
+            return empty(validation.errors, validation.eventTypes);
+        }
+        const font = window.currentFontModel;
+        if (!font) {
+            return empty(
+                [{ kind: 'runtime', message: 'No font is open.' }],
+                validation.eventTypes
+            );
+        }
+
+        const plugin: GlyphFilterPlugin = {
+            path: 'user',
+            keyword: PREVIEW_FILTER_KEYWORD,
+            display_name: 'Preview',
+            instance: null,
+            groups: {},
+            eventTypes: validation.eventTypes,
+            isUserFilter: true,
+            pythonCode: code,
+            classifications: new Map()
+        };
+
+        let timeoutId: number | undefined;
+        try {
+            await Promise.race([
+                Promise.resolve().then(() => {
+                    this.classifyGlyphs(plugin, font.glyphs || []);
+                    this.derivePluginResults(plugin);
+                }),
+                new Promise<never>((_, reject) => {
+                    timeoutId = window.setTimeout(() => {
+                        reject(
+                            new Error(
+                                `Filter timed out after ${this.FILTER_TIMEOUT_MS}ms`
+                            )
+                        );
+                    }, this.FILTER_TIMEOUT_MS);
+                })
+            ]);
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            return empty(
+                [
+                    {
+                        kind: message.startsWith('Filter timed out')
+                            ? 'timeout'
+                            : 'runtime',
+                        message
+                    }
+                ],
+                validation.eventTypes
+            );
+        } finally {
+            window.clearTimeout(timeoutId);
+            if (plugin.sourceNamespace) {
+                this.dropFilterNamespace(plugin.sourceNamespace);
+            }
+        }
+
+        const { results, usedGroupKeywords, augmentedGroups } =
+            this.processFilterResults(
+                plugin.lastResults || [],
+                plugin.groups || {}
+            );
+        const counts = countGlyphsPerGroup(results);
+        const groups: GlyphFilterPreviewGroup[] = [...usedGroupKeywords].map(
+            (name) => ({
+                name,
+                color: augmentedGroups[name]?.color || '',
+                count: counts.get(name) || 0
+            })
+        );
+        const byName = new Map(
+            results.map((result) => [result.glyph_name, result])
+        );
+        const ordered: FilterResult[] = [];
+        for (const glyph of font.glyphs || []) {
+            const result = byName.get(glyph.name);
+            if (result) {
+                ordered.push(result);
+            }
+        }
+        return {
+            ok: true,
+            glyphNames: ordered.map((result) => result.glyph_name),
+            results: ordered,
+            groups,
+            eventTypes: validation.eventTypes,
+            errors: []
         };
     }
 
@@ -1701,7 +1931,7 @@ export class GlyphOverviewFilterManager {
                 '<span class="material-symbols-outlined">add</span>';
             newBtn.addEventListener('click', async (e) => {
                 e.stopPropagation();
-                await this.createNewFilter();
+                await this.openFilterEditor(null);
             });
             buttonContainer.appendChild(newBtn);
 
@@ -1906,6 +2136,10 @@ export class GlyphOverviewFilterManager {
         // Build menu HTML (using same structure as file-browser context menus)
         const menuHtml = `
             <div class="plugin-menu">
+                <div class="plugin-menu-item" data-action="edit-filter">
+                    <span class="material-symbols-outlined">tune</span>
+                    <span>Edit Filter…</span>
+                </div>
                 <div class="plugin-menu-item" data-action="open-script-editor">
                     <span class="material-symbols-outlined">code</span>
                     <span>Open in Script Editor</span>
@@ -1959,6 +2193,9 @@ export class GlyphOverviewFilterManager {
                             element.classList.remove('context-menu-active');
 
                             switch (action) {
+                                case 'edit-filter':
+                                    await this.openFilterEditor(filePath);
+                                    break;
                                 case 'open-script-editor':
                                     await this.openFilterInScriptEditor(
                                         filePath
@@ -1984,6 +2221,11 @@ export class GlyphOverviewFilterManager {
             activeClass: 'context-menu-active'
         });
 
+        element.addEventListener('dblclick', (e) => {
+            e.preventDefault();
+            void this.openFilterEditor(filePath);
+        });
+
         // Right-click to show context menu
         element.addEventListener('contextmenu', (e) => {
             e.preventDefault();
@@ -2006,6 +2248,21 @@ export class GlyphOverviewFilterManager {
 
             tippyInstance.show();
         });
+    }
+
+    /** Open the glyph filter editor for a filter, or for a new one. */
+    async openFilterEditor(filePath: string | null): Promise<void> {
+        try {
+            const { openGlyphFilterEditor } =
+                await import('./glyph-filter-editor-modal');
+            await openGlyphFilterEditor({ filePath });
+        } catch (error) {
+            console.error('Could not open the filter editor:', error);
+            alert(
+                'Could not open the filter editor: ' +
+                    (error instanceof Error ? error.message : String(error))
+            );
+        }
     }
 
     /**
@@ -2740,75 +2997,24 @@ export class GlyphOverviewFilterManager {
     ): void {
         if (!this.groupLegendContainer) return;
 
-        // Clear existing content and reset group filters
-        this.groupLegendContainer.innerHTML = '';
+        // Reset group filters
         this.activeGroupFilters.clear();
-        this.groupElements.clear();
-
-        // If no groups used, hide the container
-        if (usedGroupKeywords.size === 0 || !plugin.groups) {
-            this.groupLegendContainer.style.display = 'none';
-            return;
-        }
-
-        // Count glyphs per group keyword (a glyph can be counted in multiple groups)
-        const groupCounts = new Map<string, number>();
-        if (plugin.lastResults) {
-            for (const result of plugin.lastResults) {
-                if (result.groups) {
-                    for (const groupKeyword of result.groups) {
-                        groupCounts.set(
-                            groupKeyword,
-                            (groupCounts.get(groupKeyword) || 0) + 1
-                        );
-                    }
-                }
+        const groups =
+            usedGroupKeywords.size === 0 || !plugin.groups
+                ? []
+                : buildGlyphFilterLegendGroups(
+                      plugin.groups,
+                      usedGroupKeywords,
+                      plugin.lastResults
+                  );
+        // Click to toggle group filter by keyword
+        this.groupElements = renderGlyphFilterLegend(
+            this.groupLegendContainer,
+            groups,
+            (keyword, item, event) => {
+                this.toggleGroupFilter(keyword, item, event);
             }
-        }
-
-        // Show container and add legend items
-        this.groupLegendContainer.style.display = '';
-
-        for (const keyword of usedGroupKeywords) {
-            const groupDef = plugin.groups[keyword];
-            if (!groupDef) continue;
-
-            const item = document.createElement('div');
-            item.className = 'glyph-filter-legend-item';
-            item.dataset.groupKeyword = keyword; // Store keyword for filtering
-            item.dataset.groupHex = groupDef.color || ''; // Keep color for reference
-            item.style.cursor = 'pointer';
-
-            // Only show circle if there's a color defined
-            if (groupDef.color) {
-                const circle = document.createElement('span');
-                circle.className = 'glyph-filter-legend-circle';
-                circle.style.backgroundColor = groupDef.color;
-                item.appendChild(circle);
-            }
-
-            const label = document.createElement('span');
-            label.className = 'glyph-filter-legend-label';
-            label.textContent = groupDef.description;
-
-            const count = document.createElement('span');
-            count.className = 'glyph-filter-legend-count';
-            count.textContent = String(groupCounts.get(keyword) || 0);
-
-            item.appendChild(label);
-            item.appendChild(count);
-
-            // Store element reference and keyword for later highlighting
-            this.groupElements.set(keyword, item);
-            item.dataset.groupKeyword = keyword;
-
-            // Click to toggle group filter by keyword
-            item.addEventListener('click', (e) => {
-                this.toggleGroupFilter(keyword, item, e);
-            });
-
-            this.groupLegendContainer.appendChild(item);
-        }
+        );
 
         // Update highlighting for currently selected glyphs
         this.updateGroupHighlighting();
@@ -3207,173 +3413,158 @@ export class GlyphOverviewFilterManager {
     }
 
     /**
-     * Create a new filter file using file picker
+     * Names (without `.py`) of the filter files directly in `folder`.
      */
-    private async createNewFilter(): Promise<void> {
+    async listFilterNamesInFolder(
+        folder: string = this.USER_FILTERS_PATH
+    ): Promise<string[]> {
         const adapter = settingsFolder.getAdapter();
         if (!this.isDiskAdapterLike(adapter) || !adapter.hasDirectory()) {
-            alert('Settings Folder not available');
-            return;
+            return [];
         }
-
-        try {
-            // Get the directory handle
-            const dirHandle = adapter.getDirectoryHandle();
-            if (!dirHandle) {
-                alert('Directory handle not available');
-                return;
-            }
-
-            // Navigate to Filters directory (create if doesn't exist)
-            const filtersDirParts = this.USER_FILTERS_PATH.split('/').filter(
-                (p) => p
-            );
-            let currentHandle = dirHandle;
-            for (const part of filtersDirParts) {
-                currentHandle = await currentHandle.getDirectoryHandle(part, {
-                    create: true
-                });
-            }
-
-            // Show save file picker starting from Filters directory
-            const fileHandle = await (window as any).showSaveFilePicker({
-                startIn: currentHandle,
-                suggestedName: 'New Filter.py',
-                types: [
-                    {
-                        description: 'Python Files',
-                        accept: { 'text/x-python': ['.py'] }
-                    }
-                ]
-            });
-
-            // Get the relative path from the root
-            let filePath = await this.getRelativePathFromHandle(
-                dirHandle,
-                fileHandle
-            );
-
-            // Ensure .py extension
-            if (!filePath.endsWith('.py')) {
-                filePath += '.py';
-            }
-
-            if (!filePath.startsWith(this.USER_FILTERS_PATH)) {
-                alert(`Filter must be saved under ${this.USER_FILTERS_PATH}`);
-                return;
-            }
-
-            // Extract filter name from file path
-            const fileName = filePath.split('/').pop() || 'filter';
-            const filterName = fileName.replace(/\.py$/, '');
-
-            // Create empty filter file with template
-            const template = createGlyphFilterTemplate(filterName);
-
-            // Write file using the file handle
-            markManagedFileInternalWrite(SETTINGS_FOLDER_SOURCE_ID, filePath);
-            try {
-                const writable = await fileHandle.createWritable();
-                await writable.write(template);
-                await writable.close();
-            } catch (error) {
-                cancelManagedFileInternalWrite(
-                    SETTINGS_FOLDER_SOURCE_ID,
-                    filePath
-                );
-                throw error;
-            }
-
-            console.log('[GlyphOverviewFilters] Created new filter:', filePath);
-
-            // Trigger refresh; FileSystemObserver echo is suppressed via the
-            // internal-write marker above.
-            await this.discoverUserFilters();
-
-            // Select the newly created filter
-            setTimeout(() => {
-                const newFilter = this.userFilters.find(
-                    (f) => f.filePath === filePath
-                );
-                if (newFilter) {
-                    const filterElement = this.sidebarContainer?.querySelector(
-                        `.glyph-filter-item[data-plugin-keyword="${newFilter.keyword}"]`
-                    ) as HTMLElement;
-                    if (filterElement) {
-                        this.activateFilter(newFilter, filterElement);
-                    }
-                }
-            }, 300);
-        } catch (error: any) {
-            if (error.name === 'AbortError') {
-                console.log('[GlyphOverviewFilters] File creation cancelled');
-                return;
-            }
-            console.error(
-                '[GlyphOverviewFilters] Error creating filter:',
-                error
-            );
-            alert(`Error creating filter: ${error.message}`);
+        if (!(await adapter.fileExists(folder))) {
+            return [];
         }
+        const entries = await adapter.scanDirectory(folder);
+        return Object.entries(entries)
+            .filter(
+                ([name, info]) =>
+                    !info.is_dir && name.toLowerCase().endsWith('.py')
+            )
+            .map(([name]) => name.slice(0, -3));
     }
 
-    /**
-     * Get relative path from root directory handle to a file handle
-     */
-    private async getRelativePathFromHandle(
-        rootHandle: FileSystemDirectoryHandle,
-        targetHandle: FileSystemFileHandle
-    ): Promise<string> {
-        // Try to resolve the path by checking if we can get to the target from root
-        const path = await this.resolvePathRecursive(
-            rootHandle,
-            targetHandle,
-            '/'
+    /** First free "New Filter", "New Filter 2", … in the Filters folder. */
+    async getFreeFilterName(baseName: string = 'New Filter'): Promise<string> {
+        return nextFreeFilterName(
+            await this.listFilterNamesInFolder(),
+            baseName
         );
-        if (path) return path;
-        throw new Error('Could not resolve file path');
     }
 
     /**
-     * Recursively search for a file handle starting from a directory
+     * Write a new filter file `<folder>/<name>.py` with `code`, without any
+     * UI, then refresh the sidebar. Rejects an invalid or taken name.
+     * @returns the new file's path
      */
-    private async resolvePathRecursive(
-        dirHandle: FileSystemDirectoryHandle,
-        targetHandle: FileSystemFileHandle,
-        currentPath: string
-    ): Promise<string | null> {
-        for await (const [name, handle] of (dirHandle as any).entries()) {
-            const itemPath =
-                currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
-
-            if (
-                handle.kind === 'file' &&
-                (await this.isSameHandle(handle, targetHandle))
-            ) {
-                return itemPath;
-            } else if (handle.kind === 'directory') {
-                const result = await this.resolvePathRecursive(
-                    handle,
-                    targetHandle,
-                    itemPath
-                );
-                if (result) return result;
-            }
+    async createFilterFile(
+        name: string,
+        code: string,
+        folder: string = this.USER_FILTERS_PATH
+    ): Promise<string> {
+        const adapter = settingsFolder.getAdapter();
+        if (!this.isDiskAdapterLike(adapter) || !adapter.hasDirectory()) {
+            throw new Error('Settings Folder not available');
         }
-        return null;
+        const nameError = validateFilterName(
+            name,
+            await this.listFilterNamesInFolder(folder)
+        );
+        if (nameError) {
+            throw new Error(nameError);
+        }
+        const filePath = `${folder}/${normalizeFilterName(name)}.py`;
+        markManagedFileInternalWrite(SETTINGS_FOLDER_SOURCE_ID, filePath);
+        try {
+            await adapter.writeFile(filePath, code);
+        } catch (error) {
+            cancelManagedFileInternalWrite(SETTINGS_FOLDER_SOURCE_ID, filePath);
+            throw error;
+        }
+        console.log('[GlyphOverviewFilters] Created new filter:', filePath);
+
+        // FileSystemObserver echo is suppressed via the internal-write marker.
+        await this.discoverUserFilters();
+        return filePath;
+    }
+
+    /** Current text of a filter file in the Settings Folder. */
+    async readFilterFile(filePath: string): Promise<string> {
+        const adapter = settingsFolder.getAdapter();
+        if (!this.isDiskAdapterLike(adapter) || !adapter.hasDirectory()) {
+            throw new Error('Settings Folder not available');
+        }
+        const content = await adapter.readFile(filePath);
+        return typeof content === 'string'
+            ? content
+            : new TextDecoder().decode(content);
     }
 
     /**
-     * Check if two file handles point to the same file
+     * Write `code` to an existing filter file, renaming it first when
+     * `newName` differs. The sidebar and an active filter refresh the same way
+     * as after a Script Editor save or a sidebar rename.
+     * @returns the file's path after the rename
      */
-    private async isSameHandle(
-        handle1: FileSystemFileHandle,
-        handle2: FileSystemFileHandle
-    ): Promise<boolean> {
+    async saveFilterFile(
+        filePath: string,
+        code: string,
+        newName?: string
+    ): Promise<string> {
+        const adapter = settingsFolder.getAdapter();
+        if (!this.isDiskAdapterLike(adapter) || !adapter.hasDirectory()) {
+            throw new Error('Settings Folder not available');
+        }
+        const slash = filePath.lastIndexOf('/');
+        const folder = filePath.slice(0, slash);
+        const oldFileName = filePath.slice(slash + 1);
+        const oldName = normalizeFilterName(oldFileName);
+        let targetPath = filePath;
+        const records: unknown[] = [];
+
+        if (newName !== undefined && normalizeFilterName(newName) !== oldName) {
+            const nameError = validateFilterName(
+                newName,
+                await this.listFilterNamesInFolder(folder),
+                oldName
+            );
+            if (nameError) {
+                throw new Error(nameError);
+            }
+            const newFileName = `${normalizeFilterName(newName)}.py`;
+            targetPath = `${folder}/${newFileName}`;
+            markManagedFileInternalWrite(SETTINGS_FOLDER_SOURCE_ID, filePath);
+            markManagedFileInternalWrite(SETTINGS_FOLDER_SOURCE_ID, targetPath);
+            await adapter.renameItem(filePath, newFileName, false);
+            filterChatRegistry.rename(filePath, targetPath);
+            records.push({
+                type: 'moved',
+                changedHandle: { name: newFileName },
+                relativePathMovedFrom: [oldFileName],
+                relativePathComponents: [newFileName]
+            });
+        }
+
+        markManagedFileInternalWrite(SETTINGS_FOLDER_SOURCE_ID, targetPath);
         try {
-            return await handle1.isSameEntry(handle2);
-        } catch {
-            return false;
+            await adapter.writeFile(targetPath, code);
+        } catch (error) {
+            cancelManagedFileInternalWrite(
+                SETTINGS_FOLDER_SOURCE_ID,
+                targetPath
+            );
+            throw error;
+        }
+
+        dispatchManagedFileChanged({
+            pluginId: SETTINGS_FOLDER_SOURCE_ID,
+            source: 'glyph-filter-editor',
+            paths: [targetPath],
+            records,
+            internalWrite: true
+        });
+        return targetPath;
+    }
+
+    /** Select a user filter in the sidebar, e.g. one the editor just created. */
+    activateUserFilterByPath(filePath: string): void {
+        const filter = this.userFilters.find((f) => f.filePath === filePath);
+        if (!filter) return;
+        const element = this.sidebarContainer?.querySelector<HTMLElement>(
+            `.glyph-filter-item[data-plugin-keyword="${filter.keyword}"]`
+        );
+        if (element) {
+            void this.activateFilter(filter, element);
         }
     }
 
@@ -3435,23 +3626,24 @@ export class GlyphOverviewFilterManager {
             }
             labelElement.style.display = '';
 
-            if (!newName || newName === displayName) {
-                return;
-            }
-
-            // Add .py extension if not present
-            if (!newName.endsWith('.py')) {
-                newName += '.py';
-            }
-
-            // Validate new name
-            if (newName.includes('/') || newName.includes('\\')) {
-                alert('Name cannot contain / or \\ characters');
+            if (!newName || normalizeFilterName(newName) === displayName) {
                 return;
             }
 
             try {
+                const folder = filePath.slice(0, filePath.lastIndexOf('/'));
+                const nameError = validateFilterName(
+                    newName,
+                    await this.listFilterNamesInFolder(folder),
+                    displayName
+                );
+                if (nameError) {
+                    alert(nameError);
+                    return;
+                }
+                newName = `${normalizeFilterName(newName)}.py`;
                 await adapter.renameItem(filePath, newName, false);
+                filterChatRegistry.rename(filePath, `${folder}/${newName}`);
                 console.log(
                     '[GlyphOverviewFilters] Renamed:',
                     filePath,
@@ -3517,6 +3709,7 @@ export class GlyphOverviewFilterManager {
         try {
             await adapter.deleteItem(filePath, false);
             console.log('[GlyphOverviewFilters] Deleted:', filePath);
+            filterChatRegistry.remove(filePath);
 
             // If this filter is currently active, clear it
             if (this.activeFilter === plugin) {

@@ -1,7 +1,8 @@
 /* Glyph Overview Styles */
 
-/* Main container for glyph tiles */
-#glyph-overview-container {
+/* Main container for glyph tiles (GlyphOverviewView; the main window's has the id) */
+#glyph-overview-container,
+.glyph-overview-container {
     --tile-width: 30px;
     --tile-height: 50px;
     --tile-columns: 1;
@@ -17,21 +18,26 @@
     user-select: none;
 }
 
-#glyph-overview-container.glyph-overview-grid-mode {
+#glyph-overview-container.glyph-overview-grid-mode,
+.glyph-overview-container.glyph-overview-grid-mode {
     display: block;
 }
 
-#glyph-overview-container.glyph-overview-lines-mode {
+#glyph-overview-container.glyph-overview-lines-mode,
+.glyph-overview-container.glyph-overview-lines-mode {
     display: grid;
     grid-template-columns: repeat(var(--tile-columns), minmax(0, 1fr));
     align-content: start;
 }
 
-#glyph-overview-container.glyph-overview-lines-mode .glyph-tile {
+#glyph-overview-container.glyph-overview-lines-mode .glyph-tile,
+.glyph-overview-container.glyph-overview-lines-mode .glyph-tile {
     width: 100%;
 }
 
 #glyph-overview-container.glyph-overview-lines-mode
+    [data-role^='virtual-spacer'],
+.glyph-overview-container.glyph-overview-lines-mode
     [data-role^='virtual-spacer'] {
     grid-column: 1 / -1;
 }

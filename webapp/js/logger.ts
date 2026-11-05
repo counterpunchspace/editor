@@ -21,6 +21,7 @@
 // true = enabled (normal logs will print)
 // false = disabled (only errors and warnings will print)
 export const FACILITY_REGISTRY: Record<string, boolean> = {
+    AssistantChat: false,
     AutomationRuntime: false,
     AutoCompileManager: false,
     BabelfontModel: false,
@@ -51,6 +52,7 @@ export const FACILITY_REGISTRY: Record<string, boolean> = {
     GlyphCanvas: false,
     GlyphData: false,
     GlyphOverview: false,
+    GlyphFilterEditor: false,
     GlyphOverviewFilters: false,
     GlyphTileRendererFast: false,
     HistoryView: false,

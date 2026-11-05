@@ -1,0 +1,700 @@
+/* Glyph filter editor modal. Built on .info-popup-overlay > .info-popup and
+ * .dialog-button from dialogs.css. Lines between sections use
+ * --border-primary; lines inside a section use the lighter --border-inner.
+ * Content areas are --code-bg; places you type in are --modal-bg. */
+
+.info-popup.gfe {
+    max-width: 960px;
+    width: calc(100% - 32px);
+    max-height: calc(100vh - 32px);
+    background-color: var(--code-bg);
+    font-size: 13px;
+}
+
+.gfe,
+.gfe *:not(.material-symbols-outlined) {
+    font-family: 'Inter UI', sans-serif;
+}
+
+/* The code editor keeps the Script Editor's monospaced font (set on
+   .ace_editor by Ace's fontFamily option). */
+.gfe .ace_editor * {
+    font-family: inherit;
+}
+
+/* Buttons with an icon (Update filter, Send) */
+.gfe .dialog-button,
+.gfe .assistant-send-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.gfe .dialog-button .material-symbols-outlined,
+.gfe .assistant-send-button .material-symbols-outlined {
+    font-size: 16px;
+}
+
+/* Header */
+.gfe-head {
+    display: grid;
+    gap: 6px;
+    padding: 12px 14px 10px 16px;
+    background-color: var(--background-secondary);
+    border-bottom: 1px solid var(--border-primary);
+    flex-shrink: 0;
+}
+
+.gfe-head-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.gfe-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background-color: var(--glyphfilter-context-bg);
+    color: var(--glyphfilter-context-text);
+    font-size: 11px;
+    font-weight: 500;
+    padding: 3px 8px 3px 6px;
+    border-radius: 4px;
+    white-space: nowrap;
+}
+
+.gfe-chip .material-symbols-outlined {
+    font-size: 15px;
+}
+
+.gfe-name {
+    flex: 0 1 380px;
+    min-width: 160px;
+    height: 30px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 8px;
+    background-color: var(--modal-bg);
+    border: 1px solid var(--border-control);
+    border-radius: 6px;
+    cursor: text;
+}
+
+.gfe-name:hover {
+    border-color: var(--text-secondary);
+}
+
+.gfe-name:focus-within {
+    border-color: var(--border-focus-outline);
+}
+
+.gfe-name.invalid {
+    border-color: var(--ai-error-text);
+}
+
+.gfe-name .material-symbols-outlined {
+    font-size: 16px;
+    color: var(--text-muted);
+}
+
+.gfe-name input {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    outline: none;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 13.5px;
+    font-weight: 600;
+}
+
+.gfe-name-suffix {
+    font-size: 12px;
+    color: var(--text-faint);
+}
+
+.gfe-name-error {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--ai-error-text);
+}
+
+.gfe-name-error .material-symbols-outlined {
+    font-size: 15px;
+}
+
+.gfe-mode {
+    margin-left: auto;
+    height: 30px;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: stretch;
+    gap: 2px;
+    padding: 2px;
+    background-color: var(--input-bg);
+    border: 1px solid var(--border-control);
+    border-radius: 6px;
+}
+
+.gfe-mode button {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 0 10px 0 8px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+}
+
+.gfe-mode button .material-symbols-outlined {
+    font-size: 16px;
+}
+
+.gfe-mode button[aria-pressed='true'] {
+    background-color: var(--modal-bg);
+    color: var(--text-primary);
+    box-shadow: 0 0 0 1px var(--border-primary);
+}
+
+.gfe-mode button:not([aria-pressed='true']):hover {
+    background-color: var(--background-hover);
+    color: var(--text-primary);
+}
+
+/* Bodies */
+.gfe-body {
+    display: grid;
+    gap: 12px;
+    padding: 16px;
+    min-height: 0;
+    overflow: auto;
+}
+
+.gfe-body[hidden],
+.gfe [hidden] {
+    display: none !important;
+}
+
+.gfe-field-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.gfe-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.gfe-help {
+    margin: 2px 0 0;
+    max-width: 72ch;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.gfe-desc {
+    width: 100%;
+    min-height: 96px;
+    box-sizing: border-box;
+    resize: vertical;
+    padding: 10px 12px;
+    background-color: var(--modal-bg);
+    border: 1px solid var(--border-secondary);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 15px;
+    line-height: 1.5;
+}
+
+.gfe-desc:focus {
+    outline: none;
+    border-color: var(--border-focus-outline);
+}
+
+.gfe-desc[readonly] {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.gfe-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+/* Small strip buttons (Examples, Show conversation, Show glyphs) */
+.gfe-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px 3px 6px;
+    border: 1px solid var(--border-inner);
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 12px;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.gfe-toggle:hover:not(:disabled) {
+    border-color: var(--text-secondary);
+    color: var(--text-primary);
+}
+
+.gfe-toggle:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.gfe-toggle .material-symbols-outlined {
+    font-size: 16px;
+}
+
+/* Examples popup content (inside the app's tippy) */
+.gfe-examples {
+    display: grid;
+    gap: 2px;
+    padding: 6px;
+    width: min(380px, calc(100vw - 64px));
+}
+
+.gfe-examples-title {
+    padding: 4px 8px 2px;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.gfe-example {
+    display: grid;
+    gap: 2px;
+    padding: 7px 8px;
+    border: 0;
+    border-radius: 4px;
+    background: none;
+    color: var(--text-primary);
+    text-align: left;
+    cursor: pointer;
+}
+
+.gfe-example:hover,
+.gfe-example:focus-visible {
+    background-color: var(--background-hover);
+    outline: none;
+}
+
+.gfe-example-text {
+    font-size: 12.5px;
+    line-height: 1.45;
+}
+
+.gfe-example-note {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+/* AI label next to Update filter and Send */
+.gfe-ai-note {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
+    border: 0;
+    background: none;
+    color: var(--text-faint);
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.gfe-ai-note .material-symbols-outlined {
+    font-size: 13px;
+}
+
+.gfe-ai-note:hover,
+.gfe-ai-note[aria-expanded='true'] {
+    color: var(--text-secondary);
+}
+
+/* Strips: conversation (Simple) and results (both modes) */
+.gfe-strip {
+    border-top: 1px solid var(--border-primary);
+    background-color: var(--code-bg);
+    flex-shrink: 0;
+}
+
+.gfe-strip-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 8px 14px;
+}
+
+.gfe-strip-head .gfe-spacer {
+    flex: 1 1 auto;
+}
+
+.gfe-count {
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.gfe-count b {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.gfe-status {
+    flex: 1 1 220px;
+    min-width: 0;
+    font-size: 12px;
+    color: var(--text-secondary);
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+}
+
+.gfe-status-icon {
+    font-size: 16px;
+    color: var(--text-muted);
+}
+
+.gfe-spinner {
+    display: block;
+    width: 14px;
+    height: 14px;
+    flex: none;
+    box-sizing: border-box;
+    border-radius: 50%;
+    border: 2px solid var(--border-primary);
+    border-top-color: var(--view-assistant);
+    /* The Assistant panel's spinner animation (style.css). */
+    animation: assistant-spin 0.8s linear infinite;
+}
+
+.gfe-status-slot {
+    display: flex;
+    align-items: center;
+    flex: none;
+}
+
+/* Chips fill the space between the count and the toggle and wrap there.
+   The width must not depend on the chips, since clampLegend() hides some
+   of them by measuring the rows. */
+.gfe-strip-head .glyph-filter-legend {
+    flex: 999 1 0;
+    min-width: 0;
+    /* Chip offsets are measured from the legend, not from a moving parent. */
+    position: relative;
+}
+
+.gfe-legend-more {
+    background: none;
+    font: inherit;
+    font-size: 11px;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+/* The legend sits in the results strip, which has its own dividers; the
+   overview's framing (padding, bottom border) does not apply here. */
+.gfe-strip-head .glyph-filter-legend {
+    padding: 0;
+    border-bottom: 0;
+}
+
+.gfe-strip-body {
+    border-top: 1px solid var(--border-inner);
+    max-height: 260px;
+    overflow: auto;
+}
+
+.gfe-conversation {
+    padding: 10px 14px;
+    background-color: var(--code-bg);
+}
+
+.gfe-glyphs {
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--border-inner);
+}
+
+.gfe-glyphs-tiles {
+    height: 340px;
+    min-height: 0;
+    position: relative;
+}
+
+.gfe-glyphs-empty {
+    padding: 12px 14px;
+    font-size: 12.5px;
+    color: var(--text-muted);
+}
+
+/* The overview widget's own controls on a line of their own. Same markup as
+ * the Overview title bar; only the dividers and the search box differ. */
+.gfe-glyphs .glyph-overview-bar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    height: 24px;
+    font-size: 11px;
+    border-bottom: 1px solid var(--border-inner);
+}
+
+.gfe-glyphs .glyph-overview-bar .view-title-button {
+    border-left-color: var(--border-inner);
+}
+
+.gfe-glyphs .glyph-overview-bar .view-title-field {
+    background-color: var(--modal-bg);
+    border-left-color: var(--border-inner);
+    border-right-color: var(--border-inner);
+}
+
+/* Expert mode: three panes edge to edge */
+.gfe-body.gfe-expert {
+    padding: 0;
+    gap: 0;
+}
+
+.gfe-expert-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+    min-height: 0;
+}
+
+.gfe-pane {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+}
+
+.gfe-pane + .gfe-pane {
+    border-left: 1px solid var(--border-primary);
+}
+
+.gfe-pane-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 37px;
+    box-sizing: border-box;
+    padding: 8px 14px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border-inner);
+}
+
+.gfe-pane-head .material-symbols-outlined {
+    font-size: 16px;
+    color: var(--text-muted);
+}
+
+.gfe-pane-label {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.gfe-pane-file {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11.5px;
+    color: var(--text-muted);
+}
+
+.gfe-desc-strip {
+    background-color: var(--code-bg);
+    border-bottom: 1px solid var(--border-primary);
+}
+
+.gfe-desc-strip .gfe-pane-head {
+    border-bottom: 0;
+    padding-bottom: 2px;
+    min-height: 0;
+}
+
+.gfe-desc-text {
+    padding: 0 14px 10px;
+    font-size: 13px;
+    color: var(--text-primary);
+}
+
+.gfe-badge {
+    padding: 1px 6px;
+    border-radius: 3px;
+    border: 1px solid var(--border-inner);
+    background-color: var(--input-bg);
+    color: var(--text-muted);
+    font-size: 10.5px;
+}
+
+.gfe-badge.warn {
+    color: var(--ai-error-text);
+}
+
+.gfe-code {
+    flex: 1 1 auto;
+    min-height: 340px;
+    position: relative;
+}
+
+/* The Ace instance: white text area, grey line-number gutter */
+.gfe-code .ace_editor {
+    position: absolute;
+    inset: 0;
+    background-color: var(--modal-bg);
+}
+
+.gfe-code .ace_gutter {
+    background-color: var(--code-bg);
+    border-right: 1px solid var(--border-inner);
+}
+
+.gfe-chat {
+    flex: 1 1 auto;
+    height: 0;
+    min-height: 440px;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    background-color: var(--code-bg);
+    overflow: hidden;
+}
+
+.gfe-chat-transcript {
+    min-height: 0;
+    overflow: auto;
+    background-color: var(--modal-bg);
+}
+
+.gfe-chat-input {
+    display: grid;
+    gap: 6px;
+    padding: 8px 8px 12px;
+    border-top: 1px solid var(--border-inner);
+    background-color: var(--code-bg);
+}
+
+.gfe-chat-input textarea {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: calc(1.4em + 14px);
+    max-height: 120px;
+    resize: none;
+    padding: 6px 10px;
+    background-color: var(--modal-bg);
+    border: 1px solid var(--border-primary);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.gfe-chat-input textarea:focus {
+    outline: none;
+    border-color: var(--border-focus-outline);
+}
+
+.gfe-chat-input textarea::placeholder {
+    color: var(--text-faint);
+}
+
+.gfe-chat > .assistant-access-gate {
+    grid-row: 2 / 4;
+}
+
+/* Footer */
+.gfe-foot {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 10px 14px;
+    border-top: 1px solid var(--border-primary);
+    background-color: var(--background-secondary);
+    font-size: 12px;
+    flex-shrink: 0;
+}
+
+.gfe-facts {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    flex: 1 1 260px;
+    min-width: 0;
+    color: var(--text-secondary);
+}
+
+.gfe-error {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--ai-error-text);
+    font-size: 11px;
+}
+
+.gfe-error .material-symbols-outlined {
+    font-size: 14px;
+}
+
+.gfe-hint {
+    color: var(--text-muted);
+}
+
+.gfe-confirm {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.gfe-confirm span {
+    font-size: 12.5px;
+    color: var(--text-primary);
+}
+
+@media (max-width: 760px) {
+    .gfe-expert-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .gfe-pane + .gfe-pane {
+        border-left: 0;
+        border-top: 1px solid var(--border-primary);
+    }
+
+    .gfe-code {
+        min-height: 280px;
+    }
+
+    .gfe-chat {
+        height: auto;
+        min-height: 380px;
+    }
+}

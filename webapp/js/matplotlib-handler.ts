@@ -104,7 +104,7 @@ import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
                             !elementNode.id &&
                             !elementNode.className &&
                             !elementNode.closest(
-                                '.view-title-bar, .overview-size-control'
+                                '.view-title-bar, .glyph-overview-bar, .overview-size-control'
                             )
                         ) {
                             console.log(
@@ -186,7 +186,7 @@ import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
         // Skip divs in UI controls or view elements
         if (
             div.closest(
-                '.view-title-bar, .overview-size-control, #glyph-overview-container'
+                '.view-title-bar, .glyph-overview-bar, .overview-size-control, .glyph-overview-container'
             )
         ) {
             return;

@@ -1,6 +1,10 @@
 /** Build the shared starter source for a simple glyph filter. */
 export function createGlyphFilterTemplate(name: string = 'New Filter'): string {
-    return `# "${name}" Filter
+    // The module docstring is the filter's description; it starts empty.
+    return `"""
+"""
+
+# "${name}" Filter
 #
 # A filter handles one glyph at a time.
 #

@@ -5000,8 +5000,7 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
 }
 
 #open-folder-container .folder-setup-callout,
-#assistant-login-container .folder-setup-callout,
-#assistant-subscription-container .folder-setup-callout {
+.assistant-access-gate .folder-setup-callout {
     max-width: 360px;
     width: 100%;
     margin-block: auto;
@@ -5457,9 +5456,10 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     display: none;
 }
 
-#assistant-login-container,
-#assistant-subscription-container {
-    display: none;
+/* "Sign In Required" / "Advanced Subscription Required": the Assistant panel
+   and the glyph filter editor. */
+.assistant-access-gate {
+    display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: flex-start;
@@ -5470,20 +5470,15 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     overflow-y: auto;
 }
 
-#assistant-messages {
-    flex: 1;
-    overflow-y: auto;
-    padding: 12px;
-    padding-bottom: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    scrollbar-width: none;
+/* The panel shows these from script. */
+#assistant-login-container,
+#assistant-subscription-container {
+    display: none;
 }
 
-#assistant-messages::-webkit-scrollbar {
-    width: 0;
-    display: none;
+#assistant-messages {
+    flex: 1;
+    padding-bottom: 0;
 }
 
 #assistant-input-container {
@@ -5591,227 +5586,14 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     margin-left: auto;
 }
 
-/* Assistant Message Styles */
-.assistant-message {
-    padding: 8px 12px;
-    border-radius: 4px;
-    font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
-    line-height: 1.5;
-    word-wrap: break-word;
-    overflow-wrap: break-word;
-}
-
-.assistant-message-user {
-    background-color: var(--background-secondary);
-    /* border: 1px solid var(--border-secondary); */
-    color: var(--text-primary);
-    align-self: flex-end;
-    max-width: 85%;
-}
-
-.assistant-message-assistant {
-    color: var(--text-primary);
-    align-self: flex-start;
-    max-width: 100%;
-}
-
-.assistant-message-assistant p {
-    margin: 4px 0;
-}
-
-.assistant-message-assistant p:first-child {
-    margin-top: 0;
-}
-
-.assistant-message-assistant p:last-child {
-    margin-bottom: 0;
-}
-
-.assistant-message-assistant pre {
-    background: var(--code-bg);
-    border: 1px solid var(--border-primary);
-    border-radius: 4px;
-    padding: 8px;
-    overflow-x: auto;
-    font-size: 11px;
-    line-height: 1.4;
-}
-
-.assistant-message-assistant code {
-    font-family: var(--font-families-mono);
-    font-size: 11px;
-}
-
-.assistant-message-assistant code:not(pre code) {
-    background: var(--code-bg);
-    padding: 1px 4px;
-    border-radius: 3px;
-}
-
-.assistant-message-assistant ul,
-.assistant-message-assistant ol {
-    margin: 4px 0;
-    padding-left: 20px;
-}
-
-.assistant-message-assistant h1,
-.assistant-message-assistant h2,
-.assistant-message-assistant h3,
-.assistant-message-assistant h4 {
-    margin: 8px 0 4px;
-    font-weight: 500;
-    color: var(--text-primary);
-}
-
-.assistant-message-assistant h1 {
-    font-size: 14px;
-}
-.assistant-message-assistant h2 {
-    font-size: 13px;
-}
-.assistant-message-assistant h3 {
-    font-size: 12px;
-}
-
-/* Per-round usage metrics (dev mode only) */
-.assistant-round-metrics {
-    font-size: 10px;
-    color: var(--text-tertiary);
-    padding: 1px 0 4px 0;
-    font-family: var(--font-families-mono);
-    opacity: 0.65;
-}
-
-/* Tool-call line — sits between round-text containers in chronological order */
-.assistant-tool-call-line {
-    font-size: 10px;
-    color: var(--text-tertiary);
-    font-style: italic;
-    line-height: 1.6;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-}
-
-.assistant-tool-call-info-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 14px;
-    height: 14px;
-    border: none;
-    background: transparent;
-    color: var(--text-tertiary);
-    cursor: pointer;
-    border-radius: 50%;
-    font-size: 10px;
-    padding: 0;
-    opacity: 0.5;
-    transition: opacity 0.15s ease;
-    flex-shrink: 0;
-}
-
-.assistant-tool-call-info-btn:hover {
-    opacity: 1;
-    color: var(--text-primary);
-}
-
-.assistant-message-header {
-    margin-bottom: 10px;
-}
-
-.assistant-message-header .material-symbols-outlined {
-    font-size: 14px;
-}
-
-/* Assistant Messages Scrollbar */
-#assistant-messages::-webkit-scrollbar {
-    width: 0;
-    display: none;
-}
-
-#assistant-messages hr {
-    border: none;
-    border-top: 1px solid var(--border-primary);
-    margin: 12px 0;
-}
-
-/* Assistant Thinking indicator */
-.assistant-thinking {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 8px 12px;
-    color: var(--text-tertiary);
-    font-size: 11px;
-}
-
-.assistant-thinking .spinner {
-    width: 12px;
-    height: 12px;
-    border: 2px solid var(--border-primary);
-    border-top: 2px solid var(--view-assistant);
-    border-radius: 50%;
-    animation: assistant-spin 0.8s linear infinite;
-}
-
-/* Inline tool-call status line inside the assistant message */
-.assistant-tool-call-line {
-    font-size: 10px;
-    color: var(--text-faint);
-    font-style: italic;
-    padding: 0;
-    line-height: 1.4;
-    margin: 0;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    margin-top: 10px;
-    margin-left: 12px;
-    margin-bottom: 14px;
-}
-
-.assistant-tool-call-line button {
-    appearance: none;
-}
-
-.assistant-tool-call-line + .assistant-tool-call-line {
-    margin-top: -10px;
-}
-
-.assistant-tool-call-line button {
-    appearance: none;
-    border: none;
-    background: transparent;
-}
-
 @keyframes assistant-spin {
     to {
         transform: rotate(360deg);
     }
 }
 
-/* Error state */
-.assistant-message-error {
-    background-color: rgba(239, 65, 54, 0.1);
-    border: 1px solid var(--view-assistant);
-    color: var(--view-assistant);
-    align-self: flex-start;
-    max-width: 100%;
-}
-
+/* The transcript itself is styled by css/assistant-chat.css (.assistant-chat). */
 /* Assistant stream indicator (spinner + stop button) */
-.assistant-connection-dropped {
-    padding: 8px 12px;
-    margin: 4px 0;
-    background: rgba(239, 65, 54, 0.08);
-    border: 1px solid rgba(239, 65, 54, 0.25);
-    border-radius: 6px;
-    color: var(--accent-magenta);
-    font-size: 0.85em;
-    text-align: center;
-}
-
 #assistant-stream-indicator {
     display: flex;
     align-items: center;

@@ -1,7 +1,7 @@
 export const MANAGED_FILE_CHANGED_EVENT = 'managedFileChanged';
 
 export type ManagedFileChangeSource =
-    'script-editor-save' | 'file-system-observer';
+    'script-editor-save' | 'glyph-filter-editor' | 'file-system-observer';
 
 const INTERNAL_WRITE_TTL_MS = 5000;
 const pendingInternalWrites = new Map<string, number>();

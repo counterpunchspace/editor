@@ -676,61 +676,8 @@
                                 </div>
                                 <div class="view-title-actions"></div>
                             </div>
-                            <div class="view-title-right">
-                                <div
-                                    class="overview-mode-toggle"
-                                    role="group"
-                                    aria-label="Overview mode"
-                                >
-                                    <button
-                                        id="overview-mode-lines"
-                                        class="view-title-button context-tab overview-mode-btn"
-                                        title="Normal Mode"
-                                        aria-label="Normal Mode"
-                                        aria-pressed="false"
-                                    >
-                                        <span class="material-symbols-outlined"
-                                            >border_all</span
-                                        >
-                                    </button>
-                                    <button
-                                        id="overview-mode-grid"
-                                        class="view-title-button context-tab overview-mode-btn"
-                                        title="Matrix Mode"
-                                        aria-label="Matrix Mode"
-                                        aria-pressed="false"
-                                    >
-                                        <span class="material-symbols-outlined"
-                                            >crossword</span
-                                        >
-                                    </button>
-                                </div>
-                                <div
-                                    class="view-title-field overview-search-control"
-                                >
-                                    <span
-                                        class="material-symbols-outlined overview-search-icon"
-                                        >search</span
-                                    >
-                                    <input
-                                        type="text"
-                                        class="overview-search-input"
-                                        id="overview-search-input"
-                                        placeholder="Search glyphs..."
-                                    />
-                                </div>
-                                <div class="overview-size-control">
-                                    <input
-                                        type="range"
-                                        class="overview-size-slider"
-                                        id="overview-size-slider"
-                                        min="0"
-                                        max="10"
-                                        step="1"
-                                        value="5"
-                                    />
-                                </div>
-                            </div>
+                            <!-- Mode switch, search and size slider: GlyphOverviewView -->
+                            <div class="view-title-right"></div>
                         </div>
                         <div class="view-content" id="overview-content"></div>
                     </div>
@@ -941,6 +888,7 @@
                             <!-- Login prompt for unauthenticated users -->
                             <div
                                 id="assistant-login-container"
+                                class="assistant-access-gate"
                                 style="display: none"
                             >
                                 <div
@@ -975,6 +923,7 @@
                             <!-- Subscription required message -->
                             <div
                                 id="assistant-subscription-container"
+                                class="assistant-access-gate"
                                 style="display: none"
                             >
                                 <div

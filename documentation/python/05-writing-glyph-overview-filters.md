@@ -33,7 +33,7 @@ def classify_glyph(glyph):
 
 `is_candidate()` does not need to predict the final answer. It only decides whether `classify_glyph()` is worth calling. A candidate may still return `None`. For a filter that finds glyphs without anchors, do not use a gate: both anchor-bearing and anchorless glyphs must be classified.
 
-`EVENT_TYPES` lists only glyph-content changes that can change this filter's answer. The app reclassifies the affected glyph after a matching committed edit. Do not subscribe to `glyph.created`, `glyph.deleted`, `glyph.renamed`, or `font.masters.changed`. The app always manages those. It also emits `glyph.compatibility.changed` only when a glyph's compatibility actually changes, so compatibility filters should subscribe to that targeted event.
+`EVENT_TYPES` lists only glyph-content changes that can change this filter's answer. The app reclassifies the affected glyph after a matching committed edit. Do not subscribe to `glyph.created`, `glyph.deleted`, `glyph.renamed`, or `font.masters.changed`. The app always manages those. A filter that only looks at glyph names has no such events and uses `EVENT_TYPES = []`; it still updates when glyphs are added, renamed or removed. It also emits `glyph.compatibility.changed` only when a glyph's compatibility actually changes, so compatibility filters should subscribe to that targeted event.
 
 Supported event types:
 
