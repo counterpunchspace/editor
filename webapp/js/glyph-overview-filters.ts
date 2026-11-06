@@ -20,10 +20,20 @@ import {
     getTheme,
     setupMenuKeyboardNav
 } from './tippy-utils';
-import { createGlyphFilterTemplate } from './glyph-filter-template';
+import {
+    buildGlyphFilterLegendGroups,
+    countGlyphsPerGroup,
+    renderGlyphFilterLegend
+} from './glyph-filter-legend';
+import {
+    nextFreeFilterName,
+    normalizeFilterName,
+    validateFilterName
+} from './glyph-filter-names';
 import {
     MANAGED_FILE_CHANGED_EVENT,
     cancelManagedFileInternalWrite,
+    dispatchManagedFileChanged,
     extractManagedChangedPaths,
     markManagedFileInternalWrite,
     normalizeManagedPath,
@@ -44,6 +54,16 @@ import {
     type GlyphFilterLifecycleChange
 } from './glyph-filter-change-derivation';
 import { getGlyphFilterIds, setGlyphFilterIds } from './window-ui-state';
+import { filterChatRegistry } from './glyph-filter-chat';
+import { showProceedDialog } from './ui/confirm-dialog';
+
+/** Drag data type of a user filter being moved between folders. */
+const USER_FILTER_DRAG_TYPE = 'application/x-counterpunch-user-filter';
+/**
+ * Folders under Filters/ nest at most this deep: user filters are listed
+ * three levels down from the Settings Folder (Filters/Folder/Subfolder).
+ */
+const USER_FILTER_MAX_FOLDER_DEPTH = 2;
 
 const console = new Logger('GlyphOverviewFilters');
 
@@ -173,6 +193,54 @@ interface RefreshPluginsOptions {
 }
 
 const ALL_GLYPHS_FILTER_KEYWORD = 'com.context.allglyphs';
+
+/** A problem in unsaved filter code. `line` is 1-based when known. */
+export interface GlyphFilterSourceError {
+    kind: 'syntax' | 'contract' | 'runtime' | 'timeout';
+    message: string;
+    line?: number;
+}
+
+export interface GlyphFilterSourceValidation {
+    eventTypes: GlyphFilterEventType[];
+    errors: GlyphFilterSourceError[];
+}
+
+export interface GlyphFilterPreviewGroup {
+    name: string;
+    /** CSS color; empty when the group has none. */
+    color: string;
+    count: number;
+}
+
+/** Dry run of unsaved filter code on the open font. */
+export interface GlyphFilterPreviewResult {
+    ok: boolean;
+    /** Matching glyphs in font order (overview glyph ids are names). */
+    glyphNames: string[];
+    /**
+     * One entry per matching glyph with its group keywords and resolved
+     * colors; pass to `GlyphOverviewView.setGroups`.
+     */
+    results: FilterResult[];
+    /** Groups in first-seen order with their glyph counts. */
+    groups: GlyphFilterPreviewGroup[];
+    eventTypes: GlyphFilterEventType[];
+    errors: GlyphFilterSourceError[];
+}
+
+/** Namespace keyword for dry runs; never collides with `user.*` filters. */
+const PREVIEW_FILTER_KEYWORD = 'preview';
+
+const FILTER_SYNTAX_CHECK = [
+    'def _cp_filter_syntax_error(source):',
+    '    try:',
+    "        compile(source, '<filter>', 'exec')",
+    '    except SyntaxError as error:',
+    "        return f'{error.lineno or 0}\\n{error.msg}'",
+    "    return ''",
+    '_cp_filter_syntax_error(__glyph_filter_check_source)'
+].join('\n');
 
 /** Empty batch requests a host-owned full cache rebuild. */
 const FULL_FILTER_REBUILD_BATCH: GlyphFilterChangeBatch = { changes: [] };
@@ -1286,6 +1354,15 @@ export class GlyphOverviewFilterManager {
                 }
             }
 
+            // Folders show even when they hold no filters yet.
+            const folders = await this.listUserFilterFolders();
+            if (!isCurrentScan()) {
+                return;
+            }
+            for (const folder of folders) {
+                this.addUserFolderToTree(folder);
+            }
+
             console.log(
                 `Loaded ${this.userFilters.length} user filter(s):`,
                 this.userFilters.map((f) => f.display_name)
@@ -1410,9 +1487,12 @@ export class GlyphOverviewFilterManager {
         eventTypes: GlyphFilterEventType[];
         diagnostic?: string;
     } {
-        const eventTypesMatch = code.match(
-            /^\s*EVENT_TYPES\s*=\s*([\[\(\{])([\s\S]*?)[\]\)\}]/m
-        );
+        // An empty list is valid: a filter that only reads glyph names has no
+        // content events, and the host re-checks created, renamed and deleted
+        // glyphs for every filter.
+        const eventTypesMatch =
+            code.match(/^\s*EVENT_TYPES\s*=\s*([\[\(\{])([\s\S]*?)[\]\)\}]/m) ??
+            code.match(/^\s*EVENT_TYPES\s*=\s*set\s*\(()()\s*\)/m);
         if (!eventTypesMatch) {
             return {
                 eventTypes: [],
@@ -1422,8 +1502,11 @@ export class GlyphOverviewFilterManager {
         const quotedEvents = [
             ...eventTypesMatch[2].matchAll(/['"]([^'"]+)['"]/g)
         ].map((match) => match[1]);
+        const onlyQuotedEvents =
+            eventTypesMatch[2].replace(/['"][^'"]*['"]|#[^\n]*|[\s,]/g, '') ===
+            '';
         if (
-            quotedEvents.length === 0 ||
+            !onlyQuotedEvents ||
             quotedEvents.some((eventType) => !isGlyphFilterEventType(eventType))
         ) {
             return {
@@ -1448,6 +1531,171 @@ export class GlyphOverviewFilterManager {
         }
         return {
             eventTypes: [...new Set(quotedEvents)] as GlyphFilterEventType[]
+        };
+    }
+
+    /**
+     * Check unsaved filter code: Python syntax (when Pyodide is loaded), a
+     * literal EVENT_TYPES and classify_glyph(glyph). Runs nothing.
+     */
+    validateFilterSource(code: string): GlyphFilterSourceValidation {
+        const errors: GlyphFilterSourceError[] = [];
+        const pyodide = window.pyodide as FilterPyodide | undefined;
+        if (pyodide) {
+            pyodide.globals.set('__glyph_filter_check_source', code);
+            const syntax = this.runFilterPython(FILTER_SYNTAX_CHECK);
+            if (typeof syntax === 'string' && syntax) {
+                const newline = syntax.indexOf('\n');
+                const line = Number(syntax.slice(0, newline));
+                errors.push({
+                    kind: 'syntax',
+                    message: syntax.slice(newline + 1),
+                    ...(line > 0 ? { line } : {})
+                });
+            }
+        }
+        const inspection = this.inspectUserFilterSource(code);
+        if (inspection.diagnostic) {
+            errors.push({ kind: 'contract', message: inspection.diagnostic });
+        }
+        return { eventTypes: inspection.eventTypes, errors };
+    }
+
+    /**
+     * Dry run: classify every glyph of the open font with unsaved `code`
+     * through the same Python path as a saved user filter. Leaves the plugin
+     * cache, the active filter, the overview and the sidebar alone.
+     */
+    private dropFilterNamespace(namespace: string): void {
+        try {
+            this.getFilterPyodide().globals.set(
+                '__glyph_filter_namespace',
+                namespace
+            );
+            this.runFilterPython(
+                'globals().pop(__glyph_filter_namespace, None)'
+            );
+        } catch (error) {
+            console.warn('Could not drop filter namespace:', error);
+        }
+    }
+
+    async previewFilter(code: string): Promise<GlyphFilterPreviewResult> {
+        const empty = (
+            errors: GlyphFilterSourceError[],
+            eventTypes: GlyphFilterEventType[] = []
+        ): GlyphFilterPreviewResult => ({
+            ok: false,
+            glyphNames: [],
+            results: [],
+            groups: [],
+            eventTypes,
+            errors
+        });
+
+        let validation: GlyphFilterSourceValidation;
+        try {
+            validation = this.validateFilterSource(code);
+        } catch (error) {
+            return empty([
+                {
+                    kind: 'runtime',
+                    message:
+                        error instanceof Error ? error.message : String(error)
+                }
+            ]);
+        }
+        if (validation.errors.length > 0) {
+            return empty(validation.errors, validation.eventTypes);
+        }
+        const font = window.currentFontModel;
+        if (!font) {
+            return empty(
+                [{ kind: 'runtime', message: 'No font is open.' }],
+                validation.eventTypes
+            );
+        }
+
+        const plugin: GlyphFilterPlugin = {
+            path: 'user',
+            keyword: PREVIEW_FILTER_KEYWORD,
+            display_name: 'Preview',
+            instance: null,
+            groups: {},
+            eventTypes: validation.eventTypes,
+            isUserFilter: true,
+            pythonCode: code,
+            classifications: new Map()
+        };
+
+        let timeoutId: number | undefined;
+        try {
+            await Promise.race([
+                Promise.resolve().then(() => {
+                    this.classifyGlyphs(plugin, font.glyphs || []);
+                    this.derivePluginResults(plugin);
+                }),
+                new Promise<never>((_, reject) => {
+                    timeoutId = window.setTimeout(() => {
+                        reject(
+                            new Error(
+                                `Filter timed out after ${this.FILTER_TIMEOUT_MS}ms`
+                            )
+                        );
+                    }, this.FILTER_TIMEOUT_MS);
+                })
+            ]);
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            return empty(
+                [
+                    {
+                        kind: message.startsWith('Filter timed out')
+                            ? 'timeout'
+                            : 'runtime',
+                        message
+                    }
+                ],
+                validation.eventTypes
+            );
+        } finally {
+            window.clearTimeout(timeoutId);
+            if (plugin.sourceNamespace) {
+                this.dropFilterNamespace(plugin.sourceNamespace);
+            }
+        }
+
+        const { results, usedGroupKeywords, augmentedGroups } =
+            this.processFilterResults(
+                plugin.lastResults || [],
+                plugin.groups || {}
+            );
+        const counts = countGlyphsPerGroup(results);
+        const groups: GlyphFilterPreviewGroup[] = [...usedGroupKeywords].map(
+            (name) => ({
+                name,
+                color: augmentedGroups[name]?.color || '',
+                count: counts.get(name) || 0
+            })
+        );
+        const byName = new Map(
+            results.map((result) => [result.glyph_name, result])
+        );
+        const ordered: FilterResult[] = [];
+        for (const glyph of font.glyphs || []) {
+            const result = byName.get(glyph.name);
+            if (result) {
+                ordered.push(result);
+            }
+        }
+        return {
+            ok: true,
+            glyphNames: ordered.map((result) => result.glyph_name),
+            results: ordered,
+            groups,
+            eventTypes: validation.eventTypes,
+            errors: []
         };
     }
 
@@ -1615,6 +1863,73 @@ export class GlyphOverviewFilterManager {
         currentNode.plugins.push(filter);
     }
 
+    /** Add an (empty) folder, relative to Filters/, to the user tree. */
+    private addUserFolderToTree(folderPath: string): void {
+        const parts = folderPath.split('/');
+        let currentNode = this.userFiltersNode;
+        for (let i = 0; i < parts.length; i++) {
+            const part = parts[i];
+            if (!currentNode.children.has(part)) {
+                currentNode.children.set(part, {
+                    path: `user/${parts.slice(0, i + 1).join('/')}`,
+                    displayName: part,
+                    children: new Map(),
+                    plugins: [],
+                    expanded: true
+                });
+            }
+            currentNode = currentNode.children.get(part)!;
+        }
+    }
+
+    /** Folders under Filters/, relative to it, down to the nesting limit. */
+    async listUserFilterFolders(): Promise<string[]> {
+        const adapter = settingsFolder.getAdapter();
+        if (!this.isDiskAdapterLike(adapter) || !adapter.hasDirectory()) {
+            return [];
+        }
+        const folders: string[] = [];
+        const scan = async (relative: string, depth: number) => {
+            if (depth > USER_FILTER_MAX_FOLDER_DEPTH) return;
+            const path = relative
+                ? `${this.USER_FILTERS_PATH}/${relative}`
+                : this.USER_FILTERS_PATH;
+            let entries: Record<string, { is_dir?: boolean }>;
+            try {
+                entries = await adapter.scanDirectory(path);
+            } catch {
+                return;
+            }
+            for (const [name, info] of Object.entries(entries)) {
+                if (!info.is_dir || name.startsWith('.')) continue;
+                const child = relative ? `${relative}/${name}` : name;
+                folders.push(child);
+                await scan(child, depth + 1);
+            }
+        };
+        if (await adapter.fileExists(this.USER_FILTERS_PATH)) {
+            await scan('', 1);
+        }
+        return folders;
+    }
+
+    /** Settings Folder path of a user tree folder node (`user/A/B`). */
+    private userFolderFsPath(node: TreeNode): string {
+        const relative = node.path.replace(/^user\/?/, '');
+        return relative
+            ? `${this.USER_FILTERS_PATH}/${relative}`
+            : this.USER_FILTERS_PATH;
+    }
+
+    private userFolderDepth(node: TreeNode): number {
+        const relative = node.path.replace(/^user\/?/, '');
+        return relative ? relative.split('/').length : 0;
+    }
+
+    private isUserFolderNode(node: TreeNode): boolean {
+        return node.path === 'user' || node.path.startsWith('user/');
+    }
+
     /**
      * Check if a path is valid (exists in FILTER_PATHS)
      */
@@ -1701,9 +2016,20 @@ export class GlyphOverviewFilterManager {
                 '<span class="material-symbols-outlined">add</span>';
             newBtn.addEventListener('click', async (e) => {
                 e.stopPropagation();
-                await this.createNewFilter();
+                await this.openFilterEditor(null);
             });
             buttonContainer.appendChild(newBtn);
+
+            const newFolderBtn = document.createElement('button');
+            newFolderBtn.className = 'glyph-filter-new-folder-btn';
+            newFolderBtn.title = 'Create new folder';
+            newFolderBtn.innerHTML =
+                '<span class="material-symbols-outlined">create_new_folder</span>';
+            newFolderBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                await this.promptNewUserFolder(this.userFiltersNode);
+            });
+            buttonContainer.appendChild(newFolderBtn);
 
             const refreshBtn = document.createElement('button');
             refreshBtn.className = 'glyph-filter-refresh-btn';
@@ -1730,7 +2056,10 @@ export class GlyphOverviewFilterManager {
 
         if (!hasSettingsFolder) {
             userTreeContainer.appendChild(createFolderSetupCallout());
-        } else if (this.userFilters.length === 0) {
+        } else if (
+            this.userFilters.length === 0 &&
+            this.userFiltersNode.children.size === 0
+        ) {
             const emptyMsg = document.createElement('div');
             emptyMsg.className = 'glyph-filter-empty';
             emptyMsg.textContent = `No filters in ${this.USER_FILTERS_PATH}`;
@@ -1740,6 +2069,16 @@ export class GlyphOverviewFilterManager {
             this.renderUserFiltersTree(this.userFiltersNode, userTreeContainer);
         }
 
+        if (hasSettingsFolder) {
+            // Dropping on the section title or on empty space moves a filter
+            // to the top level of Filters/.
+            this.setupUserFilterDropTarget(header, this.userFiltersNode);
+            this.setupUserFilterDropTarget(
+                userTreeContainer,
+                this.userFiltersNode
+            );
+        }
+        this.userTreeContainer = userTreeContainer;
         this.sidebarContainer.appendChild(userTreeContainer);
     }
 
@@ -1795,6 +2134,19 @@ export class GlyphOverviewFilterManager {
             childContent.className = 'glyph-filter-node-content';
             childContent.style.display = childNode.expanded ? '' : 'none';
 
+            if (this.isUserFolderNode(childNode)) {
+                header.classList.add('glyph-filter-user-folder');
+                // The whole folder block, so dropping on a filter inside
+                // it lands in this folder.
+                this.setupUserFilterDropTarget(nodeElement, childNode);
+                this.setupUserFolderContextMenu(header, childNode, () => {
+                    childNode.expanded = true;
+                    toggle.textContent = 'expand_more';
+                    childContent.style.display = '';
+                    return childContent;
+                });
+            }
+
             // Render plugins in this node - sorted alphabetically
             const sortedPlugins = [...childNode.plugins].sort((a, b) =>
                 a.display_name.localeCompare(b.display_name, undefined, {
@@ -1834,14 +2186,8 @@ export class GlyphOverviewFilterManager {
             container.appendChild(pluginElement);
         }
 
-        // Then render child nodes (subfolders) - also sorted
-        const sortedChildren = Array.from(node.children.entries()).sort(
-            ([keyA], [keyB]) =>
-                keyA.localeCompare(keyB, undefined, { sensitivity: 'base' })
-        );
-        for (const [, childNode] of sortedChildren) {
-            this.renderTreeNode(childNode, container, 0);
-        }
+        // Then the folders, each with its header, filters and subfolders.
+        this.renderTreeNode(node, container, 0);
     }
 
     /**
@@ -1889,6 +2235,18 @@ export class GlyphOverviewFilterManager {
         // Add context menu for user filters
         if (plugin.isUserFilter && plugin.filePath) {
             this.setupUserFilterContextMenu(item, plugin);
+            const filePath = plugin.filePath;
+            item.draggable = true;
+            item.addEventListener('dragstart', (event) => {
+                event.dataTransfer?.setData(USER_FILTER_DRAG_TYPE, filePath);
+                if (event.dataTransfer) {
+                    event.dataTransfer.effectAllowed = 'move';
+                }
+                item.classList.add('dragging');
+            });
+            item.addEventListener('dragend', () => {
+                item.classList.remove('dragging');
+            });
         }
 
         return item;
@@ -1906,6 +2264,10 @@ export class GlyphOverviewFilterManager {
         // Build menu HTML (using same structure as file-browser context menus)
         const menuHtml = `
             <div class="plugin-menu">
+                <div class="plugin-menu-item" data-action="edit-filter">
+                    <span class="material-symbols-outlined">tune</span>
+                    <span>Edit Filter…</span>
+                </div>
                 <div class="plugin-menu-item" data-action="open-script-editor">
                     <span class="material-symbols-outlined">code</span>
                     <span>Open in Script Editor</span>
@@ -1959,6 +2321,9 @@ export class GlyphOverviewFilterManager {
                             element.classList.remove('context-menu-active');
 
                             switch (action) {
+                                case 'edit-filter':
+                                    await this.openFilterEditor(filePath);
+                                    break;
                                 case 'open-script-editor':
                                     await this.openFilterInScriptEditor(
                                         filePath
@@ -1984,6 +2349,11 @@ export class GlyphOverviewFilterManager {
             activeClass: 'context-menu-active'
         });
 
+        element.addEventListener('dblclick', (e) => {
+            e.preventDefault();
+            void this.openFilterEditor(filePath);
+        });
+
         // Right-click to show context menu
         element.addEventListener('contextmenu', (e) => {
             e.preventDefault();
@@ -2006,6 +2376,21 @@ export class GlyphOverviewFilterManager {
 
             tippyInstance.show();
         });
+    }
+
+    /** Open the glyph filter editor for a filter, or for a new one. */
+    async openFilterEditor(filePath: string | null): Promise<void> {
+        try {
+            const { openGlyphFilterEditor } =
+                await import('./glyph-filter-editor-modal');
+            await openGlyphFilterEditor({ filePath });
+        } catch (error) {
+            console.error('Could not open the filter editor:', error);
+            alert(
+                'Could not open the filter editor: ' +
+                    (error instanceof Error ? error.message : String(error))
+            );
+        }
     }
 
     /**
@@ -2740,75 +3125,24 @@ export class GlyphOverviewFilterManager {
     ): void {
         if (!this.groupLegendContainer) return;
 
-        // Clear existing content and reset group filters
-        this.groupLegendContainer.innerHTML = '';
+        // Reset group filters
         this.activeGroupFilters.clear();
-        this.groupElements.clear();
-
-        // If no groups used, hide the container
-        if (usedGroupKeywords.size === 0 || !plugin.groups) {
-            this.groupLegendContainer.style.display = 'none';
-            return;
-        }
-
-        // Count glyphs per group keyword (a glyph can be counted in multiple groups)
-        const groupCounts = new Map<string, number>();
-        if (plugin.lastResults) {
-            for (const result of plugin.lastResults) {
-                if (result.groups) {
-                    for (const groupKeyword of result.groups) {
-                        groupCounts.set(
-                            groupKeyword,
-                            (groupCounts.get(groupKeyword) || 0) + 1
-                        );
-                    }
-                }
+        const groups =
+            usedGroupKeywords.size === 0 || !plugin.groups
+                ? []
+                : buildGlyphFilterLegendGroups(
+                      plugin.groups,
+                      usedGroupKeywords,
+                      plugin.lastResults
+                  );
+        // Click to toggle group filter by keyword
+        this.groupElements = renderGlyphFilterLegend(
+            this.groupLegendContainer,
+            groups,
+            (keyword, item, event) => {
+                this.toggleGroupFilter(keyword, item, event);
             }
-        }
-
-        // Show container and add legend items
-        this.groupLegendContainer.style.display = '';
-
-        for (const keyword of usedGroupKeywords) {
-            const groupDef = plugin.groups[keyword];
-            if (!groupDef) continue;
-
-            const item = document.createElement('div');
-            item.className = 'glyph-filter-legend-item';
-            item.dataset.groupKeyword = keyword; // Store keyword for filtering
-            item.dataset.groupHex = groupDef.color || ''; // Keep color for reference
-            item.style.cursor = 'pointer';
-
-            // Only show circle if there's a color defined
-            if (groupDef.color) {
-                const circle = document.createElement('span');
-                circle.className = 'glyph-filter-legend-circle';
-                circle.style.backgroundColor = groupDef.color;
-                item.appendChild(circle);
-            }
-
-            const label = document.createElement('span');
-            label.className = 'glyph-filter-legend-label';
-            label.textContent = groupDef.description;
-
-            const count = document.createElement('span');
-            count.className = 'glyph-filter-legend-count';
-            count.textContent = String(groupCounts.get(keyword) || 0);
-
-            item.appendChild(label);
-            item.appendChild(count);
-
-            // Store element reference and keyword for later highlighting
-            this.groupElements.set(keyword, item);
-            item.dataset.groupKeyword = keyword;
-
-            // Click to toggle group filter by keyword
-            item.addEventListener('click', (e) => {
-                this.toggleGroupFilter(keyword, item, e);
-            });
-
-            this.groupLegendContainer.appendChild(item);
-        }
+        );
 
         // Update highlighting for currently selected glyphs
         this.updateGroupHighlighting();
@@ -3207,173 +3541,555 @@ export class GlyphOverviewFilterManager {
     }
 
     /**
-     * Create a new filter file using file picker
+     * Names (without `.py`) of the filter files directly in `folder`.
      */
-    private async createNewFilter(): Promise<void> {
+    async listFilterNamesInFolder(
+        folder: string = this.USER_FILTERS_PATH
+    ): Promise<string[]> {
         const adapter = settingsFolder.getAdapter();
         if (!this.isDiskAdapterLike(adapter) || !adapter.hasDirectory()) {
-            alert('Settings Folder not available');
+            return [];
+        }
+        if (!(await adapter.fileExists(folder))) {
+            return [];
+        }
+        const entries = await adapter.scanDirectory(folder);
+        return Object.entries(entries)
+            .filter(
+                ([name, info]) =>
+                    !info.is_dir && name.toLowerCase().endsWith('.py')
+            )
+            .map(([name]) => name.slice(0, -3));
+    }
+
+    /** First free "New Filter", "New Filter 2", … in the Filters folder. */
+    async getFreeFilterName(baseName: string = 'New Filter'): Promise<string> {
+        return nextFreeFilterName(
+            await this.listFilterNamesInFolder(),
+            baseName
+        );
+    }
+
+    /**
+     * Write a new filter file `<folder>/<name>.py` with `code`, without any
+     * UI, then refresh the sidebar. Rejects an invalid or taken name.
+     * @returns the new file's path
+     */
+    async createFilterFile(
+        name: string,
+        code: string,
+        folder: string = this.USER_FILTERS_PATH
+    ): Promise<string> {
+        const adapter = settingsFolder.getAdapter();
+        if (!this.isDiskAdapterLike(adapter) || !adapter.hasDirectory()) {
+            throw new Error('Settings Folder not available');
+        }
+        const nameError = validateFilterName(
+            name,
+            await this.listFilterNamesInFolder(folder)
+        );
+        if (nameError) {
+            throw new Error(nameError);
+        }
+        const filePath = `${folder}/${normalizeFilterName(name)}.py`;
+        markManagedFileInternalWrite(SETTINGS_FOLDER_SOURCE_ID, filePath);
+        try {
+            await adapter.writeFile(filePath, code);
+        } catch (error) {
+            cancelManagedFileInternalWrite(SETTINGS_FOLDER_SOURCE_ID, filePath);
+            throw error;
+        }
+        console.log('[GlyphOverviewFilters] Created new filter:', filePath);
+
+        // FileSystemObserver echo is suppressed via the internal-write marker.
+        await this.discoverUserFilters();
+        return filePath;
+    }
+
+    /** Current text of a filter file in the Settings Folder. */
+    async readFilterFile(filePath: string): Promise<string> {
+        const adapter = settingsFolder.getAdapter();
+        if (!this.isDiskAdapterLike(adapter) || !adapter.hasDirectory()) {
+            throw new Error('Settings Folder not available');
+        }
+        const content = await adapter.readFile(filePath);
+        return typeof content === 'string'
+            ? content
+            : new TextDecoder().decode(content);
+    }
+
+    /**
+     * Write `code` to an existing filter file, renaming it first when
+     * `newName` differs. The sidebar and an active filter refresh the same way
+     * as after a Script Editor save or a sidebar rename.
+     * @returns the file's path after the rename
+     */
+    async saveFilterFile(
+        filePath: string,
+        code: string,
+        newName?: string
+    ): Promise<string> {
+        const adapter = settingsFolder.getAdapter();
+        if (!this.isDiskAdapterLike(adapter) || !adapter.hasDirectory()) {
+            throw new Error('Settings Folder not available');
+        }
+        const slash = filePath.lastIndexOf('/');
+        const folder = filePath.slice(0, slash);
+        const oldFileName = filePath.slice(slash + 1);
+        const oldName = normalizeFilterName(oldFileName);
+        let targetPath = filePath;
+        const records: unknown[] = [];
+
+        if (newName !== undefined && normalizeFilterName(newName) !== oldName) {
+            const nameError = validateFilterName(
+                newName,
+                await this.listFilterNamesInFolder(folder),
+                oldName
+            );
+            if (nameError) {
+                throw new Error(nameError);
+            }
+            const newFileName = `${normalizeFilterName(newName)}.py`;
+            targetPath = `${folder}/${newFileName}`;
+            markManagedFileInternalWrite(SETTINGS_FOLDER_SOURCE_ID, filePath);
+            markManagedFileInternalWrite(SETTINGS_FOLDER_SOURCE_ID, targetPath);
+            await adapter.renameItem(filePath, newFileName, false);
+            filterChatRegistry.rename(filePath, targetPath);
+            records.push({
+                type: 'moved',
+                changedHandle: { name: newFileName },
+                relativePathMovedFrom: [oldFileName],
+                relativePathComponents: [newFileName]
+            });
+        }
+
+        markManagedFileInternalWrite(SETTINGS_FOLDER_SOURCE_ID, targetPath);
+        try {
+            await adapter.writeFile(targetPath, code);
+        } catch (error) {
+            cancelManagedFileInternalWrite(
+                SETTINGS_FOLDER_SOURCE_ID,
+                targetPath
+            );
+            throw error;
+        }
+
+        dispatchManagedFileChanged({
+            pluginId: SETTINGS_FOLDER_SOURCE_ID,
+            source: 'glyph-filter-editor',
+            paths: [targetPath],
+            records,
+            internalWrite: true
+        });
+        return targetPath;
+    }
+
+    // ── User filter folders ─────────────────────────────────────────────
+
+    private userTreeContainer: HTMLElement | null = null;
+
+    /** Names of the folders directly in `folder`. */
+    private async listFolderNamesIn(folder: string): Promise<string[]> {
+        const adapter = settingsFolder.getAdapter();
+        if (!this.isDiskAdapterLike(adapter) || !adapter.hasDirectory()) {
+            return [];
+        }
+        if (!(await adapter.fileExists(folder))) {
+            return [];
+        }
+        const entries = await adapter.scanDirectory(folder);
+        return Object.entries(entries)
+            .filter(([, info]) => info.is_dir)
+            .map(([name]) => name);
+    }
+
+    /**
+     * Ask for a folder name inline at the top of `parent` and create it.
+     * Same input and rules as renaming a filter.
+     */
+    async promptNewUserFolder(
+        parent: TreeNode,
+        host?: HTMLElement
+    ): Promise<void> {
+        if (this.userFolderDepth(parent) >= USER_FILTER_MAX_FOLDER_DEPTH) {
             return;
         }
+        const container = host ?? this.userTreeContainer;
+        if (!container) return;
+        container.querySelector('.glyph-filter-empty')?.remove();
 
-        try {
-            // Get the directory handle
-            const dirHandle = adapter.getDirectoryHandle();
-            if (!dirHandle) {
-                alert('Directory handle not available');
-                return;
-            }
-
-            // Navigate to Filters directory (create if doesn't exist)
-            const filtersDirParts = this.USER_FILTERS_PATH.split('/').filter(
-                (p) => p
-            );
-            let currentHandle = dirHandle;
-            for (const part of filtersDirParts) {
-                currentHandle = await currentHandle.getDirectoryHandle(part, {
-                    create: true
-                });
-            }
-
-            // Show save file picker starting from Filters directory
-            const fileHandle = await (window as any).showSaveFilePicker({
-                startIn: currentHandle,
-                suggestedName: 'New Filter.py',
-                types: [
-                    {
-                        description: 'Python Files',
-                        accept: { 'text/x-python': ['.py'] }
-                    }
-                ]
-            });
-
-            // Get the relative path from the root
-            let filePath = await this.getRelativePathFromHandle(
-                dirHandle,
-                fileHandle
-            );
-
-            // Ensure .py extension
-            if (!filePath.endsWith('.py')) {
-                filePath += '.py';
-            }
-
-            if (!filePath.startsWith(this.USER_FILTERS_PATH)) {
-                alert(`Filter must be saved under ${this.USER_FILTERS_PATH}`);
-                return;
-            }
-
-            // Extract filter name from file path
-            const fileName = filePath.split('/').pop() || 'filter';
-            const filterName = fileName.replace(/\.py$/, '');
-
-            // Create empty filter file with template
-            const template = createGlyphFilterTemplate(filterName);
-
-            // Write file using the file handle
-            markManagedFileInternalWrite(SETTINGS_FOLDER_SOURCE_ID, filePath);
-            try {
-                const writable = await fileHandle.createWritable();
-                await writable.write(template);
-                await writable.close();
-            } catch (error) {
-                cancelManagedFileInternalWrite(
-                    SETTINGS_FOLDER_SOURCE_ID,
-                    filePath
-                );
-                throw error;
-            }
-
-            console.log('[GlyphOverviewFilters] Created new filter:', filePath);
-
-            // Trigger refresh; FileSystemObserver echo is suppressed via the
-            // internal-write marker above.
-            await this.discoverUserFilters();
-
-            // Select the newly created filter
-            setTimeout(() => {
-                const newFilter = this.userFilters.find(
-                    (f) => f.filePath === filePath
-                );
-                if (newFilter) {
-                    const filterElement = this.sidebarContainer?.querySelector(
-                        `.glyph-filter-item[data-plugin-keyword="${newFilter.keyword}"]`
-                    ) as HTMLElement;
-                    if (filterElement) {
-                        this.activateFilter(newFilter, filterElement);
-                    }
-                }
-            }, 300);
-        } catch (error: any) {
-            if (error.name === 'AbortError') {
-                console.log('[GlyphOverviewFilters] File creation cancelled');
-                return;
-            }
-            console.error(
-                '[GlyphOverviewFilters] Error creating filter:',
-                error
-            );
-            alert(`Error creating filter: ${error.message}`);
-        }
-    }
-
-    /**
-     * Get relative path from root directory handle to a file handle
-     */
-    private async getRelativePathFromHandle(
-        rootHandle: FileSystemDirectoryHandle,
-        targetHandle: FileSystemFileHandle
-    ): Promise<string> {
-        // Try to resolve the path by checking if we can get to the target from root
-        const path = await this.resolvePathRecursive(
-            rootHandle,
-            targetHandle,
-            '/'
+        const row = document.createElement('div');
+        row.className = 'glyph-filter-node-header glyph-filter-new-folder';
+        row.style.setProperty(
+            '--glyph-filter-node-depth',
+            String(this.userFolderDepth(parent))
         );
-        if (path) return path;
-        throw new Error('Could not resolve file path');
-    }
+        row.innerHTML =
+            '<span class="glyph-filter-toggle material-symbols-outlined">folder</span>';
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'glyph-filter-rename-input';
+        input.placeholder = 'Folder name';
+        input.addEventListener('click', (e) => e.stopPropagation());
+        row.appendChild(input);
+        container.prepend(row);
+        input.focus();
 
-    /**
-     * Recursively search for a file handle starting from a directory
-     */
-    private async resolvePathRecursive(
-        dirHandle: FileSystemDirectoryHandle,
-        targetHandle: FileSystemFileHandle,
-        currentPath: string
-    ): Promise<string | null> {
-        for await (const [name, handle] of (dirHandle as any).entries()) {
-            const itemPath =
-                currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
-
-            if (
-                handle.kind === 'file' &&
-                (await this.isSameHandle(handle, targetHandle))
-            ) {
-                return itemPath;
-            } else if (handle.kind === 'directory') {
-                const result = await this.resolvePathRecursive(
-                    handle,
-                    targetHandle,
-                    itemPath
-                );
-                if (result) return result;
-            }
+        const name = await new Promise<string | null>((resolve) => {
+            let done = false;
+            const finish = (value: string | null) => {
+                if (done) return;
+                done = true;
+                row.remove();
+                resolve(value);
+            };
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    finish(input.value);
+                } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    finish(null);
+                }
+            });
+            input.addEventListener('blur', () => finish(input.value));
+        });
+        if (name === null || !name.trim()) {
+            this.renderSidebar();
+            return;
         }
-        return null;
+        try {
+            await this.createUserFilterFolder(
+                this.userFolderFsPath(parent),
+                name
+            );
+        } catch (error) {
+            alert(error instanceof Error ? error.message : String(error));
+            this.renderSidebar();
+        }
+    }
+
+    /** Create `<parentFolder>/<name>` and refresh the sidebar. */
+    async createUserFilterFolder(
+        parentFolder: string,
+        name: string
+    ): Promise<string> {
+        const adapter = settingsFolder.getAdapter();
+        if (!this.isDiskAdapterLike(adapter) || !adapter.hasDirectory()) {
+            throw new Error('Settings Folder not available');
+        }
+        const trimmed = name.trim();
+        const nameError = validateFilterName(
+            trimmed,
+            await this.listFolderNamesIn(parentFolder),
+            undefined,
+            'folder'
+        );
+        if (nameError) {
+            throw new Error(nameError);
+        }
+        const folderPath = `${parentFolder}/${trimmed}`;
+        markManagedFileInternalWrite(SETTINGS_FOLDER_SOURCE_ID, folderPath);
+        await adapter.createFolder(folderPath);
+        await this.discoverUserFilters(true);
+        return folderPath;
     }
 
     /**
-     * Check if two file handles point to the same file
+     * Delete a folder under Filters/. A folder with filters or subfolders
+     * asks first and says what goes with it.
      */
-    private async isSameHandle(
-        handle1: FileSystemFileHandle,
-        handle2: FileSystemFileHandle
-    ): Promise<boolean> {
+    async deleteUserFilterFolder(node: TreeNode): Promise<void> {
+        const adapter = settingsFolder.getAdapter();
+        if (!this.isDiskAdapterLike(adapter) || !adapter.hasDirectory()) {
+            return;
+        }
+        const folderPath = this.userFolderFsPath(node);
+        if (folderPath === this.USER_FILTERS_PATH) return;
+        const files = await adapter.listFilesRecursive(folderPath, 3);
+        const filters = files.filter((file) => file.path.endsWith('.py'));
+        const otherFiles = files.length - filters.length;
+        const subfolders = (await this.listUserFilterFolders()).filter(
+            (folder) =>
+                `${this.USER_FILTERS_PATH}/${folder}`.startsWith(
+                    `${folderPath}/`
+                )
+        ).length;
+
+        const contents: string[] = [];
+        if (filters.length) {
+            contents.push(
+                `${filters.length} filter${filters.length === 1 ? '' : 's'}`
+            );
+        }
+        if (subfolders) {
+            contents.push(
+                `${subfolders} subfolder${subfolders === 1 ? '' : 's'}`
+            );
+        }
+        if (otherFiles) {
+            contents.push(
+                `${otherFiles} other file${otherFiles === 1 ? '' : 's'}`
+            );
+        }
+        if (contents.length) {
+            const proceed = await showProceedDialog(
+                `Delete folder “${node.displayName}”?`,
+                `It contains ${
+                    contents.length > 1
+                        ? `${contents.slice(0, -1).join(', ')} and ${contents[contents.length - 1]}`
+                        : contents[0]
+                }, which will be deleted with it. This cannot be undone.`,
+                { proceedLabel: 'Delete', danger: true }
+            );
+            if (!proceed) return;
+        }
+
         try {
-            return await handle1.isSameEntry(handle2);
-        } catch {
-            return false;
+            markManagedFileInternalWrite(SETTINGS_FOLDER_SOURCE_ID, folderPath);
+            for (const file of files) {
+                markManagedFileInternalWrite(
+                    SETTINGS_FOLDER_SOURCE_ID,
+                    file.path
+                );
+            }
+            await adapter.deleteItem(folderPath, true);
+            const inside = (path: string | undefined) =>
+                !!path && path.startsWith(`${folderPath}/`);
+            for (const file of filters) {
+                filterChatRegistry.remove(file.path);
+            }
+            if (inside(this.activeFilter?.filePath)) {
+                this.clearActiveFilter();
+            }
+            await this.discoverUserFilters(true);
+        } catch (error) {
+            console.error('Error deleting filter folder:', error);
+            alert(
+                'Error deleting folder: ' +
+                    (error instanceof Error ? error.message : String(error))
+            );
+        }
+    }
+
+    /**
+     * Move a user filter into another folder under Filters/. A filter with
+     * the same name there is replaced only after the user confirms.
+     * @returns the new path, or null when nothing moved
+     */
+    async moveUserFilter(
+        filePath: string,
+        targetFolder: string
+    ): Promise<string | null> {
+        const adapter = settingsFolder.getAdapter();
+        if (!this.isDiskAdapterLike(adapter) || !adapter.hasDirectory()) {
+            return null;
+        }
+        const slash = filePath.lastIndexOf('/');
+        const sourceFolder = filePath.slice(0, slash);
+        const fileName = filePath.slice(slash + 1);
+        if (sourceFolder === targetFolder) return null;
+        if (
+            targetFolder !== this.USER_FILTERS_PATH &&
+            !targetFolder.startsWith(`${this.USER_FILTERS_PATH}/`)
+        ) {
+            return null;
+        }
+
+        const name = normalizeFilterName(fileName);
+        const existing = (
+            await this.listFilterNamesInFolder(targetFolder)
+        ).find((other) => other.toLowerCase() === name.toLowerCase());
+        if (existing !== undefined) {
+            const folderName =
+                targetFolder === this.USER_FILTERS_PATH
+                    ? 'Filters'
+                    : targetFolder.slice(targetFolder.lastIndexOf('/') + 1);
+            const replace = await showProceedDialog(
+                `Replace “${existing}”?`,
+                `A filter named “${existing}” already exists in “${folderName}”. Replace it with the one you are moving? This cannot be undone.`,
+                { proceedLabel: 'Replace', danger: true }
+            );
+            if (!replace) return null;
+        }
+
+        const targetPath = `${targetFolder}/${fileName}`;
+        try {
+            const code = await this.readFilterFile(filePath);
+            markManagedFileInternalWrite(SETTINGS_FOLDER_SOURCE_ID, filePath);
+            markManagedFileInternalWrite(SETTINGS_FOLDER_SOURCE_ID, targetPath);
+            if (existing !== undefined) {
+                const existingPath = `${targetFolder}/${existing}.py`;
+                markManagedFileInternalWrite(
+                    SETTINGS_FOLDER_SOURCE_ID,
+                    existingPath
+                );
+                // Removed first, so a name that differs only in case does
+                // not keep the old spelling on case-insensitive disks.
+                await adapter.deleteItem(existingPath, false);
+                filterChatRegistry.remove(existingPath);
+            }
+            await adapter.writeFile(targetPath, code);
+            await adapter.deleteItem(filePath, false);
+        } catch (error) {
+            console.error('Error moving filter:', error);
+            alert(
+                'Error moving filter: ' +
+                    (error instanceof Error ? error.message : String(error))
+            );
+            await this.discoverUserFilters(true);
+            return null;
+        }
+        filterChatRegistry.rename(filePath, targetPath);
+
+        // Same refresh as a rename: an active filter stays active.
+        const relative = (path: string) =>
+            path.slice(this.USER_FILTERS_PATH.length + 1).split('/');
+        dispatchManagedFileChanged({
+            pluginId: SETTINGS_FOLDER_SOURCE_ID,
+            source: 'glyph-filter-editor',
+            paths: [filePath, targetPath],
+            records: [
+                {
+                    type: 'moved',
+                    changedHandle: { name: fileName },
+                    relativePathMovedFrom: relative(filePath),
+                    relativePathComponents: relative(targetPath)
+                }
+            ],
+            internalWrite: true
+        });
+        return targetPath;
+    }
+
+    /** Accept user filters dropped on a folder (or the Filters root). */
+    private setupUserFilterDropTarget(
+        element: HTMLElement,
+        folder: TreeNode
+    ): void {
+        const carriesFilter = (event: DragEvent) =>
+            !!event.dataTransfer?.types.includes(USER_FILTER_DRAG_TYPE);
+        element.addEventListener('dragover', (event) => {
+            if (!carriesFilter(event)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+            element.classList.add('drop-target');
+        });
+        element.addEventListener('dragleave', (event) => {
+            if (
+                event.relatedTarget instanceof Node &&
+                element.contains(event.relatedTarget)
+            ) {
+                return;
+            }
+            element.classList.remove('drop-target');
+        });
+        element.addEventListener('drop', (event) => {
+            if (!carriesFilter(event)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            element.classList.remove('drop-target');
+            const filePath = event.dataTransfer?.getData(USER_FILTER_DRAG_TYPE);
+            if (filePath) {
+                void this.moveUserFilter(
+                    filePath,
+                    this.userFolderFsPath(folder)
+                );
+            }
+        });
+    }
+
+    /** Context menu of a user filter folder: new subfolder, delete. */
+    private setupUserFolderContextMenu(
+        element: HTMLElement,
+        node: TreeNode,
+        openContent: () => HTMLElement
+    ): void {
+        const canNest =
+            this.userFolderDepth(node) < USER_FILTER_MAX_FOLDER_DEPTH;
+        const menuHtml = `
+            <div class="plugin-menu">
+                ${
+                    canNest
+                        ? `<div class="plugin-menu-item" data-action="new-subfolder">
+                    <span class="material-symbols-outlined">create_new_folder</span>
+                    <span>New Subfolder…</span>
+                </div>
+                <div class="plugin-menu-divider"></div>`
+                        : ''
+                }
+                <div class="plugin-menu-item plugin-menu-item-danger" data-action="delete-folder">
+                    <span class="material-symbols-outlined">folder_delete</span>
+                    <span>Delete Folder…</span>
+                </div>
+            </div>
+        `;
+        const backdrop = getOrCreateBackdrop('user-filter-context-backdrop');
+        const tippyInstance = tippy(element, {
+            content: menuHtml,
+            allowHTML: true,
+            trigger: 'manual',
+            interactive: true,
+            placement: 'right-start',
+            theme: getTheme(),
+            arrow: false,
+            offset: [0, 0],
+            appendTo: document.body,
+            hideOnClick: false,
+            zIndex: 9999,
+            onShown: (instance) => {
+                const menu =
+                    instance.popper.querySelector<HTMLElement>('.plugin-menu');
+                if (!menu || menu.dataset.handlersSetup) return;
+                menu.dataset.handlersSetup = 'true';
+                setupMenuKeyboardNav(menu);
+                menu.querySelectorAll<HTMLElement>('.plugin-menu-item').forEach(
+                    (menuItem) => {
+                        menuItem.addEventListener('click', () => {
+                            instance.hide();
+                            backdrop.classList.remove('visible');
+                            element.classList.remove('context-menu-active');
+                            const action = menuItem.dataset.action;
+                            if (action === 'new-subfolder') {
+                                void this.promptNewUserFolder(
+                                    node,
+                                    openContent()
+                                );
+                            } else if (action === 'delete-folder') {
+                                void this.deleteUserFilterFolder(node);
+                            }
+                        });
+                    }
+                );
+            }
+        });
+        this.tippyInstances.push(tippyInstance);
+        addTippyBackdropSupport(tippyInstance, backdrop, {
+            targetElement: element,
+            activeClass: 'context-menu-active'
+        });
+        element.addEventListener('contextmenu', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            tippyInstance.setProps({
+                getReferenceClientRect: () =>
+                    new DOMRect(event.clientX, event.clientY, 0, 0)
+            });
+            tippyInstance.show();
+        });
+    }
+
+    /** Select a user filter in the sidebar, e.g. one the editor just created. */
+    activateUserFilterByPath(filePath: string): void {
+        const filter = this.userFilters.find((f) => f.filePath === filePath);
+        if (!filter) return;
+        const element = this.sidebarContainer?.querySelector<HTMLElement>(
+            `.glyph-filter-item[data-plugin-keyword="${filter.keyword}"]`
+        );
+        if (element) {
+            void this.activateFilter(filter, element);
         }
     }
 
@@ -3435,23 +4151,24 @@ export class GlyphOverviewFilterManager {
             }
             labelElement.style.display = '';
 
-            if (!newName || newName === displayName) {
-                return;
-            }
-
-            // Add .py extension if not present
-            if (!newName.endsWith('.py')) {
-                newName += '.py';
-            }
-
-            // Validate new name
-            if (newName.includes('/') || newName.includes('\\')) {
-                alert('Name cannot contain / or \\ characters');
+            if (!newName || normalizeFilterName(newName) === displayName) {
                 return;
             }
 
             try {
+                const folder = filePath.slice(0, filePath.lastIndexOf('/'));
+                const nameError = validateFilterName(
+                    newName,
+                    await this.listFilterNamesInFolder(folder),
+                    displayName
+                );
+                if (nameError) {
+                    alert(nameError);
+                    return;
+                }
+                newName = `${normalizeFilterName(newName)}.py`;
                 await adapter.renameItem(filePath, newName, false);
+                filterChatRegistry.rename(filePath, `${folder}/${newName}`);
                 console.log(
                     '[GlyphOverviewFilters] Renamed:',
                     filePath,
@@ -3517,6 +4234,7 @@ export class GlyphOverviewFilterManager {
         try {
             await adapter.deleteItem(filePath, false);
             console.log('[GlyphOverviewFilters] Deleted:', filePath);
+            filterChatRegistry.remove(filePath);
 
             // If this filter is currently active, clear it
             if (this.activeFilter === plugin) {

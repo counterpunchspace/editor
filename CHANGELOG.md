@@ -1,6 +1,6 @@
 # Unreleased
 
-- **Add items here** for the next release (Replace this comment)
+- **Glyph filter editor**: **New filter**, **Edit Filter…** and a double-click on a user filter open an editor where you describe the filter in words (Simple) or edit its code next to an Assistant chat (Expert). The Assistant writes the code from your description and keeps the description in step with the code, groups and colors included. The matching glyphs, their groups and the glyph overview (with Normal/Matrix, search and size) appear on demand. Changes reach the sidebar only on OK; Cancel discards them and that part of the chat. New filters save straight into `Filters/`, and renaming refuses a name that is already taken. User filters can be sorted into folders and subfolders: create them from the User Filters title or a folder's context menu, drag filters between them, and delete folders (with a warning that lists what's inside).
 
 # v0.4.0
 

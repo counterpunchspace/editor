@@ -5,11 +5,9 @@
 
 import { resolveWebsiteURL } from './website-url';
 import { Logger } from './logger';
-import { rewriteHtmlAnchorsForDocs } from './link-navigation';
 import {
     ASSISTANT_TOOLS,
     ASSISTANT_TOOL_CATEGORIES,
-    ASSISTANT_SYSTEM_PROMPT,
     AssistantTool,
     AssistantToolCategory,
     UsageMetrics
@@ -18,6 +16,24 @@ import tippy from 'tippy.js';
 import 'tippy.js/dist/tippy.css';
 import { getTheme } from './tippy-utils';
 import {
+    AssistantChatSession,
+    type AssistantChatMessage,
+    type AssistantRoundResult,
+    type AssistantToolCall
+} from './assistant/chat-session';
+import {
+    AssistantChatView,
+    createToolCallDetailsElement,
+    escapeHtml,
+    formatUsageMetrics,
+    highlightPython
+} from './assistant/chat-view';
+import { MAIN_ASSISTANT_PROFILE } from './assistant/profile';
+import {
+    createScriptEditorTarget,
+    type PythonDocumentTarget
+} from './assistant/python-target';
+import {
     getFeatureDescription,
     getFeatureExecutionOrder,
     isDiscretionary,
@@ -25,7 +41,7 @@ import {
 } from './opentype-features';
 import { designspaceToUserspace, userspaceToDesignspace } from './locations';
 import {
-    AssistantPromptExecutionContext,
+    type AssistantPromptExecutionContext,
     awaitActiveAssistantPythonExecutionSettled,
     getActiveAssistantPythonExecution,
     runAssistantPythonExecution
@@ -94,22 +110,7 @@ function findHandbookPath(
 
 const console = new Logger('AIAssistant');
 
-/**
- * Turn an error body from /api/ai/assistant into readable text. `error` may
- * be a string or an OpenRouter-style `{ message, code }` object.
- */
-export function assistantErrorMessage(
-    body: any,
-    status?: number,
-    fallback = 'Request failed'
-): string {
-    const err = body?.error;
-    if (typeof err === 'string' && err) return err;
-    if (typeof err?.message === 'string' && err.message) return err.message;
-    if (typeof body?.message === 'string' && body.message) return body.message;
-    return status ? `${fallback} (HTTP ${status})` : fallback;
-}
-const DEFAULT_PROMPT_HISTORY_SUMMARY = 'Assistant changes';
+export { assistantErrorMessage } from './assistant/chat-session';
 
 type BinaryFontWorkerState = {
     awaitWorkerDocumentSync?: () => Promise<void>;
@@ -787,20 +788,10 @@ class AIAssistant {
 
     isAuthenticated: boolean;
     subscription: any;
-    isStreaming: boolean;
-    abortController: AbortController | null;
-    _reconnectAttempts: number;
-    messages: Array<{ role: string; content: string }>;
-    conversationMessages: Array<any>;
-    roundUsage: UsageMetrics[];
-    sessionTotals: UsageMetrics;
     binaryFontApiDocsViewed: boolean;
-    allowFontEdits: boolean;
-    activePromptContext: AssistantPromptExecutionContext | null;
-    promptTransactionOpen: boolean;
-    promptInterrupted: boolean;
-    lastKnownScriptRevision: string | null;
-    scriptStateInvalidated: boolean;
+    /** The panel's conversation. Other chats create their own sessions. */
+    readonly session: AssistantChatSession;
+    chatView: AssistantChatView | null;
 
     constructor() {
         this.messagesContainer = null;
@@ -811,24 +802,77 @@ class AIAssistant {
         this.subscriptionContainer = null;
         this.isAuthenticated = false;
         this.subscription = null;
-        this.isStreaming = false;
-        this.abortController = null;
-        this._reconnectAttempts = 0;
-        this.messages = [];
-        this.conversationMessages = [];
-        this.roundUsage = [];
-        this.sessionTotals = {};
         this.binaryFontApiDocsViewed = false;
-        this.allowFontEdits =
-            localStorage.getItem('assistantAllowFontEdits') === 'true';
-        this.activePromptContext = null;
-        this.promptTransactionOpen = false;
-        this.promptInterrupted = false;
-        this.lastKnownScriptRevision = null;
-        this.scriptStateInvalidated = false;
+        this.chatView = null;
+        this.session = new AssistantChatSession({
+            profile: MAIN_ASSISTANT_PROFILE,
+            target: createScriptEditorTarget(),
+            // Late-bound, so the panel's executeToolCall and streamRound stay
+            // the seams tests and callers replace.
+            host: {
+                executeToolCall: (toolCall, session) =>
+                    this.executeToolCall(toolCall, session),
+                streamRound: (...args) => this.streamRound(...args)
+            },
+            allowEdits:
+                localStorage.getItem('assistantAllowFontEdits') === 'true'
+        });
+        this.session.on('streaming-changed', ({ streaming }) => {
+            if (streaming) this.showStreamIndicator();
+            else this.hideStreamIndicator();
+            this.updateAssistantEditToggle();
+            if (this.sendButton)
+                (this.sendButton as HTMLButtonElement).disabled = streaming;
+        });
+        this.session.on('usage', () => this.updateSessionMetricsBar());
 
         this.initUI();
         this.checkAuthenticationStatus();
+    }
+
+    // The panel's chat state lives on its session.
+    get isStreaming(): boolean {
+        return this.session.isStreaming;
+    }
+
+    get abortController(): AbortController | null {
+        return this.session.abortController;
+    }
+
+    get messages(): Array<{ role: string; content: string }> {
+        return this.session.messages;
+    }
+
+    get conversationMessages(): AssistantChatMessage[] {
+        return this.session.conversationMessages;
+    }
+
+    get sessionTotals(): UsageMetrics {
+        return this.session.sessionTotals;
+    }
+
+    get allowFontEdits(): boolean {
+        return this.session.allowEdits;
+    }
+
+    set allowFontEdits(value: boolean) {
+        this.session.allowEdits = value;
+    }
+
+    get activePromptContext(): AssistantPromptExecutionContext | null {
+        return this.session.activePromptContext;
+    }
+
+    set activePromptContext(context: AssistantPromptExecutionContext | null) {
+        this.session.activePromptContext = context;
+    }
+
+    get lastKnownScriptRevision(): string | null {
+        return this.session.lastKnownDocumentRevision;
+    }
+
+    get scriptStateInvalidated(): boolean {
+        return this.session.documentStateInvalidated;
     }
 
     canUseAssistant() {
@@ -932,6 +976,10 @@ class AIAssistant {
             console.warn('Assistant UI elements not found');
             return;
         }
+        this.chatView = new AssistantChatView(
+            this.messagesContainer,
+            this.session
+        );
 
         this.sendButton.addEventListener('click', (e: Event) => {
             e.stopPropagation();
@@ -977,16 +1025,6 @@ class AIAssistant {
         });
         this.updateAssistantEditToggle();
 
-        window.addEventListener('scriptEditorDocumentChanged', (event) => {
-            const state = (event as CustomEvent<{ revision: string }>).detail;
-            if (
-                this.lastKnownScriptRevision &&
-                state.revision !== this.lastKnownScriptRevision
-            ) {
-                this.scriptStateInvalidated = true;
-            }
-        });
-
         document
             .getElementById('assistant-stop-btn')
             ?.addEventListener('click', () => this.interruptPrompt());
@@ -1024,25 +1062,6 @@ class AIAssistant {
         if (icon) {
             icon.textContent = editsAllowed ? 'edit' : 'edit_off';
         }
-    }
-
-    private async getRuntimeSystemPrompt(): Promise<string> {
-        const editorState = await this.executeToolCall({
-            function: { name: 'get_editor_state', arguments: '{}' }
-        });
-        const promptContext = this.activePromptContext;
-        const scriptState = window.scriptEditor?.getDocumentState();
-        if (
-            scriptState &&
-            this.lastKnownScriptRevision &&
-            scriptState.revision !== this.lastKnownScriptRevision
-        ) {
-            this.scriptStateInvalidated = true;
-        }
-        const staleScriptNotice = this.scriptStateInvalidated
-            ? '\n\nSCRIPT STATE NOTICE: The Script Editor changed after the Assistant last read it. The buffer is authoritative; read the active Python document before proposing or applying another script edit.'
-            : '';
-        return `${ASSISTANT_SYSTEM_PROMPT}\n\nCURRENT PROMPT PERMISSION: Assistant editing is ${promptContext?.allowFontEdits ? 'allowed' : 'disabled'} for this prompt.${staleScriptNotice}\n\nCURRENT EDITOR STATE:\n${editorState}`;
     }
 
     setupInfoModal() {
@@ -1603,438 +1622,20 @@ class AIAssistant {
         return wrapper;
     }
 
-    createAssistantMessageShell() {
-        const messageDiv = document.createElement('div');
-        messageDiv.className = 'assistant-message assistant-message-assistant';
-
-        const header = document.createElement('div');
-        header.className = 'assistant-message-header';
-        header.style.display = 'flex';
-        header.style.alignItems = 'center';
-        header.style.gap = '6px';
-
-        const label = document.createElement('span');
-        label.style.display = 'inline-flex';
-        label.style.alignItems = 'center';
-        label.style.gap = '4px';
-        label.innerHTML =
-            '<span class="material-symbols-outlined">robot_2</span> Assistant';
-        header.appendChild(label);
-
-        messageDiv.appendChild(header);
-
-        const body = document.createElement('div');
-        messageDiv.appendChild(body);
-
-        return { messageDiv, header, body };
-    }
-
-    attachPopup(
-        button: HTMLElement,
-        contentFactory: () => HTMLElement,
-        placement: string = 'right',
-        maxWidth: number = 520
-    ) {
-        tippy(button, {
-            content: contentFactory(),
-            allowHTML: true,
-            interactive: true,
-            appendTo: document.body,
-            maxWidth,
-            placement: placement as any,
-            zIndex: 99999,
-            theme: getTheme(),
-            popperOptions: {
-                modifiers: [
-                    {
-                        name: 'preventOverflow',
-                        options: {
-                            boundary: 'viewport',
-                            padding: 12
-                        }
-                    }
-                ]
-            },
-            onShow: (instance) => {
-                instance.setContent(contentFactory());
-            },
-            onMount(instance) {
-                const content = instance.popper.querySelector(
-                    '.tippy-content'
-                ) as HTMLElement | null;
-                if (content) {
-                    content.style.maxHeight = '70vh';
-                    content.style.overflowY = 'auto';
-                }
-            }
-        });
-    }
-
-    toolCallHasNoArguments(args: any): boolean {
-        return (
-            !args ||
-            (typeof args === 'object' &&
-                !Array.isArray(args) &&
-                Object.keys(args).length === 0)
-        );
-    }
-
+    /** The ⓘ details of a tool call, as the panel's chat shows them. */
     createToolCallMetaElement(
         toolName: string,
-        args: any,
+        args: Record<string, unknown>,
         toolResult: string,
         timeLabel: string
     ): HTMLElement {
-        const resultLen = toolResult.length;
-        const metaEl = document.createElement('div');
-        metaEl.style.cssText =
-            'font-size:11px;line-height:1.6;padding:4px;color:var(--text-primary);';
-
-        let argsHtml: string;
-        if (toolName === 'execute_python_code' && args.code) {
-            argsHtml = `<b>Arguments:</b><br><pre style="margin:4px 0 0 0;padding:8px;background:var(--background-hover);border-radius:4px;font-size:11px;line-height:1.5;overflow-x:auto;font-family:var(--font-families-mono);tab-size:4">${this.highlightPython(args.code)}</pre>`;
-        } else {
-            argsHtml = `<b>Arguments:</b> ${this.escapeHtml(JSON.stringify(args, null, 2))}`;
-        }
-
-        metaEl.innerHTML = `
-            <b>Tool:</b> ${toolName}<br>
-            ${argsHtml}<br>
-            <b>Result:</b> ${resultLen} characters<br>
-            <b>Time:</b> ${this.escapeHtml(timeLabel)}<br>
-            <hr style="margin:4px 0;border:none;border-top:1px solid var(--border-primary)">
-            <pre style="margin:0;white-space:pre-wrap;word-break:break-word;font-size:10px">${this.escapeHtml(toolResult)}</pre>
-        `;
-
-        if (
-            toolName === 'replace_python_text_in_editor' &&
-            typeof args.old_text === 'string' &&
-            typeof args.new_text === 'string'
-        ) {
-            this.addPythonDocumentToolActions(metaEl, args, toolResult);
-        }
-
-        return metaEl;
-    }
-
-    private addPythonDocumentToolActions(
-        metaEl: HTMLElement,
-        args: { old_text: string; new_text: string },
-        toolResult: string
-    ): void {
-        const revision = toolResult.match(/^Revision: (.+)$/m)?.[1];
-        if (!revision) return;
-
-        const actions = document.createElement('div');
-        actions.style.cssText =
-            'display:flex;gap:4px;margin-top:6px;align-items:center;';
-        const openButton = document.createElement('button');
-        openButton.type = 'button';
-        openButton.title = 'Open in Script Editor';
-        openButton.setAttribute('aria-label', 'Open in Script Editor');
-        openButton.innerHTML =
-            '<span class="material-symbols-outlined">code</span>';
-        const revertButton = document.createElement('button');
-        revertButton.type = 'button';
-        revertButton.title = 'Revert this Assistant edit';
-        revertButton.setAttribute('aria-label', 'Revert this Assistant edit');
-        revertButton.innerHTML =
-            '<span class="material-symbols-outlined">undo</span>';
-        const status = document.createElement('span');
-        status.style.cssText = 'font-size:10px;';
-
-        openButton.addEventListener('click', () => {
-            document.getElementById('view-scripts')?.click();
-        });
-        revertButton.addEventListener('click', () => {
-            if (!this.allowFontEdits) {
-                status.textContent =
-                    'Enable editing in the Assistant title bar before reverting.';
-                return;
-            }
-            const scriptEditor = window.scriptEditor;
-            const state = scriptEditor?.getDocumentState();
-            if (!scriptEditor || !state || state.revision !== revision) {
-                status.textContent =
-                    'The script changed since this Assistant edit. Use the Script Editor recovery controls instead.';
-                return;
-            }
-            try {
-                const restored = scriptEditor.replaceExactText(
-                    args.new_text,
-                    args.old_text,
-                    revision
-                );
-                this.lastKnownScriptRevision = restored.revision;
-                this.scriptStateInvalidated = false;
-                revertButton.disabled = true;
-                status.textContent = 'Assistant edit reverted, not saved.';
-            } catch (error) {
-                status.textContent = (error as Error).message;
-            }
-        });
-
-        actions.append(openButton, revertButton, status);
-        metaEl.appendChild(actions);
-    }
-
-    createToolCallOutputElement(
-        toolName: string,
-        toolResult: string,
-        timeLabel: string
-    ): HTMLElement {
-        const outputEl = document.createElement('div');
-        outputEl.style.cssText =
-            'font-size:11px;line-height:1.6;padding:4px;color:var(--text-primary);';
-        outputEl.innerHTML = `
-            <b>Tool:</b> ${toolName}<br>
-            <b>Time:</b> ${this.escapeHtml(timeLabel)}<br>
-            <hr style="margin:4px 0;border:none;border-top:1px solid var(--border-primary)">
-            <pre style="margin:0;white-space:pre-wrap;word-break:break-word;font-size:10px">${this.escapeHtml(toolResult)}</pre>
-        `;
-        return outputEl;
-    }
-
-    private createInlinePythonEditDiffElement(
-        toolResult: string,
-        args?: { old_text?: string; new_text?: string }
-    ): HTMLElement {
-        const outputEl = document.createElement('div');
-        outputEl.className = 'assistant-python-edit-diff';
-        outputEl.style.cssText =
-            'margin:4px 0 8px 20px;padding:8px;border:1px solid var(--border-primary);border-radius:6px;background:var(--background-secondary);color:var(--text-primary);font-size:11px;line-height:1.5;';
-
-        const diffStart = toolResult.indexOf('@@ Script Editor @@');
-        const summary =
-            diffStart >= 0 ? toolResult.slice(0, diffStart).trim() : '';
-        const title = document.createElement('div');
-        title.textContent = 'Python edit diff';
-        title.style.cssText = 'font-weight:600;margin-bottom:4px';
-        outputEl.appendChild(title);
-
-        if (summary) {
-            const summaryEl = document.createElement('div');
-            summaryEl.textContent = summary;
-            summaryEl.style.cssText =
-                'margin-bottom:6px;color:var(--text-secondary);white-space:pre-wrap';
-            outputEl.appendChild(summaryEl);
-        }
-
-        const hasLineInputs =
-            typeof args?.old_text === 'string' &&
-            typeof args?.new_text === 'string';
-        if (hasLineInputs) {
-            const rows = this.createPythonLineDiffRows(
-                args.old_text || '',
-                args.new_text || ''
-            );
-            outputEl.appendChild(this.renderPythonLineDiffRows(rows));
-        } else {
-            const diff =
-                diffStart >= 0
-                    ? toolResult.slice(diffStart).trim()
-                    : toolResult.trim();
-            const pre = document.createElement('pre');
-            pre.textContent = diff;
-            pre.style.cssText =
-                'margin:0;white-space:pre-wrap;word-break:break-word;font-size:10px;font-family:var(--font-families-mono);tab-size:4';
-            outputEl.appendChild(pre);
-        }
-        return outputEl;
-    }
-
-    private createPythonLineDiffRows(
-        oldText: string,
-        newText: string
-    ): Array<{
-        type: 'context' | 'removed' | 'added' | 'omitted';
-        oldLine?: number;
-        newLine?: number;
-        text: string;
-    }> {
-        const oldLines = oldText.split(/\r?\n/);
-        const newLines = newText.split(/\r?\n/);
-        const lengths = Array.from(
-            { length: oldLines.length + 1 },
-            () => Array(newLines.length + 1).fill(0) as number[]
+        return createToolCallDetailsElement(
+            this.session,
+            toolName,
+            args,
+            toolResult,
+            timeLabel
         );
-
-        for (let oldIndex = oldLines.length - 1; oldIndex >= 0; oldIndex--) {
-            for (
-                let newIndex = newLines.length - 1;
-                newIndex >= 0;
-                newIndex--
-            ) {
-                lengths[oldIndex][newIndex] =
-                    oldLines[oldIndex] === newLines[newIndex]
-                        ? lengths[oldIndex + 1][newIndex + 1] + 1
-                        : Math.max(
-                              lengths[oldIndex + 1][newIndex],
-                              lengths[oldIndex][newIndex + 1]
-                          );
-            }
-        }
-
-        const rows: Array<{
-            type: 'context' | 'removed' | 'added' | 'omitted';
-            oldLine?: number;
-            newLine?: number;
-            text: string;
-        }> = [];
-        let oldIndex = 0;
-        let newIndex = 0;
-        while (oldIndex < oldLines.length || newIndex < newLines.length) {
-            if (
-                oldIndex < oldLines.length &&
-                newIndex < newLines.length &&
-                oldLines[oldIndex] === newLines[newIndex]
-            ) {
-                rows.push({
-                    type: 'context',
-                    oldLine: oldIndex + 1,
-                    newLine: newIndex + 1,
-                    text: oldLines[oldIndex]
-                });
-                oldIndex++;
-                newIndex++;
-            } else if (
-                newIndex < newLines.length &&
-                (oldIndex >= oldLines.length ||
-                    lengths[oldIndex][newIndex + 1] >
-                        lengths[oldIndex + 1][newIndex])
-            ) {
-                rows.push({
-                    type: 'added',
-                    newLine: newIndex + 1,
-                    text: newLines[newIndex]
-                });
-                newIndex++;
-            } else {
-                rows.push({
-                    type: 'removed',
-                    oldLine: oldIndex + 1,
-                    text: oldLines[oldIndex]
-                });
-                oldIndex++;
-            }
-        }
-
-        return this.collapsePythonDiffContextRows(rows);
-    }
-
-    private collapsePythonDiffContextRows(
-        rows: Array<{
-            type: 'context' | 'removed' | 'added' | 'omitted';
-            oldLine?: number;
-            newLine?: number;
-            text: string;
-        }>
-    ): Array<{
-        type: 'context' | 'removed' | 'added' | 'omitted';
-        oldLine?: number;
-        newLine?: number;
-        text: string;
-    }> {
-        const contextRadius = 2;
-        const changedIndexes = rows
-            .map((row, index) => (row.type === 'context' ? -1 : index))
-            .filter((index) => index >= 0);
-        if (changedIndexes.length === 0) return rows;
-
-        const keep = new Set<number>();
-        for (const changedIndex of changedIndexes) {
-            for (
-                let index = Math.max(0, changedIndex - contextRadius);
-                index <=
-                Math.min(rows.length - 1, changedIndex + contextRadius);
-                index++
-            ) {
-                keep.add(index);
-            }
-        }
-
-        const collapsed: Array<{
-            type: 'context' | 'removed' | 'added' | 'omitted';
-            oldLine?: number;
-            newLine?: number;
-            text: string;
-        }> = [];
-        let omittedCount = 0;
-        for (let index = 0; index < rows.length; index++) {
-            if (keep.has(index) || rows[index].type !== 'context') {
-                if (omittedCount > 0) {
-                    collapsed.push({
-                        type: 'omitted',
-                        text: `${omittedCount} unchanged line${
-                            omittedCount === 1 ? '' : 's'
-                        } hidden`
-                    });
-                    omittedCount = 0;
-                }
-                collapsed.push(rows[index]);
-            } else {
-                omittedCount++;
-            }
-        }
-        if (omittedCount > 0) {
-            collapsed.push({
-                type: 'omitted',
-                text: `${omittedCount} unchanged line${
-                    omittedCount === 1 ? '' : 's'
-                } hidden`
-            });
-        }
-        return collapsed;
-    }
-
-    private renderPythonLineDiffRows(
-        rows: Array<{
-            type: 'context' | 'removed' | 'added' | 'omitted';
-            oldLine?: number;
-            newLine?: number;
-            text: string;
-        }>
-    ): HTMLElement {
-        const list = document.createElement('div');
-        list.style.cssText =
-            'display:flex;flex-direction:column;gap:1px;font-family:var(--font-families-mono);font-size:10px;tab-size:4;';
-
-        for (const row of rows) {
-            const line = document.createElement('div');
-            line.className = `assistant-python-edit-diff-row assistant-python-edit-diff-row-${row.type}`;
-            const marker = document.createElement('span');
-            const text = document.createElement('span');
-
-            line.style.cssText =
-                'display:grid;grid-template-columns:64px minmax(0,1fr);gap:8px;padding:2px 6px;border-radius:4px;white-space:pre-wrap;word-break:break-word;';
-            marker.style.cssText =
-                'user-select:none;color:var(--text-tertiary);text-align:right;';
-            text.textContent = row.text;
-
-            if (row.type === 'added') {
-                line.style.background =
-                    'color-mix(in srgb, var(--accent-green) 16%, transparent)';
-                line.style.borderLeft = '3px solid var(--accent-green)';
-                marker.textContent = `+${row.newLine || ''}`;
-            } else if (row.type === 'removed') {
-                line.style.background =
-                    'color-mix(in srgb, var(--accent-red) 16%, transparent)';
-                line.style.borderLeft = '3px solid var(--accent-red)';
-                marker.textContent = `-${row.oldLine || ''}`;
-            } else if (row.type === 'omitted') {
-                line.style.color = 'var(--text-tertiary)';
-                line.style.fontStyle = 'italic';
-                marker.textContent = '...';
-            } else {
-                line.style.color = 'var(--text-secondary)';
-                marker.textContent = ` ${row.oldLine || row.newLine || ''}`;
-            }
-
-            line.append(marker, text);
-            list.appendChild(line);
-        }
-
-        return list;
     }
 
     parseOpenTypeSearchTerms(query: string): string[] {
@@ -2525,135 +2126,38 @@ class AIAssistant {
         return lines.join('\n');
     }
 
-    createHeaderToolCallsElement(toolCalls: any[]): HTMLElement {
-        const wrapper = document.createElement('div');
-        wrapper.style.cssText =
-            'min-width:260px;max-width:420px;padding:4px;color:var(--text-primary);';
-
-        const title = document.createElement('div');
-        title.textContent = 'Tool calls';
-        title.style.cssText =
-            'font-size:12px;font-weight:600;margin-bottom:8px;color:var(--text-primary);';
-        wrapper.appendChild(title);
-
-        if (toolCalls.length === 0) {
-            const empty = document.createElement('div');
-            empty.textContent = 'No tool calls recorded.';
-            empty.style.cssText = 'font-size:11px;color:var(--text-tertiary);';
-            wrapper.appendChild(empty);
-            return wrapper;
-        }
-
-        for (const call of toolCalls) {
-            const row = document.createElement('div');
-            row.style.cssText =
-                'display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 0;border-top:1px solid var(--border-primary);';
-
-            const left = document.createElement('div');
-            left.style.cssText = 'display:flex;align-items:center;gap:6px;';
-
-            const name = document.createElement('span');
-            name.textContent = call.name;
-            name.style.cssText =
-                'font-size:11px;font-family:var(--font-families-mono);color:var(--text-primary);';
-            left.appendChild(name);
-
-            if (this.toolCallHasNoArguments(call.args)) {
-                const infoBtn = document.createElement('button');
-                infoBtn.className = 'assistant-tool-call-info-btn';
-                infoBtn.textContent = 'ⓘ';
-                infoBtn.title = 'Show tool output';
-                this.attachPopup(
-                    infoBtn,
-                    () =>
-                        this.createToolCallOutputElement(
-                            call.name,
-                            call.result,
-                            call.timeLabel
-                        ),
-                    'right',
-                    520
-                );
-                left.appendChild(infoBtn);
-            }
-
-            const meta = document.createElement('span');
-            meta.textContent = this.toolCallHasNoArguments(call.args)
-                ? 'no arguments'
-                : `${Object.keys(call.args || {}).length} args`;
-            meta.style.cssText =
-                'font-size:10px;color:var(--text-tertiary);white-space:nowrap;';
-
-            row.appendChild(left);
-            row.appendChild(meta);
-            wrapper.appendChild(row);
-        }
-
-        return wrapper;
-    }
-
-    ensureHeaderToolCallsButton(header: HTMLElement, toolCalls: any[]) {
-        let button = header.querySelector(
-            '.assistant-message-info-btn'
-        ) as HTMLButtonElement | null;
-
-        if (!button) {
-            button = document.createElement('button');
-            button.className =
-                'assistant-tool-call-info-btn assistant-message-info-btn';
-            button.textContent = 'ⓘ';
-            button.title = 'Show tool calls';
-            button.style.marginLeft = '2px';
-            header.appendChild(button);
-            this.attachPopup(
-                button,
-                () => this.createHeaderToolCallsElement(toolCalls),
-                'bottom-end',
-                440
-            );
-        }
-
-        button.style.display = toolCalls.length > 0 ? 'inline-flex' : 'none';
-    }
-
     addMessage(role: 'user' | 'assistant' | 'error', content: string) {
-        if (!this.messagesContainer) return;
-        const msgDiv = document.createElement('div');
-        msgDiv.className = `assistant-message assistant-message-${role}`;
-        msgDiv.style.whiteSpace = 'pre-wrap';
-        const header = document.createElement('div');
-        header.className = 'assistant-message-header';
         if (role === 'user') {
-            header.innerHTML =
-                '<span class="material-symbols-outlined">person</span> You';
-            msgDiv.appendChild(header);
-            msgDiv.appendChild(document.createTextNode(content));
+            this.session.appendEntry({
+                kind: 'user',
+                text: content,
+                automatic: false
+            });
         } else if (role === 'assistant') {
-            const shell = this.createAssistantMessageShell();
-            shell.body.innerHTML =
-                typeof marked !== 'undefined'
-                    ? rewriteHtmlAnchorsForDocs(marked.parse(content))
-                    : this.escapeHtml(content);
-            this.messagesContainer.appendChild(shell.messageDiv);
-            this.messagesContainer.scrollTop =
-                this.messagesContainer.scrollHeight;
-            return;
+            this.session.appendEntry({
+                kind: 'assistant',
+                items: [{ kind: 'text', round: 0, text: content }]
+            });
         } else {
-            header.innerHTML =
-                '<span class="material-symbols-outlined">error</span> Error';
-            msgDiv.appendChild(header);
-            msgDiv.appendChild(document.createTextNode(content));
+            this.session.appendEntry({ kind: 'error', text: content });
         }
-        this.messagesContainer.appendChild(msgDiv);
-        this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
     }
 
-    private requireAssistantEditPermission(): void {
-        if (!this.activePromptContext?.allowFontEdits) {
+    private requireDocumentEditPermission(session: AssistantChatSession): void {
+        if (!session.promptAllowsDocumentEdits()) {
             throw new Error(
-                'Enable editing in the Assistant title bar before changing Python code.'
+                `${session.profile.editDisabledHint} before changing Python code.`
             );
         }
+    }
+
+    private requirePythonTarget(
+        session: AssistantChatSession
+    ): PythonDocumentTarget {
+        if (!session.target) {
+            throw new Error('This chat has no Python document.');
+        }
+        return session.target;
     }
 
     private isManagedPythonPath(path: string): boolean {
@@ -2816,7 +2320,11 @@ __counterpunch_assistant_validate_syntax(${sourceKey})`
         }
     }
 
-    private createPythonDiff(oldText: string, newText: string): string {
+    private createPythonDiff(
+        oldText: string,
+        newText: string,
+        label: string
+    ): string {
         const limit = 12;
         const oldLines = oldText.split(/\r?\n/).slice(0, limit);
         const newLines = newText.split(/\r?\n/).slice(0, limit);
@@ -2824,14 +2332,17 @@ __counterpunch_assistant_validate_syntax(${sourceKey})`
             oldText.split(/\r?\n/).length > limit ||
             newText.split(/\r?\n/).length > limit;
         return [
-            '@@ Script Editor @@',
+            `@@ ${label} @@`,
             ...oldLines.map((line) => `-${line}`),
             ...newLines.map((line) => `+${line}`),
             ...(truncated ? ['… diff truncated'] : [])
         ].join('\n');
     }
 
-    async executeToolCall(toolCall: any): Promise<string> {
+    async executeToolCall(
+        toolCall: AssistantToolCall,
+        session: AssistantChatSession = this.session
+    ): Promise<string> {
         const { name, arguments: argsStr } = toolCall.function;
         const args = JSON.parse(argsStr || '{}');
         switch (name) {
@@ -2890,7 +2401,7 @@ __counterpunch_assistant_validate_syntax(${sourceKey})`
             case 'glyph_filter_event_types':
                 return `${JSON.stringify(getGlyphFilterEventAssistantView(), null, 2)}
 
-Write only the simple filter contract. Subscribe EVENT_TYPES only to glyph-content events that can change the classification. Do not subscribe to glyph.created, glyph.deleted, glyph.renamed, or font.masters.changed: the app handles those itself.
+Write only the simple filter contract. Subscribe EVENT_TYPES only to glyph-content events that can change the classification. Do not subscribe to glyph.created, glyph.deleted, glyph.renamed, or font.masters.changed: the app handles those itself. A filter that only reads glyph names uses EVENT_TYPES = [].
 
 Example single-file filter:
 
@@ -3090,9 +2601,9 @@ def classify_glyph(glyph):
                 const runInternalPythonAsync =
                     pyodide._originalRunPythonAsync.bind(pyodide);
 
-                const promptContext = this.activePromptContext ?? {
+                const promptContext = session.activePromptContext ?? {
                     id: `assistant-manual-tool-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-                    allowFontEdits: this.allowFontEdits,
+                    allowFontEdits: session.editPermissions().fontEdits,
                     historySummary: 'Manual Assistant tool call'
                 };
                 return await runAssistantPythonExecution(
@@ -3155,12 +2666,12 @@ if '_assistant_original_stdout' in dir():
                 );
             }
             case 'get_active_python_document': {
-                const state = window.scriptEditor.getDocumentState();
+                const state =
+                    this.requirePythonTarget(session).getDocumentState();
                 const kindInfo = getPythonDocumentKindInfo(state);
                 const includeContent = args.include_content !== false;
                 const maxChars = Math.max(0, Number(args.max_chars) || 12000);
-                this.lastKnownScriptRevision = state.revision;
-                this.scriptStateInvalidated = false;
+                session.markDocumentRead(state.revision);
                 return JSON.stringify({
                     ...state,
                     kind: kindInfo.kind,
@@ -3231,10 +2742,10 @@ if '_assistant_original_stdout' in dir():
                         `Python files must be under ${SETTINGS_FOLDER_PATHS.scripts} or ${SETTINGS_FOLDER_PATHS.filters}.`
                     );
                 }
-                const active = window.scriptEditor.getDocumentState();
+                const active = session.target?.getDocumentState() ?? null;
                 const adapter = await this.getPythonSettingsFolderAdapter();
                 const data =
-                    active.path === path
+                    active && active.path === path
                         ? active.content
                         : await adapter.readFile(path);
                 const content =
@@ -3253,7 +2764,8 @@ if '_assistant_original_stdout' in dir():
                 return JSON.stringify({
                     path,
                     kind: this.getPythonDocumentKind(path),
-                    revision: active.path === path ? active.revision : null,
+                    revision:
+                        active && active.path === path ? active.revision : null,
                     content: this.formatPythonLines(
                         content,
                         startLine,
@@ -3269,49 +2781,55 @@ if '_assistant_original_stdout' in dir():
                         `Python files must be under ${SETTINGS_FOLDER_PATHS.scripts} or ${SETTINGS_FOLDER_PATHS.filters}.`
                     );
                 }
-                const opened = await window.scriptEditor.openFile(
-                    path,
-                    'settings'
-                );
+                const target = this.requirePythonTarget(session);
+                if (!target.openFile) {
+                    throw new Error(
+                        'This chat cannot open other Python files.'
+                    );
+                }
+                const opened = await target.openFile(path);
                 if (!opened) throw new Error(`Could not open ${path}.`);
-                return JSON.stringify(window.scriptEditor.getDocumentState());
+                return JSON.stringify(target.getDocumentState());
             }
             case 'create_python_draft_in_editor': {
-                this.requireAssistantEditPermission();
+                this.requireDocumentEditPermission(session);
+                const target = this.requirePythonTarget(session);
+                if (!target.createDraft) {
+                    throw new Error('This chat cannot create Python drafts.');
+                }
                 const kind = args.kind;
                 if (kind !== 'general-script' && kind !== 'glyph-filter') {
                     throw new Error(
                         'Draft kind must be general-script or glyph-filter.'
                     );
                 }
-                window.scriptEditor.createDraft(kind, args.content);
-                const state = window.scriptEditor.getDocumentState();
-                this.lastKnownScriptRevision = state.revision;
-                this.scriptStateInvalidated = false;
+                const state = target.createDraft(kind, args.content);
+                session.markDocumentRead(state.revision);
                 return JSON.stringify(state);
             }
             case 'replace_python_text_in_editor': {
-                this.requireAssistantEditPermission();
+                this.requireDocumentEditPermission(session);
+                const target = this.requirePythonTarget(session);
                 const oldText = String(args.old_text || '');
                 const newText = String(args.new_text || '');
                 if (!oldText) throw new Error('old_text is required.');
-                const state = window.scriptEditor.replaceExactText(
+                const state = target.replaceExactText(
                     oldText,
                     newText,
                     String(args.expected_revision || '')
                 );
-                this.lastKnownScriptRevision = state.revision;
-                this.scriptStateInvalidated = false;
+                session.markDocumentRead(state.revision);
                 return [
                     `Edited ${state.path || 'untitled Python draft'} (${state.kind})`,
                     `Revision: ${state.revision}`,
                     'Modified, not saved',
                     '',
-                    this.createPythonDiff(oldText, newText)
+                    this.createPythonDiff(oldText, newText, target.label)
                 ].join('\n');
             }
             case 'validate_python_document': {
-                const state = window.scriptEditor.getDocumentState();
+                const target = this.requirePythonTarget(session);
+                const state = target.getDocumentState();
                 const kindInfo = getPythonDocumentKindInfo(state);
                 const syntax = this.validatePythonSyntax(state.content || '');
                 const hasFilterFunction =
@@ -3350,13 +2868,18 @@ if '_assistant_original_stdout' in dir():
                 if (kindInfo.confidence !== 'saved-path') {
                     messages.push(kindInfo.message);
                 }
+                const targetProblems = target.validate?.(state) ?? [];
+                messages.push(...targetProblems);
                 return JSON.stringify({
                     kind: kindInfo.kind,
                     editorKind: kindInfo.editorKind,
                     kindConfidence: kindInfo.confidence,
                     kindMessage: kindInfo.message,
                     revision: state.revision,
-                    valid: syntax.valid && structureValid,
+                    valid:
+                        syntax.valid &&
+                        structureValid &&
+                        targetProblems.length === 0,
                     syntaxChecked: syntax.checked,
                     syntaxValid: syntax.valid,
                     syntaxError: syntax.valid
@@ -3567,10 +3090,10 @@ if '_assistant_original_stdout' in dir():
                 if (!summary) {
                     throw new Error('Missing required parameter: summary');
                 }
-                if (!this.activePromptContext) {
+                if (!session.activePromptContext) {
                     throw new Error('No assistant prompt is currently running');
                 }
-                this.activePromptContext.historySummary = summary;
+                session.activePromptContext.historySummary = summary;
                 return 'Prompt history summary will be used for subsequent edits.';
             }
             case 'get_font_opentype_info': {
@@ -4108,141 +3631,23 @@ if '_assistant_original_stdout' in dir():
         return await res.text();
     }
 
-    // ── Single streaming round ──
+    // ── Chat (AssistantChatSession does the work) ──
 
-    async streamRound(
-        messages: any[],
+    streamRound(
+        messages: AssistantChatMessage[],
         onChunk: (text: string) => void,
         billingRunId: string,
         signal?: AbortSignal,
         previousGenerationIds?: string[]
-    ): Promise<any> {
-        const sessionToken = window.authManager?.getSessionToken();
-        const headers: Record<string, string> = {
-            'Content-Type': 'application/json'
-        };
-        if (sessionToken) headers['Authorization'] = `Bearer ${sessionToken}`;
-
-        const body: Record<string, any> = {
+    ): Promise<AssistantRoundResult> {
+        return this.session.streamRound(
             messages,
-            tools: ASSISTANT_TOOLS,
-            systemPrompt: await this.getRuntimeSystemPrompt(),
-            stream: true,
-            billingRunId
-        };
-        if (previousGenerationIds && previousGenerationIds.length > 0) {
-            body.previousGenerationIds = previousGenerationIds;
-        }
-
-        let response: Response;
-        try {
-            response = await fetch(`${this.getWebsiteURL()}/api/ai/assistant`, {
-                method: 'POST',
-                credentials: 'include',
-                headers,
-                signal,
-                body: JSON.stringify(body)
-            });
-        } catch (err: any) {
-            // Re-throw AbortError so the caller's stop-button handler works
-            if (err.name === 'AbortError') throw err;
-            return {
-                text: '',
-                toolCalls: null,
-                done: false,
-                connectionDropped: true,
-                dropError: err.message || 'Network request failed'
-            };
-        }
-
-        if (!response.ok) {
-            const errBody = await response
-                .json()
-                .catch(() => ({ error: 'Request failed' }));
-            throw new Error(assistantErrorMessage(errBody, response.status));
-        }
-
-        const reader = response.body?.getReader();
-        if (!reader) throw new Error('Empty response');
-
-        const decoder = new TextDecoder();
-        let buf = '';
-        let streamedText = '';
-        let toolCalls: any[] | null = null;
-        let generationId: string | null = null;
-
-        while (true) {
-            let readResult;
-            try {
-                readResult = await reader.read();
-            } catch (err: any) {
-                // Re-throw AbortError so the caller's stop-button handler works
-                if (err.name === 'AbortError') throw err;
-                // Connection dropped mid-stream — return partial text
-                // so the caller can rehydrate and continue
-                return {
-                    text: streamedText,
-                    toolCalls,
-                    done: false,
-                    connectionDropped: true,
-                    dropError: err.message || 'Connection lost',
-                    generationId
-                };
-            }
-            const { done, value } = readResult;
-            if (done) break;
-            buf += decoder.decode(value, { stream: true });
-            const lines = buf.split('\n');
-            buf = lines.pop() || '';
-
-            for (const line of lines) {
-                const t = line.trim();
-                if (!t.startsWith('data: ')) continue;
-                const data = t.slice(6);
-                let parsed: any;
-                try {
-                    parsed = JSON.parse(data);
-                } catch {
-                    continue; // skip unparseable
-                }
-                {
-                    // Capture OpenRouter generationId from every event
-                    if (parsed.generationId) {
-                        generationId = parsed.generationId;
-                    }
-                    if (parsed.type === 'chunk' && parsed.content) {
-                        streamedText += parsed.content;
-                        onChunk(parsed.content);
-                    } else if (
-                        parsed.type === 'tool_call' &&
-                        parsed.tool_calls
-                    ) {
-                        toolCalls = parsed.tool_calls;
-                    } else if (parsed.type === 'done') {
-                        return {
-                            text: streamedText,
-                            toolCalls,
-                            usage: parsed.usage,
-                            generationId: generationId || parsed.generationId,
-                            cumulativeUsage: parsed.cumulativeUsage,
-                            done: true
-                        };
-                    } else if (parsed.type === 'error') {
-                        throw new Error(
-                            assistantErrorMessage(
-                                parsed,
-                                undefined,
-                                'Stream error'
-                            )
-                        );
-                    }
-                }
-            }
-        }
-        return { text: streamedText, toolCalls, done: false, generationId };
+            onChunk,
+            billingRunId,
+            signal,
+            previousGenerationIds
+        );
     }
-
-    // ── Main entry: streaming multi-round loop ──
 
     async sendPrompt() {
         if (
@@ -4257,392 +3662,20 @@ if '_assistant_original_stdout' in dir():
 
         this.promptInput.value = '';
         this.promptInput.style.height = 'auto';
-        this.isStreaming = true;
-        this.activePromptContext = {
-            id: `assistant-prompt-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-            allowFontEdits: this.allowFontEdits,
-            historySummary: DEFAULT_PROMPT_HISTORY_SUMMARY
-        };
-        this.promptTransactionOpen = false;
-        this.promptInterrupted = false;
-        this.updateAssistantEditToggle();
-        if (this.sendButton)
-            (this.sendButton as HTMLButtonElement).disabled = true;
-        this.showStreamIndicator();
-
-        this.addMessage('user', prompt);
-        const conversationMessages: any[] = [
-            ...this.conversationMessages,
-            { role: 'user', content: prompt }
-        ];
-        this.showInitialStatus();
-
-        const abortController = new AbortController();
-        this.abortController = abortController;
-        const signal = abortController.signal;
-        let roundTexts: string[] = [];
-        const billingRunId = `assistant-billing-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        // Track generationIds across retry legs for cumulative cost reporting
-        const previousGenerationIds: string[] = [];
-
-        try {
-            let messageDiv: HTMLDivElement | null = null;
-            let bodyDiv: HTMLDivElement | null = null;
-            let headerDiv: HTMLDivElement | null = null;
-            let currentRoundIndex = -1;
-            const executedToolCalls: any[] = [];
-
-            const ensureMessageShell = () => {
-                if (!messageDiv) {
-                    const shell = this.createAssistantMessageShell();
-                    messageDiv = shell.messageDiv;
-                    headerDiv = shell.header;
-                    bodyDiv = shell.body;
-                    this.messagesContainer!.appendChild(messageDiv);
-                }
-            };
-
-            while (true) {
-                currentRoundIndex++;
-                const result = await this.streamRound(
-                    conversationMessages,
-                    (chunk) => {
-                        this.clearInitialStatus();
-                        ensureMessageShell();
-
-                        // Append/render to the LAST round-text container in bodyDiv
-                        roundTexts[currentRoundIndex] =
-                            (roundTexts[currentRoundIndex] || '') + chunk;
-                        const bd = bodyDiv as HTMLDivElement;
-                        let textContainer = bd.querySelector(
-                            '.assistant-round-text:last-child'
-                        ) as HTMLDivElement | null;
-                        if (!textContainer) {
-                            textContainer = document.createElement('div');
-                            textContainer.className = 'assistant-round-text';
-                            bd.appendChild(textContainer);
-                        }
-                        if (typeof marked !== 'undefined') {
-                            textContainer.innerHTML = rewriteHtmlAnchorsForDocs(
-                                marked.parse(roundTexts[currentRoundIndex])
-                            );
-                        } else {
-                            textContainer.textContent =
-                                roundTexts[currentRoundIndex];
-                        }
-                        this.scrollToBottomIfNear();
-                    },
-                    billingRunId,
-                    signal,
-                    previousGenerationIds.length > 0
-                        ? [...previousGenerationIds]
-                        : undefined
-                );
-
-                // Successful round — reset reconnect counter and clear
-                // previous generation IDs (their cost has now been captured
-                // in cumulativeUsage or they're no longer relevant)
-                this._reconnectAttempts = 0;
-
-                // ── Track usage for this round ──
-                // On retry legs, the backend returns cumulativeUsage which
-                // is the total across ALL prior dropped legs + current leg.
-                // We compute the delta (dropped legs = cumulative - current)
-                // and accumulate that separately, then accumulate the current
-                // leg normally. This avoids double-counting while capturing
-                // the costs of legs whose SSE never completed.
-                const roundUsage = result.usage;
-                if (result.cumulativeUsage && roundUsage) {
-                    const droppedPrompt =
-                        (result.cumulativeUsage.prompt_tokens || 0) -
-                        (roundUsage.prompt_tokens || 0);
-                    const droppedCompletion =
-                        (result.cumulativeUsage.completion_tokens || 0) -
-                        (roundUsage.completion_tokens || 0);
-                    const droppedCost =
-                        (result.cumulativeUsage.total_cost || 0) -
-                        (roundUsage.total_cost || 0);
-                    if (droppedPrompt > 0 || droppedCompletion > 0) {
-                        this.accumulateSessionTotals({
-                            prompt_tokens: droppedPrompt,
-                            completion_tokens: droppedCompletion,
-                            total_tokens: droppedPrompt + droppedCompletion,
-                            cached_tokens:
-                                (result.cumulativeUsage.cached_tokens || 0) -
-                                (roundUsage.cached_tokens || 0),
-                            total_cost: droppedCost
-                        });
-                    }
-                    this.accumulateSessionTotals(roundUsage);
-                    // Clear previous gen IDs — their costs are now captured
-                    // in sessionTotals via the delta above
-                    previousGenerationIds.length = 0;
-                } else if (roundUsage) {
-                    this.accumulateSessionTotals(roundUsage);
-                }
-
-                // ── Render per-round metrics (dev mode only) ──
-                const isDev = window.isDevelopment?.() ?? false;
-                if (isDev && bodyDiv) {
-                    const bd = bodyDiv as HTMLDivElement;
-                    const metricsStr = this.formatUsageMetrics(roundUsage);
-                    if (metricsStr) {
-                        const roundTextEl = bd.querySelector(
-                            '.assistant-round-text:last-child'
-                        ) as HTMLElement | null;
-                        if (roundTextEl) {
-                            const metricsEl = document.createElement('div');
-                            metricsEl.className = 'assistant-round-metrics';
-                            metricsEl.textContent = metricsStr;
-                            roundTextEl.insertAdjacentElement(
-                                'afterend',
-                                metricsEl
-                            );
-                        }
-                    }
-                }
-
-                this.updateSessionMetricsBar();
-
-                // ── Connection dropped mid-stream — auto-retry in-place ──
-                if (result.connectionDropped) {
-                    const partialText =
-                        roundTexts.filter(Boolean).join(' ').trim() ||
-                        result.text ||
-                        '';
-                    if (partialText) {
-                        conversationMessages.push({
-                            role: 'assistant',
-                            content: partialText
-                        });
-                        this.conversationMessages = conversationMessages;
-                    }
-                    // Save the generationId from the dropped leg so the retry
-                    // request includes it — the backend will query OpenRouter's
-                    // generation API to include its usage in cumulativeUsage
-                    if (result.generationId) {
-                        previousGenerationIds.push(result.generationId);
-                    }
-                    if (!this._reconnectAttempts) this._reconnectAttempts = 0;
-                    this._reconnectAttempts++;
-                    if (this._reconnectAttempts <= 3) {
-                        const reconnMsg = document.createElement('div');
-                        reconnMsg.className = 'assistant-connection-dropped';
-                        reconnMsg.textContent = `🔄 Reconnecting... (attempt ${this._reconnectAttempts}/3)`;
-                        const appendTarget: HTMLElement | null =
-                            bodyDiv || this.messagesContainer;
-                        if (appendTarget) appendTarget.appendChild(reconnMsg);
-                        // Back off: 500ms, 1s, 1.5s
-                        await new Promise((r) =>
-                            setTimeout(r, 500 * this._reconnectAttempts)
-                        );
-                        // Remove the notice before retry.
-                        reconnMsg.remove();
-                        // Retry the same round into the same shell;
-                        // conversationMessages now ends with the partial
-                        // model response, so the model picks up from
-                        // where it left off
-                        currentRoundIndex--; // undo the increment
-                        continue;
-                    }
-                    // Max retries exhausted — give up
-                    const exhaustedMsg = document.createElement('div');
-                    exhaustedMsg.className = 'assistant-connection-dropped';
-                    exhaustedMsg.textContent =
-                        '⚠️ Connection lost after 3 retries. Type "continue" to resume.';
-                    const appendTarget: HTMLElement | null =
-                        bodyDiv || this.messagesContainer;
-                    if (appendTarget) appendTarget.appendChild(exhaustedMsg);
-                    this.hideStreamIndicator();
-                    this.isStreaming = false;
-                    this.finishPromptTransaction();
-                    this.activePromptContext = null;
-                    this.updateAssistantEditToggle();
-                    if (this.sendButton)
-                        (this.sendButton as HTMLButtonElement).disabled = false;
-                    if (this.promptInput) this.promptInput.focus();
-                    this.scrollToBottomIfNear();
-                    return;
-                }
-
-                if (result.toolCalls && result.toolCalls.length > 0) {
-                    // Ensure the assistant message container exists even when the model
-                    // responds with only a tool call and no preamble text
-                    ensureMessageShell();
-
-                    conversationMessages.push({
-                        role: 'assistant',
-                        content: result.text || null,
-                        tool_calls: result.toolCalls
-                    });
-
-                    for (const toolCall of result.toolCalls) {
-                        let args;
-                        try {
-                            args = JSON.parse(
-                                toolCall.function.arguments || '{}'
-                            );
-                        } catch {
-                            args = {};
-                        }
-
-                        let toolResult: string;
-                        let resultLen = 0;
-
-                        // Add tool-call line directly into bodyDiv — between rounds,
-                        // so it appears chronologically between Round 1 text and Round 2 text
-                        if (bodyDiv) {
-                            const line = document.createElement('div');
-                            line.className = 'assistant-tool-call-line';
-                            line.textContent = `📖 Calling ${toolCall.function.name}`;
-
-                            const infoBtn = document.createElement('button');
-                            infoBtn.className = 'assistant-tool-call-info-btn';
-                            infoBtn.textContent = 'ⓘ';
-                            line.appendChild(infoBtn);
-
-                            try {
-                                toolResult =
-                                    await this.executeToolCall(toolCall);
-                                resultLen = toolResult.length;
-                            } catch (err: any) {
-                                toolResult = `Error: ${err.message}`;
-                            }
-
-                            const timeLabel = new Date().toLocaleTimeString();
-
-                            this.attachPopup(
-                                infoBtn,
-                                () =>
-                                    this.createToolCallMetaElement(
-                                        toolCall.function.name,
-                                        args,
-                                        toolResult,
-                                        timeLabel
-                                    ),
-                                'right',
-                                520
-                            );
-
-                            executedToolCalls.push({
-                                name: toolCall.function.name,
-                                args,
-                                result: toolResult,
-                                timeLabel
-                            });
-                            if (headerDiv) {
-                                this.ensureHeaderToolCallsButton(
-                                    headerDiv,
-                                    executedToolCalls
-                                );
-                            }
-
-                            (bodyDiv as HTMLDivElement).appendChild(line);
-                            if (
-                                toolCall.function.name ===
-                                    'replace_python_text_in_editor' &&
-                                !toolResult.startsWith('Error:')
-                            ) {
-                                (bodyDiv as HTMLDivElement).appendChild(
-                                    this.createInlinePythonEditDiffElement(
-                                        toolResult,
-                                        args
-                                    )
-                                );
-                            }
-                            this.scrollToBottomIfNear();
-                        } else {
-                            try {
-                                toolResult =
-                                    await this.executeToolCall(toolCall);
-                            } catch (err: any) {
-                                toolResult = `Error: ${err.message}`;
-                            }
-                        }
-
-                        conversationMessages.push({
-                            role: 'tool',
-                            tool_call_id: toolCall.id,
-                            name: toolCall.function.name,
-                            content: toolResult
-                        });
-                    }
-                    // Continue to next streaming round
-                } else {
-                    // No more tool calls — final text response
-                    const finalText = roundTexts.join(' ') || result.text || '';
-                    this.conversationMessages = conversationMessages;
-                    conversationMessages.push({
-                        role: 'assistant',
-                        content: finalText
-                    });
-                    this.messages.push({
-                        role: 'assistant',
-                        content: finalText
-                    });
-                    this.hideStreamIndicator();
-                    this.isStreaming = false;
-                    this.abortController = null;
-                    this.finishPromptTransaction();
-                    this.activePromptContext = null;
-                    this.updateAssistantEditToggle();
-                    if (this.sendButton)
-                        (this.sendButton as HTMLButtonElement).disabled = false;
-                    if (this.promptInput) this.promptInput.focus();
-                    return;
-                }
-            }
-        } catch (err: any) {
-            this.clearInitialStatus();
-            if (err.name === 'AbortError') {
-                // User clicked stop — save whatever text was streamed so the
-                // model can pick up from "Continue"
-                const partialText = roundTexts.filter(Boolean).join(' ').trim();
-                if (partialText) {
-                    conversationMessages.push({
-                        role: 'assistant',
-                        content: partialText
-                    });
-                    this.conversationMessages = conversationMessages;
-                }
-            } else {
-                this.addMessage('error', err.message || 'Network error');
-                console.error('[AIAssistant]', 'Request failed:', err);
-            }
-        }
-
-        this.hideStreamIndicator();
-        this.isStreaming = false;
-        this.finishPromptTransaction(this.promptInterrupted);
-        this.activePromptContext = null;
-        this.updateAssistantEditToggle();
-        if (this.sendButton)
-            (this.sendButton as HTMLButtonElement).disabled = false;
-        if (this.promptInput) this.promptInput.focus();
+        await this.session.send(prompt);
+        this.promptInput?.focus();
     }
 
     private interruptPrompt() {
-        if (!this.isStreaming) {
-            return;
-        }
-
-        this.promptInterrupted = true;
-        this.abortController?.abort();
-        this.abortController = null;
-    }
-
-    private finishPromptTransaction(interrupted: boolean = false) {
-        this.promptTransactionOpen = false;
+        this.session.stop();
     }
 
     showInitialStatus() {
-        if (!this.messagesContainer) return;
-        const el = document.createElement('div');
-        el.id = 'assistant-initial-status';
-        el.className = 'assistant-tool-call-line';
-        el.textContent = '💭 Understanding your question...';
-        this.messagesContainer.appendChild(el);
-        this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+        this.session.setStatus('Understanding your question...');
+    }
+
+    clearInitialStatus() {
+        this.session.setStatus(null);
     }
 
     showStreamIndicator() {
@@ -4655,105 +3688,16 @@ if '_assistant_original_stdout' in dir():
         if (el) el.style.display = 'none';
     }
 
-    clearInitialStatus() {
-        document.getElementById('assistant-initial-status')?.remove();
-    }
-
-    scrollToBottomIfNear(threshold = 150) {
-        if (!this.messagesContainer) return;
-        const dist =
-            this.messagesContainer.scrollHeight -
-            this.messagesContainer.scrollTop -
-            this.messagesContainer.clientHeight;
-        if (dist < threshold) {
-            this.messagesContainer.scrollTop =
-                this.messagesContainer.scrollHeight;
-        }
-    }
-
     escapeHtml(text: string): string {
-        const d = document.createElement('div');
-        d.appendChild(document.createTextNode(text));
-        return d.innerHTML;
+        return escapeHtml(text);
     }
 
     highlightPython(code: string): string {
-        const escaped = this.escapeHtml(code);
-        let html = escaped;
-
-        // Triple-quoted strings (must come before single-line strings)
-        html = html.replace(
-            /(&quot;&quot;&quot;[\s\S]*?&quot;&quot;&quot;|&#x27;&#x27;&#x27;[\s\S]*?&#x27;&#x27;&#x27;)/g,
-            '<span style="color:var(--accent-orange)">$1</span>'
-        );
-        // Comments
-        html = html.replace(
-            /(#[^\n]*)/g,
-            '<span style="color:var(--accent-green);font-style:italic">$1</span>'
-        );
-        // F-strings (before regular strings)
-        html = html.replace(
-            /(f&quot;[^&]*?&quot;|f&#x27;[^&]*?&#x27;)/g,
-            '<span style="color:var(--accent-magenta)">$1</span>'
-        );
-        // Regular strings
-        html = html.replace(
-            /(&quot;[^&]*?&quot;|&#x27;[^&]*?&#x27;)/g,
-            '<span style="color:var(--accent-orange)">$1</span>'
-        );
-        // Keywords
-        html = html.replace(
-            /\b(def|class|if|elif|else|for|while|import|from|as|return|yield|try|except|finally|raise|with|pass|break|continue|and|or|not|in|is|lambda|async|await|True|False|None|self|del|global|nonlocal|assert)\b/g,
-            '<span style="color:var(--accent-blue);font-weight:bold">$1</span>'
-        );
-        // Built-in functions
-        html = html.replace(
-            /\b(print|len|range|int|str|float|list|dict|set|tuple|type|open|map|filter|zip|enumerate|sorted|reversed|abs|min|max|sum|any|all|isinstance|hasattr|getattr|setattr|super|property|staticmethod|classmethod|object|__init__|__str__|__repr__|__len__|__getitem__|__setitem__|__delitem__|__iter__|__next__|__enter__|__exit__)\b/g,
-            '<span style="color:var(--accent-cyan)">$1</span>'
-        );
-        // Numbers
-        html = html.replace(
-            /\b(\d+\.?\d*)\b/g,
-            '<span style="color:var(--accent-magenta)">$1</span>'
-        );
-
-        return html;
+        return highlightPython(code);
     }
-
-    // ── Dev-mode usage metrics ──
 
     formatUsageMetrics(usage: UsageMetrics | null | undefined): string {
-        if (!usage) return '';
-        const parts: string[] = [];
-        if (usage.prompt_tokens != null)
-            parts.push(`in: ${usage.prompt_tokens}`);
-        if (usage.completion_tokens != null)
-            parts.push(`out: ${usage.completion_tokens}`);
-        if (usage.cached_tokens != null)
-            parts.push(`cached: ${usage.cached_tokens}`);
-        if (usage.total_cost != null)
-            parts.push(`$${usage.total_cost.toFixed(6)}`);
-        else if (usage.cost_eur_cents != null)
-            parts.push(`${usage.cost_eur_cents}c`);
-        return parts.length > 0 ? parts.join(' · ') : '';
-    }
-
-    accumulateSessionTotals(usage: UsageMetrics | null | undefined): void {
-        if (!usage) return;
-        this.sessionTotals.prompt_tokens =
-            (this.sessionTotals.prompt_tokens || 0) +
-            (usage.prompt_tokens || 0);
-        this.sessionTotals.completion_tokens =
-            (this.sessionTotals.completion_tokens || 0) +
-            (usage.completion_tokens || 0);
-        this.sessionTotals.cached_tokens =
-            (this.sessionTotals.cached_tokens || 0) +
-            (usage.cached_tokens || 0);
-        this.sessionTotals.total_cost =
-            (this.sessionTotals.total_cost || 0) + (usage.total_cost || 0);
-        this.sessionTotals.cost_eur_cents =
-            (this.sessionTotals.cost_eur_cents || 0) +
-            (usage.cost_eur_cents || 0);
+        return formatUsageMetrics(usage);
     }
 
     updateSessionMetricsBar(): void {
@@ -4775,17 +3719,11 @@ if '_assistant_original_stdout' in dir():
             return;
         }
         bar.style.display = 'inline';
-        bar.textContent = this.formatUsageMetrics(s);
+        bar.textContent = formatUsageMetrics(s);
     }
 
     newChat() {
-        this.interruptPrompt();
-        if (this.messagesContainer) this.messagesContainer.innerHTML = '';
-        this.messages = [];
-        this.conversationMessages = [];
-        this.roundUsage = [];
-        this.sessionTotals = {};
-        this._reconnectAttempts = 0;
+        this.session.reset();
         if (this.promptInput) {
             this.promptInput.value = '';
             this.promptInput.style.height = 'auto';
@@ -4793,9 +3731,7 @@ if '_assistant_original_stdout' in dir():
         this.lockAssistantInput(
             !this.isAuthenticated || !this.canUseAssistant()
         );
-        this.clearInitialStatus();
         this.hideStreamIndicator();
-        this.updateSessionMetricsBar();
         if (this.promptInput && !this.promptInput.disabled) {
             this.promptInput.focus();
         }

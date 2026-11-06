@@ -1,0 +1,281 @@
+/* One look for every Assistant chat (AssistantChatView, js/assistant/chat-view.ts).
+   Rules are scoped to the view's root, .assistant-chat; hosts only place it. */
+
+.assistant-chat {
+    overflow-y: auto;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    scrollbar-width: none;
+}
+
+.assistant-chat::-webkit-scrollbar {
+    width: 0;
+    display: none;
+}
+
+.assistant-chat .assistant-message {
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
+    line-height: 1.5;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+.assistant-chat .assistant-message-header {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 10px;
+    color: var(--text-tertiary);
+}
+
+.assistant-chat .assistant-message-header .material-symbols-outlined {
+    font-size: 14px;
+}
+
+/* "You" and "Sent automatically" */
+.assistant-chat .assistant-message-user {
+    background-color: var(--background-secondary);
+    color: var(--text-primary);
+    align-self: flex-end;
+    max-width: 85%;
+    white-space: pre-wrap;
+}
+
+.assistant-chat .assistant-message-assistant {
+    color: var(--text-primary);
+    align-self: flex-start;
+    max-width: 100%;
+}
+
+.assistant-chat .assistant-message-error {
+    color: var(--accent-red);
+    align-self: flex-start;
+    max-width: 100%;
+    white-space: pre-wrap;
+}
+
+.assistant-chat .assistant-message-error .assistant-message-header {
+    color: inherit;
+}
+
+.assistant-chat .assistant-message-assistant p {
+    margin: 4px 0;
+}
+
+.assistant-chat .assistant-message-assistant p:first-child {
+    margin-top: 0;
+}
+
+.assistant-chat .assistant-message-assistant p:last-child {
+    margin-bottom: 0;
+}
+
+.assistant-chat .assistant-message-assistant pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border-primary);
+    border-radius: 4px;
+    padding: 8px;
+    overflow-x: auto;
+    font-size: 11px;
+    line-height: 1.4;
+}
+
+.assistant-chat .assistant-message-assistant code {
+    font-family: var(--font-families-mono);
+    font-size: 11px;
+}
+
+.assistant-chat .assistant-message-assistant code:not(pre code) {
+    background: var(--code-bg);
+    padding: 1px 4px;
+    border-radius: 3px;
+}
+
+.assistant-chat .assistant-message-assistant ul,
+.assistant-chat .assistant-message-assistant ol {
+    margin: 4px 0;
+    padding-left: 20px;
+}
+
+.assistant-chat .assistant-message-assistant h1,
+.assistant-chat .assistant-message-assistant h2,
+.assistant-chat .assistant-message-assistant h3,
+.assistant-chat .assistant-message-assistant h4 {
+    margin: 8px 0 4px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.assistant-chat .assistant-message-assistant h1 {
+    font-size: 14px;
+}
+
+.assistant-chat .assistant-message-assistant h2 {
+    font-size: 13px;
+}
+
+.assistant-chat .assistant-message-assistant h3 {
+    font-size: 12px;
+}
+
+.assistant-chat hr {
+    border: none;
+    border-top: 1px solid var(--border-primary);
+    margin: 12px 0;
+}
+
+/* Per-round usage metrics (dev mode only) */
+.assistant-chat .assistant-round-metrics {
+    font-size: 10px;
+    color: var(--text-tertiary);
+    padding: 1px 0 4px 0;
+    font-family: var(--font-families-mono);
+    opacity: 0.65;
+}
+
+/* Tool-call lines sit between the round texts in chronological order. */
+.assistant-chat .assistant-tool-call-line {
+    font-size: 10px;
+    color: var(--text-faint);
+    font-style: italic;
+    line-height: 1.4;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin: 10px 0 14px 12px;
+}
+
+.assistant-chat .assistant-tool-call-line + .assistant-tool-call-line {
+    margin-top: -10px;
+}
+
+/* Connection lost after the retries */
+.assistant-chat .assistant-connection-dropped {
+    margin: 4px 0;
+    color: var(--text-tertiary);
+    font-size: 0.85em;
+}
+
+/* Status under the transcript: "Understanding your question...", reconnects */
+.assistant-chat .assistant-thinking {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 12px 8px;
+    color: var(--text-tertiary);
+    font-size: 11px;
+}
+
+.assistant-chat .assistant-thinking .spinner {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+    border: 2px solid var(--border-primary);
+    border-top: 2px solid var(--view-assistant);
+    border-radius: 50%;
+    animation: assistant-spin 0.8s linear infinite;
+}
+
+/* Inline diff after replace_python_text_in_editor */
+.assistant-chat .assistant-python-edit-diff {
+    margin: 4px 0 8px 20px;
+    padding: 8px;
+    border: 1px solid var(--border-primary);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.assistant-chat .assistant-python-edit-diff-title {
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.assistant-chat .assistant-python-edit-diff-summary {
+    margin-bottom: 6px;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+}
+
+.assistant-chat .assistant-python-edit-diff-raw {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 10px;
+    font-family: var(--font-families-mono);
+    tab-size: 4;
+}
+
+.assistant-chat .assistant-python-edit-diff-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    font-family: var(--font-families-mono);
+    font-size: 10px;
+    tab-size: 4;
+}
+
+.assistant-chat .assistant-python-edit-diff-row {
+    display: grid;
+    grid-template-columns: 64px minmax(0, 1fr);
+    gap: 8px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text-secondary);
+}
+
+.assistant-chat .assistant-python-edit-diff-marker {
+    user-select: none;
+    color: var(--text-tertiary);
+    text-align: right;
+}
+
+.assistant-chat .assistant-python-edit-diff-row-added {
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--accent-green) 16%, transparent);
+    border-left: 3px solid var(--accent-green);
+}
+
+.assistant-chat .assistant-python-edit-diff-row-removed {
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--accent-red) 16%, transparent);
+    border-left: 3px solid var(--accent-red);
+}
+
+.assistant-chat .assistant-python-edit-diff-row-omitted {
+    color: var(--text-tertiary);
+    font-style: italic;
+}
+
+/* The ⓘ button. Not scoped: Tippy popups and the tool catalog use it too. */
+.assistant-tool-call-info-btn {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border: none;
+    background: transparent;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    border-radius: 50%;
+    font-size: 10px;
+    font-style: normal;
+    padding: 0;
+    opacity: 0.5;
+    transition: opacity 0.15s ease;
+    flex-shrink: 0;
+}
+
+.assistant-tool-call-info-btn:hover {
+    opacity: 1;
+    color: var(--text-primary);
+}

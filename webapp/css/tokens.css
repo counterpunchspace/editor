@@ -12,6 +12,8 @@
     --border-tertiary: rgba(255, 255, 255, 0.3);
     --border-secondary: #555555;
     --border-primary: #181818;
+    --border-inner: #383838;
+    --border-control: #4a4a4a;
     --border-active: #666666;
     --border-focus-outline: #ffffff;
     --modal-bg: #2a2a2a;
@@ -103,6 +105,8 @@
     --border-tertiary: rgba(0, 0, 0, 0.2);
     --border-secondary: #999999;
     --border-primary: #c0c0c0;
+    --border-inner: #e2e2e2;
+    --border-control: #b4b4b4;
     --border-active: #888888;
     --border-focus-outline: #000000;
     --modal-bg: #ffffff;

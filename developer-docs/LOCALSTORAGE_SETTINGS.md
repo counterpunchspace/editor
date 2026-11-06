@@ -10,7 +10,7 @@ IndexedDB keys such as directory handles and export destinations are not include
 
 | Keys | Literal | Pattern |
 | ---: | ---: | ---: |
-| 35 | 32 | 3 |
+| 36 | 33 | 3 |
 
 | Key | Purpose | Operations | Files |
 | --- | --- | --- | --- |
@@ -31,6 +31,7 @@ IndexedDB keys such as directory handles and export destinations are not include
 | [`editorPathFillOpacity`](#key-editorpathfillopacity) | Preference: opacity of editable outline fills, placeholder fills, and subtraction cutter fills. | getItem, setItem | `webapp/js/path-fill-opacity-pref.ts` |
 | [`editorScreenUnitScale`](#key-editorscreenunitscale) | Persists editor screen unit scale. | getItem, setItem, removeItem | `webapp/js/glyph-canvas/point-size.ts` |
 | [`glyphCanvasTextBuffer`](#key-glyphcanvastextbuffer) | Persists glyph canvas text buffer. | getItem, setItem, removeItem | `webapp/js/font-manager.ts`, `webapp/js/glyph-canvas/textrun.ts` |
+| [`glyphFilterEditorMode`](#key-glyphfiltereditormode) | Persists glyph filter editor mode. | getItem, setItem | `webapp/js/glyph-filter-editor-modal.ts` |
 | [`lastFilesystemContext`](#key-lastfilesystemcontext) | Persists last filesystem context. | getItem, setItem | `webapp/js/file-browser.ts` |
 | [`preferredTheme`](#key-preferredtheme) | Theme management | getItem, setItem | `webapp/js/font-info.ts`, `webapp/js/script-editor.ts`, `webapp/js/theme-switcher.ts` |
 | [`pythonScript`](#key-pythonscript) | Persists python script. | getItem, setItem | `webapp/js/script-editor.ts` |
@@ -81,8 +82,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Operations: `getItem`, `setItem`
 - Default when unset: `false`
 - Sites:
-  - webapp/js/ai-assistant.ts:823 `getItem` via constructor `constructor`
-  - webapp/js/ai-assistant.ts:972 `setItem` via method `initUI`
+  - webapp/js/ai-assistant.ts:818 `getItem` via constructor `constructor`
+  - webapp/js/ai-assistant.ts:1020 `setItem` via method `initUI`
 
 <a id="key-canvasplugin-curvaturecombplugin-exponent"></a>
 
@@ -248,6 +249,17 @@ IndexedDB keys such as directory handles and export destinations are not include
   - webapp/js/glyph-canvas/textrun.ts:2350 `setItem` via method `loadTextBufferFromFont`
   - webapp/js/glyph-canvas/textrun.ts:2387 `setItem` via method `saveTextBuffer`
 
+<a id="key-glyphfiltereditormode"></a>
+
+## `glyphFilterEditorMode`
+
+- Purpose: Persists glyph filter editor mode.
+- Kind: literal
+- Operations: `getItem`, `setItem`
+- Sites:
+  - webapp/js/glyph-filter-editor-modal.ts:154 `getItem` via function `readStoredMode`
+  - webapp/js/glyph-filter-editor-modal.ts:164 `setItem` via function `storeMode`
+
 <a id="key-lastfilesystemcontext"></a>
 
 ## `lastFilesystemContext`
@@ -269,7 +281,7 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Default when unset: `auto`
 - Sites:
   - webapp/js/font-info.ts:2957 `getItem` via function `getInitialTheme`
-  - webapp/js/script-editor.ts:348 `getItem` via function `getInitialTheme`
+  - webapp/js/script-editor.ts:352 `getItem` via function `getInitialTheme`
   - webapp/js/theme-switcher.ts:56 `getItem` via method `init`
   - webapp/js/theme-switcher.ts:58 `setItem` via method `init`
   - webapp/js/theme-switcher.ts:105 `getItem` via method `init`
@@ -285,11 +297,11 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Operations: `getItem`, `setItem`
 - Default when unset: `# Write your Python script here...`
 - Sites:
-  - webapp/js/script-editor.ts:310 `getItem` via function `init`
-  - webapp/js/script-editor.ts:433 `setItem` via function `init`
-  - webapp/js/script-editor.ts:1160 `setItem` via function `handleNew`
-  - webapp/js/script-editor.ts:1400 `setItem` via function `openFile`
-  - webapp/js/script-editor.ts:1792 `setItem` via function `reloadFileFromDisk`
+  - webapp/js/script-editor.ts:314 `getItem` via function `init`
+  - webapp/js/script-editor.ts:437 `setItem` via function `init`
+  - webapp/js/script-editor.ts:1164 `setItem` via function `handleNew`
+  - webapp/js/script-editor.ts:1404 `setItem` via function `openFile`
+  - webapp/js/script-editor.ts:1796 `setItem` via function `reloadFileFromDisk`
 
 <a id="key-pythonscriptsavedcontent"></a>
 
@@ -299,8 +311,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: literal
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/script-editor.ts:129 `setItem` via function `persistSavedContent`
-  - webapp/js/script-editor.ts:312 `getItem` via function `init`
+  - webapp/js/script-editor.ts:133 `setItem` via function `persistSavedContent`
+  - webapp/js/script-editor.ts:316 `getItem` via function `init`
 
 <a id="key-pythonscripttimestamp"></a>
 
@@ -310,10 +322,10 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: literal
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/script-editor.ts:671 `getItem` via function `tryStartWatcher`
-  - webapp/js/script-editor.ts:1276 `setItem` via function `handleSave`
-  - webapp/js/script-editor.ts:1409 `setItem` via function `openFile`
-  - webapp/js/script-editor.ts:1798 `setItem` via function `reloadFileFromDisk`
+  - webapp/js/script-editor.ts:675 `getItem` via function `tryStartWatcher`
+  - webapp/js/script-editor.ts:1280 `setItem` via function `handleSave`
+  - webapp/js/script-editor.ts:1413 `setItem` via function `openFile`
+  - webapp/js/script-editor.ts:1802 `setItem` via function `reloadFileFromDisk`
 
 <a id="key-pythonscripturi"></a>
 
@@ -323,12 +335,12 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: literal
 - Operations: `getItem`, `setItem`, `removeItem`
 - Sites:
-  - webapp/js/script-editor.ts:240 `setItem` via function `updateFilePath`
-  - webapp/js/script-editor.ts:317 `getItem` via function `init`
-  - webapp/js/script-editor.ts:328 `setItem` via function `init`
-  - webapp/js/script-editor.ts:1159 `removeItem` via function `handleNew`
-  - webapp/js/script-editor.ts:1401 `setItem` via function `openFile`
-  - webapp/js/script-editor.ts:1849 `removeItem` via module `top-level module code`
+  - webapp/js/script-editor.ts:244 `setItem` via function `updateFilePath`
+  - webapp/js/script-editor.ts:321 `getItem` via function `init`
+  - webapp/js/script-editor.ts:332 `setItem` via function `init`
+  - webapp/js/script-editor.ts:1163 `removeItem` via function `handleNew`
+  - webapp/js/script-editor.ts:1405 `setItem` via function `openFile`
+  - webapp/js/script-editor.ts:1853 `removeItem` via module `top-level module code`
 
 <a id="key-runpythonscriptlastrun"></a>
 
@@ -361,8 +373,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: literal
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/auth-manager.ts:570 `getItem` via method `rememberedSignInEmail`
-  - webapp/js/auth-manager.ts:578 `setItem` via method `rememberSignInEmail`
+  - webapp/js/auth-manager.ts:571 `getItem` via method `rememberedSignInEmail`
+  - webapp/js/auth-manager.ts:579 `setItem` via method `rememberSignInEmail`
 
 <a id="key-tabkeepalivetimestamp"></a>
 

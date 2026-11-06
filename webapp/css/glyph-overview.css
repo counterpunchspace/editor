@@ -1,7 +1,8 @@
 /* Glyph Overview Styles */
 
-/* Main container for glyph tiles */
-#glyph-overview-container {
+/* Main container for glyph tiles (GlyphOverviewView; the main window's has the id) */
+#glyph-overview-container,
+.glyph-overview-container {
     --tile-width: 30px;
     --tile-height: 50px;
     --tile-columns: 1;
@@ -17,21 +18,26 @@
     user-select: none;
 }
 
-#glyph-overview-container.glyph-overview-grid-mode {
+#glyph-overview-container.glyph-overview-grid-mode,
+.glyph-overview-container.glyph-overview-grid-mode {
     display: block;
 }
 
-#glyph-overview-container.glyph-overview-lines-mode {
+#glyph-overview-container.glyph-overview-lines-mode,
+.glyph-overview-container.glyph-overview-lines-mode {
     display: grid;
     grid-template-columns: repeat(var(--tile-columns), minmax(0, 1fr));
     align-content: start;
 }
 
-#glyph-overview-container.glyph-overview-lines-mode .glyph-tile {
+#glyph-overview-container.glyph-overview-lines-mode .glyph-tile,
+.glyph-overview-container.glyph-overview-lines-mode .glyph-tile {
     width: 100%;
 }
 
 #glyph-overview-container.glyph-overview-lines-mode
+    [data-role^='virtual-spacer'],
+.glyph-overview-container.glyph-overview-lines-mode
     [data-role^='virtual-spacer'] {
     grid-column: 1 / -1;
 }
@@ -421,17 +427,33 @@
 .glyph-filter-legend {
     display: flex;
     flex-wrap: wrap;
-    gap: 3px 3px;
+    gap: 2px 2px;
     padding: 7px;
     border-bottom: 1px solid var(--border-primary);
     user-select: none;
+}
+
+/* In the overview, a long group list stops at a third of the overview's
+   height and scrolls, so the glyph tiles keep most of the space. */
+#overview-group-legend {
+    flex-shrink: 0;
+    max-height: 33%;
+    overflow-y: auto;
+}
+
+/* Group lists that scroll (here and in the filter editor) use a quiet
+   scrollbar like the glyph tiles: thin, with no visible track. */
+#overview-group-legend,
+.gfe-strip-head .glyph-filter-legend {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 .glyph-filter-legend-item {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 3px 6px;
+    padding: 2px 6px;
     border-radius: 4px;
     border: 1px solid transparent;
     user-select: none;
@@ -747,7 +769,8 @@
 }
 
 /* New filter button */
-.glyph-filter-new-btn {
+.glyph-filter-new-btn,
+.glyph-filter-new-folder-btn {
     background: none;
     border: none;
     cursor: pointer;
@@ -760,13 +783,32 @@
     transition: background-color 0.1s ease;
 }
 
-.glyph-filter-new-btn:hover {
+.glyph-filter-new-btn:hover,
+.glyph-filter-new-folder-btn:hover {
     background-color: var(--background-hover);
     color: var(--text-primary);
 }
 
-.glyph-filter-new-btn .material-symbols-outlined {
+.glyph-filter-new-btn .material-symbols-outlined,
+.glyph-filter-new-folder-btn .material-symbols-outlined {
     font-size: 16px;
+}
+
+/* Moving user filters between folders */
+.glyph-filter-item.dragging {
+    opacity: 0.5;
+}
+
+.glyph-filter-user-tree.drop-target,
+.glyph-filter-user-header.drop-target,
+.glyph-filter-node.drop-target {
+    background-color: var(--background-hover);
+    border-radius: 4px;
+}
+
+.glyph-filter-new-folder .glyph-filter-rename-input {
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
 /* Rename input */

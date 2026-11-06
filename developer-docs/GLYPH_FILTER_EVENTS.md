@@ -15,7 +15,7 @@ def classify_glyph(glyph):
     return not glyph.anchors
 ```
 
-Return `False` to hide a glyph or `True` to show it without groups. Return a mapping with groups only when categories are needed. Do not use lifecycle events in `EVENT_TYPES`: `glyph.created`, `glyph.deleted`, and `glyph.renamed` are always handled by the host. Do not use `font.masters.changed` in a simple filter. Every returned group is a complete `{name, color}` mapping; group names identify groups and colors are last-wins.
+Return `False` to hide a glyph or `True` to show it without groups. Return a mapping with groups only when categories are needed. Do not use lifecycle events in `EVENT_TYPES`: `glyph.created`, `glyph.deleted`, and `glyph.renamed` are always handled by the host. A filter that only reads glyph names uses `EVENT_TYPES = []`. Do not use `font.masters.changed` in a simple filter. Every returned group is a complete `{name, color}` mapping; group names identify groups and colors are last-wins.
 
 ## Events
 

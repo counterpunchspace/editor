@@ -43,6 +43,10 @@ import {
 import type { FileSystemAdapter } from './file-system-adapter';
 import { createGlyphFilterTemplate } from './glyph-filter-template';
 import { showNamedUnsavedChangesDialog } from './ui/confirm-dialog';
+import {
+    assertExpectedRevision,
+    replaceExactTextInAce
+} from './assistant/python-target';
 
 (function () {
     type ScriptDocumentState = {
@@ -1854,34 +1858,8 @@ import { showNamedUnsavedChangesDialog } from './ui/confirm-dialog';
             newText: string,
             expectedRevision: string
         ) => {
-            if (expectedRevision !== getRevision()) {
-                throw new Error(
-                    'The script changed since it was last read. Read it again before editing.'
-                );
-            }
-            const content = editor.getValue();
-            const firstIndex = content.indexOf(oldText);
-            if (firstIndex < 0) {
-                throw new Error(
-                    'The requested text was not found in the script.'
-                );
-            }
-            if (content.indexOf(oldText, firstIndex + oldText.length) >= 0) {
-                throw new Error(
-                    'The requested text appears more than once. Read a narrower section before editing.'
-                );
-            }
-            const document = editor.session.getDocument();
-            document.replace(
-                {
-                    start: document.indexToPosition(firstIndex, 0),
-                    end: document.indexToPosition(
-                        firstIndex + oldText.length,
-                        0
-                    )
-                },
-                newText
-            );
+            assertExpectedRevision(expectedRevision, getRevision());
+            replaceExactTextInAce(editor, oldText, newText);
             return getDocumentState();
         },
         get isModified() {
