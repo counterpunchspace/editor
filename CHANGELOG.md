@@ -1,5 +1,6 @@
 # Unreleased
 
+- **Start with a new font**: Opening the app with no file URL now starts with a new empty font, like File → New. The sample font stays one link away: `?file=memory:///user/Fustat.glyphs` opens memory `Fustat.glyphs` at Regular (weight 400) with the text `hëllo مَرْحَباً`, as the app did before (`?text=` and `?location=` still win). The website's **Try a sample font** button uses that link. A URL font that cannot be opened now falls back to a new font as well.
 - **Glyph filter editor**: **New filter**, **Edit Filter…** and a double-click on a user filter open an editor where you describe the filter in words (Simple) or edit its code next to an Assistant chat (Expert). The Assistant writes the code from your description and keeps the description in step with the code, groups and colors included. The matching glyphs, their groups and the glyph overview (with Normal/Matrix, search and size) appear on demand. Changes reach the sidebar only on OK; Cancel discards them and that part of the chat. New filters save straight into `Filters/`, and renaming refuses a name that is already taken. User filters can be sorted into folders and subfolders: create them from the User Filters title or a folder's context menu, drag filters between them, and delete folders (with a warning that lists what's inside).
 
 # v0.4.0

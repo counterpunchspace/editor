@@ -4198,35 +4198,32 @@ document.addEventListener('DOMContentLoaded', () => {
             );
         };
 
+        // Cold start, and every fallback when a URL font cannot be opened,
+        // opens a new empty font (File → New).
         const openDefaultStartupFont = async (reason: string) => {
             if (window.fontManager?.currentFont) {
                 return;
             }
             await waitForFontEditorReady();
             console.log('[FileBrowser]', reason);
+            await window.fontManager?.handleNewFont?.();
+        };
 
-            // Playwright (`?test=true`) keeps File → New so suites that open a
-            // font themselves are not racing a Fustat compile.
-            if (window.isTestMode?.()) {
-                await window.fontManager?.handleNewFont?.();
+        // `?file=memory:///user/Fustat.glyphs` is the sample-font link (the
+        // website's "Try a sample font"): Regular plus the sample text, unless
+        // `?text=` or `?location=` say otherwise. Playwright (`?test=true`)
+        // opens Fustat as-is.
+        const openMemoryUrlFontFromUrl = async (path: string) => {
+            const isSampleFont =
+                path === TOUR_FUSTAT_PATH && !window.isTestMode?.();
+            if (!isSampleFont) {
+                await openMemoryUrlFont(path);
                 return;
             }
-
-            try {
-                applyDefaultStartupText();
-                armDefaultStartupRegularLocation();
-                await openMemoryUrlFont(TOUR_FUSTAT_PATH);
-                applyDefaultStartupText();
-            } catch (error) {
-                console.error(
-                    '[FileBrowser]',
-                    'Failed to open default Fustat.glyphs; falling back to empty font:',
-                    error
-                );
-                if (!window.fontManager?.currentFont) {
-                    await window.fontManager?.handleNewFont?.();
-                }
-            }
+            applyDefaultStartupText();
+            armDefaultStartupRegularLocation();
+            await openMemoryUrlFont(path);
+            applyDefaultStartupText();
         };
 
         try {
@@ -4253,7 +4250,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 !hasPendingPwaLaunchFiles()
             ) {
                 try {
-                    await openMemoryUrlFont(fontPath);
+                    await openMemoryUrlFontFromUrl(fontPath);
                     if (window.fontManager?.currentFont) {
                         return;
                     }
@@ -4266,7 +4263,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         error
                     );
                     await openDefaultStartupFont(
-                        'URL font inaccessible; opening default Fustat.glyphs'
+                        'URL font inaccessible; opening a new font'
                     );
                     return;
                 }
@@ -4354,7 +4351,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                     ) {
                                         console.warn(
                                             '[FileBrowser]',
-                                            `Memory font not found: ${fontPath}; opening the default font`
+                                            `Memory font not found: ${fontPath}; opening a new font`
                                         );
                                         await openDefaultStartupFont(
                                             'URL memory font missing'
@@ -4432,14 +4429,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 // URL pointed at an inaccessible file — keep the alert above,
                 // then open the same default sample font as a cold start.
                 await openDefaultStartupFont(
-                    'URL font inaccessible; opening default Fustat.glyphs'
+                    'URL font inaccessible; opening a new font'
                 );
                 return;
             }
 
-            // No URL/PWA font — open the memory sample font, not File → New.
+            // No URL/PWA font — start with a new empty font.
             await openDefaultStartupFont(
-                'No URL font attached; opening default Fustat.glyphs'
+                'No URL font attached; opening a new font'
             );
         } catch (error: any) {
             console.error(
@@ -4449,7 +4446,7 @@ document.addEventListener('DOMContentLoaded', () => {
             );
             try {
                 await openDefaultStartupFont(
-                    'Startup font open failed; opening default Fustat.glyphs'
+                    'Startup font open failed; opening a new font'
                 );
             } catch (fallbackError) {
                 console.error(
