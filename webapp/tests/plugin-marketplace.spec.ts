@@ -64,7 +64,8 @@ async function linkStartupFolders(page: Page, waitForDialog: boolean) {
     }
     await dialog.locator('[data-folder-kind="settings"]').click();
     await expect(dialog).toContainText('Access granted', { timeout: 20000 });
-    await dialog.locator('[data-folder-kind="project"]').click();
+    // The dialog links only the Settings Folder; fonts on disk are opened
+    // from the launcher.
     const continueButton = dialog.locator('[data-action="continue"]');
     await expect(continueButton).toBeEnabled({ timeout: 20000 });
     await continueButton.click();
