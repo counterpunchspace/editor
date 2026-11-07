@@ -232,8 +232,9 @@ test('the editor signs in from the dialog and keeps the open font', async ({
     try {
         const page = await context.newPage();
         const otherTab = await context.newPage();
-        for (const tab of [page, otherTab]) {
-            await tab.goto('/');
+        // The editor's root is the launcher; `?new=` opens a new font.
+        for (const [index, tab] of [page, otherTab].entries()) {
+            await tab.goto(`/?new=sign-in-${index}`);
             await waitForCanvasReady(tab);
         }
         await page.evaluate(() => {

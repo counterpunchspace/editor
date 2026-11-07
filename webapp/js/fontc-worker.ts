@@ -2419,14 +2419,19 @@ self.onmessage = async (event) => {
                 timelineMark('font.worker.getGlyphOutlines.success');
             } catch (e: any) {
                 timelineMark('font.worker.getGlyphOutlines.failed');
-                console.error(
-                    `[Fontc Worker] Error getting glyph outlines:`,
-                    e
-                );
+                const error = e.toString();
+                // Opening a font drops the previous one before the new one is
+                // stored; a request in between is expected, not an error.
+                if (!error.includes('No font loaded')) {
+                    console.error(
+                        `[Fontc Worker] Error getting glyph outlines:`,
+                        e
+                    );
+                }
                 self.postMessage({
                     id,
                     type: 'getGlyphOutlines',
-                    error: e.toString()
+                    error
                 });
             } finally {
                 timelineSpanEnd(outlinesSpanId);

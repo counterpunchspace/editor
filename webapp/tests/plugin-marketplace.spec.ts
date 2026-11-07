@@ -604,7 +604,8 @@ test('register, buy, and install the free and commercial plugins', async ({
         await attachCloudCollabCookies(editorContext, buyer);
         const editorPage = await editorContext.newPage();
         await prepareEditorPluginStorage(editorPage);
-        await editorPage.goto(editor());
+        // The editor's root is the launcher; `?new=` opens a new font.
+        await editorPage.goto(`${editor()}/?new=plugin-marketplace`);
 
         free = await creatorPlugin('fontdestination-example-plugin');
         harakat = await creatorPlugin('counterpunch-harakat');

@@ -30,7 +30,8 @@ test('a signed-in account loads the editor without page errors', async ({
         const page = await context.newPage();
         const errors: string[] = [];
         page.on('pageerror', (error) => errors.push(error.message));
-        await page.goto('/');
+        // The editor's root is the launcher; `?new=` opens a new font.
+        await page.goto('/?new=product-smoke');
         await waitForCanvasReady(page);
         await page.waitForFunction(
             () => (window as any).authManager?.isAuthenticated?.() === true,

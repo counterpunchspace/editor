@@ -2736,6 +2736,17 @@ export class GlyphOverviewView {
                         location: batchLocation,
                         flattenComponents: false // Don't flatten - preserve component structure with layerData
                     });
+                } catch (error) {
+                    // The worker is between fonts: keep the tiles queued. The
+                    // font that is opening refreshes the overview when ready.
+                    const message =
+                        error instanceof Error ? error.message : String(error);
+                    if (message.includes('No font loaded')) {
+                        glyphIds.forEach((id) => this.pendingGlyphIds.add(id));
+                        timelineSpanEnd(batchSpanId);
+                        return;
+                    }
+                    throw error;
                 } finally {
                     timelineSpanEnd(fetchBatchSpanId);
                 }
