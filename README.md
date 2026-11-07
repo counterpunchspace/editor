@@ -50,8 +50,8 @@ and [Cloud collaboration architecture](strategy/CLOUD_COLLABORATION_ARCHITECTURE
 | Format | Open | Save | Notes |
 | --- | --- | --- | --- |
 | `.babelfont` | Yes | Yes | Native JSON source format. |
-| `.glyphs` | Yes | Yes | Glyphs 3 source text, serialized by `babelfont-rs`/`glyphslib`. |
-| `.glyphspackage` | Yes | Yes | Glyphs 3 and 4 packages, saved file by file. The Glyphs 4 layout (`kerning.plist`, `note.md`, `features/*.fea`) follows the Glyphs file format specification. |
+| `.glyphs` | Yes | Yes | Glyphs 3 and 4 source text, serialized by `babelfont-rs`/`glyphslib`. Saves in the version it was read in; Save As can choose Glyphs 3 or 4. |
+| `.glyphspackage` | Yes | Yes | Glyphs 3 and 4 packages, saved file by file. The Glyphs 4 layout (`kerning.plist`, `note.md`, `features/*.fea`) matches what Glyphs 4 writes. Save As can choose Glyphs 3 or 4. |
 | `.ufo` | Yes | Yes | Single-master, saved file by file with the UFO's own file names. `data/` and `images/` are left untouched; `include()`d feature files are kept until the features are edited, then the flattened code is written. |
 | `.designspace` | Yes | Yes | The document and the UFOs it references, saved file by file. Rules, axis mappings, STAT labels and each UFO's own info, lib, features and extra layers are kept; a source with a `layer` is saved into that layer. |
 | `.vfj` | Yes | No | FontLab source import. |

@@ -1,0 +1,8 @@
+  featureNames {
+    name 1 "Alt numbers";
+    name 3 "Alt numbers";
+  };
+sub six by six.ss05;
+sub nine by nine.ss05;
+sub six.tf by six.tf.ss05;
+sub nine.tf by nine.tf.ss05;

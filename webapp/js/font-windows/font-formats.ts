@@ -78,6 +78,20 @@ export function baseNameOf(name: string): string {
     return format ? name.slice(0, -FONT_FORMATS[format].ext.length) : name;
 }
 
+/**
+ * A file name or path as typed or pasted into Save As, split into the name
+ * and the writable format its extension names. Null when it names none.
+ */
+export function splitFontFileName(
+    text: string
+): { name: string; format: FontFormatKey } | null {
+    const fileName = text.trim().split(/[/\\]/).pop() ?? '';
+    const format = fontFormatOf(fileName);
+    if (!format || !FONT_FORMATS[format].writable) return null;
+    const name = baseNameOf(fileName);
+    return name ? { name, format } : null;
+}
+
 /** Extensions for the system file picker's filter. */
 export const FONT_PICKER_TYPES: PickerAcceptType[] = [
     {

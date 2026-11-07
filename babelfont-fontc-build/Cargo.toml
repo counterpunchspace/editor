@@ -8,7 +8,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 # Git pin (not a sibling path) so CI can resolve without a local checkout.
-babelfont = { git = "https://github.com/yanone/babelfont-rs", rev = "ac98c2d99252c1bfdf5b7bd2b35c6138cc8a211e", features = ["fontir", "glyphs", "ufo", "fontlab", "fontforge"] }
+babelfont = { git = "https://github.com/yanone/babelfont-rs", rev = "b0b8869c118c3e0a8c756bf2725ca7dce52a7ac1", features = ["fontir", "glyphs", "ufo", "fontlab", "fontforge"] }
 # fontc crates must match the versions babelfont-rs resolves (1.0.0 from crates.io).
 # A second copy makes `fontdrasil::coords::Location` a distinct type
 # from babelfont's and breaks the wasm build.

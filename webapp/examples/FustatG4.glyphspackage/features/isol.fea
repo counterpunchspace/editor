@@ -1,0 +1,12 @@
+ sub kaf-ar									by kafDotless-ar miniKeheh-ar;
+ sub qafAfrican-ar							by qafDotless-ar;
+ sub qafThreedotsaboveAfrican-ar			by qafAfrican-ar;
+ sub noonThreedotsabove-ar					by noonghunna-ar threedotsupabove-ar;
+ sub noonAfrican-ar							by noonghunna-ar;
+ sub ae-ar									by hehgoal-ar;
+ sub yehFarsi-ar							by alefMaksura-ar;
+ sub yehTail-ar								by alefMaksura-ar tail-ar;
+
+#sub highhamzaAlef-ar						by highhamza-ar alef-ar;
+#sub highhamzaWaw-ar						by highhamza-ar waw-ar;
+#sub highhamzaYeh-ar						by highhamza-ar alefMaksura-ar;

@@ -1,0 +1,24 @@
+# Automatic Code
+
+lookup beh_dots_1 {
+  lookupflag UseMarkFilteringSet [@behdotbelow @markbottom];
+    ignore
+    pos behDotless-ar.init @behdotbelow' [alef-ar.fina lam-ar.medi] @markbottom;
+    pos behDotless-ar.init @behdotbelow' <DOTSHIFT> [alef-ar.fina lam-ar.medi];
+
+    ignore
+    pos behDotless-ar.init @behdotbelow' @markbottom [alef-ar.fina lam-ar.medi] @markbottom;
+    pos behDotless-ar.init @behdotbelow' <DOTSHIFT> @markbottom [alef-ar.fina lam-ar.medi];
+} beh_dots_1;
+
+lookup beh_dots_2 {
+  lookupflag UseMarkFilteringSet @behdotbelow;
+    pos  behDotless-ar.init
+         @behdotbelow' <DOTSHIFT>
+        [kafDotless-ar.fina lam_alef-ar.fina lam_alef-ar.fina.ss02
+         dal-ar.fina kaf-ar.medi keheh-ar.fina kafswash-ar.medi kafswash-ar.fina
+         sad-ar.medi sad-ar.fina tah-ar.medi tah-ar.fina ain-ar.medi
+         fehDotless-ar.medi fehDotless-ar.fina heh-ar.fina
+         meem-ar.medi meem-ar.medi meem-ar.fina meem-ar.fina.ss01
+        ];
+} beh_dots_2;

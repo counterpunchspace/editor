@@ -1,0 +1,35 @@
+script arab;
+  language FAR;
+	sub zeroFarsi-ar	by zeroFarsi-ar.locl;
+
+  language URD;
+	sub fourFarsi-ar	by fourFarsi-ar.locl;
+	sub sixFarsi-ar		by six-ar;
+	sub sevenFarsi-ar	by sevenFarsi-ar.locl;
+#	sub dammainverted-ar by dammainverted-ar.locl;
+
+  language KSH;
+	sub fourFarsi-ar	by fourFarsi-ar.locl;
+	sub sixFarsi-ar		by six-ar;
+	sub sevenFarsi-ar	by sevenFarsi-ar.locl;
+
+  language RHG;
+	sub fourFarsi-ar	by four-ar;
+	sub sixFarsi-ar		by six-ar;
+	sub sevenFarsi-ar	by sevenFarsi-ar.locl;
+
+  language SND;
+	sub sixFarsi-ar		by six-ar;
+	sub sevenFarsi-ar	by sevenFarsi-ar.locl;
+ 	sub comma-ar		by commareversed;
+ 	sub semicolon-ar	by semicolonreversed;
+
+script latn;
+  language dflt;
+	sub guillemetleft	by guillemetleft.locl;
+	sub guillemetright	by guillemetright.locl;
+	sub guilsinglleft	by guilsinglleft.locl;
+	sub guilsinglright	by guilsinglright.locl;
+  language ROM include_dflt;
+  language MOL include_dflt;
+  language CAT include_dflt;

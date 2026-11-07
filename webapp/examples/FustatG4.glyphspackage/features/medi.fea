@@ -1,0 +1,27 @@
+ lookup center_marks;
+
+ sub [behDotless-ar	noonghunna-ar alefMaksura-ar]
+											by behDotless-ar.medi;
+ sub hah-ar									by hah-ar.medi;
+ sub seen-ar								by seen-ar.medi;
+ sub sad-ar									by sad-ar.medi;
+ sub tah-ar									by tah-ar.medi;
+ sub ain-ar									by ain-ar.medi;
+ sub [fehDotless-ar qafDotless-ar]			by fehDotless-ar.medi;
+ sub fehAfrican-ar							by fehDotless-ar.medi dotbelow-ar;
+ sub qafAfrican-ar							by fehDotless-ar.medi dotabove-ar;
+ sub qafThreedotsaboveAfrican-ar			by fehDotless-ar.medi threedotsupabove-ar;
+ sub [kaf-ar keheh-ar]						by kaf-ar.medi;
+ sub kafswash-ar							by kafswash-ar.medi;
+ sub lam-ar									by lam-ar.medi;
+ sub meem-ar								by meem-ar.medi;
+ sub noonThreedotsabove-ar					by behDotless-ar.medi threedotsdownbelow-ar;
+ sub noonAfrican-ar							by behDotless-ar.medi dotabove-ar;
+ sub heh-ar									by heh-ar.medi;
+ sub hehgoal-ar								by hehgoal-ar.medi;
+ sub hehDoachashmee-ar						by hehDoachashmee-ar.medi;
+ sub yehFarsi-ar							by behDotless-ar.medi twodotshorizontalbelow-ar;
+ sub yehbarree-ar							by behDotless-ar.medi twodotshorizontalbelow-ar;
+#sub yehthin-ar.init						by yehthin-ar.medi;
+ 
+#sub highhamzaYeh-ar						by highhamza-ar alefMaksura-ar;

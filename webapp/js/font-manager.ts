@@ -165,9 +165,51 @@ export function setStartupEditingCompileGateForTests(options: {
     startupCompiledSubsetKey = options.compiledSubsetKey ?? '';
 }
 
+/** A Glyphs file format version Counterpunch can save in. */
+export type GlyphsFormatVersion = 3 | 4;
+
+const GLYPHS_FORMAT_VERSION_KEY = 'com.schriftgestalt.Glyphs.formatVersion';
+const GLYPHS_SAVE_FORMAT_VERSION_KEY =
+    'com.schriftgestalt.Glyphs.saveFormatVersion';
+
+/**
+ * The Glyphs file format version a font was read in (a Glyphs 2 file counts
+ * as 3, the oldest one Counterpunch writes), or null for a font that does
+ * not come from a Glyphs file.
+ */
+export function glyphsFormatVersionOf(
+    data: unknown
+): GlyphsFormatVersion | null {
+    const formatSpecific = (
+        data as { format_specific?: Record<string, unknown> } | null
+    )?.format_specific;
+    const version = Number(formatSpecific?.[GLYPHS_FORMAT_VERSION_KEY]);
+    if (!Number.isFinite(version) || version <= 0) {
+        return null;
+    }
+    return version >= 4 ? 4 : 3;
+}
+
+/** Asks the Glyphs writer for `version`, when one was chosen. */
+function withGlyphsSaveVersion(
+    data: unknown,
+    version: GlyphsFormatVersion | null
+): unknown {
+    if (!version || !data || typeof data !== 'object' || Array.isArray(data)) {
+        return data;
+    }
+    const font = data as { format_specific?: Record<string, unknown> };
+    font.format_specific = {
+        ...(font.format_specific ?? {}),
+        [GLYPHS_SAVE_FORMAT_VERSION_KEY]: version
+    };
+    return data;
+}
+
 export async function serializeFontForSourceSave(
     path: string,
-    babelfontJson: string
+    babelfontJson: string,
+    glyphsVersion: GlyphsFormatVersion | null = null
 ): Promise<string> {
     const extension = path.split('.').pop()?.toLowerCase();
 
@@ -178,7 +220,10 @@ export async function serializeFontForSourceSave(
     if (extension === 'glyphs') {
         await ensureWasmInitialized();
         const glyphsSerializationInput = JSON.stringify(
-            stampPathBooleanFlagsForGlyphsSave(JSON.parse(babelfontJson))
+            withGlyphsSaveVersion(
+                stampPathBooleanFlagsForGlyphsSave(JSON.parse(babelfontJson)),
+                glyphsVersion
+            )
         );
         return save_font_as_glyphs(glyphsSerializationInput);
     }
@@ -202,13 +247,19 @@ export async function serializeFolderSourceEntries(
         layoutEntries: Record<string, string>;
         /** Designspace: the document's file name. */
         document?: string;
-    }
+    },
+    glyphsVersion: GlyphsFormatVersion | null = null
 ): Promise<FolderSourceEntries | null> {
     await ensureWasmInitialized();
     const input =
         format === 'glyphspackage'
             ? JSON.stringify(
-                  stampPathBooleanFlagsForGlyphsSave(JSON.parse(babelfontJson))
+                  withGlyphsSaveVersion(
+                      stampPathBooleanFlagsForGlyphsSave(
+                          JSON.parse(babelfontJson)
+                      ),
+                      glyphsVersion
+                  )
               )
             : babelfontJson;
     const result = JSON.parse(
@@ -563,6 +614,11 @@ class OpenedFont {
     folderSaveTracker: FolderSaveTracker;
     /** A single-file source's content hash as last read or written. */
     sourceFileHash?: string;
+    /**
+     * The Glyphs file format version to save in, as chosen in Save As; null
+     * saves in the version the font was read in.
+     */
+    glyphsSaveVersion: GlyphsFormatVersion | null = null;
 
     constructor(
         babelfontJson: string,
@@ -782,7 +838,8 @@ class OpenedFont {
         const pluginId = this.sourcePlugin.getId();
         const serializedFont = await serializeFontForSourceSave(
             this.path,
-            this.babelfontJson
+            this.babelfontJson,
+            this.glyphsSaveVersion
         );
 
         // For disk plugin, need file handle and permission check
@@ -872,7 +929,8 @@ class OpenedFont {
                     fontLevel: plan.fontLevel,
                     layoutEntries,
                     document
-                }
+                },
+                this.glyphsSaveVersion
             );
         }
         let stale: string[];
@@ -897,7 +955,8 @@ class OpenedFont {
             entries = (await serializeFolderSourceEntries(
                 format,
                 this.folderSourceJson(null),
-                { glyphs: null, fontLevel: true, layoutEntries, document }
+                { glyphs: null, fontLevel: true, layoutEntries, document },
+                this.glyphsSaveVersion
             )) as FolderSourceEntries;
             const written = new Set(Object.keys(entries.files));
             stale = state.managedPaths().filter((path) => !written.has(path));

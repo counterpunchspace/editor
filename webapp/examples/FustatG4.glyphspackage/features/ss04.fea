@@ -1,0 +1,31 @@
+  featureNames {
+    name 1 "Tailed a g l y";
+    name 3 "Tailed a g l y";
+  };
+
+sub a by a.ss04;
+sub aacute by aacute.ss04;
+sub abreve by abreve.ss04;
+sub acircumflex by acircumflex.ss04;
+sub adieresis by adieresis.ss04;
+sub agrave by agrave.ss04;
+sub amacron by amacron.ss04;
+sub aogonek by aogonek.ss04;
+sub aring by aring.ss04;
+sub atilde by atilde.ss04;
+sub g by g.ss04;
+sub gbreve by gbreve.ss04;
+sub gcaron by gcaron.ss04;
+sub gcommaaccent by gcommaaccent.ss04;
+sub gdotaccent by gdotaccent.ss04;
+sub l by l.ss04;
+sub lacute by lacute.ss04;
+sub lcaron by lcaron.ss04;
+sub lcommaaccent by lcommaaccent.ss04;
+sub ldot by ldot.ss04;
+sub lslash by lslash.ss04;
+sub y by y.ss04;
+sub yacute by yacute.ss04;
+sub ycircumflex by ycircumflex.ss04;
+sub ydieresis by ydieresis.ss04;
+sub ygrave by ygrave.ss04;

@@ -1,0 +1,21 @@
+  featureNames {
+    name 1 "Geometric a g";
+    name 3 "Geometric a g";
+  };
+
+sub a by a.ss03;
+sub aacute by aacute.ss03;
+sub abreve by abreve.ss03;
+sub acaron by acaron.ss03;
+sub acircumflex by acircumflex.ss03;
+sub adieresis by adieresis.ss03;
+sub agrave by agrave.ss03;
+sub amacron by amacron.ss03;
+sub aogonek by aogonek.ss03;
+sub aring by aring.ss03;
+sub atilde by atilde.ss03;
+sub g by g.ss03;
+sub gbreve by gbreve.ss03;
+sub gcaron by gcaron.ss03;
+sub gcommaaccent by gcommaaccent.ss03;
+sub gdotaccent by gdotaccent.ss03;

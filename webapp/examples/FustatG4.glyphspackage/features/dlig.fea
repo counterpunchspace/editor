@@ -1,0 +1,7 @@
+lookup dlig_RTL {
+lookupflag IgnoreMarks;
+	sub behDotless-ar.init hah-ar.fina by behDotless_hah-ar;
+	sub behDotless-ar.init hah-ar.medi by behDotless_hah-ar.init;
+	sub lam-ar.init hah-ar.fina by lam_hah-ar;
+	sub lam-ar.init hah-ar.medi by lam_hah-ar.init;
+} dlig_RTL;

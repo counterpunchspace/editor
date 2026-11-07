@@ -1,0 +1,6 @@
+  featureNames {
+    name 1 "Alternate lam-alef";
+    name 3 "Alternate lam-alef";
+  };
+
+sub lam_alef-ar.fina by lam_alef-ar.fina.ss02;

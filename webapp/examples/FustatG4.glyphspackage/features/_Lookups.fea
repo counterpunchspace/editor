@@ -1,0 +1,5 @@
+lookup center_marks {
+	sub @dotcenter				by @dotbelow;
+} center_marks;
+
+valueRecordDef <$dotshift 0 0 0> DOTSHIFT;

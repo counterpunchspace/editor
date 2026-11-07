@@ -701,3 +701,39 @@ describe('designspace projects', () => {
         reloadSpy.mockRestore();
     });
 });
+
+describe('saving in another Glyphs version', () => {
+    const {
+        glyphsFormatVersionOf,
+        serializeFontForSourceSave
+    } = require('../js/font-manager');
+    const wasm = require('../wasm-dist/babelfont_fontc_web');
+    const KEY = 'com.schriftgestalt.Glyphs.saveFormatVersion';
+
+    test('a font knows the Glyphs version it was read in', () => {
+        const of = (version) =>
+            glyphsFormatVersionOf({
+                format_specific: {
+                    'com.schriftgestalt.Glyphs.formatVersion': version
+                }
+            });
+        expect(of(4)).toBe(4);
+        expect(of(3)).toBe(3);
+        // Glyphs 2 is saved as the oldest version Counterpunch writes.
+        expect(of(2)).toBe(3);
+        expect(glyphsFormatVersionOf({ format_specific: {} })).toBeNull();
+    });
+
+    test('the chosen version reaches the Glyphs writer', async () => {
+        const json = JSON.stringify({ glyphs: [], format_specific: {} });
+        wasm.save_font_as_glyphs.mockClear();
+        await serializeFontForSourceSave('/Font.glyphs', json, 3);
+        const input = JSON.parse(wasm.save_font_as_glyphs.mock.calls[0][0]);
+        expect(input.format_specific[KEY]).toBe(3);
+
+        wasm.save_font_as_glyphs.mockClear();
+        await serializeFontForSourceSave('/Font.glyphs', json);
+        const asRead = JSON.parse(wasm.save_font_as_glyphs.mock.calls[0][0]);
+        expect(asRead.format_specific[KEY]).toBeUndefined();
+    });
+});

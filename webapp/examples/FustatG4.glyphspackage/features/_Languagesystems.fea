@@ -1,0 +1,13 @@
+languagesystem DFLT dflt;
+
+languagesystem arab dflt;
+languagesystem arab FAR;
+languagesystem arab URD;
+languagesystem arab KSH;
+languagesystem arab RHG;
+languagesystem arab SND;
+
+languagesystem latn dflt;
+languagesystem latn ROM;
+languagesystem latn MOL;
+languagesystem latn CAT;

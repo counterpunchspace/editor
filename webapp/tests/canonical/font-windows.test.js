@@ -128,6 +128,24 @@ describe('fonts on this computer', () => {
         expect(formats.fontFormatOf('notes.txt')).toBeNull();
     });
 
+    test('a pasted file name gives Save As its name and format', () => {
+        expect(formats.splitFontFileName('My Font.UFO')).toEqual({
+            name: 'My Font',
+            format: 'ufo'
+        });
+        expect(
+            formats.splitFontFileName('/Users/me/Fonts/Sans.glyphspackage ')
+        ).toEqual({ name: 'Sans', format: 'glyphspackage' });
+        expect(formats.splitFontFileName('C:\\Fonts\\Sans.glyphs')).toEqual({
+            name: 'Sans',
+            format: 'glyphs'
+        });
+        // No extension, one Save As can't write, or nothing before it.
+        expect(formats.splitFontFileName('Sans Bold')).toBeNull();
+        expect(formats.splitFontFileName('Sans.vfj')).toBeNull();
+        expect(formats.splitFontFileName('.glyphs')).toBeNull();
+    });
+
     test('Save As offers only formats Counterpunch can write', () => {
         const writable = Object.entries(formats.FONT_FORMATS)
             .filter(([, format]) => format.writable)

@@ -1,0 +1,7 @@
+  featureNames {
+    name 1 "Alternate meem";
+    name 3 "Alternate meem";
+  };
+
+sub meem-ar by meem-ar.ss01;
+sub meem-ar.fina by meem-ar.fina.ss01;

@@ -135,10 +135,25 @@
 /* ── Save As ─────────────────────────────────────────────────────────────── */
 
 .font-window-fields {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 190px;
+    display: flex;
+    flex-direction: column;
     gap: 12px;
     margin-bottom: 18px;
+}
+
+/* Format, with the Glyphs version beside it for Glyphs formats. */
+.font-window-field-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 170px;
+    gap: 12px;
+}
+
+.font-window-field-row:has(> label[hidden]) {
+    grid-template-columns: 1fr;
+}
+
+.font-window-field-row:not(:has(> label:not([hidden]))) {
+    display: none;
 }
 
 .font-window-fields label {
@@ -154,32 +169,70 @@
     display: none;
 }
 
-.font-window-save-as .font-window-fields:has(label[hidden]) {
-    grid-template-columns: 1fr;
-}
-
-.font-window-fields input,
-.font-window-fields select {
+/* The box around a field: its icon, the control, and for the name the
+   extension after it. */
+.font-window-control {
+    display: flex;
+    align-items: center;
     height: 36px;
-    padding: 0 10px;
     border: 1px solid var(--border-inner);
     border-radius: 8px;
     background-color: var(--input-bg);
     color: var(--text-primary);
-    font: inherit;
     font-size: 14px;
+    font-weight: 400;
+    cursor: text;
 }
 
-.font-window-fields select option {
-    background: var(--modal-bg);
+.font-window-control:has(select) {
+    cursor: default;
 }
 
-.font-window-fields input:focus,
-.font-window-fields select:focus {
-    outline: none;
+.font-window-control:focus-within {
     border-color: var(--view-editor);
     box-shadow: 0 0 0 3px
         color-mix(in srgb, var(--view-editor) 25%, transparent);
+}
+
+.font-window-control > .material-symbols-outlined {
+    flex: none;
+    margin-left: 10px;
+    font-size: 18px;
+    color: var(--text-faint);
+    pointer-events: none;
+}
+
+.font-window-control input,
+.font-window-control select {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 100%;
+    padding: 0 10px 0 8px;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    outline: none;
+}
+
+.font-window-control select option {
+    background: var(--modal-bg);
+}
+
+/* The name is as wide as its text, so the extension follows it. */
+.font-window-name input {
+    flex: 0 1 auto;
+    field-sizing: content;
+    min-width: 3ch;
+    padding-right: 0;
+}
+
+.font-window-ext {
+    flex: none;
+    padding-right: 10px;
+    color: var(--text-faint);
+    white-space: nowrap;
+    user-select: none;
 }
 
 .font-window-destinations {
@@ -260,7 +313,7 @@
 }
 
 @media (max-width: 560px) {
-    .font-window-fields {
+    .font-window-field-row {
         grid-template-columns: 1fr;
     }
 }

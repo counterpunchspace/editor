@@ -59,6 +59,7 @@ import { TOUR_FUSTAT_PATH, TOUR_SAMPLE_TEXT } from './tour-slides';
 import { shouldHandleOpenPathBeforeEditorReady } from './open-font-readiness';
 import {
     serializeFontForSourceSave,
+    type GlyphsFormatVersion,
     type SourceSnapshot
 } from './font-manager';
 import {
@@ -1992,12 +1993,35 @@ function diskDirectoryHandleOf(
 export async function saveCurrentFontAs(
     plugin: FilesystemPlugin,
     path: string,
-    options: { exists: boolean }
+    options: {
+        exists: boolean;
+        /** For a Glyphs file or package: the file format version to save in. */
+        glyphsVersion?: GlyphsFormatVersion;
+    }
 ): Promise<void> {
     const currentFont = window.fontManager?.currentFont;
     if (!currentFont) {
         return;
     }
+    const previousGlyphsVersion = currentFont.glyphsSaveVersion;
+    if (options.glyphsVersion) {
+        // Later saves keep the version; a package changing it is written whole.
+        currentFont.glyphsSaveVersion = options.glyphsVersion;
+    }
+    try {
+        await saveCurrentFontAsIn(currentFont, plugin, path, options);
+    } catch (error) {
+        currentFont.glyphsSaveVersion = previousGlyphsVersion;
+        throw error;
+    }
+}
+
+async function saveCurrentFontAsIn(
+    currentFont: NonNullable<typeof window.fontManager.currentFont>,
+    plugin: FilesystemPlugin,
+    path: string,
+    options: { exists: boolean }
+): Promise<void> {
     const pluginId = plugin.getId();
     const adapter = plugin.getAdapter();
     const targetFolderFormat = folderSourceFormatForPath(path);
@@ -2025,7 +2049,8 @@ export async function saveCurrentFontAs(
         }
         const serializedFont = await serializeFontForSourceSave(
             path,
-            babelfontJson
+            babelfontJson,
+            currentFont.glyphsSaveVersion
         );
         if (pluginId === 'disk') {
             markManagedFileInternalWrite(pluginId, path);

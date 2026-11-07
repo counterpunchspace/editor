@@ -1,0 +1,16 @@
+  featureNames {
+    name 1 "Double-story tailed a";
+    name 3 "Double-story tailed a";
+  };
+
+sub a by a.ss06;
+sub aacute by aacute.ss06;
+sub abreve by abreve.ss06;
+sub acaron by acaron.ss06;
+sub acircumflex by acircumflex.ss06;
+sub adieresis by adieresis.ss06;
+sub agrave by agrave.ss06;
+sub amacron by amacron.ss06;
+sub aogonek by aogonek.ss06;
+sub aring by aring.ss06;
+sub atilde by atilde.ss06;

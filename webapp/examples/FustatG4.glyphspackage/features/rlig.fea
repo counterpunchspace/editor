@@ -1,0 +1,52 @@
+# Adobe’s pre-HarfBuzz composers don’t apply the center_marks lookup
+# in init and medi features, help it by applying it contextually here.
+lookup adobe_center_marks {
+    sub [hah-ar.init hah-ar.medi]
+		 @dotcenter' lookup center_marks
+	;
+} adobe_center_marks;
+
+lookup isolated_heh {
+  lookupflag IgnoreMarks;
+    ignore
+    sub @ArabicLetters heh-ar';
+    sub heh-ar' by hehDoachashmee-ar;
+
+    ignore
+    sub heh-ar.init' kashida-ar' @ArabicLetters;
+    sub heh-ar.init' kashida-ar' by hehDoachashmee-ar;
+} isolated_heh;
+
+lookup high_tooth {
+ lookupflag IgnoreMarks;
+ rsub [behDotless-ar.init behDotless-ar.medi]'
+      [behDotless-ar.medi behDotless-ar.fina noonghunna-ar.fina
+       seen-ar.medi seen-ar.fina]
+   by [behDotless-ar.init.high behDotless-ar.medi.high];
+} high_tooth;
+
+lookup lam_alef {
+ lookupflag IgnoreMarks;
+  sub lam-ar.init alef-ar.fina by lam_alef-ar;
+  sub lam-ar.medi alef-ar.fina by lam_alef-ar.fina;
+} lam_alef;
+
+lookup short_alef {
+ lookupflag UseMarkFilteringSet @marktop;
+ sub [alef-ar alef-ar.fina]' @marktop by [alef-ar.short alef-ar.short.fina];
+} short_alef;
+
+lookup narrow_yehbarree {
+ lookupflag UseMarkFilteringSet @markbottom;
+  sub [seen-ar.init seen-ar.medi sad-ar.init sad-ar.medi tah-ar.init tah-ar.medi
+       ain-ar.init ain-ar.medi fehDotless-ar.init fehDotless-ar.medi
+       kaf-ar.init kaf-ar.medi kafswash-ar.init kafswash-ar.medi
+       hah-ar.init hah-ar.medi meem-ar.init meem-ar.medi]
+       yehbarree-ar.fina'
+   by  yehbarree-ar.fina.narrow;
+} narrow_yehbarree;
+
+lookup hah_dots {
+  lookupflag UseMarkFilteringSet @behdotbelow;
+    sub behDotless-ar.init @behdotbelow' [hah-ar.medi hah-ar.fina] by @behdotbelow.alt;;
+} hah_dots;

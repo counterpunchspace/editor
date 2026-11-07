@@ -13,6 +13,27 @@ const {
 } = require('../wasm-dist/babelfont_fontc_web');
 
 const EXAMPLES_DIR = path.join(__dirname, '..', 'examples');
+
+/** The real WASM's `save_font_as_glyphs`; Jest's module is a stub. */
+function saveFontAsGlyphs(babelfontJson) {
+    const os = require('os');
+    const { execFileSync } = require('child_process');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'glyphs-save-'));
+    try {
+        const input = path.join(dir, 'args.json');
+        const output = path.join(dir, 'result.txt');
+        fs.writeFileSync(input, JSON.stringify([babelfontJson]));
+        execFileSync(process.execPath, [
+            path.join(__dirname, 'helpers', 'call-wasm-export.mjs'),
+            'save_font_as_glyphs',
+            input,
+            output
+        ]);
+        return fs.readFileSync(output, 'utf-8');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+}
 const PACKAGE = 'YanoneKaffeesatz.glyphspackage';
 const UFO = 'YanoneKaffeesatz-Bold.ufo';
 
@@ -131,6 +152,85 @@ describe('.glyphspackage round trip', () => {
             expect.anything(),
             expect.anything()
         ]);
+    });
+});
+
+describe('Glyphs 4 package round trip', () => {
+    // Fustat, saved by Glyphs 4 (build 4108) as a package.
+    const G4_PACKAGE = 'FustatG4.glyphspackage';
+    const original = readTree(path.join(EXAMPLES_DIR, G4_PACKAGE));
+    const font = open(G4_PACKAGE, original);
+
+    test('a whole save reproduces the package Glyphs 4 wrote', () => {
+        const saved = save('glyphspackage', font);
+        expect(Object.keys(saved.files).sort()).toEqual(
+            Object.keys(original).sort()
+        );
+        const differing = Object.keys(saved.files).filter(
+            (file) => saved.files[file] !== original[file]
+        );
+        // The rest are formatting Glyphs 3 shares (number keys in quotes,
+        // one-element arrays inline) and a width stored in single precision.
+        expect(differing.sort()).toEqual([
+            'fontinfo.plist',
+            'glyphs/slash.shortcomb.glyph',
+            'kerning.plist'
+        ]);
+        for (const file of Object.keys(original)) {
+            if (file.startsWith('features/')) {
+                expect(saved.files[file]).toBe(original[file]);
+            }
+        }
+    });
+
+    test('saved as Glyphs 3, it is a Glyphs 3 package', () => {
+        const glyphs3 = {
+            ...font,
+            format_specific: {
+                ...font.format_specific,
+                'com.schriftgestalt.Glyphs.saveFormatVersion': 3
+            }
+        };
+        const saved = save('glyphspackage', glyphs3);
+        const files = Object.keys(saved.files);
+        expect(files).not.toContain('kerning.plist');
+        expect(files.some((file) => file.startsWith('features/'))).toBe(false);
+        const fontinfo = saved.files['fontinfo.plist'];
+        expect(fontinfo).toContain('.formatVersion = 3;');
+        expect(fontinfo).toContain('kerningLTR = {');
+        expect(fontinfo).toContain('familyName = Fustat;');
+        expect(fontinfo).not.toContain('colorSpace');
+        // No trailing commas, and Glyphs 3's stroke positions.
+        expect(fontinfo).not.toMatch(/,\n\)/);
+        const circle = saved.files['glyphs/mediumW_hiteC_ircle.glyph'];
+        expect(circle).not.toMatch(/,\n\)/);
+        expect(circle).toContain('strokePos = 1;');
+        expect(circle).not.toContain('strokePos = -1;');
+        expect(saved.files['order.plist'].endsWith('\n)')).toBe(true);
+    });
+
+    test('the flat file Glyphs 4 wrote saves as Glyphs 3 and back', () => {
+        const flat = fs.readFileSync(
+            path.join(EXAMPLES_DIR, 'FustatG4.glyphs'),
+            'utf-8'
+        );
+        const fromFlat = JSON.parse(open_font_file('FustatG4.glyphs', flat));
+        const glyphs3 = saveFontAsGlyphs(
+            JSON.stringify({
+                ...fromFlat,
+                format_specific: {
+                    ...fromFlat.format_specific,
+                    'com.schriftgestalt.Glyphs.saveFormatVersion': 3
+                }
+            })
+        );
+        expect(glyphs3).toContain('.formatVersion = 3;');
+        const back = JSON.parse(open_font_file('Fustat.glyphs', glyphs3));
+        expect(back.glyphs.length).toBe(fromFlat.glyphs.length);
+        expect(back.names.family_name).toEqual(fromFlat.names.family_name);
+        expect(back.instances.map((i) => i.name)).toEqual(
+            fromFlat.instances.map((i) => i.name)
+        );
     });
 });
 

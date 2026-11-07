@@ -53,7 +53,7 @@ norad = { path = \"$LOCAL_NORAD\" }
 fi
 if [ -d "$LOCAL_GLYPHSLIB/glyphslib" ]; then
     echo "✓ Using local glyphslib-rs: $LOCAL_GLYPHSLIB"
-    LOCAL_PATCHES+="[patch.crates-io]
+    LOCAL_PATCHES+="[patch.\"https://github.com/yanone/glyphslib-rs\"]
 glyphslib = { path = \"$LOCAL_GLYPHSLIB/glyphslib\" }
 openstep-plist = { path = \"$LOCAL_GLYPHSLIB/openstep-plist\" }
 "

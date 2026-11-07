@@ -14,6 +14,7 @@ import {
     baseNameOf,
     fontFormatKind,
     fontFormatOf,
+    splitFontFileName,
     type FontFormatKey
 } from './font-formats';
 import {
@@ -34,6 +35,10 @@ import {
     type SaveDestination
 } from './save-destination';
 import { escapeHtml, icon, openDialog, reportError } from './dialogs';
+import {
+    glyphsFormatVersionOf,
+    type GlyphsFormatVersion
+} from '../font-manager';
 
 const console = new Logger('FontWindows');
 
@@ -43,6 +48,25 @@ const console = new Logger('FontWindows');
  */
 const LAST_DESTINATION_KEY = 'saveAsLastDestination';
 const LAST_FORMAT_KEY = 'saveAsLastFormat';
+/** The Glyphs file format version last saved in: `3` or `4`. */
+const LAST_GLYPHS_VERSION_KEY = 'saveAsLastGlyphsVersion';
+
+/** The formats with a Glyphs file format version to choose. */
+function isGlyphsFormat(format: FontFormatKey): boolean {
+    return format === 'glyphs' || format === 'glyphspackage';
+}
+
+/**
+ * The Glyphs version to offer: the one the font saves in, else the one
+ * last chosen, else Glyphs 3, which both Glyphs 3 and 4 open.
+ */
+function defaultGlyphsVersion(): GlyphsFormatVersion {
+    const font = window.fontManager?.currentFont;
+    const own =
+        font?.glyphsSaveVersion ?? glyphsFormatVersionOf(font?.babelfontData);
+    if (own) return own;
+    return readSetting(LAST_GLYPHS_VERSION_KEY) === '4' ? 4 : 3;
+}
 
 const WRITABLE_FORMATS = (Object.keys(FONT_FORMATS) as FontFormatKey[]).filter(
     (key) => FONT_FORMATS[key].writable
@@ -255,7 +279,8 @@ function ensureNotOpenElsewhere(key: string, name: string): void {
 
 async function saveToDisk(
     fileName: string,
-    format: FontFormatKey
+    format: FontFormatKey,
+    glyphsVersion: GlyphsFormatVersion | undefined
 ): Promise<void> {
     const disk = diskPlugin();
     if (!disk) throw new Error('Saving to this computer is not available.');
@@ -264,7 +289,10 @@ async function saveToDisk(
     const previous = disk.document;
     disk.attachDocument(doc);
     try {
-        await saveCurrentFontAs(disk, `/${doc.name}`, { exists });
+        await saveCurrentFontAs(disk, `/${doc.name}`, {
+            exists,
+            glyphsVersion
+        });
     } catch (error) {
         if (previous) disk.attachDocument(previous);
         else disk.detachDocument();
@@ -272,7 +300,10 @@ async function saveToDisk(
     }
 }
 
-async function saveToBrowser(fileName: string): Promise<void> {
+async function saveToBrowser(
+    fileName: string,
+    glyphsVersion: GlyphsFormatVersion | undefined
+): Promise<void> {
     const memory = plugin<FilesystemPlugin>('memory');
     if (!memory) throw new Error('Browser storage is not available.');
     const path = `/user/${fileName}`;
@@ -285,7 +316,7 @@ async function saveToBrowser(fileName: string): Promise<void> {
     ) {
         throw new DOMException('Replace declined', 'AbortError');
     }
-    await saveCurrentFontAs(memory, path, { exists });
+    await saveCurrentFontAs(memory, path, { exists, glyphsVersion });
 }
 
 async function saveToCloud(name: string): Promise<boolean> {
@@ -310,6 +341,7 @@ export async function showSaveAsDialog(
 
     const cloudPromise = cloudState();
     const initial = defaultNameAndFormat();
+    const initialGlyphsVersion = defaultGlyphsVersion();
     let cloud: CloudState = { available: false, note: 'Checking…' };
     let dest: SaveDestination =
         options.destination ?? defaultDestination(cloud);
@@ -324,11 +356,21 @@ export async function showSaveAsDialog(
     });
     dialog.body.innerHTML = `
         <div class="font-window-fields">
-            <label>Name<input type="text" data-name spellcheck="false" value="${escapeHtml(initial.name)}"></label>
-            <label data-format-field>Format<select data-format>${WRITABLE_FORMATS.map(
-                (key) =>
-                    `<option value="${key}"${key === initial.format ? ' selected' : ''}>${escapeHtml(FONT_FORMATS[key].label)}</option>`
-            ).join('')}</select></label>
+            <label>Name<span class="font-window-control font-window-name">${icon('edit')}<input type="text" data-name spellcheck="false" value="${escapeHtml(initial.name)}"><span class="font-window-ext" data-ext aria-hidden="true"></span></span></label>
+            <div class="font-window-field-row">
+                <label data-format-field>Format<span class="font-window-control">${icon('description')}<select data-format>${WRITABLE_FORMATS.map(
+                    (key) =>
+                        `<option value="${key}"${key === initial.format ? ' selected' : ''}>${escapeHtml(FONT_FORMATS[key].label)}</option>`
+                ).join('')}</select></span></label>
+                <label data-glyphs-version-field>Glyphs version<span class="font-window-control">${icon('history')}<select data-glyphs-version>${(
+                    [3, 4] as const
+                )
+                    .map(
+                        (version) =>
+                            `<option value="${version}"${version === initialGlyphsVersion ? ' selected' : ''}>Glyphs ${version}</option>`
+                    )
+                    .join('')}</select></span></label>
+            </div>
         </div>
         <div class="font-window-destinations" role="radiogroup" aria-label="Where to save">
             <button type="button" class="font-window-destination" role="radio" data-dest="disk"${fileAccess ? '' : ' disabled'}>${icon('computer')}<span><b>This computer</b><small data-hint="disk"></small></span><span class="font-window-radio"></span></button>
@@ -345,6 +387,9 @@ export async function showSaveAsDialog(
     const formatSelect = body.querySelector(
         '[data-format]'
     ) as HTMLSelectElement;
+    const glyphsVersionSelect = body.querySelector(
+        '[data-glyphs-version]'
+    ) as HTMLSelectElement;
     const go = body.querySelector('[data-go]') as HTMLButtonElement;
     const cloudButton = body.querySelector(
         '[data-dest="cloud"]'
@@ -352,6 +397,10 @@ export async function showSaveAsDialog(
 
     const baseName = () => nameInput.value.trim() || 'Untitled';
     const format = () => formatSelect.value as FontFormatKey;
+    const glyphsVersion = (): GlyphsFormatVersion | undefined =>
+        dest !== 'cloud' && isGlyphsFormat(format())
+            ? (Number(glyphsVersionSelect.value) as GlyphsFormatVersion)
+            : undefined;
 
     const update = () => {
         const kind = fontFormatKind(format());
@@ -371,10 +420,16 @@ export async function showSaveAsDialog(
                     : `Pick a folder; ${fileName} and its UFOs are created inside it`;
         (body.querySelector('[data-hint="cloud"]') as HTMLElement).textContent =
             cloud.note;
+        // The cloud saves by name alone, without an extension.
+        (body.querySelector('[data-ext]') as HTMLElement).textContent =
+            dest === 'cloud' ? '' : FONT_FORMATS[format()].ext;
         cloudButton.disabled = !cloud.available;
         cloudButton.title = cloud.blocked ?? '';
         (body.querySelector('[data-format-field]') as HTMLElement).hidden =
             dest === 'cloud';
+        (
+            body.querySelector('[data-glyphs-version-field]') as HTMLElement
+        ).hidden = dest === 'cloud' || !isGlyphsFormat(format());
         go.textContent =
             dest === 'disk'
                 ? kind === 'file'
@@ -395,7 +450,20 @@ export async function showSaveAsDialog(
         })
     );
     formatSelect.addEventListener('change', update);
-    nameInput.addEventListener('input', update);
+    glyphsVersionSelect.addEventListener('change', update);
+    nameInput.addEventListener('input', (event) => {
+        // A pasted or dropped file name chooses its format and loses its
+        // extension, which the field shows after the name.
+        const { inputType } = event as InputEvent;
+        if (inputType === 'insertFromPaste' || inputType === 'insertFromDrop') {
+            const pasted = splitFontFileName(nameInput.value);
+            if (pasted) {
+                nameInput.value = pasted.name;
+                formatSelect.value = pasted.format;
+            }
+        }
+        update();
+    });
     nameInput.addEventListener('keydown', (event) => {
         if (event.key === 'Enter') go.click();
     });
@@ -415,17 +483,19 @@ export async function showSaveAsDialog(
         }
         const fileName = baseName() + FONT_FORMATS[format()].ext;
         // The pickers must open in this click's turn: no awaits before them.
+        const version = glyphsVersion();
         const saving =
             dest === 'disk'
-                ? saveToDisk(fileName, format())
+                ? saveToDisk(fileName, format(), version)
                 : dest === 'cloud'
                   ? saveToCloud(baseName())
-                  : saveToBrowser(fileName);
+                  : saveToBrowser(fileName, version);
         go.disabled = true;
         try {
             await saving;
             writeSetting(LAST_DESTINATION_KEY, dest);
             if (dest !== 'cloud') writeSetting(LAST_FORMAT_KEY, format());
+            if (version) writeSetting(LAST_GLYPHS_VERSION_KEY, String(version));
             dialog.close();
         } catch (error) {
             if (!isAbortError(error)) console.error('Save As failed', error);
