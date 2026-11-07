@@ -18,6 +18,26 @@ print(f'Masters: {len(font.masters)}')
 
 `Font()` returns the current open font and raises when none is open. In outline editing, `Glyph()` and `Layer()` return the glyph and layer being edited. `Master()` returns the selected master, or `None` when the location is not a stored master. Use the [Python API](06-python-api.md) when you need an exact property or method.
 
+## Working with other open fonts
+
+Every font opens in its own window. `OtherFonts()` returns the fonts of Counterpunch's other windows, so one script can compare or copy between them:
+
+```python
+# Compare glyph sets with the other open fonts
+#
+# Lists glyphs the other fonts have and this one doesn't
+#
+# Keywords: compare, glyphs
+
+font = Font()
+names = {glyph.name for glyph in font.glyphs}
+for other in OtherFonts():
+    missing = [g.name for g in other.glyphs if g.name not in names]
+    print(f'{other.info.familyName}: {len(missing)} glyphs not in {font.info.familyName}')
+```
+
+Changes to another font work like changes to `Font()`. That font's window records them, so `Cmd/Ctrl+Z` there undoes them, and it saves and recompiles them with its font. A window the browser reopened by itself after a restart isn't linked yet and is missing from the list; open its font again from the launcher.
+
 Keep a script self-contained and focused on one operation. Start with a small read-only report. Before a script changes font data, save the font and make the intended change clear in its header. Font manipulation can be undone with `Cmd/Ctrl+Z` while Scripts, Konsole, or Assistant is focused. Those views use the automation undo surface.
 
 Use `print()` for results, counts, skipped items, and next steps.

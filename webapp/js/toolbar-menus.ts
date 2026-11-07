@@ -1,4 +1,6 @@
 import tippy, { Instance as TippyInstance } from 'tippy.js';
+import { goToLauncher } from './font-windows/font-window';
+import { newFontKey, openFontWindow } from './font-windows/open-documents';
 import 'tippy.js/dist/tippy.css';
 import {
     addTippyBackdropSupport,
@@ -125,7 +127,7 @@ function getFileMenuItems(): ToolbarMenuItem[] {
             label: 'New',
             icon: 'note_add',
             action: async () => {
-                await window.fontManager?.handleNewFont?.();
+                openFontWindow({ key: newFontKey(), name: 'Untitled' });
             }
         },
         {
@@ -133,7 +135,7 @@ function getFileMenuItems(): ToolbarMenuItem[] {
             icon: 'folder_open',
             shortcut: '⌘O',
             action: async () => {
-                await window.showFontFileDialog?.({ mode: 'open' });
+                goToLauncher();
             }
         },
         {
@@ -151,7 +153,7 @@ function getFileMenuItems(): ToolbarMenuItem[] {
             shortcut: `⌘${MENU_SHIFT_SYMBOL}S`,
             disabled: !saveButton?.canSaveAs?.(),
             action: async () => {
-                await window.showFontFileDialog?.({ mode: 'save-as' });
+                await window.saveFontAs?.();
             }
         },
         {
@@ -685,7 +687,7 @@ function installGlobalShortcuts(): void {
                 event.preventDefault();
                 event.stopPropagation();
                 event.stopImmediatePropagation();
-                void window.showFontFileDialog?.({ mode: 'open' });
+                goToLauncher();
                 return;
             }
 
@@ -719,7 +721,7 @@ function installGlobalShortcuts(): void {
                 event.preventDefault();
                 event.stopPropagation();
                 event.stopImmediatePropagation();
-                void window.showFontFileDialog?.({ mode: 'save-as' });
+                void window.saveFontAs?.();
                 return;
             }
 

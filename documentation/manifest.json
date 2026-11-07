@@ -33,7 +33,7 @@
                 },
                 {
                     "id": "getting-started/project-and-settings-folders",
-                    "title": "Project and settings folders",
+                    "title": "Settings Folder and fonts on disk",
                     "kind": "page",
                     "path": "getting-started/04-project-and-settings-folders.md"
                 }
@@ -46,13 +46,13 @@
             "children": [
                 {
                     "id": "files/files-view-basics",
-                    "title": "Files view",
+                    "title": "The launcher and where fonts live",
                     "kind": "page",
                     "path": "files/01-files-view-basics.md"
                 },
                 {
                     "id": "files/local-disk-access",
-                    "title": "Local disk access",
+                    "title": "Fonts on this computer",
                     "kind": "page",
                     "path": "files/02-local-disk-access.md"
                 },

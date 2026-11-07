@@ -2432,27 +2432,13 @@ def classify_glyph(glyph):
                     const adapter = plugin.getAdapter();
                     if (!adapter) continue;
 
-                    // Check plugin readiness with contextual messages
+                    // Fonts on this computer are only reachable once the user
+                    // picks them, so there is no disk folder to list.
                     if (pluginId === 'disk') {
-                        const hasDir =
-                            typeof adapter.hasDirectory === 'function' &&
-                            adapter.hasDirectory();
-                        if (!hasDir) {
-                            messages.push(
-                                `⚠️ **${pluginName}**: No folder linked yet. Open the file browser and select a folder to enable disk access.`
-                            );
-                            continue;
-                        }
-                        const perm =
-                            typeof adapter.checkPermission === 'function'
-                                ? await adapter.checkPermission()
-                                : 'granted';
-                        if (perm !== 'granted') {
-                            messages.push(
-                                `⚠️ **${pluginName}**: Folder access expired. Re-enable access in the file browser to continue.`
-                            );
-                            continue;
-                        }
+                        messages.push(
+                            `💻 **This computer**: Fonts on disk open from the launcher (File → Open…), so they can't be listed here.`
+                        );
+                        continue;
                     }
 
                     const scanPath = plugin.getDefaultPath?.() || '/';

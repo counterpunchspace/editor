@@ -1,27 +1,14 @@
-# Project and settings folders
+# Settings Folder and fonts on disk
 
-Counterpunch uses two folders you pick on disk. They are independent. Use different folders.
+Counterpunch opens fonts from anywhere on your disk with your system's file picker; there is no project folder to set up. See [Fonts on this computer](../files/02-local-disk-access.md).
 
-- The **project folder** (Files **Disk**) holds font sources you open and save.
-- The **Settings Folder** holds app files: scripts, glyph filters, and plugins.
+The **Settings Folder** is the one folder Counterpunch asks for. It holds app files: scripts, glyph filters, and plugins. It needs the browser's File System Access permission, which Chrome may ask to confirm again after a restart. Firefox cannot keep this folder.
 
-Both need Chrome’s File System Access permission. The browser may ask again after a restart. Firefox cannot keep these folders.
-
-## Project folder
-
-This is the folder of fonts you are working on. In **Files**, choose the **Disk** context, click **Select Folder**, pick the folder, and allow read and write. The tree then shows that folder. Open a source from it; `Cmd/Ctrl+S` writes back there.
-
-You can change the project folder later from Files. Chrome can notice external edits in the granted folder and reload; other browsers do not. In a `.ufo`, `.glyphspackage`, or a `.designspace`'s UFOs, an edit to one glyph's file updates just that glyph, and asks first only if you have unsaved changes to it.
-
-Folder-based sources (`.ufo`, `.designspace`, `.glyphspackage`) must be opened from this attached folder, not as a detached single file.
-
-**Memory** is a third place, not a disk folder: in-browser storage for throwaway work. It is not the Settings Folder.
-
-Details are in [Local disk access](../files/02-local-disk-access.md).
+**Browser storage** is a separate place, not a disk folder: in-browser storage for throwaway work. It is not the Settings Folder.
 
 ## Settings Folder
 
-This is one folder for the whole app, not per project. Open Settings (`Cmd/Ctrl+,`) and use **Choose Folder** (or **Change Folder**). Plugin Manager also asks if none is connected.
+This is one folder for the whole app, not per font. Open Settings (`Cmd/Ctrl+,`) and use **Choose Folder** (or **Change Folder**). Plugin Manager also asks if none is connected.
 
 Counterpunch creates three subfolders:
 
@@ -29,7 +16,7 @@ Counterpunch creates three subfolders:
 - `Filters` — glyph overview filters
 - `Plugins` — installed plugin wheels
 
-A dedicated folder named `Counterpunch` is a good choice. Do not point Settings at the same folder as a font project.
+A dedicated folder named `Counterpunch` is a good choice. Do not point Settings at a folder of font sources.
 
 After a reload, scripts, filters, and plugin wheels in that folder are available again once permission is granted.
 
@@ -37,6 +24,6 @@ Plugins and packages are in [Installing plugins and packages](../python/07-insta
 
 ## If access expires
 
-Files → Disk shows **Re-enable** when the project folder permission lapses. Settings → **Change Folder** (or Plugin Manager → **Connect Folder**) restores the Settings Folder. Pick the same folders and confirm write access.
+Settings → **Change Folder** (or Plugin Manager → **Connect Folder**) restores the Settings Folder. Pick the same folder and confirm write access.
 
 Then continue with [Your first session](02-first-session.md).

@@ -1,0 +1,449 @@
+/* Dialogs and notices for the launcher and font windows: the folder step,
+ * fonts in a folder, Save As, and the confirmation for fonts opened from the
+ * file manager. Built on .info-popup and .dialog-button (ui/dialogs.css),
+ * in the launcher's cleaner card style. */
+
+.font-window-dialog {
+    width: 500px;
+    max-width: calc(100vw - 32px);
+    border: 1px solid var(--border-inner);
+    border-radius: 14px;
+    box-shadow: 0 24px 64px var(--modal-overlay);
+}
+
+.font-window-dialog-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 22px 24px 6px;
+}
+
+.font-window-dialog-head h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.font-window-dialog-body {
+    padding: 12px 24px 22px;
+    overflow-y: auto;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-tertiary);
+}
+
+.font-window-dialog-body p {
+    margin: 0 0 12px;
+}
+
+.font-window-dialog-body strong {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.font-window-dialog .dialog-button {
+    padding: 8px 16px;
+    font-size: 13px;
+    border-radius: 8px;
+    border-color: var(--border-inner);
+}
+
+.font-window-dialog .dialog-button-primary {
+    border-color: transparent;
+}
+
+.font-window-dialog-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 20px;
+}
+
+.font-window-hint {
+    margin-right: auto;
+    font-size: 11px;
+    color: var(--text-faint);
+}
+
+/* ── The folder step ─────────────────────────────────────────────────────── */
+
+.font-window-steps {
+    list-style: none;
+    margin: 0 0 4px;
+    padding: 12px;
+    display: grid;
+    gap: 4px;
+    background-color: var(--input-bg);
+    border-left: 3px solid var(--view-editor);
+    border-radius: 4px;
+}
+
+.font-window-steps li {
+    display: flex;
+    gap: 10px;
+}
+
+.font-window-steps span {
+    font-family: var(--font-families-mono);
+    color: var(--text-faint);
+}
+
+/* ── Fonts in a folder ───────────────────────────────────────────────────── */
+
+.font-window-list {
+    display: flex;
+    flex-direction: column;
+    max-height: 340px;
+    overflow: auto;
+    margin: 0 -8px;
+}
+
+.font-window-list-row {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    padding: 6px 8px;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+    font-size: 13px;
+    color: var(--text-primary);
+}
+
+.font-window-list-row:hover {
+    background-color: var(--background-hover);
+}
+
+.font-window-list-row .material-symbols-outlined {
+    font-size: 19px;
+    color: var(--text-secondary);
+}
+
+.font-window-list-row .meta {
+    font-family: var(--font-families-mono);
+    font-size: 11px;
+    color: var(--text-faint);
+}
+
+/* ── Save As ─────────────────────────────────────────────────────────────── */
+
+.font-window-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 190px;
+    gap: 12px;
+    margin-bottom: 18px;
+}
+
+.font-window-fields label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+.font-window-fields label[hidden] {
+    display: none;
+}
+
+.font-window-save-as .font-window-fields:has(label[hidden]) {
+    grid-template-columns: 1fr;
+}
+
+.font-window-fields input,
+.font-window-fields select {
+    height: 36px;
+    padding: 0 10px;
+    border: 1px solid var(--border-inner);
+    border-radius: 8px;
+    background-color: var(--input-bg);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 14px;
+}
+
+.font-window-fields select option {
+    background: var(--modal-bg);
+}
+
+.font-window-fields input:focus,
+.font-window-fields select:focus {
+    outline: none;
+    border-color: var(--view-editor);
+    box-shadow: 0 0 0 3px
+        color-mix(in srgb, var(--view-editor) 25%, transparent);
+}
+
+.font-window-destinations {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.font-window-destination {
+    display: grid;
+    grid-template-columns: 36px minmax(0, 1fr) 16px;
+    gap: 12px;
+    align-items: center;
+    width: 100%;
+    padding: 12px 14px;
+    border: 1px solid var(--border-inner);
+    border-radius: 10px;
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+    color: var(--text-primary);
+}
+
+.font-window-destination:hover:not(:disabled) {
+    background-color: var(--input-bg);
+}
+
+.font-window-destination:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.font-window-destination .material-symbols-outlined {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    font-size: 22px;
+    color: var(--text-secondary);
+    background-color: var(--input-bg);
+}
+
+.font-window-destination b {
+    display: block;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.font-window-destination small {
+    display: block;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.font-window-radio {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 1.5px solid var(--border-secondary);
+    box-sizing: border-box;
+}
+
+.font-window-destination.is-selected {
+    border-color: var(--view-editor);
+    background-color: color-mix(in srgb, var(--view-editor) 9%, transparent);
+}
+
+.font-window-destination.is-selected .material-symbols-outlined {
+    color: var(--text-primary);
+    background-color: color-mix(in srgb, var(--view-editor) 22%, transparent);
+}
+
+.font-window-destination.is-selected .font-window-radio {
+    border: 4px solid var(--view-editor);
+}
+
+@media (max-width: 560px) {
+    .font-window-fields {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* ── Fonts opened from the file manager: one confirmation everywhere ───── */
+
+.font-window-pending {
+    z-index: 10800;
+}
+
+.font-window-pending .font-window-dialog {
+    width: 520px;
+    padding: 26px 26px 22px;
+    animation: fontWindowPendingIn 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+.font-window-pending.closing {
+    animation: fontWindowPendingFade 0.2s ease forwards;
+}
+
+.font-window-pending.closing .font-window-dialog {
+    animation: fontWindowPendingOut 0.2s ease forwards;
+}
+
+@keyframes fontWindowPendingIn {
+    from {
+        opacity: 0;
+        transform: scale(0.92) translateY(12px);
+    }
+}
+
+@keyframes fontWindowPendingOut {
+    to {
+        opacity: 0;
+        transform: scale(0.94);
+    }
+}
+
+@keyframes fontWindowPendingFade {
+    to {
+        opacity: 0;
+    }
+}
+
+.font-window-pending-head {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 14px;
+}
+
+.font-window-pending-head img {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 1px var(--border-inner);
+}
+
+.font-window-pending-head h3 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--text-primary);
+}
+
+.font-window-pending-why {
+    margin: 0 0 18px;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-tertiary);
+}
+
+.font-window-pending-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.font-window-pending-row {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-inner);
+    border-radius: 10px;
+    color: var(--text-primary);
+}
+
+.font-window-pending-row .material-symbols-outlined {
+    font-size: 20px;
+    color: var(--text-secondary);
+}
+
+.font-window-pending-row .name {
+    font-size: 14px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.font-window-pending-row small {
+    display: block;
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--text-muted);
+}
+
+/* ── Notices ─────────────────────────────────────────────────────────────── */
+
+.font-window-notices {
+    position: fixed;
+    bottom: 18px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 11000;
+    width: max-content;
+    max-width: calc(100vw - 32px);
+}
+
+.font-window-notice {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 8px 8px 14px;
+    border-radius: 6px;
+    background: var(--tour-tooltip-bg);
+    color: var(--tour-tooltip-text);
+    box-shadow: 0 8px 24px var(--tour-tooltip-shadow);
+    font-size: 12px;
+    animation: infoPopupSlideUp 0.25s ease;
+}
+
+.font-window-notice .dialog-button {
+    border-color: var(--tour-tooltip-kbd-border);
+    color: inherit;
+    padding: 3px 10px;
+}
+
+.font-window-notice .info-popup-close {
+    color: inherit;
+    opacity: 0.6;
+}
+
+/* ── A font window that waits for the user (loading screen) ──────────── */
+
+.font-window-startup-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    max-width: 420px;
+    margin: 18px auto 0;
+    text-align: center;
+    color: var(--text-primary);
+}
+
+.font-window-startup-card .material-symbols-outlined {
+    font-size: 32px;
+    color: var(--view-editor);
+}
+
+.font-window-startup-card h2 {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 600;
+}
+
+.font-window-startup-card p {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-muted);
+}
+
+.font-window-startup-card .dialog-button {
+    margin-top: 6px;
+    padding: 8px 16px;
+    font-size: 13px;
+    border-radius: 8px;
+}

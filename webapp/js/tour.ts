@@ -175,9 +175,7 @@ async function confirmUnsavedChangesForTour(): Promise<boolean> {
     }
     if (choice === 'save') {
         if (!currentFont.fileHandle && !currentFont.isCloudBacked()) {
-            await window.showFontFileDialog?.({
-                mode: 'save-as'
-            });
+            await window.saveFontAs?.();
         } else {
             await window.saveButton?.handleSave?.();
         }

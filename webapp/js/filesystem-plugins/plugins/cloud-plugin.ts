@@ -2214,17 +2214,12 @@ export class CloudPlugin extends FilesystemPlugin {
      * eligibility-required messages, hiding it when ready to browse.
      */
     async updateUI(uiCallbacks: {
-        showOpenFolderUI: () => void;
-        hideOpenFolderUI: () => void;
-        showPermissionBanner: (show: boolean) => void;
         showUnsupportedBrowserUI: () => void;
         hideUnsupportedBrowserUI: () => void;
         showPluginMessage: (options: PluginMessageOptions) => void;
         hidePluginMessage: () => void;
     }): Promise<void> {
         uiCallbacks.hideUnsupportedBrowserUI();
-        uiCallbacks.showPermissionBanner(false);
-        uiCallbacks.hideOpenFolderUI();
         uiCallbacks.hidePluginMessage();
 
         const cloudPanel = document.getElementById('cloud-panel');
@@ -2278,10 +2273,7 @@ export class CloudPlugin extends FilesystemPlugin {
                 label: 'Save to Cloud',
                 icon: 'cloud_upload',
                 action: async () => {
-                    await window.showFontFileDialog?.({
-                        mode: 'save-as',
-                        pluginId: 'cloud'
-                    });
+                    await window.saveFontAs?.({ destination: 'cloud' });
                 }
             },
             {

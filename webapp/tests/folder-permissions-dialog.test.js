@@ -33,23 +33,20 @@ describe('folder access classification', () => {
         );
     });
 
-    test('setup is complete only when both folders are ready', () => {
+    test('setup is complete only when the settings folder is ready', () => {
         expect(
             folderPermissions.isFolderSetupComplete({
-                project: { state: 'ready', name: 'Fonts' },
                 settings: { state: 'ready', name: 'Counterpunch' }
             })
         ).toBe(true);
         expect(
             folderPermissions.isFolderSetupComplete({
-                project: { state: 'ready', name: 'Fonts' },
                 settings: { state: 'needsRenewal', name: 'Counterpunch' }
             })
         ).toBe(false);
         expect(
             folderPermissions.isFolderSetupComplete({
-                project: { state: 'missing', name: null },
-                settings: { state: 'ready', name: 'Counterpunch' }
+                settings: { state: 'missing', name: null }
             })
         ).toBe(false);
     });
@@ -76,7 +73,6 @@ describe('folder permissions unavailable copy', () => {
         jest.resetModules();
         const folderPermissions = require('../js/folder-permissions-dialog');
         const missingStatus = {
-            project: { state: 'missing', name: null },
             settings: { state: 'missing', name: null }
         };
         const copy = folderPermissions.getFolderPermissionsDialogCopy(
@@ -96,6 +92,6 @@ describe('folder permissions unavailable copy', () => {
                 missingStatus,
                 true
             ).title
-        ).toBe('Link Folders');
+        ).toBe('Link Settings Folder');
     });
 });

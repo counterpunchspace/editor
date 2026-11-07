@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="theme-color" content="#181818" />
+        <meta
+            name="description"
+            content="Start a new font or open one from your computer, the cloud or browser storage"
+        />
+        <title>Counterpunch</title>
+        <link
+            rel="icon"
+            type="image/svg+xml"
+            href="assets/favicon/launcher-icon.svg"
+        />
+        <script>
+            // Apply the saved theme before the first paint (see theme-switcher.ts).
+            (function () {
+                var preference = 'auto';
+                try {
+                    preference =
+                        localStorage.getItem('preferredTheme') || 'auto';
+                } catch (error) {}
+                var light =
+                    preference === 'light' ||
+                    (preference === 'auto' &&
+                        window.matchMedia('(prefers-color-scheme: light)')
+                            .matches);
+                if (light) {
+                    document.documentElement.setAttribute('data-theme', 'light');
+                }
+            })();
+            window.isDevelopment = function () {
+                var params = new URLSearchParams(window.location.search);
+                if (params.has('production')) return false;
+                if (params.has('development')) return true;
+                var port = parseInt(window.location.port, 10);
+                return (
+                    window.location.hostname === 'localhost' ||
+                    window.location.hostname === '127.0.0.1' ||
+                    (!isNaN(port) && port >= 8000)
+                );
+            };
+            window.isProduction = function () {
+                return !window.isDevelopment();
+            };
+            window.isTestMode = function () {
+                return new URLSearchParams(window.location.search).has('test');
+            };
+            window.isTest = window.isTestMode;
+            // Font windows need the same cross-origin isolation as this page,
+            // or the browser separates them and they can't reach each other.
+            if (!window.isDevelopment()) {
+                var script = document.createElement('script');
+                script.src = 'coi-serviceworker.js';
+                document.head.appendChild(script);
+            }
+        </script>
+        <link rel="manifest" href="manifest.json" />
+        <link
+            rel="apple-touch-icon"
+            sizes="192x192"
+            href="assets/icons/icon-192x192.png"
+        />
+        <link rel="stylesheet" href="css/launcher.css" />
+    </head>
+    <body class="launcher-page">
+        <main class="launcher">
+            <div class="launcher-window">
+                <aside class="launcher-side">
+                    <div class="launcher-brand">
+                        <img src="assets/logo.svg" alt="" />
+                        <div class="launcher-brand-text">
+                            <span class="launcher-brand-name">Counterpunch</span>
+                            <span class="launcher-brand-version" id="launcher-version"></span>
+                        </div>
+                    </div>
+                    <button type="button" class="launcher-action primary" id="launcher-new-font"></button>
+                    <button type="button" class="launcher-action" id="launcher-sample-font"></button>
+                    <button type="button" class="launcher-action" id="launcher-open"></button>
+                    <p class="launcher-folder-route" id="launcher-folder-route">
+                        Opening a .ufo or .glyphspackage?
+                        <button type="button" class="launcher-link" id="launcher-open-folder">Choose its folder…</button>
+                    </p>
+                    <div class="launcher-drop-zone" id="launcher-drop-zone"></div>
+                    <div class="launcher-side-foot">
+                        <div class="launcher-notice" id="launcher-unsupported" hidden>
+                            This browser can’t open files from your computer.
+                            Use Chrome or Edge, or work in browser storage and
+                            the cloud.
+                        </div>
+                    </div>
+                </aside>
+                <section class="launcher-main" aria-label="Recent fonts">
+                    <div class="launcher-main-head">
+                        <h2>Recent fonts</h2>
+                        <span class="launcher-open-count" id="launcher-open-count"></span>
+                        <span class="launcher-account" id="launcher-account"></span>
+                        <button type="button" class="launcher-icon-button" id="launcher-theme" aria-label="Appearance" aria-haspopup="menu">
+                            <span class="material-symbols-outlined" aria-hidden="true">contrast</span>
+                        </button>
+                    </div>
+                    <div class="launcher-recents" id="launcher-recents"></div>
+                    <div class="launcher-main-foot">
+                        Fonts open in their own windows. The launcher stays open.
+                    </div>
+                </section>
+            </div>
+        </main>
+    </body>
+</html>

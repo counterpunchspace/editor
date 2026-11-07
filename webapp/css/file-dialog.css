@@ -236,20 +236,6 @@
     line-height: 1.35;
 }
 
-#permission-banner {
-    margin: 12px 12px 0;
-    border-radius: 8px;
-    padding: 12px 14px;
-    font-size: 13px;
-}
-
-.permission-banner-button {
-    font-size: 11px;
-    padding: 6px 10px;
-    border-radius: 6px;
-}
-
-#open-folder-container,
 #cloud-panel,
 #plugin-message-container {
     padding: 48px 28px;

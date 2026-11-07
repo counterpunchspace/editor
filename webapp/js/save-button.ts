@@ -100,7 +100,7 @@ class SaveButton {
             !currentFont.isCloudBacked()
         ) {
             if (!this.hasFontOpen()) return;
-            await window.showFontFileDialog?.({ mode: 'save-as' });
+            await window.saveFontAs?.();
             return;
         }
 

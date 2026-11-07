@@ -125,14 +125,15 @@ export class OPFSAdapter implements FileSystemAdapter {
 }
 
 // Native File System Access API Adapter for disk-based file system.
-// Each instance persists its directory handle under a dedicated IndexedDB key
-// so Fonts folder and Settings folder remain independent.
+// Each instance persists its directory handle under a dedicated IndexedDB key.
+// The Settings Folder uses its own key; the Disk plugin's per-font adapter
+// (font-windows/document-root-adapter.ts) is attached to a picked font instead.
 export const FONTS_FOLDER_HANDLE_KEY = 'disk-directory-handle';
 export const SETTINGS_FOLDER_HANDLE_KEY = 'settings-directory-handle';
 
 export class NativeAdapter implements FileSystemAdapter {
-    private directoryHandle: FileSystemDirectoryHandle | null = null;
-    private rootPath: string = '';
+    protected directoryHandle: FileSystemDirectoryHandle | null = null;
+    protected rootPath: string = '';
     private readonly storageKey: string;
 
     constructor(storageKey: string = FONTS_FOLDER_HANDLE_KEY) {

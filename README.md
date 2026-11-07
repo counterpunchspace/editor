@@ -34,6 +34,13 @@ Folder sources (`.ufo`, `.glyphspackage`, `.designspace` with its UFOs) save
 file by file: editing one glyph writes that glyph's file, and an external
 change to one glyph file updates just that glyph.
 
+Counterpunch starts with a launcher, and every font opens in its own window.
+Fonts on this computer open with the system's file pickers (File System
+Access API, Chromium browsers) and save back to the picked file or folder.
+`.ufo`, `.glyphspackage` and `.designspace` may ask for the folder they are
+in once, so the browser can read the whole font. File → Save As chooses
+name, format and place: this computer, the cloud or browser storage.
+
 **Cloud** is a filesystem plugin, not a file format. Open/Save talk to per-shard
 rooms (`font-core`, `font-deps`, `glyph:<id>`). Hydrate is HTTP + live tail;
 rebaseline is required when compaction moves the checkpoint past the client’s

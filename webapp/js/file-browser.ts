@@ -5,9 +5,20 @@ import tippy, { Instance as TippyInstance } from 'tippy.js';
 import 'tippy.js/dist/tippy.css';
 import {
     FileSystemAdapter,
-    isFileSystemAccessSupported,
-    FileInfo
+    FileInfo,
+    type NativeAdapter
 } from './file-system-adapter';
+import {
+    documentKeyFromUrl,
+    isLaunchWindow,
+    listenForLaunchedFiles,
+    noteDocumentIdentity,
+    openDiskDocumentFromUrl,
+    showFontUnavailable,
+    takeOverFromOtherWindow
+} from './font-windows/font-window';
+import { openFontWindow } from './font-windows/open-documents';
+import { fontFormatOf } from './font-windows/font-formats';
 import { showCriticalError } from './critical-error-handler';
 
 /** A memory URL for a font that is not in the session should open the default
@@ -59,10 +70,6 @@ import {
 } from './folder-source';
 import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
 import { notifyLoadingOverlayHiding } from './welcome-screen';
-import {
-    createFolderSetupCallout,
-    openFolderPermissionsDialog
-} from './folder-permissions-dialog';
 import {
     cancelManagedFileInternalWrite,
     consumeManagedFileInternalWritePaths,
@@ -624,9 +631,9 @@ async function showFontFileDialog(
     }
 
     if (options.path) {
-        await browseCurrentPluginIfReady(options.path);
+        await navigateToPath(options.path);
     } else if (!document.getElementById('file-path-header')) {
-        await browseCurrentPluginIfReady(fileSystemCache.currentPath || '/');
+        await navigateToPath(fileSystemCache.currentPath || '/');
     } else {
         await new Promise<void>((resolve) => {
             requestAnimationFrame(() => {
@@ -731,9 +738,6 @@ async function convertSourceToBabelfontViaWorker(
 
     throw new Error('Font conversion failed after retries');
 }
-
-let detachedLaunchFilename: string | null = null;
-let detachedLaunchFileHandle: FileSystemFileHandle | null = null;
 
 let diskFontReloadDebounceTimer: number | null = null;
 const pendingDiskChangePaths = new Set<string>();
@@ -959,15 +963,29 @@ function truncatePathMiddle(
  */
 function createFileUri(pluginId: string, path: string): string {
     const directUriPattern = new RegExp(`^${pluginId}:\/\/\/?`);
-    const normalizedPath = directUriPattern.test(path)
+    let normalizedPath = directUriPattern.test(path)
         ? path.replace(directUriPattern, '')
         : path;
+    normalizedPath = normalizedPath.startsWith('/')
+        ? normalizedPath.slice(1)
+        : normalizedPath;
 
-    return `${pluginId}:///${normalizedPath.startsWith('/') ? normalizedPath.slice(1) : normalizedPath}`;
+    // A disk font's path is `/<name>` inside its document; the URI also
+    // names the document, because browsers never reveal where files are.
+    if (pluginId === 'disk') {
+        const doc = (pluginRegistry.get('disk') as DiskPlugin | undefined)
+            ?.document;
+        if (doc) {
+            return `disk:///${doc.id}/${normalizedPath}`;
+        }
+    }
+
+    return `${pluginId}:///${normalizedPath}`;
 }
 
 function syncEditorFileState(fileUri: string, eventType: string): void {
     updateUrlState({ file: fileUri });
+    noteDocumentIdentity(fileUri);
 
     if (!window.stateManager) {
         return;
@@ -984,12 +1002,21 @@ function syncEditorFileState(fileUri: string, eventType: string): void {
     window.stateManager.syncUrlNow?.();
 }
 
-function syncEditorFileStateFromCurrentFont(): void {
+export function syncEditorFileStateFromCurrentFont(): void {
     const currentFont = window.fontManager?.currentFont;
     const pluginId = currentFont?.sourcePlugin?.getId?.();
     let path = currentFont?.path;
 
     if (!pluginId || !path) {
+        return;
+    }
+
+    // A new font sits on Disk without a document until it is saved; it keeps
+    // its `new:///` identity until then.
+    if (
+        pluginId === 'disk' &&
+        !(pluginRegistry.get('disk') as DiskPlugin | undefined)?.document
+    ) {
         return;
     }
 
@@ -1430,11 +1457,12 @@ function updatePluginMenuButtonVisibility(plugin: FilesystemPlugin): void {
 function openFontInNewTab(path: string) {
     const pluginId = fileSystemCache.currentPlugin.getId();
     const fileUri = createFileUri(pluginId, path);
-    const params = new URLSearchParams();
-    params.set('file', fileUri);
-
-    const url = `${window.location.origin}${window.location.pathname}?${params.toString()}`;
-    window.open(url, '_blank');
+    // Its own font window, linked to the others (or brought forward).
+    openFontWindow({
+        key: fileUri,
+        name: path.split('/').pop() || path,
+        format: fontFormatOf(path)
+    });
     console.log('[FileBrowser]', `Opening font in new tab: ${fileUri}`);
 }
 
@@ -1446,11 +1474,7 @@ function getPluginTabDescription(plugin: FilesystemPlugin): string {
     }
 
     if (pluginId === 'disk') {
-        const adapter = plugin.getAdapter() as {
-            directoryHandle?: { name?: string };
-        };
-        const folderName = adapter.directoryHandle?.name;
-        return folderName ? `Folder: ${folderName}` : 'Local folder access';
+        return 'This computer';
     }
 
     if (pluginId === 'cloud') {
@@ -1579,11 +1603,6 @@ function hideLoadingOverlayForUrlOpen(): void {
     notifyLoadingOverlayHiding();
 }
 
-function hasPendingPwaLaunchFiles(): boolean {
-    const pending = (window as any).__pendingLaunchFileHandles;
-    return Array.isArray(pending) && pending.length > 0;
-}
-
 async function revealUrlOpenedFontInFileBrowser(
     fontPath: string
 ): Promise<void> {
@@ -1599,7 +1618,6 @@ async function revealUrlOpenedFontInFileBrowser(
             navError
         );
     }
-    updateHomeButtonVisibility();
     await new Promise((resolve) => setTimeout(resolve, 200));
     const fileTree = document.getElementById('file-tree');
     const currentFontItem = fileTree?.querySelector('.file-item.current-font');
@@ -1625,7 +1643,6 @@ async function openMemoryUrlFont(fontPath: string): Promise<void> {
     });
     await urlOpenReadyPromise;
     timelineMark('app.startupMemoryUrlOpen.ready');
-    updateHomeButtonVisibility();
     void revealUrlOpenedFontInFileBrowser(fontPath).catch((error) => {
         console.error(
             '[FileBrowser]',
@@ -1720,30 +1737,13 @@ async function openFont(
         const isReplacingOpenFont = !!window.fontManager?.currentFont;
         const sourceAdapter = sourcePlugin.getAdapter() as any;
 
-        const directoryHandleForSource: FileSystemDirectoryHandle | undefined =
-            sourcePlugin.getId() === 'disk'
-                ? sourceAdapter.directoryHandle
-                : undefined;
-
-        const isDetachedDiskLaunch =
-            sourcePlugin.getId() === 'disk' &&
-            !!fileHandle &&
-            !directoryHandleForSource;
+        const directoryHandleForSource = diskDirectoryHandleOf(sourcePlugin);
 
         // Determine file extension
         const extension = path.split('.').pop()?.toLowerCase() || '';
         const isGlyphsPackage = extension === 'glyphspackage';
         const isUfoDirectory = extension === 'ufo';
         const isDesignspace = extension === 'designspace';
-
-        if (
-            isDetachedDiskLaunch &&
-            (isGlyphsPackage || isUfoDirectory || isDesignspace)
-        ) {
-            throw new Error(
-                'This source format requires folder context. Please attach the containing folder in Disk context and open it from there.'
-            );
-        }
 
         let contents: string | Uint8Array | undefined;
         let packageEntries: Record<string, Uint8Array> | undefined;
@@ -1754,16 +1754,7 @@ async function openFont(
 
         const readSpan = timelineSpanStart('font.open.readSource');
         try {
-            if (isDetachedDiskLaunch) {
-                const launchedFile = await fileHandle!.getFile();
-                const launchedBytes = new Uint8Array(
-                    await launchedFile.arrayBuffer()
-                );
-                contents =
-                    extension === 'babelfont'
-                        ? new TextDecoder('utf-8').decode(launchedBytes)
-                        : launchedBytes;
-            } else if (isGlyphsPackage || isUfoDirectory || isDesignspace) {
+            if (isGlyphsPackage || isUfoDirectory || isDesignspace) {
                 const { entries, state } = await readFolderSource(
                     sourceAdapter,
                     path,
@@ -1877,11 +1868,9 @@ async function openFont(
             sourcePlugin.getId() === 'disk' &&
             directoryHandleForSource
         ) {
-            const diskPlugin = sourcePlugin as DiskPlugin;
-            const adapter = diskPlugin.getAdapter() as any;
-            if (adapter.getFileHandle) {
-                actualFileHandle = await adapter.getFileHandle(path);
-            }
+            actualFileHandle =
+                (await (sourceAdapter as NativeAdapter).getFileHandle(path)) ??
+                undefined;
         }
 
         const directoryHandle = directoryHandleForSource;
@@ -1934,38 +1923,6 @@ async function openFont(
     }
 }
 
-async function getDiskFileHandleForPath(
-    plugin: FilesystemPlugin,
-    path: string
-): Promise<FileSystemFileHandle | undefined> {
-    if (plugin.getId() !== 'disk') {
-        return undefined;
-    }
-
-    const adapter = plugin.getAdapter() as {
-        getFileHandle?: (
-            filePath: string
-        ) => Promise<FileSystemFileHandle | null>;
-        directoryHandle?: FileSystemDirectoryHandle;
-    };
-
-    if (!adapter.getFileHandle) {
-        return undefined;
-    }
-
-    return (await adapter.getFileHandle(path)) || undefined;
-}
-
-function currentDiskDirectoryHandle(): FileSystemDirectoryHandle | undefined {
-    return fileSystemCache.currentPlugin.getId() === 'disk'
-        ? (
-              fileSystemCache.currentPlugin.getAdapter() as {
-                  directoryHandle?: FileSystemDirectoryHandle;
-              }
-          ).directoryHandle
-        : undefined;
-}
-
 /**
  * Save As into a .ufo or .glyphspackage folder: the font then lives there and
  * is saved there file by file. Saving over an existing folder replaces the
@@ -1973,11 +1930,12 @@ function currentDiskDirectoryHandle(): FileSystemDirectoryHandle | undefined {
  */
 async function saveCurrentFontAsFolderSource(
     currentFont: NonNullable<typeof window.fontManager.currentFont>,
+    plugin: FilesystemPlugin,
     targetPath: string,
     format: NonNullable<ReturnType<typeof folderSourceFormatForPath>>,
     targetExists: boolean
 ): Promise<void> {
-    const adapter = fileSystemCache.activeAdapter;
+    const adapter = plugin.getAdapter();
     const root = folderSourceRoot(targetPath, format);
     const existing = targetExists
         ? (await readFolderSource(adapter, targetPath, format)).state
@@ -2002,9 +1960,9 @@ async function saveCurrentFontAsFolderSource(
         sourceFileHash: currentFont.sourceFileHash
     };
     currentFont.path = targetPath;
-    currentFont.sourcePlugin = fileSystemCache.currentPlugin;
+    currentFont.sourcePlugin = plugin;
     currentFont.fileHandle = undefined;
-    currentFont.directoryHandle = currentDiskDirectoryHandle();
+    currentFont.directoryHandle = diskDirectoryHandleOf(plugin);
     currentFont.folderSource = existing;
     currentFont.sourceFileHash = undefined;
     currentFont.folderSaveTracker.requireFullSave();
@@ -2014,6 +1972,94 @@ async function saveCurrentFontAsFolderSource(
         Object.assign(currentFont, previous);
         throw error;
     }
+}
+
+/** The directory handle a Disk plugin's adapter is rooted at. */
+function diskDirectoryHandleOf(
+    plugin: FilesystemPlugin
+): FileSystemDirectoryHandle | undefined {
+    if (plugin.getId() !== 'disk') {
+        return undefined;
+    }
+    const adapter = plugin.getAdapter() as Partial<NativeAdapter>;
+    return adapter.getDirectoryHandle?.() ?? undefined;
+}
+
+/**
+ * Save the current font as `path` in `plugin`'s storage; that becomes the
+ * font's home. Used by Save As in the file dialog and in the Save As dialog.
+ */
+export async function saveCurrentFontAs(
+    plugin: FilesystemPlugin,
+    path: string,
+    options: { exists: boolean }
+): Promise<void> {
+    const currentFont = window.fontManager?.currentFont;
+    if (!currentFont) {
+        return;
+    }
+    const pluginId = plugin.getId();
+    const adapter = plugin.getAdapter();
+    const targetFolderFormat = folderSourceFormatForPath(path);
+    if (targetFolderFormat) {
+        await saveCurrentFontAsFolderSource(
+            currentFont,
+            plugin,
+            path,
+            targetFolderFormat,
+            options.exists
+        );
+    } else {
+        currentFont.syncJsonFromModel();
+        const sourcePlugin = currentFont.sourcePlugin;
+        let babelfontJson = currentFont.babelfontJson;
+        if (
+            sourcePlugin &&
+            sourcePlugin.getId() !== pluginId &&
+            typeof sourcePlugin.stripOwnedFontData === 'function'
+        ) {
+            const parsed = JSON.parse(babelfontJson) as Record<string, unknown>;
+            babelfontJson = JSON.stringify(
+                sourcePlugin.stripOwnedFontData(parsed)
+            );
+        }
+        const serializedFont = await serializeFontForSourceSave(
+            path,
+            babelfontJson
+        );
+        if (pluginId === 'disk') {
+            markManagedFileInternalWrite(pluginId, path);
+        }
+        try {
+            await adapter.writeFile(path, serializedFont);
+        } catch (error) {
+            if (pluginId === 'disk') {
+                cancelManagedFileInternalWrite(pluginId, path);
+            }
+            throw error;
+        }
+
+        currentFont.path = path;
+        currentFont.sourcePlugin = plugin;
+        currentFont.fileHandle =
+            pluginId === 'disk'
+                ? ((await (adapter as NativeAdapter).getFileHandle(path)) ??
+                  undefined)
+                : undefined;
+        currentFont.directoryHandle = diskDirectoryHandleOf(plugin);
+        currentFont.folderSource = undefined;
+        currentFont.sourceFileHash = hashBytes(
+            new TextEncoder().encode(serializedFont)
+        );
+    }
+    currentFont.needsRecompile = false;
+    currentFont.hasUnsavedChanges = false;
+
+    syncEditorFileState(createFileUri(pluginId, path), 'file_saved_as');
+
+    await window.fontManager.updateFontDisplay();
+    await window.fontManager.updateDirtyIndicator();
+    window.saveButton?.updateButtonState?.();
 }
 
 async function saveCurrentFontAsToPath(): Promise<void> {
@@ -2094,78 +2140,11 @@ async function saveCurrentFontAsToPath(): Promise<void> {
                     return;
                 }
 
-                const pluginId = fileSystemCache.currentPlugin.getId();
-                const targetFolderFormat =
-                    folderSourceFormatForPath(targetPath);
-                if (targetFolderFormat) {
-                    await saveCurrentFontAsFolderSource(
-                        currentFont,
-                        targetPath,
-                        targetFolderFormat,
-                        fileExists
-                    );
-                } else {
-                    currentFont.syncJsonFromModel();
-                    const sourcePlugin = currentFont.sourcePlugin;
-                    const destinationPlugin = fileSystemCache.currentPlugin;
-                    let babelfontJson = currentFont.babelfontJson;
-                    if (
-                        sourcePlugin &&
-                        destinationPlugin &&
-                        sourcePlugin.getId() !== destinationPlugin.getId() &&
-                        typeof sourcePlugin.stripOwnedFontData === 'function'
-                    ) {
-                        const parsed = JSON.parse(babelfontJson) as Record<
-                            string,
-                            unknown
-                        >;
-                        babelfontJson = JSON.stringify(
-                            sourcePlugin.stripOwnedFontData(parsed)
-                        );
-                    }
-                    const serializedFont = await serializeFontForSourceSave(
-                        targetPath,
-                        babelfontJson
-                    );
-                    if (pluginId === 'disk') {
-                        markManagedFileInternalWrite(pluginId, targetPath);
-                    }
-                    try {
-                        await fileSystemCache.activeAdapter.writeFile(
-                            targetPath,
-                            serializedFont
-                        );
-                    } catch (error) {
-                        if (pluginId === 'disk') {
-                            cancelManagedFileInternalWrite(
-                                pluginId,
-                                targetPath
-                            );
-                        }
-                        throw error;
-                    }
-
-                    currentFont.path = targetPath;
-                    currentFont.sourcePlugin = fileSystemCache.currentPlugin;
-                    currentFont.fileHandle = await getDiskFileHandleForPath(
-                        fileSystemCache.currentPlugin,
-                        targetPath
-                    );
-                    currentFont.directoryHandle = currentDiskDirectoryHandle();
-                    currentFont.folderSource = undefined;
-                    currentFont.sourceFileHash = hashBytes(
-                        new TextEncoder().encode(serializedFont)
-                    );
-                }
-                currentFont.needsRecompile = false;
-                currentFont.hasUnsavedChanges = false;
-
-                const fileUri = createFileUri(pluginId, targetPath);
-                syncEditorFileState(fileUri, 'file_saved_as');
-
-                await window.fontManager.updateFontDisplay();
-                await window.fontManager.updateDirtyIndicator();
-                window.saveButton?.updateButtonState?.();
+                await saveCurrentFontAs(
+                    fileSystemCache.currentPlugin,
+                    targetPath,
+                    { exists: fileExists }
+                );
 
                 await refreshFileSystem();
                 selectedDialogPath = targetPath;
@@ -2330,23 +2309,16 @@ async function switchContext(pluginId: string) {
                 if (!activated) {
                     fileSystemCache.currentPath = plugin.getDefaultPath();
                     await plugin.updateUI({
-                        showOpenFolderUI,
-                        hideOpenFolderUI,
-                        showPermissionBanner,
                         showUnsupportedBrowserUI,
                         hideUnsupportedBrowserUI,
                         showPluginMessage,
                         hidePluginMessage
                     });
-                    updateDiskRelinkButton();
                     return;
                 }
 
                 // Plugin activated successfully - let plugin update UI
                 await plugin.updateUI({
-                    showOpenFolderUI,
-                    hideOpenFolderUI,
-                    showPermissionBanner,
                     showUnsupportedBrowserUI,
                     hideUnsupportedBrowserUI,
                     showPluginMessage,
@@ -2355,7 +2327,6 @@ async function switchContext(pluginId: string) {
 
                 // Update dropdown menu button visibility based on plugin capabilities
                 updatePluginMenuButtonVisibility(plugin);
-                updateDiskRelinkButton();
 
                 // Restore last visited path for this plugin, or use default path
                 let targetPath = plugin.getDefaultPath();
@@ -2418,216 +2389,6 @@ async function switchContext(pluginId: string) {
     }
 }
 
-function updateOpenFolderPromptForDetachedLaunch() {
-    renderOpenFolderWidget();
-}
-
-function renderOpenFolderWidget(): void {
-    const openFolderContainer = document.getElementById(
-        'open-folder-container'
-    );
-    if (!openFolderContainer) {
-        return;
-    }
-
-    const message = detachedLaunchFilename
-        ? `Opened ${detachedLaunchFilename}. Attach its folder to enable full disk browsing and external reload.`
-        : undefined;
-    openFolderContainer.replaceChildren(
-        createFolderSetupCallout(message, 'project')
-    );
-}
-
-function isDiskProjectFolderLinked(): boolean {
-    const plugin = pluginRegistry.get('disk');
-    if (!(plugin instanceof DiskPlugin)) {
-        return false;
-    }
-    const adapter = plugin.getAdapter() as { hasDirectory?: () => boolean };
-    return adapter.hasDirectory?.() === true;
-}
-
-function shouldShowFilePathHeader(): boolean {
-    if (!(fileSystemCache.currentPlugin instanceof DiskPlugin)) {
-        return true;
-    }
-    return isDiskProjectFolderLinked();
-}
-
-function syncFilePathHeaderVisibility(): void {
-    const pathHeader = document.getElementById('file-path-header');
-    if (!pathHeader) {
-        return;
-    }
-    pathHeader.style.display = shouldShowFilePathHeader() ? 'flex' : 'none';
-}
-
-async function browseCurrentPluginIfReady(
-    path: string,
-    highlightFolder?: string
-): Promise<void> {
-    if (!shouldShowFilePathHeader()) {
-        syncFilePathHeaderVisibility();
-        return;
-    }
-    await navigateToPath(path, highlightFolder);
-}
-
-function ensureDiskRelinkButton(): HTMLButtonElement | null {
-    const tabs = document.getElementById('file-dialog-plugin-tabs');
-    if (!tabs) {
-        return null;
-    }
-    const existing = document.getElementById(
-        'disk-relink-project-folder-btn'
-    ) as HTMLButtonElement | null;
-    if (existing) {
-        return existing;
-    }
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.id = 'disk-relink-project-folder-btn';
-    button.className = 'dialog-button file-dialog-disk-relink-btn';
-    button.textContent = 'Link another project folder';
-    button.hidden = true;
-    button.addEventListener('click', () => {
-        void openFolderPermissionsDialog();
-    });
-    tabs.appendChild(button);
-    return button;
-}
-
-function updateDiskRelinkButton(): void {
-    const button = ensureDiskRelinkButton();
-    if (!button) {
-        return;
-    }
-    const diskActive =
-        fileSystemCache.currentPlugin?.getId() === 'disk' &&
-        isFileSystemAccessSupported();
-    button.hidden = !(diskActive && isDiskProjectFolderLinked());
-}
-
-/**
- * Refresh Disk UI after the Fonts folder handle is already selected.
- * Does not open a picker — call this after DiskPlugin.showSetupUI succeeds.
- */
-export async function applyFontsFolderSelection(options?: {
-    source?: 'attach' | 'settings';
-}): Promise<void> {
-    const plugin = pluginRegistry.get('disk');
-    if (!(plugin instanceof DiskPlugin)) {
-        return;
-    }
-
-    let targetPath = '/';
-    const currentFont = window.fontManager?.currentFont;
-    const currentFontHandle = currentFont?.fileHandle;
-
-    if (
-        currentFont &&
-        currentFont.sourcePlugin.getId() === 'disk' &&
-        currentFontHandle
-    ) {
-        const resolvedPath =
-            await resolveDiskPathForLaunchedFileHandle(currentFontHandle);
-
-        if (resolvedPath) {
-            currentFont.path = resolvedPath;
-            const adapter = plugin.getAdapter() as {
-                directoryHandle?: FileSystemDirectoryHandle;
-                getDirectoryHandle?: () => FileSystemDirectoryHandle | null;
-            };
-            currentFont.directoryHandle =
-                adapter.getDirectoryHandle?.() ??
-                adapter.directoryHandle ??
-                null;
-
-            targetPath =
-                resolvedPath.substring(0, resolvedPath.lastIndexOf('/')) || '/';
-
-            const fileUri = createFileUri('disk', resolvedPath);
-            if (window.stateManager) {
-                window.stateManager.editor_file = fileUri;
-                window.stateManager.recordEvent('file_opened', 'FileBrowser', {
-                    fileUri
-                });
-            }
-        }
-    }
-
-    detachedLaunchFilename = null;
-    detachedLaunchFileHandle = null;
-    updateOpenFolderPromptForDetachedLaunch();
-    hideOpenFolderUI();
-
-    window.dispatchEvent(
-        new CustomEvent('fontsFolderAccessChanged', {
-            detail: {
-                hasFontsFolderAccess: true,
-                source: options?.source || 'attach'
-            }
-        })
-    );
-
-    if (fileSystemCache.currentPlugin.getId() === 'disk') {
-        fileSystemCache.currentPath = targetPath;
-        await navigateToPath(targetPath);
-
-        setTimeout(() => {
-            const fileTree = document.getElementById('file-tree');
-            const currentFontItem = fileTree?.querySelector(
-                '.file-item.current-font'
-            );
-            if (currentFontItem) {
-                (currentFontItem as HTMLElement).scrollIntoView({
-                    block: 'center',
-                    behavior: 'auto'
-                });
-            }
-        }, 100);
-    }
-}
-
-/**
- * Change the selected Fonts folder (Disk plugin root) while preserving the
- * current Disk-context refresh, observer setup, and dependent-view notifications.
- * This does not affect the Settings Folder used for Plugins/Filters/Scripts.
- */
-export async function changeFontsFolder(options?: {
-    startIn?: FileSystemHandle;
-    source?: 'attach' | 'settings';
-}): Promise<boolean> {
-    try {
-        const plugin = pluginRegistry.get('disk');
-        if (!(plugin instanceof DiskPlugin)) {
-            console.error('[FileBrowser]', 'DiskPlugin is not available');
-            return false;
-        }
-
-        const success = await plugin.showSetupUI({ startIn: options?.startIn });
-        if (success) {
-            await applyFontsFolderSelection(options);
-        }
-        return success;
-    } catch (error: unknown) {
-        console.error('[FileBrowser]', 'Error selecting Fonts folder:', error);
-        alert(`Error selecting folder: ${getErrorMessage(error)}`);
-        return false;
-    }
-}
-
-/** @deprecated Use changeFontsFolder */
-export const changeDiskRootFolder = changeFontsFolder;
-
-/** Open the Fonts folder picker from the File Browser. */
-async function selectDiskFolder(): Promise<void> {
-    await changeFontsFolder({
-        startIn: detachedLaunchFileHandle || undefined,
-        source: 'attach'
-    });
-}
-
 function showFileTree() {
     const fileTree = document.getElementById('file-tree');
     if (fileTree) {
@@ -2686,14 +2447,11 @@ function hidePluginMessage() {
     container.innerHTML = '';
     container.classList.remove('visible');
 
-    const openFolderVisible = document
-        .getElementById('open-folder-container')
-        ?.classList.contains('visible');
     const cloudPanelVisible = document
         .getElementById('cloud-panel')
         ?.classList.contains('visible');
 
-    if (!openFolderVisible && !cloudPanelVisible) {
+    if (!cloudPanelVisible) {
         showFileTree();
     }
 }
@@ -2711,70 +2469,6 @@ function showUnsupportedBrowserUI() {
 
 function hideUnsupportedBrowserUI() {
     hidePluginMessage();
-}
-
-async function reEnableAccess() {
-    try {
-        const plugin = fileSystemCache.currentPlugin;
-        if (!(plugin instanceof DiskPlugin)) {
-            console.error('[FileBrowser]', 'Current plugin is not DiskPlugin');
-            return;
-        }
-
-        const permission = await plugin.requestPermission();
-        if (permission) {
-            showPermissionBanner(false);
-            await refreshFileSystem();
-            window.dispatchEvent(
-                new CustomEvent('fontsFolderAccessChanged', {
-                    detail: {
-                        hasFontsFolderAccess: true,
-                        source: 'renew'
-                    }
-                })
-            );
-        } else {
-            alert('Permission not granted. Please try again.');
-        }
-    } catch (error: unknown) {
-        console.error('[FileBrowser]', 'Error requesting permission:', error);
-        alert(`Error requesting permission: ${getErrorMessage(error)}`);
-    }
-}
-
-function showPermissionBanner(show: boolean) {
-    const banner = document.getElementById('permission-banner');
-    if (banner) {
-        banner.style.display = show ? 'flex' : 'none';
-    }
-}
-
-function showOpenFolderUI() {
-    const openFolderContainer = document.getElementById(
-        'open-folder-container'
-    );
-
-    renderOpenFolderWidget();
-
-    if (openFolderContainer) {
-        openFolderContainer.classList.add('visible');
-    }
-    hideFileTree();
-    syncFilePathHeaderVisibility();
-    updateDiskRelinkButton();
-}
-
-function hideOpenFolderUI() {
-    const openFolderContainer = document.getElementById(
-        'open-folder-container'
-    );
-
-    if (openFolderContainer) {
-        openFolderContainer.classList.remove('visible');
-    }
-    showFileTree();
-    syncFilePathHeaderVisibility();
-    updateDiskRelinkButton();
 }
 
 async function scanDirectory(
@@ -3343,7 +3037,6 @@ function renderFilePathHeader(path: string): HTMLElement | null {
 
     schedulePathDisplayUpdate(path);
     updateLastRefreshedStatus();
-    syncFilePathHeaderVisibility();
 
     const pathTextElement = pathHeader.querySelector(
         '.file-path-text'
@@ -3675,127 +3368,6 @@ async function navigateToCurrentFont() {
     }, 100); // Small delay to ensure DOM is updated
 }
 
-function updateHomeButtonVisibility() {
-    return;
-}
-
-function consumePendingLaunchFileHandles(): FileSystemFileHandle[] {
-    const pending = (window as any).__pendingLaunchFileHandles;
-    if (!Array.isArray(pending) || pending.length === 0) {
-        return [];
-    }
-
-    (window as any).__pendingLaunchFileHandles = [];
-    return pending.filter((handle) => handle?.kind === 'file');
-}
-
-async function resolveDiskPathForLaunchedFileHandle(
-    fileHandle: FileSystemFileHandle
-): Promise<string | null> {
-    const diskPlugin = pluginRegistry.get('disk') as DiskPlugin | undefined;
-    if (!diskPlugin) {
-        return null;
-    }
-
-    const isReady = await diskPlugin.isReady();
-    if (!isReady) {
-        return null;
-    }
-
-    const adapter = diskPlugin.getAdapter() as {
-        listFilesRecursive?: (path: string, depth: number) => Promise<any[]>;
-        checkPermission?: () => Promise<'granted' | 'denied' | 'prompt'>;
-    };
-    if (!adapter.listFilesRecursive || !adapter.checkPermission) {
-        return null;
-    }
-
-    const permission = await adapter.checkPermission();
-    if (permission !== 'granted') {
-        return null;
-    }
-
-    const files = await adapter.listFilesRecursive('/', 20);
-    for (const file of files) {
-        const candidateHandle = file.handle;
-        if (
-            !candidateHandle ||
-            typeof candidateHandle.isSameEntry !== 'function'
-        ) {
-            continue;
-        }
-
-        try {
-            const isSame = await candidateHandle.isSameEntry(fileHandle);
-            if (isSame) {
-                return file.path;
-            }
-        } catch (error) {
-            console.warn('[FileBrowser]', 'Failed handle comparison:', error);
-        }
-    }
-
-    return null;
-}
-
-function createDetachedLaunchPath(fileHandle: FileSystemFileHandle): string {
-    const sanitizedName = fileHandle.name.replace(/[\\/]/g, '_');
-    return `/__launched__/${sanitizedName}`;
-}
-
-async function openLaunchedFileHandle(
-    fileHandle: FileSystemFileHandle
-): Promise<void> {
-    const diskPlugin = pluginRegistry.get('disk') as DiskPlugin | undefined;
-    if (!diskPlugin) {
-        throw new Error('Disk plugin is not available');
-    }
-
-    const resolvedPath = await resolveDiskPathForLaunchedFileHandle(fileHandle);
-    if (resolvedPath) {
-        detachedLaunchFilename = null;
-        detachedLaunchFileHandle = null;
-        await switchContext('disk');
-        const dirPath =
-            resolvedPath.substring(0, resolvedPath.lastIndexOf('/')) || '/';
-        await navigateToPath(dirPath);
-        await openFont(resolvedPath, fileHandle, {
-            sourcePluginOverride: diskPlugin
-        });
-        return;
-    }
-
-    detachedLaunchFilename = fileHandle.name;
-    detachedLaunchFileHandle = fileHandle;
-    await switchContext('disk');
-    await openFont(createDetachedLaunchPath(fileHandle), fileHandle, {
-        sourcePluginOverride: diskPlugin
-    });
-}
-
-async function processPendingPwaLaunchFiles() {
-    const launchHandles = consumePendingLaunchFileHandles();
-    if (!launchHandles.length) {
-        return;
-    }
-
-    for (const fileHandle of launchHandles) {
-        try {
-            await openLaunchedFileHandle(fileHandle);
-            updateHomeButtonVisibility();
-        } catch (error) {
-            const message =
-                error instanceof Error ? error.message : String(error);
-            alert(`Error opening launched file ${fileHandle.name}: ${message}`);
-            console.error(
-                '[FileBrowser]',
-                `Failed opening launched file ${fileHandle.name}:`,
-                error
-            );
-        }
-    }
-}
-
 function initFileDialogModal(): void {
     const dialog = getDialogRoot();
     const closeBtn = document.getElementById('font-file-dialog-close-btn');
@@ -3861,29 +3433,6 @@ async function initFileBrowser() {
                 'File system not supported in this browser. Please use a modern browser like Chrome or Edge.'
             );
             return;
-        }
-
-        // Check if File System Access API is supported for disk context
-        const diskApiSupported = isFileSystemAccessSupported();
-        if (!diskApiSupported) {
-            console.warn(
-                '[FileBrowser]',
-                'File System Access API not supported - disk context will show info message'
-            );
-        }
-
-        // Initialize disk plugin (restore directory handle)
-        const diskPlugin = pluginRegistry.get('disk') as DiskPlugin;
-        if (diskPlugin) {
-            // Mark disk plugin as unsupported if needed
-            if (!diskApiSupported) {
-                (diskPlugin as any)._unsupported = true;
-            }
-
-            const adapter = diskPlugin.getAdapter() as any;
-            if (adapter.initialize) {
-                await adapter.initialize();
-            }
         }
 
         // Create /user folder in memory context if it doesn't exist
@@ -4065,9 +3614,6 @@ async function initFileBrowser() {
 
             // Let plugin update its UI state
             await defaultPlugin.updateUI({
-                showOpenFolderUI,
-                hideOpenFolderUI,
-                showPermissionBanner,
                 showUnsupportedBrowserUI,
                 hideUnsupportedBrowserUI,
                 showPluginMessage,
@@ -4096,14 +3642,10 @@ async function initFileBrowser() {
                 );
             }
 
-            await browseCurrentPluginIfReady(startPath);
+            await navigateToPath(startPath);
 
             // Update plugin menu button visibility
             updatePluginMenuButtonVisibility(defaultPlugin);
-            updateDiskRelinkButton();
-
-            // Update home button visibility
-            updateHomeButtonVisibility();
         }
 
         console.log('[FileBrowser]', 'File browser initialized');
@@ -4151,6 +3693,12 @@ document.addEventListener('DOMContentLoaded', () => {
             '[FileBrowser]',
             `Legacy URL params detected: plugin=${pluginId}, path=${fontPath}`
         );
+    }
+
+    const launched = listenForLaunchedFiles(openFont);
+    if (isLaunchWindow()) {
+        void launched;
+        return;
     }
 
     (async () => {
@@ -4212,11 +3760,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            if (
-                pluginId === 'memory' &&
-                fontPath &&
-                !hasPendingPwaLaunchFiles()
-            ) {
+            if (pluginId === 'memory' && fontPath) {
                 try {
                     await openMemoryUrlFontFromUrl(fontPath);
                     if (window.fontManager?.currentFont) {
@@ -4238,10 +3782,24 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             await waitForFileBrowserReady();
-            await processPendingPwaLaunchFiles();
 
-            // PWA launch (or anything else) may already have opened a font.
-            if (window.fontManager?.currentFont) {
+            // The launcher reopened a font from a window it couldn't reach:
+            // that window steps aside, unless it has unsaved changes.
+            const documentKey = documentKeyFromUrl();
+            if (
+                documentKey &&
+                new URLSearchParams(window.location.search).has('takeover') &&
+                !(await takeOverFromOtherWindow(documentKey))
+            ) {
+                showFontUnavailable(
+                    'This font has unsaved changes in another window',
+                    'Save it there first, then use Jump to in the launcher again.'
+                );
+                return;
+            }
+
+            if (pluginId === 'disk' && fontPath) {
+                await openDiskDocumentFromUrl(fontPath, openFont);
                 return;
             }
 
@@ -4340,9 +3898,6 @@ document.addEventListener('DOMContentLoaded', () => {
                                     await urlOpenReadyPromise;
                                     openedFromUrl = true;
 
-                                    // Show home button since we opened from URL
-                                    updateHomeButtonVisibility();
-
                                     // Wait a bit for the fontLoaded event handler to refresh the file list,
                                     // then scroll the opened file into view
                                     await new Promise((resolve) =>
@@ -4402,10 +3957,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            // No URL/PWA font — start with a new empty font.
-            await openDefaultStartupFont(
-                'No URL font attached; opening a new font'
-            );
+            // A new font (File → New, the launcher's New font). Tests start
+            // with one too.
+            if (
+                new URLSearchParams(window.location.search).has('new') ||
+                window.isTestMode?.()
+            ) {
+                await openDefaultStartupFont('Starting a new font');
+                return;
+            }
+
+            // No font asked for: this window becomes the launcher.
+            window.location.replace('launcher.html');
         } catch (error: any) {
             console.error(
                 '[FileBrowser]',
@@ -4427,21 +3990,6 @@ document.addEventListener('DOMContentLoaded', () => {
     })();
 });
 
-window.addEventListener('pwaLaunchFilesPending', () => {
-    (async () => {
-        try {
-            await waitForFileBrowserReady();
-            await processPendingPwaLaunchFiles();
-        } catch (error) {
-            console.error(
-                '[FileBrowser]',
-                'Cannot process PWA launch files before file browser readiness:',
-                error
-            );
-        }
-    })();
-});
-
 // Close any open Tippy menu on Escape key
 document.addEventListener('keydown', (e: KeyboardEvent) => {
     if (e.key === 'Escape') {
@@ -4453,61 +4001,6 @@ document.addEventListener('keydown', (e: KeyboardEvent) => {
             }
         });
     }
-});
-
-// Listen for plugin folder closed event
-window.addEventListener('pluginFolderClosed', async () => {
-    console.log('[FileBrowser]', 'Plugin folder closed, updating UI...');
-    const { currentPlugin } = fileSystemCache;
-    if (currentPlugin) {
-        await currentPlugin.updateUI({
-            showOpenFolderUI,
-            hideOpenFolderUI,
-            showPermissionBanner,
-            showUnsupportedBrowserUI,
-            hideUnsupportedBrowserUI,
-            showPluginMessage,
-            hidePluginMessage
-        });
-        updatePluginMenuButtonVisibility(currentPlugin);
-        updateDiskRelinkButton();
-    }
-
-    window.dispatchEvent(
-        new CustomEvent('fontsFolderAccessChanged', {
-            detail: {
-                hasFontsFolderAccess: false,
-                source: 'detach'
-            }
-        })
-    );
-});
-
-window.addEventListener('folderPermissionsDialogClosed', async () => {
-    const plugin = fileSystemCache.currentPlugin;
-    if (!(plugin instanceof DiskPlugin)) {
-        updateDiskRelinkButton();
-        return;
-    }
-
-    const adapter = plugin.getAdapter() as { hasDirectory?: () => boolean };
-    if (!adapter.hasDirectory?.()) {
-        await plugin.updateUI({
-            showOpenFolderUI,
-            hideOpenFolderUI,
-            showPermissionBanner,
-            showUnsupportedBrowserUI,
-            hideUnsupportedBrowserUI
-        });
-        updateDiskRelinkButton();
-        return;
-    }
-
-    hideOpenFolderUI();
-    fileSystemCache.currentPath = plugin.getDefaultPath();
-    await refreshFileSystem();
-    refreshPluginTabLabel(plugin);
-    updateDiskRelinkButton();
 });
 
 // Listen for disk file system changes (FileSystemObserver)
@@ -4627,9 +4120,7 @@ window.addEventListener('fontReady', async () => {
     }
 });
 
-window.addEventListener('fontReady', async () => {
-    updateHomeButtonVisibility();
-});
+window.addEventListener('fontReady', async () => {});
 
 window.addEventListener('cloudAssetLocalizedToMemory', async () => {
     syncEditorFileStateFromCurrentFont();
@@ -4679,8 +4170,6 @@ window.closeFontFileDialog = closeFontFileDialog;
 window.locatePathInFileDialog = locatePathInFileDialog;
 (window as any).openFontWithHandle = openFontWithHandle;
 (window as any).switchContext = switchContext;
-(window as any).selectDiskFolder = selectDiskFolder;
-(window as any).reEnableAccess = reEnableAccess;
 (window as any).parseFileUri = parseFileUri;
 window.downloadFile = downloadFile;
 
@@ -4690,7 +4179,3 @@ window.downloadFile = downloadFile;
     getCurrentPlugin: () => fileSystemCache.currentPlugin,
     getCurrentPath: () => fileSystemCache.currentPath
 };
-// Bridge for folder-permissions-dialog (also bundled into glyph-overview).
-// Keep as a window callback so that entry does not dynamic-import this module
-// and pull a second Yjs copy into the page (yjs#438).
-window.applyFontsFolderSelection = applyFontsFolderSelection;

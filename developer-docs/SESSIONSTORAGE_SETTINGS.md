@@ -10,11 +10,12 @@ This document lists `sessionStorage` keys discovered in production TypeScript (`
 
 | Keys | Literal | Pattern |
 | ---: | ---: | ---: |
-| 5 | 5 | 0 |
+| 6 | 6 | 0 |
 
 | Key | Purpose | Operations | Files |
 | --- | --- | --- | --- |
 | [`coiReloadedBySelf`](#key-coireloadedbyself) | Persists coi reloaded by self. | getItem, setItem, removeItem | `webapp/coi-serviceworker.js`, `webapp/js/fonteditor.ts` |
+| [`cp-editor-health-unhealthy`](#key-cp-editor-health-unhealthy) | Persists cp editor health unhealthy. | getItem, setItem, removeItem | `webapp/js/editor-health-monitor.ts` |
 | [`lastMemory`](#key-lastmemory) | Persists last memory. | getItem, setItem | `webapp/js/cache-manager.ts` |
 | [`loadingCursorLastPointer`](#key-loadingcursorlastpointer) | Persists loading cursor last pointer. | getItem, setItem | `webapp/js/loading-cursor.ts` |
 | [`reloadCount`](#key-reloadcount) | Persists reload count. | getItem, setItem | `webapp/js/cache-manager.ts` |
@@ -29,14 +30,26 @@ This document lists `sessionStorage` keys discovered in production TypeScript (`
 - Operations: `getItem`, `setItem`, `removeItem`
 - Default when unset: `false`
 - Sites:
-  - webapp/coi-serviceworker.js:448 `getItem` via module `top-level module code`
-  - webapp/coi-serviceworker.js:470 `removeItem` via module `top-level module code`
-  - webapp/coi-serviceworker.js:545 `setItem` via module `top-level module code`
-  - webapp/coi-serviceworker.js:568 `getItem` via module `top-level module code`
-  - webapp/coi-serviceworker.js:575 `setItem` via module `top-level module code`
-  - webapp/coi-serviceworker.js:592 `removeItem` via module `top-level module code`
-  - webapp/js/fonteditor.ts:46 `getItem` via function `initFontEditor`
-  - webapp/js/fonteditor.ts:73 `setItem` via function `initFontEditor`
+  - webapp/coi-serviceworker.js:406 `getItem` via module `top-level module code`
+  - webapp/coi-serviceworker.js:428 `removeItem` via module `top-level module code`
+  - webapp/coi-serviceworker.js:461 `setItem` via function `reloadForCoiBootstrap`
+  - webapp/coi-serviceworker.js:552 `getItem` via module `top-level module code`
+  - webapp/coi-serviceworker.js:571 `removeItem` via module `top-level module code`
+  - webapp/js/fonteditor.ts:49 `getItem` via function `initFontEditor`
+  - webapp/js/fonteditor.ts:76 `setItem` via function `initFontEditor`
+
+<a id="key-cp-editor-health-unhealthy"></a>
+
+## `cp-editor-health-unhealthy`
+
+- Purpose: Persists cp editor health unhealthy.
+- Kind: literal
+- Operations: `getItem`, `setItem`, `removeItem`
+- Default when unset: `0`
+- Sites:
+  - webapp/js/editor-health-monitor.ts:240 `getItem` via method `readSessionFlag`
+  - webapp/js/editor-health-monitor.ts:249 `setItem` via method `writeSessionFlag`
+  - webapp/js/editor-health-monitor.ts:251 `removeItem` via method `writeSessionFlag`
 
 <a id="key-lastmemory"></a>
 
@@ -81,6 +94,6 @@ This document lists `sessionStorage` keys discovered in production TypeScript (`
 - Kind: literal
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/window-role.ts:97 `getItem` via method `_resolveSessionId`
-  - webapp/js/window-role.ts:102 `setItem` via method `_resolveSessionId`
+  - webapp/js/window-role.ts:182 `getItem` via method `_resolveSessionId`
+  - webapp/js/window-role.ts:187 `setItem` via method `_resolveSessionId`
 

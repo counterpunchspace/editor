@@ -14,6 +14,29 @@
         <meta name="apple-mobile-web-app-title" content="counterpunch" />
         <title>Counterpunch Editor</title>
         <script>
+            // Without a font to open, go to the launcher before the editor
+            // starts loading (file-browser.ts still sends a window there if
+            // the font it asked for can't open).
+            (function () {
+                var params = new URLSearchParams(window.location.search);
+                var wantsFont = [
+                    'file',
+                    'path',
+                    'new',
+                    'launch',
+                    'test',
+                    'linked'
+                ].some(function (name) {
+                    return params.has(name);
+                });
+                if (!wantsFont) {
+                    window.location.replace(
+                        'launcher.html' + window.location.search
+                    );
+                }
+            })();
+        </script>
+        <script>
             document.documentElement.dataset.commandModifier =
                 /Mac|iPhone|iPad|iPod/i.test(navigator.platform || '')
                     ? 'mac'
@@ -1189,28 +1212,9 @@
                 </div>
                 <div class="info-popup-content file-dialog-shell-content">
                     <div id="file-browser">
-                        <div id="permission-banner">
-                            <div class="permission-banner-content">
-                                <span
-                                    class="material-symbols-outlined permission-banner-icon"
-                                    >lock</span
-                                >
-                                <span class="permission-banner-text"
-                                    >Folder access expired. Re-enable to
-                                    continue.</span
-                                >
-                                <button
-                                    class="permission-banner-button"
-                                    onclick="window.reEnableAccess()"
-                                >
-                                    Re-enable
-                                </button>
-                            </div>
-                        </div>
                         <div id="plugin-message-container">
                             <!-- Dynamic plugin messages rendered here -->
                         </div>
-                        <div id="open-folder-container"></div>
                         <div id="cloud-panel">
                             <div class="open-folder-content">
                                 <span

@@ -29,6 +29,19 @@ function beforePythonExecution(code?: string) {
         '[PythonUISync]',
         '🔒 UI updates paused (Python execution starting)'
     );
+    const historyContext = openPythonEditContext(code);
+    window.pythonExecutionHistoryContext = historyContext;
+    return historyContext;
+}
+
+/**
+ * Start recording a Python edit of this window's font: snapshot it, open an
+ * undo transaction and pause live recording. Close it with
+ * `commitPythonExecutionSyntheticChanges` (python-post-execution.ts).
+ * A script in another window that edits this font through `OtherFonts()`
+ * uses this too.
+ */
+export function openPythonEditContext(code?: string) {
     const assistantExecution = getActiveAssistantPythonExecution();
     const bridge = window.patchSyncEngine;
     // Returned to the caller. A second overlapping run must not replace the
@@ -42,7 +55,6 @@ function beforePythonExecution(code?: string) {
         transactionStarted: false,
         releaseRecordingSuppression: null as (() => void) | null
     };
-    window.pythonExecutionHistoryContext = historyContext;
     bridge?.beginTransaction(
         assistantExecution?.historySummary ?? 'Python script',
         null,

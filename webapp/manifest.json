@@ -2,11 +2,11 @@
     "name": "Counterpunch",
     "short_name": "counterpunch",
     "description": "Modern font editor for creating and editing fonts",
-    "start_url": "./index.html",
+    "start_url": "./launcher.html",
     "scope": "./",
     "display": "standalone",
     "launch_handler": {
-        "client_mode": "focus-existing"
+        "client_mode": "navigate-new"
     },
     "background_color": "#ffffff",
     "theme_color": "#181818",
@@ -70,7 +70,8 @@
     "categories": ["productivity", "utilities", "design"],
     "file_handlers": [
         {
-            "action": "./index.html",
+            "action": "./index.html?launch=1",
+            "launch_type": "multiple-clients",
             "accept": {
                 "application/json": [".babelfont"],
                 "application/octet-stream": [

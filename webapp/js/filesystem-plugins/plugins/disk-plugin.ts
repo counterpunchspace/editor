@@ -1,25 +1,44 @@
-import {
-    NativeAdapter,
-    FONTS_FOLDER_HANDLE_KEY
-} from '../../file-system-adapter';
 import { Logger } from '../../logger';
 import { dispatchManagedFileChanged } from '../../managed-file-events';
-import { FilesystemPlugin, type TitleBarMenuItem } from '../filesystem-plugin';
+import { FilesystemPlugin } from '../filesystem-plugin';
+import { DocumentRootAdapter } from '../../font-windows/document-root-adapter';
+import type { DiskDocument } from '../../font-windows/document-store';
 
 const console = new Logger('FilesystemPlugins');
 
+type ObserverRecord = {
+    relativePathComponents?: string[];
+    [key: string]: unknown;
+};
+
+type FileSystemObserverLike = {
+    observe(
+        handle: FileSystemHandle,
+        options?: { recursive?: boolean }
+    ): Promise<void>;
+    disconnect(): void;
+};
+
+type FileSystemObserverConstructor = new (
+    callback: (records: ObserverRecord[]) => void
+) => FileSystemObserverLike;
+
 /**
- * Disk Plugin - uses File System Access API for direct disk access
+ * Disk: fonts on this computer, opened through the system file pickers.
+ *
+ * Each window shows one font, so the plugin holds that window's document.
+ * Its adapter is rooted at the document (see DocumentRootAdapter) and the
+ * font's path is `/<name>`. Fonts are opened from the launcher, not browsed
+ * in the file dialog.
  */
 export class DiskPlugin extends FilesystemPlugin {
-    private nativeAdapter: NativeAdapter;
-    private fileSystemObserver: any = null;
-    private observerSupported: boolean = 'FileSystemObserver' in window;
+    private documentAdapter: DocumentRootAdapter;
+    private fileSystemObserver: FileSystemObserverLike | null = null;
 
     constructor() {
-        const adapter = new NativeAdapter(FONTS_FOLDER_HANDLE_KEY);
+        const adapter = new DocumentRootAdapter();
         super(adapter);
-        this.nativeAdapter = adapter;
+        this.documentAdapter = adapter;
     }
 
     getId(): string {
@@ -27,11 +46,43 @@ export class DiskPlugin extends FilesystemPlugin {
     }
 
     getName(): string {
-        return 'Disk';
+        return 'This computer';
     }
 
     getIcon(): string {
-        return '<span class="material-symbols-outlined">hard_drive</span>';
+        return '<span class="material-symbols-outlined">computer</span>';
+    }
+
+    /** The document this window shows, if it came from this computer. */
+    get document(): DiskDocument | null {
+        return this.documentAdapter.attachedDocument;
+    }
+
+    /** Point this window's Disk plugin at `doc` and follow its changes. */
+    attachDocument(doc: DiskDocument): void {
+        this.documentAdapter.attach(doc);
+        void this.watch();
+    }
+
+    detachDocument(): void {
+        this.disconnectObserver();
+        this.documentAdapter.detach();
+    }
+
+    isVisibleInUI(): boolean {
+        return false;
+    }
+
+    supportsUpload(): boolean {
+        return false;
+    }
+
+    supportsNewFolder(): boolean {
+        return false;
+    }
+
+    supportsNewFile(): boolean {
+        return false;
     }
 
     requiresPermission(): boolean {
@@ -39,303 +90,67 @@ export class DiskPlugin extends FilesystemPlugin {
     }
 
     showsManualRefreshButton(): boolean {
-        return !this.observerSupported;
+        return false;
     }
 
-    async onActivate(): Promise<boolean> {
-        const isReady = await this.isReady();
-        if (!isReady) {
-            return false;
-        }
-
-        const hasPermission = await this.nativeAdapter.checkPermission();
-        if (!hasPermission) {
-            return false;
-        }
-
-        await this.setupFileSystemObserver();
-
-        return true;
+    async isReady(): Promise<boolean> {
+        return this.document !== null;
     }
 
     async onDeactivate(): Promise<void> {
-        this.disconnectObserver();
+        // The window's font stays watched whichever plugin the dialog shows.
     }
 
-    private async setupFileSystemObserver(): Promise<void> {
+    /** Report outside changes to the font's files, as paths below `/`. */
+    private async watch(): Promise<void> {
         this.disconnectObserver();
-
-        if (!this.observerSupported) {
-            console.log(
-                '[DiskPlugin] FileSystemObserver not supported, changes require manual refresh'
-            );
+        const Observer = (
+            window as unknown as {
+                FileSystemObserver?: FileSystemObserverConstructor;
+            }
+        ).FileSystemObserver;
+        const doc = this.document;
+        const handle = this.documentAdapter.watchHandle();
+        if (!Observer || !doc || !handle) {
             return;
         }
-
+        // Without a parent folder the observed handle is the font itself, so
+        // its changes are reported relative to the font: put its name back.
+        const prefix = doc.parent ? [] : [doc.name];
         try {
-            const rootHandle = await this.nativeAdapter.getHandleAtPath('/');
-            if (!rootHandle || rootHandle.kind !== 'directory') {
-                console.log(
-                    '[DiskPlugin] Cannot get root directory handle for observer'
+            const observer = new Observer((records) => {
+                const rooted = records.map((record) => ({
+                    ...record,
+                    relativePathComponents: [
+                        ...prefix,
+                        ...(record.relativePathComponents ?? [])
+                    ]
+                }));
+                window.dispatchEvent(
+                    new CustomEvent('diskFilesChanged', {
+                        detail: { records: rooted }
+                    })
                 );
-                return;
-            }
-
-            const FileSystemObserver = (window as any).FileSystemObserver;
-            this.fileSystemObserver = new FileSystemObserver(
-                async (records: any[]) => {
-                    console.log(
-                        '[DiskPlugin] FileSystemObserver detected changes:',
-                        records.length
-                    );
-                    window.dispatchEvent(
-                        new CustomEvent('diskFilesChanged', {
-                            detail: { records }
-                        })
-                    );
-                    dispatchManagedFileChanged({
-                        pluginId: this.getId(),
-                        source: 'file-system-observer',
-                        records,
-                        internalWrite: false
-                    });
-                }
-            );
-
-            await this.fileSystemObserver.observe(rootHandle, {
-                recursive: true
+                dispatchManagedFileChanged({
+                    pluginId: this.getId(),
+                    source: 'file-system-observer',
+                    records: rooted,
+                    internalWrite: false
+                });
             });
-            console.log(
-                '[DiskPlugin] FileSystemObserver watching root directory'
-            );
+            await observer.observe(handle, { recursive: true });
+            this.fileSystemObserver = observer;
         } catch (error) {
-            console.error(
-                '[DiskPlugin] Failed to set up FileSystemObserver:',
-                error
-            );
+            console.warn('[DiskPlugin] Could not watch', doc.name, error);
         }
     }
 
     private disconnectObserver(): void {
-        if (this.fileSystemObserver) {
-            try {
-                this.fileSystemObserver.disconnect();
-            } catch (e) {
-                // Ignore disconnect errors
-            }
-            this.fileSystemObserver = null;
-        }
-    }
-
-    async showSetupUI(options?: {
-        startIn?: FileSystemHandle;
-    }): Promise<boolean> {
         try {
-            const selected = await this.nativeAdapter.selectDirectory(options);
-            if (!selected) {
-                return false;
-            }
-            this.redrawTitleBarButtons();
-            await this.setupFileSystemObserver();
-            return true;
-        } catch (error) {
-            console.error('[DiskPlugin] Setup cancelled or failed:', error);
-            return false;
+            this.fileSystemObserver?.disconnect();
+        } catch {
+            // Already gone.
         }
-    }
-
-    async isReady(): Promise<boolean> {
-        return await this.nativeAdapter.hasDirectory();
-    }
-
-    getDefaultPath(): string {
-        return '/';
-    }
-
-    supportsUpload(): boolean {
-        return false;
-    }
-
-    getDirectoryName(): string | null {
-        return this.nativeAdapter.getDirectoryName();
-    }
-
-    async requestPermission(): Promise<boolean> {
-        const permission = await this.nativeAdapter.requestPermission();
-        return permission === 'granted';
-    }
-
-    canClose(): boolean {
-        return true;
-    }
-
-    async close(): Promise<void> {
-        this.disconnectObserver();
-        await this.nativeAdapter.clearDirectory();
-        console.log('[DiskPlugin]', 'Folder access closed');
-    }
-
-    getTitleBarMenuItems(): TitleBarMenuItem[] {
-        return [
-            {
-                label: 'Close Folder Access',
-                icon: 'close',
-                action: async () => {
-                    await this.close();
-                    window.dispatchEvent(new CustomEvent('pluginFolderClosed'));
-                }
-            }
-        ];
-    }
-
-    async updateUI(uiCallbacks: {
-        showOpenFolderUI: () => void;
-        hideOpenFolderUI: () => void;
-        showPermissionBanner: (show: boolean) => void;
-        showUnsupportedBrowserUI: () => void;
-        hideUnsupportedBrowserUI: () => void;
-    }): Promise<void> {
-        if ((this as any)._unsupported) {
-            uiCallbacks.showUnsupportedBrowserUI();
-            uiCallbacks.showPermissionBanner(false);
-            return;
-        }
-
-        uiCallbacks.hideUnsupportedBrowserUI();
-
-        const isReady = await this.isReady();
-
-        if (!isReady) {
-            uiCallbacks.showOpenFolderUI();
-            uiCallbacks.showPermissionBanner(false);
-        } else {
-            uiCallbacks.hideOpenFolderUI();
-
-            const permission = await this.nativeAdapter.checkPermission();
-            if (permission !== 'granted') {
-                uiCallbacks.showPermissionBanner(true);
-            } else {
-                uiCallbacks.showPermissionBanner(false);
-            }
-        }
-    }
-
-    async clearDirectory(): Promise<void> {
-        await this.nativeAdapter.clearDirectory();
-    }
-
-    supportsOpenFilePicker(): boolean {
-        return this.nativeAdapter.hasDirectory();
-    }
-
-    supportsSaveAsFilePicker(): boolean {
-        return this.nativeAdapter.hasDirectory();
-    }
-
-    async showOpenFilePicker(options?: {
-        types?: { description: string; accept: Record<string, string[]> }[];
-        startIn?: string;
-    }): Promise<string | null> {
-        if (!this.nativeAdapter.hasDirectory()) {
-            return null;
-        }
-
-        try {
-            const pickerOptions: any = {
-                multiple: false
-            };
-
-            if (options?.types) {
-                pickerOptions.types = options.types;
-            }
-
-            const startPath = options?.startIn || '/';
-            const startHandle =
-                await this.nativeAdapter.getHandleAtPath(startPath);
-            if (startHandle) {
-                pickerOptions.startIn = startHandle;
-            }
-
-            const [fileHandle] = await (window as any).showOpenFilePicker(
-                pickerOptions
-            );
-
-            const relativePath = await this.getRelativePath(fileHandle);
-            return relativePath;
-        } catch (error: any) {
-            if (error.name === 'AbortError') {
-                console.log('[DiskPlugin] Open file picker cancelled');
-                return null;
-            }
-            console.error('[DiskPlugin] Error opening file picker:', error);
-            return null;
-        }
-    }
-
-    async showSaveFilePicker(options?: {
-        suggestedName?: string;
-        types?: { description: string; accept: Record<string, string[]> }[];
-        startIn?: string;
-    }): Promise<string | null> {
-        if (!this.nativeAdapter.hasDirectory()) {
-            return null;
-        }
-
-        try {
-            const pickerOptions: any = {};
-
-            if (options?.suggestedName) {
-                pickerOptions.suggestedName = options.suggestedName;
-            }
-
-            if (options?.types) {
-                pickerOptions.types = options.types;
-            }
-
-            const startPath = options?.startIn || '/';
-            const startHandle =
-                await this.nativeAdapter.getHandleAtPath(startPath);
-            if (startHandle) {
-                pickerOptions.startIn = startHandle;
-            }
-
-            const fileHandle = await (window as any).showSaveFilePicker(
-                pickerOptions
-            );
-
-            const relativePath = await this.getRelativePath(fileHandle);
-            return relativePath;
-        } catch (error: any) {
-            if (error.name === 'AbortError') {
-                console.log('[DiskPlugin] Save file picker cancelled');
-                return null;
-            }
-            console.error('[DiskPlugin] Error saving file picker:', error);
-            return null;
-        }
-    }
-
-    private async getRelativePath(
-        fileHandle: FileSystemFileHandle
-    ): Promise<string | null> {
-        try {
-            const rootHandle = await this.nativeAdapter.getHandleAtPath('/');
-            if (!rootHandle || rootHandle.kind !== 'directory') {
-                return null;
-            }
-
-            const pathParts = await (rootHandle as any).resolve(fileHandle);
-            if (pathParts === null) {
-                console.warn(
-                    '[DiskPlugin] Selected file is outside the root directory'
-                );
-                return null;
-            }
-
-            return '/' + pathParts.join('/');
-        } catch (error) {
-            console.error('[DiskPlugin] Error resolving path:', error);
-            return null;
-        }
+        this.fileSystemObserver = null;
     }
 }

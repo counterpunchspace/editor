@@ -88,19 +88,18 @@ The example repository's manifest currently looks like this:
 
 ## Installation
 
-Plugin installation requires a user-selected Disk workspace with granted
-read/write File System Access permission. The selected folder is Counterpunch's
-root for all app-owned directories; its name and location remain the user's
-choice. The installer verifies the SHA-256 release checksum and writes the
+Plugin installation requires the Settings Folder with granted read/write File
+System Access permission. The Settings Folder is Counterpunch's root for all
+app-owned directories; its name and location remain the user's choice. The installer verifies the SHA-256 release checksum and writes the
 wheel to:
 
 ```text
-<selected Disk folder>/Plugins/<distribution>-<version>-py3-none-any.whl
+<Settings Folder>/Plugins/<distribution>-<version>-py3-none-any.whl
 ```
 
 The wheel's presence defines the installed state. During startup, Counterpunch
-reinstalls every wheel from this directory into Pyodide when the retained Disk
-folder still grants permission. Removing a wheel affects a newly initialized
+reinstalls every wheel from this directory into Pyodide when the Settings
+Folder still grants permission. Removing a wheel affects a newly initialized
 Pyodide runtime; Python modules already imported in the current runtime remain
 loaded until that runtime is recreated.
 

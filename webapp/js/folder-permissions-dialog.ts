@@ -1,18 +1,15 @@
 /**
- * Folder permissions setup / renewal dialog.
- * Prompts for the Font Project Folder and Settings Folder after welcome,
- * and keeps a toolbar Link Folders control until both are granted.
+ * Settings Folder setup / renewal dialog.
+ * Prompts for the Settings Folder after welcome, and keeps a toolbar Link
+ * Folder control until it is granted. Fonts on disk need no folder: they are
+ * opened with the system file pickers from the launcher.
  */
 
 import tippy, { type Instance as TippyInstance } from 'tippy.js';
 import { Logger } from './logger';
 import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
 import { getTheme } from './tippy-utils';
-import {
-    isFileSystemAccessSupported,
-    type NativeAdapter
-} from './file-system-adapter';
-import { pluginRegistry, DiskPlugin } from './filesystem-plugins';
+import { isFileSystemAccessSupported } from './file-system-adapter';
 import { settingsFolder } from './settings-folder';
 
 const console = new Logger('FolderPermissions');
@@ -25,49 +22,39 @@ export type FolderStatus = {
 };
 
 export type FolderSetupStatus = {
-    project: FolderStatus;
     settings: FolderStatus;
 };
 
-const PROJECT_INFO_HTML = `
-    <p>The Font Project Folder is the Disk root in Files. Open and save font sources there — for example <code>.babelfont</code>, <code>.glyphs</code>, <code>.ufo</code>, and <code>.designspace</code>.</p>
-    <p>Pick the parent folder that contains your projects, not a single font file. Counterpunch cannot see files outside this folder. Chrome may ask you to confirm access again after a browser restart.</p>
-`;
-
 const SETTINGS_INFO_HTML = `
-    <p>The Settings Folder is app-wide, not per font project. Counterpunch creates three subfolders automatically if they are missing:</p>
+    <p>The Settings Folder is app-wide, not per font. Counterpunch creates three subfolders automatically if they are missing:</p>
     <ul>
         <li><strong>Scripts</strong> — reusable Python opened from the Script Editor and Tools → Run Python Script</li>
         <li><strong>Filters</strong> — glyph overview user filters</li>
         <li><strong>Plugins</strong> — installed plugin wheels such as Font Destinations</li>
     </ul>
-    <p>A dedicated folder named Counterpunch is a good choice. Do not point Settings at the same folder as a font project.</p>
+    <p>A dedicated folder named Counterpunch is a good choice. Keep it separate from your font sources.</p>
 `;
 
-export type FolderSetupKind = 'project' | 'settings';
+export type FolderSetupKind = 'settings';
 
 export const FOLDER_KIND_ICON: Record<FolderSetupKind, string> = {
-    project: 'bookmark_manager',
     settings: 'folder_managed'
 };
 
 const FOLDER_KIND_CALLOUT_TITLE: Record<FolderSetupKind, string> = {
-    project: 'Project Folder Required',
     settings: 'Settings Folder Required'
 };
 
 const FOLDER_KIND_CALLOUT_MESSAGE: Record<FolderSetupKind, string> = {
-    project:
-        'Link a Font Project Folder so Counterpunch can open and save font sources on disk.',
     settings:
         'Link a Settings Folder so Counterpunch can store filters, scripts, and plugins on disk.'
 };
 
-export const LINK_FOLDERS_BUTTON_LABEL = 'Link Folders';
+export const LINK_FOLDERS_BUTTON_LABEL = 'Link Folder';
 
 export const FOLDER_ACCESS_UNAVAILABLE_COPY = {
     title: 'Folder Access Unavailable',
-    intro: 'This browser cannot link folders on disk. Use <strong>Chrome/Chromium, Safari, or Edge</strong>. Counterpunch needs the File System Access directory picker. Brave turns that API off by default, and Firefox does not provide it, so Disk, the project folder, and the Settings Folder are unavailable here. Memory storage still works.'
+    intro: 'This browser cannot link folders on disk. Use <strong>Chrome/Chromium, Safari, or Edge</strong>. Counterpunch needs the File System Access pickers. Brave turns that API off by default, and Firefox does not provide it, so fonts on disk and the Settings Folder are unavailable here. Browser storage still works.'
 };
 
 type FolderPermissionsHost = {
@@ -117,9 +104,7 @@ export function classifyFolderAccess(
 }
 
 export function isFolderSetupComplete(status: FolderSetupStatus): boolean {
-    return (
-        status.project.state === 'ready' && status.settings.state === 'ready'
-    );
+    return status.settings.state === 'ready';
 }
 
 export function isFolderSetupCompleteSync(): boolean {
@@ -137,39 +122,9 @@ function isAutomatedSession(): boolean {
     return !!window.isTestMode?.();
 }
 
-function getProjectAdapter(): NativeAdapter | null {
-    const plugin = pluginRegistry.get('disk');
-    if (!(plugin instanceof DiskPlugin)) {
-        return null;
-    }
-    return plugin.getAdapter() as NativeAdapter;
-}
-
-async function readFolderStatus(
-    adapter: NativeAdapter | null
-): Promise<FolderStatus> {
-    if (!adapter) {
-        return { state: 'missing', name: null };
-    }
-    if (!adapter.hasDirectory()) {
-        await adapter.initialize();
-    }
-    const hasHandle = adapter.hasDirectory();
-    const name = hasHandle ? adapter.getDirectoryName() || null : null;
-    if (!hasHandle) {
-        return { state: 'missing', name: null };
-    }
-    const permission = await adapter.checkPermission();
-    return {
-        state: classifyFolderAccess(true, permission),
-        name
-    };
-}
-
 export async function refreshFolderSetupStatus(): Promise<FolderSetupStatus> {
     await settingsFolder.initialize();
     cachedStatus = {
-        project: await readFolderStatus(getProjectAdapter()),
         settings: {
             state: await settingsFolder.getAccessState(),
             name: settingsFolder.getFolderName()
@@ -177,7 +132,7 @@ export async function refreshFolderSetupStatus(): Promise<FolderSetupStatus> {
     };
     updateLinkFolderButton();
     /**
-     * Folder project/settings access snapshot after a status refresh.
+     * Settings Folder access snapshot after a status refresh.
      */
     window.dispatchEvent(
         new CustomEvent('folderSetupStatusChanged', { detail: cachedStatus })
@@ -265,7 +220,7 @@ function folderPathLabel(status: FolderStatus): string {
 }
 
 function renderFolderSection(
-    kind: 'project' | 'settings',
+    kind: FolderSetupKind,
     title: string,
     bodyHtml: string,
     status: FolderStatus,
@@ -310,28 +265,15 @@ export function getFolderPermissionsDialogCopy(
     if (!pickerAvailable) {
         return FOLDER_ACCESS_UNAVAILABLE_COPY;
     }
-    const needsRenewal =
-        status.project.state === 'needsRenewal' ||
-        status.settings.state === 'needsRenewal';
-    const anyMissing =
-        status.project.state === 'missing' ||
-        status.settings.state === 'missing';
-
-    if (needsRenewal && !anyMissing) {
+    if (status.settings.state === 'needsRenewal') {
         return {
             title: 'Restore Folder Access',
-            intro: 'The browser has withdrawn write access to a folder you already linked. Restore access so Counterpunch can keep reading and writing those files. This confirms the existing folder; it does not pick a new one.'
-        };
-    }
-    if (needsRenewal && anyMissing) {
-        return {
-            title: 'Set Up Folders',
-            intro: 'This app runs inside a browser, so it needs access to two folders. One still needs to be chosen. Another already has a folder on file, but Chrome has withdrawn permission — restore that access without choosing a different folder.'
+            intro: 'The browser has withdrawn write access to the Settings Folder you already linked. Restore access so Counterpunch can keep reading and writing those files. This confirms the existing folder; it does not pick a new one.'
         };
     }
     return {
-        title: 'Link Folders',
-        intro: 'Since this app runs inside a browser, you need to grant access to two folders.'
+        title: 'Link Settings Folder',
+        intro: 'Since this app runs inside a browser, you need to grant access to a folder for your settings.'
     };
 }
 
@@ -357,20 +299,12 @@ async function paintDialog(): Promise<void> {
     }
     if (content) {
         const introClass = pickerAvailable
-            ? status.project.state === 'needsRenewal' ||
-              status.settings.state === 'needsRenewal'
+            ? status.settings.state === 'needsRenewal'
                 ? 'folder-permissions-renewal-message'
                 : ''
             : 'folder-permissions-unavailable';
         content.innerHTML = `
             <p class="${introClass}">${copy.intro}</p>
-            ${renderFolderSection(
-                'project',
-                'Font Project Folder',
-                '<p>You store your fonts here. Select the root folder that contains all of your font project files.</p>',
-                status.project,
-                pickerAvailable
-            )}
             ${renderFolderSection(
                 'settings',
                 'Settings Folder',
@@ -385,11 +319,6 @@ async function paintDialog(): Promise<void> {
     }
 
     destroyInfoTippys();
-    bindInfoButton(
-        host.dialogOverlay.querySelector('[data-folder-info="project"]'),
-        PROJECT_INFO_HTML,
-        host.dialogOverlay
-    );
     bindInfoButton(
         host.dialogOverlay.querySelector('[data-folder-info="settings"]'),
         SETTINGS_INFO_HTML,
@@ -410,59 +339,14 @@ function concealOverlayForNativePicker(): () => void {
     };
 }
 
-async function selectProjectFolder(): Promise<boolean> {
-    const plugin = pluginRegistry.get('disk');
-    if (!(plugin instanceof DiskPlugin)) {
-        return false;
-    }
-    const success = await plugin.showSetupUI();
-    if (!success) {
-        return false;
-    }
-    // Use the bootstrap-registered bridge — do not dynamic-import file-browser
-    // from this module. glyph-overview also bundles this dialog, and a dynamic
-    // import would load a second Yjs copy (yjs#438).
-    const applyFontsFolderSelection = window.applyFontsFolderSelection;
-    if (!applyFontsFolderSelection) {
-        console.error(
-            'applyFontsFolderSelection is not available; file-browser has not loaded'
-        );
-        return false;
-    }
-    await applyFontsFolderSelection({ source: 'attach' });
-    return true;
-}
-
-async function handleFolderAction(
-    kind: 'project' | 'settings',
-    action: 'select' | 'renew'
-): Promise<void> {
+async function handleFolderAction(action: 'select' | 'renew'): Promise<void> {
     if (!isFileSystemAccessSupported()) {
         await paintDialog();
         return;
     }
     const restoreOverlay = concealOverlayForNativePicker();
     try {
-        if (kind === 'project') {
-            if (action === 'select') {
-                await selectProjectFolder();
-            } else {
-                const plugin = pluginRegistry.get('disk');
-                if (plugin instanceof DiskPlugin) {
-                    const granted = await plugin.requestPermission();
-                    if (granted) {
-                        window.dispatchEvent(
-                            new CustomEvent('fontsFolderAccessChanged', {
-                                detail: {
-                                    hasFontsFolderAccess: true,
-                                    source: 'renew'
-                                }
-                            })
-                        );
-                    }
-                }
-            }
-        } else if (action === 'select') {
+        if (action === 'select') {
             await settingsFolder.selectFolder();
         } else {
             await settingsFolder.renewPermission();
@@ -505,7 +389,7 @@ export async function openFolderPermissionsDialog(): Promise<void> {
     overlay.innerHTML = `
         <div class="info-popup confirm-dialog folder-permissions-dialog">
             <div class="info-popup-header">
-                <h3 id="folder-permissions-title">Link Folders</h3>
+                <h3 id="folder-permissions-title">Link Settings Folder</h3>
                 <button type="button" class="info-popup-close confirm-dialog-close-btn" aria-label="Skip">
                     <span class="material-symbols-outlined">close</span>
                 </button>
@@ -550,11 +434,11 @@ export async function openFolderPermissionsDialog(): Promise<void> {
         const kind = target.dataset.folderKind;
         const action = target.dataset.folderAction;
         if (
-            (kind === 'project' || kind === 'settings') &&
+            kind === 'settings' &&
             (action === 'select' || action === 'renew')
         ) {
             event.preventDefault();
-            void handleFolderAction(kind, action);
+            void handleFolderAction(action);
         }
     });
 
@@ -586,7 +470,7 @@ function ensureLinkFolderButton(): HTMLButtonElement | null {
     button.id = 'link-folder-btn';
     button.className = 'toolbar-link-folder-btn';
     button.textContent = LINK_FOLDERS_BUTTON_LABEL;
-    button.title = 'Link or restore project and settings folders';
+    button.title = 'Link or restore the Settings Folder';
     button.hidden = true;
     button.addEventListener('click', () => {
         void openFolderPermissionsDialog();
@@ -692,12 +576,6 @@ function bindStatusListeners(): void {
         void maybeShowFolderPermissionsDialog();
     });
     window.addEventListener('settingsFolderAccessChanged', () => {
-        void refreshFolderSetupStatus();
-    });
-    window.addEventListener('fontsFolderAccessChanged', () => {
-        void refreshFolderSetupStatus();
-    });
-    window.addEventListener('pluginFolderClosed', () => {
         void refreshFolderSetupStatus();
     });
 }

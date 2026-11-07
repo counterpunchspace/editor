@@ -8,9 +8,9 @@ That architecture means you can start immediately on macOS, Windows, or Linux, p
 
 ## Recommended browser: Chrome
 
-**Chrome** (or **Chromium**) is the recommended browser. It has the most complete support for the File System Access API which we need to read and write file to your disk.
+**Chrome** (or **Chromium**) is the recommended browser. It has the most complete support for the File System Access API, which Counterpunch needs to read and write files on your disk.
 
-Chrome can watch a granted local folder and refresh Counterpunch when files change on disk — for example after an edit in another app, a script, or version control. Other browsers may require a manual refresh.
+Chrome can watch the fonts you open from your disk and refresh Counterpunch when their files change — for example after an edit in another app, a script, or version control. Other browsers may require a manual refresh.
 
 If you only ever work inside Counterpunch and do not need that hot-reload, **Edge** and **Safari** are the next-best options.
 
@@ -33,8 +33,8 @@ Even though now locally installed, the editor’s Python environment will not be
 
 ## First launch and updates
 
-On first visit the browser may ask about folder access, and after a browser restart you may have to repeat giving those permissions once. This is a result of the editor not being a native OS app. The two folders you pick are in [Project and settings folders](04-project-and-settings-folders.md).
+Counterpunch starts with the launcher, where you start a new font or open one; see [The launcher and where fonts live](../files/01-files-view-basics.md). On first visit it also asks for a Settings Folder for your scripts, filters and plugins; see [Settings Folder and fonts on disk](04-project-and-settings-folders.md). Browsers ask again for file access after a restart, unless Counterpunch is installed as an app. This is a result of the editor not being a native OS app.
 
-Reloading the page does not load a new version, because the app is cached on purpose. When an update is ready, Preferences (the gear, or `Cmd/Ctrl+,`) shows an orange notification. Open it to read the version, check for updates, and use Update plus the changelog link. That behaviour is the same online and in the installed app.
+Reloading the page does not load a new version, because the app is cached on purpose. When an update is ready, Preferences (the gear, or `Cmd/Ctrl+,`) shows an orange notification, and the launcher offers **Update** too. Open Preferences to read the version, check for updates, and use Update plus the changelog link. Updating moves all open Counterpunch windows to the new version: windows without unsaved changes reload by themselves, and a window with unsaved changes keeps them and offers a reload once you have saved. That behaviour is the same online and in the installed app.
 
 Continue with [What is Counterpunch?](01-what-is-counterpunch.md).

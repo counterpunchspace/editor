@@ -14,7 +14,7 @@ export class MemoryPlugin extends FilesystemPlugin {
     }
 
     getName(): string {
-        return 'Memory';
+        return 'Browser storage';
     }
 
     getIcon(): string {

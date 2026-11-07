@@ -1,10 +1,10 @@
 # Cloud fonts
 
-Files can keep a font in **Memory** (this browser), on **Disk** (a folder you grant), or in **Cloud** (signed in, on Counterpunch’s servers).
+A font can live on **this computer**, in **browser storage**, or in the **cloud** (signed in, on Counterpunch’s servers). See [The launcher and where fonts live](01-files-view-basics.md).
 
-A local font stays on your computer. It is uploaded only when you **Save As** into Cloud, or when you open a cloud font you were invited to. After that, you and invited people can edit it together.
+A local font stays on your computer. It is uploaded only when you save it to the cloud with **Save As**, or when you open a cloud font you were invited to. After that, you and invited people can edit it together.
 
-You must be signed in. Opening Cloud while signed out asks for your email and sends you a 6-digit code; paste it into the dialog and you are signed in without leaving the editor, so open fonts stay open. The owner’s plan limits how many cloud fonts and glyphs that account can host (Basic: one font and 1 000 glyphs).
+You must be signed in. Logging in from the launcher or from Save As asks for your email and sends you a 6-digit code; paste it into the dialog and you are signed in without leaving the editor, so open fonts stay open. The owner’s plan limits how many cloud fonts and glyphs that account can host (Basic: one font and 1 000 glyphs).
 
 ## How a cloud font is stored
 
@@ -20,9 +20,9 @@ Each of those pieces has a **5 MiB** size cap. When any piece gets close to th
 
 ## Saving and opening
 
-In Files, choose **Cloud Storage**, then Save As. Counterpunch uploads the font and checks it before it becomes the live copy. Opening a cloud font loads those pieces and stays connected so other people’s edits appear.
+Choose **File → Save As…** and pick **Cloud**. Save As shows whether your plan has room before you save. Counterpunch uploads the font and checks it before it becomes the live copy. The launcher lists your cloud fonts. Opening one loads those pieces and stays connected so other people’s edits appear.
 
-You can still **Save As** back to Disk or Memory. That copy is local again and does not stay in sync with the cloud font.
+You can still **Save As** to this computer or browser storage. That copy is local again and does not stay in sync with the cloud font.
 
 You can cancel an upload or open in progress. You stay on the font you already had.
 

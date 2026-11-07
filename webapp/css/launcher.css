@@ -1,0 +1,670 @@
+/* The launcher (launcher.html): a clean card in Counterpunch's colours.
+ * Dialogs and notices come from ui/font-windows.css. */
+
+@import url('tokens.css');
+@import url('ui/dialogs.css');
+@import url('ui/font-windows.css');
+
+@font-face {
+    font-family: 'Inter';
+    src: url('../assets/fonts/Inter-UI.woff2') format('woff2');
+    font-weight: 100 700;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'IBM Plex Mono';
+    src: url('../assets/fonts/IBMPlexMono-Regular.woff2') format('woff2');
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'IBM Plex Mono';
+    src: url('../assets/fonts/IBMPlexMono-Medium.woff2') format('woff2');
+    font-weight: 500;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Material Symbols Outlined';
+    src: url('../assets/fonts/MaterialSymbolsOutlined.woff2') format('woff2');
+    font-weight: 100 700;
+    font-style: normal;
+    font-display: block;
+}
+
+:root {
+    --launcher-page: var(--border-primary);
+    --launcher-card: var(--modal-bg);
+    --launcher-side: var(--background-tertiary);
+    --launcher-line: var(--border-inner);
+}
+
+:root[data-theme='light'] {
+    --launcher-page: var(--background-secondary);
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    background-color: var(--launcher-page);
+    overscroll-behavior: none;
+}
+
+body {
+    min-height: 100vh;
+    min-height: 100dvh;
+}
+
+body {
+    display: flex;
+    flex-direction: column;
+    font-family: var(--font-families-sans), -apple-system, BlinkMacSystemFont,
+        'Segoe UI', sans-serif;
+    font-size: 13px;
+    line-height: 1.4;
+    letter-spacing: 0.02em;
+    color: var(--text-primary);
+}
+
+button,
+input,
+select {
+    font: inherit;
+    color: inherit;
+    letter-spacing: inherit;
+}
+
+h2 {
+    margin: 0;
+}
+
+.material-symbols-outlined {
+    font-family: 'Material Symbols Outlined';
+    font-weight: normal;
+    font-style: normal;
+    font-size: 1.2em;
+    display: inline-block;
+    line-height: 1;
+    text-transform: none;
+    letter-spacing: 0;
+    white-space: nowrap;
+    direction: ltr;
+    vertical-align: middle;
+    flex-shrink: 0;
+}
+
+:focus-visible {
+    outline: 2px solid var(--border-focus-outline);
+    outline-offset: 1px;
+}
+
+kbd {
+    display: inline-block;
+    padding: 1px 5px;
+    font-family: var(--font-families-mono);
+    font-size: 10px;
+    line-height: 1.4;
+    color: var(--text-faint);
+    border: 1px solid var(--border-secondary);
+    border-radius: 3px;
+}
+
+/* ── The card ────────────────────────────────────────────────────────────── */
+
+.launcher {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px 16px;
+}
+
+.launcher-window {
+    width: 100%;
+    max-width: 960px;
+    /* Fill the window; the font list scrolls inside. */
+    height: max(580px, calc(100dvh - 64px));
+    display: grid;
+    grid-template-columns: 310px minmax(0, 1fr);
+    background-color: var(--launcher-card);
+    border: 1px solid var(--launcher-line);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 24px 64px var(--modal-overlay);
+}
+
+.launcher-side {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 26px 22px 22px;
+    background-color: var(--launcher-side);
+    border-right: 1px solid var(--launcher-line);
+}
+
+.launcher-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 22px;
+}
+
+.launcher-brand img {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 1px var(--launcher-line);
+}
+
+.launcher-brand-text {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.2;
+}
+
+.launcher-brand-name {
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+
+.launcher-brand-version {
+    font-family: var(--font-families-mono);
+    font-size: 11px;
+    color: var(--text-faint);
+    letter-spacing: 0;
+}
+
+.launcher-action {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 11px 14px;
+    border: 1px solid var(--launcher-line);
+    border-radius: 8px;
+    background-color: var(--launcher-card);
+    text-align: left;
+    cursor: pointer;
+    transition:
+        background-color 0.15s ease,
+        border-color 0.15s ease;
+}
+
+.launcher-action:hover:not(:disabled) {
+    border-color: var(--border-secondary);
+    background-color: var(--input-bg);
+}
+
+.launcher-action:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.launcher-action .material-symbols-outlined {
+    font-size: 22px;
+    color: var(--text-secondary);
+}
+
+.launcher-action b {
+    display: block;
+    font-weight: 500;
+    font-size: 14px;
+}
+
+.launcher-action small {
+    display: block;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 1px;
+}
+
+.launcher-action.primary {
+    background-color: var(--folder-setup-callout-bg);
+    border-color: transparent;
+    color: var(--folder-setup-callout-text);
+}
+
+.launcher-action.primary .material-symbols-outlined {
+    color: inherit;
+}
+
+.launcher-action.primary:hover {
+    background-color: var(--folder-setup-callout-bg);
+    border-color: transparent;
+    filter: brightness(1.06);
+}
+
+#launcher-open {
+    margin-top: 12px;
+}
+
+.launcher-link {
+    border: 0;
+    background: none;
+    padding: 0;
+    color: var(--accent-cyan);
+    cursor: pointer;
+    font-size: 12px;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.launcher-folder-route {
+    margin: 0 2px;
+    padding: 4px 6px;
+    border-radius: 6px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-muted);
+}
+
+/* After a cancelled file picker: draw the eye to the folder route. */
+.launcher-folder-route.flash {
+    animation: launcherFolderRouteFlash 1.6s ease;
+}
+
+@keyframes launcherFolderRouteFlash {
+    0%,
+    60% {
+        background-color: color-mix(
+            in srgb,
+            var(--view-editor) 22%,
+            transparent
+        );
+    }
+}
+
+.launcher-drop-zone {
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 22px 12px;
+    border: 1.5px dashed var(--border-secondary);
+    border-radius: 8px;
+    color: var(--text-muted);
+    font-size: 12px;
+    text-align: center;
+    transition:
+        background-color 0.15s ease,
+        border-color 0.15s ease,
+        color 0.15s ease;
+}
+
+.launcher-drop-zone .material-symbols-outlined {
+    font-size: 22px;
+    opacity: 0.7;
+}
+
+.launcher-drop-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.launcher-drop-sub {
+    font-size: 11.5px;
+    line-height: 1.45;
+    color: var(--text-faint);
+    max-width: 220px;
+}
+
+body.dragging .launcher-drop-zone {
+    border-color: var(--view-editor);
+    color: var(--text-primary);
+    background-color: color-mix(in srgb, var(--view-editor) 12%, transparent);
+}
+
+.launcher-side-foot {
+    margin-top: auto;
+    padding-top: 16px;
+}
+
+.launcher-notice {
+    padding: 10px 12px;
+    border-radius: 8px;
+    background-color: var(--folder-setup-callout-bg);
+    color: var(--folder-setup-callout-text);
+    font-size: 12px;
+}
+
+/* ── Recent fonts ────────────────────────────────────────────────────────── */
+
+.launcher-main {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+    min-width: 0;
+    min-height: 0;
+    padding: 26px 28px 18px;
+}
+
+.launcher-main-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.launcher-main-head h2 {
+    font-size: 15px;
+    font-weight: 600;
+    margin-right: auto;
+}
+
+.launcher-open-count:empty,
+.launcher-account:empty {
+    display: none;
+}
+
+.launcher-open-count {
+    font-family: var(--font-families-mono);
+    font-size: 11px;
+    letter-spacing: 0;
+    padding: 2px 8px;
+    border-radius: 99px;
+    background-color: color-mix(in srgb, var(--view-editor) 20%, transparent);
+}
+
+.launcher-account {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.launcher-account .material-symbols-outlined {
+    font-size: 16px;
+}
+
+.launcher-icon-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.launcher-icon-button:hover {
+    color: var(--text-primary);
+    background-color: var(--background-hover);
+}
+
+.launcher-icon-button .material-symbols-outlined {
+    font-size: 18px;
+}
+
+.launcher-recents {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    margin: 0 -8px;
+    padding: 0 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.launcher-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.launcher-group-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 8px;
+    margin-bottom: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+}
+
+.launcher-group-title .material-symbols-outlined {
+    font-size: 16px;
+}
+
+.launcher-group-title .sub {
+    font-weight: 400;
+    color: var(--text-faint);
+}
+
+.launcher-row {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    min-height: 38px;
+    padding: 4px 8px;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+.launcher-row:hover {
+    background-color: var(--input-bg);
+}
+
+.launcher-row > .material-symbols-outlined {
+    font-size: 20px;
+    color: var(--text-secondary);
+}
+
+.launcher-row .name-line {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+}
+
+.launcher-row .name {
+    flex: 0 1 auto;
+    max-width: 70%;
+    font-size: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* "in Fonts › Grotesk › sources": the start truncates first, so the
+   font's own folder stays visible. */
+.launcher-row .where {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    color: var(--text-faint);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.launcher-row .where-head {
+    flex: 0 1 auto;
+    min-width: 1.5em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.launcher-row .where-tail {
+    flex: 0 0 auto;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.launcher-row .meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--font-families-mono);
+    font-size: 11px;
+    letter-spacing: 0;
+    color: var(--text-faint);
+}
+
+.launcher-row .meta .dialog-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 9px;
+    font-size: 11px;
+    border-radius: 6px;
+    border-color: var(--border-secondary);
+}
+
+.launcher-row .meta .dialog-button .material-symbols-outlined {
+    font-size: 15px;
+}
+
+.launcher-row .remove {
+    opacity: 0;
+}
+
+.launcher-row:hover .remove,
+.launcher-row:focus-within .remove {
+    opacity: 1;
+}
+
+.launcher-open-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    border-radius: 99px;
+    font-family: var(--font-families-sans);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    color: var(--text-primary);
+    background-color: color-mix(in srgb, var(--view-editor) 20%, transparent);
+}
+
+.launcher-open-badge::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: var(--view-editor);
+}
+
+.launcher-empty {
+    color: var(--text-faint);
+    font-size: 13px;
+    padding: 4px 8px;
+}
+
+.launcher-callout {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border: 1px dashed var(--border-secondary);
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.launcher-show-all {
+    margin: 6px 8px 0;
+    align-self: flex-start;
+}
+
+.launcher-main-foot {
+    font-size: 12px;
+    color: var(--text-faint);
+}
+
+/* ── Appearance menu ─────────────────────────────────────────────────────── */
+
+.launcher-menu {
+    position: fixed;
+    z-index: 10500;
+    min-width: 190px;
+    padding: 5px;
+    display: flex;
+    flex-direction: column;
+    background-color: var(--modal-bg);
+    border: 1px solid var(--border-inner);
+    border-radius: 10px;
+    box-shadow: 0 12px 32px var(--modal-overlay);
+}
+
+.launcher-menu-item {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr) 18px;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 10px;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    text-align: left;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.launcher-menu-item:hover,
+.launcher-menu-item:focus-visible {
+    background-color: var(--input-bg);
+    outline: none;
+}
+
+.launcher-menu-item .material-symbols-outlined {
+    font-size: 18px;
+    color: var(--text-secondary);
+}
+
+.launcher-menu-item .material-symbols-outlined:last-child {
+    color: var(--view-editor);
+}
+
+.launcher-menu-item[aria-checked='true'] {
+    font-weight: 500;
+}
+
+@media (max-width: 760px) {
+    .launcher {
+        padding: 0;
+        align-items: stretch;
+    }
+
+    .launcher-window {
+        grid-template-columns: 1fr;
+        height: auto;
+        min-height: 100dvh;
+        border-radius: 0;
+        border: 0;
+        box-shadow: none;
+    }
+
+    .launcher-recents {
+        overflow-y: visible;
+    }
+
+    .launcher-side {
+        border-right: 0;
+        border-bottom: 1px solid var(--launcher-line);
+    }
+
+    .launcher-main {
+        padding: 22px 16px 16px;
+    }
+}

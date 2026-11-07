@@ -214,7 +214,8 @@ module.exports = {
         'glyph-overview': './js/glyph-overview.ts',
         'find-glyph-dialog': './js/find-glyph-dialog.ts',
         'translations': './js/translations.ts',
-        'overview-view': './js/overview-view.ts'
+        'overview-view': './js/overview-view.ts',
+        'launcher': './js/launcher/launcher-page.ts'
     },
     output: {
         path: path.resolve(__dirname, 'build'),
@@ -254,6 +255,12 @@ module.exports = {
             cdnBase: process.argv.includes('serve')
                 ? '/cdn-jsdelivr'
                 : 'https://cdn.jsdelivr.net'
+        }),
+        new HtmlWebpackPlugin({
+            template: './launcher.html',
+            filename: 'launcher.html',
+            inject: 'body',
+            chunks: ['launcher']
         }),
         new webpack.DefinePlugin({
             'process.env.EDITOR_VERSION': JSON.stringify(EDITOR_VERSION),

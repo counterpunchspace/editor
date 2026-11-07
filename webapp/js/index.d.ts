@@ -12,6 +12,8 @@ import type { StateManager, EditorState } from './state-manager';
 import type { PatchSyncEngine } from './patch-sync-engine';
 import type { WindowSync } from './window-sync';
 import type { WindowRoleManager } from './window-role';
+import type { CounterpunchWindowApi } from './font-windows/window-registry';
+import type { PythonGuestApi } from './font-windows/other-fonts';
 import type {
     CloudPlugin,
     CloudEligibility,
@@ -42,6 +44,11 @@ declare global {
         };
         windowSync: WindowSync | undefined;
         windowRole: WindowRoleManager | undefined;
+        /** Links the launcher and font windows (font-windows/window-registry.ts). */
+        counterpunchWindows: CounterpunchWindowApi | undefined;
+        // From font-windows/other-fonts.ts
+        counterpunchPythonGuest: PythonGuestApi | undefined;
+        counterpunchOtherFontModels: (() => Font[]) | undefined;
         syncRustCacheAndRefreshCanvas:
             | ((
                   rootGlyphName?: string,
@@ -182,6 +189,13 @@ declare global {
               }) => Promise<void>)
             | undefined;
         closeFontFileDialog: (() => void) | undefined;
+
+        // From font-windows/save-as-dialog.ts
+        saveFontAs:
+            | ((options?: {
+                  destination?: 'disk' | 'cloud' | 'browser';
+              }) => Promise<void>)
+            | undefined;
         locatePathInFileDialog:
             ((pluginId: string, fullPath: string) => Promise<void>) | undefined;
 
@@ -432,8 +446,6 @@ declare global {
             options?: { sourcePluginOverride?: any }
         ) => Promise<void>;
         downloadFile: (filePath: string, fileName: string) => Promise<void>;
-        selectDiskFolder: () => Promise<void>;
-        reEnableAccess: () => Promise<void>;
         parseFileUri: (
             uri: string
         ) => { pluginId: string; path: string } | null;
@@ -673,9 +685,6 @@ declare global {
             getCurrentPlugin: () => any;
             getCurrentPath: () => string;
         };
-        applyFontsFolderSelection: (options?: {
-            source?: 'attach' | 'settings';
-        }) => Promise<void>;
 
         // From index.html (inline script)
         isDevelopment: () => boolean;

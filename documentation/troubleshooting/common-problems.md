@@ -6,9 +6,9 @@ When something fails, identify the category, apply the shortest reliable fix, an
 
 Browser compatibility, missing cross-origin isolation, or WebAssembly memory limits can block the first load. Refresh once. Use a current Chrome or Edge build. Try a smaller font if memory is tight. SharedArrayBuffer is required.
 
-## Disk folder is not accessible
+## A font on disk asks for access again
 
-Permissions expire, get revoked, or fail after a browser session change. In Files → Disk, click **Re-enable access**, select the same folder, and allow read/write. Details are in [Local disk access](../files/02-local-disk-access.md).
+Browsers forget file access when they restart, unless Counterpunch is installed as an app. The font window shows **Allow access**; click it and allow editing. If a `.ufo`, `.glyphspackage` or `.designspace` asks for its folder, choose the folder it is in and confirm. Details are in [Fonts on this computer](../files/02-local-disk-access.md).
 
 ## Script or filter fails
 

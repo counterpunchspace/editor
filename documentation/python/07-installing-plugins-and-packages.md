@@ -14,7 +14,7 @@ The manager lists Font Destination plugins discovered on GitHub. **Install** dow
 
 Installed plugins are `.whl` files in the Settings Folder’s `Plugins` directory. That is the durable copy. After a reload, Counterpunch reinstalls every wheel in that folder into Pyodide so plugins return without using Plugin Manager again.
 
-The Settings Folder is separate from the Files **Disk** project folder. How both are chosen is in [Project and settings folders](../getting-started/04-project-and-settings-folders.md). The same Settings Folder also holds `Scripts` and `Filters`.
+The Settings Folder is separate from your font sources. How it is chosen is in [Settings Folder and fonts on disk](../getting-started/04-project-and-settings-folders.md). The same Settings Folder also holds `Scripts` and `Filters`.
 
 ## Temporary installs with micropip
 

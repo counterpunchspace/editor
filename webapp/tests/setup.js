@@ -44,6 +44,7 @@ if (typeof globalThis.BroadcastChannel === 'undefined') {
         constructor(name) {
             this.name = name;
             this.onmessage = null;
+            this._listeners = new Set();
             this._closed = false;
             if (!channels.has(name)) channels.set(name, new Set());
             channels.get(name).add(this);
@@ -53,12 +54,20 @@ if (typeof globalThis.BroadcastChannel === 'undefined') {
             const peers = channels.get(this.name);
             if (!peers) return;
             for (const peer of peers) {
-                if (peer !== this && !peer._closed && peer.onmessage) {
-                    // Simulate async delivery
-                    const msg = { data };
-                    setTimeout(() => peer.onmessage(msg), 0);
-                }
+                if (peer === this || peer._closed) continue;
+                // Simulate async delivery
+                const msg = { data };
+                setTimeout(() => {
+                    peer.onmessage?.(msg);
+                    for (const listener of peer._listeners) listener(msg);
+                }, 0);
             }
+        }
+        addEventListener(type, listener) {
+            if (type === 'message') this._listeners.add(listener);
+        }
+        removeEventListener(type, listener) {
+            if (type === 'message') this._listeners.delete(listener);
         }
         close() {
             this._closed = true;

@@ -10,6 +10,7 @@
  */
 
 import { Logger } from './logger';
+import { markApplyingUpdate } from './app-update';
 
 const console = new Logger('UpdateManager');
 
@@ -655,6 +656,9 @@ async function applyPendingUpdate(): Promise<void> {
     }
 
     applyUpdateInFlight = true;
+    // The other windows follow once the new version takes over; this one
+    // reloads below.
+    markApplyingUpdate();
     refreshPreferencesVersionUi();
     const statusEl = document.getElementById('settings-update-status');
     if (statusEl) {

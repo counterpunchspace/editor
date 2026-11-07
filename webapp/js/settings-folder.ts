@@ -1,8 +1,9 @@
 /**
  * Settings Folder — app-owned local directory for Plugins, Filters, and Scripts.
  *
- * Independent from the Disk plugin's Fonts folder. Persisted under its own
- * IndexedDB key and configured only from Preferences (and Plugin Manager).
+ * The only folder Counterpunch asks for; fonts on disk are opened with the
+ * system pickers instead. Persisted under its own IndexedDB key and
+ * configured from the startup prompt, Preferences and Plugin Manager.
  */
 
 import {

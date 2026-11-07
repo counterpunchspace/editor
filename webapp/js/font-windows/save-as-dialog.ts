@@ -1,0 +1,439 @@
+// File → Save As: name, format and where to save. "This computer" asks for
+// the place with the system pickers; Cloud and Browser storage save by name.
+
+import { Logger } from '../logger';
+import { pluginRegistry } from '../filesystem-plugins/registry';
+import type { DiskPlugin } from '../filesystem-plugins/plugins/disk-plugin';
+import type { FilesystemPlugin } from '../filesystem-plugins/filesystem-plugin';
+import {
+    saveCurrentFontAs,
+    syncEditorFileStateFromCurrentFont
+} from '../file-browser';
+import {
+    FONT_FORMATS,
+    baseNameOf,
+    fontFormatKind,
+    fontFormatOf,
+    type FontFormatKey
+} from './font-formats';
+import {
+    rememberFolder,
+    upsertDiskDocument,
+    type DiskDocument
+} from './document-store';
+import { diskDocumentKey } from './disk-documents';
+import {
+    isAbortError,
+    showDirectoryPicker,
+    showSaveFilePicker,
+    supportsFileAccess
+} from './file-access';
+import { documentOpenState } from './window-registry';
+import {
+    chooseSaveDestination,
+    type SaveDestination
+} from './save-destination';
+import { escapeHtml, icon, openDialog, reportError } from './dialogs';
+
+const console = new Logger('FontWindows');
+
+/**
+ * The last destination and format a new font was saved with.
+ * Values: `disk` | `cloud` | `browser`, and a format key such as `glyphs`.
+ */
+const LAST_DESTINATION_KEY = 'saveAsLastDestination';
+const LAST_FORMAT_KEY = 'saveAsLastFormat';
+
+const WRITABLE_FORMATS = (Object.keys(FONT_FORMATS) as FontFormatKey[]).filter(
+    (key) => FONT_FORMATS[key].writable
+);
+
+function readSetting(key: string): string | null {
+    try {
+        return localStorage.getItem(key);
+    } catch {
+        return null;
+    }
+}
+
+function writeSetting(key: string, value: string): void {
+    try {
+        localStorage.setItem(key, value);
+    } catch {
+        // Storage may be unavailable; the defaults still work.
+    }
+}
+
+function plugin<T extends FilesystemPlugin>(id: string): T | null {
+    const found = pluginRegistry.get(id);
+    return found && found.getId() === id ? (found as T) : null;
+}
+
+type CloudPluginLike = FilesystemPlugin & {
+    handleSaveAs(name: string): Promise<boolean>;
+    checkEligibility?: () => Promise<{
+        cloudHostingEnabled: boolean;
+        maxFontsOwned: number | null;
+        fontsOwnedCount: number;
+    } | null>;
+    getCurrentSaveAsWarningState?: () => Promise<{
+        visible: boolean;
+        title: string;
+        label: string;
+        canSave: boolean;
+    } | null>;
+};
+
+type CloudState = { available: boolean; note: string; blocked?: string };
+
+/** Whether the cloud can take this font, the same rules as the editor's. */
+async function cloudState(): Promise<CloudState> {
+    const cloud = plugin<CloudPluginLike>('cloud');
+    if (!cloud || !cloud.isVisibleInUI()) {
+        return { available: false, note: 'Not available in this version' };
+    }
+    if (!window.authManager?.isAuthenticated?.()) {
+        return { available: false, note: 'Log in to save to the cloud' };
+    }
+    const eligibility = await cloud.checkEligibility?.().catch(() => null);
+    if (!eligibility?.cloudHostingEnabled) {
+        return {
+            available: false,
+            note: 'Your plan doesn’t include cloud fonts'
+        };
+    }
+    const { maxFontsOwned, fontsOwnedCount } = eligibility;
+    if (maxFontsOwned !== null && fontsOwnedCount >= maxFontsOwned) {
+        return {
+            available: false,
+            note: `All ${maxFontsOwned} cloud fonts in your plan are used`
+        };
+    }
+    const warning = await cloud
+        .getCurrentSaveAsWarningState?.()
+        .catch(() => null);
+    const used =
+        maxFontsOwned === null
+            ? 'Collaborate and share'
+            : `Collaborate and share · ${fontsOwnedCount} of ${maxFontsOwned} fonts used`;
+    if (warning?.visible && !warning.canSave) {
+        return {
+            available: false,
+            note: warning.label,
+            blocked: warning.title
+        };
+    }
+    return {
+        available: true,
+        note: warning?.visible ? `${used} · ${warning.label}` : used,
+        blocked: warning?.visible ? warning.title : undefined
+    };
+}
+
+function currentDestination(): SaveDestination | null {
+    const id = window.fontManager?.currentFont?.sourcePlugin?.getId?.();
+    if (id === 'disk') return 'disk';
+    if (id === 'cloud') return 'cloud';
+    if (id === 'memory') return 'browser';
+    return null;
+}
+
+function defaultDestination(cloud: CloudState): SaveDestination {
+    return chooseSaveDestination(
+        currentDestination(),
+        readSetting(LAST_DESTINATION_KEY),
+        {
+            fileAccess: supportsFileAccess,
+            cloud: cloud.available
+        }
+    );
+}
+
+function defaultNameAndFormat(): { name: string; format: FontFormatKey } {
+    const font = window.fontManager?.currentFont;
+    // A new font only has a placeholder path until it is saved.
+    const isNew =
+        window.counterpunchWindows?.documentKey?.startsWith('new:///');
+    const fileName = isNew ? '' : (font?.path?.split('/').pop() ?? '');
+    const format = fontFormatOf(fileName);
+    if (format && FONT_FORMATS[format].writable) {
+        return { name: baseNameOf(fileName), format };
+    }
+    const last = readSetting(LAST_FORMAT_KEY) as FontFormatKey | null;
+    return {
+        name: font?.name || 'Untitled',
+        format: last && WRITABLE_FORMATS.includes(last) ? last : 'glyphs'
+    };
+}
+
+// --- Saving -------------------------------------------------------------
+
+/** Ask where on this computer to save; returns the font's new document. */
+async function chooseDiskLocation(
+    fileName: string,
+    format: FontFormatKey
+): Promise<{ doc: DiskDocument; exists: boolean }> {
+    const startIn = (diskPlugin()?.document?.parent ??
+        diskPlugin()?.document?.handle ??
+        'documents') as FileSystemHandle | 'documents';
+    if (fontFormatKind(format) === 'file') {
+        const { ext, label } = FONT_FORMATS[format];
+        const handle = await showSaveFilePicker({
+            id: 'cp-save',
+            suggestedName: fileName,
+            startIn,
+            types: [
+                {
+                    description: label,
+                    accept: { 'application/octet-stream': [ext] }
+                }
+            ]
+        });
+        const doc = await upsertDiskDocument({
+            name: handle.name,
+            format: fontFormatOf(handle.name) ?? format,
+            handle
+        });
+        return { doc, exists: false };
+    }
+    // Packages and .designspace: there is no "save a folder" picker, so the
+    // user picks the folder to save into and the font is created inside.
+    const folder = await showDirectoryPicker({
+        id: 'cp-save',
+        mode: 'readwrite',
+        startIn
+    });
+    await rememberFolder(folder);
+    const isPackage = fontFormatKind(format) === 'package';
+    const exists = await entryExists(folder, fileName, isPackage);
+    if (
+        exists &&
+        !confirm(
+            `“${fileName}” already exists in “${folder.name}”. Replace it?`
+        )
+    ) {
+        throw new DOMException('Replace declined', 'AbortError');
+    }
+    const handle = isPackage
+        ? await folder.getDirectoryHandle(fileName, { create: true })
+        : await folder.getFileHandle(fileName, { create: true });
+    const doc = await upsertDiskDocument({
+        name: fileName,
+        format,
+        handle,
+        parent: folder
+    });
+    return { doc, exists };
+}
+
+async function entryExists(
+    folder: FileSystemDirectoryHandle,
+    name: string,
+    isDirectory: boolean
+): Promise<boolean> {
+    try {
+        if (isDirectory) await folder.getDirectoryHandle(name);
+        else await folder.getFileHandle(name);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+function diskPlugin(): DiskPlugin | null {
+    return plugin<DiskPlugin>('disk');
+}
+
+function ensureNotOpenElsewhere(key: string, name: string): void {
+    const own = window.counterpunchWindows?.documentKey;
+    if (key !== own && documentOpenState(key)) {
+        throw new Error(
+            `${name} is open in another window. Close it there first, or save under a different name.`
+        );
+    }
+}
+
+async function saveToDisk(
+    fileName: string,
+    format: FontFormatKey
+): Promise<void> {
+    const disk = diskPlugin();
+    if (!disk) throw new Error('Saving to this computer is not available.');
+    const { doc, exists } = await chooseDiskLocation(fileName, format);
+    ensureNotOpenElsewhere(diskDocumentKey(doc), doc.name);
+    const previous = disk.document;
+    disk.attachDocument(doc);
+    try {
+        await saveCurrentFontAs(disk, `/${doc.name}`, { exists });
+    } catch (error) {
+        if (previous) disk.attachDocument(previous);
+        else disk.detachDocument();
+        throw error;
+    }
+}
+
+async function saveToBrowser(fileName: string): Promise<void> {
+    const memory = plugin<FilesystemPlugin>('memory');
+    if (!memory) throw new Error('Browser storage is not available.');
+    const path = `/user/${fileName}`;
+    const key = `memory://${path}`;
+    ensureNotOpenElsewhere(key, fileName);
+    const exists = await memory.getAdapter().fileExists(path);
+    if (
+        exists &&
+        !confirm(`“${fileName}” already exists in browser storage. Replace it?`)
+    ) {
+        throw new DOMException('Replace declined', 'AbortError');
+    }
+    await saveCurrentFontAs(memory, path, { exists });
+}
+
+async function saveToCloud(name: string): Promise<boolean> {
+    const cloud = plugin<CloudPluginLike>('cloud');
+    if (!cloud) throw new Error('The cloud is not available.');
+    const saved = await cloud.handleSaveAs(name);
+    if (saved) syncEditorFileStateFromCurrentFont();
+    return saved;
+}
+
+// --- The dialog ---------------------------------------------------------
+
+let open = false;
+
+/** Show the Save As dialog for the current font. */
+export async function showSaveAsDialog(
+    options: { destination?: SaveDestination } = {}
+): Promise<void> {
+    const font = window.fontManager?.currentFont;
+    if (!font || open) return;
+    open = true;
+
+    const cloudPromise = cloudState();
+    const initial = defaultNameAndFormat();
+    let cloud: CloudState = { available: false, note: 'Checking…' };
+    let dest: SaveDestination =
+        options.destination ?? defaultDestination(cloud);
+    const fileAccess = supportsFileAccess;
+
+    const dialog = openDialog({
+        title: `Save ${font.name || 'font'} as`,
+        className: 'font-window-save-as',
+        onClose: () => {
+            open = false;
+        }
+    });
+    dialog.body.innerHTML = `
+        <div class="font-window-fields">
+            <label>Name<input type="text" data-name spellcheck="false" value="${escapeHtml(initial.name)}"></label>
+            <label data-format-field>Format<select data-format>${WRITABLE_FORMATS.map(
+                (key) =>
+                    `<option value="${key}"${key === initial.format ? ' selected' : ''}>${escapeHtml(FONT_FORMATS[key].label)}</option>`
+            ).join('')}</select></label>
+        </div>
+        <div class="font-window-destinations" role="radiogroup" aria-label="Where to save">
+            <button type="button" class="font-window-destination" role="radio" data-dest="disk"${fileAccess ? '' : ' disabled'}>${icon('computer')}<span><b>This computer</b><small data-hint="disk"></small></span><span class="font-window-radio"></span></button>
+            <button type="button" class="font-window-destination" role="radio" data-dest="cloud" disabled>${icon('cloud')}<span><b>Cloud</b><small data-hint="cloud">${escapeHtml(cloud.note)}</small></span><span class="font-window-radio"></span></button>
+            <button type="button" class="font-window-destination" role="radio" data-dest="browser">${icon('web')}<span><b>Browser storage</b><small>Stays in this browser only</small></span><span class="font-window-radio"></span></button>
+        </div>
+        <div class="font-window-dialog-actions">
+            <button type="button" class="dialog-button" data-close>Cancel</button>
+            <button type="button" class="dialog-button dialog-button-primary" data-go></button>
+        </div>`;
+
+    const body = dialog.body;
+    const nameInput = body.querySelector('[data-name]') as HTMLInputElement;
+    const formatSelect = body.querySelector(
+        '[data-format]'
+    ) as HTMLSelectElement;
+    const go = body.querySelector('[data-go]') as HTMLButtonElement;
+    const cloudButton = body.querySelector(
+        '[data-dest="cloud"]'
+    ) as HTMLButtonElement;
+
+    const baseName = () => nameInput.value.trim() || 'Untitled';
+    const format = () => formatSelect.value as FontFormatKey;
+
+    const update = () => {
+        const kind = fontFormatKind(format());
+        const fileName = baseName() + FONT_FORMATS[format()].ext;
+        body.querySelectorAll<HTMLElement>('[data-dest]').forEach((el) => {
+            const on = el.dataset.dest === dest;
+            el.classList.toggle('is-selected', on);
+            el.setAttribute('aria-checked', String(on));
+        });
+        (body.querySelector('[data-hint="disk"]') as HTMLElement).textContent =
+            !fileAccess
+                ? 'This browser can’t save to your computer'
+                : kind === 'file'
+                  ? 'Choose where to save in the next window'
+                  : kind === 'package'
+                    ? `Pick a folder; ${fileName} is created inside it`
+                    : `Pick a folder; ${fileName} and its UFOs are created inside it`;
+        (body.querySelector('[data-hint="cloud"]') as HTMLElement).textContent =
+            cloud.note;
+        cloudButton.disabled = !cloud.available;
+        cloudButton.title = cloud.blocked ?? '';
+        (body.querySelector('[data-format-field]') as HTMLElement).hidden =
+            dest === 'cloud';
+        go.textContent =
+            dest === 'disk'
+                ? kind === 'file'
+                    ? 'Choose location…'
+                    : 'Choose folder…'
+                : dest === 'cloud'
+                  ? 'Save to cloud'
+                  : 'Save';
+        go.disabled =
+            (dest === 'cloud' && !cloud.available) ||
+            (dest === 'disk' && !fileAccess);
+    };
+
+    body.querySelectorAll<HTMLButtonElement>('[data-dest]').forEach((el) =>
+        el.addEventListener('click', () => {
+            dest = el.dataset.dest as SaveDestination;
+            update();
+        })
+    );
+    formatSelect.addEventListener('change', update);
+    nameInput.addEventListener('input', update);
+    nameInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') go.click();
+    });
+    update();
+    nameInput.select();
+
+    void cloudPromise.then((state) => {
+        cloud = state;
+        if (!options.destination) dest = defaultDestination(cloud);
+        update();
+    });
+
+    go.addEventListener('click', async () => {
+        if (baseName().includes('/') || baseName().includes('\\')) {
+            reportError(new Error('A name can’t contain / or \\.'));
+            return;
+        }
+        const fileName = baseName() + FONT_FORMATS[format()].ext;
+        // The pickers must open in this click's turn: no awaits before them.
+        const saving =
+            dest === 'disk'
+                ? saveToDisk(fileName, format())
+                : dest === 'cloud'
+                  ? saveToCloud(baseName())
+                  : saveToBrowser(fileName);
+        go.disabled = true;
+        try {
+            await saving;
+            writeSetting(LAST_DESTINATION_KEY, dest);
+            if (dest !== 'cloud') writeSetting(LAST_FORMAT_KEY, format());
+            dialog.close();
+        } catch (error) {
+            if (!isAbortError(error)) console.error('Save As failed', error);
+            reportError(error);
+        } finally {
+            go.disabled = false;
+        }
+    });
+}
+
+window.saveFontAs = showSaveAsDialog;

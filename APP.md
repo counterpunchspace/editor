@@ -38,6 +38,26 @@ Signing in never navigates the editor page, so open and unsaved fonts stay open.
 
 The website returns the session to the editor in the verify-code response, and the editor keeps it in its own `editor_session` cookie. Other open editor tabs sign in and out with it. Signing in from anywhere replaces the signed-out Cloud panel with the font list. Website pages that need the account, such as **Account** in the Assistant, open in a new tab. The website login page uses the same codes.
 
+## Launcher, Font Windows and Files on Disk
+
+Counterpunch starts with the launcher (`launcher.html`); the installed app opens it too. An editor window without a font goes to the launcher. The launcher starts new fonts, opens fonts from this computer, the cloud and browser storage, and lists recent fonts per place. It stays open next to the fonts. File → Open… (`cmd+O`) in a font window brings the launcher forward, or opens it again.
+
+Every font opens in its own window, named after the font's document key (its file URI, or `new:///<id>` for a font that was never saved). The launcher and all font windows are opened from each other, so they can reach each other's JavaScript directly. Opening a font that is already open in such a linked window brings that window forward instead of opening it twice. A font open in a window the others can't reach (restored by the browser) shows as open; opening it again moves it into a linked window, unless it has unsaved changes there. Same-font windows (Window → Open In New Window) are views of one font, not font windows of their own.
+
+Fonts on this computer open with the system's file pickers; there is no project folder. A font on disk is a document with its own id and the handle the user picked, and its URI is `disk:///<id>/<name>`. Packages and `.designspace` that need the folder they are in ask the user for that folder, starting the folder picker there. Saving writes back to the picked file or folder.
+
+Fonts the file manager opens arrive in a window of their own. When Counterpunch is not running, that window opens the first font itself. Otherwise it hands its fonts to the running windows and closes, and every Counterpunch window shows the same confirmation; a click in any of them opens the font, and resolves the confirmation everywhere. A font that is already open is brought forward instead.
+
+Save As asks for a name, a writable format and where to save: this computer, the cloud or browser storage. It starts where the font lives; a new font starts at the last destination used, else this computer. The cloud follows the same eligibility as the rest of the editor. Saving over a font that is open in another window is refused.
+
+In Python, `OtherFonts()` returns the fonts of the other linked font windows. Changes to them land in that window's own history, sync and compile, as if a script had run there: each window opens an edit session the first time a script asks for it, and the sessions close when the script ends.
+
+## Updates Across Windows
+
+A new version downloads in the background and waits until the user clicks **Update** (Preferences in a font window, or the launcher) or every window of the old version has closed. When it takes over, every open window follows: the launcher and every font window without unsaved work reload into it right away. A window with unsaved changes, unsynced cloud edits or a save in progress keeps them on the old version and offers a reload. A same-font view window follows its main window. The launcher checks for updates like the font windows and offers **Update** when one is ready.
+
+Linked windows only link with windows of the same build. A window still on the old version counts as unreachable for the others: it shows as open in the launcher, opening its font again moves it into a window of the new version (unless it has unsaved changes), and `OtherFonts()` does not include it.
+
 ## Document Collaboration
 
 Yjs is the single source of truth for all edits. Reliable document convergence is the primary design goal.

@@ -51,9 +51,6 @@ export interface MasterTopologyGate {
 }
 
 export interface FilesystemPluginUICallbacks {
-    showOpenFolderUI: () => void;
-    hideOpenFolderUI: () => void;
-    showPermissionBanner: (show: boolean) => void;
     showUnsupportedBrowserUI: () => void;
     hideUnsupportedBrowserUI: () => void;
     showPluginMessage: (options: PluginMessageOptions) => void;
@@ -168,8 +165,6 @@ export abstract class FilesystemPlugin {
      * Update UI elements specific to this plugin's state
      */
     async updateUI(uiCallbacks: FilesystemPluginUICallbacks): Promise<void> {
-        uiCallbacks.hideOpenFolderUI();
-        uiCallbacks.showPermissionBanner(false);
         uiCallbacks.hideUnsupportedBrowserUI();
         uiCallbacks.hidePluginMessage();
     }

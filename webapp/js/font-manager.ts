@@ -2960,9 +2960,7 @@ class FontManager {
                         !currentFont.fileHandle &&
                         !currentFont.isCloudBacked()
                     ) {
-                        await window.showFontFileDialog?.({
-                            mode: 'save-as'
-                        });
+                        await window.saveFontAs?.();
                     } else {
                         await window.saveButton?.handleSave?.();
                     }

@@ -14,8 +14,8 @@ while opening a font, or as part of synchronization.
 
 Successful exports retain their `FileSystemFileHandle` in IndexedDB. Each handle
 uses the plugin-qualified source URI as its key, such as
-`disk:///fonts/Example.babelfont`; this keeps disk paths unambiguous, including
-the third slash before an absolute folder path. On a later export, the editor
+`disk:///<document id>/Example.babelfont` for a font on this computer or
+`memory:///user/Example.babelfont` in browser storage. On a later export, the editor
 checks or requests read/write permission for the restored handle. If permission
 is denied or the handle is no longer usable, it discards that destination and
 opens the save picker instead. The browser File System Access API is required.

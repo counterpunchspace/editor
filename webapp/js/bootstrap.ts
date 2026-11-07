@@ -62,7 +62,6 @@ function summarizeStartupEvent(
 function registerStartupEventLogging(): void {
     const startupEvents = [
         'unsupportedBrowserContinue',
-        'pwaLaunchFilesPending',
         'fontLoaded',
         'fontOpenLifecycle',
         'fontModelReady',
@@ -107,40 +106,6 @@ fetch('worktree-config.json')
     .catch(() => {
         /* No config — not a worktree */
     });
-
-function registerPwaLaunchFileConsumer() {
-    const launchQueue = (window as any).launchQueue;
-    if (!launchQueue || typeof launchQueue.setConsumer !== 'function') {
-        return;
-    }
-
-    launchQueue.setConsumer((launchParams: any) => {
-        const launchedHandles = Array.isArray(launchParams?.files)
-            ? launchParams.files.filter(
-                  (handle: any) => handle?.kind === 'file'
-              )
-            : [];
-
-        if (!launchedHandles.length) {
-            return;
-        }
-
-        const pendingHandles = Array.isArray(
-            (window as any).__pendingLaunchFileHandles
-        )
-            ? (window as any).__pendingLaunchFileHandles
-            : [];
-
-        (window as any).__pendingLaunchFileHandles = [
-            ...pendingHandles,
-            ...launchedHandles
-        ];
-
-        window.dispatchEvent(new CustomEvent('pwaLaunchFilesPending'));
-    });
-}
-
-registerPwaLaunchFileConsumer();
 
 function isSupportedBrowser(): boolean {
     const ua = navigator.userAgent;
@@ -497,6 +462,8 @@ import './ai-assistant';
 import './auto-compile-manager';
 import './cache-manager';
 import './window-role';
+import './font-windows/font-window-init';
+import './font-windows/update-reload';
 import './window-ui-state';
 import './canvas-plugin-manager';
 import './change-bridge-init'; // Yjs undo/redo & cross-window sync
@@ -506,6 +473,7 @@ import './editor-edit-tools-ui';
 import './ui/title-bar-text-fields';
 import './example-loader';
 import './file-browser';
+import './font-windows/save-as-dialog';
 import './font-info'; // Font info view manager (Names/Features tabs)
 import './font-interpolation';
 import './font-manager';
@@ -529,6 +497,7 @@ import './python-execution-wrapper';
 import './python-package-lazy-loader';
 import './python-ui-sync';
 import './python-post-execution';
+import './font-windows/other-fonts';
 import './docs-viewer';
 import './resizer';
 import './save-button';

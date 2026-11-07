@@ -2551,9 +2551,6 @@ describe('CloudPlugin eligibility gating', () => {
 
     test('does not show the hosting-disabled panel to authenticated users without hosting eligibility', async () => {
         await plugin.updateUI({
-            showOpenFolderUI: jest.fn(),
-            hideOpenFolderUI: jest.fn(),
-            showPermissionBanner: jest.fn(),
             showUnsupportedBrowserUI: jest.fn(),
             hideUnsupportedBrowserUI: jest.fn(),
             showPluginMessage: jest.fn(),

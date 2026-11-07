@@ -5,6 +5,7 @@
 @import url('editor-left-sidebar.css');
 @import url('editor-right-sidebar.css');
 @import url('ui/dialogs.css');
+@import url('ui/font-windows.css');
 @import url('ui/add-axis-dialog.css');
 @import url('ui/tour.css');
 @import url('docs-viewer.css');
@@ -4934,57 +4935,7 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     padding: 1px !important;
 }
 
-/* Permission Banner */
-#permission-banner {
-    display: none;
-    background: var(--background-secondary);
-    border: 1px solid var(--border-primary);
-    border-radius: 3px;
-    padding: 8px 12px;
-    margin-bottom: 8px;
-    font-size: 11px;
-    line-height: 1.4;
-}
-
-#permission-banner.visible {
-    display: block;
-}
-
-.permission-banner-content {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.permission-banner-icon {
-    color: var(--accent-yellow);
-    font-size: 16px;
-}
-
-.permission-banner-text {
-    flex: 1;
-    color: var(--text-secondary);
-}
-
-.permission-banner-button {
-    background: transparent;
-    border: 1px solid var(--border-primary);
-    color: var(--text-secondary);
-    padding: 4px 8px;
-    border-radius: 3px;
-    font-family: var(--font-families-mono);
-    font-size: 10px;
-    cursor: pointer;
-    transition: all 0.15s ease;
-}
-
-.permission-banner-button:hover {
-    background: var(--button-hover);
-    border-color: var(--border-hover);
-}
-
-/* Open Folder Container (similar to AI login) */
-#open-folder-container,
+/* Cloud panel (similar to AI login) */
 #cloud-panel {
     display: none;
     flex-direction: column;
@@ -4994,12 +4945,10 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     padding: 40px 20px;
 }
 
-#open-folder-container.visible,
 #cloud-panel.visible {
     display: flex;
 }
 
-#open-folder-container .folder-setup-callout,
 .assistant-access-gate .folder-setup-callout {
     max-width: 360px;
     width: 100%;

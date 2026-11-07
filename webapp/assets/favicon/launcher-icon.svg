@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Launcher tab icon: the Counterpunch badge (white disc, orange base) with a
+     grid of tiles instead of the pen, so the launcher tab stands out. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000">
+  <circle cx="500" cy="500" r="482" fill="#fff"/>
+  <path fill="#e99a3d" d="M76.9,730.6c81.8,149.7,240.6,251.2,423.2,251.2s341.4-101.5,423.2-251.2H76.9Z"/>
+  <g fill="#231f20">
+    <rect x="290" y="205" width="190" height="190" rx="38"/>
+    <rect x="520" y="205" width="190" height="190" rx="38"/>
+    <rect x="290" y="435" width="190" height="190" rx="38"/>
+  </g>
+  <rect x="520" y="435" width="190" height="190" rx="38" fill="#cfcfce"/>
+  <circle cx="500" cy="500" r="468" fill="none" stroke="#231f20" stroke-width="28"/>
+</svg>

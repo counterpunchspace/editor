@@ -1,13 +1,15 @@
-# Files view
+# The launcher and where fonts live
 
-The Files view is where sources enter and leave Counterpunch, and where storage context is defined. Getting this right early prevents a lot of “where did that save go?” confusion.
+Counterpunch starts with the **launcher**. From there you start a new font or open one, and every font opens in its own window. The launcher stays open beside them, so you can come back to it to open the next font. In a font window, **File → Open…** (`Cmd/Ctrl+O`) brings the launcher forward, or opens it again if you closed it.
 
-Counterpunch has three storage contexts:
+Fonts live in one of three places:
 
-- **Memory** is in-browser storage for quick experiments and temporary work.
-- **Disk** is a local folder you grant permission to, for production sources.
-- **Cloud Storage** is a signed-in, hosted font you Save As or open from an invite. Details are in [Cloud fonts](05-cloud-fonts.md).
+- **This computer**: font files and folders on your disk, opened with your system's file picker. Saving writes back to the same file. See [Fonts on this computer](02-local-disk-access.md).
+- **Cloud**: a hosted font you can edit with others, when your account includes cloud fonts. See [Cloud fonts](05-cloud-fonts.md).
+- **Browser storage**: in-browser storage for quick experiments. It stays in this browser only.
 
-![Files view with Memory and Disk contexts](images/files-view.png)
+The launcher lists recent fonts from each place. A font that is already open shows **Open** and a **Jump to** button that brings its window forward instead of opening it twice. **Unsaved** lists new fonts that were never saved; they are gone when you close their window without saving.
 
-Check which context is active before you save. Open a font from the tree, edit, then save back to the same place. Disk setup is in [Local disk access](02-local-disk-access.md). Cloud Save As, invites, offline sync, and read-only states are in [Cloud fonts](05-cloud-fonts.md). The Disk folder is not the Settings Folder; both are in [Project and settings folders](../getting-started/04-project-and-settings-folders.md). Formats are in [Open, save, and file formats](03-open-save-formats.md).
+**New font** opens an empty font in a new window. **Open sample font** opens Fustat from browser storage. Drop a font file or folder anywhere on the launcher to open it straight from your disk; nothing is uploaded.
+
+Formats are in [Open, save, and file formats](03-open-save-formats.md). Scripts can reach the other open fonts with `OtherFonts()`; see [Writing general scripts](../python/04-writing-general-scripts.md).

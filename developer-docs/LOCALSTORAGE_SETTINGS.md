@@ -33,7 +33,7 @@ IndexedDB keys such as directory handles and export destinations are not include
 | [`glyphCanvasTextBuffer`](#key-glyphcanvastextbuffer) | Persists glyph canvas text buffer. | getItem, setItem, removeItem | `webapp/js/font-manager.ts`, `webapp/js/glyph-canvas/textrun.ts` |
 | [`glyphFilterEditorMode`](#key-glyphfiltereditormode) | Persists glyph filter editor mode. | getItem, setItem | `webapp/js/glyph-filter-editor-modal.ts` |
 | [`lastFilesystemContext`](#key-lastfilesystemcontext) | Persists last filesystem context. | getItem, setItem | `webapp/js/file-browser.ts` |
-| [`preferredTheme`](#key-preferredtheme) | Theme management | getItem, setItem | `webapp/js/font-info.ts`, `webapp/js/script-editor.ts`, `webapp/js/theme-switcher.ts` |
+| [`preferredTheme`](#key-preferredtheme) | Shared with the editor's theme switcher. | getItem, setItem | `webapp/js/font-info.ts`, `webapp/js/launcher/launcher-page.ts`, `webapp/js/script-editor.ts`, `webapp/js/theme-switcher.ts` |
 | [`pythonScript`](#key-pythonscript) | Persists python script. | getItem, setItem | `webapp/js/script-editor.ts` |
 | [`pythonScriptSavedContent`](#key-pythonscriptsavedcontent) | Persists python script saved content. | getItem, setItem | `webapp/js/script-editor.ts` |
 | [`pythonScriptTimestamp`](#key-pythonscripttimestamp) | Persists python script timestamp. | getItem, setItem | `webapp/js/script-editor.ts` |
@@ -242,8 +242,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Operations: `getItem`, `setItem`, `removeItem`
 - Default when unset: `Hamburgevons`
 - Sites:
-  - webapp/js/font-manager.ts:2471 `removeItem` via method `handleNewFont`
-  - webapp/js/font-manager.ts:2605 `getItem` via method `resolveEditingTextForCompile`
+  - webapp/js/font-manager.ts:2993 `removeItem` via method `handleNewFont`
+  - webapp/js/font-manager.ts:3127 `getItem` via method `resolveEditingTextForCompile`
   - webapp/js/glyph-canvas/textrun.ts:154 `getItem` via constructor `constructor`
   - webapp/js/glyph-canvas/textrun.ts:498 `setItem` via method `setTextBuffer`
   - webapp/js/glyph-canvas/textrun.ts:2350 `setItem` via method `loadTextBufferFromFont`
@@ -257,8 +257,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: literal
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/glyph-filter-editor-modal.ts:154 `getItem` via function `readStoredMode`
-  - webapp/js/glyph-filter-editor-modal.ts:164 `setItem` via function `storeMode`
+  - webapp/js/glyph-filter-editor-modal.ts:175 `getItem` via function `readStoredMode`
+  - webapp/js/glyph-filter-editor-modal.ts:185 `setItem` via function `storeMode`
 
 <a id="key-lastfilesystemcontext"></a>
 
@@ -268,19 +268,21 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: literal
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/file-browser.ts:2336 `setItem` via function `switchContext`
-  - webapp/js/file-browser.ts:4041 `getItem` via function `initFileBrowser`
+  - webapp/js/file-browser.ts:2283 `setItem` via function `switchContext`
+  - webapp/js/file-browser.ts:3558 `getItem` via function `initFileBrowser`
 
 <a id="key-preferredtheme"></a>
 
 ## `preferredTheme`
 
-- Purpose: Theme management
+- Purpose: Shared with the editor's theme switcher.
 - Kind: literal
 - Operations: `getItem`, `setItem`
 - Default when unset: `auto`
 - Sites:
   - webapp/js/font-info.ts:2957 `getItem` via function `getInitialTheme`
+  - webapp/js/launcher/launcher-page.ts:194 `getItem` via function `themePreference`
+  - webapp/js/launcher/launcher-page.ts:256 `setItem` via module `top-level module code`
   - webapp/js/script-editor.ts:352 `getItem` via function `getInitialTheme`
   - webapp/js/theme-switcher.ts:56 `getItem` via method `init`
   - webapp/js/theme-switcher.ts:58 `setItem` via method `init`
@@ -396,7 +398,7 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Default when unset: `false`
 - Sites:
   - webapp/js/tour.ts:107 `getItem` via function `hasCompletedTour`
-  - webapp/js/tour.ts:357 `setItem` via function `completeTour`
+  - webapp/js/tour.ts:355 `setItem` via function `completeTour`
 
 <a id="key-tourlaunchbuttondismissed"></a>
 
@@ -409,7 +411,7 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Sites:
   - webapp/js/tour.ts:98 `getItem` via function `hasDismissedTourLaunchButton`
   - webapp/js/tour.ts:134 `setItem` via function `dismissTourLaunchButton`
-  - webapp/js/tour.ts:358 `setItem` via function `completeTour`
+  - webapp/js/tour.ts:356 `setItem` via function `completeTour`
 
 <a id="key-tourskipped"></a>
 
@@ -433,7 +435,7 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Default when unset: `false`
 - Sites:
   - webapp/js/tour.ts:89 `getItem` via function `hasStartedTour`
-  - webapp/js/tour.ts:348 `setItem` via function `markTourStarted`
+  - webapp/js/tour.ts:346 `setItem` via function `markTourStarted`
 
 <a id="key-welcomedismissedversion"></a>
 
@@ -454,10 +456,10 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: pattern
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/file-browser.ts:2395 `getItem` via function `switchContext`
-  - webapp/js/file-browser.ts:3494 `setItem` via function `navigateToPath`
-  - webapp/js/file-browser.ts:4113 `getItem` via function `initFileBrowser`
-  - webapp/js/file-browser.ts:4593 `setItem` via module `top-level module code`
+  - webapp/js/file-browser.ts:2334 `getItem` via function `switchContext`
+  - webapp/js/file-browser.ts:3155 `setItem` via function `navigateToPath`
+  - webapp/js/file-browser.ts:3627 `getItem` via function `initFileBrowser`
+  - webapp/js/file-browser.ts:4066 `setItem` via module `top-level module code`
 
 <a id="key-linkedwindowoccupancy-sessionid-"></a>
 

@@ -889,6 +889,33 @@ def Font():
     return _as_model_proxy(host.currentFontModel)
 
 
+def OtherFonts():
+    """
+    Get the fonts open in Counterpunch's other windows.
+
+    Every font opens in its own window. This returns the fonts of the other
+    windows, not the one the script runs in (that is ``Font()``). Changes to
+    them work like changes to ``Font()``: each window records them in its own
+    undo history, saves them with its font and recompiles.
+
+    Fonts opened outside Counterpunch's launcher (for example a window the
+    browser restored on its own) are not linked and are missing here until
+    they are opened again from the launcher.
+
+    Returns:
+        list[Font]: The other open fonts; empty when no other font is open
+
+    Example:
+        >>> for font in OtherFonts():
+        ...     print(font.info.familyName, len(font.glyphs))
+    """
+    host = _cp_get_host_object()
+    get_models = getattr(host, "counterpunchOtherFontModels", None)
+    if get_models is None or type(get_models) is pyodide.ffi.JsNull:
+        return []
+    return [_as_model_proxy(model) for model in get_models()]
+
+
 def Glyph():
     """
     Get the currently active glyph in outline editing mode.

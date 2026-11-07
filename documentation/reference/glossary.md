@@ -8,7 +8,8 @@ Type design mixes geometric, typographic, and technical terms. These are the mea
 - **Axis** — a variable dimension such as weight or width.
 - **Background layer** — a paired reference drawing behind a foreground layer. Paths only; it does not interpolate or own metrics.
 - **Base glyph** — a glyph’s ordinary layers, used when no feature variation is selected.
-- **Cloud font** — a font hosted in Files → Cloud Storage. Local files are not uploaded unless you Save As to Cloud or open an invite. See [Cloud fonts](../files/05-cloud-fonts.md).
+- **Browser storage** — in-browser storage for quick experiments. It stays in this browser only. Not a disk folder and not the Settings Folder.
+- **Cloud font** — a font hosted on Counterpunch’s servers. Local files are not uploaded unless you save them to the cloud with Save As or open an invite. See [Cloud fonts](../files/05-cloud-fonts.md).
 - **Codepoint** — a Unicode scalar assigned to a glyph (`glyph.codepoints`).
 - **Compatibility** — whether a glyph’s main layers share the same outline structure (paths, components, anchors) so they can interpolate (`glyph.isCompatible`).
 - **Component** — a reference to another glyph’s outline, placed with an optional transformation.
@@ -16,7 +17,6 @@ Type design mixes geometric, typographic, and technical terms. These are the mea
 - **Core** — in a cloud font, the shared part: names, features, kerning, and the glyph list. See [Cloud fonts](../files/05-cloud-fonts.md).
 - **Dependencies** — in a cloud font, the record of how glyphs use each other (for example components). See [Cloud fonts](../files/05-cloud-fonts.md).
 - **Designspace** — axis coordinates as stored on layers and masters. Feature-variation min/max use this space, not slider userspace.
-- **Disk** — the Files context whose root is the **project folder**.
 - **Feature variation** — an alternate layer family that is active only inside an axis range. The editor list is labeled **Variations**.
 - **Filter script** — Python in the Settings Folder `Filters` directory that decides which glyphs Overview shows.
 - **Font Destination** — an installed plugin that can receive an exported binary font.
@@ -33,12 +33,11 @@ Type design mixes geometric, typographic, and technical terms. These are the mea
 - **LKG** — left kerning group: the group on a glyph’s left side. In LTR text-mode kerning it is the **Second** operand. In RTL it is the **First** operand.
 - **LSB** — left sidebearing: the distance from `x = 0` to the left edge of the outline (`layer.lsb`).
 - **Master** — a key design at a location in axis space.
-- **Memory** — in-browser Files storage for temporary work. Not a disk folder and not the Settings Folder.
+- **Launcher** — the window Counterpunch starts with. It starts new fonts, opens fonts, and lists recent and open ones. See [The launcher](../files/01-files-view-basics.md).
 - **Metrics key** — a sidebearing formula such as `=n+10` or `==|H` (`leftMetricsKey` / `rightMetricsKey`).
 - **Node / point** — an editable location on a contour. On-curve nodes sit on the path; off-curve nodes are handles.
 - **Path** — the object-model name for a **contour**.
 - **Production name** — the compiled glyph name, when it differs from the working `name`.
-- **Project folder** — the local folder granted to Files **Disk**. Font sources open and save here.
 - **RKG** — right kerning group: the group on a glyph’s right side. In LTR text-mode kerning it is the **First** operand. In RTL it is the **Second** operand.
 - **RSB** — right sidebearing: the distance from the right edge of the outline to the advance width (`layer.rsb`).
 - **Settings Folder** — the local folder for app files: `Scripts`, `Filters`, and `Plugins`. Chosen in Settings (`Cmd/Ctrl+,`).
