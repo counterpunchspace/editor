@@ -32,16 +32,42 @@ rustup toolchain install nightly --profile minimal --component rust-std --compon
 mkdir -p "$WASM_DIR"
 cd "$WASM_DIR"
 
-# Prefer a sibling babelfont-rs checkout (uncommitted join/keep-shape work)
-# over the git pin in Cargo.toml. CI has no sibling, so it keeps the pin.
-LOCAL_BABELFONT="$(cd "$SCRIPT_DIR/.." && pwd)/babelfont-rs/babelfont"
+# Prefer sibling checkouts of babelfont-rs, norad and glyphslib-rs (work in
+# progress) over the pins. CI has no siblings, so it keeps the pins.
+WORKSPACE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+LOCAL_BABELFONT="$WORKSPACE_DIR/babelfont-rs/babelfont"
+LOCAL_NORAD="$WORKSPACE_DIR/norad"
+LOCAL_GLYPHSLIB="$WORKSPACE_DIR/glyphslib-rs"
+LOCAL_PATCHES=""
 if [ -d "$LOCAL_BABELFONT" ]; then
     echo "✓ Using local babelfont-rs: $LOCAL_BABELFONT"
+    LOCAL_PATCHES+="[patch.\"https://github.com/yanone/babelfont-rs\"]
+babelfont = { path = \"$LOCAL_BABELFONT\" }
+"
+fi
+if [ -d "$LOCAL_NORAD" ]; then
+    echo "✓ Using local norad: $LOCAL_NORAD"
+    LOCAL_PATCHES+="[patch.\"https://github.com/yanone/norad\"]
+norad = { path = \"$LOCAL_NORAD\" }
+"
+fi
+if [ -d "$LOCAL_GLYPHSLIB/glyphslib" ]; then
+    echo "✓ Using local glyphslib-rs: $LOCAL_GLYPHSLIB"
+    LOCAL_PATCHES+="[patch.crates-io]
+glyphslib = { path = \"$LOCAL_GLYPHSLIB/glyphslib\" }
+openstep-plist = { path = \"$LOCAL_GLYPHSLIB/openstep-plist\" }
+"
+fi
+if [ -n "$LOCAL_PATCHES" ]; then
     mkdir -p "$WASM_DIR/.cargo"
-    cat > "$WASM_DIR/.cargo/config.toml" << EOF
-[patch."https://github.com/yanone/babelfont-rs"]
-babelfont = { path = "$LOCAL_BABELFONT" }
-EOF
+    printf '%s' "$LOCAL_PATCHES" > "$WASM_DIR/.cargo/config.toml"
+    # A patch whose version differs from Cargo.lock is silently ignored, so
+    # check that every local checkout is really in the build.
+    if cargo metadata --format-version 1 --manifest-path "$WASM_DIR/Cargo.toml" 2>&1 >/dev/null \
+        | grep "was not used in the crate graph"; then
+        echo "❌ A local checkout is not used; update Cargo.lock, e.g. cargo update -p babelfont"
+        exit 1
+    fi
 fi
 
 echo ""

@@ -36,7 +36,6 @@ import init, {
     reinterpolate_master_layers_yjs,
     clear_font_cache,
     open_font_file,
-    save_font_as_ufo_entries,
     get_glyphs_outlines,
     set_debug_font_cache_max_bytes,
     validate_feature_source_with_full_filter_pipeline,
@@ -2597,36 +2596,6 @@ self.onmessage = async (event) => {
                     type: 'filteredBooleanFingerprints',
                     error: e?.toString?.() || String(e)
                 });
-            }
-            return;
-        }
-
-        // Handle save font as UFO entries request
-        if (data.type === 'saveUfoEntries') {
-            const saveSpanId = timelineSpanStart('font.worker.saveUfoEntries');
-            const { id, babelfontJson } = data;
-
-            try {
-                if (!initialized) {
-                    await initializeWasm();
-                }
-
-                const entriesJson = save_font_as_ufo_entries(babelfontJson);
-
-                self.postMessage({
-                    id,
-                    type: 'saveUfoEntries',
-                    entriesJson
-                });
-            } catch (e: any) {
-                console.error('[Fontc Worker] saveUfoEntries error:', e);
-                self.postMessage({
-                    id,
-                    type: 'saveUfoEntries',
-                    error: e.toString()
-                });
-            } finally {
-                timelineSpanEnd(saveSpanId);
             }
             return;
         }

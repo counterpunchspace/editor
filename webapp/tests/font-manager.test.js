@@ -5,6 +5,7 @@ const Y = require('yjs');
 const fontManager = require('../js/font-manager').default;
 const { setStartupEditingCompileGateForTests } = require('../js/font-manager');
 const { PatchSyncEngine: ChangeBridge } = require('../js/patch-sync-engine');
+const { FolderSaveTracker } = require('../js/folder-source');
 const { fontCompilation } = require('../js/font-compilation');
 const { Font, withSuppressedModelRecording } = require('../js/babelfont-model');
 const {
@@ -5894,7 +5895,8 @@ describe('FontManager external source reload', () => {
             babelfontJson: JSON.stringify(originalData),
             babelfontData: originalData,
             path: '/fonts/external-change.glyphs',
-            sourcePlugin: { getId: () => 'disk' }
+            sourcePlugin: { getId: () => 'disk' },
+            folderSaveTracker: new FolderSaveTracker()
         };
         const bridge = new ChangeBridge('font-manager-external-reload');
         bridge.initFromJson(openedFont.babelfontData);
@@ -5930,7 +5932,10 @@ describe('FontManager external source reload', () => {
             fontManager.reloadCurrentFontFromSource({ preserveUiState: false })
         ).resolves.toBe(true);
 
-        expect(loadSourceSpy).toHaveBeenCalledWith(openedFont);
+        expect(loadSourceSpy).toHaveBeenCalledWith(
+            openedFont,
+            expect.any(Object)
+        );
         expect(emittedUpdates.length).toBeGreaterThanOrEqual(1);
         expect(workerCacheSpy).toHaveBeenCalledTimes(1);
         expect(sendMessageSpy).not.toHaveBeenCalledWith(
@@ -6040,7 +6045,8 @@ describe('FontManager external source reload', () => {
             sourcePlugin: {
                 getId: () => 'external-test',
                 getAdapter: () => sourceAdapter
-            }
+            },
+            folderSaveTracker: new FolderSaveTracker()
         };
         const bridge = new ChangeBridge('font-manager-node-reload');
         bridge.initFromJson(openedFont.babelfontData);

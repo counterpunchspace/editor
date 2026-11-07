@@ -11,7 +11,7 @@ Both need Chrome’s File System Access permission. The browser may ask again af
 
 This is the folder of fonts you are working on. In **Files**, choose the **Disk** context, click **Select Folder**, pick the folder, and allow read and write. The tree then shows that folder. Open a source from it; `Cmd/Ctrl+S` writes back there.
 
-You can change the project folder later from Files. Chrome can notice external edits in the granted folder and reload; other browsers do not.
+You can change the project folder later from Files. Chrome can notice external edits in the granted folder and reload; other browsers do not. In a `.ufo`, `.glyphspackage`, or a `.designspace`'s UFOs, an edit to one glyph's file updates just that glyph, and asks first only if you have unsaved changes to it.
 
 Folder-based sources (`.ufo`, `.designspace`, `.glyphspackage`) must be opened from this attached folder, not as a detached single file.
 

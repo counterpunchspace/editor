@@ -30,7 +30,9 @@ Counterpunch converts opened source files into the Babelfont model for editing.
 Direct source saving is deliberately limited to formats with a browser-safe
 serializer; unsupported source formats fail instead of receiving Babelfont JSON
 under their original extension.
-Saving to UFO/DS and .glyphspackage is in development.
+Folder sources (`.ufo`, `.glyphspackage`, `.designspace` with its UFOs) save
+file by file: editing one glyph writes that glyph's file, and an external
+change to one glyph file updates just that glyph.
 
 **Cloud** is a filesystem plugin, not a file format. Open/Save talk to per-shard
 rooms (`font-core`, `font-deps`, `glyph:<id>`). Hydrate is HTTP + live tail;
@@ -42,9 +44,9 @@ and [Cloud collaboration architecture](strategy/CLOUD_COLLABORATION_ARCHITECTURE
 | --- | --- | --- | --- |
 | `.babelfont` | Yes | Yes | Native JSON source format. |
 | `.glyphs` | Yes | Yes | Glyphs 3 source text, serialized by `babelfont-rs`/`glyphslib`. |
-| `.glyphspackage` | Yes | No | Directory-based Glyphs package import. |
-| `.ufo` | Yes | No | Directory-based UFO import. |
-| `.designspace` | Yes | No | Requires the Designspace file and referenced UFO entries. |
+| `.glyphspackage` | Yes | Yes | Glyphs 3 and 4 packages, saved file by file. The Glyphs 4 layout (`kerning.plist`, `note.md`, `features/*.fea`) follows the Glyphs file format specification. |
+| `.ufo` | Yes | Yes | Single-master, saved file by file with the UFO's own file names. `data/` and `images/` are left untouched; `include()`d feature files are kept until the features are edited, then the flattened code is written. |
+| `.designspace` | Yes | Yes | The document and the UFOs it references, saved file by file. Rules, axis mappings, STAT labels and each UFO's own info, lib, features and extra layers are kept; a source with a `layer` is saved into that layer. |
 | `.vfj` | Yes | No | FontLab source import. |
 | `.sfd` | Yes | No | FontForge source import. |
 | `.ttf` | No | Export only | Use binary-font export; it is not an editable source import format. |
@@ -81,7 +83,7 @@ Coverage: 🟢 Should work · 🟡 Partial · 🔴 Missing
 | Language Packs | 🟡 | Infrastructure and basic Arabic demo exists |
 | Documentation | 🟡 | Incomplete, bad screenshots |
 | Glyph overview and filters | 🟡 | Glyph categorization missing |
-| Source file I/O | 🟡 | UFO/DS and `.glyphspackage` writing is missing, Glyphs 4 is still missing |
+| Source file I/O | 🟢 | |
 | Plugin system | 🟡 | Most plugin types not yet implemented, no auto-update yet |
 | OpenType feature code generator | 🟡 | Infrastructure and basic demos exist |
 | Live online collaboration | 🟡 | Basic implementation exists |

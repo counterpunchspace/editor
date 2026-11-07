@@ -173,6 +173,27 @@ export function canonicalizeImportedFontData(
     };
 }
 
+/**
+ * Canonicalize glyphs re-read from their own source files, with the font's
+ * masters as context: stable ids, tagged layer masters and model defaults, as
+ * a whole import gives them. Metrics keys are not recomputed; as on a whole reload, the
+ * files on disk are taken as they are.
+ */
+export function canonicalizeImportedGlyphs(
+    glyphs: Babelfont.Glyph[],
+    masters: Babelfont.Master[]
+): Babelfont.Glyph[] {
+    const fontData = {
+        masters,
+        glyphs: JSON.parse(JSON.stringify(glyphs))
+    } as unknown as Babelfont.Font;
+    ensureStableIds(fontData as unknown as JsonRecord);
+    normalizeImportedLayerMasters(fontData);
+    // Building the model fills in the defaults a whole import gets too.
+    Font.fromData(fontData);
+    return fontData.glyphs;
+}
+
 /** Parse source JSON and return the canonical representation used by every import path. */
 export function canonicalizeImportedFontJson(
     sourceBabelfontJson: string

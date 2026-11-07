@@ -89,8 +89,7 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "babelfont"
-version = "0.2.4"
-source = "git+https://github.com/yanone/babelfont-rs?rev=ac98c2d99252c1bfdf5b7bd2b35c6138cc8a211e#ac98c2d99252c1bfdf5b7bd2b35c6138cc8a211e"
+version = "0.2.5"
 dependencies = [
  "chrono",
  "csv",
@@ -100,15 +99,17 @@ dependencies = [
  "fontdrasil",
  "fontir",
  "glyphslib",
+ "icu_properties",
  "indexmap 2.14.2",
  "itertools",
  "kurbo",
  "linesweeper",
  "log",
- "norad",
+ "norad 0.19.2",
  "num-traits",
  "ordered-float",
  "paste",
+ "plist",
  "regex",
  "roxmltree",
  "serde",
@@ -851,8 +852,6 @@ dependencies = [
 [[package]]
 name = "glyphslib"
 version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab3cfbe26803ecf73f3489e63235d71cdfa9c8e73430352f6c388e245656bc09"
 dependencies = [
  "itertools",
  "openstep-plist",
@@ -1213,15 +1212,32 @@ checksum = "e94e1e6445d314f972ff7395df2de295fe51b71821694f0b0e1e79c4f12c8577"
 [[package]]
 name = "norad"
 version = "0.18.4"
-source = "git+https://github.com/yanone/norad?rev=cdd7469a1f4d5459cf5c264079c04ac6149f23aa#cdd7469a1f4d5459cf5c264079c04ac6149f23aa"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d223261353c1d60c5e00c3b669c6936c47b2e9dc860b5121bc57b964389c47bb"
 dependencies = [
  "base64 0.22.1",
+ "close_already",
+ "indexmap 2.14.2",
+ "log",
+ "plist",
+ "quick-xml 0.38.4",
+ "serde",
+ "serde_derive",
+ "serde_repr",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "norad"
+version = "0.19.2"
+dependencies = [
+ "base64 0.23.1",
  "close_already",
  "indexmap 2.14.2",
  "kurbo",
  "log",
  "plist",
- "quick-xml 0.41.0",
+ "quick-xml 0.42.0",
  "serde",
  "serde_derive",
  "serde_repr",
@@ -1289,8 +1305,6 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 [[package]]
 name = "openstep-plist"
 version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e96b4b3fe906fb081df1be6c58811ed24836595a146fcf5ff73b528c383cad70"
 dependencies = [
  "itertools",
  "serde",
@@ -1451,12 +1465,21 @@ dependencies = [
 
 [[package]]
 name = "quick-xml"
+version = "0.38.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b66c2058c55a409d601666cffe35f04333cf1013010882cec174a7467cd4e21c"
+dependencies = [
+ "memchr",
+ "serde",
+]
+
+[[package]]
+name = "quick-xml"
 version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
 dependencies = [
  "memchr",
- "serde",
 ]
 
 [[package]]
@@ -1466,6 +1489,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41b1177fdf999d2321d3fb46ff47159d9c1fb9ad66a4879f8c50a0b504615e9b"
 dependencies = [
  "memchr",
+ "serde",
 ]
 
 [[package]]
@@ -1874,8 +1898,7 @@ dependencies = [
 
 [[package]]
 name = "sr-aef"
-version = "0.1.1"
-source = "git+https://github.com/yanone/babelfont-rs?rev=ac98c2d99252c1bfdf5b7bd2b35c6138cc8a211e#ac98c2d99252c1bfdf5b7bd2b35c6138cc8a211e"
+version = "0.1.2"
 dependencies = [
  "fea-rs-ast",
  "fontdrasil",
@@ -2157,7 +2180,7 @@ dependencies = [
  "indexmap 2.14.2",
  "kurbo",
  "log",
- "norad",
+ "norad 0.18.4",
  "ordered-float",
  "plist",
  "serde",

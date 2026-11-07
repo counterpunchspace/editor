@@ -157,6 +157,9 @@ export type LocalUpdateListener = (
     documentId?: string
 ) => void;
 
+/** Compile source stamped on changes that reload a font's own files. */
+export const EXTERNAL_SOURCE_RELOAD_SOURCE = 'external-source-reload';
+
 export type CommittedChangeOrigin = 'local' | 'remote';
 
 /** Several documents emitted by one commit, so UI can refresh once. */
@@ -3200,11 +3203,7 @@ export class PatchSyncEngine {
         expectedStateVector: Uint8Array
     ): ExternalSourceReloadResult {
         if (
-            !this._fontJson ||
-            this._suppressRecording ||
-            this._isSyncing ||
-            this._isApplyingRemote ||
-            this._txDepth > 0 ||
+            !this._canApplyExternalReload() ||
             !stateVectorsEqual(
                 expectedStateVector,
                 Y.encodeStateVector(this.yDoc)
@@ -3213,9 +3212,67 @@ export class PatchSyncEngine {
             return { status: 'stale', commit: null };
         }
 
-        const previousSnapshot = this._normalizeExternalSourceReloadSnapshot(
-            this._captureYDocFontJson()
+        return this._commitExternalReload(
+            this._captureYDocFontJson(),
+            fontSnapshot,
+            this._fontJson
         );
+    }
+
+    /**
+     * Commit glyphs re-read from their own files in a folder source, like
+     * applyExternalSourceReload for those glyphs alone: no whole-font capture
+     * or diff. Every glyph must already exist in the font; the caller reads
+     * the files before calling, so no state vector check is needed.
+     */
+    applyExternalGlyphReload(
+        glyphSnapshots: Array<Record<string, unknown>>
+    ): ExternalSourceReloadResult {
+        if (!this._canApplyExternalReload()) {
+            return { status: 'stale', commit: null };
+        }
+        const liveGlyphs = (this._fontJson?.glyphs || []) as Array<
+            Record<string, unknown>
+        >;
+        const previousGlyphs: Unsafe[] = [];
+        const liveGlyphsByName: Array<Record<string, unknown>> = [];
+        for (const glyph of glyphSnapshots) {
+            const name = String(glyph.name || '');
+            const previous = this._readNormalizedGlyphSnapshotFromYDoc(name);
+            const live = liveGlyphs.find(
+                (candidate) => candidate.name === name
+            );
+            if (!previous || !live) {
+                return { status: 'stale', commit: null };
+            }
+            previousGlyphs.push(previous);
+            liveGlyphsByName.push(live);
+        }
+        return this._commitExternalReload(
+            { glyphs: previousGlyphs },
+            { glyphs: glyphSnapshots },
+            { glyphs: liveGlyphsByName }
+        );
+    }
+
+    private _canApplyExternalReload(): boolean {
+        return (
+            !!this._fontJson &&
+            !this._suppressRecording &&
+            !this._isSyncing &&
+            !this._isApplyingRemote &&
+            this._txDepth === 0
+        );
+    }
+
+    /** Diff a reloaded snapshot against the live one and commit the difference. */
+    private _commitExternalReload(
+        liveYDocSnapshot: unknown,
+        fontSnapshot: unknown,
+        liveJsonSnapshot: unknown
+    ): ExternalSourceReloadResult {
+        const previousSnapshot =
+            this._normalizeExternalSourceReloadSnapshot(liveYDocSnapshot);
         const normalizedPreviousSnapshot = this._normalizeFontSnapshot(
             previousSnapshot,
             previousSnapshot
@@ -3231,7 +3288,7 @@ export class PatchSyncEngine {
             nextSnapshot
         );
         this._stampLiveShapeIdsOnReloadSnapshots(
-            this._fontJson,
+            liveJsonSnapshot,
             normalizedPreviousSnapshot,
             nextSnapshot
         );
@@ -3244,7 +3301,7 @@ export class PatchSyncEngine {
         this._omitLiveOnlyModelKeys(
             nextSnapshot,
             normalizedPreviousSnapshot,
-            this._fontJson
+            liveJsonSnapshot
         );
         if (this._isDeepEqual(normalizedPreviousSnapshot, nextSnapshot)) {
             return { status: 'noop', commit: null };
@@ -3278,7 +3335,7 @@ export class PatchSyncEngine {
                     path,
                     oldValue,
                     newValue,
-                    compileChangeSource: 'external-source-reload',
+                    compileChangeSource: EXTERNAL_SOURCE_RELOAD_SOURCE,
                     compileEditType: null,
                     applyMode:
                         isObjectValue && isGlyphRoot
@@ -3328,6 +3385,19 @@ export class PatchSyncEngine {
             ) {
                 throw new TypeError(
                     'Expected a normalized shape record for external reload.'
+                );
+            }
+            // Source converters leave out `smooth: false`; the live document
+            // spells it out, and an unchanged node must compare equal.
+            const shapeRecord = normalizedRecord as Record<string, unknown>;
+            if (isShapeEntry && Array.isArray(shapeRecord.nodes)) {
+                shapeRecord.nodes = shapeRecord.nodes.map((node: unknown) =>
+                    node &&
+                    typeof node === 'object' &&
+                    !Array.isArray(node) &&
+                    !('smooth' in node)
+                        ? { ...node, smooth: false }
+                        : node
                 );
             }
 

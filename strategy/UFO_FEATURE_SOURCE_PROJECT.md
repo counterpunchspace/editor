@@ -44,14 +44,18 @@ Norad now has the required low-level source I/O primitives:
   include files separately in `Font.features` and `Font.feature_files`.
 - `Font.features_expanded()` resolves includes only when explicitly requested.
 
-Counterpunch does not preserve that structure through Babelfont. Its UFO
-conversion currently expands features during import and stores only the
-flattened result in the Babelfont feature model. The browser source-entry path
-also converts every file to UTF-8 text, which is unsafe for arbitrary UFO
-`data/` and `images/` content.
+Counterpunch now saves standalone UFOs (see "Source File I/O" in
+[README.md](../README.md)), with an interim answer to the include problem:
+Babelfont keeps the authored `features.fea` and its include files beside the
+flattened features, with a fingerprint of the flattened code. While the
+features still produce that fingerprint, saving writes the authored files back
+unchanged; once they are edited, it writes the flattened code to
+`features.fea` and leaves the include files on disk unused. `data/` and
+`images/` are neither read nor written, so they survive byte for byte.
 
-The source File I/O matrix in [README.md](../README.md) must remain unchanged
-until the complete plan below is implemented and verified.
+Designspace projects save the same way, each UFO keeping its own feature
+files. What remains of this plan is editing the feature files themselves
+(Phase 1 below).
 
 ## Goals
 

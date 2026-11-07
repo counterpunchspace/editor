@@ -130,6 +130,18 @@ export function compile_glyphs(_glyphs_json: string): Uint8Array;
 export function compile_preview_cached_font_from_last_layout_closure(options: any): Uint8Array;
 
 /**
+ * [`ufo_glyph_files_for_paths`] for a designspace project: the glyphs that
+ * changed `.glif` files belong to, with each glyph's files in every UFO.
+ */
+export function designspace_glyph_files_for_paths(document: string, layout_entries_json: string, paths_json: string): string;
+
+/**
+ * The UFOs a designspace document's sources live in, as a JSON array of
+ * paths relative to the document.
+ */
+export function designspace_source_files(document: string): string;
+
+/**
  * Dump Rust-side layer state for one or more glyph/layer targets.
  *
  * This is a debug/introspection facility for comparing the Rust caches against
@@ -358,6 +370,30 @@ export function interpolate_glyph(glyph_name: string, location_json: string, ext
 export function list_debug_cached_font_children(font_hash: string, request_json: string): string;
 
 /**
+ * Loads designspace glyphs from their `.glif` files alone, across all
+ * masters. Only layers and codepoints are meaningful. Returns a JSON array of
+ * babelfont glyphs.
+ */
+export function load_designspace_glyphs(document: string, layout_entries_json: string, glifs_json: string, glyph_names_json: string): string;
+
+/**
+ * Loads `.glyphspackage` glyphs from their glyph files alone, with the font
+ * context of the package's `fontinfo.plist`.
+ *
+ * Returns `{ "glyphs": [babelfont glyph], "kernGroups": { name: [first, second] } }`,
+ * the kerning groups each glyph's file puts it in (`null` for none).
+ */
+export function load_glyphspackage_glyphs(fontinfo: string, glyph_files_json: string): string;
+
+/**
+ * Loads UFO glyphs from their `.glif` files alone, with layers assigned to
+ * the master `master_id`. Only layers and codepoints are meaningful; the
+ * rest of a UFO glyph lives in its `lib.plist`. Returns a JSON array of
+ * babelfont glyphs.
+ */
+export function load_ufo_glyphs(layout_entries_json: string, glifs_json: string, glyph_names_json: string, master_id: string): string;
+
+/**
  * Open a font file from various formats
  *
  * Supports .glyphs, .glyphspackage, .ufo, .designspace, .vfj, and .babelfont formats.
@@ -410,15 +446,21 @@ export function reset_ydoc_set(): void;
 export function save_font_as_glyphs(babelfont_json: string): string;
 
 /**
- * Serialize a babelfont JSON string to a UFO file-tree as JSON.
+ * Serialize a babelfont JSON string as the files of a folder source.
  *
- * Input: a babelfont JSON string (as produced by `open_font_file`).
- * Output: a JSON object `{ "relative/path": "file contents", ... }`
- * representing the UFO directory structure.
+ * `format` is `"ufo"`, `"glyphspackage"` or `"designspace"`; a designspace
+ * project's paths are relative to the document's folder, and its request
+ * names the `document`. `request_json` is
+ * `{ "glyphs": [names] | null, "fontLevel": bool, "layoutEntries": { path: text } }`:
+ * with `glyphs`, only those glyphs' files are written (and the font-level
+ * files with `fontLevel`), so that a change to one glyph saves one file.
  *
- * Only single-master fonts are supported (norad/UFO limitation).
+ * Returns `{ "files": { path: text }, "removed": [path] }` with paths relative
+ * to the source folder; `removed` lists files a partial save made obsolete.
+ * A partial UFO save that would change the UFO's glyph set or layers returns
+ * `{ "needsFullSave": reason }` instead.
  */
-export function save_font_as_ufo_entries(babelfont_json: string): string;
+export function save_font_source_entries(format: string, babelfont_json: string, request_json: string): string;
 
 /**
  * Seed the Rust Y.Doc from a full Yjs binary state (v1 encoding) without
@@ -453,6 +495,17 @@ export function set_debug_font_cache_max_bytes(max_bytes: number): void;
  */
 export function store_font(babelfont_json: string): void;
 
+/**
+ * The glyphs that changed `.glif` files of a UFO belong to, with every
+ * `.glif` file of each glyph across layers.
+ *
+ * `layout_entries_json` is the UFO's `layercontents.plist` and
+ * `contents.plist` files by path, `paths_json` the changed paths relative to
+ * the UFO. Returns `{ "glyphs": { name: [path] }, "unknown": [path] }`, where
+ * `unknown` lists paths that are not a known glyph's file.
+ */
+export function ufo_glyph_files_for_paths(layout_entries_json: string, paths_json: string): string;
+
 export function validate_feature_source_with_full_filter_pipeline(options: any): void;
 
 /**
@@ -478,6 +531,8 @@ export interface InitOutput {
     readonly compile_debug_cached_font_from_last_layout_closure: (a: any) => [number, number, number, number];
     readonly compile_glyphs: (a: number, b: number) => [number, number, number, number];
     readonly compile_preview_cached_font_from_last_layout_closure: (a: any) => [number, number, number, number];
+    readonly designspace_glyph_files_for_paths: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+    readonly designspace_source_files: (a: number, b: number) => [number, number, number, number];
     readonly dump_layer_state_json: (a: number, b: number) => [number, number, number, number];
     readonly dump_worker_cache_state_json: () => [number, number, number, number];
     readonly filtered_boolean_fingerprints: (a: number, b: number) => [number, number, number];
@@ -491,6 +546,9 @@ export interface InitOutput {
     readonly inspect_debug_cached_font: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly interpolate_glyph: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
     readonly list_debug_cached_font_children: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly load_designspace_glyphs: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly load_glyphspackage_glyphs: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly load_ufo_glyphs: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
     readonly open_font_file: (a: number, b: number, c: any) => [number, number, number, number];
     readonly prime_debug_layout_closure_cache: (a: number, b: number) => [number, number, number];
     readonly prime_layout_closure_cache: (a: number, b: number, c: number, d: number) => [number, number, number];
@@ -498,26 +556,27 @@ export interface InitOutput {
     readonly rebuild_caches_from_ydoc_set: () => [number, number];
     readonly reset_ydoc_set: () => void;
     readonly save_font_as_glyphs: (a: number, b: number) => [number, number, number, number];
-    readonly save_font_as_ufo_entries: (a: number, b: number) => [number, number, number, number];
+    readonly save_font_source_entries: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly seed_ydoc: (a: number, b: number) => [number, number];
     readonly seed_ydoc_document: (a: number, b: number, c: number, d: number) => [number, number];
     readonly set_compile_feature_overlay: (a: number, b: number) => void;
     readonly set_debug_font_cache_max_bytes: (a: number) => void;
     readonly store_font: (a: number, b: number) => [number, number];
+    readonly ufo_glyph_files_for_paths: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly validate_feature_source_with_full_filter_pipeline: (a: any) => [number, number];
     readonly version: () => [number, number];
-    readonly get_font_axes: (a: number, b: number) => [number, number, number, number];
-    readonly get_font_features: (a: number, b: number) => [number, number, number, number];
-    readonly get_font_features_with_tables: (a: number, b: number) => [number, number, number, number];
-    readonly get_glyph_name: (a: number, b: number, c: number) => [number, number, number, number];
-    readonly get_glyph_order: (a: number, b: number) => [number, number, number, number];
-    readonly get_stylistic_set_names: (a: number, b: number) => [number, number, number, number];
     readonly add_axis_with_master_copies_yjs: (a: number, b: number) => [number, number, number];
     readonly add_master_with_interpolated_layers_yjs: (a: number, b: number) => [number, number, number];
     readonly refine_layer_snapshots_yjs: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly reinterpolate_layer_yjs: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly reinterpolate_master_layers_yjs: (a: number, b: number) => [number, number, number];
     readonly remove_masters_yjs: (a: number, b: number) => [number, number, number];
+    readonly get_font_axes: (a: number, b: number) => [number, number, number, number];
+    readonly get_font_features: (a: number, b: number) => [number, number, number, number];
+    readonly get_font_features_with_tables: (a: number, b: number) => [number, number, number, number];
+    readonly get_glyph_name: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly get_glyph_order: (a: number, b: number) => [number, number, number, number];
+    readonly get_stylistic_set_names: (a: number, b: number) => [number, number, number, number];
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;

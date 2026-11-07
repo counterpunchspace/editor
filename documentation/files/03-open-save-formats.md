@@ -6,7 +6,7 @@ Counterpunch converts opened sources into the Babelfont model for editing. After
 
 **Open** (editable sources): `.babelfont`, `.glyphs`, `.glyphspackage`, `.ufo`, `.designspace` (the Designspace file plus its referenced UFOs), `.vfj`, and `.sfd`.
 
-**Save** back to the same format: `.babelfont` and `.glyphs` only. Saving UFO, Designspace, and `.glyphspackage` is still in development. `.vfj` and `.sfd` open for editing but do not save in those formats. Open a folder-based source (`.glyphspackage`, `.ufo`, `.designspace`) from Disk after granting the containing folder; do not treat it as a detached single file.
+**Save** back to the same format: `.babelfont`, `.glyphs`, `.glyphspackage`, single-master `.ufo`, and `.designspace` with its UFOs. Folder sources save file by file: changing one glyph rewrites only that glyph's files. `.vfj` and `.sfd` open for editing but do not save in those formats. Open a folder-based source (`.glyphspackage`, `.ufo`, `.designspace`) from Disk after granting the containing folder; do not treat it as a detached single file.
 
 `.ttf` is not an editable source import. Use binary-font export when you need an OpenType file.
 

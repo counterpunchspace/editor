@@ -358,27 +358,24 @@ initBabelfontWasm.open_font_file = jest.fn((filename, contents) => {
     }
 });
 
-// Real implementation using wasm module to save babelfont JSON as UFO entries
-initBabelfontWasm.save_font_as_ufo_entries = jest.fn((babelfontJson) => {
+/** Calls a string-in, string-out export of the real WASM module. */
+function callRealWasmExport(exportName, args) {
     const tempDir = fs.mkdtempSync(
-        path.join(os.tmpdir(), 'babelfont-jest-saveufo-')
+        path.join(os.tmpdir(), 'babelfont-jest-export-')
     );
-    const inputPath = path.join(tempDir, 'font.babelfont.json');
-    const outputPath = path.join(tempDir, 'ufo-entries.json');
-
+    const inputPath = path.join(tempDir, 'args.json');
+    const outputPath = path.join(tempDir, 'result.txt');
     try {
-        fs.writeFileSync(inputPath, babelfontJson, 'utf-8');
-        const converterScript = path.join(
-            __dirname,
-            '../helpers/save-babelfont-as-ufo-entries.mjs'
-        );
+        fs.writeFileSync(inputPath, JSON.stringify(args), 'utf-8');
         execFileSync(
             process.execPath,
-            [converterScript, inputPath, outputPath],
-            {
-                stdio: 'pipe',
-                maxBuffer: 50 * 1024 * 1024
-            }
+            [
+                path.join(__dirname, '../helpers/call-wasm-export.mjs'),
+                exportName,
+                inputPath,
+                outputPath
+            ],
+            { stdio: 'pipe', maxBuffer: 50 * 1024 * 1024 }
         );
         return fs.readFileSync(outputPath, 'utf-8');
     } finally {
@@ -386,7 +383,23 @@ initBabelfontWasm.save_font_as_ufo_entries = jest.fn((babelfontJson) => {
             fs.rmSync(tempDir, { recursive: true, force: true });
         } catch (e) {}
     }
-});
+}
+
+// Folder source (.ufo, .glyphspackage, .designspace) saving and single-glyph loading run
+// the real WASM module.
+for (const exportName of [
+    'save_font_source_entries',
+    'ufo_glyph_files_for_paths',
+    'load_ufo_glyphs',
+    'load_glyphspackage_glyphs',
+    'designspace_source_files',
+    'designspace_glyph_files_for_paths',
+    'load_designspace_glyphs'
+]) {
+    initBabelfontWasm[exportName] = jest.fn((...args) =>
+        callRealWasmExport(exportName, args)
+    );
+}
 
 initBabelfontWasm.boolean_op_paths = jest.fn(() => '[]');
 initBabelfontWasm.save_font_as_glyphs = jest.fn(() => 'glyphs = ();\n');

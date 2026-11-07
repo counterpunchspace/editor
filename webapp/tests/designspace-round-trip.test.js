@@ -5,7 +5,7 @@
 // This exercises the full norad FontSource/FontSink pipeline:
 //   1. Read .designspace + .ufo files from disk into an entry map
 //   2. Pass entry map to WASM open_font_file() → babelfont JSON
-//   3. Pass babelfont JSON to WASM save_font_as_ufo_entries() → UFO entry map
+//   3. Pass babelfont JSON to WASM save_font_source_entries() → UFO entry map
 //   4. Reload the UFO entry map through open_font_file() → babelfont JSON
 //   5. Verify key data matches (glyphs, names, features, masters)
 
@@ -13,7 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const {
     open_font_file,
-    save_font_as_ufo_entries
+    save_font_source_entries
 } = require('../wasm-dist/babelfont_fontc_web');
 
 const EXAMPLES_DIR = path.join(__dirname, '..', 'examples');
@@ -149,7 +149,7 @@ describe('Designspace round-trip test', () => {
         expect(originalFont.glyphs.length).toBeGreaterThan(0);
 
         // Step 2: Save the font as UFO entries
-        // Note: save_font_as_ufo_entries only supports single-master fonts
+        // Note: saving a UFO only supports single-master fonts
         // (norad/UFO limitation). The designspace font has 2 masters, so we
         // need to test with a single-master subset.
         // Create a single-master font for the round-trip test.
@@ -191,11 +191,15 @@ describe('Designspace round-trip test', () => {
         }
 
         const singleMasterJson = JSON.stringify(singleMasterFont);
-        const ufoEntriesJson = save_font_as_ufo_entries(singleMasterJson);
+        const ufoEntriesJson = save_font_source_entries(
+            'ufo',
+            singleMasterJson,
+            '{}'
+        );
 
         expect(ufoEntriesJson).toBeTruthy();
 
-        const ufoEntries = JSON.parse(ufoEntriesJson);
+        const ufoEntries = JSON.parse(ufoEntriesJson).files;
 
         // Verify the UFO entry map contains expected files
         expect(ufoEntries['metainfo.plist']).toBeDefined();
@@ -261,10 +265,14 @@ describe('Designspace round-trip test', () => {
         expect(font.masters.length).toBe(1);
 
         // Save as UFO entries
-        const ufoEntriesJson = save_font_as_ufo_entries(babelfontJson);
+        const ufoEntriesJson = save_font_source_entries(
+            'ufo',
+            babelfontJson,
+            '{}'
+        );
         expect(ufoEntriesJson).toBeTruthy();
 
-        const ufoEntries = JSON.parse(ufoEntriesJson);
+        const ufoEntries = JSON.parse(ufoEntriesJson).files;
         expect(ufoEntries['metainfo.plist']).toBeDefined();
         expect(ufoEntries['fontinfo.plist']).toBeDefined();
         expect(ufoEntries['glyphs/contents.plist']).toBeDefined();

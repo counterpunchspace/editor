@@ -12,6 +12,7 @@
  */
 
 import {
+    EXTERNAL_SOURCE_RELOAD_SOURCE,
     PatchSyncEngine,
     type CommittedChangeOrigin,
     type CommittedUiBatch
@@ -3000,6 +3001,22 @@ function initializeBridge(detail: {
             void fontManager.updateDirtyIndicator();
             window.saveButton?.updateButtonState?.();
         }
+    });
+
+    // Collect what each commit changed, so that saving a folder source
+    // (.ufo, .glyphspackage) rewrites only those files. Glyphs reloaded from
+    // their files already match them.
+    bridge.onCommittedChange((entries) => {
+        const tracker = window.fontManager?.currentFont?.folderSaveTracker;
+        if (!tracker) {
+            return;
+        }
+        tracker.recordEntries(
+            entries.filter(
+                (entry) =>
+                    entry.compileChangeSource !== EXTERNAL_SOURCE_RELOAD_SOURCE
+            )
+        );
     });
 
     let latestWorkerForward: Promise<void> = Promise.resolve();

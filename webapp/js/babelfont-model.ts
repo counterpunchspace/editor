@@ -16313,10 +16313,45 @@ export class Font extends ModelBase {
     /**
      * Serialize the font back to JSON string
      */
-    toJSONString(options?: { compileFacing?: boolean }): string {
+    /**
+     * With `glyphBodies`, only those glyphs keep their outlines, anchors,
+     * guides and layer libs; every other glyph keeps its layer metadata
+     * (ids, masters, widths) as a cheap stub. Serializers that write some
+     * glyphs' files still see the whole glyph set and every master's layers.
+     */
+    toJSONString(options?: {
+        compileFacing?: boolean;
+        glyphBodies?: ReadonlySet<string>;
+    }): string {
         // Worker/Yjs/resting state is always logical. Only explicit export or
         // compile-facing callers request the physical automatic =+/- view.
         const compileFacing = options?.compileFacing === true;
+        const glyphBodies = options?.glyphBodies;
+        const data = glyphBodies
+            ? {
+                  ...this._data,
+                  glyphs: (this._data.glyphs || []).map(
+                      (glyph: Babelfont.Glyph) =>
+                          glyphBodies.has(glyph.name)
+                              ? glyph
+                              : {
+                                    ...glyph,
+                                    layers: (glyph.layers || []).map(
+                                        (layer: Babelfont.Layer) => {
+                                            const {
+                                                shapes: _shapes,
+                                                anchors: _anchors,
+                                                guides: _guides,
+                                                format_specific: _lib,
+                                                ...metadata
+                                            } = layer;
+                                            return metadata;
+                                        }
+                                    )
+                                }
+                  )
+              }
+            : this._data;
         const stripNodeIds = (nodes: unknown[]): unknown[] =>
             nodes.map((node) => {
                 if (!node || typeof node !== 'object') {
@@ -16341,7 +16376,7 @@ export class Font extends ModelBase {
         }
 
         return JSON.stringify(
-            this._data,
+            data,
             (key, value) => {
                 // Substitute offset-applied layer data for automatic layers with sidebearing keys
                 if (

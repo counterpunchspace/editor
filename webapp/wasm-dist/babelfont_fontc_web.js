@@ -351,6 +351,66 @@ export function compile_preview_cached_font_from_last_layout_closure(options) {
 }
 
 /**
+ * [`ufo_glyph_files_for_paths`] for a designspace project: the glyphs that
+ * changed `.glif` files belong to, with each glyph's files in every UFO.
+ * @param {string} document
+ * @param {string} layout_entries_json
+ * @param {string} paths_json
+ * @returns {string}
+ */
+export function designspace_glyph_files_for_paths(document, layout_entries_json, paths_json) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const ptr0 = passStringToWasm0(document, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(layout_entries_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(paths_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.designspace_glyph_files_for_paths(ptr0, len0, ptr1, len1, ptr2, len2);
+        var ptr4 = ret[0];
+        var len4 = ret[1];
+        if (ret[3]) {
+            ptr4 = 0; len4 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+    }
+}
+
+/**
+ * The UFOs a designspace document's sources live in, as a JSON array of
+ * paths relative to the document.
+ * @param {string} document
+ * @returns {string}
+ */
+export function designspace_source_files(document) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(document, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.designspace_source_files(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Dump Rust-side layer state for one or more glyph/layer targets.
  *
  * This is a debug/introspection facility for comparing the Rust caches against
@@ -932,6 +992,114 @@ export function list_debug_cached_font_children(font_hash, request_json) {
 }
 
 /**
+ * Loads designspace glyphs from their `.glif` files alone, across all
+ * masters. Only layers and codepoints are meaningful. Returns a JSON array of
+ * babelfont glyphs.
+ * @param {string} document
+ * @param {string} layout_entries_json
+ * @param {string} glifs_json
+ * @param {string} glyph_names_json
+ * @returns {string}
+ */
+export function load_designspace_glyphs(document, layout_entries_json, glifs_json, glyph_names_json) {
+    let deferred6_0;
+    let deferred6_1;
+    try {
+        const ptr0 = passStringToWasm0(document, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(layout_entries_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(glifs_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passStringToWasm0(glyph_names_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len3 = WASM_VECTOR_LEN;
+        const ret = wasm.load_designspace_glyphs(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        var ptr5 = ret[0];
+        var len5 = ret[1];
+        if (ret[3]) {
+            ptr5 = 0; len5 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred6_0 = ptr5;
+        deferred6_1 = len5;
+        return getStringFromWasm0(ptr5, len5);
+    } finally {
+        wasm.__wbindgen_free(deferred6_0, deferred6_1, 1);
+    }
+}
+
+/**
+ * Loads `.glyphspackage` glyphs from their glyph files alone, with the font
+ * context of the package's `fontinfo.plist`.
+ *
+ * Returns `{ "glyphs": [babelfont glyph], "kernGroups": { name: [first, second] } }`,
+ * the kerning groups each glyph's file puts it in (`null` for none).
+ * @param {string} fontinfo
+ * @param {string} glyph_files_json
+ * @returns {string}
+ */
+export function load_glyphspackage_glyphs(fontinfo, glyph_files_json) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(fontinfo, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(glyph_files_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.load_glyphspackage_glyphs(ptr0, len0, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * Loads UFO glyphs from their `.glif` files alone, with layers assigned to
+ * the master `master_id`. Only layers and codepoints are meaningful; the
+ * rest of a UFO glyph lives in its `lib.plist`. Returns a JSON array of
+ * babelfont glyphs.
+ * @param {string} layout_entries_json
+ * @param {string} glifs_json
+ * @param {string} glyph_names_json
+ * @param {string} master_id
+ * @returns {string}
+ */
+export function load_ufo_glyphs(layout_entries_json, glifs_json, glyph_names_json, master_id) {
+    let deferred6_0;
+    let deferred6_1;
+    try {
+        const ptr0 = passStringToWasm0(layout_entries_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(glifs_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(glyph_names_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passStringToWasm0(master_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len3 = WASM_VECTOR_LEN;
+        const ret = wasm.load_ufo_glyphs(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        var ptr5 = ret[0];
+        var len5 = ret[1];
+        if (ret[3]) {
+            ptr5 = 0; len5 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred6_0 = ptr5;
+        deferred6_1 = len5;
+        return getStringFromWasm0(ptr5, len5);
+    } finally {
+        wasm.__wbindgen_free(deferred6_0, deferred6_1, 1);
+    }
+}
+
+/**
  * Open a font file from various formats
  *
  * Supports .glyphs, .glyphspackage, .ufo, .designspace, .vfj, and .babelfont formats.
@@ -1124,34 +1292,46 @@ export function save_font_as_glyphs(babelfont_json) {
 }
 
 /**
- * Serialize a babelfont JSON string to a UFO file-tree as JSON.
+ * Serialize a babelfont JSON string as the files of a folder source.
  *
- * Input: a babelfont JSON string (as produced by `open_font_file`).
- * Output: a JSON object `{ "relative/path": "file contents", ... }`
- * representing the UFO directory structure.
+ * `format` is `"ufo"`, `"glyphspackage"` or `"designspace"`; a designspace
+ * project's paths are relative to the document's folder, and its request
+ * names the `document`. `request_json` is
+ * `{ "glyphs": [names] | null, "fontLevel": bool, "layoutEntries": { path: text } }`:
+ * with `glyphs`, only those glyphs' files are written (and the font-level
+ * files with `fontLevel`), so that a change to one glyph saves one file.
  *
- * Only single-master fonts are supported (norad/UFO limitation).
+ * Returns `{ "files": { path: text }, "removed": [path] }` with paths relative
+ * to the source folder; `removed` lists files a partial save made obsolete.
+ * A partial UFO save that would change the UFO's glyph set or layers returns
+ * `{ "needsFullSave": reason }` instead.
+ * @param {string} format
  * @param {string} babelfont_json
+ * @param {string} request_json
  * @returns {string}
  */
-export function save_font_as_ufo_entries(babelfont_json) {
-    let deferred3_0;
-    let deferred3_1;
+export function save_font_source_entries(format, babelfont_json, request_json) {
+    let deferred5_0;
+    let deferred5_1;
     try {
-        const ptr0 = passStringToWasm0(babelfont_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const ptr0 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.save_font_as_ufo_entries(ptr0, len0);
-        var ptr2 = ret[0];
-        var len2 = ret[1];
+        const ptr1 = passStringToWasm0(babelfont_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(request_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.save_font_source_entries(ptr0, len0, ptr1, len1, ptr2, len2);
+        var ptr4 = ret[0];
+        var len4 = ret[1];
         if (ret[3]) {
-            ptr2 = 0; len2 = 0;
+            ptr4 = 0; len4 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
-        deferred3_0 = ptr2;
-        deferred3_1 = len2;
-        return getStringFromWasm0(ptr2, len2);
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
     } finally {
-        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
     }
 }
 
@@ -1224,6 +1404,41 @@ export function store_font(babelfont_json) {
     const ret = wasm.store_font(ptr0, len0);
     if (ret[1]) {
         throw takeFromExternrefTable0(ret[0]);
+    }
+}
+
+/**
+ * The glyphs that changed `.glif` files of a UFO belong to, with every
+ * `.glif` file of each glyph across layers.
+ *
+ * `layout_entries_json` is the UFO's `layercontents.plist` and
+ * `contents.plist` files by path, `paths_json` the changed paths relative to
+ * the UFO. Returns `{ "glyphs": { name: [path] }, "unknown": [path] }`, where
+ * `unknown` lists paths that are not a known glyph's file.
+ * @param {string} layout_entries_json
+ * @param {string} paths_json
+ * @returns {string}
+ */
+export function ufo_glyph_files_for_paths(layout_entries_json, paths_json) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(layout_entries_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(paths_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.ufo_glyph_files_for_paths(ptr0, len0, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
     }
 }
 

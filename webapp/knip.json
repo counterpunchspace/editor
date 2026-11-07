@@ -8,7 +8,7 @@
         "tests/helpers/convert-entries-to-babelfont.mjs",
         "tests/helpers/interpolate-glyph.mjs",
         "tests/helpers/compile-glyphs-stylistic-set-names.mjs",
-        "tests/helpers/save-babelfont-as-ufo-entries.mjs",
+        "tests/helpers/call-wasm-export.mjs",
         "tests/helpers/roundtrip-boolean-glyphs.mjs",
         "tests/helpers/compile-worker-seed.mjs",
         "tests/fustat-binary-font-compile.mjs"

@@ -6698,23 +6698,274 @@ pub fn save_font_as_glyphs(babelfont_json: &str) -> Result<String, JsValue> {
         .map_err(|e| JsValue::from_str(&format!("Failed to serialize Glyphs file: {}", e)))
 }
 
-/// Serialize a babelfont JSON string to a UFO file-tree as JSON.
+/// What `save_font_source_entries` writes.
+#[derive(serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct SourceSaveRequest {
+    /// Only these glyphs' files (plus font-level files with `font_level`);
+    /// `None` writes the whole source.
+    #[serde(default)]
+    glyphs: Option<Vec<String>>,
+    #[serde(default)]
+    font_level: bool,
+    /// UFO and designspace: the existing `layercontents.plist` and
+    /// `contents.plist` files, whose directory and file names the save keeps.
+    #[serde(default)]
+    layout_entries: HashMap<String, String>,
+    /// Designspace only: the document's file name in the project folder.
+    #[serde(default)]
+    document: String,
+}
+
+fn js_error(context: &str) -> impl Fn(babelfont::BabelfontError) -> JsValue + '_ {
+    move |e| JsValue::from_str(&format!("{context}: {e}"))
+}
+
+/// Serialize a babelfont JSON string as the files of a folder source.
 ///
-/// Input: a babelfont JSON string (as produced by `open_font_file`).
-/// Output: a JSON object `{ "relative/path": "file contents", ... }`
-/// representing the UFO directory structure.
+/// `format` is `"ufo"`, `"glyphspackage"` or `"designspace"`; a designspace
+/// project's paths are relative to the document's folder, and its request
+/// names the `document`. `request_json` is
+/// `{ "glyphs": [names] | null, "fontLevel": bool, "layoutEntries": { path: text } }`:
+/// with `glyphs`, only those glyphs' files are written (and the font-level
+/// files with `fontLevel`), so that a change to one glyph saves one file.
 ///
-/// Only single-master fonts are supported (norad/UFO limitation).
+/// Returns `{ "files": { path: text }, "removed": [path] }` with paths relative
+/// to the source folder; `removed` lists files a partial save made obsolete.
+/// A partial UFO save that would change the UFO's glyph set or layers returns
+/// `{ "needsFullSave": reason }` instead.
 #[wasm_bindgen]
-pub fn save_font_as_ufo_entries(babelfont_json: &str) -> Result<String, JsValue> {
+pub fn save_font_source_entries(
+    format: &str,
+    babelfont_json: &str,
+    request_json: &str,
+) -> Result<String, JsValue> {
     let font: babelfont::Font = serde_json::from_str(babelfont_json)
         .map_err(|e| JsValue::from_str(&format!("Failed to parse babelfont JSON: {}", e)))?;
+    let request: SourceSaveRequest = serde_json::from_str(request_json)
+        .map_err(|e| JsValue::from_str(&format!("Invalid save request: {}", e)))?;
+    let result = match format {
+        "ufo" => {
+            let layout = babelfont::convertors::ufo::UfoLayout::from_entries(&request.layout_entries)
+                .map_err(js_error("Failed to read UFO layout"))?;
+            let save = babelfont::convertors::ufo::save_entries(
+                &font,
+                babelfont::convertors::ufo::UfoSaveRequest {
+                    layout: Some(&layout),
+                    glyphs: request.glyphs.as_deref(),
+                    font_level: request.font_level,
+                },
+            )
+            .map_err(js_error("Failed to save UFO"))?;
+            match save {
+                babelfont::convertors::ufo::UfoSave::Entries(entries) => {
+                    serde_json::to_value(entries)
+                }
+                babelfont::convertors::ufo::UfoSave::NeedsFullSave(reason) => {
+                    Ok(serde_json::json!({ "needsFullSave": reason }))
+                }
+            }
+        }
+        "designspace" => {
+            let layouts = babelfont::convertors::designspace::layouts_for_font(
+                &font,
+                &request.layout_entries,
+            )
+            .map_err(js_error("Failed to read UFO layouts"))?;
+            let save = babelfont::convertors::designspace::save_entries(
+                &font,
+                babelfont::convertors::designspace::DesignspaceSaveRequest {
+                    document: &request.document,
+                    layouts: &layouts,
+                    glyphs: request.glyphs.as_deref(),
+                    font_level: request.font_level,
+                },
+            )
+            .map_err(js_error("Failed to save designspace"))?;
+            match save {
+                babelfont::convertors::ufo::UfoSave::Entries(entries) => {
+                    serde_json::to_value(entries)
+                }
+                babelfont::convertors::ufo::UfoSave::NeedsFullSave(reason) => {
+                    Ok(serde_json::json!({ "needsFullSave": reason }))
+                }
+            }
+        }
+        "glyphspackage" => serde_json::to_value(
+            babelfont::convertors::glyphs3::save_package_entries(
+                &font,
+                babelfont::convertors::glyphs3::PackageSaveRequest {
+                    glyphs: request.glyphs.as_deref(),
+                    font_level: request.font_level,
+                },
+            )
+            .map_err(js_error("Failed to save .glyphspackage"))?,
+        ),
+        other => {
+            return Err(JsValue::from_str(&format!(
+                "Unsupported folder source format: {other}"
+            )))
+        }
+    };
+    result
+        .map(|value| value.to_string())
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize entries: {}", e)))
+}
 
-    let entries = babelfont::convertors::ufo::save_entries(&font)
-        .map_err(|e| JsValue::from_str(&format!("Failed to save UFO: {:?}", e)))?;
+/// The glyphs that changed `.glif` files of a UFO belong to, with every
+/// `.glif` file of each glyph across layers.
+///
+/// `layout_entries_json` is the UFO's `layercontents.plist` and
+/// `contents.plist` files by path, `paths_json` the changed paths relative to
+/// the UFO. Returns `{ "glyphs": { name: [path] }, "unknown": [path] }`, where
+/// `unknown` lists paths that are not a known glyph's file.
+#[wasm_bindgen]
+pub fn ufo_glyph_files_for_paths(
+    layout_entries_json: &str,
+    paths_json: &str,
+) -> Result<String, JsValue> {
+    let layout = parse_ufo_layout(layout_entries_json)?;
+    let paths: Vec<String> = serde_json::from_str(paths_json)
+        .map_err(|e| JsValue::from_str(&format!("Invalid paths: {}", e)))?;
+    let mut glyphs = serde_json::Map::new();
+    let mut unknown = vec![];
+    for path in paths {
+        match layout.glyph_at(&path) {
+            Some(name) => {
+                glyphs
+                    .entry(name.to_string())
+                    .or_insert_with(|| serde_json::json!(layout.glyph_paths(name)));
+            }
+            None => unknown.push(path),
+        }
+    }
+    Ok(serde_json::json!({ "glyphs": glyphs, "unknown": unknown }).to_string())
+}
 
-    serde_json::to_string(&entries)
-        .map_err(|e| JsValue::from_str(&format!("Failed to serialize UFO entries: {}", e)))
+fn parse_ufo_layout(
+    layout_entries_json: &str,
+) -> Result<babelfont::convertors::ufo::UfoLayout, JsValue> {
+    let entries: HashMap<String, String> = serde_json::from_str(layout_entries_json)
+        .map_err(|e| JsValue::from_str(&format!("Invalid layout entries: {}", e)))?;
+    babelfont::convertors::ufo::UfoLayout::from_entries(&entries)
+        .map_err(js_error("Failed to read UFO layout"))
+}
+
+/// Loads UFO glyphs from their `.glif` files alone, with layers assigned to
+/// the master `master_id`. Only layers and codepoints are meaningful; the
+/// rest of a UFO glyph lives in its `lib.plist`. Returns a JSON array of
+/// babelfont glyphs.
+#[wasm_bindgen]
+pub fn load_ufo_glyphs(
+    layout_entries_json: &str,
+    glifs_json: &str,
+    glyph_names_json: &str,
+    master_id: &str,
+) -> Result<String, JsValue> {
+    let layout = parse_ufo_layout(layout_entries_json)?;
+    let glifs: HashMap<String, String> = serde_json::from_str(glifs_json)
+        .map_err(|e| JsValue::from_str(&format!("Invalid glif files: {}", e)))?;
+    let names: Vec<String> = serde_json::from_str(glyph_names_json)
+        .map_err(|e| JsValue::from_str(&format!("Invalid glyph names: {}", e)))?;
+    let glyphs =
+        babelfont::convertors::ufo::load_glyphs_from_glifs(&layout, &glifs, &names, master_id)
+            .map_err(js_error("Failed to load UFO glyphs"))?;
+    serde_json::to_string(&glyphs)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize glyphs: {}", e)))
+}
+
+/// The UFOs a designspace document's sources live in, as a JSON array of
+/// paths relative to the document.
+#[wasm_bindgen]
+pub fn designspace_source_files(document: &str) -> Result<String, JsValue> {
+    let files = babelfont::convertors::designspace::source_files(document)
+        .map_err(js_error("Failed to read designspace"))?;
+    serde_json::to_string(&files)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize files: {}", e)))
+}
+
+fn parse_designspace_layouts(
+    document: &str,
+    layout_entries_json: &str,
+) -> Result<HashMap<String, babelfont::convertors::ufo::UfoLayout>, JsValue> {
+    let entries: HashMap<String, String> = serde_json::from_str(layout_entries_json)
+        .map_err(|e| JsValue::from_str(&format!("Invalid layout entries: {}", e)))?;
+    babelfont::convertors::designspace::layouts_from_entries(document, &entries)
+        .map_err(js_error("Failed to read UFO layouts"))
+}
+
+/// [`ufo_glyph_files_for_paths`] for a designspace project: the glyphs that
+/// changed `.glif` files belong to, with each glyph's files in every UFO.
+#[wasm_bindgen]
+pub fn designspace_glyph_files_for_paths(
+    document: &str,
+    layout_entries_json: &str,
+    paths_json: &str,
+) -> Result<String, JsValue> {
+    let layouts = parse_designspace_layouts(document, layout_entries_json)?;
+    let paths: Vec<String> = serde_json::from_str(paths_json)
+        .map_err(|e| JsValue::from_str(&format!("Invalid paths: {}", e)))?;
+    let (glyphs, unknown) =
+        babelfont::convertors::designspace::glyph_files_for_paths(document, &layouts, &paths)
+            .map_err(js_error("Failed to locate glyph files"))?;
+    Ok(serde_json::json!({ "glyphs": glyphs, "unknown": unknown }).to_string())
+}
+
+/// Loads designspace glyphs from their `.glif` files alone, across all
+/// masters. Only layers and codepoints are meaningful. Returns a JSON array of
+/// babelfont glyphs.
+#[wasm_bindgen]
+pub fn load_designspace_glyphs(
+    document: &str,
+    layout_entries_json: &str,
+    glifs_json: &str,
+    glyph_names_json: &str,
+) -> Result<String, JsValue> {
+    let layouts = parse_designspace_layouts(document, layout_entries_json)?;
+    let glifs: HashMap<String, String> = serde_json::from_str(glifs_json)
+        .map_err(|e| JsValue::from_str(&format!("Invalid glif files: {}", e)))?;
+    let names: Vec<String> = serde_json::from_str(glyph_names_json)
+        .map_err(|e| JsValue::from_str(&format!("Invalid glyph names: {}", e)))?;
+    let glyphs = babelfont::convertors::designspace::load_glyphs_from_glifs(
+        document, &layouts, &glifs, &names,
+    )
+    .map_err(js_error("Failed to load designspace glyphs"))?;
+    serde_json::to_string(&glyphs)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize glyphs: {}", e)))
+}
+
+/// Loads `.glyphspackage` glyphs from their glyph files alone, with the font
+/// context of the package's `fontinfo.plist`.
+///
+/// Returns `{ "glyphs": [babelfont glyph], "kernGroups": { name: [first, second] } }`,
+/// the kerning groups each glyph's file puts it in (`null` for none).
+#[wasm_bindgen]
+pub fn load_glyphspackage_glyphs(fontinfo: &str, glyph_files_json: &str) -> Result<String, JsValue> {
+    let files: HashMap<String, String> = serde_json::from_str(glyph_files_json)
+        .map_err(|e| JsValue::from_str(&format!("Invalid glyph files: {}", e)))?;
+    let font = babelfont::convertors::glyphs3::load_package_glyphs(fontinfo, &files)
+        .map_err(js_error("Failed to load .glyphspackage glyphs"))?;
+    fn group_of<'a>(
+        mut groups: impl Iterator<Item = (&'a SmolStr, &'a Vec<SmolStr>)>,
+        name: &str,
+    ) -> Option<String> {
+        groups
+            .find(|(_, members)| members.iter().any(|m| m == name))
+            .map(|(group, _)| group.to_string())
+    }
+    let mut kern_groups = serde_json::Map::new();
+    for glyph in font.glyphs.iter() {
+        kern_groups.insert(
+            glyph.name.to_string(),
+            serde_json::json!([
+                group_of(font.first_kern_groups.iter(), &glyph.name),
+                group_of(font.second_kern_groups.iter(), &glyph.name)
+            ]),
+        );
+    }
+    let glyphs = serde_json::to_value(&font.glyphs)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize glyphs: {}", e)))?;
+    Ok(serde_json::json!({ "glyphs": glyphs, "kernGroups": kern_groups }).to_string())
 }
 
 #[cfg(test)]

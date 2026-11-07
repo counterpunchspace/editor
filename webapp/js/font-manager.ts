@@ -30,7 +30,23 @@ import {
     withSuppressedModelRecording,
     type AxisMasterCopyPlan
 } from './babelfont-model';
-import { canonicalizeImportedFontJson } from './font-import-canonicalization';
+import {
+    canonicalizeImportedFontJson,
+    canonicalizeImportedGlyphs
+} from './font-import-canonicalization';
+import {
+    designspaceUfoDirs,
+    FolderSaveTracker,
+    FolderSourceState,
+    folderSourceFormatForPath,
+    folderSourceRoot,
+    hashBytes,
+    isFolderSourceFile,
+    isGlyphFile,
+    joinSourcePath,
+    readFolderSource,
+    type FolderSourceFormat
+} from './folder-source';
 import { compilationPlan, type CompileEditStamp } from './edit-intent';
 import { jsonToYDoc, fromYType, getYPath } from './change-bridge-ydoc';
 import {
@@ -42,7 +58,10 @@ import {
 import { sidebarErrorDisplay } from './sidebar-error-display';
 import type { FilesystemPlugin } from './filesystem-plugins';
 import { Logger } from './logger';
-import { showUnsavedChangesDialog } from './ui/confirm-dialog';
+import {
+    showProceedDialog,
+    showUnsavedChangesDialog
+} from './ui/confirm-dialog';
 import {
     timelineMark,
     timelineSpanEnd,
@@ -76,15 +95,59 @@ import {
 import { ensureWasmInitialized } from './wasm-init';
 import {
     cancelManagedFileInternalWrite,
-    markManagedFileInternalWrite
+    markManagedFileInternalWrite,
+    normalizeManagedPath
 } from './managed-file-events';
 import tippy, { Instance as TippyInstance } from 'tippy.js';
 import 'tippy.js/dist/tippy.css';
 import { getTheme } from './tippy-utils';
 
-const { save_font_as_glyphs } = babelfontWasm as object as {
+const {
+    save_font_as_glyphs,
+    save_font_source_entries,
+    ufo_glyph_files_for_paths,
+    load_ufo_glyphs,
+    load_glyphspackage_glyphs,
+    designspace_glyph_files_for_paths,
+    load_designspace_glyphs
+} = babelfontWasm as object as {
     save_font_as_glyphs: (babelfontJson: string) => string;
+    save_font_source_entries: (
+        format: string,
+        babelfontJson: string,
+        requestJson: string
+    ) => string;
+    ufo_glyph_files_for_paths: (
+        layoutEntriesJson: string,
+        pathsJson: string
+    ) => string;
+    load_ufo_glyphs: (
+        layoutEntriesJson: string,
+        glifsJson: string,
+        glyphNamesJson: string,
+        masterId: string
+    ) => string;
+    load_glyphspackage_glyphs: (
+        fontinfo: string,
+        glyphFilesJson: string
+    ) => string;
+    designspace_glyph_files_for_paths: (
+        document: string,
+        layoutEntriesJson: string,
+        pathsJson: string
+    ) => string;
+    load_designspace_glyphs: (
+        document: string,
+        layoutEntriesJson: string,
+        glifsJson: string,
+        glyphNamesJson: string
+    ) => string;
 };
+
+/** Files written for a folder source, by path relative to its folder. */
+type FolderSourceEntries = { files: Record<string, string>; removed: string[] };
+
+const FOLDER_WRITE_CONCURRENCY = 8;
 
 const console = new Logger('FontManager');
 
@@ -121,8 +184,71 @@ export async function serializeFontForSourceSave(
     }
 
     throw new Error(
-        `Cannot save ${path} in its original format: source saving currently supports .babelfont and .glyphs files.`
+        `Cannot save ${path} in its original format: source saving supports .babelfont, .glyphs, .glyphspackage, .ufo and .designspace sources.`
     );
+}
+
+/**
+ * Serialize a font as the files of a folder source: with `glyphs`, only those
+ * glyphs' files (plus font-level files with `fontLevel`). Returns null when a
+ * partial save cannot express the change and the whole source must be saved.
+ */
+export async function serializeFolderSourceEntries(
+    format: FolderSourceFormat,
+    babelfontJson: string,
+    request: {
+        glyphs: string[] | null;
+        fontLevel: boolean;
+        layoutEntries: Record<string, string>;
+        /** Designspace: the document's file name. */
+        document?: string;
+    }
+): Promise<FolderSourceEntries | null> {
+    await ensureWasmInitialized();
+    const input =
+        format === 'glyphspackage'
+            ? JSON.stringify(
+                  stampPathBooleanFlagsForGlyphsSave(JSON.parse(babelfontJson))
+              )
+            : babelfontJson;
+    const result = JSON.parse(
+        save_font_source_entries(format, input, JSON.stringify(request))
+    ) as FolderSourceEntries | { needsFullSave: string };
+    if ('needsFullSave' in result) {
+        console.log(`Saving the whole source: ${result.needsFullSave}`);
+        return null;
+    }
+    return result;
+}
+
+/** Runs `task` over `items`, `concurrency` at a time. */
+async function forEachConcurrently<T>(
+    items: T[],
+    concurrency: number,
+    task: (item: T) => Promise<void>
+): Promise<void> {
+    let next = 0;
+    const worker = async (): Promise<void> => {
+        while (next < items.length) {
+            await task(items[next++]);
+        }
+    };
+    await Promise.all(Array.from({ length: concurrency }, worker));
+}
+
+/** The file's bytes, or null when it no longer exists or is a directory. */
+async function readSourceFileOrNull(
+    sourcePlugin: FilesystemPlugin,
+    path: string
+): Promise<Uint8Array | null> {
+    try {
+        const content = await sourcePlugin.getAdapter().readFile(path);
+        return typeof content === 'string'
+            ? new TextEncoder().encode(content)
+            : content;
+    } catch {
+        return null;
+    }
 }
 
 function stampPathBooleanFlagsForGlyphsSave(data: unknown): unknown {
@@ -402,6 +528,22 @@ function normalizeEditingCompileContext(
     };
 }
 
+/** What a font's source held when read; see OpenedFont.folderSource. */
+export type SourceSnapshot = {
+    folderSource?: FolderSourceState;
+    sourceFileHash?: string;
+};
+
+/** Remember what `font`'s source held when last read. */
+function applySourceSnapshot(font: OpenedFont, snapshot: SourceSnapshot): void {
+    if (snapshot.folderSource) {
+        font.folderSource = snapshot.folderSource;
+    }
+    if (snapshot.sourceFileHash) {
+        font.sourceFileHash = snapshot.sourceFileHash;
+    }
+}
+
 class OpenedFont {
     babelfontJson: string;
     babelfontData: any;
@@ -415,6 +557,12 @@ class OpenedFont {
     directoryHandle?: FileSystemDirectoryHandle;
     changeVersion: number; // Counter incremented on every change to track data freshness
     compileRequestVersion: number; // Counter incremented on every editing-font compile request
+    /** A folder source's (.ufo, .glyphspackage) files as last read or written. */
+    folderSource?: FolderSourceState;
+    /** What changed since the last save, so that saving writes only that. */
+    folderSaveTracker: FolderSaveTracker;
+    /** A single-file source's content hash as last read or written. */
+    sourceFileHash?: string;
 
     constructor(
         babelfontJson: string,
@@ -443,6 +591,7 @@ class OpenedFont {
         this.hasUnsavedChanges = false;
         this.changeVersion = 0;
         this.compileRequestVersion = 0;
+        this.folderSaveTracker = new FolderSaveTracker();
     }
 
     /** Install a font object already built from a linked-window snapshot. */
@@ -469,6 +618,7 @@ class OpenedFont {
         opened.hasUnsavedChanges = false;
         opened.changeVersion = 0;
         opened.compileRequestVersion = 0;
+        opened.folderSaveTracker = new FolderSaveTracker();
         return opened;
     }
 
@@ -574,9 +724,21 @@ class OpenedFont {
      */
     syncJsonFromModel(): void {
         assertBabelfontLayerWidths(this.babelfontData, 'syncJsonFromModel');
+        this.normalizeComponentTransformsForRust(this.babelfontData.glyphs);
 
-        // Process all layers to prepare for serialization
-        for (const glyph of this.babelfontData.glyphs || []) {
+        // `babelfontJson` backs bridge/worker seeding and must retain logical
+        // automatic component placement. Rust owns physicalization at
+        // compile-read; only explicit export asks for compile-facing JSON.
+        this.babelfontJson = this.fontModel.toJSONString({
+            compileFacing: false
+        });
+    }
+
+    /** Prepare the glyphs' components for the Rust serializers. */
+    private normalizeComponentTransformsForRust(
+        glyphs: Babelfont.Glyph[] | undefined
+    ): void {
+        for (const glyph of glyphs || []) {
             for (const layer of glyph.layers || []) {
                 if (!layer?.shapes) continue;
 
@@ -605,19 +767,17 @@ class OpenedFont {
                 }
             }
         }
-
-        // `babelfontJson` backs bridge/worker seeding and must retain logical
-        // automatic component placement. Rust owns physicalization at
-        // compile-read; only explicit export asks for compile-facing JSON.
-        this.babelfontJson = this.fontModel.toJSONString({
-            compileFacing: false
-        });
     }
 
     /**
      * Save font using the source plugin's adapter
      */
     async save(): Promise<void> {
+        const folderFormat = folderSourceFormatForPath(this.path);
+        if (folderFormat) {
+            await this.saveFolderSource(folderFormat);
+            return;
+        }
         this.syncJsonFromModel();
         const pluginId = this.sourcePlugin.getId();
         const serializedFont = await serializeFontForSourceSave(
@@ -664,10 +824,129 @@ class OpenedFont {
             const adapter = this.sourcePlugin.getAdapter();
             await adapter.writeFile(this.path, serializedFont);
         }
+        this.sourceFileHash = hashBytes(
+            new TextEncoder().encode(serializedFont)
+        );
 
         // Clear unsaved/sync flags after successful save
         this.needsRecompile = false;
         this.hasUnsavedChanges = false;
+    }
+
+    /**
+     * Save a folder source, writing only the files whose content changed:
+     * a glyph edit rewrites that glyph's file. Files a save makes obsolete
+     * (a deleted or renamed glyph's) are removed.
+     */
+    private async saveFolderSource(format: FolderSourceFormat): Promise<void> {
+        const state = this.folderSource;
+        if (!state) {
+            throw new Error(
+                `Cannot save ${this.path}: open it from its folder to save it.`
+            );
+        }
+        const adapter = this.sourcePlugin.getAdapter();
+        if (adapter.checkPermission && adapter.requestPermission) {
+            if (
+                (await adapter.checkPermission()) !== 'granted' &&
+                (await adapter.requestPermission()) !== 'granted'
+            ) {
+                throw new Error('Write permission not granted');
+            }
+        }
+
+        const plan = this.folderSaveTracker.plan(
+            format,
+            this.hasUnsavedChanges
+        );
+        const root = folderSourceRoot(this.path, format);
+        const layoutEntries = state.layoutEntries();
+        const document = state.layout.document;
+        let entries: FolderSourceEntries | null = null;
+        if (!plan.full) {
+            entries = await serializeFolderSourceEntries(
+                format,
+                this.folderSourceJson(new Set(plan.glyphs)),
+                {
+                    glyphs: plan.glyphs,
+                    fontLevel: plan.fontLevel,
+                    layoutEntries,
+                    document
+                }
+            );
+        }
+        let stale: string[];
+        if (entries) {
+            stale = entries.removed.filter((path) => state.has(path));
+            if (format === 'glyphspackage' && plan.fontLevel) {
+                // The font-level files of a package are all written, so one
+                // not written any more (a removed feature's) is stale.
+                const written = new Set(Object.keys(entries.files));
+                stale.push(
+                    ...state
+                        .managedPaths()
+                        .filter(
+                            (path) =>
+                                !isGlyphFile(state.layout, path) &&
+                                !written.has(path) &&
+                                !stale.includes(path)
+                        )
+                );
+            }
+        } else {
+            entries = (await serializeFolderSourceEntries(
+                format,
+                this.folderSourceJson(null),
+                { glyphs: null, fontLevel: true, layoutEntries, document }
+            )) as FolderSourceEntries;
+            const written = new Set(Object.keys(entries.files));
+            stale = state.managedPaths().filter((path) => !written.has(path));
+        }
+
+        // A designspace may have gained or lost UFOs; their files belong to
+        // the project from this save on.
+        if (document && entries.files[document] !== undefined) {
+            state.setUfoDirs(await designspaceUfoDirs(entries.files[document]));
+        }
+
+        const pluginId = this.sourcePlugin.getId();
+        const changed = Object.entries(entries.files).filter(
+            ([path, text]) => !state.isUnchanged(path, text)
+        );
+        await forEachConcurrently(
+            changed,
+            FOLDER_WRITE_CONCURRENCY,
+            async ([relativePath, text]) => {
+                const path = joinSourcePath(root, relativePath);
+                markManagedFileInternalWrite(pluginId, path);
+                await adapter.writeFile(path, text);
+                state.record(relativePath, text);
+            }
+        );
+        for (const relativePath of stale) {
+            await adapter.deleteItem(joinSourcePath(root, relativePath), false);
+            state.forget(relativePath);
+        }
+        console.log(
+            `Saved ${this.path}: ${changed.length} file(s) written, ${stale.length} removed`
+        );
+
+        this.folderSaveTracker.reset();
+        this.needsRecompile = false;
+        this.hasUnsavedChanges = false;
+    }
+
+    /** The font as JSON for a folder save, with outlines only for `glyphs`. */
+    private folderSourceJson(glyphs: ReadonlySet<string> | null): string {
+        assertBabelfontLayerWidths(this.babelfontData, 'folderSourceJson');
+        const allGlyphs: Babelfont.Glyph[] = this.babelfontData.glyphs || [];
+        this.normalizeComponentTransformsForRust(
+            glyphs ? allGlyphs.filter((g) => glyphs.has(g.name)) : allGlyphs
+        );
+        return this.fontModel.toJSONString({
+            compileFacing: false,
+            glyphBodies: glyphs ?? undefined
+        });
     }
 }
 
@@ -718,6 +997,8 @@ class FontManager {
     private editingCompileInFlight: Promise<unknown> | null = null;
     private editingCompileEnqueueGen = 0;
     isExternalReloading: boolean = false;
+    private pendingExternalSourcePaths = new Set<string>();
+    private externalSourceChangeQueue: Promise<void> = Promise.resolve();
     pendingDebugEditingFontSaveAfterDrag: boolean;
     pendingBabelfontJsonSyncAfterDrag: boolean;
     pendingCommittedKeyboardDriftCheckAfterDrag: boolean;
@@ -1796,95 +2077,6 @@ class FontManager {
         }
     }
 
-    private getParentPath(path: string): string {
-        const idx = path.lastIndexOf('/');
-        return idx >= 0 ? path.slice(0, idx) : '';
-    }
-
-    private async collectGlyphsPackageEntries(
-        rootPath: string,
-        sourcePlugin: FilesystemPlugin
-    ): Promise<Record<string, Uint8Array>> {
-        const entries: Record<string, Uint8Array> = {};
-        const requiredTopLevelFiles = new Set([
-            'fontinfo.plist',
-            'order.plist',
-            'UIState.plist'
-        ]);
-        const adapter = sourcePlugin.getAdapter();
-
-        const walk = async (currentPath: string): Promise<void> => {
-            const items = await adapter.scanDirectory(currentPath);
-
-            for (const [, data] of Object.entries(items)) {
-                const itemPath = data.path;
-                if (data.is_dir) {
-                    await walk(itemPath);
-                    continue;
-                }
-
-                const content = await adapter.readFile(itemPath);
-                const bytes =
-                    typeof content === 'string'
-                        ? new TextEncoder().encode(content)
-                        : new Uint8Array(content as any);
-
-                const relativePath = itemPath
-                    .slice(rootPath.length)
-                    .replace(/^\/+/, '');
-
-                const isGlyphFile =
-                    relativePath.startsWith('glyphs/') &&
-                    relativePath.endsWith('.glyph');
-                const isRequiredTopLevel =
-                    requiredTopLevelFiles.has(relativePath);
-
-                if (!isGlyphFile && !isRequiredTopLevel) {
-                    continue;
-                }
-
-                entries[relativePath] = bytes;
-            }
-        };
-
-        await walk(rootPath);
-        return entries;
-    }
-
-    private async collectAllDirectoryEntries(
-        rootPath: string,
-        sourcePlugin: FilesystemPlugin
-    ): Promise<Record<string, Uint8Array>> {
-        const entries: Record<string, Uint8Array> = {};
-        const adapter = sourcePlugin.getAdapter();
-
-        const walk = async (currentPath: string): Promise<void> => {
-            const items = await adapter.scanDirectory(currentPath);
-
-            for (const [, data] of Object.entries(items)) {
-                const itemPath = data.path;
-                if (data.is_dir) {
-                    await walk(itemPath);
-                    continue;
-                }
-
-                const content = await adapter.readFile(itemPath);
-                const bytes =
-                    typeof content === 'string'
-                        ? new TextEncoder().encode(content)
-                        : new Uint8Array(content as any);
-
-                const relativePath = itemPath
-                    .slice(rootPath.length)
-                    .replace(/^\/+/, '');
-                entries[relativePath] = bytes;
-            }
-        };
-
-        await walk(rootPath);
-        return entries;
-    }
-
     private async readFromFileHandle(
         fileHandle: FileSystemFileHandle,
         extension: string
@@ -1899,8 +2091,13 @@ class FontManager {
         return bytes;
     }
 
+    /**
+     * Read and convert the font's source again. `snapshot` receives what was
+     * read, for telling later external changes from Counterpunch's own.
+     */
     private async loadBabelfontJsonFromSource(
-        font: OpenedFont
+        font: OpenedFont,
+        snapshot: SourceSnapshot = {}
     ): Promise<string> {
         const extension = font.path.split('.').pop()?.toLowerCase() || '';
         const isGlyphsPackage =
@@ -1927,36 +2124,43 @@ class FontManager {
                 font.fileHandle!,
                 extension
             );
-        } else if (isGlyphsPackage) {
-            packageEntries = await this.collectGlyphsPackageEntries(
+        } else if (isGlyphsPackage || isUfoDirectory || isDesignspace) {
+            const format = isGlyphsPackage
+                ? 'glyphspackage'
+                : isUfoDirectory
+                  ? 'ufo'
+                  : 'designspace';
+            const { entries, state } = await readFolderSource(
+                font.sourcePlugin.getAdapter(),
                 font.path,
-                font.sourcePlugin
+                format
             );
-
             if (
-                !packageEntries['fontinfo.plist'] ||
-                !packageEntries['order.plist']
+                isGlyphsPackage &&
+                (!entries['fontinfo.plist'] || !entries['order.plist'])
             ) {
                 throw new Error(
                     'Invalid .glyphspackage: missing fontinfo.plist or order.plist'
                 );
             }
-        } else if (isUfoDirectory) {
-            projectEntries = await this.collectAllDirectoryEntries(
-                font.path,
-                font.sourcePlugin
-            );
-        } else if (isDesignspace) {
-            const projectRoot = this.getParentPath(font.path);
-            projectEntries = await this.collectAllDirectoryEntries(
-                projectRoot,
-                font.sourcePlugin
-            );
+            if (isGlyphsPackage) {
+                packageEntries = entries;
+            } else {
+                projectEntries = entries;
+            }
+            snapshot.folderSource = state;
         } else {
             contents = await font.sourcePlugin.getAdapter().readFile(font.path);
             if (extension === 'babelfont' && contents instanceof Uint8Array) {
                 contents = new TextDecoder('utf-8').decode(contents);
             }
+        }
+        if (contents !== undefined) {
+            snapshot.sourceFileHash = hashBytes(
+                typeof contents === 'string'
+                    ? new TextEncoder().encode(contents)
+                    : contents
+            );
         }
 
         if (extension === 'babelfont') {
@@ -2050,6 +2254,319 @@ class FontManager {
         glyphCanvas.render();
     }
 
+    /**
+     * React to files of the current font's source changing on disk. Files
+     * that still hold what Counterpunch read or wrote (its own saves) are
+     * ignored. In a folder source, changed glyph files update just those
+     * glyphs; anything else reloads the whole source. Changes arriving while
+     * one is handled are handled after it.
+     */
+    handleExternalSourceChanges(changedPaths: string[]): Promise<void> {
+        for (const path of changedPaths) {
+            this.pendingExternalSourcePaths.add(path);
+        }
+        this.externalSourceChangeQueue = this.externalSourceChangeQueue
+            .then(() => this.processExternalSourceChanges())
+            .catch((error) => {
+                console.error('External source change failed:', error);
+                alert(
+                    `Failed to reload externally changed font: ${error instanceof Error ? error.message : String(error)}`
+                );
+            });
+        return this.externalSourceChangeQueue;
+    }
+
+    private async processExternalSourceChanges(): Promise<void> {
+        const changedPaths = [...this.pendingExternalSourcePaths];
+        this.pendingExternalSourcePaths.clear();
+        const font = this.currentFont;
+        if (!font || changedPaths.length === 0) {
+            return;
+        }
+        const format = folderSourceFormatForPath(font.path);
+        if (format && font.folderSource) {
+            await this.applyFolderSourceChanges(font, format, changedPaths);
+            return;
+        }
+        if (font.sourceFileHash) {
+            // A file launched on its own is read through its handle.
+            const bytes =
+                font.fileHandle && !font.directoryHandle
+                    ? new Uint8Array(
+                          await (await font.fileHandle.getFile()).arrayBuffer()
+                      )
+                    : await readSourceFileOrNull(font.sourcePlugin, font.path);
+            if (bytes && hashBytes(bytes) === font.sourceFileHash) {
+                return;
+            }
+        }
+        await this.reloadWholeSourceUnlessKeepingLocal(font);
+    }
+
+    private async reloadWholeSourceUnlessKeepingLocal(
+        font: OpenedFont
+    ): Promise<void> {
+        if (
+            font.hasUnsavedChanges &&
+            !(await showProceedDialog(
+                'Font changed on disk',
+                `${font.path.split('/').pop()} changed on disk, and you have unsaved changes. Reload it from disk and discard them, or keep your changes?`,
+                {
+                    proceedLabel: 'Reload from disk',
+                    cancelLabel: 'Keep my changes',
+                    danger: true
+                }
+            ))
+        ) {
+            return;
+        }
+        await this.reloadCurrentFontFromSource({ preserveUiState: true });
+    }
+
+    private async applyFolderSourceChanges(
+        font: OpenedFont,
+        format: FolderSourceFormat,
+        changedPaths: string[]
+    ): Promise<void> {
+        const state = font.folderSource!;
+        const sourceRoot = folderSourceRoot(font.path, format);
+        const root = `${normalizeManagedPath(sourceRoot).replace(/\/+$/, '')}/`;
+        const relativePaths = [
+            ...new Set(
+                changedPaths
+                    .map(normalizeManagedPath)
+                    .filter((path) => path.startsWith(root))
+                    .map((path) => path.slice(root.length))
+                    .filter((path) => isFolderSourceFile(state.layout, path))
+            )
+        ];
+        const changed: Array<{ path: string; bytes: Uint8Array | null }> = [];
+        for (const relativePath of relativePaths) {
+            const bytes = await readSourceFileOrNull(
+                font.sourcePlugin,
+                joinSourcePath(sourceRoot, relativePath)
+            );
+            const unchanged =
+                bytes === null
+                    ? !state.has(relativePath)
+                    : state.isUnchanged(relativePath, bytes);
+            if (!unchanged) {
+                changed.push({ path: relativePath, bytes });
+            }
+        }
+        if (changed.length === 0) {
+            return;
+        }
+        const onlyGlyphFiles = changed.every(
+            ({ path, bytes }) =>
+                bytes !== null &&
+                state.has(path) &&
+                isGlyphFile(state.layout, path)
+        );
+        if (
+            onlyGlyphFiles &&
+            (await this.reloadGlyphFiles(
+                font,
+                format,
+                changed as Array<{ path: string; bytes: Uint8Array }>
+            ))
+        ) {
+            return;
+        }
+        await this.reloadWholeSourceUnlessKeepingLocal(font);
+    }
+
+    /**
+     * Update the glyphs whose files changed, from those files alone. Returns
+     * false when the change needs a whole reload: a glyph is new, or (in a
+     * .glyphspackage) its kerning groups changed.
+     */
+    private async reloadGlyphFiles(
+        font: OpenedFont,
+        format: FolderSourceFormat,
+        changed: Array<{ path: string; bytes: Uint8Array }>
+    ): Promise<boolean> {
+        const state = font.folderSource!;
+        const sourceRoot = folderSourceRoot(font.path, format);
+        const bridge = window.patchSyncEngine;
+        if (!bridge) {
+            return false;
+        }
+        await ensureWasmInitialized();
+        const decoder = new TextDecoder();
+        const liveData = font.babelfontData as Babelfont.Font;
+        const liveGlyph = (name: string) =>
+            liveData.glyphs.find((glyph) => glyph.name === name);
+        const masters = liveData.masters || [];
+        let glyphs: Babelfont.Glyph[];
+
+        if (format === 'ufo' || format === 'designspace') {
+            const layoutJson = JSON.stringify(state.layoutEntries());
+            const document = state.documentText();
+            const masterId = masters.length === 1 ? masters[0].id : undefined;
+            if (format === 'designspace' ? !document : !masterId) {
+                return false;
+            }
+            const changedPaths = JSON.stringify(
+                changed.map(({ path }) => path)
+            );
+            const located = JSON.parse(
+                format === 'designspace'
+                    ? designspace_glyph_files_for_paths(
+                          document!,
+                          layoutJson,
+                          changedPaths
+                      )
+                    : ufo_glyph_files_for_paths(layoutJson, changedPaths)
+            ) as { glyphs: Record<string, string[]>; unknown: string[] };
+            if (located.unknown.length > 0) {
+                return false;
+            }
+            const changedText = new Map(
+                changed.map(({ path, bytes }) => [path, decoder.decode(bytes)])
+            );
+            const glifs: Record<string, string> = {};
+            for (const path of Object.values(located.glyphs).flat()) {
+                const text =
+                    changedText.get(path) ??
+                    (await readSourceFileOrNull(
+                        font.sourcePlugin,
+                        joinSourcePath(sourceRoot, path)
+                    ).then((bytes) => (bytes ? decoder.decode(bytes) : null)));
+                if (text === null || text === undefined) {
+                    return false;
+                }
+                glifs[path] = text;
+            }
+            const names = JSON.stringify(Object.keys(located.glyphs));
+            const fromDisk = JSON.parse(
+                format === 'designspace'
+                    ? load_designspace_glyphs(
+                          document!,
+                          layoutJson,
+                          JSON.stringify(glifs),
+                          names
+                      )
+                    : load_ufo_glyphs(
+                          layoutJson,
+                          JSON.stringify(glifs),
+                          names,
+                          masterId!
+                      )
+            ) as Babelfont.Glyph[];
+            glyphs = [];
+            for (const diskGlyph of fromDisk) {
+                const live = liveGlyph(diskGlyph.name);
+                if (!live) {
+                    return false;
+                }
+                // A .glif holds a glyph's layers and codepoints; the rest is
+                // in lib.plist, which did not change.
+                glyphs.push({
+                    ...live,
+                    layers: diskGlyph.layers,
+                    codepoints: diskGlyph.codepoints
+                });
+            }
+        } else {
+            const fontinfo = state.fontinfoText();
+            if (!fontinfo) {
+                return false;
+            }
+            const loaded = JSON.parse(
+                load_glyphspackage_glyphs(
+                    fontinfo,
+                    JSON.stringify(
+                        Object.fromEntries(
+                            changed.map(({ path, bytes }) => [
+                                path,
+                                decoder.decode(bytes)
+                            ])
+                        )
+                    )
+                )
+            ) as {
+                glyphs: Babelfont.Glyph[];
+                kernGroups: Record<string, [string | null, string | null]>;
+            };
+            const groupOf = (
+                groups: Record<string, string[]> | undefined,
+                name: string
+            ) =>
+                Object.entries(groups || {}).find(([, members]) =>
+                    members.includes(name)
+                )?.[0] ?? null;
+            for (const glyph of loaded.glyphs) {
+                const [first, second] = loaded.kernGroups[glyph.name] || [];
+                if (
+                    !liveGlyph(glyph.name) ||
+                    groupOf(liveData.first_kern_groups, glyph.name) !== first ||
+                    groupOf(liveData.second_kern_groups, glyph.name) !== second
+                ) {
+                    return false;
+                }
+            }
+            glyphs = loaded.glyphs;
+        }
+
+        const locallyEdited = glyphs
+            .map((glyph) => glyph.name)
+            .filter((name) => font.folderSaveTracker.isGlyphDirty(name));
+        if (
+            locallyEdited.length > 0 &&
+            !(await showProceedDialog(
+                'Glyphs changed on disk',
+                `${locallyEdited.join(', ')} changed on disk, and you have unsaved changes to ${locallyEdited.length === 1 ? 'it' : 'them'}. Take the version on disk, or keep yours?`,
+                {
+                    proceedLabel: 'Take the disk version',
+                    cancelLabel: 'Keep mine',
+                    danger: true
+                }
+            ))
+        ) {
+            // Keeping the local glyphs: the next save writes them over these.
+            for (const { path, bytes } of changed) {
+                state.record(path, bytes);
+            }
+            return true;
+        }
+
+        const wasClean = !font.hasUnsavedChanges;
+        const result = bridge.applyExternalGlyphReload(
+            canonicalizeImportedGlyphs(glyphs, masters) as unknown as Array<
+                Record<string, unknown>
+            >
+        );
+        if (result.status === 'stale') {
+            // Mid-transaction or sync: try again shortly.
+            window.setTimeout(
+                () =>
+                    void this.handleExternalSourceChanges(
+                        changed.map(({ path }) =>
+                            joinSourcePath(sourceRoot, path)
+                        )
+                    ),
+                250
+            );
+            return true;
+        }
+        for (const { path, bytes } of changed) {
+            state.record(path, bytes);
+        }
+        for (const glyph of glyphs) {
+            font.folderSaveTracker.markGlyphClean(glyph.name);
+        }
+        if (wasClean) {
+            font.hasUnsavedChanges = false;
+            await this.updateDirtyIndicator();
+            window.saveButton?.updateButtonState();
+        }
+        console.log(
+            `Reloaded ${glyphs.length} glyph(s) from ${font.path}: ${result.status}`
+        );
+        return true;
+    }
+
     async reloadCurrentFontFromSource(
         options: ReloadCurrentFontOptions = {}
     ): Promise<boolean> {
@@ -2078,8 +2595,11 @@ class FontManager {
         beginLoadingCursor();
 
         try {
-            const babelfontJson =
-                await this.loadBabelfontJsonFromSource(previousOpenedFont);
+            const snapshot: SourceSnapshot = {};
+            const babelfontJson = await this.loadBabelfontJsonFromSource(
+                previousOpenedFont,
+                snapshot
+            );
             const canonicalImport = canonicalizeImportedFontJson(babelfontJson);
 
             this.recordFullFontCrossing();
@@ -2117,6 +2637,10 @@ class FontManager {
                 this.openedFonts.set(previousFontId, reloadedFont);
                 this.currentFontId = previousFontId;
             }
+            // The font now holds what the source holds.
+            applySourceSnapshot(reloadedFont, snapshot);
+            reloadedFont.folderSaveTracker.reset();
+            reloadedFont.hasUnsavedChanges = false;
 
             this.editingFont = null;
             this.glyphOrderCache = null;
@@ -7073,6 +7597,12 @@ window.addEventListener('fontLoaded', async (event: Event) => {
                 detail.fileHandle,
                 detail.directoryHandle
             );
+            const sourceSnapshot = (
+                detail as { sourceSnapshot?: SourceSnapshot }
+            ).sourceSnapshot;
+            if (sourceSnapshot && fontManager!.currentFont) {
+                applySourceSnapshot(fontManager!.currentFont, sourceSnapshot);
+            }
         }
 
         emitOpenLifecycle(openSessionId, 'loadFontComplete', {

@@ -46,7 +46,17 @@ import { isLinkedPeerSnapshotSearch } from './window-sync';
 import { readUrlState, updateUrlState } from './url-state';
 import { TOUR_FUSTAT_PATH, TOUR_SAMPLE_TEXT } from './tour-slides';
 import { shouldHandleOpenPathBeforeEditorReady } from './open-font-readiness';
-import { serializeFontForSourceSave } from './font-manager';
+import {
+    serializeFontForSourceSave,
+    type SourceSnapshot
+} from './font-manager';
+import {
+    FolderSourceState,
+    folderSourceFormatForPath,
+    folderSourceRoot,
+    hashBytes,
+    readFolderSource
+} from './folder-source';
 import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
 import { notifyLoadingOverlayHiding } from './welcome-screen';
 import {
@@ -892,69 +902,25 @@ function changedPathsAffectCurrentFont(
     );
 }
 
-function hasUnsavedFontChanges(
-    currentFont: { hasUnsavedChanges?: boolean } | null
-): boolean {
-    if (!currentFont) {
-        return false;
-    }
-
-    if (currentFont.hasUnsavedChanges === true) {
-        return true;
-    }
-
-    const dirtyIndicator = document.getElementById('file-dirty-indicator');
-    return !!dirtyIndicator?.classList.contains('visible');
-}
-
-function confirmExternalFontReload(): boolean {
-    return window.confirm(
-        'External font changes detected with unsaved local changes. OK = reload external (discard local unsaved); Cancel = keep local changes.'
-    );
-}
-
-async function maybeReloadCurrentFontFromDisk(
+/**
+ * Hand observed disk changes inside the current font's source to the font
+ * manager, which tells external edits from Counterpunch's own saves.
+ */
+async function handleCurrentFontDiskChanges(
     changedPaths: string[]
 ): Promise<void> {
-    if (!changedPaths.length) {
-        return;
-    }
-
     const currentFont = window.fontManager?.currentFont;
-    if (!currentFont) {
+    if (
+        !changedPaths.length ||
+        !currentFont ||
+        currentFont.sourcePlugin.getId() !== 'disk' ||
+        !changedPathsAffectCurrentFont(changedPaths, currentFont.path)
+    ) {
         return;
     }
-
-    if (currentFont.sourcePlugin.getId() !== 'disk') {
-        return;
-    }
-
-    if (!changedPathsAffectCurrentFont(changedPaths, currentFont.path)) {
-        return;
-    }
-
-    if (window.fontManager.isExternalReloading) {
-        return;
-    }
-
-    if (hasUnsavedFontChanges(currentFont)) {
-        const shouldReloadExternal = confirmExternalFontReload();
-        if (!shouldReloadExternal) {
-            return;
-        }
-    }
-
-    try {
-        await window.fontManager.reloadCurrentFontFromSource({
-            preserveUiState: true
-        });
-        console.log('[FileBrowser]', 'External font reload completed');
-    } catch (error) {
-        console.error('[FileBrowser]', 'External font reload failed:', error);
-        const errorMessage =
-            error instanceof Error ? error.message : String(error);
-        alert(`Failed to reload externally changed font: ${errorMessage}`);
-    }
+    await window.fontManager.handleExternalSourceChanges(
+        changedPaths.map(normalizeObservedPath)
+    );
 }
 
 function formatFileSize(bytes: number | undefined): string {
@@ -1591,94 +1557,6 @@ async function openInScriptEditor(path: string) {
     }
 }
 
-async function collectDirectoryEntries(
-    rootPath: string
-): Promise<Record<string, Uint8Array>> {
-    const entries: Record<string, Uint8Array> = {};
-    const requiredTopLevelFiles = new Set([
-        'fontinfo.plist',
-        'order.plist',
-        'UIState.plist'
-    ]);
-
-    const walk = async (currentPath: string) => {
-        const items =
-            await fileSystemCache.activeAdapter.scanDirectory(currentPath);
-
-        for (const [, data] of Object.entries(items)) {
-            const itemPath = data.path;
-            if (data.is_dir) {
-                await walk(itemPath);
-                continue;
-            }
-
-            const content =
-                await fileSystemCache.activeAdapter.readFile(itemPath);
-            const bytes =
-                typeof content === 'string'
-                    ? new TextEncoder().encode(content)
-                    : new Uint8Array(content as any);
-
-            const relativePath = itemPath
-                .slice(rootPath.length)
-                .replace(/^\/+/, '');
-
-            const isGlyphFile =
-                relativePath.startsWith('glyphs/') &&
-                relativePath.endsWith('.glyph');
-            const isRequiredTopLevel = requiredTopLevelFiles.has(relativePath);
-
-            if (!isGlyphFile && !isRequiredTopLevel) {
-                continue;
-            }
-
-            entries[relativePath] = bytes;
-        }
-    };
-
-    await walk(rootPath);
-    return entries;
-}
-
-async function collectAllDirectoryEntries(
-    rootPath: string
-): Promise<Record<string, Uint8Array>> {
-    const entries: Record<string, Uint8Array> = {};
-
-    const walk = async (currentPath: string) => {
-        const items =
-            await fileSystemCache.activeAdapter.scanDirectory(currentPath);
-
-        for (const [, data] of Object.entries(items)) {
-            const itemPath = data.path;
-            if (data.is_dir) {
-                await walk(itemPath);
-                continue;
-            }
-
-            const content =
-                await fileSystemCache.activeAdapter.readFile(itemPath);
-            const bytes =
-                typeof content === 'string'
-                    ? new TextEncoder().encode(content)
-                    : new Uint8Array(content as any);
-
-            const relativePath = itemPath
-                .slice(rootPath.length)
-                .replace(/^\/+/, '');
-            entries[relativePath] = bytes;
-        }
-    };
-
-    await walk(rootPath);
-    return entries;
-}
-
-function getParentPath(path: string): string {
-    const idx = path.lastIndexOf('/');
-    return idx >= 0 ? path.slice(0, idx) : '';
-}
-
 function hideLoadingOverlayForUrlOpen(): void {
     const extendedWindow = window as Window & {
         __unsupportedBrowserWarningRequired?: boolean;
@@ -1870,6 +1748,9 @@ async function openFont(
         let contents: string | Uint8Array | undefined;
         let packageEntries: Record<string, Uint8Array> | undefined;
         let projectEntries: Record<string, Uint8Array> | undefined;
+        // What the source holds, recorded before conversion transfers the
+        // buffers away, to tell external changes from Counterpunch's saves.
+        const sourceSnapshot: SourceSnapshot = {};
 
         const readSpan = timelineSpanStart('font.open.readSource');
         try {
@@ -1882,22 +1763,30 @@ async function openFont(
                     extension === 'babelfont'
                         ? new TextDecoder('utf-8').decode(launchedBytes)
                         : launchedBytes;
-            } else if (isGlyphsPackage) {
-                packageEntries = await collectDirectoryEntries(path);
-
+            } else if (isGlyphsPackage || isUfoDirectory || isDesignspace) {
+                const { entries, state } = await readFolderSource(
+                    sourceAdapter,
+                    path,
+                    isGlyphsPackage
+                        ? 'glyphspackage'
+                        : isUfoDirectory
+                          ? 'ufo'
+                          : 'designspace'
+                );
                 if (
-                    !packageEntries['fontinfo.plist'] ||
-                    !packageEntries['order.plist']
+                    isGlyphsPackage &&
+                    (!entries['fontinfo.plist'] || !entries['order.plist'])
                 ) {
                     throw new Error(
                         'Invalid .glyphspackage: missing fontinfo.plist or order.plist'
                     );
                 }
-            } else if (isUfoDirectory) {
-                projectEntries = await collectAllDirectoryEntries(path);
-            } else if (isDesignspace) {
-                const projectRoot = getParentPath(path);
-                projectEntries = await collectAllDirectoryEntries(projectRoot);
+                if (isGlyphsPackage) {
+                    packageEntries = entries;
+                } else {
+                    projectEntries = entries;
+                }
+                sourceSnapshot.folderSource = state;
             } else {
                 contents = await sourceAdapter.readFile(path);
 
@@ -1910,6 +1799,13 @@ async function openFont(
                     contents = new TextDecoder('utf-8').decode(contents);
                 }
                 // All other formats: keep as Uint8Array for worker to handle
+            }
+            if (contents !== undefined) {
+                sourceSnapshot.sourceFileHash = hashBytes(
+                    typeof contents === 'string'
+                        ? new TextEncoder().encode(contents)
+                        : contents
+                );
             }
         } finally {
             timelineSpanEnd(readSpan);
@@ -2002,7 +1898,8 @@ async function openFont(
                     babelfontJson: babelfontJson,
                     sourcePlugin,
                     fileHandle: actualFileHandle,
-                    directoryHandle: directoryHandle
+                    directoryHandle: directoryHandle,
+                    sourceSnapshot
                 }
             })
         );
@@ -2057,6 +1954,66 @@ async function getDiskFileHandleForPath(
     }
 
     return (await adapter.getFileHandle(path)) || undefined;
+}
+
+function currentDiskDirectoryHandle(): FileSystemDirectoryHandle | undefined {
+    return fileSystemCache.currentPlugin.getId() === 'disk'
+        ? (
+              fileSystemCache.currentPlugin.getAdapter() as {
+                  directoryHandle?: FileSystemDirectoryHandle;
+              }
+          ).directoryHandle
+        : undefined;
+}
+
+/**
+ * Save As into a .ufo or .glyphspackage folder: the font then lives there and
+ * is saved there file by file. Saving over an existing folder replaces the
+ * files the format owns and leaves anything else in it alone.
+ */
+async function saveCurrentFontAsFolderSource(
+    currentFont: NonNullable<typeof window.fontManager.currentFont>,
+    targetPath: string,
+    format: NonNullable<ReturnType<typeof folderSourceFormatForPath>>,
+    targetExists: boolean
+): Promise<void> {
+    const adapter = fileSystemCache.activeAdapter;
+    const root = folderSourceRoot(targetPath, format);
+    const existing = targetExists
+        ? (await readFolderSource(adapter, targetPath, format)).state
+        : new FolderSourceState(
+              format === 'designspace'
+                  ? {
+                        format,
+                        document: targetPath
+                            .slice(root.length)
+                            .replace(/^\/+/, ''),
+                        ufoDirs: []
+                    }
+                  : format,
+              {}
+          );
+    const previous = {
+        path: currentFont.path,
+        sourcePlugin: currentFont.sourcePlugin,
+        fileHandle: currentFont.fileHandle,
+        directoryHandle: currentFont.directoryHandle,
+        folderSource: currentFont.folderSource,
+        sourceFileHash: currentFont.sourceFileHash
+    };
+    currentFont.path = targetPath;
+    currentFont.sourcePlugin = fileSystemCache.currentPlugin;
+    currentFont.fileHandle = undefined;
+    currentFont.directoryHandle = currentDiskDirectoryHandle();
+    currentFont.folderSource = existing;
+    currentFont.sourceFileHash = undefined;
+    currentFont.folderSaveTracker.requireFullSave();
+    try {
+        await currentFont.save();
+    } catch (error) {
+        Object.assign(currentFont, previous);
+        throw error;
+    }
 }
 
 async function saveCurrentFontAsToPath(): Promise<void> {
@@ -2137,58 +2094,69 @@ async function saveCurrentFontAsToPath(): Promise<void> {
                     return;
                 }
 
-                currentFont.syncJsonFromModel();
-                const sourcePlugin = currentFont.sourcePlugin;
-                const destinationPlugin = fileSystemCache.currentPlugin;
-                let babelfontJson = currentFont.babelfontJson;
-                if (
-                    sourcePlugin &&
-                    destinationPlugin &&
-                    sourcePlugin.getId() !== destinationPlugin.getId() &&
-                    typeof sourcePlugin.stripOwnedFontData === 'function'
-                ) {
-                    const parsed = JSON.parse(babelfontJson) as Record<
-                        string,
-                        unknown
-                    >;
-                    babelfontJson = JSON.stringify(
-                        sourcePlugin.stripOwnedFontData(parsed)
-                    );
-                }
-                const serializedFont = await serializeFontForSourceSave(
-                    targetPath,
-                    babelfontJson
-                );
                 const pluginId = fileSystemCache.currentPlugin.getId();
-                if (pluginId === 'disk') {
-                    markManagedFileInternalWrite(pluginId, targetPath);
-                }
-                try {
-                    await fileSystemCache.activeAdapter.writeFile(
+                const targetFolderFormat =
+                    folderSourceFormatForPath(targetPath);
+                if (targetFolderFormat) {
+                    await saveCurrentFontAsFolderSource(
+                        currentFont,
                         targetPath,
-                        serializedFont
+                        targetFolderFormat,
+                        fileExists
                     );
-                } catch (error) {
-                    if (pluginId === 'disk') {
-                        cancelManagedFileInternalWrite(pluginId, targetPath);
+                } else {
+                    currentFont.syncJsonFromModel();
+                    const sourcePlugin = currentFont.sourcePlugin;
+                    const destinationPlugin = fileSystemCache.currentPlugin;
+                    let babelfontJson = currentFont.babelfontJson;
+                    if (
+                        sourcePlugin &&
+                        destinationPlugin &&
+                        sourcePlugin.getId() !== destinationPlugin.getId() &&
+                        typeof sourcePlugin.stripOwnedFontData === 'function'
+                    ) {
+                        const parsed = JSON.parse(babelfontJson) as Record<
+                            string,
+                            unknown
+                        >;
+                        babelfontJson = JSON.stringify(
+                            sourcePlugin.stripOwnedFontData(parsed)
+                        );
                     }
-                    throw error;
-                }
+                    const serializedFont = await serializeFontForSourceSave(
+                        targetPath,
+                        babelfontJson
+                    );
+                    if (pluginId === 'disk') {
+                        markManagedFileInternalWrite(pluginId, targetPath);
+                    }
+                    try {
+                        await fileSystemCache.activeAdapter.writeFile(
+                            targetPath,
+                            serializedFont
+                        );
+                    } catch (error) {
+                        if (pluginId === 'disk') {
+                            cancelManagedFileInternalWrite(
+                                pluginId,
+                                targetPath
+                            );
+                        }
+                        throw error;
+                    }
 
-                currentFont.path = targetPath;
-                currentFont.sourcePlugin = fileSystemCache.currentPlugin;
-                currentFont.fileHandle = await getDiskFileHandleForPath(
-                    fileSystemCache.currentPlugin,
-                    targetPath
-                );
-                currentFont.directoryHandle =
-                    fileSystemCache.currentPlugin.getId() === 'disk'
-                        ? (
-                              fileSystemCache.currentPlugin.getAdapter() as {
-                                  directoryHandle?: FileSystemDirectoryHandle;
-                              }
-                          ).directoryHandle
-                        : undefined;
+                    currentFont.path = targetPath;
+                    currentFont.sourcePlugin = fileSystemCache.currentPlugin;
+                    currentFont.fileHandle = await getDiskFileHandleForPath(
+                        fileSystemCache.currentPlugin,
+                        targetPath
+                    );
+                    currentFont.directoryHandle = currentDiskDirectoryHandle();
+                    currentFont.folderSource = undefined;
+                    currentFont.sourceFileHash = hashBytes(
+                        new TextEncoder().encode(serializedFont)
+                    );
+                }
                 currentFont.needsRecompile = false;
                 currentFont.hasUnsavedChanges = false;
 
@@ -4549,17 +4517,32 @@ window.addEventListener('diskFilesChanged', async (event: Event) => {
     const detail = (event as CustomEvent).detail || {};
     const changedPaths = extractChangedPathsFromRecords(detail.records || []);
 
-    // Only respond if we're currently in disk context
-    if (currentPlugin.getId() !== 'disk') {
-        return;
-    }
-
     const internallyWrittenPaths = new Set(
         consumeManagedFileInternalWritePaths('disk', changedPaths)
     );
     const reloadablePaths = changedPaths.filter(
         (path) => !internallyWrittenPaths.has(path)
     );
+
+    // Debounced external font hot reload (targeted by changed paths). A font
+    // opened from Disk follows its files whichever tab the browser shows.
+    for (const changedPath of reloadablePaths) {
+        pendingDiskChangePaths.add(changedPath);
+    }
+    if (diskFontReloadDebounceTimer !== null) {
+        window.clearTimeout(diskFontReloadDebounceTimer);
+    }
+    diskFontReloadDebounceTimer = window.setTimeout(() => {
+        diskFontReloadDebounceTimer = null;
+        const pathsToProcess = Array.from(pendingDiskChangePaths);
+        pendingDiskChangePaths.clear();
+        void handleCurrentFontDiskChanges(pathsToProcess);
+    }, 400);
+
+    // Only refresh the listing if we're currently in disk context
+    if (currentPlugin.getId() !== 'disk') {
+        return;
+    }
 
     console.log('[FileBrowser]', 'Disk files changed, refreshing...');
 
@@ -4598,21 +4581,6 @@ window.addEventListener('diskFilesChanged', async (event: Event) => {
 
     // Refresh the view
     await navigateToPath(targetPath);
-
-    // Debounced external font hot reload (targeted by changed paths)
-    for (const changedPath of reloadablePaths) {
-        pendingDiskChangePaths.add(changedPath);
-    }
-
-    if (diskFontReloadDebounceTimer !== null) {
-        window.clearTimeout(diskFontReloadDebounceTimer);
-    }
-
-    diskFontReloadDebounceTimer = window.setTimeout(async () => {
-        const pathsToProcess = Array.from(pendingDiskChangePaths);
-        pendingDiskChangePaths.clear();
-        await maybeReloadCurrentFontFromDisk(pathsToProcess);
-    }, 400);
 });
 
 // Listen for font ready event to refresh file browser highlighting

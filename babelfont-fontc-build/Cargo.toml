@@ -43,9 +43,6 @@ features = ["console"]
 opt-level = "z"
 lto = true
 
-[patch.crates-io]
-norad = { git = "https://github.com/yanone/norad", rev = "cdd7469a1f4d5459cf5c264079c04ac6149f23aa" }
-
 [dev-dependencies]
 serde_json = "1.0"
 wasm-bindgen-test = "=0.3.62"
