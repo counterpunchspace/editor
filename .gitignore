@@ -62,3 +62,4 @@ release-notes.md
 build/
 target/
 .gitnexus
+.gitnexus-extension-outage

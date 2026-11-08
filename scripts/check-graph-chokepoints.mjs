@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as ts from "typescript";
@@ -470,8 +470,19 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         );
     }
 
-    for (const rule of configuration.rules) {
-        checkRule(rule);
+    // Set by scripts/gitnexus-analyze.mjs when CI could not build the index
+    // because LadybugDB's extension server was down.
+    const indexUnavailable = existsSync(
+        new URL("../.gitnexus-extension-outage", import.meta.url),
+    );
+    if (indexUnavailable) {
+        console.log(
+            "::warning::Skipping graph chokepoint queries: no GitNexus index (LadybugDB extension server outage).",
+        );
+    } else {
+        for (const rule of configuration.rules) {
+            checkRule(rule);
+        }
     }
     for (const rule of configuration.sourceRules ?? []) {
         checkSourceRule(rule);
