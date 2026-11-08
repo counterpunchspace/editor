@@ -12,8 +12,10 @@ import {
     dumpLiveSessionState,
     glyphNodeX,
     nudgeGlyphNode,
+    moveGlyphNodeThroughModel,
     probeWorkerAuth,
-    requestDebugRoomControl
+    requestDebugRoomControl,
+    waitForCloudLiveIdle
 } from './helpers/cloud-collab-e2e';
 import {
     openInviteeOnAsset,
@@ -41,6 +43,7 @@ test.describe('Cloud P0 integrity Playwright gates', () => {
                     ? { serviceWorkers: 'block' }
                     : undefined
             );
+        let readerContext: BrowserContext | null = null;
         try {
             let validatorReachable = false;
             try {
@@ -141,21 +144,32 @@ test.describe('Cloud P0 integrity Playwright gates', () => {
             ).toEqual(expect.arrayContaining([429, 503]));
             await ownerPage.unroute(/\/live(?:\?|$)/);
 
-            await nudgeGlyphNode(
+            const dirtyB = await nudgeGlyphNode(
                 ownerPage,
                 'b',
                 9,
                 'Dirty journal before compact'
             );
-            await ownerPage
-                .waitForFunction(
-                    () =>
-                        (window as any).cloudPlugin?.connectionStatus ===
-                        'connected',
-                    null,
-                    { timeout: 20000 }
-                )
-                .catch(() => undefined);
+            // The invalid probe row above stays pending on purpose (the room
+            // keeps refusing it), so wait for every other WAL row instead of
+            // full idle.
+            await ownerPage.waitForFunction(
+                (probeDocumentId) => {
+                    const snapshot = (
+                        window as any
+                    ).__collabIntegrity?.snapshot?.();
+                    const rows = snapshot?.session?.walRecords;
+                    return (
+                        Array.isArray(rows) &&
+                        rows.every(
+                            (row: { documentId?: string }) =>
+                                row.documentId === probeDocumentId
+                        )
+                    );
+                },
+                httpTarget.id,
+                { timeout: 90000 }
+            );
 
             const compacted = await requestDebugRoomControl(
                 ownerPage,
@@ -205,6 +219,31 @@ test.describe('Cloud P0 integrity Playwright gates', () => {
                 throw new Error(`pack/discard failed: ${lastError}`);
             }, assetId);
             expect(packDiscardStatus).toBe(410);
+
+            // A fresh client must open the compacted room with the edit made
+            // right before compaction.
+            const reader = await openInviteeOnAsset(
+                browser,
+                request,
+                ownerPage,
+                emails,
+                assetId
+            );
+            readerContext = reader.inviteeContext;
+            await alignEditorCanvas(reader.inviteePage, 'b', { wght: 200 });
+            await expect
+                .poll(async () => glyphNodeX(reader.inviteePage, 'b'), {
+                    timeout: 120000
+                })
+                .toBe(dirtyB.newX);
+            await alignEditorCanvas(ownerPage, 'b', { wght: 200 });
+            await waitUntilGlyphLayerDataMatches(
+                ownerPage,
+                reader.inviteePage,
+                ['b']
+            );
+            await readerContext.close();
+            readerContext = null;
 
             const walLock = await ownerPage.evaluate(async () => {
                 const failingOpen = () => {
@@ -299,6 +338,7 @@ test.describe('Cloud P0 integrity Playwright gates', () => {
             expect(walLock.error).toMatch(/read-only/i);
             expect(walLock.x).toBe(walLock.oldX);
         } finally {
+            await readerContext?.close();
             await ownerContext.close();
             await cleanupCloudCollabUsers(request, [
                 emails.owner,
@@ -345,9 +385,6 @@ test.describe('Cloud P0 integrity Playwright gates', () => {
                     { timeout: 20000 }
                 )
                 .catch(() => undefined);
-            await expect
-                .poll(async () => true, { timeout: 500 + 1000 })
-                .toBeTruthy();
 
             let inviteeEdit: { oldX: number; newX: number };
             try {
@@ -363,7 +400,20 @@ test.describe('Cloud P0 integrity Playwright gates', () => {
             }
             expect(inviteeEdit.newX).toBe(aBefore + 23);
             await dumpCollabIntegrity(inviteePage, 'invitee-after-nudge');
-            await dumpCollabIntegrity(ownerPage, 'owner-after-invitee-nudge');
+
+            // The owner edits a different node of the same layer while also
+            // offline, then reconnects so the compaction below folds the
+            // owner's edit while the invitee's is still only in its WAL.
+            await ownerContext.setOffline(true);
+            const ownerEdit = await moveGlyphNodeThroughModel(ownerPage, {
+                glyphName: 'a',
+                nodeIndex: -1,
+                deltaX: 11,
+                label: 'Owner offline WAL'
+            });
+            await ownerContext.setOffline(false);
+            await waitForCloudLiveIdle(ownerPage);
+            await dumpCollabIntegrity(ownerPage, 'owner-after-offline-edit');
 
             const compacted = await requestDebugRoomControl(
                 ownerPage,
@@ -407,6 +457,15 @@ test.describe('Cloud P0 integrity Playwright gates', () => {
                 throw error;
             }
             await waitUntilGlyphLayerDataMatches(ownerPage, inviteePage, ['a']);
+            const lastNodeX = (page: typeof ownerPage) =>
+                page.evaluate((index) => {
+                    const glyph = (window as any).currentFontModel.findGlyph(
+                        'a'
+                    );
+                    return glyph.layers[0].paths[0].nodes[index].x;
+                }, ownerEdit.nodeIndex);
+            expect(await lastNodeX(ownerPage)).toBe(ownerEdit.newX);
+            expect(await lastNodeX(inviteePage)).toBe(ownerEdit.newX);
         } finally {
             await ownerContext.close();
             await inviteeContext?.close();

@@ -64,6 +64,70 @@ async function nudgeGlyphNodeAt(
     return edited;
 }
 
+async function firstAndLastNodeX(
+    page: Page,
+    glyphName: string
+): Promise<{ first: number; last: number }> {
+    return page.evaluate((name) => {
+        const glyph = (window as any).currentFontModel.findGlyph(name);
+        const nodes = glyph.layers[0].paths[0].nodes;
+        return { first: nodes[0].x, last: nodes[nodes.length - 1].x };
+    }, glyphName);
+}
+
+async function editFontCoreThroughModel(page: Page): Promise<{
+    masterId: string;
+    kern: number;
+    version: [number, number];
+}> {
+    return page.evaluate(async () => {
+        const w = window as any;
+        const font = w.currentFontModel;
+        const bridge = w.patchSyncEngine;
+        const master = font.masters[0];
+        bridge.beginTransaction('Edit kerning pair', null, {
+            compileChangeSource: 'keyboard-kerning-value',
+            compileEditType: 'kerning-value'
+        });
+        try {
+            master.kerning = { ...master.kerning, 'a:b': -37 };
+        } finally {
+            bridge.endTransaction();
+        }
+        const [major, minor] = font.version || [1, 0];
+        bridge.beginTransaction('Edit font info', null, {
+            compileChangeSource: 'font-info',
+            compileEditType: null
+        });
+        try {
+            font.version = [major, minor + 7];
+        } finally {
+            bridge.endTransaction();
+        }
+        await bridge.waitForPendingCloudCommits?.();
+        return {
+            masterId: String(master.id),
+            kern: master.kerning['a:b'],
+            version: [...font.version] as [number, number]
+        };
+    });
+}
+
+async function readFontCore(
+    page: Page,
+    masterId: string
+): Promise<{ kern: number | null; version: [number, number] | null }> {
+    return page.evaluate((id) => {
+        const font = (window as any).currentFontModel;
+        const master = (font?.masters || []).find((m: any) => m.id === id);
+        const version = font?.version;
+        return {
+            kern: master?.kerning?.['a:b'] ?? null,
+            version: version ? ([...version] as [number, number]) : null
+        };
+    }, masterId);
+}
+
 async function holdGlyphSockets(page: Page): Promise<number> {
     return page.evaluate(() => {
         const session = (window as any).cloudPlugin?._liveSession;
@@ -214,8 +278,14 @@ test('two-sided offline edits on the same glyph converge and a reload does not a
 
         await ownerContext.setOffline(true);
         await inviteeContext.setOffline(true);
-        await nudgeGlyphNodeAt(ownerPage, 'a', 0, 9, 'Owner conflict node 0');
-        await nudgeGlyphNodeAt(
+        const ownerEdit = await nudgeGlyphNodeAt(
+            ownerPage,
+            'a',
+            0,
+            9,
+            'Owner conflict node 0'
+        );
+        const inviteeEdit = await nudgeGlyphNodeAt(
             inviteePage,
             'a',
             nodeCount - 1,
@@ -235,7 +305,27 @@ test('two-sided offline edits on the same glyph converge and a reload does not a
             { timeout: 90000 }
         );
         await waitUntilGlyphLayerDataMatches(ownerPage, inviteePage, ['a']);
-        const settled = await glyphNodeX(ownerPage, 'a');
+        // Agreeing is not enough: both offline edits must survive the merge.
+        const expected = {
+            first: ownerEdit.newX,
+            last: inviteeEdit.newX
+        };
+        await expect
+            .poll(async () => firstAndLastNodeX(ownerPage, 'a'))
+            .toEqual(expected);
+        await expect
+            .poll(async () => firstAndLastNodeX(inviteePage, 'a'))
+            .toEqual(expected);
+
+        // Font-core data: a kerning pair and a font-info value set through
+        // the recorded model API reach the invitee and survive its reload.
+        const coreEdit = await editFontCoreThroughModel(ownerPage);
+        expect(coreEdit.kern).toBe(-37);
+        await expect
+            .poll(async () => readFontCore(inviteePage, coreEdit.masterId), {
+                timeout: 60000
+            })
+            .toEqual({ kern: -37, version: coreEdit.version });
 
         await inviteePage.reload();
         await waitForCanvasReady(inviteePage);
@@ -244,11 +334,19 @@ test('two-sided offline edits on the same glyph converge and a reload does not a
         await waitForBridgeReady(inviteePage);
         await alignEditorCanvas(inviteePage, 'a', { wght: 200 });
         await expect
-            .poll(async () => glyphNodeX(inviteePage, 'a'), { timeout: 120000 })
-            .toBe(settled);
+            .poll(async () => firstAndLastNodeX(inviteePage, 'a'), {
+                timeout: 120000
+            })
+            .toEqual(expected);
         await expect
-            .poll(async () => glyphNodeX(ownerPage, 'a'), { timeout: 30000 })
-            .toBe(settled);
+            .poll(async () => firstAndLastNodeX(ownerPage, 'a'), {
+                timeout: 30000
+            })
+            .toEqual(expected);
+        expect(await readFontCore(inviteePage, coreEdit.masterId)).toEqual({
+            kern: -37,
+            version: coreEdit.version
+        });
     } finally {
         await ownerContext.close();
         await inviteeContext?.close();

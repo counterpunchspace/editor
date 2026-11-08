@@ -54,6 +54,7 @@
         "chokidar": "^5.0.0",
         "copy-webpack-plugin": "^13.0.1",
         "css-loader": "^7.1.2",
+        "fake-indexeddb": "^6.2.5",
         "html-webpack-plugin": "^5.6.5",
         "husky": "^9.1.7",
         "jest": "^30.2.0",

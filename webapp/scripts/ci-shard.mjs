@@ -137,7 +137,6 @@ const GROUPS = {
             'tests/open-path-startup.spec.ts',
             'tests/multiline-text.spec.ts',
             'tests/typing-pending-glyph.spec.ts',
-            'tests/cloud-wal-idb.spec.ts',
             'tests/compilation-lane-benchmark.spec.ts',
             'tests/perf-pipeline-benchmark.spec.ts'
         ],

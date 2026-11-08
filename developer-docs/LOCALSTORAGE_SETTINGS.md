@@ -82,8 +82,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Operations: `getItem`, `setItem`
 - Default when unset: `false`
 - Sites:
-  - webapp/js/ai-assistant.ts:818 `getItem` via constructor `constructor`
-  - webapp/js/ai-assistant.ts:1020 `setItem` via method `initUI`
+  - webapp/js/ai-assistant.ts:819 `getItem` via constructor `constructor`
+  - webapp/js/ai-assistant.ts:1021 `setItem` via method `initUI`
 
 <a id="key-canvasplugin-curvaturecombplugin-exponent"></a>
 
@@ -242,12 +242,12 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Operations: `getItem`, `setItem`, `removeItem`
 - Default when unset: `Hamburgevons`
 - Sites:
-  - webapp/js/font-manager.ts:2993 `removeItem` via method `handleNewFont`
-  - webapp/js/font-manager.ts:3127 `getItem` via method `resolveEditingTextForCompile`
-  - webapp/js/glyph-canvas/textrun.ts:154 `getItem` via constructor `constructor`
-  - webapp/js/glyph-canvas/textrun.ts:498 `setItem` via method `setTextBuffer`
-  - webapp/js/glyph-canvas/textrun.ts:2350 `setItem` via method `loadTextBufferFromFont`
-  - webapp/js/glyph-canvas/textrun.ts:2387 `setItem` via method `saveTextBuffer`
+  - webapp/js/font-manager.ts:3073 `removeItem` via method `handleNewFont`
+  - webapp/js/font-manager.ts:3207 `getItem` via method `resolveEditingTextForCompile`
+  - webapp/js/glyph-canvas/textrun.ts:190 `getItem` via constructor `constructor`
+  - webapp/js/glyph-canvas/textrun.ts:542 `setItem` via method `setTextBuffer`
+  - webapp/js/glyph-canvas/textrun.ts:2411 `setItem` via method `loadTextBufferFromFont`
+  - webapp/js/glyph-canvas/textrun.ts:2448 `setItem` via method `saveTextBuffer`
 
 <a id="key-glyphfiltereditormode"></a>
 
@@ -268,8 +268,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: literal
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/file-browser.ts:2283 `setItem` via function `switchContext`
-  - webapp/js/file-browser.ts:3558 `getItem` via function `initFileBrowser`
+  - webapp/js/file-browser.ts:2307 `setItem` via function `switchContext`
+  - webapp/js/file-browser.ts:3582 `getItem` via function `initFileBrowser`
 
 <a id="key-preferredtheme"></a>
 
@@ -456,10 +456,10 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: pattern
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/file-browser.ts:2334 `getItem` via function `switchContext`
-  - webapp/js/file-browser.ts:3155 `setItem` via function `navigateToPath`
-  - webapp/js/file-browser.ts:3627 `getItem` via function `initFileBrowser`
-  - webapp/js/file-browser.ts:4066 `setItem` via module `top-level module code`
+  - webapp/js/file-browser.ts:2358 `getItem` via function `switchContext`
+  - webapp/js/file-browser.ts:3179 `setItem` via function `navigateToPath`
+  - webapp/js/file-browser.ts:3651 `getItem` via function `initFileBrowser`
+  - webapp/js/file-browser.ts:4099 `setItem` via module `top-level module code`
 
 <a id="key-linkedwindowoccupancy-sessionid-"></a>
 

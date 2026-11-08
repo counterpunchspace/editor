@@ -5,7 +5,11 @@ const {
 
 function createIndexedDbMock(options = {}) {
     const records = new Map();
-    const failPut = options.failPut === true;
+    const control = {
+        failPuts: options.failPut === true ? Infinity : 0,
+        errorName: options.errorName || 'UnknownError'
+    };
+    let failPut = false;
     const store = {
         put: jest.fn((value) => {
             if (!failPut) {
@@ -57,12 +61,18 @@ function createIndexedDbMock(options = {}) {
     const db = {
         objectStoreNames: { contains: () => true },
         createObjectStore: jest.fn(() => store),
-        transaction: jest.fn(() => {
+        transaction: jest.fn((_store, mode) => {
+            failPut = mode === 'readwrite' && control.failPuts > 0;
+            if (failPut) {
+                control.failPuts -= 1;
+            }
+            const error = new Error('write failed');
+            error.name = control.errorName;
             const transaction = {
                 objectStore: () => store,
                 onerror: null,
                 onabort: null,
-                error: failPut ? new Error('quota') : null
+                error: failPut ? error : null
             };
             Object.defineProperty(transaction, 'oncomplete', {
                 configurable: true,
@@ -87,6 +97,7 @@ function createIndexedDbMock(options = {}) {
     };
     return {
         records,
+        control,
         open: jest.fn(() => {
             const request = {
                 result: db,
@@ -165,6 +176,7 @@ describe('CloudDurableWal', () => {
         await expect(wal.append(sampleRecord())).rejects.toThrow(
             'Cloud write-ahead storage is unavailable'
         );
+        wal.close();
     });
 
     test('verifies a persisted record before treating the WAL as ready', async () => {
@@ -182,6 +194,66 @@ describe('CloudDurableWal', () => {
         await wal.load('asset-1');
         await expect(wal.append(sampleRecord())).rejects.toThrow();
         expect(wal.health).toBe('unavailable');
+        wal.close();
+    });
+
+    test('retries a transient write failure without losing the row', async () => {
+        const idb = createIndexedDbMock();
+        global.indexedDB = idb;
+        const wal = new CloudDurableWal();
+        await wal.load('asset-1');
+        idb.control.failPuts = 1;
+        await wal.append(sampleRecord());
+        expect(wal.health).toBe('ready');
+        expect(idb.records.size).toBe(1);
+    });
+
+    test('keeps a refused row sendable and heals once IndexedDB writes again', async () => {
+        // The IndexedDB mock reports errors via queueMicrotask.
+        jest.useFakeTimers({ doNotFake: ['queueMicrotask'] });
+        try {
+            const idb = createIndexedDbMock();
+            global.indexedDB = idb;
+            const wal = new CloudDurableWal();
+            await wal.load('asset-1');
+            idb.control.failPuts = 3;
+            const appending = wal.append(sampleRecord('txn-lost'));
+            const settled = expect(appending).rejects.toThrow(
+                'Cloud write-ahead storage is unavailable'
+            );
+            await jest.advanceTimersByTimeAsync(500);
+            await settled;
+            expect(wal.health).toBe('unavailable');
+            expect(wal.recordsFor('font-core')).toHaveLength(1);
+            expect(wal.pendingCount).toBe(1);
+            expect(idb.records.size).toBe(0);
+
+            await jest.advanceTimersByTimeAsync(1_000);
+            expect(wal.health).toBe('ready');
+            expect([...idb.records.keys()]).toEqual([
+                'asset-1:font-core:txn-lost'
+            ]);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    test('reports a full disk with a clear message and no retry storm', async () => {
+        const idb = createIndexedDbMock({ errorName: 'QuotaExceededError' });
+        global.indexedDB = idb;
+        const wal = new CloudDurableWal();
+        await wal.load('asset-1');
+        idb.control.failPuts = 1;
+        const error = await wal.append(sampleRecord()).catch((e) => e);
+        expect(error.quotaExceeded).toBe(true);
+        expect(error.message).toContain(
+            'browser’s storage for the site is full'
+        );
+        expect(wal.health).toBe('unavailable');
+        await wal.verifyWritable();
+        expect(wal.health).toBe('ready');
+        expect(idb.records.size).toBe(1);
+        wal.close();
     });
 
     test('keeps records with the same transaction id on different documents', async () => {

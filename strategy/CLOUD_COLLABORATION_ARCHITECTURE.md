@@ -669,8 +669,10 @@ working   = reverseW, then forward* over strict `component` only
             // previous working ids unioned only if they are not
             // metrics-key/both stems of this family
 hidden    = forward*(working) over metrics-key and both   // n, l, o
-            ∪ reverse metrics inheritors of working       // a.wide keyed to a
-            ∪ forward* component of those inheritors
+            ∪ writeTargets                                // a.wide keyed to a
+            ∪ forward* component of writeTargets
+writeTargets = reverse*(component ∪ metrics-key) from the reverse
+            metrics inheritors of working                 // a.wide.sc, adieresis.wide
             minus working
 load      = working ∪ hidden
 ```

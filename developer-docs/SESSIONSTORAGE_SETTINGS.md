@@ -30,13 +30,13 @@ This document lists `sessionStorage` keys discovered in production TypeScript (`
 - Operations: `getItem`, `setItem`, `removeItem`
 - Default when unset: `false`
 - Sites:
-  - webapp/coi-serviceworker.js:406 `getItem` via module `top-level module code`
-  - webapp/coi-serviceworker.js:428 `removeItem` via module `top-level module code`
-  - webapp/coi-serviceworker.js:461 `setItem` via function `reloadForCoiBootstrap`
-  - webapp/coi-serviceworker.js:552 `getItem` via module `top-level module code`
-  - webapp/coi-serviceworker.js:571 `removeItem` via module `top-level module code`
-  - webapp/js/fonteditor.ts:49 `getItem` via function `initFontEditor`
-  - webapp/js/fonteditor.ts:76 `setItem` via function `initFontEditor`
+  - webapp/coi-serviceworker.js:431 `getItem` via module `top-level module code`
+  - webapp/coi-serviceworker.js:453 `removeItem` via module `top-level module code`
+  - webapp/coi-serviceworker.js:486 `setItem` via function `reloadForCoiBootstrap`
+  - webapp/coi-serviceworker.js:577 `getItem` via module `top-level module code`
+  - webapp/coi-serviceworker.js:596 `removeItem` via module `top-level module code`
+  - webapp/js/fonteditor.ts:50 `getItem` via function `initFontEditor`
+  - webapp/js/fonteditor.ts:77 `setItem` via function `initFontEditor`
 
 <a id="key-cp-editor-health-unhealthy"></a>
 

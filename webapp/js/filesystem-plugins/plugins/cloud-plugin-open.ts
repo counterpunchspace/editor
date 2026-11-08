@@ -484,7 +484,6 @@ export const cloudPluginOpenMethods = {
         if (window.stateManager) {
             window.stateManager.editor_file = fileUri;
         }
-        window.windowSync?.rebindChannel?.(assetId);
 
         void (window as any).fontManager?.updateFontDisplay?.();
         void (window as any).fontManager?.updateDirtyIndicator?.();

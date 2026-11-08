@@ -6180,9 +6180,55 @@ describe('WindowSync', () => {
         receiver.destroy();
     });
 
+    test('a linked-window batch of packets rebuilds the receiver model once', () => {
+        const bridge1 = new ChangeBridge('win-batch-1');
+        bridge1.initFromJson(makeMinimalFont());
+        const bridge2 = new ChangeBridge('win-batch-2');
+        bridge2.applyDocumentSetState(bridge1.encodeDocumentSet());
+        let afterSyncCount = 0;
+        bridge2.onAfterSync(() => {
+            afterSyncCount += 1;
+        });
+        const applyRemoteUpdate = jest.spyOn(bridge2, 'applyRemoteUpdate');
+
+        const sync1 = new WindowSync(bridge1, 'font-channel-batch');
+        const sync2 = new WindowSync(bridge2, 'font-channel-batch');
+
+        // Three commits in one task leave in one channel message.
+        for (const width of [700, 710, 720]) {
+            bridge1.recordChange(
+                ['glyphs', 'A', 'layers', 'layer-1'],
+                'width',
+                600,
+                width
+            );
+        }
+        flushTimers();
+
+        expect(
+            bridge2.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
+        ).toBe(720);
+        expect(applyRemoteUpdate.mock.calls.length).toBeGreaterThan(1);
+        expect(afterSyncCount).toBe(1);
+
+        sync1.destroy();
+        sync2.destroy();
+        bridge1.destroy();
+        bridge2.destroy();
+    });
+
     test('full state request/response bootstraps new window', () => {
         const originalFontCompilation = window.fontCompilation;
+        const originalRole = window.windowRole;
         window.fontCompilation = undefined;
+        // Only main answers a full-state request.
+        window.windowRole = {
+            ...(originalRole || {}),
+            isMainWindow: () => true,
+            isLinkedWindow: () => false,
+            getRoleLabel: () => 'Main',
+            sessionId: 'main'
+        };
 
         const fontJson1 = makeMinimalFont();
         const bridge1 = new ChangeBridge('win-1');
@@ -6222,6 +6268,7 @@ describe('WindowSync', () => {
         bridge1.destroy();
         bridge2.destroy();
         window.fontCompilation = originalFontCompilation;
+        window.windowRole = originalRole;
     });
 
     test('main window defers the initial linked full-state until cloud bootstrap is ready', () => {

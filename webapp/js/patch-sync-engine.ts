@@ -81,7 +81,7 @@ import {
 import { Logger } from './logger';
 import { ApplyKind } from './apply-kind';
 import { pushCollabIntegrityEvent } from './cloud-collab-integrity-debug';
-import { bytesToBase64 } from './cloud-durable-wal';
+import { bytesToBase64, CloudWalPersistError } from './cloud-durable-wal';
 import {
     collaborationMessageKey,
     createChangeLogEntriesFromCollaborationMessageEnvelope,
@@ -109,9 +109,13 @@ import {
     type CloudOwnedFontData
 } from './filesystem-plugins/cloud-glyph-catalog';
 import {
-    buildFontDepsForGlyph,
+    buildFontDepsForGlyphWithIndex,
+    catalogNameIndexFromEntries,
     catalogEntriesForDepsParse,
+    parseMetricsKeyReferencedNames,
     patchSourceEdges,
+    readFontDepsIndex,
+    sparseWriteClosureIds,
     writeCompleteFontDepsIfLoaded
 } from './filesystem-plugins/cloud-font-deps';
 import {
@@ -719,6 +723,11 @@ export class PatchSyncEngine {
     /** Sparse residency: in-memory only. Never written to font-deps. */
     private _sparseSession = false;
     private _sparseWorkingGlyphIds: Set<string> = new Set();
+    private _depsVersion = 0;
+    private _sparseWriteClosureCache: {
+        key: string;
+        ids: string[];
+    } | null = null;
     /** Callback to trigger dirty marking on the font manager side */
     private _onDirty: (() => void) | null = null;
     /** Callback after _syncJsonFromYDoc (undo/redo/remote) for external resync */
@@ -943,6 +952,9 @@ export class PatchSyncEngine {
         this.windowId = windowId ?? windowRole.instanceId;
         this.yDoc = new Y.Doc({ gc: false });
         this.depsDoc = new Y.Doc({ gc: false });
+        this.depsDoc.on('update', () => {
+            this._depsVersion += 1;
+        });
         this.fontMap = this.yDoc.getMap('font');
 
         const LOCAL_EDIT_ORIGINS: Set<string> = new Set([
@@ -1303,6 +1315,85 @@ export class PatchSyncEngine {
         return this._sparseWorkingGlyphIds.has(glyphId);
     }
 
+    /**
+     * Catalog glyphs that an edit of `glyphNames` would rewrite (composites,
+     * metrics-key inheritors, transitively, from live font-deps) but that are
+     * not resident in this sparse session. Editing those sources must wait
+     * until these are hydrated: the cascade only reaches resident glyphs.
+     */
+    listSparseWriteBlockers(glyphNames: Iterable<string>): string[] {
+        if (!this._sparseSession) {
+            return [];
+        }
+        const sourceIds = [...new Set(glyphNames)]
+            .map((name) => this._glyphIdByName.get(name))
+            .filter((id): id is string => Boolean(id))
+            .sort();
+        if (!sourceIds.length) {
+            return [];
+        }
+        // The closure depends only on font-deps; residency is checked live.
+        const key = `${this._depsVersion}\0${sourceIds.join('\0')}`;
+        if (this._sparseWriteClosureCache?.key !== key) {
+            this._sparseWriteClosureCache = {
+                key,
+                ids: sparseWriteClosureIds({
+                    sourceIds,
+                    edges: readFontDepsIndex(this.depsDoc.getMap('deps')).edges
+                })
+            };
+        }
+        const missing = this._sparseWriteClosureCache.ids.filter(
+            (id) => !this._glyphDocs.has(id)
+        );
+        if (!missing.length) {
+            return [];
+        }
+        const live = new Set(this.listLiveCatalogGlyphIds());
+        return missing
+            .filter((id) => live.has(id))
+            .map((id) => this._catalogGlyphName(id) || id);
+    }
+
+    /**
+     * Catalog glyphs a metrics-key string names that are not resident here.
+     * Applying such a key would store it without resolving its value.
+     */
+    listNonResidentMetricsKeyReferences(rawKey: string): string[] {
+        if (!this._sparseSession) {
+            return [];
+        }
+        const idByName = new Map<string, string>();
+        for (const glyphId of this.listLiveCatalogGlyphIds()) {
+            const name = this._catalogGlyphName(glyphId);
+            if (name) {
+                idByName.set(name, glyphId);
+            }
+        }
+        const namesByLength = [...idByName.keys()].sort(
+            (left, right) => right.length - left.length
+        );
+        return parseMetricsKeyReferencedNames(rawKey, namesByLength).filter(
+            (name) => !this._glyphDocs.has(idByName.get(name) || '')
+        );
+    }
+
+    /** Refuse a glyph write whose dependents are not resident. */
+    private _assertSparseWriteClosureResident(
+        path: Array<string | number>
+    ): void {
+        if (!this._sparseSession || path[0] !== 'glyphs' || !path[1]) {
+            return;
+        }
+        const glyphName = String(path[1]);
+        const blockers = this.listSparseWriteBlockers([glyphName]);
+        if (blockers.length) {
+            throw new Error(
+                `“${glyphName}” cannot be edited yet: glyphs that depend on it are still on the server (${blockers.slice(0, 5).join(', ')}${blockers.length > 5 ? ', …' : ''}).`
+            );
+        }
+    }
+
     replaceSparseWorkingGlyphIds(glyphIds: string[]): void {
         this.beginSparseWorkingSet(glyphIds);
     }
@@ -1501,6 +1592,21 @@ export class PatchSyncEngine {
         this._patchGlyphFromYDoc(name, { ignoreExisting: true });
     }
 
+    /** Glyph name from the core catalog, also for glyphs that are not resident. */
+    private _catalogGlyphName(glyphId: string): string | null {
+        const known = this._glyphNameById.get(glyphId);
+        if (known) {
+            return known;
+        }
+        const yCatalog = this.fontMap.get(CORE_GLYPH_CATALOG_KEY);
+        const entry = yCatalog instanceof Y.Map ? yCatalog.get(glyphId) : null;
+        const name =
+            entry instanceof Y.Map
+                ? entry.get('name')
+                : (entry as { name?: unknown } | null)?.name;
+        return typeof name === 'string' && name ? name : null;
+    }
+
     /** Non-deleted catalog glyph ids, read from font-core without building font JSON. */
     listLiveCatalogGlyphIds(): string[] {
         const yCatalog = this.fontMap.get(CORE_GLYPH_CATALOG_KEY);
@@ -1672,25 +1778,26 @@ export class PatchSyncEngine {
             const idByName = new Map<string, string>();
             const glyphByName = new Map<string, Record<string, unknown>>();
             const catalog = catalogEntriesForDepsParse(fontJson);
+            const catalogIds = new Set<string>();
             for (const entry of catalog) {
                 idByName.set(entry.name, entry.glyphId);
+                catalogIds.add(entry.glyphId);
             }
+            const catalogNames = new Set(idByName.keys());
             for (const glyph of glyphs) {
                 const name = String(glyph.name || '');
                 if (name) {
                     const glyphId = ensureImmutableGlyphId(glyph);
                     idByName.set(name, glyphId);
                     glyphByName.set(name, glyph);
-                    if (
-                        !catalog.some(
-                            (entry) =>
-                                entry.glyphId === glyphId || entry.name === name
-                        )
-                    ) {
+                    if (!catalogIds.has(glyphId) && !catalogNames.has(name)) {
                         catalog.push({ glyphId, name });
+                        catalogIds.add(glyphId);
+                        catalogNames.add(name);
                     }
                 }
             }
+            const nameIndex = catalogNameIndexFromEntries(catalog);
             for (const name of glyphNames) {
                 const sourceId = idByName.get(name);
                 const glyph = glyphByName.get(name);
@@ -1704,7 +1811,7 @@ export class PatchSyncEngine {
                 patchSourceEdges(
                     depsMap,
                     sourceId,
-                    buildFontDepsForGlyph(glyph, catalog),
+                    buildFontDepsForGlyphWithIndex(glyph, nameIndex),
                     typeof sourceRevision === 'string' && sourceRevision
                         ? sourceRevision
                         : '0'
@@ -2526,16 +2633,6 @@ export class PatchSyncEngine {
                 });
             }
         };
-        const reportPersistFailure = (id: string, reason: string): void => {
-            console.error(
-                `Cloud durability persist failed for ${id}: ${reason}; edit is not yet durable`
-            );
-            window.dispatchEvent(
-                new CustomEvent('cloud-persist-failed', {
-                    detail: { documentId: id, reason }
-                })
-            );
-        };
         const plugin = window.cloudPlugin;
         if (
             typeof plugin?.persistOutgoingCloudUpdate === 'function' &&
@@ -2561,7 +2658,10 @@ export class PatchSyncEngine {
                             ok: ok !== false
                         });
                         if (ok === false) {
-                            reportPersistFailure(documentId, 'rejected');
+                            this._reportCloudPersistFailure(
+                                documentId,
+                                'rejected'
+                            );
                         }
                         // Local consumers must always see the applied update;
                         // skipping deliver() would leave the UI stale versus Yjs.
@@ -2574,7 +2674,10 @@ export class PatchSyncEngine {
                             ok: false,
                             error: String(error)
                         });
-                        reportPersistFailure(documentId, String(error));
+                        this._reportCloudPersistFailure(
+                            documentId,
+                            error instanceof Error ? error : String(error)
+                        );
                         deliver();
                     }
                 )
@@ -2585,6 +2688,23 @@ export class PatchSyncEngine {
             return;
         }
         deliver();
+    }
+
+    private _reportCloudPersistFailure(
+        documentId: string,
+        failure: string | Error
+    ): void {
+        const reason = typeof failure === 'string' ? failure : failure.message;
+        console.error(
+            `Cloud durability persist failed for ${documentId}: ${reason}; edit is not yet durable`
+        );
+        const storageFull =
+            failure instanceof CloudWalPersistError && failure.quotaExceeded;
+        window.dispatchEvent(
+            new CustomEvent('cloud-persist-failed', {
+                detail: { documentId, reason, storageFull }
+            })
+        );
     }
 
     private _documentIdsForHistoryItem(
@@ -2875,6 +2995,31 @@ export class PatchSyncEngine {
         }
     }
 
+    private _remoteAfterSyncBatch: { pending: boolean } | null = null;
+
+    /**
+     * Apply several remote updates in one synchronous batch (a linked-window
+     * BroadcastChannel flush) with one after-sync model rebuild at the end.
+     * Unlike `runWithDeferredAfterSync`, this never spans an await, so it
+     * cannot hold back a cloud packet that lands during an async catch-up.
+     */
+    runWithBatchedRemoteAfterSync(fn: () => void): void {
+        if (this._remoteAfterSyncBatch) {
+            fn();
+            return;
+        }
+        const batch = { pending: false };
+        this._remoteAfterSyncBatch = batch;
+        try {
+            fn();
+        } finally {
+            this._remoteAfterSyncBatch = null;
+            if (batch.pending) {
+                this._onAfterSync?.();
+            }
+        }
+    }
+
     private _emitAfterSync(): void {
         if (this._afterSyncDeferDepth > 0) {
             this._afterSyncSkipped = true;
@@ -2965,6 +3110,7 @@ export class PatchSyncEngine {
     ): void {
         if (this._suppressRecording || this._isSyncing) return;
         assertCloudAssetMutable();
+        this._assertSparseWriteClosureResident(path);
 
         const fullPath = this._stabilizeRecordedPath([...path, prop]);
         this._queueOrCommitOperations([
@@ -2986,6 +3132,7 @@ export class PatchSyncEngine {
     recordAdd(path: (string | number)[], value: unknown): void {
         if (this._suppressRecording || this._isSyncing) return;
         assertCloudAssetMutable();
+        this._assertSparseWriteClosureResident(path);
 
         const isObjectValue =
             !!value && typeof value === 'object' && !Array.isArray(value);
@@ -3025,6 +3172,7 @@ export class PatchSyncEngine {
     recordRemove(path: (string | number)[], oldValue: unknown): void {
         if (this._suppressRecording || this._isSyncing) return;
         assertCloudAssetMutable();
+        this._assertSparseWriteClosureResident(path);
 
         const operations: TransactionBufferedOperation[] = [
             {
@@ -5571,7 +5719,11 @@ export class PatchSyncEngine {
                 effectiveRemoteEntries,
                 resolvedDocumentId
             );
-            this._onAfterSync?.();
+            if (this._remoteAfterSyncBatch) {
+                this._remoteAfterSyncBatch.pending = true;
+            } else {
+                this._onAfterSync?.();
+            }
             this._onDirty?.();
             if (
                 captureInUndo &&
@@ -7359,17 +7511,30 @@ export class PatchSyncEngine {
         return plugin.canSubmitCollabUpdate(requests);
     }
 
+    /**
+     * The rejected commit already advanced this client's Yjs clocks. Its items
+     * and the undo items stay unsent, so the next packet must start from the
+     * pre-commit baseline (or peers park everything after the gap), and the
+     * undo transaction GCs the deleted content so that packet stays small.
+     */
     private _rejectLocalCollabSubmit(
         changeLogEntries: ChangeLogEntry[],
-        decision: CollabSubmitDecision
+        decision: CollabSubmitDecision,
+        baselineByDoc: Map<string, Uint8Array>
     ): void {
+        for (const [documentId, baseline] of baselineByDoc) {
+            if (!this._lastBroadcastStateVectorByDoc.has(documentId)) {
+                this._lastBroadcastStateVectorByDoc.set(documentId, baseline);
+            }
+        }
         this._pushApplyKind(ApplyKind.UndoRedo);
         try {
             this._replayHistoryEntries(
                 [...changeLogEntries]
                     .reverse()
                     .filter(isReplayableHistoryEntry),
-                'undo'
+                'undo',
+                true
             );
         } finally {
             this._popApplyKind();
@@ -7994,7 +8159,11 @@ export class PatchSyncEngine {
                 }))
             );
             if (!decision.allowed) {
-                this._rejectLocalCollabSubmit(changeLogEntries, decision);
+                this._rejectLocalCollabSubmit(
+                    changeLogEntries,
+                    decision,
+                    localUpdateBaselineByDoc
+                );
                 return null;
             }
             this._lastLocalUpdateLogIndex = this._changeLog.length;
@@ -8760,8 +8929,19 @@ export class PatchSyncEngine {
                     )
                 )
                 .then(
-                    () => undefined,
-                    () => undefined
+                    (ok) => {
+                        if (ok === false) {
+                            this._reportCloudPersistFailure(
+                                FONT_CORE_DOCUMENT_ID,
+                                'rejected'
+                            );
+                        }
+                    },
+                    (error) =>
+                        this._reportCloudPersistFailure(
+                            FONT_CORE_DOCUMENT_ID,
+                            error instanceof Error ? error : String(error)
+                        )
                 );
         }
         for (const cb of this._glyphRevisionListeners) {
@@ -9117,7 +9297,8 @@ export class PatchSyncEngine {
     /** Apply already-ordered forward entries in the given direction, one Yjs transaction per document. */
     private _replayHistoryEntries(
         replayEntries: ChangeLogEntry[],
-        direction: 'undo' | 'redo'
+        direction: 'undo' | 'redo',
+        collectDeletedContent = false
     ): void {
         const itemRenames = this._collectGlyphRenamesFromEntries(replayEntries);
         if (direction === 'undo') {
@@ -9135,15 +9316,22 @@ export class PatchSyncEngine {
         }
         for (const [documentId, entries] of entriesByDocument) {
             const doc = this._docForId(documentId) || this.yDoc;
-            doc.transact(() => {
-                for (const entry of entries) {
-                    this._applyHistoryReplayEntry(
-                        entry,
-                        direction,
-                        itemRenames
-                    );
-                }
-            }, HISTORY_REPLAY_ORIGIN);
+            const keepGc = doc.gc;
+            // Yjs GCs a transaction's deletions at cleanup when doc.gc is set.
+            doc.gc = keepGc || collectDeletedContent;
+            try {
+                doc.transact(() => {
+                    for (const entry of entries) {
+                        this._applyHistoryReplayEntry(
+                            entry,
+                            direction,
+                            itemRenames
+                        );
+                    }
+                }, HISTORY_REPLAY_ORIGIN);
+            } finally {
+                doc.gc = keepGc;
+            }
         }
         if (direction === 'redo') {
             this._applyGlyphNameRemapsFromEntries(replayEntries, direction);

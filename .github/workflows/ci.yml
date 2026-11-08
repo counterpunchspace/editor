@@ -1,9 +1,11 @@
 name: CI
 
 on:
+    # Only main deploys the shared staging stack. A branch push used to run the
+    # whole suite there too, racing main's run on the same hostnames.
     push:
         branches:
-            - "**"
+            - main
     pull_request:
         branches:
             - "**"
@@ -254,9 +256,11 @@ jobs:
 
     # Deploys the trio to the staging hostnames, then the shard job runs the
     # suite there. A release cutover reuses that result for the same build.
+    # Pull requests get the local checks only: fork PRs have no secrets, and a
+    # PR run would redeploy staging under main's cloud suite.
     cloud-collab-staging-deploy:
         needs: tested-build
-        if: needs.tested-build.outputs.skip != 'true'
+        if: needs.tested-build.outputs.skip != 'true' && github.event_name != 'pull_request'
         runs-on: ubuntu-latest
         timeout-minutes: 90
         steps:
@@ -474,7 +478,7 @@ jobs:
 
     cloud-collab-staging-leftovers:
         needs: [tested-build, cloud-collab-e2e]
-        if: always() && needs.tested-build.outputs.skip != 'true' && needs.cloud-collab-e2e.result != 'cancelled'
+        if: always() && needs.tested-build.outputs.skip != 'true' && github.event_name != 'pull_request' && needs.cloud-collab-e2e.result != 'cancelled'
         runs-on: ubuntu-latest
         steps:
             - name: Checkout editor

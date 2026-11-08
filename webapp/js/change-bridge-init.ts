@@ -21,7 +21,12 @@ import * as Y from 'yjs';
 import { fromYType } from './change-bridge-ydoc';
 import { FONT_CORE_DOCUMENT_ID } from './filesystem-plugins/cloud-document-set';
 import { Font } from './babelfont-model';
-import { WindowSync, windowSyncChannelName } from './window-sync';
+import {
+    WindowSync,
+    createWindowSyncChannelName,
+    isLinkedPeerSnapshotSearch,
+    linkedWindowSyncChannel
+} from './window-sync';
 import type { FilesystemPlugin } from './filesystem-plugins';
 import { fontCompilation, fullFontCompilation } from './font-compilation';
 import { timelineSpanEnd, timelineSpanStart } from './perf-timeline';
@@ -2893,11 +2898,7 @@ window.syncRustCacheAndRefreshCanvas =
 window.runBridgeUndoRedo = runBridgeUndoRedo;
 
 function isSyncWindow(): boolean {
-    try {
-        return new URLSearchParams(window.location.search).has('sync');
-    } catch {
-        return false;
-    }
+    return isLinkedPeerSnapshotSearch(window.location.search);
 }
 
 let linkedPeerBootstrapActive = false;
@@ -3102,8 +3103,11 @@ function initializeBridge(detail: {
         );
     });
 
-    // Derive BroadcastChannel name from font path (or a fallback)
-    const channelName = windowSyncChannelName(detail.path || 'unsaved');
+    // Main names a fresh channel for this document; a linked window joins
+    // main's from its URL (one without it finds no main and latches).
+    const channelName =
+        (isSyncWindow() && linkedWindowSyncChannel(window.location.search)) ||
+        createWindowSyncChannelName();
 
     if (isSyncWindow()) {
         // Sync (secondary) window: prefer the peer's live Y.Doc, but keep any
@@ -3359,13 +3363,10 @@ function initializeBridge(detail: {
     if (isSyncWindow()) {
         // Linked window: also request the full Y.Doc state from the
         // main window so undo history and pending edits are merged.
+        // The URL keeps ?sync: a reload must take main's document again,
+        // never reopen the source as a second copy.
         sync.requestFullState();
         console.log('Sync window — initialised locally + requested peer state');
-
-        // Strip ?sync from the URL so a reload won't re-enter sync mode
-        const url = new URL(window.location.href);
-        url.searchParams.delete('sync');
-        window.history.replaceState(null, '', url.toString());
     } else {
         console.log('Main window — PatchSyncEngine initialised');
     }

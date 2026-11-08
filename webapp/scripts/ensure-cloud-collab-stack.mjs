@@ -5,6 +5,19 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, execSync, spawn } from 'node:child_process';
 
+// The editor the specs run against (CLOUD_E2E_EDITOR_URL, default the dev
+// server on 8000). Its origin must be allowed by the local website and room.
+const EDITOR_ORIGIN = new URL(
+    process.env.CLOUD_E2E_EDITOR_URL || 'https://localhost:8000'
+).origin;
+const EDITOR_ORIGINS = [
+    ...new Set([
+        EDITOR_ORIGIN,
+        'https://localhost:8000',
+        'http://localhost:9000'
+    ])
+].join(',');
+
 const webappRoot = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
     '..'
@@ -183,7 +196,7 @@ async function probeLocalCloudSessionHealthy() {
             method: 'POST',
             headers: {
                 'content-type': 'application/json',
-                'Origin': 'https://localhost:8000'
+                'Origin': EDITOR_ORIGIN
             },
             body: JSON.stringify({
                 email: 'ensure-health@counterpunch.test',
@@ -375,9 +388,9 @@ export function localCloudEnv() {
         AUTH_TOKEN_SECRET:
             process.env.AUTH_TOKEN_SECRET ||
             'counterpunch-local-dev-auth-token-secret',
-        EDITOR_ALLOWED_ORIGINS: 'https://localhost:8000,http://localhost:9000',
-        WEBSITE_ALLOWED_ORIGINS:
-            'https://localhost:8000,http://localhost:9000,https://localhost:8788',
+        EDITOR_ALLOWED_ORIGINS: EDITOR_ORIGINS,
+        EDITOR_APP_URL: EDITOR_ORIGIN,
+        WEBSITE_ALLOWED_ORIGINS: `${EDITOR_ORIGINS},https://localhost:8788`,
         MAGIC_LINK_SECRET:
             process.env.MAGIC_LINK_SECRET || 'e2e-cloud-collab-magic',
         ROOM_WORKER_URL: 'http://localhost:8787',
@@ -590,9 +603,11 @@ export async function ensureCloudCollabStack() {
                 '--binding',
                 'AUTH_TOKEN_SECRET=counterpunch-local-dev-auth-token-secret',
                 '--binding',
-                'EDITOR_ALLOWED_ORIGINS=https://localhost:8000,http://localhost:9000',
+                `EDITOR_ALLOWED_ORIGINS=${EDITOR_ORIGINS}`,
                 '--binding',
-                'WEBSITE_ALLOWED_ORIGINS=https://localhost:8000,http://localhost:9000,https://localhost:8788',
+                `EDITOR_APP_URL=${EDITOR_ORIGIN}`,
+                '--binding',
+                `WEBSITE_ALLOWED_ORIGINS=${EDITOR_ORIGINS},https://localhost:8788`,
                 '--binding',
                 'ROOM_WORKER_URL=http://localhost:8787',
                 '--binding',
@@ -711,7 +726,7 @@ export async function ensureCloudCollabStack() {
                 '--var',
                 'CLOUD_ATTEST_SERVICE_TOKEN:e2e-p0-attest',
                 '--var',
-                'EDITOR_ALLOWED_ORIGINS:https://localhost:8000,http://localhost:9000',
+                `EDITOR_ALLOWED_ORIGINS:${EDITOR_ORIGINS}`,
                 '--var',
                 'AUTH_TOKEN_SECRET:counterpunch-local-dev-auth-token-secret',
                 '--env-file',
@@ -774,14 +789,14 @@ export async function ensureCloudCollabStack() {
     }
     const editorDeadline = Date.now() + 120000;
     while (Date.now() < editorDeadline) {
-        if (await probeHttpOk('https://localhost:8000/?test=true')) {
+        if (await probeHttpOk(`${EDITOR_ORIGIN}/?test=true`)) {
             break;
         }
         await new Promise((resolve) => setTimeout(resolve, 500));
     }
-    if (!(await probeHttpOk('https://localhost:8000/?test=true'))) {
+    if (!(await probeHttpOk(`${EDITOR_ORIGIN}/?test=true`))) {
         throw new Error(
-            'editor https://localhost:8000/?test=true did not return HTTP 2xx'
+            `editor ${EDITOR_ORIGIN}/?test=true did not return HTTP 2xx`
         );
     }
     if (!roomStillUp) {

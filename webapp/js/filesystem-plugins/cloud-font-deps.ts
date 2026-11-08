@@ -202,7 +202,7 @@ export function catalogEntriesForDepsParse(
         .filter((entry) => entry.name);
 }
 
-type CatalogNameIndex = {
+export type CatalogNameIndex = {
     idByName: Map<string, string>;
     namesByLength: string[];
 };
@@ -310,9 +310,17 @@ export function buildFontDepsForGlyph(
     glyph: Record<string, unknown>,
     catalog: Array<{ glyphId: string; name: string }>
 ): Record<string, FontDepEdgeKind> {
-    const cached = catalogNameIndexFromEntries(catalog);
-    const idByName = new Map(cached.idByName);
-    const namesByLength = cached.namesByLength;
+    return buildFontDepsForGlyphWithIndex(
+        glyph,
+        catalogNameIndexFromEntries(catalog)
+    );
+}
+
+/** Same as buildFontDepsForGlyph, for callers patching many glyphs with one index. */
+export function buildFontDepsForGlyphWithIndex(
+    glyph: Record<string, unknown>,
+    { idByName, namesByLength }: CatalogNameIndex
+): Record<string, FontDepEdgeKind> {
     const sourceId = ensureImmutableGlyphId(glyph);
     const targets: Record<string, FontDepEdgeKind> = {};
     for (const name of collectShapeReferences(glyph)) {
@@ -765,6 +773,67 @@ function closeSet(
     return closed;
 }
 
+/**
+ * Glyphs whose stored data an edit of `editableIds` rewrites through
+ * metrics keys: sidebearing inheritors (`a.wide` keyed to `a`), and from
+ * there every further metrics inheritor and composite (automatic
+ * composites store translations and width derived from their parts).
+ * Reverse component edges out of `editableIds` themselves are not
+ * followed: the working reverse close already holds those composites, and
+ * a nested part (`dieresiscomb`) must reach its full write closure before
+ * it is edited (`sparseWriteClosureIds`).
+ */
+function metricsWriteTargets(options: {
+    editableIds: Iterable<string>;
+    edges: Record<string, Record<string, FontDepEdgeKind>>;
+}): Set<string> {
+    const editable = new Set(options.editableIds);
+    const reverseMetrics = invertForwardEdges(options.edges, 'metrics-key');
+    const reverseAll = invertForwardEdges(options.edges);
+    const targets = new Set<string>();
+    const queue: string[] = [];
+    const reach = (id: string) => {
+        if (!editable.has(id) && !targets.has(id)) {
+            targets.add(id);
+            queue.push(id);
+        }
+    };
+    for (const id of editable) {
+        for (const inheritor of reverseMetrics[id] || []) {
+            reach(inheritor);
+        }
+    }
+    while (queue.length) {
+        for (const dependent of reverseAll[queue.pop()!] || []) {
+            reach(dependent);
+        }
+    }
+    return targets;
+}
+
+/**
+ * Every glyph whose stored data an edit of `sourceIds` may rewrite:
+ * reverse* over component and metrics-key edges (composites rebuild from
+ * their parts, metrics keys follow their source). In a sparse session all
+ * of these must be resident before a source is edited, or the cascade
+ * silently skips them and their stored data goes stale.
+ */
+export function sparseWriteClosureIds(options: {
+    sourceIds: Iterable<string>;
+    edges: Record<string, Record<string, FontDepEdgeKind>>;
+    catalog?: HydrationCatalogEntry[];
+}): string[] {
+    const sources = [...new Set(options.sourceIds)].filter(Boolean);
+    const closed = closeSet(
+        sources,
+        invertForwardEdges(mergeHydrationEdges(options.edges, options.catalog))
+    );
+    for (const id of sources) {
+        closed.delete(id);
+    }
+    return [...closed];
+}
+
 export type SparseHydrationPartition = {
     workingIds: string[];
     hiddenIds: string[];
@@ -850,20 +919,29 @@ export function computeSparseHydrationPartition(options: {
             working.delete(id);
         }
     }
-    const metricsPool = closeSet([...working], metricsAdj);
-    const reverseMetrics = invertForwardEdges(options.edges, 'metrics-key');
-    const metricsInheritors = new Set<string>();
-    for (const id of working) {
-        for (const inheritor of reverseMetrics[id] || []) {
-            metricsInheritors.add(inheritor);
+    // Already-chosen glyphs stay working. They do not start another reverse
+    // or forward close, so a new composite or base is discovered only when
+    // the caller passes those glyphs as seeds. They are editable, so their
+    // write dependents below must still be resident.
+    for (const id of previousWorkingIds) {
+        if (
+            !id ||
+            working.has(id) ||
+            isMetricsStemOf(id, working) ||
+            isMetricsStemOf(id, reverseWorking)
+        ) {
+            continue;
         }
+        working.add(id);
     }
+    const metricsPool = closeSet([...working], metricsAdj);
+    const writeTargets = metricsWriteTargets({ editableIds: working, edges });
     const inheritorParts = closeSet(
-        [...metricsInheritors].filter((id) => !working.has(id)),
+        [...writeTargets],
         forwardAdjacencyOfKind(edges, 'component')
     );
     const hiddenSeeds = [
-        ...new Set([...metricsPool, ...metricsInheritors, ...inheritorParts])
+        ...new Set([...metricsPool, ...writeTargets, ...inheritorParts])
     ].filter((id) => !working.has(id));
     // Hidden support still needs all of its own forward prerequisites. Keep it
     // hidden unless it was independently promoted into the working set.
@@ -875,22 +953,6 @@ export function computeSparseHydrationPartition(options: {
         )
     );
     const hidden = [...hiddenDependencies].filter((id) => !working.has(id));
-    // Already-chosen glyphs stay resident. They do not start another reverse
-    // or forward close, so a new composite or base is discovered only when
-    // the caller passes those glyphs as seeds.
-    const hiddenSet = new Set(hidden);
-    for (const id of previousWorkingIds) {
-        if (
-            !id ||
-            working.has(id) ||
-            hiddenSet.has(id) ||
-            isMetricsStemOf(id, working) ||
-            isMetricsStemOf(id, reverseWorking)
-        ) {
-            continue;
-        }
-        working.add(id);
-    }
     const workingIds = [...working];
     return {
         workingIds,

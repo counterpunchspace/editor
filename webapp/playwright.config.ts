@@ -219,6 +219,9 @@ export default defineConfig({
                 '**/cloud-collab-product-smoke.spec.ts'
             ],
             timeout: 480000,
+            // Each retry reseeds fonts on shared staging (up to 1,000 glyph
+            // rooms). One retry absorbs a network flake; a second hides bugs.
+            retries: process.env.CI ? 1 : 0,
             use: {
                 ...devices['Desktop Chrome'],
                 launchOptions: {

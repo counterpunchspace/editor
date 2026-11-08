@@ -499,6 +499,135 @@ describe('live font-deps updates', () => {
         bridge.destroy();
     });
 
+    it('keeps the whole metrics write closure of a working glyph resident', () => {
+        const fontJson = {
+            upm: 1000,
+            glyphs: [
+                { name: 'a', layers: [liveLayer()] },
+                { name: 'a.wide', leftMetricsKey: '=a', layers: [liveLayer()] },
+                { name: 'a.wide.sc', layers: [liveLayer()] },
+                {
+                    name: 'adieresis.wide',
+                    layers: [liveLayer([liveComponent('a.wide')])]
+                },
+                { name: 'h', leftMetricsKey: '=n', layers: [liveLayer()] },
+                { name: 'n', layers: [liveLayer()] }
+            ]
+        };
+        const { bridge, plugin, fontJson: live } = startLiveSession(fontJson);
+        const id = (name) => live.glyphs.find((g) => g.name === name).id;
+        live.glyphs.find((g) => g.name === 'a.wide.sc').leftMetricsKey =
+            '=a.wide';
+        bridge.recordChange(
+            ['glyphs', 'a.wide.sc'],
+            'leftMetricsKey',
+            undefined,
+            '=a.wide'
+        );
+        live.glyphs.find((g) => g.name === 'a').rightMetricsKey = '=n';
+        bridge.recordChange(
+            ['glyphs', 'a'],
+            'rightMetricsKey',
+            undefined,
+            '=n'
+        );
+
+        const edges = readFontDepsIndex(bridge.depsDoc.getMap('deps')).edges;
+        expect(edges[id('a.wide.sc')][id('a.wide')]).toBe('metrics-key');
+        const partition = computeSparseHydrationPartition({
+            seedIds: [id('a')],
+            edges,
+            catalog: catalogEntriesForDepsParse(live)
+        });
+        expect(partition.workingIds).toEqual([id('a')]);
+        // Editing `a` rewrites a.wide, then a.wide.sc and the automatic
+        // composite adieresis.wide. `n` is a stem: never reverse from it.
+        expect(partition.hiddenIds.sort()).toEqual(
+            [
+                id('a.wide'),
+                id('a.wide.sc'),
+                id('adieresis.wide'),
+                id('n')
+            ].sort()
+        );
+        expect(partition.loadIds).not.toContain(id('h'));
+        plugin._stopTrackingActiveAssetSize();
+        bridge.destroy();
+    });
+
+    it('refuses an edit whose write closure is not resident in a sparse session', async () => {
+        const fontJson = {
+            upm: 1000,
+            glyphs: [
+                { name: 'a', layers: [liveLayer()] },
+                { name: 'acutecomb', layers: [liveLayer()] },
+                {
+                    name: 'aacute',
+                    layers: [
+                        liveLayer([
+                            liveComponent('a'),
+                            liveComponent('acutecomb')
+                        ])
+                    ]
+                },
+                {
+                    name: 'eacute',
+                    layers: [liveLayer([liveComponent('acutecomb')])]
+                },
+                { name: 'z', layers: [liveLayer()] }
+            ]
+        };
+        const { bridge, plugin, fontJson: live } = startLiveSession(fontJson);
+        const ids = new Map(live.glyphs.map((g) => [g.name, g.id]));
+        const id = (name) => ids.get(name);
+        const partition = computeSparseHydrationPartition({
+            seedIds: [id('a')],
+            edges: readFontDepsIndex(bridge.depsDoc.getMap('deps')).edges,
+            catalog: catalogEntriesForDepsParse(live)
+        });
+        // The nested mark is working (editable) but its other composite is not
+        // loaded by the plan.
+        expect(partition.workingIds).toContain(id('acutecomb'));
+        expect(partition.loadIds).not.toContain(id('eacute'));
+        bridge.beginSparseWorkingSet(partition.workingIds);
+        bridge.unloadCleanGlyphDocuments(partition.loadIds, {
+            ignorePeers: true
+        });
+        expect(bridge.hasResidentGlyphDocument(`glyph:${id('eacute')}`)).toBe(
+            false
+        );
+
+        expect(bridge.listSparseWriteBlockers(['a'])).toEqual([]);
+        expect(bridge.listSparseWriteBlockers(['acutecomb'])).toEqual([
+            'eacute'
+        ]);
+        expect(() =>
+            bridge.recordChange(
+                ['glyphs', 'acutecomb', 'layers', 'layer-1'],
+                'width',
+                600,
+                620
+            )
+        ).toThrow(/still on the server \(eacute\)/);
+        expect(bridge.listNonResidentMetricsKeyReferences('=z+10')).toEqual([
+            'z'
+        ]);
+        expect(bridge.listNonResidentMetricsKeyReferences('=a')).toEqual([]);
+        // A key naming a glyph that stays on the server is refused, not stored.
+        const requested = [];
+        plugin.ensureSparseHydration = async (input) => {
+            requested.push(input.glyphNames);
+            return [];
+        };
+        await expect(plugin.prepareMetricsKeyInput('=z+10')).resolves.toBe(
+            false
+        );
+        expect(requested).toEqual([['z']]);
+        await expect(plugin.prepareMetricsKeyInput('=a')).resolves.toBe(true);
+        plugin._stopTrackingActiveAssetSize();
+        bridge.destroy();
+    });
+
     it('rebuilds font-deps from loaded glyphs with the same index as seed', () => {
         const previousAlert = window.alert;
         const alerts = [];
@@ -997,7 +1126,8 @@ describe('font-deps UUID edges continued', () => {
             expect.arrayContaining([a, composite])
         );
         expect(previousOnly.workingIds).not.toContain(newcomp);
-        expect(previousOnly.hiddenIds).not.toContain(inheritor);
+        // `a` stays editable, so its sidebearing inheritor must stay resident.
+        expect(previousOnly.hiddenIds).toContain(inheritor);
         expect(previousOnly.loadIds).not.toContain(newbase);
         expect(previousOnly.loadIds).not.toContain(newcomp);
     });

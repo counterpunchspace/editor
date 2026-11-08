@@ -137,17 +137,12 @@ export function filterSendableOutboxPackets(
     host: CloudOutboxHost,
     packets: CloudOutboundUpdatePacket[]
 ): CloudOutboundUpdatePacket[] {
-    return packets.filter((packet) => {
-        if (!packet.clientTransactionId) {
-            return true;
-        }
-        return host.wal
-            .recordsFor(host.documentId)
-            .some(
-                (record) =>
-                    record.clientTransactionId === packet.clientTransactionId
-            );
-    });
+    const walTransactionIds = host.wal.transactionIdsFor(host.documentId);
+    return packets.filter(
+        (packet) =>
+            !packet.clientTransactionId ||
+            walTransactionIds.has(packet.clientTransactionId)
+    );
 }
 
 export function walRecordsReadyToRestore(

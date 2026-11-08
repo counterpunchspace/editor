@@ -31,7 +31,10 @@ Partition (`computeSparseHydrationPartition`): reverse\* component/`both` from
 seeds ∪ FEA alts ∪ encoded bases of **seeds only** (not layout alts). Forward\*
 **strict component** into working. Metrics-key/`both` stems (`n`, `l`, `o`) are
 **hidden**, never working — do not reverse-close Latin from them. Reverse
-metrics inheritors of working (`a.wide`) are hidden. Do not reverse from a
+metrics inheritors of working (`a.wide`) and, transitively, their metrics
+inheritors and composites are hidden (the edit write closure). Editing a
+glyph whose write closure is not resident (`listSparseWriteBlockers`) must
+hydrate first or be refused. Do not reverse from a
 hidden source (`h` / `ntilde` from `n`). Do not GSUB-close the reverse set.
 Plan from **live** font-deps; one glyph fetch; working set is in-memory only.
 

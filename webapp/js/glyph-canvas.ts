@@ -7985,6 +7985,16 @@ class GlyphCanvas {
     ): Promise<void> {
         const trimmedValue = value.trim();
 
+        if (
+            trimmedValue &&
+            !isPlainNumericInputValue(trimmedValue) &&
+            window.cloudPlugin?.prepareMetricsKeyInput &&
+            !(await window.cloudPlugin.prepareMetricsKeyInput(trimmedValue))
+        ) {
+            this.updatePropertyPanel();
+            return;
+        }
+
         const layer = this.getCurrentEditingLayerModel();
         if (!layer) {
             return;

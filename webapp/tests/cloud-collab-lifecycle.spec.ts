@@ -128,39 +128,8 @@ async function waitForTransferDialog(page: Page): Promise<void> {
         .waitFor({ state: 'visible', timeout: 180000 });
 }
 
-async function cancelTransfer(
-    page: Page,
-    phase: 'early' | 'mid' | 'late'
-): Promise<void> {
+async function cancelTransfer(page: Page): Promise<void> {
     await waitForTransferDialog(page);
-    if (phase === 'mid') {
-        await page.waitForFunction(
-            () => {
-                const bar = document.querySelector(
-                    '.transfer-progress-bar'
-                ) as HTMLProgressElement | null;
-                return !!bar && Number(bar.value) >= 1;
-            },
-            undefined,
-            { timeout: 180000 }
-        );
-    }
-    if (phase === 'late') {
-        await page.waitForFunction(
-            () => {
-                const bar = document.querySelector(
-                    '.transfer-progress-bar'
-                ) as HTMLProgressElement | null;
-                return (
-                    !!bar &&
-                    Number(bar.max) > 0 &&
-                    Number(bar.value) / Number(bar.max) >= 0.5
-                );
-            },
-            undefined,
-            { timeout: 180000 }
-        );
-    }
     await page
         .locator('.transfer-progress-overlay [data-action="cancel"]')
         .click();
@@ -208,14 +177,56 @@ test.describe('Cloud collab seed/load cancel and two-tab', () => {
             await installJsonCanonicalizer(page);
 
             for (const phase of ['early', 'mid', 'late'] as const) {
+                // Cancel at a fixed point instead of racing the progress bar.
+                // mid: every shard pack is held before it reaches the room.
+                // late: the first three packs are stored and attested by the
+                // room; the rest are held until after the cancel.
+                const packPattern = /\/room\/[^/]+\/pack(?:\?|$)/;
+                let release: () => void = () => undefined;
+                const released = new Promise<void>((resolve) => {
+                    release = resolve;
+                });
+                let packsSeen = 0;
+                if (phase !== 'early') {
+                    await page.route(packPattern, async (route) => {
+                        if (route.request().method() !== 'POST') {
+                            await route.continue();
+                            return;
+                        }
+                        packsSeen += 1;
+                        if (phase === 'mid' || packsSeen > 3) {
+                            await released;
+                        }
+                        await route.continue().catch(() => undefined);
+                    });
+                }
                 const created = waitForCreatedAssetId(page);
                 const savePromise = startCloudSaveAs(
                     page,
                     `Fustat-${phase}-${runId}`
                 );
                 const assetId = await created;
-                await cancelTransfer(page, phase);
+                if (phase === 'mid') {
+                    await expect.poll(() => packsSeen).toBeGreaterThan(0);
+                }
+                if (phase === 'late') {
+                    await page.waitForFunction(
+                        () => {
+                            const bar = document.querySelector(
+                                '.transfer-progress-bar'
+                            ) as HTMLProgressElement | null;
+                            return !!bar && Number(bar.value) > 0;
+                        },
+                        undefined,
+                        { timeout: 180000 }
+                    );
+                }
+                await cancelTransfer(page);
+                release();
                 const result = await savePromise;
+                if (phase !== 'early') {
+                    await page.unroute(packPattern);
+                }
                 expect(result.assetId).toBeFalsy();
                 expect(
                     `${result.name || ''} ${result.error || ''}`.toLowerCase()
@@ -282,7 +293,7 @@ test.describe('Cloud collab seed/load cancel and two-tab', () => {
                     };
                 }
             }, assetId);
-            await cancelTransfer(page, 'early');
+            await cancelTransfer(page);
             const openResult = await openPromise;
             expect(openResult.ok).toBeFalsy();
             expect(

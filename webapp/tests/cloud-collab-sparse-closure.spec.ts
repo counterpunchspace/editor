@@ -18,7 +18,8 @@ import {
     waitForEditingCompile,
     waitForFullStateSync,
     waitForWindowSyncPeers,
-    waitForWindowSyncReady
+    waitForWindowSyncReady,
+    waitUntilGlyphLayerDataMatches
 } from './helpers/change-bridge-cross-window';
 import {
     attachCloudCollabCookies,
@@ -116,6 +117,20 @@ async function glyphResidency(page: Page, glyphName: string): Promise<string> {
     }, glyphName);
 }
 
+/** Component references on the first layer, in shape order. */
+async function componentRefs(page: Page, glyphName: string): Promise<string[]> {
+    return page.evaluate((name) => {
+        const glyph = (window as any).currentFontModel.findGlyph(name);
+        const refs: string[] = [];
+        for (const shape of glyph.layers[0].shapes || []) {
+            if (shape.isComponent?.()) {
+                refs.push(shape.asComponent().reference);
+            }
+        }
+        return refs;
+    }, glyphName);
+}
+
 async function expectGlyphBody(
     page: Page,
     glyphName: string,
@@ -191,6 +206,7 @@ test('sparse peers hydrate a new composite, a new base, and a new GSUB alternate
         );
         inviteeContext = invitee.inviteeContext;
         const { inviteePage } = invitee;
+        await installJsonCanonicalizer(inviteePage);
         const linkedPage = await openLinkedEditorWindow(inviteePage);
         await waitForCanvasReady(linkedPage);
         await waitForFontLoaded(linkedPage);
@@ -224,6 +240,13 @@ test('sparse peers hydrate a new composite, a new base, and a new GSUB alternate
         await settleCloudEdit(ownerPage);
         await expectGlyphBody(inviteePage, 'newcomp', true);
         await expectGlyphBody(linkedPage, 'newcomp', true);
+        await waitUntilGlyphLayerDataMatches(ownerPage, inviteePage, [
+            'newcomp'
+        ]);
+        await waitUntilGlyphLayerDataMatches(ownerPage, linkedPage, [
+            'newcomp'
+        ]);
+        expect(await componentRefs(inviteePage, 'newcomp')).toEqual(['a']);
         await linkedPage.close();
 
         await alignEditorCanvas(inviteePage, 'adieresis', { wght: 200 });
@@ -239,6 +262,13 @@ test('sparse peers hydrate a new composite, a new base, and a new GSUB alternate
         await settleCloudEdit(ownerPage);
         await settleCloudEdit(inviteePage);
         await expectGlyphBody(inviteePage, 'newbase', true);
+        await waitUntilGlyphLayerDataMatches(ownerPage, inviteePage, [
+            'adieresis',
+            'newbase'
+        ]);
+        expect(await componentRefs(inviteePage, 'adieresis')).toContain(
+            'newbase'
+        );
 
         await alignEditorCanvas(inviteePage, 'a', { wght: 200 });
         await expectGlyphBody(inviteePage, 'a.ss01', false);
@@ -305,8 +335,56 @@ test('sparse peers hydrate a new composite, a new base, and a new GSUB alternate
         }
         await expectGlyphBody(inviteePage, 'a.ss01', true);
         await expectGlyphBody(inviteePage, 'ss01mark', true);
+        await waitUntilGlyphLayerDataMatches(ownerPage, inviteePage, [
+            'a.ss01',
+            'ss01mark'
+        ]);
+        expect(await componentRefs(inviteePage, 'a.ss01')).toEqual([
+            'ss01mark'
+        ]);
         await waitForEditingCompile(inviteePage);
         expect(await getCompilationErrorText(inviteePage)).toBeNull();
+
+        // Metrics-key write closure: editing `a` rewrites a.wide (keyed to a)
+        // and a.wide.sc (keyed to a.wide), so a sparse peer that hydrates `a`
+        // must hold both. A key naming a glyph still on the server downloads
+        // it before the key is stored.
+        await ownerPage.evaluate(() => {
+            const font = (window as any).currentFontModel;
+            font.addGlyph('a.wide', 'Base');
+            font.addGlyph('a.wide.sc', 'Base');
+        });
+        await settleCloudEdit(ownerPage);
+        await ownerPage.evaluate(() => {
+            const font = (window as any).currentFontModel;
+            font.findGlyph('a.wide').leftMetricsKey = '=a';
+            font.findGlyph('a.wide.sc').leftMetricsKey = '=a.wide';
+        });
+        await settleCloudEdit(ownerPage);
+        await inviteePage.evaluate(async () => {
+            await (window as any).cloudPlugin.ensureSparseHydration({
+                glyphNames: ['a'],
+                purpose: 'ui'
+            });
+        });
+        await expectGlyphBody(inviteePage, 'a.wide', true);
+        await expectGlyphBody(inviteePage, 'a.wide.sc', true);
+        expect(
+            await inviteePage.evaluate(() =>
+                (window as any).patchSyncEngine.listSparseWriteBlockers(['a'])
+            )
+        ).toEqual([]);
+        await ownerPage.evaluate(() => {
+            (window as any).currentFontModel.addGlyph('faraway', 'Base');
+        });
+        await settleCloudEdit(ownerPage);
+        await expectGlyphBody(inviteePage, 'faraway', false);
+        expect(
+            await inviteePage.evaluate(() =>
+                (window as any).cloudPlugin.prepareMetricsKeyInput('=faraway')
+            )
+        ).toBe(true);
+        await expectGlyphBody(inviteePage, 'faraway', true);
 
         const orphanLinkedPage = await openLinkedEditorWindow(inviteePage);
         await waitForCanvasReady(orphanLinkedPage);
@@ -314,6 +392,7 @@ test('sparse peers hydrate a new composite, a new base, and a new GSUB alternate
         await waitForFullStateSync(orphanLinkedPage);
         await waitForBridgeReady(orphanLinkedPage);
         await waitForWindowSyncReady(orphanLinkedPage);
+        await installJsonCanonicalizer(orphanLinkedPage);
         await waitForWindowSyncPeers(inviteePage, orphanLinkedPage);
         await expectGlyphBody(orphanLinkedPage, 'orphan', false);
         await ownerPage.evaluate(() => {
@@ -329,6 +408,12 @@ test('sparse peers hydrate a new composite, a new base, and a new GSUB alternate
         });
         await expectGlyphBody(orphanLinkedPage, 'orphan', true);
         await expectGlyphBody(inviteePage, 'orphan', true);
+        await waitUntilGlyphLayerDataMatches(ownerPage, orphanLinkedPage, [
+            'orphan'
+        ]);
+        await waitUntilGlyphLayerDataMatches(ownerPage, inviteePage, [
+            'orphan'
+        ]);
     } finally {
         await ownerContext.close();
         await inviteeContext?.close();

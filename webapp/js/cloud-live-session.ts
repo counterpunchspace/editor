@@ -22,6 +22,7 @@ import {
 } from './cloud-adapter';
 import {
     CloudDurableWal,
+    CloudWalPersistError,
     walUpdateBytes,
     type CloudWalHealth,
     type CloudWalRecord,
@@ -206,6 +207,7 @@ export class CloudLiveSession {
     private _syncLiveChain: Promise<void> = Promise.resolve();
     private readonly _wal = new CloudDurableWal();
     private _walLoad: Promise<void> | null = null;
+    private _walLoadAttempts = 0;
     private _token: string;
     private _roomUrl: string;
     private _keepRequestedGlyphSockets: boolean;
@@ -621,7 +623,7 @@ export class CloudLiveSession {
             return false;
         }
         await this._ensureWalLoaded();
-        if (this._wal.health !== 'ready') {
+        if (!this._wal.isLoaded) {
             return false;
         }
         const messageKey = collaborationMessage
@@ -667,6 +669,15 @@ export class CloudLiveSession {
                 'CloudLiveSession: write-ahead persist failed before send:',
                 error
             );
+            if (error instanceof CloudWalPersistError) {
+                // The WAL kept the row in memory and retries the write, so
+                // the packet stays sendable; the caller still reports it.
+                this._emitPendingSyncCount();
+                this._adapters
+                    .get(documentId || FONT_CORE_DOCUMENT_ID)
+                    ?.noteOutboundWalReady?.();
+                throw error;
+            }
             return false;
         }
     }
@@ -856,12 +867,26 @@ export class CloudLiveSession {
         if (!this._walLoad) {
             this._walLoad = this._wal
                 .load(this._options.assetId)
-                .then(async () => undefined)
+                .then(() => {
+                    this._walLoadAttempts = 0;
+                })
                 .catch((error) => {
                     console.warn(
                         'CloudLiveSession: write-ahead log is unavailable:',
                         error
                     );
+                    // A failed open must not lock editing for the session.
+                    this._walLoad = null;
+                    const delay = Math.min(
+                        60_000,
+                        1_000 * 2 ** Math.min(this._walLoadAttempts, 6)
+                    );
+                    this._walLoadAttempts += 1;
+                    this._scheduleTimer(() => {
+                        void this._ensureWalLoaded().then(() =>
+                            this._emitPendingSyncCount()
+                        );
+                    }, delay);
                 });
         }
         await this._walLoad;
@@ -915,7 +940,7 @@ export class CloudLiveSession {
                     (record) =>
                         record.clientTransactionId === clientTransactionId
                 ) || null;
-        if (!walRecord && this._wal.health === 'ready') {
+        if (!walRecord && this._wal.isLoaded) {
             walRecord = {
                 assetId: this._options.assetId,
                 documentId,

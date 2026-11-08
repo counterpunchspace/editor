@@ -96,6 +96,15 @@ Only the main window holds cloud Durable Object sockets (`font-core`,
 `font-deps`, and the sticky live glyph). Linked windows talk to main over document-scoped
 BroadcastChannel. Chrome stays per window (`windowUi.*`).
 
+Each main window names its own channel for the document it holds, and its
+linked windows get that name in their URL, so Save As keeps them connected.
+Only main answers a linked window’s request for the document. A reloaded
+linked window takes main’s document again; it never reopens the source.
+Main holds a Web Lock while it lives: a linked window that gets the lock knows
+main is gone and blocks itself, offering to become main. When main opens
+another font, its linked windows block until it reloads them; File → New
+closes them.
+
 Edits that are not on a peer’s WebSocket subset still arrive: core publishes
 `glyphRevisions`, then every instance HTTP-catches-up the glyph live vector
 until `sync.revision` matches, and main relays that to linked windows.
@@ -132,13 +141,32 @@ to `font-deps`):
 **Hidden glyphs** (resident, faint overview tiles, not first-class working):
 
 - metrics-key and `both` sources of working (`n`, `l`; `a.ss03` keyed to `o`)
-- glyphs that inherit sidebearings **from** working (`a.wide` keyed to `a`)
+- glyphs that inherit sidebearings **from** working (`a.wide` keyed to `a`),
+  and from there every further metrics inheritor and composite, transitively
+  (`a.wide.sc` keyed to `a.wide`, `adieresis.wide` built from `a.wide`): an
+  edit of `a` rewrites all of them
 - nested components of those inheritors
 
 Must not reverse-close from a hidden metrics source (`n` must not pull `h` or
 `ntilde`). Must not put a sidebearing stem in the working set even when
 font-deps stores the edge as `both`. Download Glyph(s) must be available on
 hidden tiles so the user can promote that glyph to a seed.
+
+An edit must never reach a glyph whose dependents are not resident: the
+cascade only rewrites resident glyphs and the rest would go stale. Before a
+glyph is edited, its write closure (reverse\* component and metrics-key edges
+in live `font-deps`) must be resident. A working nested part whose other
+composites are not loaded (`dieresiscomb` from `adieresis`) stays read-only
+in the outline editor while it is promoted to a seed and its family loads.
+Hidden glyphs and glyphs with a missing write closure are not editable from
+the glyph overview, and recording a change to one is refused. A metrics key
+that names a glyph still on the server (`=Z`) downloads that glyph first, or
+is refused with a notice; it is never stored without its value. A hydration
+keeps the glyph open in the outline editor as a seed, so it is not demoted to
+hidden mid-edit.
+
+The launcher’s Cloud group has a “Load outlines later” checkbox that opens a
+cloud font with `?sparse=true`.
 
 Plan the full working∪hidden set from **live** `font-deps` (not only the
 published snapshot) and fetch it **once** before the font is shown. Do not

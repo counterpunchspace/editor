@@ -104,7 +104,7 @@ async function openSavedFixture(
     return { emails, ownerContext, ownerPage, assetId };
 }
 
-test('basic limits reject a second font and a font over the glyph cap, and a basic collaborator follows the owner payload', async ({
+test('basic limits reject a second font and a font over the glyph cap, and an unlimited collaborator follows the owner’s basic limits', async ({
     browser,
     request
 }) => {
@@ -221,8 +221,11 @@ test('basic limits reject a second font and a font over the glyph cap, and a bas
             { email: pendingA, assetId }
         );
         expect(firstPending.inviteUrl).toContain('token=');
-        const inviteeBasic = await setLimitsTier(request, pendingA, 'basic');
-        expect(inviteeBasic.maxGlyphsPerFont).toBe(basic.maxGlyphsPerFont);
+        // The collaborator is on a different tier than the owner, so the
+        // asset limits below can only come from the owner's subscription.
+        const inviteeTier = await setLimitsTier(request, pendingA, 'unlimited');
+        expect(inviteeTier.maxGlyphsPerFont).toBeNull();
+        expect(inviteeTier.maxInvitesPerAsset).toBeNull();
         const firstUser = await bootstrapCloudCollabSession(
             request,
             pendingA,
@@ -245,6 +248,13 @@ test('basic limits reject a second font and a font over the glyph cap, and a bas
         await installJsonCanonicalizer(inviteePage);
         await installFontModelSyncTracker(inviteePage);
         await installEditingFontCompileTracker(inviteePage);
+        const inviteeAssetLimits = await inviteePage.evaluate(
+            (id) => (window as any).cloudPlugin._fetchAssetLimits(id),
+            assetId
+        );
+        expect(inviteeAssetLimits?.maxGlyphsPerFont).toBe(
+            basic.maxGlyphsPerFont
+        );
         await inviteePage.waitForFunction(
             () => ((window as any).currentFontModel?.glyphs?.length || 0) >= 66,
             null,

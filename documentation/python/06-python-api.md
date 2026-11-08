@@ -1,7 +1,5 @@
 # Python API
 
-**Version:** v0.4.0
-
 *Auto-generated from JavaScript object model introspection*
 
 
@@ -375,8 +373,11 @@ Remove a glyph by name
 font.removeGlyph("oldGlyph")
 ```
 
-#### `toJSONString(options: { compileFacing?: boolean } | None = None) -> str`
-Serialize the font back to JSON string
+#### `toJSONString(options: { compileFacing?: boolean; glyphBodies?: ReadonlySet<string>; } | None = None) -> str`
+With `glyphBodies`, only those glyphs keep their outlines, anchors,
+guides and layer libs; every other glyph keeps its layer metadata
+(ids, masters, widths) as a cheap stub. Serializers that write some
+glyphs' files still see the whole glyph set and every master's layers.
 
 #### `fromJSONString(json: str) -> [Font](#font)`
 Create a Font instance from JSON string

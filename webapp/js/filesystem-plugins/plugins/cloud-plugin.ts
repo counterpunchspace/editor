@@ -5,6 +5,7 @@
  * Exposed as window.cloudPlugin; window.cloudDebug kept for dev testing.
  */
 
+import { showNotice } from '../../font-windows/dialogs';
 import {
     FilesystemPlugin,
     type CanAddGlyphsResult,
@@ -256,6 +257,9 @@ export class CloudPlugin extends FilesystemPlugin {
     private _catalogClosureListener: (() => void) | null = null;
     private _residentClosureTimer: number | null = null;
     private _residentClosureAttempt = 0;
+    private _writeClosureHydrations = new Set<string>();
+    /** Last write-closure hydration attempt per glyph, so canMutate does not refetch in a loop. */
+    private _writeClosureAttemptAt = new Map<string, number>();
     private _coreHydratedListener: (() => void) | null = null;
     private _seenGlyphRevisions = new Map<string, string>();
     private _glyphRevisionSnapshotReady = false;
@@ -839,6 +843,86 @@ export class CloudPlugin extends FilesystemPlugin {
             window.patchSyncEngine.isSparseWorkingGlyphName?.(glyphName) ===
                 false;
         if (editingSparseHiddenGlyph) {
+            return false;
+        }
+        if (
+            window.glyphCanvas?.outlineEditor?.active &&
+            glyphName &&
+            glyphName !== 'undefined' &&
+            this._sparseWriteBlocked(glyphName)
+        ) {
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * A working glyph whose composites or metrics-key inheritors are not
+     * resident (a nested part such as `dieresiscomb`) stays read-only while
+     * those are hydrated: promote it to a seed so its full family loads.
+     */
+    private _sparseWriteBlocked(glyphName: string): boolean {
+        const blockers =
+            window.patchSyncEngine?.listSparseWriteBlockers?.([glyphName]) ??
+            [];
+        if (!blockers.length) {
+            return false;
+        }
+        const now = Date.now();
+        if (
+            !this._writeClosureHydrations.has(glyphName) &&
+            now - (this._writeClosureAttemptAt.get(glyphName) ?? 0) > 10000
+        ) {
+            this._writeClosureHydrations.add(glyphName);
+            this._writeClosureAttemptAt.set(glyphName, now);
+            void this.ensureSparseHydration({
+                glyphNames: [glyphName],
+                purpose: 'ui'
+            })
+                .catch((error) => {
+                    console.warn(
+                        'CloudPlugin: write-closure hydration failed',
+                        glyphName,
+                        error
+                    );
+                })
+                .finally(() => {
+                    this._writeClosureHydrations.delete(glyphName);
+                    window.glyphCanvas?.updatePropertyPanel?.();
+                    window.glyphCanvas?.render?.();
+                });
+        }
+        return true;
+    }
+
+    /**
+     * Before a metrics key such as `=Z` is applied in a sparse session, load
+     * every glyph it names. Returns false (and says why) when one stays on
+     * the server, so the key is never stored without its value.
+     */
+    async prepareMetricsKeyInput(rawKey: string): Promise<boolean> {
+        const bridge = window.patchSyncEngine;
+        const missing =
+            bridge?.listNonResidentMetricsKeyReferences?.(rawKey) ?? [];
+        if (!missing.length) {
+            return true;
+        }
+        try {
+            await this.ensureSparseHydration({
+                glyphNames: missing,
+                purpose: 'ui'
+            });
+        } catch (error) {
+            console.warn('CloudPlugin: metrics-key hydration failed', error);
+        }
+        const stillMissing =
+            window.patchSyncEngine?.listNonResidentMetricsKeyReferences?.(
+                rawKey
+            ) ?? [];
+        if (stillMissing.length) {
+            showNotice(
+                `“${stillMissing[0]}” could not be downloaded, so the metrics key was not changed.`
+            );
             return false;
         }
         return true;
@@ -2006,10 +2090,19 @@ export class CloudPlugin extends FilesystemPlugin {
         if (!owned) {
             return [];
         }
+        // The glyph open in the outline editor stays a seed, so a new
+        // working family that keys its sidebearings to it cannot demote it
+        // to hidden (read-only) mid-edit.
+        const editorGlyphNames =
+            input.purpose === 'compile'
+                ? []
+                : activeEditorGlyphNames().filter(
+                      (name) => !!name && name !== 'undefined'
+                  );
         const { seedIds, layoutIds } = resolveHydrationSeeds({
             fontJson,
             text: input.text,
-            glyphNames: input.glyphNames
+            glyphNames: [...(input.glyphNames || []), ...editorGlyphNames]
         });
         if (!seedIds.length) {
             return [];

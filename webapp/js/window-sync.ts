@@ -22,21 +22,77 @@ import {
     glyphDocumentId
 } from './filesystem-plugins/cloud-document-set';
 
-/** True when this URL should take the main window's resident font, not reopen the source. */
+/**
+ * True when this URL should take the main window's resident font, not reopen
+ * the source. A linked window (`?linked=N`) always does, also after a reload:
+ * reopening the source would give it a second, diverging document.
+ */
 export function isLinkedPeerSnapshotSearch(search: string): boolean {
     try {
-        return new URLSearchParams(search).has('sync');
+        const params = new URLSearchParams(search);
+        return params.has('sync') || params.has('linked');
     } catch {
         return false;
     }
 }
 
-/** BroadcastChannel name for a font. Cloud URIs collapse to the asset id. */
-export function windowSyncChannelName(fontPath: string): string {
-    let path = String(fontPath || 'unsaved').trim();
-    path = path.replace(/^cloud:\/+/i, '');
-    path = path.replace(/^\/+/, '');
-    return `counterpunch-font:${path || 'unsaved'}`;
+/** URL parameter that carries the main window's channel to its linked windows. */
+export const SYNC_CHANNEL_QUERY_PARAM = 'syncChannel';
+
+/**
+ * A fresh BroadcastChannel name for a main window's document. It does not
+ * depend on the font path, so Save As keeps linked windows connected and
+ * another window that opens the old path never joins this document.
+ */
+export function createWindowSyncChannelName(): string {
+    const id =
+        typeof crypto !== 'undefined' && crypto.randomUUID
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    return `counterpunch-font:${id}`;
+}
+
+/** The main window's channel for a linked window, from its URL. */
+export function linkedWindowSyncChannel(search: string): string | null {
+    try {
+        return new URLSearchParams(search).get(SYNC_CHANNEL_QUERY_PARAM);
+    } catch {
+        return null;
+    }
+}
+
+function mainWindowLockName(sessionId: string, channelName: string): string {
+    return `counterpunch-main:${sessionId}:${channelName}`;
+}
+
+function lockManager(): LockManager | null {
+    if (typeof navigator === 'undefined') {
+        return null;
+    }
+    const locks = (navigator as Navigator & { locks?: LockManager }).locks;
+    return locks && typeof locks.request === 'function' ? locks : null;
+}
+
+function isAbortError(error: unknown): boolean {
+    return error instanceof Error && error.name === 'AbortError';
+}
+
+/**
+ * The linked-window bootstrap history: the last `limit` entries, extended
+ * back so no history item is split (a partial item would undo partially).
+ */
+export function linkedWindowChangeLogSlice(
+    changeLog: ChangeLogEntry[],
+    limit: number
+): ChangeLogEntry[] {
+    let start = Math.max(0, changeLog.length - limit);
+    while (
+        start > 0 &&
+        changeLog[start].historyItemId === changeLog[start - 1].historyItemId
+    ) {
+        start -= 1;
+    }
+    return changeLog.slice(start);
 }
 
 /** Glyph shards per BroadcastChannel message while seeding a linked window. */
@@ -173,11 +229,25 @@ interface CloudConnectionStatusMsg {
     sessionId: string;
 }
 
+/** Main's answer to `main-ping` (liveness fallback without Web Locks). */
 interface MainHeartbeatMsg {
     type: 'main-heartbeat';
     windowId: string;
     sessionId: string;
     at: number;
+}
+
+interface MainPingMsg {
+    type: 'main-ping';
+    windowId: string;
+    sessionId: string;
+}
+
+/** Main dropped this document (it opens another font); linked windows wait read-only. */
+interface MainDetachedMsg {
+    type: 'main-detached';
+    windowId: string;
+    sessionId: string;
 }
 
 interface ClaimMainMsg {
@@ -200,10 +270,14 @@ type SyncMessage =
     | MainWindowClosingMsg
     | CloudConnectionStatusMsg
     | MainHeartbeatMsg
+    | MainPingMsg
+    | MainDetachedMsg
     | ClaimMainMsg;
 
-const MAIN_HEARTBEAT_INTERVAL_MS = 2000;
-const MAIN_HEARTBEAT_STALE_MS = 6000;
+const MAIN_PING_INTERVAL_MS = 2000;
+const MAIN_PING_MISSES_BEFORE_LATCH = 3;
+const MAIN_CLAIM_PROBE_MS = 1000;
+const LINKED_BOOTSTRAP_HISTORY_LIMIT = 80;
 
 const WINDOW_SYNC_MESSAGE_TYPES = new Set([
     'yjs-update',
@@ -219,6 +293,8 @@ const WINDOW_SYNC_MESSAGE_TYPES = new Set([
     'main-window-closing',
     'cloud-connection-status',
     'main-heartbeat',
+    'main-ping',
+    'main-detached',
     'claim-main'
 ]);
 
@@ -285,11 +361,14 @@ export class WindowSync {
             timer: ReturnType<typeof setTimeout>;
         }
     >();
-    private _mainHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
-    private _mainHeartbeatWatchTimer: ReturnType<typeof setInterval> | null =
-        null;
-    private _lastMainHeartbeatAt = 0;
+    private _mainLockRelease: (() => void) | null = null;
+    private _mainLockWatch: AbortController | null = null;
+    private _mainPingTimer: ReturnType<typeof setInterval> | null = null;
+    private _mainPingAnswered = true;
+    private _mainPingMisses = 0;
     private _mainMissingLatched = false;
+    private _mainDetached = false;
+    private _destroyed = false;
 
     static enableTimingLogging(): void {
         WindowSync._timingLoggingEnabled = true;
@@ -337,7 +416,7 @@ export class WindowSync {
             });
         }
 
-        this._startMainHeartbeat();
+        this._startMainLiveness();
     }
 
     /**
@@ -347,11 +426,47 @@ export class WindowSync {
         return this._mainMissingLatched;
     }
 
-    /** Reload this window as main and replay the local WAL. */
+    /**
+     * Reload this window as main and replay the local WAL — only once main
+     * is really gone. With Web Locks this window takes main's lock and keeps
+     * it until it unloads, so a second linked window cannot also claim.
+     */
     claimMainWindow(): void {
         if (window.windowRole?.isMainWindow()) {
             return;
         }
+        const locks = lockManager();
+        if (locks) {
+            void locks
+                .request(
+                    this._mainLockName(),
+                    { ifAvailable: true },
+                    (lock: Lock | null) => {
+                        if (!lock) {
+                            this._noteMainAlive();
+                            return undefined;
+                        }
+                        this._becomeMainWindow();
+                        return new Promise<void>(() => {});
+                    }
+                )
+                .catch((error: unknown) => {
+                    console.warn('WindowSync: claiming main failed', error);
+                });
+            return;
+        }
+        this._mainPingAnswered = false;
+        this._sendMainPing();
+        setTimeout(() => {
+            if (this._mainPingAnswered) {
+                this._noteMainAlive();
+                return;
+            }
+            this._becomeMainWindow();
+        }, MAIN_CLAIM_PROBE_MS);
+    }
+
+    private _becomeMainWindow(): void {
         this._send({
             type: 'claim-main',
             windowId: this._bridge.windowId,
@@ -360,6 +475,7 @@ export class WindowSync {
         const url = new URL(window.location.href);
         url.searchParams.delete('linked');
         url.searchParams.delete('sync');
+        url.searchParams.delete(SYNC_CHANNEL_QUERY_PARAM);
         window.location.assign(url.toString());
     }
 
@@ -522,21 +638,6 @@ export class WindowSync {
     }
 
     /**
-     * Move this window onto the BroadcastChannel for a new font path.
-     * Save As changes identity without rebuilding the live Y.Doc; linked
-     * windows opened afterward join the new name.
-     */
-    rebindChannel(fontPath: string): void {
-        const nextName = windowSyncChannelName(fontPath);
-        if (nextName === this._channelName && this._channel) {
-            return;
-        }
-        this._channel?.close();
-        this._bindChannel(nextName);
-        console.log(`Rebound WindowSync channel to ${nextName}`);
-    }
-
-    /**
      * Ask the main window to hydrate glyphs. Linked windows do not open
      * their own cloud sockets; the result arrives after the relayed shards.
      */
@@ -646,8 +747,13 @@ export class WindowSync {
                 FONT_CORE_DOCUMENT_ID,
                 FONT_DEPS_DOCUMENT_ID
             ]),
-            changeLog: this._bridge.getChangeLog().slice(-80),
-            collaborationLog: this._bridge.getCollaborationLog().slice(-80),
+            changeLog: linkedWindowChangeLogSlice(
+                this._bridge.getChangeLog(),
+                LINKED_BOOTSTRAP_HISTORY_LIMIT
+            ),
+            collaborationLog: this._bridge
+                .getCollaborationLog()
+                .slice(-LINKED_BOOTSTRAP_HISTORY_LIMIT),
             cloudRelayState:
                 window.windowRole?.isMainWindow() &&
                 window.cloudPlugin?.getRelayConnectionState
@@ -1104,14 +1210,52 @@ export class WindowSync {
         this._cloudBootstrapReady = false;
     }
 
-    /** Clean up. */
+    /**
+     * Clean up. On main this also tells linked windows the document is gone
+     * from here, so they stop editing until they are reloaded or closed.
+     */
     destroy(): void {
+        if (this._destroyed) {
+            return;
+        }
+        this._destroyed = true;
         if (this._missingGlyphHydrationTimer !== null) {
             clearTimeout(this._missingGlyphHydrationTimer);
             this._missingGlyphHydrationTimer = null;
         }
+        if (this._mainPingTimer !== null) {
+            clearInterval(this._mainPingTimer);
+            this._mainPingTimer = null;
+        }
+        this._stopWatchingMainLock();
+        const destroyed = new Error('WindowSync destroyed');
+        for (const [requestId, pending] of this._hydrationRequests) {
+            clearTimeout(pending.timer);
+            this._hydrationRequests.delete(requestId);
+            pending.reject(destroyed);
+        }
+        this._pendingYjsMessages = [];
+        this._pendingResidency = null;
+        this._inboundFlushScheduled = false;
+        if (
+            this._fullStateBootstrapResolve ||
+            this._fullStateBootstrapTimeout
+        ) {
+            this._inboundTransferId = null;
+            this._awaitingFullState = false;
+            this._resolveFullStateBootstrap(destroyed);
+        }
         this._flushOutboundBroadcast();
+        if (window.windowRole?.isMainWindow?.() === true) {
+            this._send({
+                type: 'main-detached',
+                windowId: this._bridge.windowId,
+                sessionId: this._sessionId
+            });
+        }
         this.announceClose();
+        this._mainLockRelease?.();
+        this._mainLockRelease = null;
         this._channel?.close();
         this._channel = null;
     }
@@ -1239,14 +1383,32 @@ export class WindowSync {
         }
 
         const startTime = performance.now?.() ?? Date.now();
-        let updateBytes = 0;
-        let collaborationMessageCount = 0;
+        const stats = { updateBytes: 0, collaborationMessageCount: 0 };
+        // One model rebuild for the whole batch, not one per packet.
+        const applyAll = () => this._applyInboundYjsMessages(messages, stats);
+        if (typeof this._bridge.runWithBatchedRemoteAfterSync === 'function') {
+            this._bridge.runWithBatchedRemoteAfterSync(applyAll);
+        } else {
+            applyAll();
+        }
+        this._logTiming('inbound-yjs-update', {
+            messageCount: messages.length,
+            collaborationMessageCount: stats.collaborationMessageCount,
+            updateBytes: stats.updateBytes,
+            durationMs: this._elapsed(startTime)
+        });
+    }
+
+    private _applyInboundYjsMessages(
+        messages: YjsUpdateMsg[],
+        stats: { updateBytes: number; collaborationMessageCount: number }
+    ): void {
         for (const msg of messages) {
             for (const packet of msg.updates) {
                 const update = toUint8Array(packet.update);
-                updateBytes += update.byteLength;
+                stats.updateBytes += update.byteLength;
                 if (packet.collaborationMessage) {
-                    collaborationMessageCount += 1;
+                    stats.collaborationMessageCount += 1;
                 }
                 const collaborationMessages = isCollaborationMessageEnvelope(
                     packet.collaborationMessage
@@ -1286,12 +1448,6 @@ export class WindowSync {
                 }
             }
         }
-        this._logTiming('inbound-yjs-update', {
-            messageCount: messages.length,
-            collaborationMessageCount,
-            updateBytes,
-            durationMs: this._elapsed(startTime)
-        });
     }
 
     private _elapsed(startTime: number): number {
@@ -1321,10 +1477,12 @@ export class WindowSync {
             case 'full-state-request':
                 if (msg.windowId === this._bridge.windowId) return;
                 this._peers.add(msg.windowId);
-                if (
-                    window.windowRole?.isMainWindow() &&
-                    !this._cloudBootstrapReady
-                ) {
+                // Only main answers. Another linked window may still be
+                // bootstrapping itself, or hold a copy main no longer backs.
+                if (window.windowRole?.isMainWindow?.() !== true) {
+                    break;
+                }
+                if (!this._cloudBootstrapReady) {
                     this._pendingFullStateRequests += 1;
                     break;
                 }
@@ -1461,15 +1619,37 @@ export class WindowSync {
             case 'main-heartbeat':
                 if (msg.windowId === this._bridge.windowId) return;
                 if (window.windowRole?.isMainWindow()) return;
-                this._lastMainHeartbeatAt = Date.now();
-                if (this._mainMissingLatched) {
-                    this._mainMissingLatched = false;
-                    this._setLinkedReadOnly(false);
+                this._noteMainAlive();
+                break;
+
+            case 'main-ping':
+                if (msg.windowId === this._bridge.windowId) return;
+                if (window.windowRole?.isMainWindow?.() === true) {
+                    this._sendMainHeartbeat();
                 }
+                break;
+
+            case 'main-detached':
+                if (msg.windowId === this._bridge.windowId) return;
+                if (window.windowRole?.isLinkedWindow?.() !== true) return;
+                this._mainDetached = true;
+                this._setLinkedReadOnly(true);
+                // Replaces a take-over offer if the freed lock came first.
+                this._showMainMissingOverlay();
                 break;
 
             case 'claim-main':
                 if (msg.windowId === this._bridge.windowId) return;
+                if (window.windowRole?.isMainWindow?.() === true) {
+                    // Main is alive: the claimer's probe sees this and backs off.
+                    this._sendMainHeartbeat();
+                    break;
+                }
+                // Another linked window becomes main from its own copy; this
+                // window's document has no main any more, like main closing.
+                for (const callback of this._mainWindowClosingListeners) {
+                    callback();
+                }
                 break;
 
             case 'main-window-closing':
@@ -1486,8 +1666,81 @@ export class WindowSync {
         }
     }
 
-    private _startMainHeartbeat(): void {
-        if (this._mainHeartbeatTimer || this._mainHeartbeatWatchTimer) {
+    private _mainLockName(): string {
+        return mainWindowLockName(this._sessionId, this._channelName);
+    }
+
+    /**
+     * Main liveness. Main holds a Web Lock for as long as it lives; a linked
+     * window queues for the same lock and is granted it only once main is
+     * gone (closed, crashed or dropped the document). No timers, so a hidden
+     * main tab, whose timers the browser throttles, is never taken for gone.
+     * Without Web Locks a linked window pings main, which answers from its
+     * message handler.
+     */
+    private _startMainLiveness(): void {
+        if (window.windowRole?.isMainWindow?.() === true) {
+            this._holdMainLock();
+            return;
+        }
+        if (window.windowRole?.isLinkedWindow?.() !== true) {
+            return;
+        }
+        if (lockManager()) {
+            this._watchMainLock();
+            return;
+        }
+        this._startMainPings();
+    }
+
+    private _holdMainLock(): void {
+        const locks = lockManager();
+        if (!locks || this._mainLockRelease) {
+            return;
+        }
+        const held = new Promise<void>((resolve) => {
+            this._mainLockRelease = resolve;
+        });
+        void locks
+            .request(this._mainLockName(), () => held)
+            .catch((error: unknown) => {
+                console.warn('WindowSync: main-window lock failed', error);
+            });
+    }
+
+    private _watchMainLock(): void {
+        const locks = lockManager();
+        if (!locks || this._mainLockWatch || this._destroyed) {
+            return;
+        }
+        const watch = new AbortController();
+        this._mainLockWatch = watch;
+        void locks
+            .request(this._mainLockName(), { signal: watch.signal }, () => {
+                if (this._mainLockWatch !== watch) {
+                    return;
+                }
+                this._mainLockWatch = null;
+                this._latchMainMissing();
+            })
+            .catch((error: unknown) => {
+                if (!isAbortError(error)) {
+                    console.warn(
+                        'WindowSync: main-window lock watch failed',
+                        error
+                    );
+                }
+            });
+    }
+
+    private _stopWatchingMainLock(): void {
+        const watch = this._mainLockWatch;
+        this._mainLockWatch = null;
+        watch?.abort();
+    }
+
+    private _startMainPings(): void {
+        if (this._mainPingTimer !== null) {
             return;
         }
         // Jest (and other fake-timer hosts) must not arm intervals from construct.
@@ -1498,26 +1751,47 @@ export class WindowSync {
         ) {
             return;
         }
-        if (window.windowRole?.isMainWindow()) {
-            this._mainHeartbeatTimer = setInterval(() => {
-                this._send({
-                    type: 'main-heartbeat',
-                    windowId: this._bridge.windowId,
-                    sessionId: this._sessionId,
-                    at: Date.now()
-                });
-            }, MAIN_HEARTBEAT_INTERVAL_MS);
-            return;
-        }
-        this._lastMainHeartbeatAt = Date.now();
-        this._mainHeartbeatWatchTimer = setInterval(() => {
-            if (
-                Date.now() - this._lastMainHeartbeatAt >
-                MAIN_HEARTBEAT_STALE_MS
-            ) {
-                this._latchMainMissing();
+        this._mainPingTimer = setInterval(() => {
+            // A throttled tick here only stretches the interval: a miss
+            // counts only for a ping main did not answer.
+            if (!this._mainPingAnswered) {
+                this._mainPingMisses += 1;
+                if (this._mainPingMisses >= MAIN_PING_MISSES_BEFORE_LATCH) {
+                    this._latchMainMissing();
+                }
             }
-        }, MAIN_HEARTBEAT_INTERVAL_MS);
+            this._mainPingAnswered = false;
+            this._sendMainPing();
+        }, MAIN_PING_INTERVAL_MS);
+    }
+
+    private _sendMainPing(): void {
+        this._send({
+            type: 'main-ping',
+            windowId: this._bridge.windowId,
+            sessionId: this._sessionId
+        });
+    }
+
+    private _sendMainHeartbeat(): void {
+        this._send({
+            type: 'main-heartbeat',
+            windowId: this._bridge.windowId,
+            sessionId: this._sessionId,
+            at: Date.now()
+        });
+    }
+
+    private _noteMainAlive(): void {
+        this._mainPingAnswered = true;
+        this._mainPingMisses = 0;
+        if (this._mainMissingLatched) {
+            this._mainMissingLatched = false;
+            if (!this._mainDetached) {
+                this._setLinkedReadOnly(false);
+            }
+        }
+        this._watchMainLock();
     }
 
     private _latchMainMissing(): void {
@@ -1526,7 +1800,7 @@ export class WindowSync {
         }
         this._mainMissingLatched = true;
         this._setLinkedReadOnly(true);
-        this._offerMakeMainWindow();
+        this._showMainMissingOverlay();
     }
 
     private _setLinkedReadOnly(readOnly: boolean): void {
@@ -1538,22 +1812,33 @@ export class WindowSync {
             ? 'true'
             : 'false';
         if (!readOnly) {
-            // A stall longer than the heartbeat window latches this offer.
-            // The next heartbeat means the main window is back; leaving the
-            // overlay up blocks the linked window for the rest of the session.
+            // Main answered after all; leaving the overlay up would block
+            // this window for the rest of the session.
             document.getElementById('linked-make-main-banner')?.remove();
         }
     }
 
-    private _offerMakeMainWindow(): void {
-        if (document.getElementById('linked-make-main-banner')) {
-            return;
+    /**
+     * Block a linked window that has no main. The overlay is what keeps it
+     * from editing a document nobody else receives. When main dropped the
+     * document on purpose (it opened another font) there is nothing to take
+     * over: main reloads or closes this window.
+     */
+    private _showMainMissingOverlay(): void {
+        const existing = document.getElementById('linked-make-main-banner');
+        if (existing) {
+            if (existing.dataset.detached === String(this._mainDetached)) {
+                return;
+            }
+            existing.remove();
         }
         const banner = document.createElement('div');
         banner.id = 'linked-make-main-banner';
         banner.className = 'info-popup-overlay';
-        banner.innerHTML =
-            '<div class="info-popup confirm-dialog"><div class="info-popup-header"><h2>Main window closed</h2></div><div class="info-popup-content"><p>This linked window is read-only. Make it the main window to continue editing (reloads and replays the WAL).</p><div class="dialog-actions"><button type="button" class="dialog-button dialog-button-primary" data-action="make-main">Make this the main window</button></div></div></div>';
+        banner.dataset.detached = String(this._mainDetached);
+        banner.innerHTML = this._mainDetached
+            ? '<div class="info-popup confirm-dialog"><div class="info-popup-header"><h2>Font closed in the main window</h2></div><div class="info-popup-content"><p>The main window opened another font. This linked window is read-only.</p></div></div>'
+            : '<div class="info-popup confirm-dialog"><div class="info-popup-header"><h2>Main window closed</h2></div><div class="info-popup-content"><p>This linked window is read-only. Make it the main window to continue editing (reloads and replays the WAL).</p><div class="dialog-actions"><button type="button" class="dialog-button dialog-button-primary" data-action="make-main">Make this the main window</button></div></div></div>';
         banner
             .querySelector('[data-action="make-main"]')
             ?.addEventListener('click', () => this.claimMainWindow());

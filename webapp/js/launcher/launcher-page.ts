@@ -284,6 +284,10 @@ const chains = new Map<string, string[]>();
 let browserFonts: string[] = [];
 let cloudAssets: CloudAsset[] | null = null;
 const expanded = new Set<string>();
+// “Load outlines later” for cloud fonts: open sparse, downloading glyph
+// outlines as they are typed or opened (`sparse=true`). Off each time, like
+// the old file dialog checkbox.
+let cloudLoadOutlinesLater = false;
 
 function timeAgo(time: number | null): string {
     if (!time) return '';
@@ -412,9 +416,10 @@ function groupHtml(
     title: string,
     symbol: string,
     body: string,
-    sub = ''
+    sub = '',
+    trailing = ''
 ): string {
-    return `<div class="launcher-group"><div class="launcher-group-title">${icon(symbol)}${title}${sub ? `<span class="sub">${escapeHtml(sub)}</span>` : ''}</div>${body}</div>`;
+    return `<div class="launcher-group"><div class="launcher-group-title">${icon(symbol)}${title}${sub ? `<span class="sub">${escapeHtml(sub)}</span>` : ''}${trailing}</div>${body}</div>`;
 }
 
 let rowsByKey = new Map<string, Row>();
@@ -467,7 +472,11 @@ function render(): void {
                 cloud,
                 'No cloud fonts yet. Save a font to the cloud with File → Save As.'
             );
-    html += groupHtml('Cloud', 'cloud', cloudBody);
+    const cloudOptions =
+        signedIn && cloud.length
+            ? `<label class="launcher-cloud-sparse" title="Download glyph outlines only as you type or open them"><input type="checkbox" data-cloud-sparse${cloudLoadOutlinesLater ? ' checked' : ''}>Load outlines later</label>`
+            : '';
+    html += groupHtml('Cloud', 'cloud', cloudBody, '', cloudOptions);
     html += groupHtml(
         'Browser storage',
         'web',
@@ -509,7 +518,14 @@ $('launcher-recents').addEventListener('click', async (event) => {
         return;
     }
     const font = rowsByKey.get(key);
-    if (font) openFontWindow(font);
+    if (font) openFontWindow(font, { sparse: cloudLoadOutlinesLater });
+});
+
+$('launcher-recents').addEventListener('change', (event) => {
+    const target = event.target as HTMLInputElement;
+    if (target.matches('[data-cloud-sparse]')) {
+        cloudLoadOutlinesLater = target.checked;
+    }
 });
 
 $('launcher-recents').addEventListener('keydown', (event) => {

@@ -1139,16 +1139,6 @@ export class CloudAdapter implements FileSystemAdapter {
                 (message) =>
                     !durableTransactionIds.has(collaborationMessageKey(message))
             );
-        void this._wal
-            .acknowledgeMany(this._assetId, this._documentId, [
-                ...durableTransactionIds
-            ])
-            .catch((error) => {
-                console.warn(
-                    'CloudAdapter: failed to acknowledge WAL rows:',
-                    error
-                );
-            });
         this._flushDurableWaiters();
         this._emitPendingSyncCountChange();
     }
@@ -2610,18 +2600,12 @@ export class CloudAdapter implements FileSystemAdapter {
             return;
         }
 
-        const packets = this._pendingOutboundPackets.filter((packet) => {
-            if (!packet.clientTransactionId) {
-                return true;
-            }
-            return this._wal
-                .recordsFor(this._documentId)
-                .some(
-                    (record) =>
-                        record.clientTransactionId ===
-                        packet.clientTransactionId
-                );
-        });
+        const walTransactionIds = this._wal.transactionIdsFor(this._documentId);
+        const packets = this._pendingOutboundPackets.filter(
+            (packet) =>
+                !packet.clientTransactionId ||
+                walTransactionIds.has(packet.clientTransactionId)
+        );
         this._pendingOutboundPackets = this._pendingOutboundPackets.filter(
             (packet) => !packets.includes(packet)
         );

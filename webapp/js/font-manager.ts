@@ -1082,6 +1082,7 @@ class FontManager {
     private workerPreviewSendQueue: Promise<unknown>;
     private pendingCloudBadgeVisibleAtByAssetId: Map<string, number>;
     private cloudPersistFailed = false;
+    private cloudPersistStorageFullMessage: string | null = null;
     private pendingCloudBadgeDelayTimer: ReturnType<typeof setTimeout> | null;
     private pendingCloudBadgeDelayAssetId: string | null;
     private cloudStatusTippy: TippyInstance | null;
@@ -1177,8 +1178,16 @@ class FontManager {
             this.fontDisplay?.querySelector('.font-window-role-badge') || null;
         this.dirtyIndicator = document.getElementById('file-dirty-indicator');
 
-        window.addEventListener('cloud-persist-failed', () => {
+        window.addEventListener('cloud-persist-failed', (event) => {
             this.cloudPersistFailed = true;
+            const detail = (
+                event as CustomEvent<{ storageFull?: boolean; reason?: string }>
+            ).detail;
+            this.cloudPersistStorageFullMessage =
+                detail?.storageFull === true &&
+                typeof detail.reason === 'string'
+                    ? detail.reason
+                    : null;
             this.updateFontDisplay();
         });
         window.addEventListener('cloudConnectionStatusChanged', () => {
@@ -1413,7 +1422,10 @@ class FontManager {
         if (this.cloudPersistFailed) {
             return {
                 visible: true,
-                title: 'Cloud status: Not saving — local durability persist failed',
+                title: `Cloud status: Not saving — ${
+                    this.cloudPersistStorageFullMessage ??
+                    'local durability persist failed'
+                }`,
                 icon: 'cloud_off',
                 tone: 'error' as const
             };
@@ -3042,8 +3054,12 @@ class FontManager {
                 );
             }
 
-            // Reset all JS-side caches
+            // Reset all JS-side caches. Linked windows show this document
+            // and the new font has none, so they close.
             if (window.windowSync) {
+                if (window.windowRole?.isMainWindow()) {
+                    window.windowSync.announceMainWindowClosing();
+                }
                 window.windowSync.destroy();
                 window.windowSync = undefined;
             }

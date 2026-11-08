@@ -51,7 +51,7 @@ export type OpenableFont = {
 /** The font window URL for a document key. */
 export function fontWindowUrl(
     key: string,
-    options: { takeOver?: boolean } = {}
+    options: { takeOver?: boolean; sparse?: boolean } = {}
 ): string {
     const params = new URLSearchParams();
     if (isNewFontKey(key)) {
@@ -60,6 +60,10 @@ export function fontWindowUrl(
         params.set('file', key);
     }
     if (options.takeOver) params.set('takeover', '1');
+    // Cloud fonts only: download outlines as glyphs are typed or opened.
+    if (options.sparse && key.startsWith('cloud://')) {
+        params.set('sparse', 'true');
+    }
     return `index.html?${params.toString()}`;
 }
 
@@ -68,7 +72,10 @@ export function fontWindowUrl(
  * click handler (or right after a picker): browsers only open windows then.
  * When the browser refuses, every Counterpunch window asks for a click.
  */
-export function openFontWindow(font: OpenableFont): boolean {
+export function openFontWindow(
+    font: OpenableFont,
+    options: { sparse?: boolean } = {}
+): boolean {
     const name = fontWindowName(font.key);
     const state = documentOpenState(font.key);
     if (state === 'linked') {
@@ -79,7 +86,10 @@ export function openFontWindow(font: OpenableFont): boolean {
     // hand): open it again from here, where it is linked; the other window
     // hands over and closes.
     const win = window.open(
-        fontWindowUrl(font.key, { takeOver: state === 'unlinked' }),
+        fontWindowUrl(font.key, {
+            takeOver: state === 'unlinked',
+            sparse: options.sparse
+        }),
         name
     );
     if (!win) {

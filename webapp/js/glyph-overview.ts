@@ -925,8 +925,19 @@ class GlyphOverview extends GlyphOverviewView {
     private needsSparseDownload(glyphName: string): boolean {
         return (
             !this.isGlyphHydrated(glyphName) ||
-            this.isSparseHiddenSupportGlyph(glyphName)
+            this.isSparseHiddenSupportGlyph(glyphName) ||
+            (window.patchSyncEngine?.listSparseWriteBlockers?.([glyphName])
+                ?.length ?? 0) > 0
         );
+    }
+
+    /**
+     * Sparse sessions: a hidden support glyph, or a glyph whose composites
+     * or metrics-key inheritors are not resident, must not be edited here.
+     * The cascade would skip the missing dependents and leave them stale.
+     */
+    private canEditSparseGlyphs(glyphNames: string[]): boolean {
+        return !glyphNames.some((name) => this.needsSparseDownload(name));
     }
 
     private async hydrateSelectedUnhydratedGlyphs(): Promise<void> {
@@ -1043,9 +1054,9 @@ class GlyphOverview extends GlyphOverviewView {
             const selectedNames = this.getSelectedGlyphNames();
             const canAct =
                 !!window.fontManager?.currentFont && selectedNames.length > 0;
-            const hasUnhydrated = selectedNames.some(
-                (name) => !this.isGlyphHydrated(name)
-            );
+            const hasUnhydrated =
+                selectedNames.some((name) => !this.isGlyphHydrated(name)) ||
+                !this.canEditSparseGlyphs(selectedNames);
             const canHydrate =
                 selectedNames.some((name) => this.needsSparseDownload(name)) &&
                 window.fontManager?.currentFont?.sourcePlugin?.getId?.() ===
@@ -2279,8 +2290,11 @@ class GlyphOverview extends GlyphOverviewView {
         const singleGlyph =
             selectedNames.length === 1 ? this.getSelectedGlyphModel() : null;
         const nameEditable = Boolean(singleGlyph);
+        const sparseEditable = this.canEditSparseGlyphs(selectedNames);
         const unicodeEditable =
-            nameEditable && this.isGlyphHydrated(singleGlyph?.name || '');
+            nameEditable &&
+            sparseEditable &&
+            this.isGlyphHydrated(singleGlyph?.name || '');
         const layers = this.getSelectedOverviewLayers();
         const sidebearingSummary = this.summarizeOverviewSidebearings(layers);
         const fontModel = window.currentFontModel;
@@ -2361,7 +2375,7 @@ class GlyphOverview extends GlyphOverviewView {
             this.createOverviewSidebearingControl(
                 'left',
                 'LSB',
-                layers.length > 0,
+                layers.length > 0 && sparseEditable,
                 sidebearingSummary.left
             )
         );
@@ -2371,7 +2385,7 @@ class GlyphOverview extends GlyphOverviewView {
             this.createOverviewSidebearingControl(
                 'right',
                 'RSB',
-                layers.length > 0,
+                layers.length > 0 && sparseEditable,
                 sidebearingSummary.right
             )
         );
@@ -2489,7 +2503,7 @@ class GlyphOverview extends GlyphOverviewView {
                       },
                       applyValue: (nextValue) => {
                           input.dataset.skipNextPropertyCommit = 'true';
-                          this.commitOverviewSidebearing(
+                          void this.commitOverviewSidebearing(
                               side,
                               String(nextValue)
                           );
@@ -2505,7 +2519,7 @@ class GlyphOverview extends GlyphOverviewView {
             if (arrowInputController?.isApplyingStep) {
                 return;
             }
-            this.commitOverviewSidebearing(side, input.value);
+            void this.commitOverviewSidebearing(side, input.value);
         });
 
         wrapper.appendChild(input);
@@ -2542,12 +2556,25 @@ class GlyphOverview extends GlyphOverviewView {
         });
     }
 
-    private commitOverviewSidebearing(
+    private async commitOverviewSidebearing(
         side: SidebearingSide,
         rawValue: string
-    ): void {
+    ): Promise<void> {
+        const trimmed = rawValue.trim();
+        if (
+            trimmed &&
+            !isPlainNumericInputValue(trimmed) &&
+            window.cloudPlugin?.prepareMetricsKeyInput &&
+            !(await window.cloudPlugin.prepareMetricsKeyInput(trimmed))
+        ) {
+            this.updatePropertyPanel();
+            return;
+        }
         const layers = this.getSelectedOverviewLayers();
-        if (layers.length === 0) {
+        if (
+            layers.length === 0 ||
+            !this.canEditSparseGlyphs(this.getSelectedGlyphNames())
+        ) {
             this.updatePropertyPanel();
             return;
         }
@@ -2577,7 +2604,11 @@ class GlyphOverview extends GlyphOverviewView {
     private commitOverviewGlyphName(rawValue: string): void {
         const singleGlyph = this.getSelectedGlyphModel();
         const fontModel = window.currentFontModel;
-        if (!singleGlyph || !fontModel) {
+        if (
+            !singleGlyph ||
+            !fontModel ||
+            !this.canEditSparseGlyphs([singleGlyph.name])
+        ) {
             this.updatePropertyPanel();
             return;
         }

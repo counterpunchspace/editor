@@ -208,6 +208,54 @@ describe('commit-time hard rejection', () => {
         }
     });
 
+    test.each([
+        ['with a broadcast baseline', false],
+        ['without a broadcast baseline', true]
+    ])('a rejected submit leaves no clock gap (%s)', (_label, dropBaseline) => {
+        const plugin = createCloudSubmitPlugin();
+        const restore = installPlugin(plugin);
+        const bridge = new PatchSyncEngine('submit-reject-gap');
+        bridge.initFromJson(makeFont());
+        window.patchSyncEngine = bridge;
+        const peer = new Y.Doc();
+        Y.applyUpdate(peer, Y.encodeStateAsUpdate(bridge.yDoc));
+        const emitted = [];
+        bridge.onLocalUpdate((update) => {
+            emitted.push(update);
+        });
+        if (dropBaseline) {
+            bridge._lastBroadcastStateVectorByDoc.clear();
+        }
+        try {
+            bridge.recordChange(
+                [],
+                'note',
+                '',
+                'p'.repeat(MAX_YJS_PACKET_BYTES)
+            );
+            expect(plugin.rejections).toHaveLength(1);
+            if (dropBaseline) {
+                // Glyph shards fall back to the doc's own vector at commit start.
+                bridge._lastBroadcastStateVector = Y.encodeStateVector(
+                    bridge.yDoc
+                );
+            }
+            bridge.recordChange([], 'note', '', 'after');
+            expect(plugin.rejections).toHaveLength(1);
+            expect(emitted.length).toBeGreaterThan(0);
+            for (const update of emitted) {
+                expect(update.byteLength).toBeLessThan(MAX_YJS_PACKET_BYTES);
+                Y.applyUpdate(peer, update);
+            }
+            expect(peer.store.pendingStructs).toBeNull();
+            expect(peer.store.pendingDs).toBeNull();
+            expect(peer.getMap('font').get('note')).toBe('after');
+        } finally {
+            restore();
+            bridge.destroy();
+        }
+    });
+
     test('a rejected submit rolls back by replay and keeps earlier history undoable', () => {
         const plugin = createCloudSubmitPlugin();
         const restore = installPlugin(plugin);

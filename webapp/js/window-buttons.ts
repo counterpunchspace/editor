@@ -22,6 +22,7 @@ import {
     parseLineHeightPercent
 } from './glyph-canvas/text-run-layout';
 import { windowRole } from './window-role';
+import { SYNC_CHANNEL_QUERY_PARAM } from './window-sync';
 
 const console = new Logger('WindowButtons');
 const editorChildWindows = new Set<Window>();
@@ -178,8 +179,19 @@ function buildLinkedWindowReloadUrl(childWindow: Window): string {
     }
 
     url.searchParams.set('sync', 'true');
+    applyMainSyncChannelToUrl(url);
     url.searchParams.set('theme', getCurrentThemePreference());
     return formatUrl(url);
+}
+
+/** Linked windows join this window's document channel, whatever the font path. */
+function applyMainSyncChannelToUrl(url: URL): void {
+    const channelName = window.windowSync?.channelName;
+    if (channelName) {
+        url.searchParams.set(SYNC_CHANNEL_QUERY_PARAM, channelName);
+    } else {
+        url.searchParams.delete(SYNC_CHANNEL_QUERY_PARAM);
+    }
 }
 
 function applyCurrentEditorStateToUrl(url: URL): void {
@@ -266,6 +278,7 @@ export function prepareLinkedWindowOpen(): LinkedWindowLaunchInfo {
     applyCurrentEditorStateToUrl(url);
 
     windowRole.configureLinkedWindowUrl(url, fontPath);
+    applyMainSyncChannelToUrl(url);
     url.searchParams.set('theme', getCurrentThemePreference());
 
     const linkedOrdinal = Number.parseInt(

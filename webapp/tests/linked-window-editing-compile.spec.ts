@@ -1727,9 +1727,23 @@ test.describe('Linked window editing compile regression', () => {
             'remote edit'
         );
 
-        // Wait for any debounced compiles to settle so they don't
-        // contaminate the local-edit baseline capture.
-        await linkedPage.waitForTimeout(600);
+        // Wait until no recompile is owed or running so a debounced compile
+        // does not contaminate the local-edit baseline capture.
+        await linkedPage.waitForFunction(
+            () => {
+                const currentFont = (window as any).fontManager?.currentFont;
+                const status = (
+                    window as any
+                ).autoCompileManager?.getStatus?.();
+                return (
+                    !!currentFont &&
+                    !currentFont.needsRecompile &&
+                    !status?.isCompiling
+                );
+            },
+            null,
+            { timeout: 15000 }
+        );
 
         // ── Local edit: linkedPage moves node (-20, 0) ─────────────
         const beforeLocal = await getEditingFontCompileTracker(linkedPage);
@@ -1985,6 +1999,14 @@ test.describe('Linked window editing compile regression', () => {
         }
         const undoStack: Array<'outline' | 'anchor' | 'sidebearing'> = [];
         const redoStack: Array<'outline' | 'anchor' | 'sidebearing'> = [];
+        // Model state before each undoable step, so undo/redo have an exact
+        // expected result rather than only "something changed".
+        type AAdieresisState = Awaited<ReturnType<typeof getAAdieresisState>>;
+        const undoStates: AAdieresisState[] = [];
+        const redoStates: AAdieresisState[] = [];
+        expect(await getAAdieresisState(linkedPage)).toEqual(
+            await getAAdieresisState(mainPage)
+        );
 
         for (let step = 0; step < operations.length; step++) {
             const operation = operations[step];
@@ -2001,6 +2023,7 @@ test.describe('Linked window editing compile regression', () => {
             const beforeMainState = await getAAdieresisState(mainPage);
             const beforeLinkedState = await getAAdieresisState(linkedPage);
             let visualChangeExpected = false;
+            let expectedState: AAdieresisState | null = null;
 
             if (
                 operation.kind === 'outline' ||
@@ -2016,6 +2039,8 @@ test.describe('Linked window editing compile regression', () => {
                 );
                 undoStack.push(operation.kind);
                 redoStack.length = 0;
+                undoStates.push(beforeMainState);
+                redoStates.length = 0;
             } else {
                 if (
                     (operation.kind === 'undo'
@@ -2033,8 +2058,12 @@ test.describe('Linked window editing compile regression', () => {
                     if (historyKind) {
                         if (operation.kind === 'undo') {
                             redoStack.push(historyKind);
+                            redoStates.push(beforeMainState);
+                            expectedState = undoStates.pop() ?? null;
                         } else {
                             undoStack.push(historyKind);
+                            undoStates.push(beforeMainState);
+                            expectedState = redoStates.pop() ?? null;
                         }
                     }
                     visualChangeExpected = historyKind !== 'sidebearing';
@@ -2050,6 +2079,8 @@ test.describe('Linked window editing compile regression', () => {
                     );
                     undoStack.push(operation.kind);
                     redoStack.length = 0;
+                    undoStates.push(beforeMainState);
+                    redoStates.length = 0;
                 }
             }
 
@@ -2062,6 +2093,19 @@ test.describe('Linked window editing compile regression', () => {
             );
             const afterMain = await getEditingFontCompileTracker(mainPage);
             const afterLinked = await getEditingFontCompileTracker(linkedPage);
+            const stepLabel = `${operation.label} ${operation.kind} ${step}`;
+            await expect
+                .poll(async () => getAAdieresisState(linkedPage), {
+                    message: `linked model state matches main after ${stepLabel}`,
+                    timeout: 15000
+                })
+                .toEqual(await getAAdieresisState(mainPage));
+            if (expectedState) {
+                expect(
+                    await getAAdieresisState(mainPage),
+                    `main model state after ${stepLabel}`
+                ).toEqual(expectedState);
+            }
             await assertCompiledAAdieresisState(
                 mainPage,
                 `main after ${operation.label} ${operation.kind} ${step}`

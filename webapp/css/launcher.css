@@ -668,3 +668,13 @@ body.dragging .launcher-drop-zone {
         padding: 22px 16px 16px;
     }
 }
+
+.launcher-cloud-sparse {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+    font-weight: 400;
+    color: var(--text-muted);
+    cursor: pointer;
+}

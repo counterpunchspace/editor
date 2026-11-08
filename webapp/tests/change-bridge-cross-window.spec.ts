@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import {
     waitForCanvasReady,
@@ -307,4 +308,99 @@ test.describe('Cross-window ChangeBridge sync', () => {
 
         await context.close();
     });
+
+    test('reloaded linked window rejoins main’s unsaved document', async ({
+        browser
+    }) => {
+        test.setTimeout(180000);
+
+        const context = await browser.newContext();
+        await installCrossWindowTrackersOnContext(context);
+        const mainPage = await context.newPage();
+
+        await mainPage.goto('/?test=true');
+        await waitForCanvasReady(mainPage);
+        await openFileFromFilesView(mainPage, 'Fustat.glyphs');
+        await waitForOpenSessionReady(mainPage, 'Fustat.glyphs');
+        await waitForBridgeReady(mainPage);
+        await installJsonCanonicalizer(mainPage);
+        await installFontModelSyncTracker(mainPage);
+        const thinLayerId = await findThinLayerId(mainPage);
+        expect(thinLayerId).toBeTruthy();
+
+        // Unsaved in main: a reload that reopened the source would miss it.
+        await nudgeFirstNode(mainPage, thinLayerId, 10);
+
+        const linkedPage = await openLinkedEditorWindow(mainPage);
+        await waitForLinkedWindowReady(linkedPage);
+        await waitForWindowSyncPeers(mainPage, linkedPage);
+
+        await linkedPage.reload();
+        await waitForLinkedWindowReady(linkedPage);
+        await installJsonCanonicalizer(linkedPage);
+        await installFontModelSyncTracker(linkedPage);
+
+        const reloaded = await linkedPage.evaluate(() => ({
+            sync: new URLSearchParams(location.search).has('sync'),
+            fileHandle: !!(window as any).fontManager?.currentFont?.fileHandle
+        }));
+        expect(reloaded).toEqual({ sync: true, fileHandle: false });
+        expect(await extractGlyphLayerData(linkedPage, ['a'])).toEqual(
+            await extractGlyphLayerData(mainPage, ['a'])
+        );
+
+        // Same document, not a copy: an edit in the linked window reaches main.
+        const mainSyncTime = await getLastFontModelSyncTime(mainPage);
+        await nudgeFirstNode(linkedPage, thinLayerId, 7);
+        await waitForRemoteChange(mainPage, mainSyncTime);
+        expect(await extractGlyphLayerData(mainPage, ['a'])).toEqual(
+            await extractGlyphLayerData(linkedPage, ['a'])
+        );
+
+        await context.close();
+    });
 });
+
+async function waitForLinkedWindowReady(linkedPage: Page): Promise<void> {
+    await waitForCanvasReady(linkedPage);
+    await waitForFontLoaded(linkedPage);
+    await waitForFullStateSync(linkedPage);
+    await waitForBridgeReady(linkedPage);
+    await waitForWindowSyncReady(linkedPage);
+}
+
+async function nudgeFirstNode(
+    page: Page,
+    layerId: string,
+    dx: number
+): Promise<void> {
+    const result = await page.evaluate(
+        ({ layerId, dx }) => {
+            const bridge = (window as any).changeBridge;
+            const layer = (window as any).currentFontModel
+                .findGlyph('a')
+                .findLayerById(layerId);
+            const node = layer?.paths?.[0]?.nodes?.[0];
+            if (!node) return 'no node';
+            bridge.runWithoutRecording(() => {
+                node.x += dx;
+            });
+            (window as any).fontManager.currentFont.syncJsonFromModel();
+            bridge.syncGlyphFromJson(
+                'a',
+                'Drag point',
+                undefined,
+                undefined,
+                layerId,
+                undefined,
+                undefined,
+                undefined,
+                'test-sync',
+                null
+            );
+            return 'ok';
+        },
+        { layerId, dx }
+    );
+    expect(result).toBe('ok');
+}

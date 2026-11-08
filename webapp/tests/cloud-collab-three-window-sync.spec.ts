@@ -74,6 +74,10 @@ import {
     glyphShardPath,
     collectPageErrors
 } from './helpers/cloud-collab-three-window';
+import {
+    glyphNodeXAt,
+    moveGlyphNodeThroughModel
+} from './helpers/cloud-collab-e2e';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -164,6 +168,7 @@ test.describe('three-window sync scenarios', () => {
             const thinLayerId = await findThinLayerId(mainPage);
             expect(thinLayerId).toBeTruthy();
             const glyphNames = ['a', 'adieresis', 'aacute'];
+            const glyphNamesWithB = [...glyphNames, 'b'];
 
             let linkedPage = await openLinkedEditorWindow(mainPage);
             await waitForCanvasReady(linkedPage);
@@ -1375,9 +1380,11 @@ test.describe('three-window sync scenarios', () => {
             await waitForEditingCompile(mainPage);
             await waitForEditingCompile(linkedPage);
             await waitForEditingCompile(inviteePage);
-            await expect
-                .poll(async () => true, { timeout: 750 + 1000 })
-                .toBeTruthy();
+            await waitUntilGlyphLayerDataMatches(
+                mainPage,
+                linkedPage,
+                glyphNames
+            );
 
             const mainDataAfterPostDeleteOutline = await extractGlyphLayerData(
                 mainPage,
@@ -1505,10 +1512,11 @@ test.describe('three-window sync scenarios', () => {
             await waitForEditingCompile(mainPage);
             await waitForEditingCompile(linkedPage);
             await waitForEditingCompile(inviteePage);
-            await waitForEditingCompile(inviteePage);
-            await expect
-                .poll(async () => true, { timeout: 750 + 1000 })
-                .toBeTruthy();
+            await waitUntilGlyphLayerDataMatches(
+                mainPage,
+                linkedPage,
+                glyphNames
+            );
 
             const mainDataAfterPostDeleteAnchor = await extractGlyphLayerData(
                 mainPage,
@@ -1610,8 +1618,7 @@ test.describe('three-window sync scenarios', () => {
                 const bridge = (window as any).changeBridge;
                 const fontModel = (window as any).currentFontModel;
                 const currentFont = (window as any).fontManager?.currentFont;
-                const glyph =
-                    fontModel.findGlyph('b') || fontModel.findGlyph('a');
+                const glyph = fontModel.findGlyph('b');
                 const layer = glyph.layers[0];
                 const node = layer.paths[0].nodes[0];
                 const oldX = node.x;
@@ -1638,18 +1645,21 @@ test.describe('three-window sync scenarios', () => {
                     newX: node.x
                 };
             });
+            expect(inviteeEdit.glyphName).toBe('b');
             expect(inviteeEdit.newX).toBe(inviteeEdit.oldX + 21);
             await waitForRemoteChange(mainPage, inviteeBSync);
             await waitUntilGlyphLayerDataMatches(
                 inviteePage,
                 mainPage,
-                glyphNames
+                glyphNamesWithB
             );
             await waitUntilGlyphLayerDataMatches(
                 inviteePage,
                 linkedPage,
-                glyphNames
+                glyphNamesWithB
             );
+            expect(await glyphNodeX(mainPage, 'b')).toBe(inviteeEdit.newX);
+            expect(await glyphNodeX(linkedPage, 'b')).toBe(inviteeEdit.newX);
 
             const ownerCannotUndoInvitee = await mainPage.evaluate(
                 ({ glyphName, layerId }) => {
@@ -1675,23 +1685,107 @@ test.describe('three-window sync scenarios', () => {
                 const glyph = fontModel.findGlyph(glyphName);
                 return glyph.layers[0].paths[0].nodes[0].x;
             }, inviteeEdit.glyphName);
+            // The owner never edited `b`, so the invitee's edit is not on the
+            // owner's undo stack and an owner undo leaves it alone.
+            expect(ownerCannotUndoInvitee).toBe(false);
             expect(ownerWidthAfterUndo).toBe(ownerWidthBeforeUndo);
-            void ownerCannotUndoInvitee;
+            expect(ownerWidthAfterUndo).toBe(inviteeEdit.newX);
+
+            // ── Owner and invitee edit different nodes of the same layer
+            // through the recorded model path; the owner's undo must revert
+            // only the owner's node and keep the invitee's edit everywhere.
+            const sharedNodeCount = await mainPage.evaluate((layerId) => {
+                const glyph = (window as any).currentFontModel.findGlyph('a');
+                return glyph.findLayerById(layerId).paths[0].nodes.length;
+            }, thinLayerId);
+            expect(sharedNodeCount).toBeGreaterThan(1);
+            const ownerSharedEdit = await moveGlyphNodeThroughModel(mainPage, {
+                glyphName: 'a',
+                layerId: thinLayerId,
+                nodeIndex: 0,
+                deltaX: 7,
+                label: 'Owner same-layer edit'
+            });
+            for (const page of [inviteePage, linkedPage]) {
+                await expect
+                    .poll(() => glyphNodeXAt(page, 'a', thinLayerId!, 0), {
+                        timeout: 60000
+                    })
+                    .toBe(ownerSharedEdit.newX);
+            }
+            const inviteeSharedEdit = await moveGlyphNodeThroughModel(
+                inviteePage,
+                {
+                    glyphName: 'a',
+                    layerId: thinLayerId,
+                    nodeIndex: -1,
+                    deltaX: 19,
+                    label: 'Invitee same-layer edit'
+                }
+            );
+            for (const page of [mainPage, linkedPage]) {
+                await expect
+                    .poll(
+                        () =>
+                            glyphNodeXAt(
+                                page,
+                                'a',
+                                thinLayerId!,
+                                inviteeSharedEdit.nodeIndex
+                            ),
+                        { timeout: 60000 }
+                    )
+                    .toBe(inviteeSharedEdit.newX);
+            }
+            expect(
+                await mainPage.evaluate(
+                    (layerId) =>
+                        !!(window as any).changeBridge?.canUndo?.('a', layerId),
+                    thinLayerId
+                )
+            ).toBe(true);
+            await mainPage.evaluate((layerId) => {
+                (window as any).changeBridge.undo('a', layerId);
+            }, thinLayerId);
+            await mainPage.evaluate(() =>
+                (window as any).patchSyncEngine?.waitForPendingCloudCommits?.()
+            );
+            const sharedLayerNodes = (page: Page) =>
+                Promise.all([
+                    glyphNodeXAt(page, 'a', thinLayerId!, 0),
+                    glyphNodeXAt(
+                        page,
+                        'a',
+                        thinLayerId!,
+                        inviteeSharedEdit.nodeIndex
+                    )
+                ]);
+            const expectedSharedLayerNodes = [
+                ownerSharedEdit.oldX,
+                inviteeSharedEdit.newX
+            ];
+            for (const page of [mainPage, linkedPage, inviteePage]) {
+                await expect
+                    .poll(() => sharedLayerNodes(page), { timeout: 60000 })
+                    .toEqual(expectedSharedLayerNodes);
+            }
 
             const dataBeforeReload = await extractGlyphLayerData(
                 mainPage,
-                glyphNames
+                glyphNamesWithB
             );
-            expect(dataBeforeReload).not.toEqual(mainBaselineData);
+            expect(
+                await extractGlyphLayerData(mainPage, glyphNames)
+            ).not.toEqual(mainBaselineData);
             await waitUntilGlyphLayerDataMatches(
                 mainPage,
                 linkedPage,
-                glyphNames
+                glyphNamesWithB
             );
             await waitUntilGlyphLayerDataMatches(
                 mainPage,
                 inviteePage,
-                glyphNames
+                glyphNamesWithB
             );
 
             await inviteePage.reload();
@@ -1776,27 +1870,47 @@ test.describe('three-window sync scenarios', () => {
                 waitForCloudLiveIdle(mainPage),
                 waitForCloudLiveIdle(inviteePage)
             ]);
+            // A reloaded cloud font may open sparse; `b` is off-screen. A UI
+            // hydration replaces the working set, so keep the edited glyphs in
+            // it too, or the open glyph `a` turns read-only.
+            for (const page of [mainPage, linkedPage, inviteePage]) {
+                await page.evaluate(
+                    (glyphNames) =>
+                        (window as any).cloudPlugin?.ensureSparseHydration?.({
+                            glyphNames,
+                            purpose: 'ui'
+                        }),
+                    glyphNamesWithB
+                );
+            }
             await waitUntilGlyphLayerDataMatches(
                 mainPage,
                 linkedPage,
-                glyphNames
+                glyphNamesWithB
             );
             await waitUntilGlyphLayerDataMatches(
                 mainPage,
                 inviteePage,
-                glyphNames
+                glyphNamesWithB
             );
             const mainDataAfterReload = await extractGlyphLayerData(
                 mainPage,
-                glyphNames
+                glyphNamesWithB
             );
             const linkedDataAfterReload = await extractGlyphLayerData(
                 linkedPage,
-                glyphNames
+                glyphNamesWithB
             );
             const inviteeDataAfterReload = await extractGlyphLayerData(
                 inviteePage,
-                glyphNames
+                glyphNamesWithB
+            );
+            expect(await glyphNodeX(mainPage, 'b')).toBe(inviteeEdit.newX);
+            expect(await sharedLayerNodes(mainPage)).toEqual(
+                expectedSharedLayerNodes
+            );
+            expect(await sharedLayerNodes(inviteePage)).toEqual(
+                expectedSharedLayerNodes
             );
             expect(mainDataAfterReload).toEqual(dataBeforeReload);
             expect(linkedDataAfterReload).toEqual(dataBeforeReload);

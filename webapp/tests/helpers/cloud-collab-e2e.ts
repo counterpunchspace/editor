@@ -274,6 +274,71 @@ export async function nudgeGlyphNode(
     return edited;
 }
 
+/**
+ * Move one node through the model setter inside a real transaction, so the
+ * edit is recorded by `recordChange` like model-API, script and structural
+ * canvas edits (not `runWithoutRecording` + `syncGlyphFromJson`).
+ * A negative `nodeIndex` counts from the end of the first path.
+ */
+export async function moveGlyphNodeThroughModel(
+    page: Page,
+    edit: {
+        glyphName: string;
+        layerId?: string | null;
+        nodeIndex: number;
+        deltaX: number;
+        label: string;
+    }
+): Promise<{ layerId: string; nodeIndex: number; oldX: number; newX: number }> {
+    const result = await page.evaluate(async (args) => {
+        const w = window as any;
+        const glyph = w.currentFontModel.findGlyph(args.glyphName);
+        const layer = args.layerId
+            ? glyph.findLayerById(args.layerId)
+            : glyph.layers[0];
+        const nodes = layer.paths[0].nodes;
+        const index =
+            args.nodeIndex < 0 ? nodes.length + args.nodeIndex : args.nodeIndex;
+        const node = nodes[index];
+        const oldX = node.x;
+        const bridge = w.patchSyncEngine;
+        bridge.beginTransaction(args.label, null, {
+            compileChangeSource: 'keyboard-outline',
+            compileEditType: null
+        });
+        try {
+            node.x = oldX + args.deltaX;
+        } finally {
+            bridge.endTransaction();
+        }
+        await bridge.waitForPendingCloudCommits?.();
+        return {
+            layerId: String(layer.id),
+            nodeIndex: index,
+            oldX,
+            newX: layer.paths[0].nodes[index].x
+        };
+    }, edit);
+    expect(result.newX).toBe(result.oldX + edit.deltaX);
+    return result;
+}
+
+export async function glyphNodeXAt(
+    page: Page,
+    glyphName: string,
+    layerId: string,
+    nodeIndex: number
+): Promise<number | null> {
+    return page.evaluate(
+        ({ name, id, index }) => {
+            const glyph = (window as any).currentFontModel?.findGlyph?.(name);
+            const layer = glyph?.findLayerById?.(id);
+            return layer?.paths?.[0]?.nodes?.[index]?.x ?? null;
+        },
+        { name: glyphName, id: layerId, index: nodeIndex }
+    );
+}
+
 /** Logged only when a staging assertion is about to fail, so CI keeps the invitee socket state. */
 export async function dumpLiveSessionState(
     page: Page,

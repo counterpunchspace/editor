@@ -89,6 +89,41 @@ export function serializeWalOperations(operations: unknown[]): unknown[] {
 
 export type CloudWalHealth = 'initializing' | 'ready' | 'unavailable';
 
+const WRITE_ATTEMPTS = 3;
+const WRITE_RETRY_DELAY_MS = 100;
+const RECOVERY_BASE_DELAY_MS = 1_000;
+const RECOVERY_MAX_DELAY_MS = 30_000;
+
+function isQuotaExceededError(error: unknown): boolean {
+    return (
+        typeof error === 'object' &&
+        error !== null &&
+        'name' in error &&
+        error.name === 'QuotaExceededError'
+    );
+}
+
+/**
+ * A row IndexedDB refused. The WAL still holds it in memory (so the outbox can
+ * send it) and keeps retrying the write in the background.
+ */
+export class CloudWalPersistError extends Error {
+    readonly quotaExceeded: boolean;
+
+    constructor(cause: unknown) {
+        const quotaExceeded = isQuotaExceededError(cause);
+        super(
+            quotaExceeded
+                ? 'This browser’s storage for the site is full. Free up disk space or clear other site data so edits can be kept offline.'
+                : `Cloud write-ahead storage is unavailable: ${
+                      cause instanceof Error ? cause.message : String(cause)
+                  }`
+        );
+        this.name = 'CloudWalPersistError';
+        this.quotaExceeded = quotaExceeded;
+    }
+}
+
 export function recordKey(
     record: Pick<
         CloudWalRecord,
@@ -149,9 +184,19 @@ export class CloudDurableWal {
     private _db: IDBDatabase | null = null;
     private _openPromise: Promise<IDBDatabase> | null = null;
     private _changeListeners = new Set<() => void>();
+    private _loaded = false;
+    /** Keys of rows held only in memory because IndexedDB refused them. */
+    private _unpersisted = new Set<string>();
+    private _recoveryTimer: ReturnType<typeof setTimeout> | null = null;
+    private _recoveryAttempts = 0;
 
     get health(): CloudWalHealth {
         return this._health;
+    }
+
+    /** True once a load succeeded; appends after that never lose a row. */
+    get isLoaded(): boolean {
+        return this._loaded;
     }
 
     get pendingCount(): number {
@@ -190,7 +235,7 @@ export class CloudDurableWal {
     private _isPending(record: CloudWalRecord): boolean {
         return (
             record.state !== 'acknowledged' &&
-            walUpdateBytes(record).byteLength > 0
+            (record.updateBytes?.byteLength ?? 0) > 0
         );
     }
 
@@ -204,6 +249,16 @@ export class CloudDurableWal {
         return [...this._records.values()]
             .filter((record) => !documentId || record.documentId === documentId)
             .sort((a, b) => a.createdAt - b.createdAt);
+    }
+
+    transactionIdsFor(documentId: string): Set<string> {
+        const ids = new Set<string>();
+        for (const record of this._records.values()) {
+            if (record.documentId === documentId) {
+                ids.add(record.clientTransactionId);
+            }
+        }
+        return ids;
     }
 
     /** Unacked rows in dependsOn order (creation order within independent rows). */
@@ -325,12 +380,17 @@ export class CloudDurableWal {
                     };
                 }
             );
+            const unpersisted = [...this._unpersisted].flatMap((key) => {
+                const record = this._records.get(key);
+                return record ? [record] : [];
+            });
             this._records.clear();
-            for (const record of records) {
+            for (const record of [...records, ...unpersisted]) {
                 this._records.set(recordKey(record), record);
             }
             this._loadedAssetId = assetId;
-            this._health = 'ready';
+            this._loaded = true;
+            this._health = this._unpersisted.size ? 'unavailable' : 'ready';
             return records;
         } catch (error) {
             this._health = 'unavailable';
@@ -340,73 +400,151 @@ export class CloudDurableWal {
         }
     }
 
-    async append(record: CloudWalRecord): Promise<void> {
-        if (this._health === 'unavailable') {
-            throw new Error('Cloud write-ahead storage is unavailable');
-        }
-        const stored = persistableRecord(record);
-        try {
-            const db = await this._ensureDb();
-            await new Promise<void>((resolve, reject) => {
-                const tx = db.transaction(STORE, 'readwrite');
-                tx.objectStore(STORE).put(stored);
-                tx.oncomplete = () => resolve();
-                tx.onerror = () => reject(tx.error);
-                tx.onabort = () => reject(tx.error);
-            });
-            this._records.set(stored.key, {
-                ...stored,
-                updateBytes: copyUpdateBytes(stored.updateBytes)
-            });
-            this._loadedAssetId = record.assetId;
-            this._health = 'ready';
-            this._emitChange();
-        } catch (error) {
-            this._health = 'unavailable';
-            this._db = null;
-            this._openPromise = null;
-            throw error;
+    private _resetDb(): void {
+        this._db = null;
+        this._openPromise = null;
+    }
+
+    private async _putRows(
+        rows: Array<CloudWalRecord & { key: string }>
+    ): Promise<void> {
+        const db = await this._ensureDb();
+        await new Promise<void>((resolve, reject) => {
+            const tx = db.transaction(STORE, 'readwrite');
+            const store = tx.objectStore(STORE);
+            for (const row of rows) {
+                store.put(row);
+            }
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error);
+        });
+    }
+
+    private async _putRowsWithRetry(
+        rows: Array<CloudWalRecord & { key: string }>
+    ): Promise<void> {
+        for (let attempt = 1; ; attempt += 1) {
+            try {
+                await this._putRows(rows);
+                return;
+            } catch (error) {
+                this._resetDb();
+                if (attempt >= WRITE_ATTEMPTS || isQuotaExceededError(error)) {
+                    throw error;
+                }
+                await new Promise((resolve) =>
+                    setTimeout(resolve, WRITE_RETRY_DELAY_MS * attempt)
+                );
+            }
         }
     }
 
-    async verifyWritable(): Promise<void> {
-        if (this._health === 'unavailable') {
-            throw new Error('Cloud write-ahead storage is unavailable');
+    private _unpersistedRows(): Array<CloudWalRecord & { key: string }> {
+        return [...this._unpersisted].flatMap((key) => {
+            const record = this._records.get(key);
+            return record ? [persistableRecord(record)] : [];
+        });
+    }
+
+    private _markPersisted(): void {
+        this._unpersisted.clear();
+        this._recoveryAttempts = 0;
+        if (this._recoveryTimer) {
+            clearTimeout(this._recoveryTimer);
+            this._recoveryTimer = null;
         }
-        const probeId = `probe:${Date.now()}`;
-        const probe: CloudWalRecord = {
+        this._health = 'ready';
+    }
+
+    private _scheduleRecovery(): void {
+        if (this._recoveryTimer || typeof indexedDB === 'undefined') {
+            return;
+        }
+        const delay = Math.min(
+            RECOVERY_MAX_DELAY_MS,
+            RECOVERY_BASE_DELAY_MS * 2 ** Math.min(this._recoveryAttempts, 5)
+        );
+        this._recoveryAttempts += 1;
+        this._recoveryTimer = setTimeout(() => {
+            this._recoveryTimer = null;
+            void this.recover();
+        }, delay);
+    }
+
+    /**
+     * Writes rows IndexedDB refused earlier (or a probe when none are left)
+     * and returns the WAL to ready on success.
+     */
+    async recover(): Promise<boolean> {
+        try {
+            const rows = this._unpersistedRows();
+            if (rows.length) {
+                await this._putRowsWithRetry(rows);
+            } else {
+                await this._probe();
+            }
+        } catch (error) {
+            console.warn('CloudDurableWal: recovery write failed', error);
+            this._health = 'unavailable';
+            this._scheduleRecovery();
+            this._emitChange();
+            return false;
+        }
+        this._markPersisted();
+        this._emitChange();
+        return true;
+    }
+
+    async append(record: CloudWalRecord): Promise<void> {
+        const stored = persistableRecord(record);
+        try {
+            // Rows refused earlier ride along, so one good write heals the log.
+            await this._putRowsWithRetry([
+                stored,
+                ...this._unpersistedRows().filter(
+                    (row) => row.key !== stored.key
+                )
+            ]);
+        } catch (error) {
+            this._records.set(stored.key, stored);
+            this._unpersisted.add(stored.key);
+            this._loadedAssetId = record.assetId;
+            this._health = 'unavailable';
+            this._scheduleRecovery();
+            this._emitChange();
+            throw new CloudWalPersistError(error);
+        }
+        this._records.set(stored.key, stored);
+        this._loadedAssetId = record.assetId;
+        this._markPersisted();
+        this._emitChange();
+    }
+
+    private async _probe(): Promise<void> {
+        const probe = persistableRecord({
             assetId: this._loadedAssetId || 'probe',
             documentId: 'wal-probe',
-            clientTransactionId: probeId,
+            clientTransactionId: `probe:${Date.now()}`,
             updateBytes: new Uint8Array([1]),
-            collaborationMessage: {
-                schemaVersion: 1,
-                transactionId: 'wal-probe',
-                localSequence: 0,
-                roomSequence: null,
-                baseRevision: null,
-                changes: [],
-                metadata: {
-                    editType: 'font',
-                    changedGlyphNames: [],
-                    changedLayerIds: [],
-                    workerReplayTargets: [],
-                    historyItemId: 'wal-probe',
-                    historyAction: 'change',
-                    undoScope: 'font'
-                },
-                source: 'wal-probe',
-                label: null,
-                summary: '',
-                windowId: null,
-                timestamp: Date.now()
-            },
             state: 'applied',
             createdAt: Date.now(),
             attempts: 0
-        };
-        await this.append(probe);
-        await this.acknowledge(probe);
+        });
+        await this._putRowsWithRetry([probe]);
+        const db = await this._ensureDb();
+        await new Promise<void>((resolve, reject) => {
+            const tx = db.transaction(STORE, 'readwrite');
+            tx.objectStore(STORE).delete(probe.key);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+    }
+
+    async verifyWritable(): Promise<void> {
+        if (!(await this.recover())) {
+            throw new Error('Cloud write-ahead storage is unavailable');
+        }
     }
 
     async acknowledge(record: CloudWalRecord): Promise<void> {
@@ -426,6 +564,7 @@ export class CloudDurableWal {
             throw error;
         }
         this._records.delete(key);
+        this._unpersisted.delete(key);
         this._emitChange();
     }
 
@@ -450,14 +589,18 @@ export class CloudDurableWal {
             tx.onerror = () => reject(tx.error);
         });
         for (const clientTransactionId of clientTransactionIds) {
-            this._records.delete(
-                recordKey({ assetId, documentId, clientTransactionId })
-            );
+            const key = recordKey({ assetId, documentId, clientTransactionId });
+            this._records.delete(key);
+            this._unpersisted.delete(key);
         }
         this._emitChange();
     }
 
     close(): void {
+        if (this._recoveryTimer) {
+            clearTimeout(this._recoveryTimer);
+            this._recoveryTimer = null;
+        }
         if (this._db) {
             this._db.close();
             this._db = null;
