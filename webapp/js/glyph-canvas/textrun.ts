@@ -71,6 +71,8 @@ export interface ShapedGlyph {
     lineIndex?: number;
     lineOriginX?: number;
     baselineY?: number;
+    /** A .notdef standing in for a glyph whose editing compile is pending. */
+    pendingGlyph?: boolean;
 }
 
 interface ExplicitGlyphToken {
@@ -107,6 +109,8 @@ export class TextRunEditor {
     shapingHbBlob: any;
     // Stage 2 output: glyph names in current visual order
     glyphNameBuffer: string[];
+    /** Codepoints typed on the keyboard whose editing compile is pending. */
+    typedCodepointsAwaitingCompile: Set<number> = new Set();
     intrinsicGlyphAdvances: Map<string, number>;
     // GID→name map for the editing font (rebuilt when editing font changes)
     editingFontNameToGid: Map<string, number>;
@@ -497,6 +501,7 @@ export class TextRunEditor {
 
     setTextBuffer(text: string) {
         this.compositionSelectionHold = null;
+        this.typedCodepointsAwaitingCompile.clear();
         this.textBuffer = normalizeTextNewlines(text || '');
         this.textBufferWriteGeneration += 1;
         markUserTextBufferWritten();
@@ -2097,6 +2102,10 @@ export class TextRunEditor {
         // Regular character input (only if not a modifier key combo)
         if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
             e.preventDefault();
+            const typedCodepoint = e.key.codePointAt(0);
+            if (typedCodepoint !== undefined) {
+                this.typedCodepointsAwaitingCompile.add(typedCodepoint);
+            }
             if (e.key === '/') {
                 // Escape literal slash typing in the raw text buffer.
                 // Token parser will resolve "//" back to a single Unicode slash.
@@ -3776,10 +3785,49 @@ export class TextRunEditor {
             }
         }
         this.bidiRuns = allBidiRuns;
+        this.collapsePendingNotdefGlyphs();
         this.rebuildGlyphNameBufferFromShapedGlyphs();
         this.applyMultilineLayout();
         this.buildClusterMap();
         this.updateCursorVisualPosition();
+    }
+
+    /**
+     * A character just typed on the keyboard that the editing font does not
+     * cover yet shapes as .notdef until its compile lands. Take those
+     * stand-ins out of the run (no advance, not drawn) so the text does not
+     * first open up for a gray box; the reshape after the compile brings the
+     * real glyph in. Every other .notdef stays: characters the font has no
+     * exported glyph for, and text that was not typed (opened, pasted,
+     * restored, or left after deleting glyphs).
+     */
+    private collapsePendingNotdefGlyphs(): void {
+        if (this.typedCodepointsAwaitingCompile.size === 0) {
+            return;
+        }
+        const text = this.textBuffer || '';
+        if (!window.fontManager?.needsEditingCompileForText?.(text)) {
+            this.typedCodepointsAwaitingCompile.clear();
+            return;
+        }
+        const font = window.currentFontModel;
+        for (const glyph of this.shapedGlyphs) {
+            if (glyph.g !== 0 || glyph.explicitGlyphName) {
+                continue;
+            }
+            const codepoint = text.codePointAt(glyph.cl || 0);
+            if (
+                codepoint === undefined ||
+                !this.typedCodepointsAwaitingCompile.has(codepoint)
+            ) {
+                continue;
+            }
+            const sourceGlyph = font?.findGlyphByCodepoint?.(codepoint);
+            if (sourceGlyph && sourceGlyph.exported !== false) {
+                glyph.ax = 0;
+                glyph.pendingGlyph = true;
+            }
+        }
     }
 
     shapeDisplaySliceSimple(
