@@ -18,6 +18,28 @@ interface ExampleFileListManifest {
     files: string[];
 }
 
+// Chrome fails fetches with thousands pending, so fixture fetches are bounded.
+const FETCH_CONCURRENCY = 16;
+
+/** Map `items` through `fn` with at most `limit` calls in flight, keeping order. */
+async function mapWithConcurrency<T, R>(
+    items: T[],
+    limit: number,
+    fn: (item: T) => Promise<R>
+): Promise<R[]> {
+    const results: R[] = new Array(items.length);
+    let next = 0;
+    await Promise.all(
+        Array.from({ length: Math.min(limit, items.length) }, async () => {
+            while (next < items.length) {
+                const index = next++;
+                results[index] = await fn(items[index]);
+            }
+        })
+    );
+    return results;
+}
+
 /**
  * Load example fonts into the /user folder based on examples-manifest.json
  */
@@ -69,106 +91,90 @@ async function loadExampleFonts() {
             `Found ${manifest.examples.length} example(s) in manifest, loading ${examplesToLoad.length}`
         );
 
-        // Load each example
-        let loadedCount = 0;
-        for (const example of examplesToLoad) {
-            try {
-                console.log(
-                    '[ExampleLoader]',
-                    `  Loading: ${example.source} → ${example.destination}`
-                );
-
-                if (example.type === 'directory') {
-                    const fileListResponse = await fetch(
-                        `./${example.fileList}`
-                    );
-                    if (!fileListResponse.ok) {
-                        console.warn(
-                            '[ExampleLoader]',
-                            `  ⚠️ Failed to fetch file list ${example.fileList}`
-                        );
-                        continue;
+        // Resolve every file first, fetch them in parallel, then write them.
+        const fileEntries = (
+            await Promise.all(
+                examplesToLoad.map(async (example) => {
+                    if (example.type !== 'directory') {
+                        return [
+                            {
+                                sourcePath: example.source,
+                                destinationPath: example.destination
+                            }
+                        ];
                     }
-
-                    const fileListManifest =
-                        (await fileListResponse.json()) as ExampleFileListManifest;
-                    const relativeFiles = fileListManifest.files || [];
-                    let uploadedFromDirectory = 0;
-
-                    for (const relativeFilePath of relativeFiles) {
-                        const sourcePath = `${example.source}/${relativeFilePath}`;
-                        const destinationPath = `${example.destination}/${relativeFilePath}`;
-
-                        const nestedFileResponse = await fetch(
-                            `./${sourcePath}`
+                    try {
+                        const fileListResponse = await fetch(
+                            `./${example.fileList}`
                         );
-                        if (!nestedFileResponse.ok) {
+                        if (!fileListResponse.ok) {
                             console.warn(
                                 '[ExampleLoader]',
-                                `  ⚠️ Failed to fetch ${sourcePath}`
+                                `  ⚠️ Failed to fetch file list ${example.fileList}`
                             );
-                            continue;
+                            return [];
                         }
-
-                        const nestedArrayBuffer =
-                            await nestedFileResponse.arrayBuffer();
-                        const nestedBytes = new Uint8Array(nestedArrayBuffer);
-                        const nestedFile = new File(
-                            [nestedBytes],
-                            destinationPath,
-                            {
-                                type: 'application/octet-stream'
-                            }
+                        const fileListManifest =
+                            (await fileListResponse.json()) as ExampleFileListManifest;
+                        return (fileListManifest.files || []).map(
+                            (relativeFilePath) => ({
+                                sourcePath: `${example.source}/${relativeFilePath}`,
+                                destinationPath: `${example.destination}/${relativeFilePath}`
+                            })
                         );
-
-                        await window.uploadFiles([nestedFile], {
-                            directory: '/',
-                            pluginId: 'memory',
-                            skipRefresh: true
-                        });
-                        uploadedFromDirectory++;
+                    } catch (error) {
+                        console.error(
+                            '[ExampleLoader]',
+                            `  ❌ Error loading ${example.source}:`,
+                            error
+                        );
+                        return [];
                     }
+                })
+            )
+        ).flat();
 
-                    loadedCount += uploadedFromDirectory;
-                    console.log(
+        const fetchedFiles = await mapWithConcurrency(
+            fileEntries,
+            FETCH_CONCURRENCY,
+            async ({ sourcePath, destinationPath }) => {
+                try {
+                    const response = await fetch(`./${sourcePath}`);
+                    if (!response.ok) {
+                        console.warn(
+                            '[ExampleLoader]',
+                            `  ⚠️ Failed to fetch ${sourcePath}`
+                        );
+                        return null;
+                    }
+                    const bytes = new Uint8Array(await response.arrayBuffer());
+                    return new File([bytes], destinationPath, {
+                        type: 'application/octet-stream'
+                    });
+                } catch (error) {
+                    console.error(
                         '[ExampleLoader]',
-                        `  ✅ Loaded ${uploadedFromDirectory} file(s) from directory ${example.source}`
+                        `  ❌ Error loading ${sourcePath}:`,
+                        error
                     );
-                    continue;
+                    return null;
                 }
-
-                // Fetch the example file
-                const fileResponse = await fetch(`./${example.source}`);
-                if (!fileResponse.ok) {
-                    console.warn(
-                        '[ExampleLoader]',
-                        `  ⚠️ Failed to fetch ${example.source}`
-                    );
-                    continue;
-                }
-
-                // Get file content as ArrayBuffer for efficient binary handling
-                const fileArrayBuffer = await fileResponse.arrayBuffer();
-                const fileBytes = new Uint8Array(fileArrayBuffer);
-                const file = new File([fileBytes], example.destination, {
-                    type: 'application/octet-stream'
-                });
-
-                // Write to destination in memory filesystem (manifest has full paths)
-                await window.uploadFiles([file], {
-                    directory: '/',
-                    pluginId: 'memory',
-                    skipRefresh: true
-                });
-                loadedCount++;
-            } catch (error) {
-                console.error(
-                    '[ExampleLoader]',
-                    `  ❌ Error loading ${example.source}:`,
-                    error
-                );
             }
-        }
+        );
+
+        // Write to the memory filesystem (manifest has full paths). Each
+        // write is a worker round trip, so a few lanes keep it pipelined.
+        const files = fetchedFiles.filter((file): file is File => !!file);
+        const WRITE_LANES = 8;
+        await Promise.all(
+            Array.from({ length: WRITE_LANES }, (_, lane) =>
+                window.uploadFiles(
+                    files.filter((_, index) => index % WRITE_LANES === lane),
+                    { directory: '/', pluginId: 'memory', skipRefresh: true }
+                )
+            )
+        );
+        const loadedCount = files.length;
 
         console.log(
             '[ExampleLoader]',

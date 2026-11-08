@@ -189,7 +189,12 @@ test('arabic add glyphs can stay empty or copy composition outlines', async ({
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(error.message));
     page.on('console', (message) => {
-        if (message.type() === 'error') {
+        // A signed-out sign-in check answers 401 when the website runs
+        // locally; like a refused one when it doesn't, it is not a failure.
+        if (
+            message.type() === 'error' &&
+            !message.location().url.includes('/api/auth/me')
+        ) {
             errors.push(message.text());
         }
     });
@@ -573,7 +578,12 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(error.message));
     page.on('console', (message) => {
-        if (message.type() === 'error') {
+        // A signed-out sign-in check answers 401 when the website runs
+        // locally; like a refused one when it doesn't, it is not a failure.
+        if (
+            message.type() === 'error' &&
+            !message.location().url.includes('/api/auth/me')
+        ) {
             errors.push(message.text());
         }
     });

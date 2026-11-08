@@ -395,11 +395,16 @@ async function navigateToGlyphA(page: Page) {
         const gc = (window as any).glyphCanvas;
         gc.textRunEditor.setTextBuffer('AA');
     });
+    // Wait for the editing font that covers the new text: until it lands,
+    // the text is shaped with the previous font as .notdef (glyph id 0).
     await page.waitForFunction(() => {
         const textRunEditor = (window as any).glyphCanvas?.textRunEditor;
         return (
             textRunEditor?.textBuffer === 'AA' &&
-            textRunEditor.shapedGlyphs?.length === 2
+            textRunEditor.shapedGlyphs?.length === 2 &&
+            textRunEditor.shapedGlyphs.every(
+                (glyph: { g?: number }) => (glyph.g ?? 0) !== 0
+            )
         );
     });
     await page.evaluate(async () => {

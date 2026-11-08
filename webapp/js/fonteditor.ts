@@ -92,40 +92,20 @@ async function initFontEditor() {
             window.updateLoadingStatus('Initializing Python environment...');
         }
 
-        // First load micropip package
-        const micropipSpanId = timelineSpanStart('python.loadMicropip');
-        await window.pyodide.loadPackage('micropip');
-        timelineSpanEnd(micropipSpanId);
-        console.log('[FontEditor]', 'micropip loaded successfully');
-        if (window.updateLoadingStatus) {
-            window.updateLoadingStatus('Loading package manager...');
-        }
-
-        // Fetch the list of wheel files from the manifest
+        // micropip and the bundled wheels load in one parallel loadPackage
+        // call. The bundled wheels declare no dependencies, so they need no
+        // micropip resolution; micropip stays loaded for plugin installs.
         const wheelsSpanId = timelineSpanStart('python.installWheels');
         const manifestResponse = await fetch('./wheels/wheels.json');
         const manifest = (await manifestResponse.json()) as WheelsManifest;
-        const wheelFiles = manifest.wheels;
-        console.log('[FontEditor]', 'Found wheel files:', wheelFiles);
-
-        // Install context package from local wheels
-        await window.pyodide.runPythonAsync(`
-            import micropip
-        `);
-
-        // Install each wheel file
-        for (const wheelFile of wheelFiles) {
-            console.log('[FontEditor]', `Installing wheel: ${wheelFile}`);
-            if (window.updateLoadingStatus) {
-                window.updateLoadingStatus(
-                    `Installing ${wheelFile.split('-')[0]}...`
-                );
-            }
-            const wheelUrl = `./wheels/${wheelFile}`;
-            await window.pyodide.runPythonAsync(`
-                await micropip.install("${wheelUrl}")
-            `);
+        const wheelUrls = manifest.wheels.map((wheelFile) =>
+            new URL(`./wheels/${wheelFile}`, window.location.href).toString()
+        );
+        console.log('[FontEditor]', 'Found wheel files:', manifest.wheels);
+        if (window.updateLoadingStatus) {
+            window.updateLoadingStatus('Loading package manager...');
         }
+        await window.pyodide.loadPackage(['micropip', ...wheelUrls]);
         timelineSpanEnd(wheelsSpanId);
 
         // Load the fonteditor Python module
@@ -144,6 +124,7 @@ async function initFontEditor() {
         console.log('[FontEditor]', 'fonteditor.py module loaded');
 
         // Stored third-party wheels are restored only when their Disk permission persists.
+        const restorePluginsSpanId = timelineSpanStart('python.restorePlugins');
         try {
             const { revokeBeforeReinstall, startPluginRevocationWatch } =
                 await import('./installed-plugin-manager');
@@ -169,9 +150,11 @@ async function initFontEditor() {
             );
         }
 
+        timelineSpanEnd(restorePluginsSpanId);
         console.log('[FontEditor]', 'FontEditor initialized successfully');
 
         // Load example fonts into /user folder
+        const exampleFontsSpanId = timelineSpanStart('python.loadExampleFonts');
         if (window.loadExampleFonts) {
             try {
                 await window.loadExampleFonts();
@@ -184,6 +167,7 @@ async function initFontEditor() {
                 // Continue anyway - this is not critical
             }
         }
+        timelineSpanEnd(exampleFontsSpanId);
 
         if (window.updateLoadingStatus) {
             window.updateLoadingStatus('READY', true);

@@ -1575,13 +1575,6 @@ async function forceEditingCompile(
     await page.evaluate(async (activeGlyphName) => {
         const fontManager = (window as any).fontManager;
         const glyphCanvas = (window as any).glyphCanvas;
-        // Cancel the text-change debounce so it cannot race and leave a
-        // stale narrow snapshot after this forced compile (or overwrite a
-        // correct wide snapshot with a later narrow one).
-        if (glyphCanvas?.textChangeDebounceTimer) {
-            clearTimeout(glyphCanvas.textChangeDebounceTimer);
-            glyphCanvas.textChangeDebounceTimer = null;
-        }
         const textBuffer =
             glyphCanvas?.textRunEditor?.textBuffer ||
             fontManager?.currentText ||

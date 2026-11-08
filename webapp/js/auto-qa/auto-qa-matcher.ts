@@ -91,6 +91,8 @@ type WithinFontStatus = {
 
 type QaFontMatchContext = {
     font: Font;
+    /** The glyph list the cached glyphs belong to (replaced on add, delete, rename). */
+    glyphs: Glyph[];
     table: QaCorpusTable;
     options: ResolvedMatchOptions;
     glyphCount: number;
@@ -104,6 +106,35 @@ type QaFontMatchContext = {
 };
 
 let cachedContext: QaFontMatchContext | null = null;
+
+/**
+ * Glyphs changed since the cached context observed them, or 'all' when a
+ * change cannot be narrowed to glyphs. They are observed again before the
+ * cached context is used, instead of observing the whole font.
+ */
+let pendingChangedGlyphs: Set<string> | 'all' = new Set();
+
+/** Record glyphs whose components, anchors, name or codepoints changed. */
+export function markQaGlyphsChanged(
+    glyphNames: Iterable<string> | 'all'
+): void {
+    if (pendingChangedGlyphs === 'all') {
+        return;
+    }
+    if (glyphNames === 'all') {
+        pendingChangedGlyphs = 'all';
+        return;
+    }
+    for (const glyphName of glyphNames) {
+        pendingChangedGlyphs.add(glyphName);
+    }
+}
+
+function takePendingChangedGlyphs(): Set<string> | 'all' {
+    const changed = pendingChangedGlyphs;
+    pendingChangedGlyphs = new Set();
+    return changed;
+}
 
 /**
  * Match an open font against the Auto QA corpus table and return missing
@@ -147,13 +178,9 @@ export function labelsForGlyph(
     if (
         !sameObservation(observation, context.observationByName.get(glyphName))
     ) {
-        cachedContext = buildContextFromObservations(
-            font,
-            context.table,
-            context.options,
-            glyphsByNameMap(font),
-            observeFont(font)
-        );
+        cachedContext =
+            refreshObservations(context, new Set([glyphName])) ??
+            buildFullContext(font, context.table, context.options);
         return sortLabels(labelsForObservation(observation, cachedContext));
     }
     return sortLabels(labelsForObservation(observation, context));
@@ -161,6 +188,7 @@ export function labelsForGlyph(
 
 export function invalidateQaMatchCache(): void {
     cachedContext = null;
+    pendingChangedGlyphs = new Set();
 }
 
 export function matchObservations(
@@ -194,18 +222,86 @@ function getMatchContext(
     }
     const resolved = resolveOptions(options);
     if (cachedContext && contextMatches(cachedContext, font, table, resolved)) {
+        const changed = takePendingChangedGlyphs();
+        if (changed !== 'all' && changed.size === 0) {
+            return cachedContext;
+        }
+        cachedContext =
+            (changed !== 'all' &&
+                refreshObservations(cachedContext, changed)) ||
+            buildFullContext(font, table, resolved);
         return cachedContext;
     }
-    const glyphsByName = glyphsByNameMap(font);
-    const observations = observeFont(font);
-    cachedContext = buildContextFromObservations(
+    cachedContext = buildFullContext(font, table, resolved);
+    return cachedContext;
+}
+
+function buildFullContext(
+    font: Font,
+    table: QaCorpusTable,
+    options: ResolvedMatchOptions
+): QaFontMatchContext {
+    pendingChangedGlyphs = new Set();
+    return buildContextFromObservations(
         font,
         table,
-        resolved,
-        glyphsByName,
-        observations
+        options,
+        glyphsByNameMap(font),
+        observeFont(font)
     );
-    return cachedContext;
+}
+
+/**
+ * The context with only `glyphNames` observed again. Every other glyph's
+ * observation depends on its own data and on the names and codepoints of the
+ * glyphs it uses, so it stays valid unless one of these glyphs changed its
+ * identity. That, a glyph that is gone, or one that newly has or no longer
+ * has an identity returns null, for a full rebuild.
+ */
+function refreshObservations(
+    context: QaFontMatchContext,
+    glyphNames: Set<string>
+): QaFontMatchContext | null {
+    const observations = [...context.observations];
+    const indexByName = new Map<string, number>();
+    observations.forEach((observation, index) =>
+        indexByName.set(observation.glyphName, index)
+    );
+    for (const glyphName of glyphNames) {
+        const glyph = context.glyphsByName.get(glyphName);
+        const previous = context.observationByName.get(glyphName);
+        if (!glyph) {
+            if (previous) {
+                return null;
+            }
+            continue;
+        }
+        const next = observeGlyph(glyph, context.glyphsByName);
+        if (!previous && !next) {
+            continue;
+        }
+        if (
+            !previous ||
+            !next ||
+            previous.identity !== next.identity ||
+            previous.unicode !== next.unicode
+        ) {
+            return null;
+        }
+        const index = indexByName.get(glyphName);
+        if (index === undefined) {
+            return null;
+        }
+        observations[index] = next;
+    }
+    return buildContextFromObservations(
+        context.font,
+        context.table,
+        context.options,
+        context.glyphsByName,
+        observations,
+        context.nameByIdentity
+    );
 }
 
 function contextMatches(
@@ -216,6 +312,7 @@ function contextMatches(
 ): boolean {
     return (
         context.font === font &&
+        context.glyphs === font.glyphs &&
         context.table === table &&
         context.glyphCount === font.glyphs.length &&
         context.options.X === options.X &&
@@ -233,7 +330,8 @@ function buildContextFromObservations(
     table: QaCorpusTable,
     options: ResolvedMatchOptions,
     glyphsByName: Map<string, Glyph>,
-    observations: QaGlyphObservation[]
+    observations: QaGlyphObservation[],
+    nameByIdentity: Map<string, string> = localNamesByIdentity(glyphsByName)
 ): QaFontMatchContext {
     const markAnchorNames = new Set(table.mark_anchor_names || []);
     const hasMarkSystem = fontHasMarkSystem(font, observations);
@@ -243,13 +341,14 @@ function buildContextFromObservations(
     }
     return {
         font,
+        glyphs: font.glyphs,
         table,
         options,
         glyphCount: font.glyphs.length,
         glyphsByName,
         observations,
         observationByName,
-        nameByIdentity: localNamesByIdentity(glyphsByName),
+        nameByIdentity,
         hasMarkSystem,
         markAnchorNames,
         peerStats: buildPeerStats(

@@ -23,6 +23,22 @@ function isCDNResource(url) {
     return url.includes('cdn.jsdelivr.net');
 }
 
+// Same-origin files under a version-pinned path (the self-hosted Pyodide
+// core) share the CDN cache, which survives app updates.
+const PINNED_PATH_RE = /\/pyodide\/v[^/]+\//;
+
+function isPinnedResource(url) {
+    if (isCDNResource(url)) {
+        return true;
+    }
+    const parsed = new URL(url);
+    return (
+        parsed.origin === self.location.origin &&
+        !parsed.search &&
+        PINNED_PATH_RE.test(parsed.pathname)
+    );
+}
+
 function applyIsolationHeaders(sourceResponse) {
     const newHeaders = new Headers(sourceResponse.headers);
     newHeaders.set(
@@ -119,7 +135,13 @@ if (typeof window === 'undefined') {
                 }
                 try {
                     const response = await fetch(url, { mode: 'cors' });
-                    if (response.ok) {
+                    if (
+                        response.ok &&
+                        !isHtmlFallback(
+                            new URL(url, self.location.href),
+                            response
+                        )
+                    ) {
                         await cache.put(url, response);
                     } else {
                         console.warn(
@@ -271,7 +293,10 @@ if (typeof window === 'undefined') {
             return cached;
         }
         const response = await fetch(request);
-        if (response.status === 200) {
+        if (
+            response.status === 200 &&
+            !isHtmlFallback(new URL(request.url), response)
+        ) {
             await cache.put(request, response.clone());
         }
         return response;
@@ -379,7 +404,7 @@ if (typeof window === 'undefined') {
                   })
                 : r;
 
-        if (isCDNResource(request.url)) {
+        if (isPinnedResource(request.url)) {
             event.respondWith(handleCdnRequest(request));
             return;
         }

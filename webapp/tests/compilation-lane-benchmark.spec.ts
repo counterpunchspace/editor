@@ -109,7 +109,19 @@ test.describe('Compilation lane benchmark (Fustat)', () => {
     }) => {
         test.setTimeout(Math.max(600000, ITERS * 45000));
 
-        await page.goto('/?test=true');
+        // COMPILE_BENCH_URL measures a production build, e.g.
+        // 'http://localhost:9102/?test=true&production'.
+        if (process.env.COMPILE_BENCH_LOG_ERRORS) {
+            page.on('pageerror', (error) =>
+                console.log(`[compile-bench:pageerror] ${error.message}`)
+            );
+            page.on('console', (message) => {
+                if (message.type() === 'error') {
+                    console.log(`[compile-bench:console] ${message.text()}`);
+                }
+            });
+        }
+        await page.goto(process.env.COMPILE_BENCH_URL || '/?test=true');
         await waitForCanvasReady(page);
         await openFileFromFilesView(page, 'Fustat.glyphs');
         await waitForFontLoaded(page);
@@ -339,6 +351,100 @@ test.describe('Compilation lane benchmark (Fustat)', () => {
         for (const line of report.lines) {
             console.log(`[compile-bench] ${line}`);
         }
+        // COMPILE_BENCH_TIMELINE=<lane> prints the main-thread spans around
+        // each compileEditingCached round trip of that lane.
+        if (process.env.COMPILE_BENCH_TIMELINE) {
+            const lines = await page.evaluate((lane) => {
+                const samples = (window as any).__compileBench.samples.filter(
+                    (sample: any) =>
+                        sample.lane === lane &&
+                        sample.workerType === 'compileEditingCached'
+                );
+                const measures = performance.getEntriesByType('measure');
+                return samples.slice(0, 3).map((sample: any) => {
+                    const from = sample.startedAt - 40;
+                    const to = sample.startedAt + sample.jsMs + 5;
+                    const inside = measures
+                        .filter(
+                            (m) =>
+                                m.startTime + m.duration >= from &&
+                                m.startTime <= to &&
+                                m.duration >= 0.5
+                        )
+                        .map(
+                            (m) =>
+                                `  ${(m.startTime - sample.startedAt).toFixed(1).padStart(7)} +${m.duration.toFixed(1).padStart(6)} ${m.name.split('|')[0]}`
+                        );
+                    return `compile at ${sample.startedAt} js=${sample.jsMs.toFixed(1)} rust=${sample.rustMs.toFixed(1)}\n${inside.join('\n')}`;
+                });
+            }, process.env.COMPILE_BENCH_TIMELINE);
+            for (const line of lines) {
+                console.log(`[compile-bench:timeline] ${line}`);
+            }
+            const mainOrigin = await page.evaluate(
+                () => performance.timeOrigin
+            );
+            const windows = await page.evaluate(
+                (lane) =>
+                    (window as any).__compileBench.samples
+                        .filter(
+                            (sample: any) =>
+                                sample.lane === lane &&
+                                sample.workerType === 'compileEditingCached'
+                        )
+                        .slice(0, 3)
+                        .map((sample: any) => [sample.startedAt, sample.jsMs]),
+                process.env.COMPILE_BENCH_TIMELINE
+            );
+            for (const worker of page.workers()) {
+                const spans: Array<[number, number, string]> = await worker
+                    .evaluate(() =>
+                        performance
+                            .getEntriesByType('measure')
+                            .map((m) => [
+                                m.startTime + performance.timeOrigin,
+                                m.duration,
+                                m.name.split('|')[0]
+                            ])
+                    )
+                    .catch(() => []);
+                for (const [startedAt, jsMs] of windows) {
+                    const from = mainOrigin + startedAt - 40;
+                    const to = mainOrigin + startedAt + jsMs + 5;
+                    const inside = spans
+                        .filter(
+                            ([start, duration]) =>
+                                start + duration >= from &&
+                                start <= to &&
+                                duration >= 0.5
+                        )
+                        .map(
+                            ([start, duration, name]) =>
+                                `  ${(start - mainOrigin - startedAt).toFixed(1).padStart(7)} +${duration.toFixed(1).padStart(6)} ${name}`
+                        );
+                    if (inside.length) {
+                        console.log(
+                            `[compile-bench:timeline] worker ${worker.url().split('/').pop()} around ${startedAt}\n${inside.join('\n')}`
+                        );
+                    }
+                }
+            }
+        }
+        // COMPILE_BENCH_DUMP=commit:undo,commit:redo prints raw worker samples.
+        if (process.env.COMPILE_BENCH_DUMP) {
+            const dumpLanes = process.env.COMPILE_BENCH_DUMP.split(',');
+            const raw = await page.evaluate(
+                (lanes) =>
+                    (window as any).__compileBench.samples.filter(
+                        (sample: { lane: string }) =>
+                            lanes.includes(sample.lane)
+                    ),
+                dumpLanes
+            );
+            for (const sample of raw) {
+                console.log(`[compile-bench:dump] ${JSON.stringify(sample)}`);
+            }
+        }
 
         expect(
             report.missing,
@@ -392,7 +498,8 @@ async function installProbe(page: Page): Promise<void> {
                 'seedYdoc',
                 'initYdoc',
                 'compileCached',
-                'compile'
+                'compile',
+                'getGlyphOutlines'
             ].includes(type);
             if (!tracked) {
                 return originalSend(data, transfer);
@@ -402,6 +509,7 @@ async function installProbe(page: Page): Promise<void> {
             win.__compileBench.samples.push({
                 lane: win.__compileBench.lane,
                 workerType: type,
+                startedAt: Math.round(started),
                 jsMs: performance.now() - started,
                 rustMs: Number(result?.time_taken) || 0,
                 skipped: result?.skipped || null
@@ -413,6 +521,7 @@ async function installProbe(page: Page): Promise<void> {
             const detail = (event as CustomEvent).detail || {};
             win.__compileBench.compileEvents.push({
                 lane: win.__compileBench.lane,
+                at: performance.now(),
                 duration: Number(detail.duration) || 0,
                 changeSource: detail.changeSource ?? null,
                 editType: detail.editType ?? null,
@@ -423,10 +532,59 @@ async function installProbe(page: Page): Promise<void> {
     });
 }
 
+// COMPILE_BENCH_PROFILE=<lane suffix>:<file.cpuprofile> records a CPU profile
+// of the main thread while every lane ending in that suffix runs (for
+// example `keyboard-outline` covers its live and commit lanes).
+const PROFILE_SPEC = process.env.COMPILE_BENCH_PROFILE || '';
+const PROFILE_LANE = PROFILE_SPEC.slice(0, PROFILE_SPEC.lastIndexOf(':'));
+const PROFILE_FILE = PROFILE_SPEC.slice(PROFILE_SPEC.lastIndexOf(':') + 1);
+let profileSession: import('@playwright/test').CDPSession | null = null;
+const isProfiledLane = (lane: string) =>
+    !!PROFILE_LANE && lane.endsWith(PROFILE_LANE);
+
+// COMPILE_BENCH_TRACE=<lane suffix>:<file.json> records a Chrome trace
+// (tasks, layout, paint, JS) while those lanes run.
+const TRACE_SPEC = process.env.COMPILE_BENCH_TRACE || '';
+const TRACE_LANE = TRACE_SPEC.slice(0, TRACE_SPEC.lastIndexOf(':'));
+const TRACE_FILE = TRACE_SPEC.slice(TRACE_SPEC.lastIndexOf(':') + 1);
+let tracing = false;
+const isTracedLane = (lane: string) =>
+    !!TRACE_LANE && lane.endsWith(TRACE_LANE);
+
 async function setLane(page: Page, lane: BenchLane): Promise<void> {
+    const browser = page.context().browser();
+    if (tracing && !isTracedLane(lane) && lane !== 'idle' && browser) {
+        await browser.stopTracing();
+        tracing = false;
+    }
+    if (TRACE_FILE && isTracedLane(lane) && !tracing && browser) {
+        await browser.startTracing(page, {
+            path: TRACE_FILE,
+            categories: [
+                'devtools.timeline',
+                'disabled-by-default-devtools.timeline',
+                'blink.console',
+                'toplevel'
+            ]
+        });
+        tracing = true;
+    }
+    if (profileSession && !isProfiledLane(lane) && lane !== 'idle') {
+        const { profile } = await profileSession.send('Profiler.stop');
+        require('node:fs').writeFileSync(PROFILE_FILE, JSON.stringify(profile));
+        profileSession = null;
+    }
     await page.evaluate((nextLane) => {
         (window as any).__compileBench.lane = nextLane;
     }, lane);
+    if (PROFILE_FILE && isProfiledLane(lane) && !profileSession) {
+        profileSession = await page.context().newCDPSession(page);
+        await profileSession.send('Profiler.enable');
+        await profileSession.send('Profiler.setSamplingInterval', {
+            interval: 500
+        });
+        await profileSession.send('Profiler.start');
+    }
 }
 
 async function pipelineCount(page: Page, lane: BenchLane): Promise<number> {
@@ -1167,17 +1325,29 @@ async function benchTextInput(page: Page): Promise<void> {
             gc.exitGlyphEditMode();
         }
     });
+    // Typing latency: from the text change to the compiled font for it,
+    // including any wait before the compile starts.
+    const typingLatencies: number[] = [];
     for (let i = 0; i < ITERS; i += 1) {
         const textLaneBefore = await pipelineCount(page, 'text-input');
         await setLane(page, 'text-input');
-        await page.evaluate(
+        const typedAt = await page.evaluate(
             (nextText) => {
                 const tre = (window as any).glyphCanvas?.textRunEditor;
+                const startedAt = performance.now();
                 tre.setTextBuffer(nextText);
+                return startedAt;
             },
             i % 2 === 0 ? 'aäB' : 'aäC'
         );
         await waitForPipeline(page, 'text-input', textLaneBefore);
+        const compiledAt = await page.evaluate(() => {
+            const events = (window as any).__compileBench.compileEvents;
+            return events[events.length - 1]?.at ?? null;
+        });
+        if (typeof compiledAt === 'number') {
+            typingLatencies.push(compiledAt - typedAt);
+        }
 
         const fullBefore = await pipelineCount(page, 'text-input-full-compile');
         await setLane(page, 'text-input-full-compile');
@@ -1189,6 +1359,14 @@ async function benchTextInput(page: Page): Promise<void> {
         });
         await waitForPipeline(page, 'text-input-full-compile', fullBefore);
     }
+    typingLatencies.sort((a, b) => a - b);
+    console.log(
+        `[compile-bench] typing-latency median=${(
+            typingLatencies[Math.floor(typingLatencies.length / 2)] ?? NaN
+        ).toFixed(
+            1
+        )} all=${typingLatencies.map((ms) => ms.toFixed(1)).join(',')}`
+    );
     await setTextRun(page, 'aä');
     await enterGlyphEdit(page, 0);
     await setLane(page, 'idle');

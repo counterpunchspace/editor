@@ -6,8 +6,9 @@ import { Logger } from './logger';
 
 const console = new Logger('StackMapper');
 
-// Cache for loaded source maps
-const sourceMapCache = new Map<string, SourceMapConsumer | null>();
+// Source maps by script URL. The in-flight promise is cached, so every frame
+// of a stack (and every concurrent stack) shares one fetch and parse.
+const sourceMapCache = new Map<string, Promise<SourceMapConsumer | null>>();
 
 const HELPER_FRAME_PATTERNS = [
     /\bGenerator\.next\b/,
@@ -71,25 +72,28 @@ function parseStackLine(line: string): {
 /**
  * Load a source map for a given JS file
  */
-async function loadSourceMap(jsUrl: string): Promise<SourceMapConsumer | null> {
+function loadSourceMap(jsUrl: string): Promise<SourceMapConsumer | null> {
     const normalizedUrl = jsUrl.trim();
-
-    // Check cache first
-    if (sourceMapCache.has(normalizedUrl)) {
-        return sourceMapCache.get(normalizedUrl)!;
+    let cached = sourceMapCache.get(normalizedUrl);
+    if (!cached) {
+        cached = fetchSourceMap(normalizedUrl);
+        sourceMapCache.set(normalizedUrl, cached);
     }
+    return cached;
+}
 
+async function fetchSourceMap(
+    normalizedUrl: string
+): Promise<SourceMapConsumer | null> {
     // Only map browser script URLs
     if (
         !/^https?:\/\//.test(normalizedUrl) &&
         !/^file:\/\//.test(normalizedUrl)
     ) {
-        sourceMapCache.set(normalizedUrl, null);
         return null;
     }
 
     if (!normalizedUrl.endsWith('.js')) {
-        sourceMapCache.set(normalizedUrl, null);
         return null;
     }
 
@@ -98,16 +102,12 @@ async function loadSourceMap(jsUrl: string): Promise<SourceMapConsumer | null> {
         const mapUrl = normalizedUrl + '.map';
         const response = await fetch(mapUrl);
         if (!response.ok) {
-            sourceMapCache.set(normalizedUrl, null);
             return null;
         }
 
         const mapData = await response.json();
-        const consumer = await new SourceMapConsumer(mapData);
-        sourceMapCache.set(normalizedUrl, consumer);
-        return consumer;
+        return await new SourceMapConsumer(mapData);
     } catch (error) {
-        sourceMapCache.set(normalizedUrl, null);
         console.warn(`Failed to load source map for ${normalizedUrl}:`, error);
         return null;
     }

@@ -38,6 +38,7 @@ import {
 } from './recomposition-closure';
 import { sidebarErrorDisplay } from './sidebar-error-display';
 import APP_SETTINGS from './settings';
+import { markQaGlyphsChanged } from './auto-qa/auto-qa-matcher';
 import {
     deriveGlyphNamesFromPaths,
     deriveGlyphName,
@@ -2333,6 +2334,45 @@ export async function refreshGlyphOverviewFromGlyphNames(
  * Refresh the glyph overview from committed change metadata so both
  * sender and receiver windows invalidate the same set of tiles.
  */
+/**
+ * Tell Auto QA which glyphs a committed packet changed, so it observes only
+ * those again. A packet that adds, removes or renames glyphs, or changes the
+ * glyph list as a whole, makes it observe every glyph.
+ */
+function markAutoQaGlyphsFromCommittedEntries(entries: ChangeLogEntry[]): void {
+    const changesGlyphList = entries.some((entry) => {
+        const path = getPathSegments(entry.path);
+        return (
+            path[0] === 'glyphs' &&
+            (path.length === 1 ||
+                path[2] === 'name' ||
+                (path.length === 2 &&
+                    (entry.op === 'add' || entry.op === 'remove')))
+        );
+    });
+    if (changesGlyphList) {
+        markQaGlyphsChanged('all');
+        return;
+    }
+    const changedGlyphNames = new Set<string>();
+    for (const entry of entries) {
+        for (const target of normalizeWorkerReplayTargets(
+            entry.workerReplayTargets
+        )) {
+            if (target.glyphName) {
+                changedGlyphNames.add(target.glyphName);
+            }
+        }
+    }
+    const entryPaths = entries
+        .map((e) => e.path)
+        .filter((p): p is string => !!p);
+    for (const glyphName of deriveGlyphNamesFromPaths(entryPaths)) {
+        changedGlyphNames.add(glyphName);
+    }
+    markQaGlyphsChanged(changedGlyphNames);
+}
+
 async function refreshGlyphOverviewFromCommittedEntries(
     entries: ChangeLogEntry[]
 ): Promise<void> {
@@ -3027,6 +3067,7 @@ function initializeBridge(detail: {
     // YJS_ONLY: This funnel processes Yjs binary updates, not full
     // JSON. Entries carry workerReplayTargets for incremental layer cache updates.
     bridge.onCommittedChange((entries, context) => {
+        markAutoQaGlyphsFromCommittedEntries(entries);
         const workerForward = latestWorkerForward;
         const localUndoRedoContext =
             context.origin === 'local' && pendingLocalUndoRedoContext

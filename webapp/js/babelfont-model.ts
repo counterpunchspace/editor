@@ -11602,64 +11602,41 @@ export class Glyph extends ArrayElementBase {
             filteredIndices.push(i);
         }
 
-        // Create wrappers for filtered layers
-        const wrappers = filteredIndices.map(
-            (i: number) => new Layer(this.data.layers, i, this)
-        );
-
-        // Sort by master order.
-        // Within one master, keep default layer first and brace layers after it.
-        wrappers.sort((a, b) => {
-            const getMasterId = (layer: Layer): string => {
-                const masterData = layer.master;
-                if (masterData && typeof masterData === 'object') {
-                    if ('type' in masterData) {
-                        return (masterData as Unsafe).master || '';
-                    }
-                }
-                return layer.id || '';
-            };
-
-            const getLayerTypeRank = (layer: Layer): number => {
-                const masterData = layer.master;
-                if (
-                    masterData &&
-                    typeof masterData === 'object' &&
-                    'type' in masterData &&
-                    masterData.type === 'DefaultForMaster'
-                ) {
-                    return 0;
-                }
-                return 1;
-            };
-
-            const masterIdA = getMasterId(a);
-            const masterIdB = getMasterId(b);
-
-            const masterIndexA = fontMasters.findIndex(
-                (m: Master) => m.id === masterIdA
-            );
-            const masterIndexB = fontMasters.findIndex(
-                (m: Master) => m.id === masterIdB
-            );
-
-            const posA =
-                masterIndexA === -1 ? fontMasters.length : masterIndexA;
-            const posB =
-                masterIndexB === -1 ? fontMasters.length : masterIndexB;
-
-            if (posA !== posB) {
-                return posA - posB;
-            }
-
-            const typeRankA = getLayerTypeRank(a);
-            const typeRankB = getLayerTypeRank(b);
-            if (typeRankA !== typeRankB) {
-                return typeRankA - typeRankB;
-            }
-
-            return 0;
+        // Sort by master order. Within one master, keep the default layer
+        // first and brace layers after it. Array.sort is stable, so equal
+        // keys keep source order.
+        const masterIndexById = new Map<string, number>();
+        fontMasters.forEach((m: Master, index: number) => {
+            if (!masterIndexById.has(m.id)) masterIndexById.set(m.id, index);
         });
+        const layersData = this.data.layers;
+        const sortKeys = new Map<number, { pos: number; rank: number }>();
+        for (const i of filteredIndices) {
+            const masterData = layersData[i].master;
+            const isTagged =
+                !!masterData &&
+                typeof masterData === 'object' &&
+                'type' in masterData;
+            const sortMasterId = isTagged
+                ? (masterData as Unsafe).master || ''
+                : layersData[i].id || '';
+            const masterIndex = masterIndexById.get(sortMasterId);
+            sortKeys.set(i, {
+                pos:
+                    masterIndex === undefined
+                        ? fontMasters.length
+                        : masterIndex,
+                rank: isTagged && masterData.type === 'DefaultForMaster' ? 0 : 1
+            });
+        }
+        filteredIndices.sort((a, b) => {
+            const keyA = sortKeys.get(a)!;
+            const keyB = sortKeys.get(b)!;
+            return keyA.pos - keyB.pos || keyA.rank - keyB.rank;
+        });
+        const wrappers = filteredIndices.map(
+            (i: number) => new Layer(layersData, i, this)
+        );
 
         return getReadOnlyCollectionValue(
             wrappers,
@@ -13165,6 +13142,14 @@ export function writePluginSettingValue(
 
 export class Font extends ModelBase {
     private _glyphWrappers: Glyph[] | null = null;
+    /** The `_data.glyphs` array `_glyphWrappers` index into. Glyph
+     *  wrappers never rebind, so array identity is their binding. */
+    private _glyphWrappersSource: Unsafe[] | null = null;
+    /** First index of each glyph name in `_glyphNameIndexSource`. Hits are
+     *  re-checked against the live array, so a stale index only costs a
+     *  rebuild. */
+    private _glyphNameIndex: Map<string, number> | null = null;
+    private _glyphNameIndexSource: Unsafe[] | null = null;
     private _axisWrappers: Axis[] | null = null;
     private _masterWrappers: Master[] | null = null;
     private _instanceWrappers: Instance[] | null = null;
@@ -13295,16 +13280,16 @@ export class Font extends ModelBase {
     }
 
     get glyphs(): Glyph[] {
+        const glyphsData = this._data.glyphs;
         if (
             !this._glyphWrappers ||
-            this._glyphWrappers.length !== this._data.glyphs.length ||
-            !this._glyphWrappers.every((wrapper) =>
-                wrapper.isBoundToArray(this._data.glyphs)
-            )
+            this._glyphWrappers.length !== glyphsData.length ||
+            this._glyphWrappersSource !== glyphsData
         ) {
-            this._glyphWrappers = this._data.glyphs.map(
-                (_: Unsafe, i: number) => new Glyph(this._data.glyphs, i, this)
+            this._glyphWrappers = glyphsData.map(
+                (_: Unsafe, i: number) => new Glyph(glyphsData, i, this)
             );
+            this._glyphWrappersSource = glyphsData;
         }
         return getReadOnlyCollectionValue(
             this._glyphWrappers!,
@@ -14426,10 +14411,66 @@ export class Font extends ModelBase {
      *     print(glyph.name)
      */
     findGlyph(name: string): Glyph | undefined {
-        const index = this._data.glyphs.findIndex(
-            (g: Unsafe) => g.name === name
-        );
+        const index = this.findGlyphIndex(name);
         return index >= 0 ? this.glyphs[index] : undefined;
+    }
+
+    /** Index of the first glyph named `name` in `_data.glyphs`, or -1. */
+    private findGlyphIndex(name: string): number {
+        const glyphsData: Unsafe[] = this._data.glyphs;
+        const indexIsCurrent =
+            this._glyphNameIndexSource === glyphsData && !!this._glyphNameIndex;
+        const cached = indexIsCurrent
+            ? this._glyphNameIndex!.get(name)
+            : undefined;
+        if (
+            cached !== undefined &&
+            glyphsData[cached]?.name === name &&
+            !this._glyphNameIndexDuplicates?.has(name)
+        ) {
+            return cached;
+        }
+        // A name can be renamed in place without touching the index, so a
+        // miss is always confirmed against the live array. The index is only
+        // rebuilt when it turns out to be stale.
+        const index = glyphsData.findIndex((g: Unsafe) => g.name === name);
+        const isKnownDuplicate =
+            indexIsCurrent && !!this._glyphNameIndexDuplicates?.has(name);
+        const indexIsStale =
+            !indexIsCurrent ||
+            (!isKnownDuplicate && (cached !== undefined || index >= 0));
+        if (indexIsStale) {
+            this._rebuildGlyphNameIndex(glyphsData);
+        }
+        return index;
+    }
+
+    /** Drop the name index; structural glyph edits and renames call this. */
+    private invalidateGlyphNameIndex(): void {
+        this._glyphNameIndex = null;
+        this._glyphNameIndexSource = null;
+        this._glyphNameIndexDuplicates = null;
+    }
+
+    /** Names that occurred more than once at the last rebuild. They always
+     *  take the findIndex path so the first occurrence wins. */
+    private _glyphNameIndexDuplicates: Set<string> | null = null;
+
+    private _rebuildGlyphNameIndex(glyphsData: Unsafe[]): void {
+        const index = new Map<string, number>();
+        let duplicates: Set<string> | null = null;
+        for (let i = 0; i < glyphsData.length; i++) {
+            const glyphName = glyphsData[i]?.name;
+            if (typeof glyphName !== 'string') continue;
+            if (index.has(glyphName)) {
+                (duplicates ??= new Set()).add(glyphName);
+                continue;
+            }
+            index.set(glyphName, i);
+        }
+        this._glyphNameIndex = index;
+        this._glyphNameIndexSource = glyphsData;
+        this._glyphNameIndexDuplicates = duplicates;
     }
 
     /**
@@ -14631,6 +14672,7 @@ export class Font extends ModelBase {
                 }
             }
             this._glyphWrappers = null;
+            this.invalidateGlyphNameIndex();
             this.invalidateReverseComponentIndex();
         });
 
@@ -14943,6 +14985,7 @@ export class Font extends ModelBase {
         const insertIndex = sourceGlyphIndex + 1;
         this._data.glyphs.splice(insertIndex, 0, clonedData);
         this._glyphWrappers = null; // Invalidate cache
+        this.invalidateGlyphNameIndex();
         this.invalidateReverseComponentIndex();
         recordAddAndMarkDirty(['glyphs', newName], clonedData);
 
@@ -15764,6 +15807,7 @@ export class Font extends ModelBase {
                 : this._data.glyphs.length;
         this._data.glyphs.splice(insertIndex, 0, glyphData);
         this._glyphWrappers = null; // Invalidate cache
+        this.invalidateGlyphNameIndex();
         this.invalidateReverseComponentIndex();
         const glyph = new Glyph(this._data.glyphs, insertIndex, this);
         withSuppressedModelRecording(() => {
@@ -16279,6 +16323,7 @@ export class Font extends ModelBase {
                 }
 
                 this._glyphWrappers = null;
+                this.invalidateGlyphNameIndex();
                 this.invalidateReverseComponentIndex();
             }
         );
@@ -16302,6 +16347,7 @@ export class Font extends ModelBase {
             assertModelMutationAllowed();
             this._data.glyphs.splice(index, 1);
             this._glyphWrappers = null; // Invalidate cache
+            this.invalidateGlyphNameIndex();
             this.invalidateReverseComponentIndex();
             recordRemoveAndMarkDirty(['glyphs', name], removedGlyph);
             notifyCatalogGlyphCount();

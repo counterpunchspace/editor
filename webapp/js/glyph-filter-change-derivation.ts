@@ -341,7 +341,9 @@ export function deriveGlyphFilterChangesFromCommittedEntry(
     let mastersChanged = false;
 
     if (path[0] === 'masters') {
-        mastersChanged = true;
+        // Kerning lives on masters but cannot change outline compatibility;
+        // treating it as a master change rechecked every glyph per kern edit.
+        mastersChanged = path[2] !== 'kerning';
         return {
             changes,
             compatibilityCheckGlyphNames,

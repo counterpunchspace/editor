@@ -24,7 +24,9 @@ const {
     matchOpenFont,
     labelsForGlyph,
     formatQaLabel,
-    invalidateQaMatchCache
+    invalidateQaMatchCache,
+    markQaGlyphsChanged,
+    matchObservations
 } = require('../../js/auto-qa/auto-qa-matcher.ts');
 const {
     buildAutoQaPopup,
@@ -803,5 +805,65 @@ describe('Auto QA property-panel widget', () => {
                 confidence: 0.87
             })
         ).toContain('`acutecomb.case`');
+    });
+});
+
+describe('incremental observation refresh', () => {
+    const corpusPath = path.join(__dirname, '../../data/qa-corpus.json.gz');
+    const loadTable = () =>
+        JSON.parse(
+            require('zlib')
+                .gunzipSync(fs.readFileSync(corpusPath))
+                .toString('utf8')
+        );
+    // What a full pass over the font's current data gives, without the cache.
+    const fullPass = (font, table) =>
+        matchObservations(font, observeFont(font), table);
+
+    test('labels after edited glyphs match a full pass', () => {
+        if (!fs.existsSync(corpusPath)) {
+            return;
+        }
+        const table = loadTable();
+        const data = JSON.parse(JSON.stringify(WORK_SANS_FIXTURE));
+        const font = Font.fromData(data);
+        const glyph = (name) => data.glyphs.find((g) => g.name === name);
+        invalidateQaMatchCache();
+        expect(matchOpenFont(font, table)).toEqual(fullPass(font, table));
+
+        const edits = [
+            ['A', (g) => (g.layers[0].anchors = [])],
+            ['Aacute', (g) => g.layers[0].shapes.pop()],
+            ['A', (g) => g.layers[0].anchors.push({ name: 'top', x: 0, y: 0 })],
+            // A codepoint change alters identities: falls back to a full pass.
+            ['Aacute', (g) => (g.codepoints = [0x00c2])]
+        ];
+        for (const [name, edit] of edits) {
+            edit(glyph(name));
+            markQaGlyphsChanged([name]);
+            expect(matchOpenFont(font, table)).toEqual(fullPass(font, table));
+        }
+        invalidateQaMatchCache();
+    });
+
+    test('an unmarked edit of the shown glyph refreshes that glyph', () => {
+        if (!fs.existsSync(corpusPath)) {
+            return;
+        }
+        const table = loadTable();
+        const data = JSON.parse(JSON.stringify(WORK_SANS_FIXTURE));
+        const font = Font.fromData(data);
+        invalidateQaMatchCache();
+        labelsForGlyph(font, 'Aacute', table);
+        data.glyphs.find((g) => g.name === 'Aacute').layers[0].shapes = [
+            { reference: 'A' }
+        ];
+        expect(labelsForGlyph(font, 'Aacute', table)).toEqual(
+            fullPass(font, table).filter(
+                (label) => label.glyph_name === 'Aacute'
+            )
+        );
+        expect(matchOpenFont(font, table)).toEqual(fullPass(font, table));
+        invalidateQaMatchCache();
     });
 });

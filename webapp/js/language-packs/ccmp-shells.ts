@@ -61,13 +61,65 @@ export function ccmpDecomposition(
     return rules;
 }
 
+type ShellNamesMemo = { signature: unknown[]; names: Set<string> };
+let currentShellNamesMemo: ShellNamesMemo | null = null;
+
+/** Every input `ccmpShellNames` reads, per feature entry. */
+function shellNamesSignature(
+    features: FeaturesDocument | undefined
+): unknown[] {
+    const signature: unknown[] = [];
+    for (const [tag, code] of features?.features || []) {
+        const stamp = generatorStamp(code);
+        signature.push(
+            tag,
+            code?.code,
+            code?.automatic,
+            stamp?.generator,
+            stamp?.block
+        );
+    }
+    return signature;
+}
+
+function sameSignature(a: unknown[], b: unknown[]): boolean {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+        if (a[i] !== b[i]) return false;
+    }
+    return true;
+}
+
+/**
+ * Shell names of the current font. Tiles and the canvas ask per glyph, so
+ * this reads the raw features (no live-mutable proxies) and reuses the last
+ * result while the inputs it depends on are unchanged.
+ */
+export function currentCcmpShellNames(): Set<string> {
+    const font = window.currentFontModel as
+        { toJSON?: () => unknown; features?: unknown } | null | undefined;
+    const features = (
+        typeof font?.toJSON === 'function'
+            ? (font.toJSON() as { features?: unknown } | undefined)?.features
+            : font?.features
+    ) as FeaturesDocument | undefined;
+    const signature = shellNamesSignature(features);
+    if (
+        currentShellNamesMemo &&
+        sameSignature(currentShellNamesMemo.signature, signature)
+    ) {
+        return currentShellNamesMemo.names;
+    }
+    const names = ccmpShellNames(features);
+    currentShellNamesMemo = { signature, names };
+    return names;
+}
+
 export function isCcmpShellGlyph(
     glyphName: string | null | undefined
 ): boolean {
     if (!glyphName) {
         return false;
     }
-    const features = window.currentFontModel?.features as
-        FeaturesDocument | undefined;
-    return ccmpShellNames(features).has(glyphName);
+    return currentCcmpShellNames().has(glyphName);
 }

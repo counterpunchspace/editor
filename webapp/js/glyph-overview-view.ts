@@ -361,6 +361,9 @@ export function filterResultGroups(result: FilterResult): string[] {
     return typeof result.group === 'string' ? [result.group] : [];
 }
 
+/** `cssColorToRgba` results for colours that do not depend on context. */
+const cssColorRgbaCache = new Map<string, string>();
+
 export class GlyphOverviewView {
     protected container: HTMLDivElement | null = null;
     /** Holds the controls unless `controlsHost` was given. */
@@ -849,25 +852,43 @@ export class GlyphOverviewView {
         this.gridRowsForNavigation = [];
         this.gridColumnCount = 0;
 
-        const fragment = document.createDocumentFragment();
         // Walk font/filter order — not Map insertion order — so incremental
         // syncGlyphs inserts land next to their namesake instead of at the end.
+        const ordered: HTMLElement[] = [];
         for (const glyphId of this.visibleGlyphIds) {
             const tile = this.tiles.get(glyphId);
             if (!tile) {
                 continue;
             }
-            tile.element.style.display = '';
-            fragment.appendChild(tile.element);
+            if (tile.element.style.display !== '') {
+                tile.element.style.display = '';
+            }
+            ordered.push(tile.element);
         }
         this.tiles.forEach((tile, glyphId) => {
             if (visibleSet.has(glyphId)) {
                 return;
             }
-            tile.element.style.display = 'none';
-            fragment.appendChild(tile.element);
+            if (tile.element.style.display !== 'none') {
+                tile.element.style.display = 'none';
+            }
+            ordered.push(tile.element);
         });
 
+        // Committed edits re-run this with the same tiles in the same order;
+        // re-inserting them all forced a full relayout of the overview.
+        const children = this.container.children;
+        const alreadyInPlace =
+            children.length === ordered.length &&
+            ordered.every((element, index) => children[index] === element);
+        if (alreadyInPlace) {
+            return;
+        }
+
+        const fragment = document.createDocumentFragment();
+        for (const element of ordered) {
+            fragment.appendChild(element);
+        }
         this.container.innerHTML = '';
         this.container.appendChild(fragment);
     }
@@ -3355,6 +3376,8 @@ export class GlyphOverviewView {
 
         this.tiles.forEach((tile) => {
             const result = this.activeFilterResults!.get(tile.glyphName);
+            let filterColor = 'transparent';
+            let backgroundImage = 'none';
             if (result && result.colors && result.colors.length > 0) {
                 // Deduplicate colors while preserving order
                 const uniqueColors = [...new Set(result.colors)];
@@ -3363,39 +3386,43 @@ export class GlyphOverviewView {
 
                 if (uniqueColors.length === 1) {
                     // Single color - use solid background
-                    tile.element.style.setProperty(
-                        '--filter-color',
-                        this.cssColorToRgba(uniqueColors[0], 0.25)
-                    );
-                    tile.element.style.backgroundImage = 'none';
+                    filterColor = this.cssColorToRgba(uniqueColors[0], 0.25);
                 } else {
                     // Multiple colors - create horizontal stripe gradient
-                    const stripeGradient = this.buildStripeGradient(
+                    backgroundImage = this.buildStripeGradient(
                         uniqueColors,
                         0.25
                     );
-                    tile.element.style.setProperty(
-                        '--filter-color',
-                        'transparent'
-                    );
-                    tile.element.style.backgroundImage = stripeGradient;
                 }
             } else if (result && result.color) {
                 // Fallback to single color if colors array not present
                 tile.filterColor = result.color;
                 tile.filterColors = [result.color];
-                tile.element.style.setProperty(
-                    '--filter-color',
-                    this.cssColorToRgba(result.color, 0.25)
-                );
-                tile.element.style.backgroundImage = 'none';
+                filterColor = this.cssColorToRgba(result.color, 0.25);
             } else {
                 tile.filterColor = undefined;
                 tile.filterColors = undefined;
-                tile.element.style.setProperty('--filter-color', 'transparent');
-                tile.element.style.backgroundImage = 'none';
             }
+            this.setTileFilterStyle(tile, filterColor, backgroundImage);
         });
+    }
+
+    /**
+     * Write a tile's filter colour styles. Every committed edit re-applies the
+     * filter; rewriting unchanged inline styles restyled every tile.
+     */
+    protected setTileFilterStyle(
+        tile: GlyphTile,
+        filterColor: string,
+        backgroundImage: string
+    ): void {
+        const style = tile.element.style;
+        if (style.getPropertyValue('--filter-color') !== filterColor) {
+            style.setProperty('--filter-color', filterColor);
+        }
+        if (style.backgroundImage !== backgroundImage) {
+            style.backgroundImage = backgroundImage;
+        }
     }
 
     /**
@@ -3425,8 +3452,7 @@ export class GlyphOverviewView {
         this.tiles.forEach((tile) => {
             tile.filterColor = undefined;
             tile.filterColors = undefined;
-            tile.element.style.setProperty('--filter-color', 'transparent');
-            tile.element.style.backgroundImage = 'none';
+            this.setTileFilterStyle(tile, 'transparent', 'none');
         });
     }
 
@@ -3435,6 +3461,24 @@ export class GlyphOverviewView {
      * Handles: hex (#fff, #ffffff), rgb(), rgba(), hsl(), hsla(), named colors (red, blue, etc.)
      */
     protected cssColorToRgba(color: string, alpha: number): string {
+        // Parsing goes through a computed style, which forces a style
+        // recalculation; colours that do not depend on context are cached.
+        const contextFree = !/var\(|currentcolor/i.test(color);
+        const cacheKey = `${alpha}|${color}`;
+        if (contextFree) {
+            const cached = cssColorRgbaCache.get(cacheKey);
+            if (cached !== undefined) {
+                return cached;
+            }
+        }
+        const rgba = this.parseCssColorToRgba(color, alpha);
+        if (contextFree) {
+            cssColorRgbaCache.set(cacheKey, rgba);
+        }
+        return rgba;
+    }
+
+    private parseCssColorToRgba(color: string, alpha: number): string {
         // Use a temporary element to parse CSS colors
         const tempEl = document.createElement('div');
         tempEl.style.color = color;

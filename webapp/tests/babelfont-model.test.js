@@ -7494,3 +7494,34 @@ describe('Babelfont Object Model', () => {
         });
     });
 });
+
+describe('Font.findGlyph name index', () => {
+    const makeFont = (names) =>
+        Font.fromData({
+            glyphs: names.map((name) => ({ name, layers: [] })),
+            masters: [],
+            axes: []
+        });
+
+    test('follows in-place renames, structural changes and duplicates like findIndex', () => {
+        const font = makeFont(['a', 'b', 'c']);
+        expect(font.findGlyph('b').name).toBe('b');
+        expect(font.findGlyph('missing')).toBeUndefined();
+
+        const raw = font.toJSON().glyphs;
+        raw[1].name = 'bb';
+        expect(font.findGlyph('b')).toBeUndefined();
+        expect(font.findGlyph('bb').name).toBe('bb');
+
+        raw[2].name = 'a';
+        expect(font.findGlyph('a')).toBe(font.glyphs[0]);
+
+        raw.splice(0, 1);
+        expect(font.findGlyph('a')).toBe(font.glyphs[1]);
+        expect(font.findGlyph('bb')).toBe(font.glyphs[0]);
+
+        font.toJSON().glyphs = [{ name: 'x', layers: [] }];
+        expect(font.findGlyph('x').name).toBe('x');
+        expect(font.findGlyph('bb')).toBeUndefined();
+    });
+});

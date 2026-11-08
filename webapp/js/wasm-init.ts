@@ -1,5 +1,6 @@
 import initBabelfontWasm from '../wasm-dist/babelfont_fontc_web';
 import { Logger } from './logger';
+import { timelineSpanEnd, timelineSpanStart } from './perf-timeline';
 
 const console = new Logger('WasmInit');
 console.log('wasm-init.ts module loaded');
@@ -25,6 +26,7 @@ export async function ensureWasmInitialized(): Promise<void> {
     if (!wasmInitPromise) {
         console.log('[WasmInit]', 'Starting WASM initialization...');
         wasmInitPromise = (async () => {
+            const initSpanId = timelineSpanStart('wasm.mainThreadInit');
             try {
                 await initBabelfontWasm();
                 wasmInitialized = true;
@@ -39,6 +41,8 @@ export async function ensureWasmInitialized(): Promise<void> {
                     error
                 );
                 throw error;
+            } finally {
+                timelineSpanEnd(initSpanId);
             }
         })();
     }

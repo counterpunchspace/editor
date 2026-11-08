@@ -76,7 +76,8 @@ static SUBSET_GLYPH_INDEX_CACHE: Mutex<Option<(String, HashMap<String, usize>)>>
 
 /// Full babelfont::Font derived from CANONICAL_JSON_CACHE.
 /// Rebuilt lazily when the epoch changes (FONT_CACHE_EPOCH > FONT_CACHE_BUILT_AT_EPOCH).
-static FONT_CACHE: Mutex<Option<babelfont::Font>> = Mutex::new(None);
+/// Shared so read-only callers borrow it instead of copying the whole font.
+static FONT_CACHE: Mutex<Option<Arc<babelfont::Font>>> = Mutex::new(None);
 static FONT_CACHE_BUILT_AT_EPOCH: AtomicU64 = AtomicU64::new(0);
 
 /// Subset babelfont::Font derived from SUBSET_JSON_CACHE.
@@ -131,7 +132,6 @@ struct PreviewOverlay {
     generation: u64,
     layer_overrides: HashMap<LayerTarget, serde_json::Value>,
     subset_font_cache: Option<PreviewSubsetFontCacheEntry>,
-    filtered_font_cache: Option<PreviewFilteredFontCacheEntry>,
 }
 
 struct PreviewSubsetFontCacheEntry {
@@ -139,15 +139,6 @@ struct PreviewSubsetFontCacheEntry {
     base_font_cache_epoch: u64,
     overlay_generation: u64,
     font: babelfont::Font,
-}
-
-struct PreviewFilteredFontCacheEntry {
-    subset_key: String,
-    filter_epoch: u64,
-    base_font_cache_epoch: u64,
-    overlay_generation: u64,
-    options_fingerprint: u64,
-    font: Arc<babelfont::Font>,
 }
 
 /// Cache entry for a pre-filtered font ready for compilation.
@@ -455,15 +446,8 @@ fn reset_debug_font_caches_with_fingerprint(committed_font_fingerprint: Option<S
 }
 
 fn refresh_debug_font_caches_from_canonical_cache() -> Result<(), JsValue> {
-    let canonical_json = CANONICAL_JSON_CACHE.lock().unwrap().clone();
-    match canonical_json {
-        Some(value) => {
-            let fingerprint = stable_hash_json_value(&value)?;
-            reset_debug_font_caches_with_fingerprint(Some(fingerprint));
-        }
-        None => reset_debug_font_caches_with_fingerprint(None),
-    }
-
+    let has_canonical = CANONICAL_JSON_CACHE.lock().unwrap().is_some();
+    reset_debug_font_caches_with_fingerprint(has_canonical.then(next_canonical_fingerprint));
     Ok(())
 }
 
@@ -497,24 +481,26 @@ fn build_glyph_index(font_json: &serde_json::Value) -> HashMap<String, usize> {
         .unwrap_or_default()
 }
 
+/// Each canonical-cache install gets a fresh fingerprint, so debug caches
+/// keyed by it can never hit across different contents. Hashing the whole
+/// font JSON cost seconds on large fonts for no extra safety.
+static CANONICAL_FINGERPRINT_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn next_canonical_fingerprint() -> String {
+    let next = CANONICAL_FINGERPRINT_COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
+    format!("canonical-{next:016x}")
+}
+
 fn set_canonical_json_cache(json_value: serde_json::Value) {
-    *CANONICAL_JSON_CACHE.lock().unwrap() = Some(json_value.clone());
     *CANONICAL_GLYPH_INDEX_CACHE.lock().unwrap() = Some(build_glyph_index(&json_value));
-    let fingerprint = stable_hash_json_value(&json_value)
-        .expect("canonical JSON cache fingerprinting must not fail");
-    reset_debug_font_caches_with_fingerprint(Some(fingerprint));
+    *CANONICAL_JSON_CACHE.lock().unwrap() = Some(json_value);
+    reset_debug_font_caches_with_fingerprint(Some(next_canonical_fingerprint()));
 }
 
 fn stable_hash_bytes(bytes: &[u8]) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     bytes.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
-}
-
-fn stable_hash_json_value(value: &serde_json::Value) -> Result<String, JsValue> {
-    let serialized = serde_json::to_vec(value)
-        .map_err(|e| JsValue::from_str(&format!("JSON serialization error: {}", e)))?;
-    Ok(stable_hash_bytes(&serialized))
 }
 
 fn get_committed_font_fingerprint() -> Result<String, JsValue> {
@@ -1508,7 +1494,7 @@ fn apply_glyph_rename_transaction(
 
     *CANONICAL_JSON_CACHE.lock().unwrap() = Some(candidate_canonical);
     *CANONICAL_GLYPH_INDEX_CACHE.lock().unwrap() = Some(candidate_index);
-    *FONT_CACHE.lock().unwrap() = Some(candidate_native);
+    *FONT_CACHE.lock().unwrap() = Some(Arc::new(candidate_native));
     *FEATURE_FILE_CACHE.lock().unwrap() = Some(feature_file);
     *FEATURE_FEA_STRING_CACHE.lock().unwrap() = Some((fea, feature_glyphs));
     clear_active_subset_caches_for_closure_invalidation();
@@ -1590,7 +1576,7 @@ fn prune_layout_closure_cache_for_subset(
 
 /// Rebuild babelfont::Font from CANONICAL_JSON_CACHE if the epoch has advanced
 /// since the last build. Returns a clone of the cached font.
-fn get_or_rebuild_font_cache() -> Result<babelfont::Font, JsValue> {
+fn get_or_rebuild_font_cache() -> Result<Arc<babelfont::Font>, JsValue> {
     let current_epoch = FONT_CACHE_EPOCH.load(Ordering::Relaxed);
     let built_epoch = FONT_CACHE_BUILT_AT_EPOCH.load(Ordering::Relaxed);
 
@@ -1630,11 +1616,17 @@ fn get_or_rebuild_font_cache() -> Result<babelfont::Font, JsValue> {
         }
     };
 
+    let font = Arc::new(font);
     let mut cache = FONT_CACHE.lock().unwrap();
-    *cache = Some(font.clone());
+    *cache = Some(Arc::clone(&font));
     FONT_CACHE_BUILT_AT_EPOCH.store(current_epoch, Ordering::Relaxed);
 
     Ok(font)
+}
+
+/// An owned copy of the cached font, for callers that change it.
+fn get_or_rebuild_font_cache_owned() -> Result<babelfont::Font, JsValue> {
+    get_or_rebuild_font_cache().map(Arc::unwrap_or_clone)
 }
 
 /// Rebuild the subset babelfont::Font from SUBSET_JSON_CACHE when stale.
@@ -1676,12 +1668,50 @@ fn get_or_rebuild_subset_font_cache(
 fn build_subset_font_from_closure_subset(
     closure_subset: &[String],
 ) -> Result<babelfont::Font, JsValue> {
-    let full_font = get_or_rebuild_font_cache()?;
-    let mut subset_font = full_font;
-    if !closure_subset.is_empty() {
-        subset_font_using_cached_fea(&mut subset_font, closure_subset)?;
+    if closure_subset.is_empty() {
+        return get_or_rebuild_font_cache_owned();
     }
+    let mut subset_font = subset_source_font(closure_subset)?;
+    subset_font_using_cached_fea(&mut subset_font, closure_subset)?;
     Ok(subset_font)
+}
+
+/// The cached font as `RetainGlyphs` needs it to keep `closure_subset`:
+/// the kept glyphs and every glyph their components reach in full (they are
+/// decomposed from), every other glyph by name only. Those are dropped, and
+/// feature subsetting reads only their names, so copying them is wasted work.
+fn subset_source_font(closure_subset: &[String]) -> Result<babelfont::Font, JsValue> {
+    cached_font_with_glyphs(|glyphs| {
+        let mut needed: HashSet<String> = HashSet::new();
+        let mut pending: Vec<String> = closure_subset.to_vec();
+        while let Some(name) = pending.pop() {
+            if needed.contains(&name) {
+                continue;
+            }
+            if let Some(glyph) = glyphs.get(&name) {
+                for layer in &glyph.layers {
+                    for shape in &layer.shapes {
+                        if let babelfont::Shape::Component(component) = shape {
+                            pending.push(component.reference.to_string());
+                        }
+                    }
+                }
+            }
+            needed.insert(name);
+        }
+        babelfont::GlyphList(
+            glyphs
+                .iter_mut()
+                .map(|glyph| {
+                    if needed.contains(glyph.name.as_str()) {
+                        glyph.clone()
+                    } else {
+                        babelfont::Glyph::new(glyph.name.as_str())
+                    }
+                })
+                .collect(),
+        )
+    })
 }
 
 /// Compute a fingerprint for compilation options that affect filtering.
@@ -1785,7 +1815,10 @@ fn collect_fea_parse_universe_names(
         }
     }
 
-    names.into_iter().collect()
+    // Sorted so stub glyphs are added in the same order on every parse.
+    let mut names: Vec<String> = names.into_iter().collect();
+    names.sort_unstable();
+    names
 }
 
 fn inject_stub_glyphs_for_fea_parse(font: &mut babelfont::Font, extra_names: &[String]) {
@@ -1822,11 +1855,12 @@ fn subset_font_using_cached_fea(
     closure_subset: &[String],
 ) -> Result<(), JsValue> {
     let real_names: HashSet<SmolStr> = font.glyphs.iter().map(|glyph| glyph.name.clone()).collect();
-    let canonical = CANONICAL_JSON_CACHE
-        .lock()
-        .ok()
-        .and_then(|guard| guard.clone());
-    prepare_font_for_layout_subset(font, canonical.as_ref());
+    // Only glyph names are read from the canonical JSON; never clone it.
+    let universe_names = {
+        let canonical = CANONICAL_JSON_CACHE.lock().ok();
+        collect_fea_parse_universe_names(font, canonical.as_ref().and_then(|guard| guard.as_ref()))
+    };
+    inject_stub_glyphs_for_fea_parse(font, &universe_names);
     RetainGlyphs::new(closure_subset.to_vec())
         .apply(font)
         .map_err(|error| JsValue::from_str(&format!("Subsetting failed: {:?}", error)))?;
@@ -1834,17 +1868,112 @@ fn subset_font_using_cached_fea(
     Ok(())
 }
 
+/// A copy of the cached font with every field but `glyphs` copied as is and
+/// `glyphs` made by `make_glyphs` from the cached glyphs. It avoids copying
+/// glyphs the caller does not need. `make_glyphs` may change the cached
+/// glyphs temporarily but must leave them as it found them.
+fn cached_font_with_glyphs(
+    make_glyphs: impl FnOnce(&mut babelfont::GlyphList) -> babelfont::GlyphList,
+) -> Result<babelfont::Font, JsValue> {
+    get_or_rebuild_font_cache()?;
+    let mut cache = FONT_CACHE.lock().unwrap();
+    let cached = cache
+        .as_mut()
+        .ok_or_else(|| JsValue::from_str("No font loaded. Open a font first."))?;
+    let Some(font) = Arc::get_mut(cached) else {
+        // Someone else holds the font right now; work on a full copy.
+        let mut font = (**cached).clone();
+        font.glyphs = make_glyphs(&mut font.glyphs);
+        return Ok(font);
+    };
+    let mut all_glyphs = std::mem::take(&mut font.glyphs);
+    let mut copy = font.clone();
+    copy.glyphs = make_glyphs(&mut all_glyphs);
+    font.glyphs = all_glyphs;
+    Ok(copy)
+}
+
+/// The cached font reduced to `roots` and every glyph their components use,
+/// without background layers. Interpolating and drawing a glyph reads only
+/// these glyphs, so copying the rest of the font is wasted work.
+fn generation_font_for_glyphs<S: AsRef<str>>(roots: &[S]) -> Result<babelfont::Font, JsValue> {
+    cached_font_with_glyphs(|glyphs| {
+        let mut wanted: HashSet<String> = HashSet::new();
+        let mut pending: Vec<String> = roots.iter().map(|name| name.as_ref().to_string()).collect();
+        while let Some(name) = pending.pop() {
+            if wanted.contains(&name) {
+                continue;
+            }
+            if let Some(glyph) = glyphs.get(&name) {
+                for layer in glyph.layers.iter().filter(|layer| !layer.is_background) {
+                    for shape in &layer.shapes {
+                        if let babelfont::Shape::Component(component) = shape {
+                            pending.push(component.reference.to_string());
+                        }
+                    }
+                }
+            }
+            wanted.insert(name);
+        }
+        babelfont::GlyphList(
+            glyphs
+                .iter()
+                .filter(|glyph| wanted.contains(glyph.name.as_str()))
+                .map(|glyph| {
+                    let mut glyph = glyph.clone();
+                    glyph.layers.retain(|layer| !layer.is_background);
+                    glyph
+                })
+                .collect(),
+        )
+    })
+}
+
+/// The cached font with every glyph, layer and component but no background
+/// layers and no paths except FIP001 subtraction paths. The generation filters
+/// decide glyph names and feature code without looking at paths (components
+/// and subtraction paths do decide which glyphs stay), so feature validation
+/// runs them on this much smaller copy.
+fn path_free_cached_font() -> Result<babelfont::Font, JsValue> {
+    cached_font_with_glyphs(|glyphs| {
+        babelfont::GlyphList(
+            glyphs
+                .iter_mut()
+                .map(|glyph| {
+                    let mut layers = std::mem::take(&mut glyph.layers);
+                    let mut copy = glyph.clone();
+                    copy.layers = layers
+                        .iter_mut()
+                        .filter(|layer| !layer.is_background)
+                        .map(|layer| {
+                            let shapes = std::mem::take(&mut layer.shapes);
+                            let mut copy = layer.clone();
+                            copy.shapes = shapes
+                                .iter()
+                                .filter(|shape| match shape {
+                                    babelfont::Shape::Path(path) => {
+                                        babelfont::filters::path_is_subtraction(path)
+                                    }
+                                    _ => true,
+                                })
+                                .cloned()
+                                .collect();
+                            layer.shapes = shapes;
+                            copy
+                        })
+                        .collect();
+                    glyph.layers = layers;
+                    copy
+                })
+                .collect(),
+        )
+    })
+}
+
 fn remove_background_layers_for_generation(font: &mut babelfont::Font) {
     for glyph in font.glyphs.iter_mut() {
         glyph.layers.retain(|layer| !layer.is_background);
     }
-}
-
-fn apply_filter_pipeline(
-    font: &babelfont::Font,
-    options: &CompilationOptions,
-) -> Result<babelfont::Font, JsValue> {
-    apply_filter_pipeline_owned(font.clone(), options, true)
 }
 
 /// Apply generation filters to a font already reduced by `RetainGlyphs`.
@@ -1858,9 +1987,22 @@ fn apply_filter_pipeline_to_subset(
 }
 
 fn apply_filter_pipeline_owned(
+    filtered: babelfont::Font,
+    options: &CompilationOptions,
+    retain_exported_glyphs: bool,
+) -> Result<babelfont::Font, JsValue> {
+    apply_filter_pipeline_inner(filtered, options, retain_exported_glyphs, false)
+}
+
+/// `names_and_features_only` drops every shape once smart components have
+/// decided which glyphs stay. The later filters choose glyph names and
+/// feature code without looking at shapes, so the result has the same names
+/// and features as the full pipeline, without the cost of decomposing.
+fn apply_filter_pipeline_inner(
     mut filtered: babelfont::Font,
     options: &CompilationOptions,
     retain_exported_glyphs: bool,
+    names_and_features_only: bool,
 ) -> Result<babelfont::Font, JsValue> {
     if options.skip_features {
         filtered.features = babelfont::Features::default();
@@ -1881,6 +2023,14 @@ fn apply_filter_pipeline_owned(
         RewriteSmartAxes
             .apply(&mut filtered)
             .map_err(|e| JsValue::from_str(&format!("RewriteSmartAxes failed: {:?}", e)))?;
+    }
+
+    if names_and_features_only {
+        for glyph in filtered.glyphs.iter_mut() {
+            for layer in glyph.layers.iter_mut() {
+                layer.shapes.clear();
+            }
+        }
     }
 
     if retain_exported_glyphs {
@@ -2158,13 +2308,62 @@ fn feature_validation_resolver(
     )
 }
 
+/// Document state a feature validation passed for: (Y.Doc epoch, font cache
+/// epoch, filter options). Both epochs advance on every change that can reach
+/// the validated font, so an equal key repeats the same validation.
+static FEATURE_VALIDATION_PASSED: Mutex<Option<(u64, u64, u64)>> = Mutex::new(None);
+
+fn feature_validation_key(options: &CompilationOptions) -> (u64, u64, u64) {
+    let mut filter_options = options_filter_fingerprint(options);
+    if options.skip_features {
+        filter_options |= 1 << 8;
+    }
+    if options.produce_varc_table {
+        filter_options |= 1 << 9;
+    }
+    (
+        Y_DOC_EPOCH.load(Ordering::Relaxed),
+        FONT_CACHE_EPOCH.load(Ordering::Relaxed),
+        filter_options,
+    )
+}
+
 fn validate_feature_source_with_full_filter_pipeline_internal(
     options: &CompilationOptions,
 ) -> Result<(), String> {
-    let full_font = get_or_rebuild_font_cache()
-        .map_err(|error| error.as_string().unwrap_or_else(|| format!("{:?}", error)))?;
-    let filtered_font = apply_filter_pipeline(&full_font, options)
-        .map_err(|error| error.as_string().unwrap_or_else(|| format!("{:?}", error)))?;
+    let validation_key = feature_validation_key(options);
+    if *FEATURE_VALIDATION_PASSED.lock().unwrap() == Some(validation_key) {
+        return Ok(());
+    }
+    validate_feature_source_uncached(options)?;
+    *FEATURE_VALIDATION_PASSED.lock().unwrap() = Some(validation_key);
+    Ok(())
+}
+
+fn validate_feature_source_uncached(options: &CompilationOptions) -> Result<(), String> {
+    let as_text = |error: JsValue| error.as_string().unwrap_or_else(|| format!("{:?}", error));
+    // Glyphs predicate classes (`$[hasComponents == 1]`) can select glyphs by
+    // their shapes, so feature code with one needs the full font.
+    let uses_glyph_predicates = get_or_rebuild_font_cache()
+        .map_err(as_text)?
+        .features
+        .to_fea()
+        .contains("$[");
+    let filtered_font = if uses_glyph_predicates {
+        apply_filter_pipeline_owned(
+            get_or_rebuild_font_cache_owned().map_err(as_text)?,
+            options,
+            true,
+        )
+    } else {
+        apply_filter_pipeline_inner(
+            path_free_cached_font().map_err(as_text)?,
+            options,
+            true,
+            true,
+        )
+    };
+    let filtered_font = filtered_font.map_err(as_text)?;
     let fea = filtered_font.features.to_fea();
     let glyph_map = GlyphMap::new(filtered_font.glyphs.iter().map(|glyph| glyph.name.as_str()))
         .map_err(|error| format!("Feature validation failed: {:?}", error))?;
@@ -2267,28 +2466,36 @@ pub fn set_compile_feature_overlay(text: &str) {
 }
 
 fn compile_with_feature_debug_context(
-    font: &babelfont::Font,
+    mut font: babelfont::Font,
     options: &CompilationOptions,
     context: &str,
 ) -> Result<Vec<u8>, JsValue> {
-    let mut font = font.clone();
-    let mut options = options.clone();
     if options.skip_features {
         font.features = babelfont::Features::default();
         drop_unresolved_components(&mut font);
     } else {
         apply_compile_feature_overlay(&mut font);
     }
-    let feature_source = font.features.to_fea();
-    match BabelfontIrSource::compile(font, options) {
+    // Kept to explain a failure; the font itself moves into the compiler.
+    let features = font.features.clone();
+    match BabelfontIrSource::compile(font, options.clone()) {
         Ok(compiled) => Ok(zero_head_timestamps(compiled)),
         Err(err) => Err(feature_debug_error_from_babelfont_error(
             "Compilation failed",
             &err,
-            &feature_source,
+            &features.to_fea(),
             context,
         )),
     }
+}
+
+/// OpenType checksum: the sum of big-endian u32 words, zero-padded.
+fn sfnt_checksum(bytes: &[u8]) -> u32 {
+    bytes.chunks(4).fold(0u32, |sum, chunk| {
+        let mut word = [0u8; 4];
+        word[..chunk.len()].copy_from_slice(chunk);
+        sum.wrapping_add(u32::from_be_bytes(word))
+    })
 }
 
 /// Zero out the `head` table `created` and `modified` timestamps so that
@@ -2354,6 +2561,17 @@ fn zero_head_timestamps(mut font_data: Vec<u8>) -> Vec<u8> {
             if modified_offset + 8 <= font_data.len() {
                 font_data[modified_offset..modified_offset + 8].fill(0);
             }
+            // The checksums fontc wrote cover the real timestamps; recompute
+            // them so they match the file (and do not depend on the clock).
+            let adjustment = offset + 8..offset + 12;
+            font_data[adjustment.clone()].fill(0);
+            if offset + length <= font_data.len() {
+                let head_checksum = sfnt_checksum(&font_data[offset..offset + length]);
+                font_data[entry_offset + 4..entry_offset + 8]
+                    .copy_from_slice(&head_checksum.to_be_bytes());
+            }
+            let file_adjustment = 0xB1B0_AFBAu32.wrapping_sub(sfnt_checksum(&font_data));
+            font_data[adjustment].copy_from_slice(&file_adjustment.to_be_bytes());
             return font_data;
         }
     }
@@ -2746,7 +2964,7 @@ pub fn compile_babelfont(babelfont_json: &str, options: &JsValue) -> Result<Vec<
     };
 
     let _ir_compile_span = PerfSpan::start("compile_babelfont.ir_compile");
-    let compiled_font = compile_with_feature_debug_context(&font, &options, "compile_babelfont")?;
+    let compiled_font = compile_with_feature_debug_context(font, &options, "compile_babelfont")?;
     drop(_ir_compile_span);
 
     Ok(compiled_font)
@@ -2844,7 +3062,7 @@ pub fn boolean_op_paths(op: &str, paths_json: &str) -> Result<String, JsValue> {
 /// outline fingerprints for `glyph_name`. Does not run DropIncompatiblePaths.
 #[wasm_bindgen]
 pub fn filtered_boolean_fingerprints(glyph_name: &str) -> Result<JsValue, JsValue> {
-    let mut font = get_or_rebuild_font_cache()?;
+    let mut font = get_or_rebuild_font_cache_owned()?;
     Fip001Boolean
         .apply(&mut font)
         .map_err(|e| JsValue::from_str(&format!("Fip001Boolean failed: {:?}", e)))?;
@@ -3027,15 +3245,18 @@ fn reconstruct_normalized_layer_geometry(
         .and_then(|value| value_as_array(value))
         .ok_or_else(|| "geometryTopology.shapes must be an array".to_string())?;
 
+    // Read the id maps in place; the layer is only changed once every shape
+    // reconstructs.
+    let empty_map = serde_json::Map::new();
     let positions = match layer_obj.get("nodePositionsById") {
-        Some(serde_json::Value::Object(map)) => map.clone(),
+        Some(serde_json::Value::Object(map)) => map,
         Some(_) => return Err("nodePositionsById must be an object".to_string()),
-        None => serde_json::Map::new(),
+        None => &empty_map,
     };
     let shape_data = match layer_obj.get("shapeDataById") {
-        Some(serde_json::Value::Object(map)) => map.clone(),
+        Some(serde_json::Value::Object(map)) => map,
         Some(_) => return Err("shapeDataById must be an object".to_string()),
-        None => serde_json::Map::new(),
+        None => &empty_map,
     };
 
     let mut shapes = Vec::with_capacity(topology_shapes.len());
@@ -3176,26 +3397,42 @@ fn reconstruct_indexed_map_array(
     by_id_key: &str,
     order_key: &str,
 ) {
-    let by_id = obj.get(by_id_key).cloned();
-    let order = obj.get(order_key).cloned();
-    if let (Some(serde_json::Value::Object(by_id_map)), Some(serde_json::Value::Array(order_arr))) =
-        (by_id, order)
+    // The indexed-map keys are removed regardless; items move into the array.
+    let by_id = obj.remove(by_id_key);
+    let order = obj.remove(order_key);
+    if let (
+        Some(serde_json::Value::Object(mut by_id_map)),
+        Some(serde_json::Value::Array(order_arr)),
+    ) = (by_id, order)
     {
-        let mut arr = Vec::with_capacity(order_arr.len());
-        for id_val in &order_arr {
+        let mut arr: Vec<serde_json::Value> = Vec::with_capacity(order_arr.len());
+        // Array slot of each order entry, so a repeated id copies its first item.
+        let mut slot_of_entry: Vec<Option<usize>> = Vec::with_capacity(order_arr.len());
+        for (entry_index, id_val) in order_arr.iter().enumerate() {
             let Some(id) = id_val.as_str() else {
+                slot_of_entry.push(None);
                 continue;
             };
-            let Some(item) = by_id_map.get(id) else {
+            if let Some(item) = by_id_map.remove(id) {
+                slot_of_entry.push(Some(arr.len()));
+                arr.push(item);
                 continue;
-            };
-            arr.push(item.clone());
+            }
+            let earlier_slot = order_arr[..entry_index]
+                .iter()
+                .zip(&slot_of_entry)
+                .find_map(|(earlier, slot)| (earlier.as_str() == Some(id)).then_some(*slot)?);
+            match earlier_slot {
+                Some(slot) => {
+                    slot_of_entry.push(Some(arr.len()));
+                    let repeated = arr[slot].clone();
+                    arr.push(repeated);
+                }
+                None => slot_of_entry.push(None),
+            }
         }
         obj.insert(array_key.to_string(), serde_json::Value::Array(arr));
     }
-    // Clean up indexed-map keys regardless
-    obj.remove(by_id_key);
-    obj.remove(order_key);
 }
 
 /// JS stores OpenType features as `featuresById` + `featureOrder` with
@@ -3634,6 +3871,7 @@ pub fn reset_ydoc_set() {
 
 #[wasm_bindgen]
 pub fn seed_ydoc_document(document_id: &str, state_update: &[u8]) -> Result<(), JsValue> {
+    let _span = PerfSpan::start("seed_ydoc_document.total");
     let update = yrs::Update::decode_v1(state_update)
         .map_err(|e| JsValue::from_str(&format!("seed_ydoc_document: decode failed: {:?}", e)))?;
     let doc = yrs::Doc::new();
@@ -3655,7 +3893,11 @@ pub fn seed_ydoc_document(document_id: &str, state_update: &[u8]) -> Result<(), 
 
 #[wasm_bindgen]
 pub fn rebuild_caches_from_ydoc_set() -> Result<(), JsValue> {
-    let json_value = assembled_babelfont_json()?;
+    let _span = PerfSpan::start("rebuild_caches_from_ydoc_set.total");
+    let json_value = {
+        let _assemble_span = PerfSpan::start("rebuild_caches_from_ydoc_set.assemble_json");
+        assembled_babelfont_json()?
+    };
     store_font_from_value(json_value)
 }
 
@@ -3908,7 +4150,7 @@ fn refresh_masters_related_caches_from_ydoc<T: ReadTxn>(txn: &T) -> Result<(), J
     }
 
     if let Some(ref mut font_cache) = *FONT_CACHE.lock().unwrap() {
-        replace_masters_in_font_cache(font_cache, masters_json.as_ref())?;
+        replace_masters_in_font_cache(Arc::make_mut(font_cache), masters_json.as_ref())?;
     }
 
     if let Some((subset_key, subset_epoch)) = subset_cache_refresh {
@@ -4032,16 +4274,83 @@ fn refresh_kerning_related_caches_from_ydoc<T: ReadTxn>(
         }
     }
 
-    *FONT_CACHE.lock().unwrap() = None;
+    // A current native font only needs the refreshed fields; rebuilding it
+    // from canonical JSON deserialized the whole font again.
+    let font_cache_was_current = FONT_CACHE_EPOCH.load(Ordering::Relaxed)
+        == FONT_CACHE_BUILT_AT_EPOCH.load(Ordering::Relaxed);
+    let patched_font_cache = font_cache_was_current
+        && patch_native_font_kerning_from_canonical(refresh_master_kerning, refresh_kern_groups)
+            .is_some();
+    if !patched_font_cache {
+        *FONT_CACHE.lock().unwrap() = None;
+    }
     *SUBSET_FONT_CACHE.lock().unwrap() = None;
     *FILTERED_FONT_CACHE.lock().unwrap() = None;
 
-    FONT_CACHE_EPOCH.fetch_add(1, Ordering::Relaxed);
-    FONT_CACHE_BUILT_AT_EPOCH.store(0, Ordering::Relaxed);
+    let next_epoch = FONT_CACHE_EPOCH.fetch_add(1, Ordering::Relaxed) + 1;
+    FONT_CACHE_BUILT_AT_EPOCH.store(
+        if patched_font_cache { next_epoch } else { 0 },
+        Ordering::Relaxed,
+    );
     SUBSET_FONT_CACHE_BUILT_AT_EPOCH.store(0, Ordering::Relaxed);
     FILTER_EPOCH.fetch_add(1, Ordering::Relaxed);
 
     Ok(())
+}
+
+/// Copy the kerning-related fields of the canonical JSON into the native font,
+/// deserialized exactly as a full rebuild would (each is a plain
+/// `#[serde(default)]` field of `babelfont::Font`).
+fn patch_native_font_kerning_from_canonical(
+    refresh_master_kerning: bool,
+    refresh_kern_groups: bool,
+) -> Option<()> {
+    fn field<T: DeserializeOwned + Default>(canonical: &serde_json::Value, key: &str) -> Option<T> {
+        match canonical.get(key) {
+            Some(value) => deserialize_json(value).ok(),
+            None => Some(T::default()),
+        }
+    }
+    let (masters, format_specific, first_kern_groups, second_kern_groups) = {
+        let canonical_lock = CANONICAL_JSON_CACHE.lock().unwrap();
+        let canonical = canonical_lock.as_ref()?;
+        let masters = if refresh_master_kerning {
+            Some(field(canonical, "masters")?)
+        } else {
+            None
+        };
+        let format_specific = if refresh_master_kerning {
+            Some(field(canonical, "format_specific")?)
+        } else {
+            None
+        };
+        let first = if refresh_kern_groups {
+            Some(field(canonical, "first_kern_groups")?)
+        } else {
+            None
+        };
+        let second = if refresh_kern_groups {
+            Some(field(canonical, "second_kern_groups")?)
+        } else {
+            None
+        };
+        (masters, format_specific, first, second)
+    };
+    let mut font_lock = FONT_CACHE.lock().unwrap();
+    let font = Arc::make_mut(font_lock.as_mut()?);
+    if let Some(masters) = masters {
+        font.masters = masters;
+    }
+    if let Some(format_specific) = format_specific {
+        font.format_specific = format_specific;
+    }
+    if let Some(first) = first_kern_groups {
+        font.first_kern_groups = first;
+    }
+    if let Some(second) = second_kern_groups {
+        font.second_kern_groups = second;
+    }
+    Some(())
 }
 
 fn refresh_top_level_caches_from_ydoc<T: ReadTxn>(txn: &T, keys: &[&str]) -> Result<(), JsValue> {
@@ -4114,7 +4423,24 @@ fn refresh_feature_related_caches_from_ydoc<T: ReadTxn>(txn: &T) -> Result<(), J
         return refresh_top_level_caches_from_ydoc(txn, &["features"]);
     }
 
-    *FONT_CACHE.lock().unwrap() = None;
+    // A current native font only needs its features replaced; rebuilding it
+    // from canonical JSON deserialized the whole font again.
+    let font_cache_was_current = FONT_CACHE_EPOCH.load(Ordering::Relaxed)
+        == FONT_CACHE_BUILT_AT_EPOCH.load(Ordering::Relaxed);
+    let patched_font_cache = font_cache_was_current
+        && features_json
+            .as_ref()
+            .and_then(native_features_from_json)
+            .and_then(|features| {
+                let mut font_lock = FONT_CACHE.lock().unwrap();
+                let font = Arc::make_mut(font_lock.as_mut()?);
+                font.features = features;
+                Some(())
+            })
+            .is_some();
+    if !patched_font_cache {
+        *FONT_CACHE.lock().unwrap() = None;
+    }
     // A subset holds feature source already pruned by RetainGlyphs. Replacing
     // its feature payload with the full source reintroduces references to
     // glyphs outside that subset, so rebuild it from canonical state instead.
@@ -4124,45 +4450,66 @@ fn refresh_feature_related_caches_from_ydoc<T: ReadTxn>(txn: &T) -> Result<(), J
     LAYOUT_CLOSURE_CACHE.lock().unwrap().clear();
     *LAST_LAYOUT_CLOSURE_CACHE_KEY.lock().unwrap() = None;
 
-    FONT_CACHE_EPOCH.fetch_add(1, Ordering::Relaxed);
-    FONT_CACHE_BUILT_AT_EPOCH.store(0, Ordering::Relaxed);
+    let next_epoch = FONT_CACHE_EPOCH.fetch_add(1, Ordering::Relaxed) + 1;
+    FONT_CACHE_BUILT_AT_EPOCH.store(
+        if patched_font_cache { next_epoch } else { 0 },
+        Ordering::Relaxed,
+    );
 
     Ok(())
 }
 
+/// `features` as `get_or_rebuild_font_cache` would deserialize it from the
+/// canonical JSON (same feature-code normalization).
+fn native_features_from_json(features_json: &serde_json::Value) -> Option<babelfont::Features> {
+    let mut features = features_json.clone();
+    normalize_babelfont_feature_code(&mut features);
+    deserialize_json(&features).ok()
+}
+
 // ── store_font internal helpers ──────────────────────────────────────────────
+
+/// Deserialize a babelfont JSON value into `babelfont::Font`, reporting the
+/// failing path.
+fn deserialize_font_from_value(json_value: &serde_json::Value) -> Result<babelfont::Font, JsValue> {
+    serde_path_to_error::deserialize(json_value).map_err(|e| {
+        JsValue::from_str(&format!(
+            "Font deserialization error: {} (path: {})",
+            e.inner(),
+            e.path()
+        ))
+    })
+}
 
 /// Internal: store a babelfont `serde_json::Value` in all Rust caches.
 /// Equivalent to `store_font()` but accepts a pre-parsed JSON value.
 fn store_font_from_value(mut json_value: serde_json::Value) -> Result<(), JsValue> {
+    let _span = PerfSpan::start("store_font_from_value.total");
     if json_value.get("glyphs").is_none() {
         json_value["glyphs"] = serde_json::Value::Array(Vec::new());
     }
-    // Store in canonical JSON cache
-    set_canonical_json_cache(json_value.clone());
-
-    // Deserialize into babelfont::Font
-    let font: babelfont::Font = {
-        let json_text = serde_json::to_string(&json_value)
-            .map_err(|e| JsValue::from_str(&format!("Font JSON re-encode error: {}", e)))?;
-        let mut deserializer = serde_json::Deserializer::from_str(&json_text);
-        serde_path_to_error::deserialize(&mut deserializer).map_err(|e| {
-            JsValue::from_str(&format!(
-                "Font deserialization error: {} (path: {})",
-                e.inner(),
-                e.path()
-            ))
-        })?
+    // Deserialize into babelfont::Font straight from the value (no string
+    // round trip), then move the value into the canonical cache. The cache is
+    // installed before a deserialization error is returned, as before.
+    let font_result = {
+        let _deserialize_span = PerfSpan::start("store_font_from_value.deserialize_font");
+        deserialize_font_from_value(&json_value)
     };
+    {
+        let _canonical_span = PerfSpan::start("store_font_from_value.canonical_cache");
+        set_canonical_json_cache(json_value);
+    }
+    let font = font_result?;
 
     // Build FeatureFile before acquiring FONT_CACHE lock to avoid re-entrant lock
+    let _feature_span = PerfSpan::start("store_font_from_value.feature_file");
     let fea = font.features.to_fea();
     let font_glyphs: Vec<String> = font.glyphs.iter().map(|g| g.name.to_string()).collect();
     let font_glyphs_ref: Vec<&str> = font_glyphs.iter().map(|s| s.as_str()).collect();
     let new_feature_file =
         FeatureFile::new_from_fea(&fea, Some(&font_glyphs_ref), font.source.clone()).ok();
 
-    *FONT_CACHE.lock().unwrap() = Some(font);
+    *FONT_CACHE.lock().unwrap() = Some(Arc::new(font));
     *FEATURE_FILE_CACHE.lock().unwrap() = new_feature_file;
     *FEATURE_FEA_STRING_CACHE.lock().unwrap() = Some((fea, font_glyphs));
 
@@ -4302,7 +4649,6 @@ fn apply_preview_layer_overlay_internal(
             generation: 0,
             layer_overrides: HashMap::new(),
             subset_font_cache: None,
-            filtered_font_cache: None,
         });
     }
 
@@ -4342,7 +4688,6 @@ fn apply_preview_layer_overlay_internal(
     }
 
     overlay.generation = overlay.generation.saturating_add(1);
-    overlay.filtered_font_cache = None;
 
     let current_targets: HashSet<LayerTarget> = overlay.layer_overrides.keys().cloned().collect();
     let can_reuse_working_font = overlay
@@ -4820,7 +5165,8 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
                             }
                         }
 
-                        if let Some(ref mut font_cache) = *FONT_CACHE.lock().unwrap() {
+                        if let Some(ref mut font_cache_arc) = *FONT_CACHE.lock().unwrap() {
+                            let font_cache = Arc::make_mut(font_cache_arc);
                             if !glyph_renames.is_empty()
                                 && !rename_glyphs_in_font_cache(
                                     font_cache,
@@ -5203,7 +5549,7 @@ pub fn open_font_file(filename: &str, contents: JsValue) -> Result<String, JsVal
 
     // Store in cache
     let mut cache = FONT_CACHE.lock().unwrap();
-    *cache = Some(font.clone());
+    *cache = Some(Arc::new(font.clone()));
     drop(cache);
 
     // Serialize to JSON for JavaScript
@@ -5232,8 +5578,7 @@ pub fn interpolate_glyph(
     extrapolate: bool,
     root_layer_ids_json: &str,
 ) -> Result<String, JsValue> {
-    let mut interpolation_font = get_or_rebuild_font_cache()?;
-    remove_background_layers_for_generation(&mut interpolation_font);
+    let mut interpolation_font = generation_font_for_glyphs(&[glyph_name])?;
     let mut root_layer_ids: Vec<String> = serde_json::from_str(root_layer_ids_json)
         .map_err(|e| JsValue::from_str(&format!("Root layer IDs parse error: {}", e)))?;
     root_layer_ids.sort();
@@ -5303,10 +5648,9 @@ pub fn get_glyphs_outlines(
     location_json: &str,
     flatten_components: bool,
 ) -> Result<String, JsValue> {
-    let mut interpolation_font = get_or_rebuild_font_cache()?;
-    remove_background_layers_for_generation(&mut interpolation_font);
     let glyph_names: Vec<String> = serde_json::from_str(glyph_names_json)
         .map_err(|e| JsValue::from_str(&format!("Failed to parse glyph names: {}", e)))?;
+    let interpolation_font = generation_font_for_glyphs(&glyph_names)?;
     glyph_outlines::get_glyphs_outlines(
         &interpolation_font,
         &glyph_names,
@@ -5660,7 +6004,7 @@ pub fn get_cache_memory_stats() -> Result<String, JsValue> {
         let cache = FONT_CACHE
             .lock()
             .map_err(|_| dump_lock_error("FONT_CACHE"))?;
-        cache.as_ref().map(cache_memory::font_bytes).unwrap_or(0)
+        cache.as_deref().map(cache_memory::font_bytes).unwrap_or(0)
     };
     let subset_native_bytes = {
         let cache = SUBSET_FONT_CACHE
@@ -5725,12 +6069,7 @@ pub fn get_cache_memory_stats() -> Result<String, JsValue> {
                     .as_ref()
                     .map(|entry| cache_memory::font_bytes(&entry.font))
                     .unwrap_or(0);
-                let filtered_native = overlay
-                    .filtered_font_cache
-                    .as_ref()
-                    .map(|entry| cache_memory::font_bytes(&entry.font))
-                    .unwrap_or(0);
-                override_bytes + subset_native + filtered_native
+                override_bytes + subset_native
             }
             None => 0,
         }
@@ -6142,8 +6481,6 @@ pub fn compile_preview_cached_font_from_last_layout_closure(
     let compilation_options = parse_compilation_options(options);
 
     let current_base_epoch = FONT_CACHE_EPOCH.load(Ordering::Relaxed);
-    let current_filter_epoch = FILTER_EPOCH.load(Ordering::Relaxed);
-    let current_options_fp = options_filter_fingerprint(&compilation_options);
 
     let filtered_font = {
         let mut preview_lock = PREVIEW_OVERLAY.lock().unwrap();
@@ -6207,59 +6544,24 @@ pub fn compile_preview_cached_font_from_last_layout_closure(
                 }
             };
 
-            let cache_hit = overlay.filtered_font_cache.as_ref().map_or(false, |entry| {
-                entry.subset_key == prepared_subset_key
-                    && entry.filter_epoch == current_filter_epoch
-                    && entry.base_font_cache_epoch == current_base_epoch
-                    && entry.overlay_generation == overlay.generation
-                    && entry.options_fingerprint == current_options_fp
-            });
-
-            if cache_hit {
-                perf_mark(&format!(
-                    "{}:compile_preview_cached_font_from_last_layout_closure.filter_cache.hit{}",
-                    PERF_PREFIX,
-                    current_perf_trace_suffix()
-                ));
-                Arc::clone(&overlay.filtered_font_cache.as_ref().unwrap().font)
-            } else {
-                // Overlay layers are already physical; bake remaining logical autos.
-                let mut compile_font = subset_font;
-                bake_automatic_sidebearing_offsets_in_font(&mut compile_font, &skip_layers);
-                let filtered =
-                    apply_filter_pipeline_owned(compile_font, &compilation_options, false)?;
-                let filtered_arc = Arc::new(filtered);
-                overlay.filtered_font_cache = Some(PreviewFilteredFontCacheEntry {
-                    subset_key: prepared_subset_key.clone(),
-                    filter_epoch: current_filter_epoch,
-                    base_font_cache_epoch: current_base_epoch,
-                    overlay_generation: overlay.generation,
-                    options_fingerprint: current_options_fp,
-                    font: Arc::clone(&filtered_arc),
-                });
-                perf_mark(&format!(
-                    "{}:compile_preview_cached_font_from_last_layout_closure.filter_cache.miss{}",
-                    PERF_PREFIX,
-                    current_perf_trace_suffix()
-                ));
-                filtered_arc
-            }
+            // Every overlay update starts a new generation, so a filtered
+            // font is never reused; it goes straight to the compiler.
+            // Overlay layers are already physical; bake remaining logical autos.
+            let mut compile_font = subset_font;
+            bake_automatic_sidebearing_offsets_in_font(&mut compile_font, &skip_layers);
+            apply_filter_pipeline_owned(compile_font, &compilation_options, false)?
         } else {
             let subset_font = match get_or_rebuild_subset_font_cache(&prepared_subset_key)? {
                 Some(cached) => cached,
                 None => build_subset_font_from_closure_subset(&closure_subset)?,
             };
             let compile_font = prepare_compile_facing_font(subset_font, &[])?;
-            Arc::new(apply_filter_pipeline_owned(
-                compile_font,
-                &compilation_options,
-                false,
-            )?)
+            apply_filter_pipeline_owned(compile_font, &compilation_options, false)?
         }
     };
 
     compile_with_feature_debug_context(
-        filtered_font.as_ref(),
+        filtered_font,
         &compilation_options,
         "compile_preview_cached_font_from_last_layout_closure",
     )
@@ -6318,11 +6620,7 @@ pub fn compile_cached_font_from_last_layout_closure(options: &JsValue) -> Result
                 PERF_PREFIX,
                 current_perf_trace_suffix()
             ));
-            let full_font = get_or_rebuild_font_cache()?;
-            let mut subset_font = full_font;
-            if !closure_subset.is_empty() {
-                subset_font_using_cached_fea(&mut subset_font, &closure_subset)?;
-            }
+            let subset_font = build_subset_font_from_closure_subset(&closure_subset)?;
             store_subset_font_cache(&prepared_subset_key, &subset_font)?;
             subset_font
         }
@@ -6412,8 +6710,10 @@ pub fn compile_cached_font_from_last_layout_closure(options: &JsValue) -> Result
 
     let _ir_compile_span =
         PerfSpan::start("compile_cached_font_from_last_layout_closure.ir_compile");
+    // A font fresh from the overlay path is not shared and moves in for free;
+    // the cached filtered font stays cached for the next compile.
     let compiled_font = compile_with_feature_debug_context(
-        filtered_font.as_ref(),
+        Arc::unwrap_or_clone(filtered_font),
         &compilation_options,
         "compile_cached_font_from_last_layout_closure",
     )?;
@@ -6491,7 +6791,7 @@ pub fn compile_debug_cached_font_from_last_layout_closure(
 
     let filtered_font = apply_filter_pipeline_owned(subset_font, &compilation_options, false)?;
     let compiled_font = compile_with_feature_debug_context(
-        &filtered_font,
+        filtered_font,
         &compilation_options,
         "compile_debug_cached_font_from_last_layout_closure",
     )?;
@@ -6632,7 +6932,7 @@ pub fn compile_cached_font(options: &JsValue) -> Result<Vec<u8>, JsValue> {
     let _compile_span = PerfSpan::start("compile_cached_font.total");
 
     let _cache_read_span = PerfSpan::start("compile_cached_font.cache_read");
-    let mut font_clone = get_or_rebuild_font_cache()?;
+    let mut font_clone = get_or_rebuild_font_cache_owned()?;
     remove_background_layers_for_generation(&mut font_clone);
     drop(_cache_read_span);
 
@@ -6662,11 +6962,11 @@ pub fn compile_cached_font(options: &JsValue) -> Result<Vec<u8>, JsValue> {
         // and otherwise fails with "neither a known glyph" for names such as
         // alef-ar.fina. Stub the catalog universe first; the compile retain
         // pass drops those unexported stubs and prunes the feature source.
-        let canonical = CANONICAL_JSON_CACHE
-            .lock()
-            .ok()
-            .and_then(|guard| guard.clone());
-        prepare_font_for_layout_subset(&mut font_clone, canonical.as_ref());
+        let canonical = CANONICAL_JSON_CACHE.lock().ok();
+        prepare_font_for_layout_subset(
+            &mut font_clone,
+            canonical.as_ref().and_then(|guard| guard.as_ref()),
+        );
     }
     drop(_subset_span);
 
@@ -6674,7 +6974,7 @@ pub fn compile_cached_font(options: &JsValue) -> Result<Vec<u8>, JsValue> {
 
     let _ir_compile_span = PerfSpan::start("compile_cached_font.ir_compile");
     let compiled_font = compile_with_feature_debug_context(
-        &font_clone,
+        font_clone,
         &compilation_options,
         "compile_cached_font",
     )?;
@@ -6746,8 +7046,9 @@ pub fn save_font_source_entries(
         .map_err(|e| JsValue::from_str(&format!("Invalid save request: {}", e)))?;
     let result = match format {
         "ufo" => {
-            let layout = babelfont::convertors::ufo::UfoLayout::from_entries(&request.layout_entries)
-                .map_err(js_error("Failed to read UFO layout"))?;
+            let layout =
+                babelfont::convertors::ufo::UfoLayout::from_entries(&request.layout_entries)
+                    .map_err(js_error("Failed to read UFO layout"))?;
             let save = babelfont::convertors::ufo::save_entries(
                 &font,
                 babelfont::convertors::ufo::UfoSaveRequest {
@@ -6940,7 +7241,10 @@ pub fn load_designspace_glyphs(
 /// Returns `{ "glyphs": [babelfont glyph], "kernGroups": { name: [first, second] } }`,
 /// the kerning groups each glyph's file puts it in (`null` for none).
 #[wasm_bindgen]
-pub fn load_glyphspackage_glyphs(fontinfo: &str, glyph_files_json: &str) -> Result<String, JsValue> {
+pub fn load_glyphspackage_glyphs(
+    fontinfo: &str,
+    glyph_files_json: &str,
+) -> Result<String, JsValue> {
     let files: HashMap<String, String> = serde_json::from_str(glyph_files_json)
         .map_err(|e| JsValue::from_str(&format!("Invalid glyph files: {}", e)))?;
     let font = babelfont::convertors::glyphs3::load_package_glyphs(fontinfo, &files)
@@ -7357,7 +7661,7 @@ mod tests {
 
         let mut compilation_font = font.clone();
         remove_background_layers_for_generation(&mut compilation_font);
-        let filtered_font = apply_filter_pipeline(&font, &options)
+        let filtered_font = apply_filter_pipeline_owned(font.clone(), &options, true)
             .expect("shared compiler filter should remove background layers");
 
         assert_eq!(font.glyphs[0].layers.len(), 2);
@@ -7366,7 +7670,7 @@ mod tests {
         assert!(!compilation_font.glyphs[0].layers[0].is_background);
         assert!(!filtered_font.glyphs[0].layers[0].is_background);
         compile_with_feature_debug_context(
-            &filtered_font,
+            filtered_font,
             &options,
             "background_layers_are_excluded_from_generation",
         )
@@ -7818,6 +8122,33 @@ mod tests {
         let layer = &font.glyphs[0].layers[0];
         let serialized_location = serde_json::to_value(&layer.location).unwrap();
         assert_eq!(serialized_location, json!([["wght", 650.0]]));
+    }
+
+    #[test]
+    fn reconstruct_indexed_map_array_repeats_items_for_repeated_order_ids() {
+        let mut layer = serde_json::Map::new();
+        layer.insert(
+            "anchorsById".to_string(),
+            json!({ "a": { "id": "a", "x": 1 }, "b": { "id": "b", "x": 2 } }),
+        );
+        layer.insert(
+            "anchorOrder".to_string(),
+            json!(["b", "a", "b", "missing", "a"]),
+        );
+
+        reconstruct_indexed_map_array(&mut layer, "anchors", "anchorsById", "anchorOrder");
+
+        assert_eq!(
+            layer.get("anchors"),
+            Some(&json!([
+                { "id": "b", "x": 2 },
+                { "id": "a", "x": 1 },
+                { "id": "b", "x": 2 },
+                { "id": "a", "x": 1 }
+            ]))
+        );
+        assert!(!layer.contains_key("anchorsById"));
+        assert!(!layer.contains_key("anchorOrder"));
     }
 
     #[test]
@@ -9635,9 +9966,23 @@ mod tests {
             json!({ "code": "sub A by A;" })
         );
         assert!(SUBSET_JSON_CACHE.lock().unwrap().is_none());
-        assert!(FONT_CACHE.lock().unwrap().is_none());
         assert!(SUBSET_FONT_CACHE.lock().unwrap().is_none());
         assert!(FEATURE_FILE_CACHE.lock().unwrap().is_none());
+        // The native font keeps everything else and takes the new features,
+        // exactly as a rebuild from the canonical JSON would produce them.
+        assert_eq!(
+            FONT_CACHE_BUILT_AT_EPOCH.load(Ordering::Relaxed),
+            FONT_CACHE_EPOCH.load(Ordering::Relaxed)
+        );
+        let patched_features =
+            serde_json::to_value(&FONT_CACHE.lock().unwrap().as_ref().unwrap().features).unwrap();
+        let mut canonical = CANONICAL_JSON_CACHE.lock().unwrap().clone().unwrap();
+        normalize_babelfont_feature_code(canonical.get_mut("features").unwrap());
+        let rebuilt: babelfont::Font = deserialize_json(&canonical).unwrap();
+        assert_eq!(
+            patched_features,
+            serde_json::to_value(&rebuilt.features).unwrap()
+        );
 
         clear_font_cache();
     }
@@ -9952,7 +10297,7 @@ mod tests {
             .unwrap();
         assert!(!closure.iter().any(|glyph_name| glyph_name == "source"));
 
-        let mut subset_font = get_or_rebuild_font_cache().unwrap();
+        let mut subset_font = get_or_rebuild_font_cache_owned().unwrap();
         subset_font_using_cached_fea(&mut subset_font, &closure).unwrap();
         store_subset_font_cache(
             &canonical_subset_key_from_sorted_unique(&closure),
@@ -10026,7 +10371,7 @@ mod tests {
         {
             Some(cached) => cached,
             None => {
-                let mut rebuilt = get_or_rebuild_font_cache().unwrap();
+                let mut rebuilt = get_or_rebuild_font_cache_owned().unwrap();
                 subset_font_using_cached_fea(&mut rebuilt, &restore_closure).unwrap();
                 store_subset_font_cache(&prepared_subset_key, &rebuilt).unwrap();
                 rebuilt
@@ -10526,7 +10871,7 @@ mod tests {
         let canonical_json: serde_json::Value = serde_json::from_str(TEST_FONT_JSON).unwrap();
         let font_cache: babelfont::Font = serde_json::from_value(canonical_json.clone()).unwrap();
         set_canonical_json_cache(canonical_json.clone());
-        *FONT_CACHE.lock().unwrap() = Some(font_cache);
+        *FONT_CACHE.lock().unwrap() = Some(Arc::new(font_cache));
 
         let subset_json: serde_json::Value = serde_json::from_str(TEST_FONT_JSON).unwrap();
         let subset_font: babelfont::Font = serde_json::from_value(subset_json.clone()).unwrap();
@@ -10650,6 +10995,67 @@ mod tests {
         );
 
         clear_font_cache();
+    }
+
+    #[test]
+    fn patched_native_kerning_matches_a_full_font_rebuild() {
+        clear_font_cache();
+        let font_json: serde_json::Value = serde_json::from_str(TEST_FONT_JSON).unwrap();
+        store_font_from_value(font_json).unwrap();
+
+        {
+            let mut canonical_lock = CANONICAL_JSON_CACHE.lock().unwrap();
+            let canonical = canonical_lock.as_mut().unwrap();
+            for master in canonical["masters"].as_array_mut().unwrap() {
+                master["kerning"] = json!({ "A:@group_r": -40, "@group_l:A": 12 });
+            }
+            canonical["first_kern_groups"] = json!({ "group_l": ["A"] });
+            canonical["second_kern_groups"] = json!({ "group_r": ["A"] });
+            canonical["format_specific"] =
+                json!({ "com.schriftgestalt.Glyphs.kerningRTL": { "m": { "A": { "A": 5 } } } });
+        }
+        patch_native_font_kerning_from_canonical(true, true).unwrap();
+
+        let patched = serde_json::to_value(FONT_CACHE.lock().unwrap().as_ref().unwrap()).unwrap();
+        let canonical = CANONICAL_JSON_CACHE.lock().unwrap().clone().unwrap();
+        let rebuilt: babelfont::Font = deserialize_json(&canonical).unwrap();
+        assert_eq!(patched, serde_json::to_value(&rebuilt).unwrap());
+        clear_font_cache();
+    }
+
+    #[test]
+    fn patched_native_features_match_a_full_font_rebuild() {
+        let mut canonical: serde_json::Value = serde_json::from_str(TEST_FONT_JSON).unwrap();
+        canonical["features"] = json!({
+            "classes": { "vowels": { "code": "a e" } },
+            "prefixes": { "anonymous": { "code": "languagesystem DFLT dflt;" } },
+            "features": [["liga", { "code": "  sub a e by A;\n" }], ["kern", "pos A A -10;"]]
+        });
+        let features = native_features_from_json(&canonical["features"]).unwrap();
+
+        normalize_babelfont_feature_code(canonical.get_mut("features").unwrap());
+        let rebuilt: babelfont::Font = deserialize_json(&canonical).unwrap();
+        assert_eq!(
+            serde_json::to_value(&features).unwrap(),
+            serde_json::to_value(&rebuilt.features).unwrap()
+        );
+    }
+
+    #[test]
+    fn font_deserializes_identically_from_value_and_from_text() {
+        for source in [
+            TEST_FONT_JSON,
+            include_str!("../../webapp/examples/ManufacturedKink.babelfont"),
+        ] {
+            let value: serde_json::Value = serde_json::from_str(source).unwrap();
+            let from_value = deserialize_font_from_value(&value).unwrap();
+            let text = serde_json::to_string(&value).unwrap();
+            let from_text: babelfont::Font = serde_json::from_str(&text).unwrap();
+            assert_eq!(
+                serde_json::to_value(&from_value).unwrap(),
+                serde_json::to_value(&from_text).unwrap()
+            );
+        }
     }
 
     #[test]
@@ -10781,7 +11187,7 @@ mod tests {
         let canonical_json: serde_json::Value = serde_json::from_str(TEST_FONT_JSON).unwrap();
         let native_font: babelfont::Font = serde_json::from_value(canonical_json.clone()).unwrap();
         set_canonical_json_cache(canonical_json.clone());
-        *FONT_CACHE.lock().unwrap() = Some(native_font);
+        *FONT_CACHE.lock().unwrap() = Some(Arc::new(native_font));
 
         let subset_json = canonical_json.clone();
         *SUBSET_JSON_CACHE.lock().unwrap() = Some(("A".to_string(), 7, subset_json));
@@ -10822,7 +11228,7 @@ mod tests {
         let canonical_json: serde_json::Value = serde_json::from_str(TEST_FONT_JSON).unwrap();
         let native_font: babelfont::Font = serde_json::from_value(canonical_json.clone()).unwrap();
         set_canonical_json_cache(canonical_json.clone());
-        *FONT_CACHE.lock().unwrap() = Some(native_font);
+        *FONT_CACHE.lock().unwrap() = Some(Arc::new(native_font));
         *SUBSET_JSON_CACHE.lock().unwrap() = Some(("A".to_string(), 7, canonical_json.clone()));
         *FEATURE_FEA_STRING_CACHE.lock().unwrap() =
             Some(("feature kern { } kern;".to_string(), vec!["A".to_string()]));
@@ -10890,7 +11296,7 @@ mod tests {
             produce_varc_table: false,
             ..CompilationOptions::default()
         };
-        let bytes = compile_with_feature_debug_context(&font, &options, "fustat_ss03")
+        let bytes = compile_with_feature_debug_context(font, &options, "fustat_ss03")
             .expect("compile Fustat");
         let names: serde_json::Value = serde_json::from_str(
             &get_stylistic_set_names(&bytes).expect("read stylistic set names"),
@@ -10901,5 +11307,218 @@ mod tests {
             Some("Geometric a g"),
             "compiled Fustat is missing the ss03 UI name: {names}"
         );
+    }
+
+    /// Anchor order in drawn layers follows hash-map order, which differs
+    /// between runs, so compare with anchors sorted by name.
+    fn outlines_with_sorted_anchors(json: &str) -> serde_json::Value {
+        fn sort(value: &mut serde_json::Value) {
+            match value {
+                serde_json::Value::Object(map) => {
+                    if let Some(serde_json::Value::Array(anchors)) = map.get_mut("anchors") {
+                        anchors.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+                    }
+                    map.values_mut().for_each(sort);
+                }
+                serde_json::Value::Array(items) => items.iter_mut().for_each(sort),
+                _ => {}
+            }
+        }
+        let mut value: serde_json::Value = serde_json::from_str(json).expect("outline JSON");
+        sort(&mut value);
+        value
+    }
+
+    #[test]
+    fn generation_font_for_glyphs_draws_like_the_whole_font() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../webapp/examples/Fustat.glyphs"
+        );
+        let font = babelfont::load(path).expect("load Fustat.glyphs");
+        let names: Vec<String> = font.glyphs.iter().map(|g| g.name.to_string()).collect();
+        let mut whole = font.clone();
+        remove_background_layers_for_generation(&mut whole);
+        *FONT_CACHE.lock().unwrap() = Some(Arc::new(font));
+        FONT_CACHE_BUILT_AT_EPOCH
+            .store(FONT_CACHE_EPOCH.load(Ordering::Relaxed), Ordering::Relaxed);
+
+        for location in ["{}", r#"{"wght": 550}"#] {
+            for flatten in [false, true] {
+                glyph_outlines::clear_outline_cache();
+                let expected =
+                    glyph_outlines::get_glyphs_outlines(&whole, &names, location, flatten)
+                        .expect("outlines from the whole font");
+                glyph_outlines::clear_outline_cache();
+                let actual =
+                    get_glyphs_outlines(&serde_json::to_string(&names).unwrap(), location, flatten)
+                        .expect("outlines from the reduced font");
+                assert_eq!(
+                    outlines_with_sorted_anchors(&actual),
+                    outlines_with_sorted_anchors(&expected),
+                    "outlines differ at {location}, flatten {flatten}"
+                );
+            }
+            for name in &names {
+                glyph_outlines::clear_outline_cache();
+                let expected =
+                    glyph_outlines::interpolate_glyph_json_cached(&whole, name, location, false)
+                        .map_err(|e| e.as_string());
+                glyph_outlines::clear_outline_cache();
+                let actual =
+                    interpolate_glyph(name, location, false, "[]").map_err(|e| e.as_string());
+                match (actual, expected) {
+                    (Ok(actual), Ok(expected)) => assert_eq!(
+                        outlines_with_sorted_anchors(&actual),
+                        outlines_with_sorted_anchors(&expected),
+                        "interpolation of {name} differs at {location}"
+                    ),
+                    (actual, expected) => assert_eq!(actual, expected, "{name} at {location}"),
+                }
+            }
+        }
+        *FONT_CACHE.lock().unwrap() = None;
+        glyph_outlines::clear_outline_cache();
+    }
+
+    #[test]
+    fn path_free_font_filters_to_the_same_features_and_glyph_names() {
+        for file in [
+            "Fustat.glyphs",
+            "FeatureVariations.glyphs",
+            "NestedComponents.glyphs",
+            "ReemKufi.glyphs",
+            "G3RTLKerning.glyphs",
+            "InterpolatableTest.glyphs",
+            "YanoneKaffeesatz.glyphs",
+            "intermediate_layer_on_a.glyphs",
+            "metricskeys.glyphs",
+            "bbox.glyphs",
+        ] {
+            let path = format!("{}/../webapp/examples/{file}", env!("CARGO_MANIFEST_DIR"));
+            let font = babelfont::load(&path).expect("load example font");
+            *FONT_CACHE.lock().unwrap() = Some(Arc::new(font.clone()));
+            FONT_CACHE_BUILT_AT_EPOCH
+                .store(FONT_CACHE_EPOCH.load(Ordering::Relaxed), Ordering::Relaxed);
+            for produce_varc_table in [false, true] {
+                let options = CompilationOptions {
+                    produce_varc_table,
+                    ..CompilationOptions::default()
+                };
+                let whole = apply_filter_pipeline_owned(font.clone(), &options, true)
+                    .map_err(|e| e.as_string());
+                let path_free = apply_filter_pipeline_inner(
+                    path_free_cached_font().expect("path-free font"),
+                    &options,
+                    true,
+                    true,
+                )
+                .map_err(|e| e.as_string());
+                let summary = |font: &babelfont::Font| {
+                    (
+                        font.features.to_fea(),
+                        font.glyphs
+                            .iter()
+                            .map(|g| g.name.to_string())
+                            .collect::<Vec<_>>(),
+                        font.source.clone(),
+                    )
+                };
+                assert_eq!(
+                    path_free.as_ref().map(summary),
+                    whole.as_ref().map(summary),
+                    "{file}, produce_varc_table {produce_varc_table}"
+                );
+            }
+            // The cached font is left as it was.
+            let cached = FONT_CACHE
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|f| serde_json::to_value(&**f).unwrap());
+            assert!(
+                cached == Some(serde_json::to_value(&font).unwrap()),
+                "{file}: path-free copy changed the cache"
+            );
+        }
+        *FONT_CACHE.lock().unwrap() = None;
+    }
+
+    #[test]
+    fn subset_from_a_reduced_copy_matches_subset_from_the_whole_font() {
+        for file in [
+            "Fustat.glyphs",
+            "FeatureVariations.glyphs",
+            "NestedComponents.glyphs",
+            "ReemKufi.glyphs",
+            "G3RTLKerning.glyphs",
+            "YanoneKaffeesatz.glyphs",
+        ] {
+            let path = format!("{}/../webapp/examples/{file}", env!("CARGO_MANIFEST_DIR"));
+            let font = babelfont::load(&path).expect("load example font");
+            *FONT_CACHE.lock().unwrap() = Some(Arc::new(font.clone()));
+            FONT_CACHE_BUILT_AT_EPOCH
+                .store(FONT_CACHE_EPOCH.load(Ordering::Relaxed), Ordering::Relaxed);
+            let names: Vec<String> = font.glyphs.iter().map(|g| g.name.to_string()).collect();
+            // A few closures: composites with their bases left out, every
+            // fifth glyph, and the first dozen.
+            let composites: Vec<String> = font
+                .glyphs
+                .iter()
+                .filter(|g| {
+                    g.layers.iter().any(|l| {
+                        l.shapes
+                            .iter()
+                            .any(|s| matches!(s, babelfont::Shape::Component(_)))
+                    })
+                })
+                .take(20)
+                .map(|g| g.name.to_string())
+                .collect();
+            let every_fifth: Vec<String> = names.iter().step_by(5).cloned().collect();
+            let first: Vec<String> = names.iter().take(12).cloned().collect();
+            for closure in [composites, every_fifth, first] {
+                let mut closure = closure;
+                closure.sort();
+                closure.dedup();
+                if closure.is_empty() {
+                    continue; // An empty closure means the whole font.
+                }
+                let mut whole = font.clone();
+                let expected = subset_font_using_cached_fea(&mut whole, &closure)
+                    .map(|_| serde_json::to_value(&whole).unwrap())
+                    .map_err(|e| e.as_string());
+                let actual = build_subset_font_from_closure_subset(&closure)
+                    .map(|f| serde_json::to_value(&f).unwrap())
+                    .map_err(|e| e.as_string());
+                assert!(
+                    actual == expected,
+                    "{file}: subset of {} glyphs differs",
+                    closure.len()
+                );
+            }
+        }
+        *FONT_CACHE.lock().unwrap() = None;
+    }
+
+    #[test]
+    fn compiles_are_byte_identical_and_checksums_match() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../webapp/examples/Fustat.glyphs"
+        );
+        let font = babelfont::load(path).expect("load Fustat.glyphs");
+        let options = CompilationOptions {
+            produce_varc_table: false,
+            ..CompilationOptions::default()
+        };
+        let first =
+            compile_with_feature_debug_context(font.clone(), &options, "first").expect("compile");
+        // fontc stamps the compile time; a later second must not change bytes.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let second = compile_with_feature_debug_context(font, &options, "second").expect("compile");
+        assert!(first == second, "compiles differ");
+        // A valid font sums to the magic number with its checkSumAdjustment.
+        assert_eq!(sfnt_checksum(&first), 0xB1B0_AFBA);
     }
 }

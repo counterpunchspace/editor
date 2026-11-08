@@ -40,7 +40,7 @@ version = "0.3"
 features = ["console"]
 
 [profile.release]
-opt-level = "z"
+opt-level = 3
 lto = true
 
 [dev-dependencies]

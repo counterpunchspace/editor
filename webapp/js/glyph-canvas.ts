@@ -468,13 +468,8 @@ class GlyphCanvas {
 
     glyphSelectionSequence: number = 0;
 
-    textChangeDebounceTimer: any = null; // NodeJS.Timeout is not available in browser
-    // Adaptive debounce timing for progressive typing compilation
-    textChangeLastKeystrokeTime: number = 0;
-    textChangeBurstThreshold: number = 200; // ms - keystrokes within this window considered "burst typing"
-    textChangeFastDelay: number = 150; // ms - delay during fast typing bursts
-    textChangeSlowDelay: number = 150; // ms - delay during slow typing
     textChangeLastSubsetKey: string = '';
+    textChangeCompileGeneration: number = 0;
     textInputFullCompileTimer: any = null; // Deferred full compilation after typing stops
 
     resizeObserver: ResizeObserver | null = null;
@@ -11636,67 +11631,65 @@ class GlyphCanvas {
     onTextChange(): void {
         // shapeText() already updated glyphNameBuffer from current editing-font shaping.
 
-        // Calculate adaptive debounce delay based on typing speed
-        const now = Date.now();
-        const timeSinceLastKeystroke = now - this.textChangeLastKeystrokeTime;
-        this.textChangeLastKeystrokeTime = now;
-
-        // Determine if user is typing fast (burst) or slow
-        // Fast typing = keystrokes within burst threshold
-        const isBurstTyping =
-            timeSinceLastKeystroke < this.textChangeBurstThreshold;
-        const debounceDelay = isBurstTyping
-            ? this.textChangeFastDelay
-            : this.textChangeSlowDelay;
-
-        // Debounce editing font recompilation with subset
-        if (this.textChangeDebounceTimer) {
-            clearTimeout(this.textChangeDebounceTimer);
-        }
-
         // Cancel any pending deferred full compile — typing is still active
         if (this.textInputFullCompileTimer) {
             clearTimeout(this.textInputFullCompileTimer);
             this.textInputFullCompileTimer = null;
         }
 
-        this.textChangeDebounceTimer = setTimeout(() => {
-            if (fontManager && fontManager.currentFont) {
-                const textBuffer = this.textRunEditor!.textBuffer;
-                if (
-                    !fontManager.needsEditingCompileForText(textBuffer) &&
-                    Array.isArray(this.textRunEditor!.shapedGlyphs) &&
-                    this.textRunEditor!.shapedGlyphs.length > 0
-                ) {
-                    return;
-                }
-
-                const subsetGlyphs =
-                    fontManager.deriveSubsetGlyphsFromText(textBuffer);
-
-                // Mark as text-input so the pipeline skips full JSON transfer
-                // and skips features/kerning for faster compilation
-                fontManager.setEditingCompileContext('text-input', null);
-
-                fontManager
-                    .compileEditingFont(
-                        textBuffer,
-                        [],
-                        subsetGlyphs.length > 0 ? subsetGlyphs : undefined
-                    )
-                    .then(() => {
-                        // Schedule a deferred full compile with features/kerning
-                        // after typing settles, for correct OT rendering
-                        this.scheduleTextInputFullCompile();
-                    })
-                    .catch((error: any) => {
-                        console.error(
-                            'Failed to recompile editing font:',
-                            error
-                        );
-                    });
+        // Compile as soon as every committed change has reached the worker:
+        // an edit that triggers a text change (adding or deleting glyphs)
+        // forwards its packets one after another, and compiling between them
+        // would see a half-applied font. With nothing pending this waits for
+        // no more than a microtask. Only the newest text change compiles.
+        const generation = ++this.textChangeCompileGeneration;
+        const compileForText = () => {
+            if (generation !== this.textChangeCompileGeneration) {
+                return;
             }
-        }, debounceDelay);
+            this.compileEditingFontForText();
+        };
+        void getCommittedChangeRefreshPromise().then(
+            compileForText,
+            compileForText
+        );
+    }
+
+    private compileEditingFontForText(): void {
+        if (!fontManager || !fontManager.currentFont) {
+            return;
+        }
+        const textBuffer = this.textRunEditor!.textBuffer;
+        if (
+            !fontManager.needsEditingCompileForText(textBuffer) &&
+            Array.isArray(this.textRunEditor!.shapedGlyphs) &&
+            this.textRunEditor!.shapedGlyphs.length > 0
+        ) {
+            return;
+        }
+
+        const subsetGlyphs = fontManager.deriveSubsetGlyphsFromText(textBuffer);
+
+        // Mark as text-input so the pipeline skips the full JSON transfer and
+        // compiles the updated subset from the cached worker font.
+        fontManager.setEditingCompileContext('text-input', null);
+
+        // compileEditingFont runs one compile at a time and, while one is
+        // running, only the newest request after it, so fast typing never
+        // queues a backlog.
+        fontManager
+            .compileEditingFont(
+                textBuffer,
+                [],
+                subsetGlyphs.length > 0 ? subsetGlyphs : undefined
+            )
+            .then(() => {
+                // Schedule a deferred full compile after typing settles
+                this.scheduleTextInputFullCompile();
+            })
+            .catch((error: any) => {
+                console.error('Failed to recompile editing font:', error);
+            });
     }
 
     /**

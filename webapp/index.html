@@ -57,7 +57,16 @@
         <script>
             // Shared helper functions to detect development/production mode
             // This is the single source of truth - settings.ts references these
+            // Hot model getters call this constantly. The mode is fixed by
+            // the URL the page loaded with, so compute it once.
+            let isDevelopmentCache = null;
             window.isDevelopment = function () {
+                if (isDevelopmentCache === null) {
+                    isDevelopmentCache = computeIsDevelopment();
+                }
+                return isDevelopmentCache;
+            };
+            function computeIsDevelopment() {
                 // URL parameter override for testing production mode locally
                 const urlParams = new URLSearchParams(window.location.search);
                 if (urlParams.has('production')) {
@@ -75,7 +84,7 @@
                     hostname === '127.0.0.1' ||
                     (!isNaN(portNum) && portNum >= 8000); // worktree ports
                 return isDev;
-            };
+            }
             window.isProduction = function () {
                 return !window.isDevelopment();
             };
@@ -192,7 +201,7 @@
             href="css/file-dialog.css"
             id="file-dialog-css"
         />
-        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/pyodide/v314.0.5/full/pyodide.js"></script>
+        <script src="pyodide/v<%= htmlWebpackPlugin.options.pyodideVersion %>/pyodide.js"></script>
         <script>
             window.__pyodideLoadPromise = new Promise(function (
                 resolve,
@@ -204,7 +213,18 @@
                     }
                     window.__pyodideLoadStarted = true;
                     performance.mark('cp:python.loadPyodide.requested');
-                    loadPyodide()
+                    // Core files are same-origin; packages resolve from
+                    // the CDN copy of the same Pyodide release.
+                    loadPyodide({
+                        indexURL: new URL(
+                            'pyodide/v<%= htmlWebpackPlugin.options.pyodideVersion %>/',
+                            document.baseURI
+                        ).href,
+                        packageBaseUrl: new URL(
+                            '<%= htmlWebpackPlugin.options.cdnBase %>/pyodide/v<%= htmlWebpackPlugin.options.pyodideVersion %>/full/',
+                            document.baseURI
+                        ).href
+                    })
                         .then(function (pyodide) {
                             window.pyodide = pyodide;
                             performance.mark('cp:python.pyodideReady');

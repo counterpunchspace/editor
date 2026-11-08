@@ -75,7 +75,12 @@ import {
     isStartupStateReady,
     resetStartupStateReady
 } from './state-restore';
-import { decodeFeatures, formatUrl, readUrlState } from './url-state';
+import {
+    decodeFeatures,
+    formatUrl,
+    readUrlState,
+    updateUrlState
+} from './url-state';
 import {
     catalogEntriesForDepsParse,
     closeComponentNamesFromFontJson,
@@ -3968,10 +3973,21 @@ class FontManager {
             startupOpenSessionActive &&
             (fontCompilation.hasWorkerCacheDocument() ||
                 fontCompilation.hasPendingWorkerDocumentSync());
+        // Typing changes the shaped subset, not the font: the worker compiles
+        // from its own document, so serializing (and validating) the whole
+        // model again on every keystroke would only repeat work. The typing
+        // path sets only lastChangeSource; an edit records its own context
+        // for the revision, and then the model is synced as usual.
+        const canSkipCanonicalJsonSyncForTextInput =
+            this.lastChangeSource === 'text-input' &&
+            !incrementalChangeSource &&
+            !wasJsonStale &&
+            fontCompilation.hasWorkerCacheDocument();
         const canSkipCanonicalJsonSyncForRequest =
             hasExplicitWorkerFreshnessAtRequest() ||
             canKeepStaleJsonDuringActiveMouseDrag ||
-            canSkipCanonicalJsonSyncForStartupCompile;
+            canSkipCanonicalJsonSyncForStartupCompile ||
+            canSkipCanonicalJsonSyncForTextInput;
 
         if (
             (!isIncrementalEditingCompile || wasJsonStale) &&
@@ -4169,7 +4185,8 @@ class FontManager {
                 const jsonToSend = this.currentFont.babelfontJson;
                 const validatedJson =
                     hasExplicitWorkerFreshnessAtRequest() ||
-                    canSkipCanonicalJsonSyncForStartupCompile
+                    canSkipCanonicalJsonSyncForStartupCompile ||
+                    canSkipCanonicalJsonSyncForTextInput
                         ? jsonToSend
                         : this.validateBabelfontJsonForRust(
                               jsonToSend,
@@ -5836,18 +5853,6 @@ class FontManager {
                     ? workerCacheStatus.fontCacheEpoch
                     : this.lastWorkerFontCacheEpoch;
 
-                // Layout closure walks ccmp multiple-substitutions only from
-                // the worker's feature list. The incremental core packet can
-                // leave that list empty while the bridge already has the
-                // rule, so a typed ccmp shell stays the unfilled glyph.
-                // Rebuild the worker from the bridge before compile.
-                if (nonGlyphChangeHints.includes('feature-code')) {
-                    return this.recoverWorkerCacheFromAuthoritativeState(
-                        'feature-code commit',
-                        { quiet: true }
-                    );
-                }
-
                 return true;
             } catch (error) {
                 this.invalidateWorkerCacheMirror();
@@ -7386,6 +7391,15 @@ async function fontCompilationReady(): Promise<boolean> {
     return true;
 }
 
+/** Drop the previous font's edit-mode cursor from the URL and state. */
+function clearEditCursorForReplacedFont(): void {
+    updateUrlState({ mode: null, cursor: null });
+    if (window.stateManager) {
+        window.stateManager.editor_mode = 'text';
+        window.stateManager.editor_cursor_position = 0;
+    }
+}
+
 function createOpenSessionId(): string {
     return `open-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -7603,6 +7617,13 @@ window.addEventListener('fontLoaded', async (event: Event) => {
         // Each open must re-run URL/state restore; otherwise a concurrent setFont
         // can keep stomping axes to the font default after the first session.
         resetStartupStateReady();
+
+        // A replaced font opens in text mode. The URL and state manager still
+        // hold the previous font's edit-mode cursor, which the restore above
+        // must not apply to a different font.
+        if (fontManager?.currentFont) {
+            clearEditCursorForReplacedFont();
+        }
 
         activeOpenSessionDetail = {
             path: detail.path,

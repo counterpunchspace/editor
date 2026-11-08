@@ -2,7 +2,10 @@ const {
     applyGeneratorBlocks,
     managedInputs
 } = require('../js/language-packs/managed-features.ts');
-const { ccmpShellNames } = require('../js/language-packs/ccmp-shells.ts');
+const {
+    ccmpShellNames,
+    isCcmpShellGlyph
+} = require('../js/language-packs/ccmp-shells.ts');
 const {
     planGlyphAdditions,
     planRebuild,
@@ -609,6 +612,32 @@ describe('language packs', () => {
             'font-info.language-packs'
         );
         expect(resolvePluginSettingTarget('add-glyphs')).toBe('add-glyphs');
+    });
+
+    test('the current font’s ccmp shells follow edits to the managed block', () => {
+        const ccmp = {
+            automatic: true,
+            code: 'sub aDiaeresis-lat by a-lat diaeresiscomb;',
+            format_specific: {
+                'com.counterpunch.generator': {
+                    generator: 'space.counterpunch.ccmp',
+                    block: 'decomposition'
+                }
+            }
+        };
+        const fontData = { features: { features: [['ccmp', ccmp]] } };
+        const previousModel = window.currentFontModel;
+        window.currentFontModel = { toJSON: () => fontData };
+        try {
+            expect(isCcmpShellGlyph('aDiaeresis-lat')).toBe(true);
+            ccmp.code = 'sub oDiaeresis-lat by o-lat diaeresiscomb;';
+            expect(isCcmpShellGlyph('aDiaeresis-lat')).toBe(false);
+            expect(isCcmpShellGlyph('oDiaeresis-lat')).toBe(true);
+            ccmp.automatic = false;
+            expect(isCcmpShellGlyph('oDiaeresis-lat')).toBe(false);
+        } finally {
+            window.currentFontModel = previousModel;
+        }
     });
 
     test('ccmp shells are the glyphs a managed decomposition replaces', () => {

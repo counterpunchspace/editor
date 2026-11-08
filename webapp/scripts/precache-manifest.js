@@ -21,6 +21,8 @@ const EXCLUDED_ASSET_PATTERNS = [
     /^css\/tokens\.json$/,
     /(^|\/)\.DS_Store$/,
     /^assets\/screenshots\//,
+    // Version-pinned; precached into the cache that survives app updates.
+    /^pyodide\//,
     /(^|\/)README\.md$/,
     // Example sources are large and only opened on demand; the runtime
     // handler caches the ones a user opens.
@@ -28,15 +30,15 @@ const EXCLUDED_ASSET_PATTERNS = [
 ];
 
 const CDN_URL_RE = /https:\/\/cdn\.jsdelivr\.net\/[^"'\s<>)]+/g;
-const PYODIDE_SCRIPT_RE =
-    /^(https:\/\/cdn\.jsdelivr\.net\/pyodide\/[^/]+\/full\/)pyodide\.js$/;
-// Fetched by pyodide.js itself from its indexURL during loadPyodide().
-const PYODIDE_CORE_FILES = [
-    'pyodide.asm.mjs',
-    'pyodide.asm.wasm',
-    'python_stdlib.zip',
-    'pyodide-lock.json'
-];
+const PINNED_ASSET_RE = /^pyodide\/v[^/]+\/[^/]+$/;
+
+/** Same-origin files under a version-pinned path (the Pyodide core). */
+function pinnedUrlsFromAssets(assetNames) {
+    return assetNames
+        .filter((name) => PINNED_ASSET_RE.test(name) && !/\.map$/.test(name))
+        .map((name) => `./${name}`)
+        .sort();
+}
 
 function isPrecachedAsset(name) {
     return !EXCLUDED_ASSET_PATTERNS.some((pattern) => pattern.test(name));
@@ -51,16 +53,7 @@ function precacheUrlsFromAssets(assetNames) {
 }
 
 function cdnUrlsFromHtml(html) {
-    const urls = new Set(html.match(CDN_URL_RE) || []);
-    for (const url of [...urls]) {
-        const pyodide = url.match(PYODIDE_SCRIPT_RE);
-        if (pyodide) {
-            for (const file of PYODIDE_CORE_FILES) {
-                urls.add(pyodide[1] + file);
-            }
-        }
-    }
-    return [...urls].sort();
+    return [...new Set(html.match(CDN_URL_RE) || [])].sort();
 }
 
 /**
@@ -114,6 +107,7 @@ module.exports = {
     isPrecachedAsset,
     precacheUrlsFromAssets,
     cdnUrlsFromHtml,
+    pinnedUrlsFromAssets,
     computeBuildId,
     injectManifest
 };

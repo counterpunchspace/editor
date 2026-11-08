@@ -4078,7 +4078,7 @@ describe('FontManager boundary-crossing budget', () => {
         );
     });
 
-    test('forwardWorkerYjsUpdate reseeds the worker after a feature-code commit', async () => {
+    test('forwardWorkerYjsUpdate keeps a feature-code commit incremental', async () => {
         const originalPatchSyncEngine = window.patchSyncEngine;
         const documentSet = [
             { documentId: 'font-core', bytes: new Uint8Array([7, 7]) }
@@ -4097,8 +4097,9 @@ describe('FontManager boundary-crossing budget', () => {
             })
         ).resolves.toBe(true);
 
-        expect(seedWorkerDocumentSetSpy).toHaveBeenCalledWith(documentSet);
-        expect(fontCompilation.hasWorkerCacheDocument()).toBe(true);
+        // APP.md: steady-state edits never fall back to a full-document seed.
+        expect(seedWorkerDocumentSetSpy).not.toHaveBeenCalled();
+        expect(window.patchSyncEngine.encodeDocumentSet).not.toHaveBeenCalled();
         seedWorkerDocumentSetSpy.mockRestore();
         window.patchSyncEngine = originalPatchSyncEngine;
     });

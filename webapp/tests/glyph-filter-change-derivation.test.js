@@ -74,6 +74,25 @@ describe('deriveGlyphFilterChangesFromCommittedEntry', () => {
         expect(result.changes).toEqual([]);
     });
 
+    test('master kerning edits do not recheck outline compatibility', () => {
+        const result = deriveGlyphFilterChangesFromCommittedEntry({
+            path: 'masters.0.kerning',
+            op: 'replace',
+            oldValue: {},
+            newValue: { 'A:V': -40 }
+        });
+        expect(result.mastersChanged).toBe(false);
+        expect(result.changes).toEqual([]);
+        expect(
+            deriveGlyphFilterChangesFromCommittedEntry({
+                path: 'masters.0.location',
+                op: 'replace',
+                oldValue: {},
+                newValue: { wght: 700 }
+            }).mastersChanged
+        ).toBe(true);
+    });
+
     test('glyph.created', () => {
         const result = deriveGlyphFilterChangesFromCommittedEntry({
             path: 'glyphs.A',

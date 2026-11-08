@@ -7,6 +7,27 @@ const webpack = require('webpack');
 const { execSync } = require('child_process');
 const precacheManifest = require('./scripts/precache-manifest');
 
+// Pyodide's core ships from our own origin under a version-pinned path;
+// packages still load from the CDN through `packageBaseUrl`.
+const readJsonFile = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
+const PYODIDE_PACKAGE_DIR = path.dirname(
+    require.resolve('pyodide/package.json')
+);
+const PYODIDE_VERSION = readJsonFile(
+    path.join(PYODIDE_PACKAGE_DIR, 'package.json')
+).version;
+const PLUGIN_CONTRACT_PYODIDE_VERSION = readJsonFile(
+    path.join(__dirname, '../plugin-contracts/contracts.json')
+).pyodideVersion;
+if (PYODIDE_VERSION !== PLUGIN_CONTRACT_PYODIDE_VERSION) {
+    throw new Error(
+        `npm pyodide ${PYODIDE_VERSION} does not match plugin-contracts pyodideVersion ${PLUGIN_CONTRACT_PYODIDE_VERSION}`
+    );
+}
+const PYODIDE_LOCK = readJsonFile(
+    path.join(PYODIDE_PACKAGE_DIR, 'pyodide-lock.json')
+);
+
 class GenerateDocsManifestPlugin {
     apply(compiler) {
         const generate = () => {
@@ -91,9 +112,18 @@ class PrecacheManifestPlugin {
                                         ),
                                         precacheManifest.SERVICE_WORKER_ASSET
                                     ]),
-                                cdnUrls: precacheManifest.cdnUrlsFromHtml(
-                                    shell.source.source().toString()
-                                ),
+                                cdnUrls: [
+                                    ...precacheManifest.cdnUrlsFromHtml(
+                                        shell.source.source().toString()
+                                    ),
+                                    ...precacheManifest.pinnedUrlsFromAssets(
+                                        compilation
+                                            .getAssets()
+                                            .map((asset) => asset.name)
+                                    ),
+                                    // Loaded on every boot.
+                                    `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/${PYODIDE_LOCK.packages.micropip.file_name}`
+                                ],
                                 buildId: precacheManifest.computeBuildId(
                                     precacheAssets.map((asset) => ({
                                         name: asset.name,
@@ -254,7 +284,8 @@ module.exports = {
             // browser binary cannot reach the public CDN directly.
             cdnBase: process.argv.includes('serve')
                 ? '/cdn-jsdelivr'
-                : 'https://cdn.jsdelivr.net'
+                : 'https://cdn.jsdelivr.net',
+            pyodideVersion: PYODIDE_VERSION
         }),
         new HtmlWebpackPlugin({
             template: './launcher.html',
@@ -279,6 +310,23 @@ module.exports = {
                 { from: 'examples', to: 'examples' },
                 { from: 'py', to: 'py' },
                 { from: 'wheels', to: 'wheels' },
+                {
+                    from: PYODIDE_PACKAGE_DIR,
+                    to: `pyodide/v${PYODIDE_VERSION}`,
+                    toType: 'dir',
+                    // Ship upstream bytes; never re-minify Pyodide.
+                    info: { minimized: true },
+                    globOptions: {
+                        ignore: [
+                            '**/*.map',
+                            '**/*.d.ts',
+                            '**/*.html',
+                            '**/*.md',
+                            '**/package.json',
+                            '**/pyodide.mjs'
+                        ]
+                    }
+                },
                 { from: 'data', to: 'data' },
                 { from: '_headers', to: '_headers', toType: 'file' },
                 {

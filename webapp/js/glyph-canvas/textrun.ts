@@ -97,6 +97,8 @@ export class TextRunEditor {
     textBuffer: string;
     shapedGlyphs: ShapedGlyph[];
     hb: any;
+    /** Settles once HarfBuzz has loaded (or failed to). */
+    private harfBuzzReady: Promise<void> = Promise.resolve();
     hbFont: any;
     hbFace: any;
     hbBlob: any;
@@ -232,7 +234,7 @@ export class TextRunEditor {
 
     init() {
         // Load HarfBuzz
-        this.loadHarfBuzz();
+        this.harfBuzzReady = this.loadHarfBuzz();
     }
 
     async loadHarfBuzz() {
@@ -262,8 +264,15 @@ export class TextRunEditor {
             this.hb = window.hbjs(hbModule);
             console.log('HarfBuzz initialized successfully');
 
-            // If we have a font loaded, shape it
+            // Fonts that arrived while HarfBuzz was loading kept only their
+            // bytes; build their HarfBuzz objects now, then shape.
+            if (this.shapingFontBlob && !this.shapingHbFont) {
+                this.setShapingFontBlob(this.shapingFontBlob);
+            }
             if (this.fontBlob) {
+                if (!this.hbFont) {
+                    this.swapFontBlob(this.fontBlob);
+                }
                 this.shapeText();
             }
         } catch (error) {
@@ -2186,12 +2195,18 @@ export class TextRunEditor {
             isInitialLoad
         );
 
+        // A compiled font can arrive before HarfBuzz has finished loading.
+        await this.harfBuzzReady;
+
         // Clean up old HarfBuzz objects before creating new ones to prevent memory leak
         this.destroyHarfbuzz();
         this.invalidateExplicitGlyphOutlineCache();
 
         // Store font blob
         this.fontBlob = fontData;
+        if (!this.hb) {
+            return;
+        }
 
         this.hbBlob = this.hb.createBlob(fontData);
         this.hbFace = this.hb.createFace(this.hbBlob, 0); // 0 = first face
@@ -2216,6 +2231,9 @@ export class TextRunEditor {
     setShapingFontBlob(fontData: Uint8Array): void {
         this.destroyShapingHarfbuzz();
         this.shapingFontBlob = fontData;
+        if (!this.hb) {
+            return;
+        }
         this.shapingHbBlob = this.hb.createBlob(fontData);
         this.shapingHbFace = this.hb.createFace(this.shapingHbBlob, 0);
         this.shapingHbFont = this.hb.createFont(this.shapingHbFace);
@@ -2241,6 +2259,10 @@ export class TextRunEditor {
         this.destroyHarfbuzz();
         this.invalidateExplicitGlyphOutlineCache();
         this.fontBlob = fontData;
+        // Before HarfBuzz loads, keep the bytes; loadHarfBuzz reshapes them.
+        if (!this.hb) {
+            return;
+        }
         this.hbBlob = this.hb.createBlob(fontData);
         this.hbFace = this.hb.createFace(this.hbBlob, 0);
         this.hbFont = this.hb.createFont(this.hbFace);

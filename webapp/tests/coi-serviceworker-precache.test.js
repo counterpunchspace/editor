@@ -3,6 +3,7 @@ const path = require('path');
 const {
     precacheUrlsFromAssets,
     cdnUrlsFromHtml,
+    pinnedUrlsFromAssets,
     computeBuildId,
     injectManifest
 } = require('../scripts/precache-manifest');
@@ -51,7 +52,7 @@ describe('precache manifest', () => {
         ]);
     });
 
-    test('collects every CDN URL from index.html plus the Pyodide core files', () => {
+    test('collects every CDN URL from index.html', () => {
         const html = fs
             .readFileSync(INDEX_PATH, 'utf-8')
             .replace(
@@ -69,20 +70,31 @@ describe('precache manifest', () => {
         for (const src of scriptSrcs) {
             expect(urls).toContain(src);
         }
-        const pyodideScript = scriptSrcs.find((src) =>
-            /\/pyodide\/[^/]+\/full\/pyodide\.js$/.test(src)
-        );
-        expect(pyodideScript).toBeDefined();
-        const base = pyodideScript.replace(/pyodide\.js$/, '');
-        expect(urls).toEqual(
-            expect.arrayContaining([
-                base + 'pyodide.asm.mjs',
-                base + 'pyodide.asm.wasm',
-                base + 'python_stdlib.zip',
-                base + 'pyodide-lock.json'
-            ])
-        );
         expect(new Set(urls).size).toBe(urls.length);
+    });
+
+    test('pins the self-hosted Pyodide core outside the per-build app cache', () => {
+        const assets = [
+            'index.html',
+            'js/bootstrap.js',
+            'pyodide/v314.0.5/pyodide.js',
+            'pyodide/v314.0.5/pyodide.asm.mjs',
+            'pyodide/v314.0.5/pyodide.asm.wasm',
+            'pyodide/v314.0.5/python_stdlib.zip',
+            'pyodide/v314.0.5/pyodide-lock.json',
+            'pyodide/v314.0.5/pyodide.js.map'
+        ];
+        expect(pinnedUrlsFromAssets(assets)).toEqual([
+            './pyodide/v314.0.5/pyodide-lock.json',
+            './pyodide/v314.0.5/pyodide.asm.mjs',
+            './pyodide/v314.0.5/pyodide.asm.wasm',
+            './pyodide/v314.0.5/pyodide.js',
+            './pyodide/v314.0.5/python_stdlib.zip'
+        ]);
+        expect(precacheUrlsFromAssets(assets)).toEqual([
+            './',
+            './js/bootstrap.js'
+        ]);
     });
 
     test('build id follows file contents but ignores the worker itself', () => {
