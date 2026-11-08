@@ -136,8 +136,10 @@ const GROUPS = {
             'tests/basic-interaction.spec.ts',
             'tests/open-path-startup.spec.ts',
             'tests/multiline-text.spec.ts',
+            'tests/typing-pending-glyph.spec.ts',
             'tests/cloud-wal-idb.spec.ts',
-            'tests/compilation-lane-benchmark.spec.ts'
+            'tests/compilation-lane-benchmark.spec.ts',
+            'tests/perf-pipeline-benchmark.spec.ts'
         ],
         'path-editing': [
             'tests/open-close-path.spec.ts',
