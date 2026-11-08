@@ -56,7 +56,7 @@ and [Cloud collaboration architecture](strategy/CLOUD_COLLABORATION_ARCHITECTURE
 | `.designspace` | Yes | Yes | The document and the UFOs it references, saved file by file. Rules, axis mappings, STAT labels and each UFO's own info, lib, features and extra layers are kept; a source with a `layer` is saved into that layer. |
 | `.vfj` | Yes | No | FontLab source import. |
 | `.sfd` | Yes | No | FontForge source import. |
-| `.ttf` | No | Export only | Use binary-font export; it is not an editable source import format. |
+| `.ttf` | Yes | No | TrueType binary fonts (not CFF-based OpenType) open as editable sources; Save leads to Save As. Binary export writes `.ttf`. |
 
 ## Development
 

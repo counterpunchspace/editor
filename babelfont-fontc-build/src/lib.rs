@@ -5441,9 +5441,20 @@ fn js_open_font_contents_to_str(contents: &JsValue) -> Result<String, JsValue> {
     Ok(bytes.into_iter().map(char::from).collect())
 }
 
+/// The raw bytes of an `open_font_file` payload, for binary formats.
+fn js_open_font_contents_to_bytes(contents: &JsValue) -> Result<Vec<u8>, JsValue> {
+    if let Some(text) = contents.as_string() {
+        return Ok(text.chars().map(|c| c as u32 as u8).collect());
+    }
+    let array = contents.dyn_ref::<js_sys::Uint8Array>().ok_or_else(|| {
+        JsValue::from_str("open_font_file contents must be a string or Uint8Array")
+    })?;
+    Ok(array.to_vec())
+}
+
 /// Open a font file from various formats
 ///
-/// Supports .glyphs, .glyphspackage, .ufo, .designspace, .vfj, and .babelfont formats.
+/// Supports .glyphs, .glyphspackage, .ufo, .designspace, .vfj, .sfd, .ttf and .babelfont formats.
 /// Loads the font, stores it in cache, and returns the babelfont JSON representation.
 ///
 /// # Arguments
@@ -5454,8 +5465,7 @@ fn js_open_font_contents_to_str(contents: &JsValue) -> Result<String, JsValue> {
 /// * `String` - Babelfont JSON representation
 #[wasm_bindgen]
 pub fn open_font_file(filename: &str, contents: JsValue) -> Result<String, JsValue> {
-    let contents = js_open_font_contents_to_str(&contents)?;
-    let contents = contents.as_str();
+    let raw_contents = contents;
     // FULLJSON_NECESSARY (A1/N1): Parses .glyphs/.ufo/etc. to babelfont::Font,
     // then serializes to JSON string for JS — the one unavoidable full JSON crossing.
     web_sys::console::log_1(&format!("[Rust] Opening font file: {}", filename).into());
@@ -5467,8 +5477,22 @@ pub fn open_font_file(filename: &str, contents: JsValue) -> Result<String, JsVal
         .unwrap_or("")
         .to_ascii_lowercase();
 
+    // Binary formats read the bytes; the others read text.
+    let text_contents = if extension == "ttf" {
+        String::new()
+    } else {
+        js_open_font_contents_to_str(&raw_contents)?
+    };
+    let contents = text_contents.as_str();
+
     // Parse the font based on file extension
     let font: babelfont::Font = match extension.as_str() {
+        "ttf" => {
+            let bytes = js_open_font_contents_to_bytes(&raw_contents)?;
+            babelfont::convertors::ttf::load_bytes(&bytes)
+                .map_err(|e| JsValue::from_str(&format!("Failed to load .ttf file: {}", e)))?
+        }
+
         "babelfont" => {
             // For .babelfont, just parse the JSON directly
             serde_json::from_str(contents).map_err(|e| {
@@ -5533,7 +5557,7 @@ pub fn open_font_file(filename: &str, contents: JsValue) -> Result<String, JsVal
 
         _ => {
             return Err(JsValue::from_str(&format!(
-                "Unsupported file format: .{}. Supported formats: .babelfont, .glyphs, .glyphspackage, .vfj, .sfd, .ufo, .designspace",
+                "Unsupported file format: .{}. Supported formats: .babelfont, .glyphs, .glyphspackage, .ufo, .designspace, .vfj, .sfd, .ttf",
                 extension
             )));
         }

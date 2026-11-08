@@ -4,7 +4,7 @@ The first session is a reliable editing loop, not every panel at once: open a fo
 
 Use Chrome if you can. See [Before you begin](00-before-you-begin.md) for browser and PWA notes.
 
-Have a sample `.glyphs`, `.glyphspackage`, `.ufo`, `.designspace`, or `.babelfont` source ready if you want to save back to the same format. Counterpunch can also open `.vfj` and `.sfd`; those open for editing but do not save in place yet.
+Have a sample `.glyphs`, `.glyphspackage`, `.ufo`, `.designspace`, or `.babelfont` source ready if you want to save back to the same format. Counterpunch can also open `.vfj`, `.sfd` and `.ttf`; those open for editing but do not save in place yet.
 
 1. Open Counterpunch. The launcher opens first. For work you want to keep, click **Open…** and pick a source on your disk; see [Fonts on this computer](../files/02-local-disk-access.md).
 2. The font opens in its own window. When it loads, switch to the **Editor** with `Cmd/Ctrl+Shift+E`.

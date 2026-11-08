@@ -5,6 +5,7 @@
 
 import { resolveWebsiteURL } from './website-url';
 import { Logger } from './logger';
+import { fontFormatKind, fontFormatOf } from './font-windows/font-formats';
 import {
     ASSISTANT_TOOLS,
     ASSISTANT_TOOL_CATEGORIES,
@@ -2418,13 +2419,6 @@ def classify_glyph(glyph):
                 const plugins = pluginRegistry.getAll() || [];
                 const results: string[] = [];
                 const messages: string[] = [];
-                const fontExtensions = [
-                    '.babelfont',
-                    '.glyphs',
-                    '.vfj',
-                    '.sfd',
-                    '.designspace'
-                ];
 
                 for (const plugin of plugins) {
                     const pluginId = plugin.getId();
@@ -2454,9 +2448,10 @@ def classify_glyph(glyph):
                             const filePath = fileInfo.path || `/${name}`;
                             const lowerName = name.toLowerCase();
                             if (fileInfo.is_dir) {
+                                const format = fontFormatOf(lowerName);
                                 if (
-                                    lowerName.endsWith('.glyphspackage') ||
-                                    lowerName.endsWith('.ufo')
+                                    format &&
+                                    fontFormatKind(format) === 'package'
                                 ) {
                                     results.push(
                                         `${name} — ${pluginId}:///${filePath.replace(/^\//, '')}`
@@ -2465,10 +2460,10 @@ def classify_glyph(glyph):
                                 }
                                 continue;
                             }
+                            const format = fontFormatOf(lowerName);
                             if (
-                                fontExtensions.some((ext) =>
-                                    lowerName.endsWith(ext)
-                                )
+                                format &&
+                                fontFormatKind(format) !== 'package'
                             ) {
                                 results.push(
                                     `${name} — ${pluginId}:///${filePath.replace(/^\//, '')}`

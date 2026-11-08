@@ -19,9 +19,22 @@ import {
     type FolderGrantRequest
 } from './disk-documents';
 import { queryPermission } from './file-access';
-import { escapeHtml, icon, reportError } from './dialogs';
+import {
+    escapeHtml,
+    icon,
+    openDialog,
+    reportError,
+    type FontWindowDialog
+} from './dialogs';
+import { holdLoadingScreen } from './loading-hold';
 import { announcePendingOpens, type PendingOpen } from './pending-opens';
-import { fontFormatOf } from './font-formats';
+import {
+    FONT_FORMATS,
+    fontFormatKind,
+    fontFormatOf,
+    openableExtensionsText,
+    type FontFormatKey
+} from './font-formats';
 import {
     holdWindowLock,
     initWindowRegistry,
@@ -112,42 +125,95 @@ export function goToLauncher(): void {
     }
 }
 
-// --- The loading screen while a font waits for the user -------------------
+// --- Dialogs while a font window waits for the user ----------------------
+//
+// They sit above the loading screen, which stays up until they close: the
+// editor underneath has no font to show yet.
 
-function loadingContent(): HTMLElement | null {
-    return document.querySelector('#loading-overlay .loading-content');
+type StartupAction = {
+    label: string;
+    primary?: boolean;
+    /** Runs on click; the dialog stays open until the caller closes it. */
+    run: (button: HTMLButtonElement) => void | Promise<void>;
+};
+
+let startupDialog: { dialog: FontWindowDialog; release: () => void } | null =
+    null;
+
+function showStartupDialog(options: {
+    title: string;
+    message?: string;
+    font?: { name: string; format: FontFormatKey | null };
+    actions?: StartupAction[];
+}): FontWindowDialog {
+    closeStartupDialog();
+    const release = holdLoadingScreen();
+    const dialog = openDialog({
+        title: options.title,
+        className: 'font-window-startup',
+        overlayClassName: 'font-window-startup-overlay',
+        dismissable: false
+    });
+    const { font } = options;
+    const fontRow = font
+        ? `<div class="font-window-pending-row">${icon(font.format && fontFormatKind(font.format) === 'package' ? 'deployed_code' : 'description')}<span class="name">${escapeHtml(font.name)}</span><small>${escapeHtml(font.format ? FONT_FORMATS[font.format].label : '')}</small></div>`
+        : '';
+    const actions = options.actions ?? [];
+    dialog.body.innerHTML = `
+        ${fontRow}
+        ${options.message ? `<p>${escapeHtml(options.message)}</p>` : ''}
+        ${
+            actions.length
+                ? `<div class="font-window-dialog-actions">${actions
+                      .map(
+                          (action, index) =>
+                              `<button type="button" class="dialog-button${action.primary ? ' dialog-button-primary' : ''}" data-action="${index}">${escapeHtml(action.label)}</button>`
+                      )
+                      .join('')}</div>`
+                : ''
+        }`;
+    dialog.body
+        .querySelectorAll<HTMLButtonElement>('[data-action]')
+        .forEach((button) => {
+            const action = actions[Number(button.dataset.action)];
+            button.addEventListener('click', async () => {
+                button.disabled = true;
+                try {
+                    await action.run(button);
+                } catch (error) {
+                    reportError(error);
+                } finally {
+                    button.disabled = false;
+                }
+            });
+        });
+    (
+        dialog.body.querySelector('.dialog-button-primary') as HTMLElement
+    )?.focus();
+    startupDialog = { dialog, release };
+    return dialog;
 }
 
-function showStartupCard(html: string): HTMLElement | null {
-    const host = loadingContent();
-    if (!host) return null;
-    host.querySelector('.font-window-startup-card')?.remove();
-    const status = document.getElementById('loading-status');
-    if (status) status.style.display = 'none';
-    const card = document.createElement('div');
-    card.className = 'font-window-startup-card';
-    card.innerHTML = html;
-    host.append(card);
-    return card;
+function closeStartupDialog(): void {
+    if (!startupDialog) return;
+    const { dialog, release } = startupDialog;
+    startupDialog = null;
+    dialog.close();
+    release();
 }
 
-function clearStartupCard(): void {
-    loadingContent()?.querySelector('.font-window-startup-card')?.remove();
-    const status = document.getElementById('loading-status');
-    if (status) status.style.display = '';
-}
+const launcherAction: StartupAction = {
+    label: 'Open the launcher',
+    run: goToLauncher
+};
 
 /** Tell the user a font can't open, with the way back to the launcher. */
 export function showFontUnavailable(title: string, message: string): void {
-    const card = showStartupCard(`
-        ${icon('error')}
-        <h2>${escapeHtml(title)}</h2>
-        <p>${escapeHtml(message)}</p>
-        <button type="button" class="dialog-button dialog-button-primary" data-launcher>Open the launcher</button>`);
-    card?.querySelector('[data-launcher]')?.addEventListener(
-        'click',
-        goToLauncher
-    );
+    showStartupDialog({
+        title,
+        message,
+        actions: [{ ...launcherAction, primary: true }]
+    });
 }
 
 // --- Opening a font from this computer --------------------------------------
@@ -194,30 +260,37 @@ export async function openDiskDocumentFromUrl(
         await openAttachedDocument(doc, openFont);
         return;
     }
-    await new Promise<void>((resolve) => {
-        const what =
-            doc.parent && doc.format === 'designspace'
-                ? `the folder containing ${doc.name}`
-                : doc.name;
-        const card = showStartupCard(`
-            ${icon('lock_open_right')}
-            <h2>Allow access to ${escapeHtml(what)}</h2>
-            <p>Browsers forget file access when they restart. Installed as an app, Counterpunch keeps it. Until then, it asks once per session.</p>
-            <button type="button" class="dialog-button dialog-button-primary" data-allow>Allow access</button>`);
-        card?.querySelector('[data-allow]')?.addEventListener(
-            'click',
-            async () => {
-                try {
-                    if (!(await ensureDocumentAccess(doc, 'readwrite'))) return;
-                    clearStartupCard();
-                    await openAttachedDocument(doc, openFont);
-                    resolve();
-                } catch (error) {
-                    reportError(error);
-                }
-            }
-        );
-    });
+    // Keep the loading screen up until the font is open, not just until
+    // access is granted.
+    const release = holdLoadingScreen();
+    try {
+        await new Promise<void>((resolve) => {
+            const folder = !!doc.parent && doc.format === 'designspace';
+            showStartupDialog({
+                title: folder
+                    ? 'Allow access to the font’s folder'
+                    : `Allow access to ${doc.name}`,
+                font: { name: doc.name, format: doc.format },
+                message: `Browsers forget file access when they restart. Installed as an app, Counterpunch keeps it. Until then, it asks once per session${folder ? ' for the folder containing the font' : ''}.`,
+                actions: [
+                    launcherAction,
+                    {
+                        label: 'Allow access',
+                        primary: true,
+                        run: async () => {
+                            if (!(await ensureDocumentAccess(doc, 'readwrite')))
+                                return;
+                            closeStartupDialog();
+                            resolve();
+                        }
+                    }
+                ]
+            });
+        });
+        await openAttachedDocument(doc, openFont);
+    } finally {
+        release();
+    }
 }
 
 /** The folder step for a font the file manager handed to this window. */
@@ -226,25 +299,28 @@ function showFolderStep(
     openFont: OpenFontFn
 ): Promise<void> {
     return new Promise((resolve) => {
-        const card = showStartupCard(`
-            ${icon('folder_open')}
-            <h2>One more step to open ${escapeHtml(request.handle.name)}</h2>
-            <p>Counterpunch needs access to the folder it’s in. Choose that folder in the next window and confirm without selecting anything.</p>
-            <button type="button" class="dialog-button dialog-button-primary" data-grant>Choose folder…</button>`);
-        card?.querySelector('[data-grant]')?.addEventListener(
-            'click',
-            async () => {
-                try {
-                    const doc = await grantFolderFor(request);
-                    clearStartupCard();
-                    openThisWindowAs(diskDocumentKey(doc));
-                    await openAttachedDocument(doc, openFont);
-                    resolve();
-                } catch (error) {
-                    reportError(error);
+        showStartupDialog({
+            title: `One more step to open ${request.handle.name}`,
+            font: {
+                name: request.handle.name,
+                format: fontFormatOf(request.handle.name)
+            },
+            message:
+                'Counterpunch needs access to the folder it’s in. Choose that folder in the next window and confirm without selecting anything.',
+            actions: [
+                {
+                    label: 'Choose folder…',
+                    primary: true,
+                    run: async () => {
+                        const doc = await grantFolderFor(request);
+                        closeStartupDialog();
+                        openThisWindowAs(diskDocumentKey(doc));
+                        await openAttachedDocument(doc, openFont);
+                        resolve();
+                    }
                 }
-            }
-        );
+            ]
+        });
     });
 }
 
@@ -303,19 +379,20 @@ async function handleLaunchedFiles(
             if (!items.length) {
                 showFontUnavailable(
                     `Counterpunch can’t open ${files.map((f) => f.name).join(', ')}`,
-                    'It opens .glyphs, .glyphspackage, .ufo, .designspace, .babelfont, .vfj and .sfd files.'
+                    `It opens ${openableExtensionsText()} files.`
                 );
                 return;
             }
             announcePendingOpens(items, { show: false });
-            showStartupCard(`${icon('open_in_new')}<h2>Opening…</h2>`);
+            showStartupDialog({ title: 'Opening…' });
             setTimeout(() => {
                 window.close();
                 // Only shown if closing was refused.
-                showStartupCard(`
-                    ${icon('open_in_new')}
-                    <h2>Continue in Counterpunch</h2>
-                    <p>Confirm opening the font in your other Counterpunch window. You can close this one.</p>`);
+                showStartupDialog({
+                    title: 'Continue in Counterpunch',
+                    message:
+                        'Confirm opening the font in your other Counterpunch window. You can close this one.'
+                });
             }, 150);
             return;
         }

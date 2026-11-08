@@ -54,6 +54,12 @@ export const FONT_FORMATS = {
         label: 'FontForge (.sfd)',
         kind: 'file',
         writable: false
+    },
+    ttf: {
+        ext: '.ttf',
+        label: 'TrueType (.ttf)',
+        kind: 'file',
+        writable: false
     }
 } as const satisfies Record<string, FontFormat>;
 
@@ -70,6 +76,18 @@ export function fontFormatOf(name: string): FontFormatKey | null {
 
 export function fontFormatKind(key: FontFormatKey): FontFormatKind {
     return FONT_FORMATS[key].kind;
+}
+
+/** Whether a font at `path` can be saved back to its own file. */
+export function savesInPlace(path: string): boolean {
+    const format = fontFormatOf(path);
+    return !!format && FONT_FORMATS[format].writable;
+}
+
+/** Every extension Counterpunch opens, as prose: “.glyphs, … and .ttf”. */
+export function openableExtensionsText(): string {
+    const exts = FORMAT_KEYS.map((key) => FONT_FORMATS[key].ext);
+    return `${exts.slice(0, -1).join(', ')} and ${exts[exts.length - 1]}`;
 }
 
 /** The name without the format's extension. */

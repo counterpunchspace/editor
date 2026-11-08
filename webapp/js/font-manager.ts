@@ -234,7 +234,7 @@ export async function serializeFontForSourceSave(
     }
 
     throw new Error(
-        `Cannot save ${path} in its original format: source saving supports .babelfont, .glyphs, .glyphspackage, .ufo and .designspace sources.`
+        `Cannot save ${path} in its original format: source saving supports .babelfont, .glyphs, .glyphspackage, .ufo and .designspace sources. Use Save As to save it in one of those.`
     );
 }
 

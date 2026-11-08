@@ -5,6 +5,7 @@
 
 import { beginLoadingCursor, endLoadingCursor } from './loading-cursor';
 import { isTourKeyEventAllowed } from './tour-spotlight';
+import { savesInPlace } from './font-windows/font-formats';
 
 declare const $: any;
 
@@ -92,12 +93,13 @@ class SaveButton {
             return;
         }
 
-        // Unsaved font with disk plugin but no file handle → redirect to Save As
+        // A font with no file yet, or one whose format opens but doesn't
+        // save (.vfj, .sfd, .ttf), goes to Save As.
         const currentFont = window.fontManager?.currentFont;
         if (
             currentFont &&
-            !currentFont.fileHandle &&
-            !currentFont.isCloudBacked()
+            !currentFont.isCloudBacked() &&
+            (!currentFont.fileHandle || !savesInPlace(currentFont.path))
         ) {
             if (!this.hasFontOpen()) return;
             await window.saveFontAs?.();

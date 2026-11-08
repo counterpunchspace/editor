@@ -31,15 +31,19 @@ export type FontWindowDialog = {
 export function openDialog(options: {
     title: string;
     className?: string;
+    overlayClassName?: string;
+    /** False: only the dialog's own buttons close it (no ×, Escape or backdrop). */
+    dismissable?: boolean;
     onClose?: () => void;
 }): FontWindowDialog {
+    const dismissable = options.dismissable !== false;
     const overlay = document.createElement('div');
-    overlay.className = 'info-popup-overlay font-window-dialog-overlay';
+    overlay.className = `info-popup-overlay font-window-dialog-overlay ${options.overlayClassName ?? ''}`;
     overlay.innerHTML = `
         <div class="info-popup font-window-dialog ${options.className ?? ''}" role="dialog" aria-modal="true">
             <div class="font-window-dialog-head">
                 <h3>${escapeHtml(options.title)}</h3>
-                <button class="info-popup-close" type="button" data-close aria-label="Close">${icon('close')}</button>
+                ${dismissable ? `<button class="info-popup-close" type="button" data-close aria-label="Close">${icon('close')}</button>` : ''}
             </div>
             <div class="font-window-dialog-body"></div>
         </div>`;
@@ -50,14 +54,17 @@ export function openDialog(options: {
     const close = () => {
         if (closed) return;
         closed = true;
-        escape.release();
+        escape?.release();
         overlay.remove();
         options.onClose?.();
     };
-    const escape = bindModalEscape(close, { isOpen: () => !closed });
+    const escape = dismissable
+        ? bindModalEscape(close, { isOpen: () => !closed })
+        : null;
     overlay.addEventListener('click', (event) => {
         const target = event.target as HTMLElement;
-        if (target === overlay || target.closest('[data-close]')) close();
+        if (target.closest('[data-close]')) close();
+        else if (target === overlay && dismissable) close();
     });
     document.body.append(overlay);
     return { root: overlay, body, close };

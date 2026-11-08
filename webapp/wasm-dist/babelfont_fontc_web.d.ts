@@ -396,7 +396,7 @@ export function load_ufo_glyphs(layout_entries_json: string, glifs_json: string,
 /**
  * Open a font file from various formats
  *
- * Supports .glyphs, .glyphspackage, .ufo, .designspace, .vfj, and .babelfont formats.
+ * Supports .glyphs, .glyphspackage, .ufo, .designspace, .vfj, .sfd, .ttf and .babelfont formats.
  * Loads the font, stores it in cache, and returns the babelfont JSON representation.
  *
  * # Arguments

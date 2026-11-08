@@ -18,7 +18,11 @@ import {
     takeOverFromOtherWindow
 } from './font-windows/font-window';
 import { openFontWindow } from './font-windows/open-documents';
-import { fontFormatOf } from './font-windows/font-formats';
+import {
+    holdLoadingScreen,
+    whenLoadingScreenFree
+} from './font-windows/loading-hold';
+import { fontFormatKind, fontFormatOf } from './font-windows/font-formats';
 import { showCriticalError } from './critical-error-handler';
 
 /** A memory URL for a font that is not in the session should open the default
@@ -1116,7 +1120,6 @@ function getFileIcon(filename: string, isDir: boolean): string {
             return fileTypeIcon('picture_as_pdf');
         case 'zip':
             return fileTypeIcon('folder_zip');
-        case 'ttf':
         case 'otf':
         case 'woff':
         case 'woff2':
@@ -1126,6 +1129,7 @@ function getFileIcon(filename: string, isDir: boolean): string {
         case 'glyphspackage':
         case 'vfj':
         case 'sfd':
+        case 'ttf':
         case 'ufo':
         case 'designspace':
             return fileTypeIcon('format_shapes');
@@ -1153,16 +1157,9 @@ function isSupportedFontFormat(name: string, isDir: boolean): boolean {
         return false;
     }
 
-    // Check for supported font formats
-    const supportedExtensions = [
-        '.babelfont', // Native format
-        '.glyphs', // Glyphs 2/3
-        '.vfj', // FontLab VFJ
-        '.sfd', // FontForge SFD
-        '.designspace' // DesignSpace
-    ];
-
-    return supportedExtensions.some((ext) => lowerName.endsWith(ext));
+    // Packages are folders, handled above.
+    const format = fontFormatOf(lowerName);
+    return !!format && fontFormatKind(format) !== 'package';
 }
 
 function hasOpenFontInCurrentWindow(): boolean {
@@ -1595,13 +1592,15 @@ function hideLoadingOverlayForUrlOpen(): void {
         return;
     }
 
-    const loadingOverlay = document.getElementById('loading-overlay');
-    if (!loadingOverlay || loadingOverlay.classList.contains('hidden')) {
-        return;
-    }
+    whenLoadingScreenFree(() => {
+        const loadingOverlay = document.getElementById('loading-overlay');
+        if (!loadingOverlay || loadingOverlay.classList.contains('hidden')) {
+            return;
+        }
 
-    loadingOverlay.classList.add('hidden');
-    notifyLoadingOverlayHiding();
+        loadingOverlay.classList.add('hidden');
+        notifyLoadingOverlayHiding();
+    });
 }
 
 async function revealUrlOpenedFontInFileBrowser(
@@ -3720,9 +3719,16 @@ document.addEventListener('DOMContentLoaded', () => {
         );
     }
 
+    // A font from this computer may need the user first (access, a
+    // folder): the loading screen stays up until it is open.
+    const releaseStartupHold =
+        isLaunchWindow() || (pluginId === 'disk' && fontPath)
+            ? holdLoadingScreen()
+            : () => {};
+
     const launched = listenForLaunchedFiles(openFont);
     if (isLaunchWindow()) {
-        void launched;
+        void launched.finally(releaseStartupHold);
         return;
     }
 
@@ -4011,6 +4017,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     fallbackError
                 );
             }
+        } finally {
+            releaseStartupHold();
         }
     })();
 });

@@ -434,7 +434,8 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    z-index: 11000;
+    /* Above the loading screen and the dialogs on it. */
+    z-index: 1000001;
     width: max-content;
     max-width: calc(100vw - 32px);
 }
@@ -463,40 +464,17 @@
     opacity: 0.6;
 }
 
-/* ── A font window that waits for the user (loading screen) ──────────── */
+/* ── A font window that waits for the user ─────────────────────────────── */
+/* Above the loading screen (#loading-overlay), which stays up underneath. */
 
-.font-window-startup-card {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 10px;
-    max-width: 420px;
-    margin: 18px auto 0;
-    text-align: center;
-    color: var(--text-primary);
+.font-window-startup-overlay {
+    z-index: 1000000;
 }
 
-.font-window-startup-card .material-symbols-outlined {
-    font-size: 32px;
-    color: var(--view-editor);
+.font-window-startup {
+    animation: fontWindowPendingIn 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
 
-.font-window-startup-card h2 {
-    margin: 0;
-    font-size: 17px;
-    font-weight: 600;
-}
-
-.font-window-startup-card p {
-    margin: 0;
-    font-size: 13px;
-    line-height: 1.6;
-    color: var(--text-muted);
-}
-
-.font-window-startup-card .dialog-button {
-    margin-top: 6px;
-    padding: 8px 16px;
-    font-size: 13px;
-    border-radius: 8px;
+.font-window-startup .font-window-pending-row {
+    margin-bottom: 14px;
 }

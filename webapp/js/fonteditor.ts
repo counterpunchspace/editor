@@ -5,6 +5,7 @@ const {
     markFontEditorReady,
     markFontEditorReadyFailed
 } = require('./editor-startup-ready.js');
+import { whenLoadingScreenFree } from './font-windows/loading-hold';
 import { fontDestinationPluginManager } from './font-destination-plugin-manager';
 import { discoverCompileFilters } from './compile-filter-host';
 import { getFocusViewId } from './window-ui-state';
@@ -188,7 +189,9 @@ async function initFontEditor() {
         };
 
         // Hide loading overlay with animation
-        const hideLoadingOverlay = () => {
+        const hideLoadingOverlay = () =>
+            whenLoadingScreenFree(hideLoadingOverlayNow);
+        const hideLoadingOverlayNow = () => {
             const loadingOverlay = document.getElementById('loading-overlay');
             const loadingLogo = document.querySelector('.loading-logo');
 
@@ -320,11 +323,14 @@ async function initFontEditor() {
             extendedWindow.__unsupportedBrowserWarningRequired !== true ||
             extendedWindow.__unsupportedBrowserWarningAcknowledged === true
         ) {
-            const loadingOverlay = document.getElementById('loading-overlay');
-            if (loadingOverlay) {
-                loadingOverlay.classList.add('hidden');
-            }
-            notifyLoadingOverlayHiding();
+            whenLoadingScreenFree(() => {
+                const loadingOverlay =
+                    document.getElementById('loading-overlay');
+                if (loadingOverlay) {
+                    loadingOverlay.classList.add('hidden');
+                }
+                notifyLoadingOverlayHiding();
+            });
         }
 
         return false;

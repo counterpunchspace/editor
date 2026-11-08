@@ -4,7 +4,7 @@ Counterpunch opens fonts from your disk with your system's file picker and saves
 
 ## Opening a font
 
-In the launcher, click **Open…** and pick a `.glyphs`, `.babelfont`, `.designspace`, `.vfj` or `.sfd` file. You can also drop files or folders on the launcher, or install Counterpunch as an app and open fonts from your file manager.
+In the launcher, click **Open…** and pick a `.glyphs`, `.babelfont`, `.designspace`, `.vfj`, `.sfd` or `.ttf` file. You can also drop files or folders on the launcher, or install Counterpunch as an app and open fonts from your file manager.
 
 `.ufo` and `.glyphspackage` are folders. On Windows, Linux, and Macs without Glyphs, the file picker can't select them: click **Choose its folder…** under **Open…** instead and pick the `.ufo` or `.glyphspackage` itself, or a folder that contains fonts to choose from.
 

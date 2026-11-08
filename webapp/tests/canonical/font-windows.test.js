@@ -128,6 +128,33 @@ describe('fonts on this computer', () => {
         expect(formats.fontFormatOf('notes.txt')).toBeNull();
     });
 
+    test('a .ttf opens but saves only through Save As', () => {
+        expect(formats.fontFormatOf('/Fonts/Sans-Regular.TTF')).toBe('ttf');
+        expect(formats.fontFormatKind('ttf')).toBe('file');
+        expect(formats.savesInPlace('/Fonts/Sans-Regular.ttf')).toBe(false);
+        expect(formats.savesInPlace('/Fonts/Sans.glyphs')).toBe(true);
+        expect(formats.splitFontFileName('Sans.ttf')).toBeNull();
+    });
+
+    test('the installed app handles every format it opens', () => {
+        const fs = require('fs');
+        const path = require('path');
+        const manifest = JSON.parse(
+            fs.readFileSync(
+                path.join(__dirname, '../../manifest.json'),
+                'utf-8'
+            )
+        );
+        const handled = manifest.file_handlers
+            .flatMap((handler) => Object.values(handler.accept).flat())
+            .sort();
+        const openable = Object.values(formats.FONT_FORMATS)
+            .map((format) => format.ext)
+            .sort();
+        expect(handled).toEqual(openable);
+        expect(formats.openableExtensionsText()).toMatch(/, \.sfd and \.ttf$/);
+    });
+
     test('a pasted file name gives Save As its name and format', () => {
         expect(formats.splitFontFileName('My Font.UFO')).toEqual({
             name: 'My Font',
