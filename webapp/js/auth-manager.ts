@@ -76,6 +76,8 @@ class AuthManager {
     private signInPromise: Promise<AuthUser | null> | null = null;
     private authChannel: BroadcastChannel | null = null;
     private announcedAuthenticated: boolean | null = null;
+    /** The last session check failed because the website was unreachable. */
+    lastAuthCheckUnreachable = false;
 
     constructor() {
         this.websiteURL = this.getWebsiteURL();
@@ -203,6 +205,7 @@ class AuthManager {
             }
 
             const response = await this.fetchAuthMeWithLocalRetry(headers);
+            this.lastAuthCheckUnreachable = false;
 
             console.log('[Auth] API response status:', response.status);
 
@@ -252,6 +255,7 @@ class AuthManager {
                 (typeof navigator !== 'undefined' &&
                     navigator.onLine === false) ||
                 error instanceof TypeError;
+            this.lastAuthCheckUnreachable = offline;
             if (offline && this.user) {
                 return this.user;
             }
@@ -413,7 +417,13 @@ class AuthManager {
             return await this.bootstrapLocalCloudSession(options.localEmail);
         }
 
-        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        // An unreachable website says nothing about the session: asking the
+        // user to sign in would block a cloud open that retries once the
+        // network is back (a reload while offline, for example).
+        if (
+            (typeof navigator !== 'undefined' && navigator.onLine === false) ||
+            this.lastAuthCheckUnreachable
+        ) {
             return this.user;
         }
 

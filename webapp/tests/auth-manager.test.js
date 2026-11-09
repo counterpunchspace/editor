@@ -112,6 +112,46 @@ describe('AuthManager.checkAuthStatus', () => {
     });
 });
 
+describe('AuthManager.ensureCloudSession with an unreachable website', () => {
+    let originalAuthManager;
+    let originalFetch;
+
+    beforeEach(() => {
+        jest.resetModules();
+        originalAuthManager = window.authManager;
+        originalFetch = global.fetch;
+    });
+
+    afterEach(() => {
+        window.authManager = originalAuthManager;
+        global.fetch = originalFetch;
+        jest.restoreAllMocks();
+    });
+
+    it('does not ask the user to sign in while the website cannot be reached', async () => {
+        global.fetch = jest
+            .fn()
+            .mockRejectedValue(new TypeError('Failed to fetch'));
+        require('../js/auth-manager');
+        const authManager = window.authManager;
+        const signIn = jest
+            .spyOn(authManager, 'signIn')
+            .mockResolvedValue(null);
+
+        await expect(authManager.ensureCloudSession()).resolves.toBeNull();
+        expect(signIn).not.toHaveBeenCalled();
+
+        // Reachable again and signed out: now the dialog is right.
+        global.fetch = jest.fn().mockResolvedValue({
+            ok: false,
+            status: 401,
+            json: async () => ({ error: 'invalid session' })
+        });
+        await authManager.ensureCloudSession();
+        expect(signIn).toHaveBeenCalledTimes(1);
+    });
+});
+
 describe('AuthManager local cloud session', () => {
     let originalAuthManager;
     let originalFetch;

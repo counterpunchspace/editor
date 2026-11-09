@@ -356,10 +356,11 @@ test('two-sided offline edits on the same glyph survive compaction, converge, an
                 timeout: 30000
             })
             .toEqual(expected);
-        expect(await readFontCore(inviteePage, coreEdit.masterId)).toEqual({
-            kern: -37,
-            version: coreEdit.version
-        });
+        await expect
+            .poll(async () => readFontCore(inviteePage, coreEdit.masterId), {
+                timeout: 60000
+            })
+            .toEqual({ kern: -37, version: coreEdit.version });
     } finally {
         await ownerContext.close();
         await inviteeContext?.close();

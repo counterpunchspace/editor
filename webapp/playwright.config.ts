@@ -296,9 +296,11 @@ export default defineConfig({
         // }
     ],
 
-    // Cloud collab e2e starts the editor via ensure-cloud-collab-stack.
+    // Cloud collab e2e starts the editor via ensure-cloud-collab-stack, and
+    // the live sign-in check runs against staging only.
     webServer:
-        process.env.CLOUD_COLLAB_E2E === '1'
+        process.env.CLOUD_COLLAB_E2E === '1' ||
+        process.env.SIGN_IN_LIVE_E2E === '1'
             ? undefined
             : {
                   command: process.env.CI
