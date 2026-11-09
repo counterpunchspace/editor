@@ -83,7 +83,7 @@ Coverage: 🟢 Should work · 🟡 Partial · 🔴 Missing
 | AI assistant | 🟢 | |
 | Undo and history | 🟢 | |
 | Multiple windows | 🟢 | |
-| Binary font export | 🟢 | Only VF, no static instances yet |
+| Binary font export | 🟢 | Only VF, no static instances yet, no automatic ccmp expansion |
 | Language database | 🟢 | Ships with Hyperglot temporarily as a demo, later as user-installable plugins |
 | Glyph composition | 🟢 | |
 | Commercial plugin marketplace | 🟢 | |
