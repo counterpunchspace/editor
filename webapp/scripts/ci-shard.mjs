@@ -136,7 +136,7 @@ const GROUPS = {
             'tests/basic-interaction.spec.ts',
             'tests/open-path-startup.spec.ts',
             'tests/multiline-text.spec.ts',
-            'tests/typing-pending-glyph.spec.ts',
+            'tests/typing-waits-for-compile.spec.ts',
             'tests/typing-arabic-cursor.spec.ts',
             'tests/text-mode-kerning-live.spec.ts',
             'tests/compilation-lane-benchmark.spec.ts',

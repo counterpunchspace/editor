@@ -58,33 +58,8 @@ export { userTextBufferHasBeenWritten };
 
 let console: Logger = new Logger('TextRun');
 
-/**
- * Raw-text ranges of the characters starting at `starts`, adjacent ones
- * merged, sorted.
- */
-function mergePendingCharacterRanges(
-    text: string,
-    starts: number[]
-): Array<[number, number]> {
-    const ranges: Array<[number, number]> = [...new Set(starts)]
-        .sort((a, b) => a - b)
-        .map((start) => {
-            const codepoint = text.codePointAt(start);
-            const length =
-                codepoint !== undefined && codepoint > 0xffff ? 2 : 1;
-            return [start, start + length];
-        });
-    const merged: Array<[number, number]> = [];
-    for (const range of ranges) {
-        const last = merged[merged.length - 1];
-        if (last && range[0] <= last[1]) {
-            last[1] = Math.max(last[1], range[1]);
-        } else {
-            merged.push([range[0], range[1]]);
-        }
-    }
-    return merged;
-}
+/** Longest a typed character's compile holds back reshaping the text. */
+const TYPED_SHAPING_WAIT_MS = 1000;
 
 export interface ShapedGlyph {
     dx: number;
@@ -99,8 +74,6 @@ export interface ShapedGlyph {
     lineIndex?: number;
     lineOriginX?: number;
     baselineY?: number;
-    /** A .notdef standing in for a glyph whose editing compile is pending. */
-    pendingGlyph?: boolean;
 }
 
 interface ExplicitGlyphToken {
@@ -139,8 +112,9 @@ export class TextRunEditor {
     glyphNameBuffer: string[];
     /** Codepoints typed on the keyboard whose editing compile is pending. */
     typedCodepointsAwaitingCompile: Set<number> = new Set();
-    /** Raw text indices of typed characters taken out of the last shaping. */
-    pendingTypedCharIndices: number[] = [];
+    /** When reshaping started waiting for a typed character's compile. */
+    private shapingDeferredSince: number | null = null;
+    private shapingDeferralTimer: number | null = null;
     intrinsicGlyphAdvances: Map<string, number>;
     // GID→name map for the editing font (rebuilt when editing font changes)
     editingFontNameToGid: Map<string, number>;
@@ -533,7 +507,7 @@ export class TextRunEditor {
 
     setTextBuffer(text: string) {
         this.compositionSelectionHold = null;
-        this.typedCodepointsAwaitingCompile.clear();
+        this.stopWaitingForTypedCharacterCompile();
         this.textBuffer = normalizeTextNewlines(text || '');
         this.textBufferWriteGeneration += 1;
         markUserTextBufferWritten();
@@ -1644,6 +1618,77 @@ export class TextRunEditor {
         }
     }
 
+    /**
+     * A character just typed whose glyph is not in the editing font yet
+     * would shape as .notdef, and Arabic letters would join to that empty
+     * glyph. Keep the text as it was shaped until the compile for the new
+     * text lands; it reshapes the text. If no compile lands within
+     * TYPED_SHAPING_WAIT_MS, shape anyway.
+     */
+    private waitForTypedCharacterCompile(): boolean {
+        if (this.typedCodepointsAwaitingCompile.size === 0) {
+            return false;
+        }
+        const text = this.textBuffer || '';
+        if (
+            !text ||
+            this.shapedGlyphs.length === 0 ||
+            !this.hasTypedCharacterAwaitingCompile(text)
+        ) {
+            this.stopWaitingForTypedCharacterCompile();
+            return false;
+        }
+        const now = performance.now();
+        this.shapingDeferredSince ??= now;
+        const remaining =
+            TYPED_SHAPING_WAIT_MS - (now - this.shapingDeferredSince);
+        if (remaining <= 0) {
+            this.stopWaitingForTypedCharacterCompile();
+            return false;
+        }
+        if (this.shapingDeferralTimer === null) {
+            this.shapingDeferralTimer = window.setTimeout(() => {
+                this.shapingDeferralTimer = null;
+                this.shapeText();
+            }, remaining);
+        }
+        return true;
+    }
+
+    /**
+     * Whether a typed character still in the text has an exported glyph in
+     * the font that the compiled editing font does not have yet. Characters
+     * the font has no glyph for shape at once, as .notdef.
+     */
+    private hasTypedCharacterAwaitingCompile(text: string): boolean {
+        const font = window.currentFontModel;
+        const compiledNames = this.editingFontNameToGid;
+        for (const codepoint of [...this.typedCodepointsAwaitingCompile]) {
+            const sourceGlyph = font?.findGlyphByCodepoint?.(codepoint);
+            const awaiting =
+                text.includes(String.fromCodePoint(codepoint)) &&
+                !!sourceGlyph &&
+                sourceGlyph.exported !== false &&
+                (compiledNames instanceof Map && compiledNames.size > 0
+                    ? !compiledNames.has(sourceGlyph.name)
+                    : !!window.fontManager?.needsEditingCompileForText?.(text));
+            if (awaiting) {
+                return true;
+            }
+            this.typedCodepointsAwaitingCompile.delete(codepoint);
+        }
+        return false;
+    }
+
+    private stopWaitingForTypedCharacterCompile(): void {
+        this.typedCodepointsAwaitingCompile.clear();
+        this.shapingDeferredSince = null;
+        if (this.shapingDeferralTimer !== null) {
+            window.clearTimeout(this.shapingDeferralTimer);
+            this.shapingDeferralTimer = null;
+        }
+    }
+
     reshapeAndRender(cursorMoveReason?: 'backspace') {
         this.call('willreshape');
         console.log('New cursor position:', this.cursorPosition);
@@ -1655,7 +1700,11 @@ export class TextRunEditor {
         // Save to localStorage and trigger recompilation (now glyphNameBuffer is populated)
         this.saveTextBuffer();
 
-        this.updateCursorVisualPosition();
+        // While shaping waits for a typed character's compile, the caret
+        // stays where it is drawn; the reshape after the compile moves it.
+        if (this.shapingDeferredSince === null) {
+            this.updateCursorVisualPosition();
+        }
 
         // If text is now empty, reset cursor to origin
         if (this.textBuffer.length === 0) {
@@ -2521,6 +2570,9 @@ export class TextRunEditor {
         skipRender: boolean = false,
         variationLocation?: UserspaceLocation
     ) {
+        if (this.waitForTypedCharacterCompile()) {
+            return;
+        }
         this.call('willreshape');
         if (!this.textBuffer) {
             this.shapedGlyphs = [];
@@ -3816,8 +3868,6 @@ export class TextRunEditor {
             }
         }
         this.bidiRuns = allBidiRuns;
-        this.collapsePendingNotdefGlyphs();
-        this.keepClustersBesidePendingTypedText(hbFont);
         this.rebuildGlyphNameBufferFromShapedGlyphs();
         this.applyMultilineLayout();
         this.buildClusterMap();
@@ -3862,221 +3912,6 @@ export class TextRunEditor {
             allGlyphs.push(...lineGlyphs);
         }
         return { glyphs: allGlyphs, bidiRuns: allBidiRuns };
-    }
-
-    /**
-     * Typing a letter changes how its neighbours shape before the letter
-     * itself can show: an Arabic final form turns medial to join it. While
-     * the typed letter is out of the run awaiting its compile, keep the
-     * clusters on either side of it (base glyphs and marks) as they shaped
-     * without it, so the text does not move until the letter arrives. The
-     * reference is the text shaped without the pending letters in the same
-     * font: what was shown before typing, and still right in the newer font
-     * when an older compile lands while typing goes on.
-     */
-    private keepClustersBesidePendingTypedText(hbFont: any): void {
-        const pendingStarts = this.pendingTypedCharIndices;
-        if (pendingStarts.length === 0 || this.explicitGlyphTokens.length > 0) {
-            return;
-        }
-        const text = this.textBuffer || '';
-        const ranges = mergePendingCharacterRanges(text, pendingStarts);
-        const reference = this.shapeTextWithoutRanges(hbFont, ranges);
-        if (!reference) {
-            return;
-        }
-        const real = this.shapedGlyphs;
-        const isPending = (cluster: number) =>
-            ranges.some(([start, end]) => cluster >= start && cluster < end);
-        const clusterBefore = (glyphs: ShapedGlyph[], index: number) =>
-            glyphs.reduce<number | null>((found, glyph) => {
-                const cluster = glyph.cl || 0;
-                return cluster <= index &&
-                    !isPending(cluster) &&
-                    (found === null || cluster > found)
-                    ? cluster
-                    : found;
-            }, null);
-        const clusterAfter = (glyphs: ShapedGlyph[], index: number) =>
-            glyphs.reduce<number | null>((found, glyph) => {
-                const cluster = glyph.cl || 0;
-                return cluster >= index &&
-                    !isPending(cluster) &&
-                    (found === null || cluster < found)
-                    ? cluster
-                    : found;
-            }, null);
-
-        const neighbours = new Set<number>();
-        for (const [start, end] of ranges) {
-            for (const [realCluster, referenceCluster] of [
-                [
-                    clusterBefore(real, start - 1),
-                    clusterBefore(reference, start - 1)
-                ],
-                [clusterAfter(real, end), clusterAfter(reference, end)]
-            ]) {
-                // Only where both shapings agree on where the cluster starts.
-                if (realCluster !== null && realCluster === referenceCluster) {
-                    neighbours.add(realCluster);
-                }
-            }
-        }
-
-        let glyphs = real;
-        for (const cluster of neighbours) {
-            const from = glyphs.findIndex(
-                (glyph) => (glyph.cl || 0) === cluster
-            );
-            if (from < 0) {
-                continue;
-            }
-            let to = from;
-            while (to < glyphs.length && (glyphs[to].cl || 0) === cluster) {
-                to += 1;
-            }
-            const lineIndex = glyphs[from].lineIndex;
-            const kept = reference
-                .filter((glyph) => (glyph.cl || 0) === cluster)
-                .map((glyph) => ({ ...glyph, lineIndex }));
-            if (kept.length === 0) {
-                continue;
-            }
-            glyphs = [...glyphs.slice(0, from), ...kept, ...glyphs.slice(to)];
-        }
-        this.shapedGlyphs = glyphs;
-    }
-
-    /**
-     * Shape the current text with the raw-text `ranges` left out, clusters
-     * mapped back to raw indices of the full text. Leaves the shaping state
-     * of the full text as it was.
-     */
-    private shapeTextWithoutRanges(
-        hbFont: any,
-        ranges: Array<[number, number]>
-    ): ShapedGlyph[] | null {
-        const text = this.textBuffer || '';
-        const originalIndexOf: number[] = [];
-        let reduced = '';
-        for (let index = 0; index < text.length; index += 1) {
-            if (ranges.some(([start, end]) => index >= start && index < end)) {
-                continue;
-            }
-            originalIndexOf.push(index);
-            reduced += text[index];
-        }
-        originalIndexOf.push(text.length);
-
-        const saved = {
-            textBuffer: this.textBuffer,
-            displayTextBuffer: this.displayTextBuffer,
-            displayIndexToRawStart: this.displayIndexToRawStart,
-            displayIndexToRawEnd: this.displayIndexToRawEnd,
-            embeddingLevels: this.embeddingLevels
-        };
-        try {
-            this.textBuffer = reduced;
-            this.buildDisplayTextMapping();
-            const { glyphs } = this.shapeLineGlyphs(hbFont);
-            return glyphs.map((glyph) => ({
-                ...glyph,
-                cl: originalIndexOf[glyph.cl || 0] ?? text.length
-            }));
-        } catch {
-            return null;
-        } finally {
-            this.textBuffer = saved.textBuffer;
-            this.displayTextBuffer = saved.displayTextBuffer;
-            this.displayIndexToRawStart = saved.displayIndexToRawStart;
-            this.displayIndexToRawEnd = saved.displayIndexToRawEnd;
-            this.embeddingLevels = saved.embeddingLevels;
-        }
-    }
-
-    /**
-     * A character just typed on the keyboard that the editing font does not
-     * cover yet shapes as .notdef until its compile lands. Take those
-     * stand-ins out of the run (no advance, not drawn) so the text does not
-     * first open up for a gray box; the reshape after the compile brings the
-     * real glyph in. This holds for letters and marks alike: HarfBuzz files a
-     * mark under its base's cluster, so every character a cluster covers is
-     * checked. A pending base letter takes its whole cluster along (marks
-     * typed after it do not float alone); a pending mark on a shown base
-     * takes only its own .notdef. Every other .notdef stays: characters the
-     * font has no exported glyph for, and text that was not typed (opened,
-     * pasted, restored, or left after deleting glyphs).
-     */
-    private collapsePendingNotdefGlyphs(): void {
-        this.pendingTypedCharIndices = [];
-        if (this.typedCodepointsAwaitingCompile.size === 0) {
-            return;
-        }
-        const text = this.textBuffer || '';
-        if (!window.fontManager?.needsEditingCompileForText?.(text)) {
-            this.typedCodepointsAwaitingCompile.clear();
-            return;
-        }
-        const font = window.currentFontModel;
-        const isPendingTypedCharacter = (index: number): boolean => {
-            const codepoint = text.codePointAt(index);
-            if (
-                codepoint === undefined ||
-                !this.typedCodepointsAwaitingCompile.has(codepoint)
-            ) {
-                return false;
-            }
-            const sourceGlyph = font?.findGlyphByCodepoint?.(codepoint);
-            return !!sourceGlyph && sourceGlyph.exported !== false;
-        };
-
-        // Each cluster covers the raw text from its start up to the next
-        // cluster's start.
-        const clusterStarts = [
-            ...new Set(this.shapedGlyphs.map((glyph) => glyph.cl || 0))
-        ].sort((a, b) => a - b);
-        const clusterEnd = (start: number): number => {
-            const next = clusterStarts.find((cluster) => cluster > start);
-            return next ?? text.length;
-        };
-        const notdefClusters = new Set(
-            this.shapedGlyphs
-                .filter((glyph) => glyph.g === 0 && !glyph.explicitGlyphName)
-                .map((glyph) => glyph.cl || 0)
-        );
-
-        const pendingBaseClusters = new Set<number>();
-        const pendingMarkClusters = new Set<number>();
-        const pendingIndices: number[] = [];
-        for (const start of notdefClusters) {
-            const end = clusterEnd(start);
-            for (let index = start; index < end;) {
-                const codepoint = text.codePointAt(index) ?? 0;
-                if (isPendingTypedCharacter(index)) {
-                    pendingIndices.push(index);
-                    if (index === start) {
-                        pendingBaseClusters.add(start);
-                    } else {
-                        pendingMarkClusters.add(start);
-                    }
-                }
-                index += codepoint > 0xffff ? 2 : 1;
-            }
-        }
-
-        for (const glyph of this.shapedGlyphs) {
-            const cluster = glyph.cl || 0;
-            const leaves =
-                pendingBaseClusters.has(cluster) ||
-                (pendingMarkClusters.has(cluster) &&
-                    glyph.g === 0 &&
-                    !glyph.explicitGlyphName);
-            if (leaves) {
-                glyph.ax = 0;
-                glyph.pendingGlyph = true;
-            }
-        }
-        this.pendingTypedCharIndices = pendingIndices.sort((a, b) => a - b);
     }
 
     shapeDisplaySliceSimple(

@@ -852,11 +852,7 @@ export class GlyphCanvasRenderer {
                     explicitGlyphName ||
                     this.textRunEditor.glyphNameBuffer[glyphIndex];
 
-                // A .notdef standing in for a glyph whose compile is pending
-                // is out of the run (textrun.collapsePendingNotdefGlyphs).
-                const hidePendingNotdef = !!glyph.pendingGlyph;
-
-                if (!skipHarfBuzz && !hidePendingNotdef) {
+                if (!skipHarfBuzz) {
                     // Check if this is .notdef (GID 0) with no explicit fallback.
                     const isNotdef = glyphId === 0 && !useExplicitOutline;
                     let fillColor: string;
