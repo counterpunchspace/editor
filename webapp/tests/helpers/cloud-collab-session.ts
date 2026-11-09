@@ -124,6 +124,21 @@ export async function cleanupCloudCollabUsers(
     if (packages.length) {
         data.packages = packages;
     }
+    // A large font is purged over several calls; the website answers
+    // `more: true` until every room is gone.
+    for (let pass = 0; pass < 200; pass += 1) {
+        if (!(await postCloudCollabCleanup(request, data))) {
+            return;
+        }
+    }
+    throw new Error('local-cloud-cleanup did not finish after 200 calls');
+}
+
+/** One cleanup call. Returns true while the website has more to purge. */
+async function postCloudCollabCleanup(
+    request: APIRequestContext,
+    data: { emails?: string[]; packages?: string[] }
+): Promise<boolean> {
     // Staging D1 and the edge drop connections now and then (ECONNRESET,
     // "D1_ERROR: Network connection lost"). Cleanup is idempotent.
     let response;
@@ -161,12 +176,16 @@ export async function cleanupCloudCollabUsers(
         console.warn(
             `local-cloud-cleanup failed (${response.status()}): ${detail}`
         );
-        return;
+        return false;
     }
     const body = (await response.json()) as {
         ok?: boolean;
+        more?: boolean;
         leftovers?: Record<string, unknown>;
     };
+    if (body.more) {
+        return true;
+    }
     const leftoverCount = body.leftovers
         ? Object.values(body.leftovers).reduce<number>((sum, value) => {
               if (typeof value === 'number') return sum + value;
@@ -179,4 +198,5 @@ export async function cleanupCloudCollabUsers(
             `local-cloud-cleanup left data behind: ${JSON.stringify(body)}`
         );
     }
+    return false;
 }

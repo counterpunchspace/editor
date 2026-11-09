@@ -19,23 +19,34 @@ if (!token) {
   process.exit(1);
 }
 
-const response = await fetch(`${website}/api/dev/local-cloud-cleanup`, {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${token}`,
-    Origin: "https://staging.editor.counterpunch.space",
-  },
-  body: JSON.stringify({ sweepTestUsers: true }),
-});
+// A large font is purged over several calls; the website answers
+// `more: true` until every room and object is gone.
+let found = 0;
+for (let pass = 1; ; pass += 1) {
+  const response = await fetch(`${website}/api/dev/local-cloud-cleanup`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      Origin: "https://staging.editor.counterpunch.space",
+    },
+    body: JSON.stringify({ sweepTestUsers: true }),
+  });
 
-const body = await response.json().catch(() => ({}));
-const found = Number(body.found || 0);
-if (!response.ok || body.ok === false) {
-  console.error(
-    `Staging e2e cleanup ${response.status}: ${JSON.stringify(body)}`,
-  );
-  process.exit(1);
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || body.ok === false) {
+    console.error(
+      `Staging e2e cleanup ${response.status}: ${JSON.stringify(body)}`,
+    );
+    process.exit(1);
+  }
+  found = Math.max(found, Number(body.found || 0));
+  if (!body.more) break;
+  if (pass >= 500) {
+    console.error("Staging e2e cleanup did not finish after 500 calls");
+    process.exit(1);
+  }
+  console.log(`Staging e2e cleanup: pass ${pass} done, more to purge.`);
 }
 
 if (found > 0) {

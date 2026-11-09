@@ -71,6 +71,22 @@ test.describe('Cloud collab deletion leaves nothing behind', () => {
                     `${roomId} still holds ${JSON.stringify(after.rooms[roomId])}`
                 ).toBe(true);
             }
+            // Every glyph room, not only those the font's hub registered:
+            // a glyph room read or written without registering kept its
+            // storage after a delete.
+            const glyphRooms = glyphs.map(
+                (glyph) => `${assetId}:glyph:${glyph.id}`
+            );
+            for (let start = 0; start < glyphRooms.length; start += 50) {
+                const chunk = glyphRooms.slice(start, start + 50);
+                const glyphCensus = await census(page, assetId, chunk);
+                for (const roomId of chunk) {
+                    expect(
+                        roomIsEmpty(glyphCensus.rooms[roomId]),
+                        `${roomId} still holds ${JSON.stringify(glyphCensus.rooms[roomId])}`
+                    ).toBe(true);
+                }
+            }
         } finally {
             await context.close();
             await cleanupCloudCollabUsers(request, [emails.owner]);
@@ -101,7 +117,7 @@ test.describe('Cloud collab deletion leaves nothing behind', () => {
                     .map((glyph) => `${assetId}:glyph:${glyph.id}`)
             ];
 
-            // One DELETE call purges one batch (20 rooms), then the "client"
+            // One DELETE call purges one batch (60 rooms), then the "client"
             // disappears, like a closed tab.
             const first = await api<{ complete?: boolean }>(
                 page,
