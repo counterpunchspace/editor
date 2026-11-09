@@ -198,6 +198,9 @@ async function recheckOurSideFailure(
                 cookie: `session=${sessionToken}`,
                 origin: website()
             },
+            // JSON, as the creator page sends it: the website refuses
+            // cookie-authenticated mutations of any other type.
+            data: {},
             failOnStatusCode: false
         }
     );
@@ -223,6 +226,9 @@ async function startRegisteredChecks(
                 cookie: `session=${sessionToken}`,
                 origin: website()
             },
+            // JSON, as the creator page sends it: the website refuses
+            // cookie-authenticated mutations of any other type.
+            data: {},
             failOnStatusCode: false
         }
     );
