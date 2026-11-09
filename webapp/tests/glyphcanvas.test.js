@@ -22434,6 +22434,18 @@ describe('GlyphCanvas keyboard handling', () => {
         expect(canvas.outlineEditor.isPreviewMode).toBe(true);
     });
 
+    test('canvas blur ends a held Space preview, since its keyup never arrives', () => {
+        canvas.outlineEditor.active = true;
+        canvas.onKeyDown(new KeyboardEvent('keydown', { code: 'Space' }));
+        expect(canvas.outlineEditor.spaceKeyPressed).toBe(true);
+        expect(canvas.outlineEditor.isPreviewMode).toBe(true);
+
+        canvas.canvas.dispatchEvent(new Event('blur'));
+
+        expect(canvas.outlineEditor.spaceKeyPressed).toBe(false);
+        expect(canvas.outlineEditor.isPreviewMode).toBe(false);
+    });
+
     test('background layer shortcuts are handled globally outside the canvas', () => {
         window.glyphCanvas = canvas;
         canvas.outlineEditor.active = true;

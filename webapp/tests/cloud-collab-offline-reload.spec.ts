@@ -1,6 +1,7 @@
 /**
  * Reload while offline with pending edits; reopen and confirm edits reach the
- * server and a peer.
+ * server and a peer. Then, with the peer gone, an online edit survives an
+ * owner reload that hydrates from the room alone.
  */
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';
 import {
@@ -11,13 +12,18 @@ import {
 } from './helpers/snapshot-helper';
 import {
     waitForBridgeReady,
+    getCompilationErrorText,
     installJsonCanonicalizer,
     installFontModelSyncTracker,
     installEditingFontCompileTracker,
     alignEditorCanvas,
     waitUntilGlyphLayerDataMatches
 } from './helpers/change-bridge-cross-window';
-import { cleanupCloudCollabUsers } from './helpers/cloud-collab-session';
+import {
+    LOCAL_ROOM_ORIGIN,
+    LOCAL_WEBSITE_ORIGIN,
+    cleanupCloudCollabUsers
+} from './helpers/cloud-collab-session';
 import {
     glyphNodeX,
     nudgeGlyphNode,
@@ -30,8 +36,15 @@ import {
 
 test.describe.configure({ mode: 'serial' });
 
-const CLOUD_BACKEND =
-    /^(https?|wss?):\/\/(localhost|127\.0\.0\.1):(8787|8788)\//;
+/** Room and website requests and sockets, locally or on staging. */
+function cloudBackendPattern(): RegExp {
+    const hosts = [LOCAL_ROOM_ORIGIN, LOCAL_WEBSITE_ORIGIN].map((origin) =>
+        new URL(origin).host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    );
+    return new RegExp(`^(https?|wss?)://(${hosts.join('|')})/`);
+}
+
+const CLOUD_BACKEND = cloudBackendPattern();
 
 /**
  * Sever the cloud backend but keep the editor origin reachable so the page
@@ -189,6 +202,35 @@ test.describe('cloud collab offline reload', () => {
                 })
                 .toBe(baselineX + 23);
             await waitUntilGlyphLayerDataMatches(ownerPage, inviteePage, ['a']);
+
+            // Peer gone: an online edit must hydrate back from the room
+            // alone after an owner reload.
+            await inviteeContext.close();
+            inviteeContext = null;
+            const online = await nudgeGlyphNode(
+                ownerPage,
+                'a',
+                17,
+                'Persist before reload'
+            );
+            await waitForCloudLiveIdle(ownerPage);
+            await ownerPage.reload();
+            await waitForCanvasReady(ownerPage);
+            await waitForFontLoaded(ownerPage);
+            await waitForOpenSessionReady(ownerPage, assetId);
+            await waitForBridgeReady(ownerPage);
+            await waitForCloudLiveIdle(ownerPage);
+            await expect
+                .poll(async () => glyphNodeX(ownerPage, 'a'), {
+                    timeout: 60000
+                })
+                .toBe(online.newX);
+            expect(await getCompilationErrorText(ownerPage)).toBeNull();
+            expect(
+                await ownerPage.evaluate(
+                    () => (window as any).cloudPlugin?.connectionStatus
+                )
+            ).toBe('connected');
         } finally {
             await ownerContext.close();
             await inviteeContext?.close();

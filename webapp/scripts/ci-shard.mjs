@@ -134,19 +134,13 @@ const GROUPS = {
         'linked-windows': ['tests/linked-window-editing-compile.spec.ts'],
         'startup-and-files': [
             'tests/basic-interaction.spec.ts',
-            'tests/open-path-startup.spec.ts',
-            'tests/multiline-text.spec.ts',
-            'tests/typing-waits-for-compile.spec.ts',
-            'tests/typing-arabic-cursor.spec.ts',
-            'tests/text-mode-kerning-live.spec.ts',
+            'tests/text-mode-typing-kerning.spec.ts',
             'tests/compilation-lane-benchmark.spec.ts',
             'tests/perf-pipeline-benchmark.spec.ts'
         ],
         'path-editing': [
             'tests/open-close-path.spec.ts',
-            'tests/outline-editor-gaps.spec.ts',
-            'tests/path-context-menu-fuzz.spec.ts',
-            'tests/boolean-subtraction.spec.ts'
+            'tests/path-context-menu-fuzz.spec.ts'
         ],
         'anchors-and-components': [
             'tests/automatic-adieresis-anchor-browser.spec.ts',
@@ -157,8 +151,7 @@ const GROUPS = {
         'python-sync-compile': [
             'tests/change-bridge-cross-window.spec.ts',
             'tests/feature-subset-fustat.spec.ts',
-            'tests/python-model-mapping-access.spec.ts',
-            'tests/python-node-history-fustat.spec.ts',
+            'tests/python-live-runtime.spec.ts',
             'tests/add-master-large-font.spec.ts'
         ]
     },
@@ -171,13 +164,10 @@ const GROUPS = {
         'lifecycle': ['tests/cloud-collab-lifecycle.spec.ts'],
         'quota': ['tests/cloud-collab-quota.spec.ts'],
         'deletion': ['tests/cloud-collab-deletion.spec.ts'],
-        'deletion-glyph': ['tests/cloud-collab-deletion-glyph.spec.ts'],
         'sparse-closure': ['tests/cloud-collab-sparse-closure.spec.ts'],
-        // Includes adding a master to a ~1,000-glyph font: ~4 minutes alone.
         'master-topology': ['tests/cloud-collab-master-topology.spec.ts'],
         'three-window-sync': ['tests/cloud-collab-three-window-sync.spec.ts'],
-        'three-window-relay': ['tests/cloud-collab-three-window-relay.spec.ts'],
-        'reconnect': ['tests/cloud-collab-three-window-reconnect.spec.ts']
+        'three-window-relay': ['tests/cloud-collab-three-window-relay.spec.ts']
     }
 };
 

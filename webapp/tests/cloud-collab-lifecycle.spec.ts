@@ -21,14 +21,16 @@ import {
     makeCloudCollabEmails
 } from './helpers/cloud-collab-session';
 import {
+    CLOUD_TEST_FONT,
+    CLOUD_TEST_FONT_URL,
     LOCAL_EDITOR_ORIGIN,
     LOCAL_ROOM_ORIGIN,
     LOCAL_WEBSITE_ORIGIN,
     assertServiceReachable,
     collectPageErrors,
     editorHrefWithTestMode,
-    gotoEditorPage,
     glyphNodeX,
+    gotoEditorPage,
     nudgeGlyphNode,
     saveCurrentFontToCloud,
     waitForCloudLiveIdle
@@ -132,7 +134,7 @@ async function cancelTransfer(page: Page): Promise<void> {
     await waitForTransferDialog(page);
     await page
         .locator('.transfer-progress-overlay [data-action="cancel"]')
-        .click();
+        .click({ timeout: 30000 });
 }
 
 test.describe('Cloud collab seed/load cancel and two-tab', () => {
@@ -169,15 +171,17 @@ test.describe('Cloud collab seed/load cancel and two-tab', () => {
         const page = await ownerContext.newPage();
         const errors = await collectPageErrors(page);
         try {
-            await page.goto('/?test=true&examples=core');
+            await page.goto(CLOUD_TEST_FONT_URL);
             await waitForCanvasReady(page);
-            await openFileFromFilesView(page, 'Fustat.glyphs');
-            await waitForOpenSessionReady(page, 'Fustat.glyphs');
+            await openFileFromFilesView(page, CLOUD_TEST_FONT);
+            await waitForOpenSessionReady(page, CLOUD_TEST_FONT);
             await waitForBridgeReady(page);
             await installJsonCanonicalizer(page);
 
             for (const phase of ['early', 'mid', 'late'] as const) {
                 // Cancel at a fixed point instead of racing the progress bar.
+                // A small font uploads in a moment, so every phase holds packs.
+                // early: cancel right after the asset is created.
                 // mid: every shard pack is held before it reaches the room.
                 // late: the first three packs are stored and attested by the
                 // room; the rest are held until after the cancel.
@@ -187,19 +191,17 @@ test.describe('Cloud collab seed/load cancel and two-tab', () => {
                     release = resolve;
                 });
                 let packsSeen = 0;
-                if (phase !== 'early') {
-                    await page.route(packPattern, async (route) => {
-                        if (route.request().method() !== 'POST') {
-                            await route.continue();
-                            return;
-                        }
-                        packsSeen += 1;
-                        if (phase === 'mid' || packsSeen > 3) {
-                            await released;
-                        }
-                        await route.continue().catch(() => undefined);
-                    });
-                }
+                await page.route(packPattern, async (route) => {
+                    if (route.request().method() !== 'POST') {
+                        await route.continue();
+                        return;
+                    }
+                    packsSeen += 1;
+                    if (phase !== 'late' || packsSeen > 3) {
+                        await released;
+                    }
+                    await route.continue().catch(() => undefined);
+                });
                 const created = waitForCreatedAssetId(page);
                 const savePromise = startCloudSaveAs(
                     page,
@@ -224,16 +226,16 @@ test.describe('Cloud collab seed/load cancel and two-tab', () => {
                 await cancelTransfer(page);
                 release();
                 const result = await savePromise;
-                if (phase !== 'early') {
-                    await page.unroute(packPattern);
-                }
+                await page.unroute(packPattern);
                 expect(result.assetId).toBeFalsy();
                 expect(
                     `${result.name || ''} ${result.error || ''}`.toLowerCase()
                 ).toMatch(/cancel/);
                 expect(await fetchAssetStatus(page, assetId)).toBe(404);
                 expect(await listVisibleAssetIds(page)).not.toContain(assetId);
-                expect(await currentFontPath(page)).toMatch(/Fustat\.glyphs$/);
+                expect(await currentFontPath(page)).toMatch(
+                    /FustatMini\.glyphs$/
+                );
                 await expect(
                     page.locator('.transfer-progress-overlay')
                 ).toHaveCount(0);
@@ -262,10 +264,10 @@ test.describe('Cloud collab seed/load cancel and two-tab', () => {
         await installCrossWindowTrackersOnContext(ownerContext);
         const page = await ownerContext.newPage();
         try {
-            await page.goto('/?test=true&examples=core');
+            await page.goto(CLOUD_TEST_FONT_URL);
             await waitForCanvasReady(page);
-            await openFileFromFilesView(page, 'Fustat.glyphs');
-            await waitForOpenSessionReady(page, 'Fustat.glyphs');
+            await openFileFromFilesView(page, CLOUD_TEST_FONT);
+            await waitForOpenSessionReady(page, CLOUD_TEST_FONT);
             await waitForBridgeReady(page);
             const assetId = await saveCurrentFontToCloud(
                 page,
@@ -279,6 +281,17 @@ test.describe('Cloud collab seed/load cancel and two-tab', () => {
             await waitForFontLoaded(page);
             expect(await currentFontPath(page)).not.toContain(assetId);
 
+            // A small font loads in a moment; hold its room requests so the
+            // cancel lands while the load is still running.
+            const roomRequests = /\/room\/[^/]+\//;
+            let releaseLoad: () => void = () => undefined;
+            const loadReleased = new Promise<void>((resolve) => {
+                releaseLoad = resolve;
+            });
+            await page.route(roomRequests, async (route) => {
+                await loadReleased;
+                await route.continue().catch(() => undefined);
+            });
             const openPromise = page.evaluate(async (id) => {
                 try {
                     await (window as any).cloudPlugin.openAsset(id);
@@ -294,7 +307,9 @@ test.describe('Cloud collab seed/load cancel and two-tab', () => {
                 }
             }, assetId);
             await cancelTransfer(page);
+            releaseLoad();
             const openResult = await openPromise;
+            await page.unroute(roomRequests);
             expect(openResult.ok).toBeFalsy();
             expect(
                 `${openResult.name || ''} ${openResult.error || ''}`.toLowerCase()

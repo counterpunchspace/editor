@@ -254,6 +254,12 @@ export async function waitForCloudLiveIdle(
     timeoutMs = 90000
 ): Promise<void> {
     try {
+        // An edit made just before this call may not be queued yet, so the
+        // pending count can read 0 before the edit is sent. Wait for the
+        // engine's queued cloud commits first.
+        await page.evaluate(() =>
+            (window as any).patchSyncEngine?.waitForPendingCloudCommits?.()
+        );
         await page.waitForFunction(
             () => {
                 const plugin = (window as any).cloudPlugin;

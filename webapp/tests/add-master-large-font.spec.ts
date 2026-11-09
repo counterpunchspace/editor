@@ -1,7 +1,8 @@
 import { test, expect } from './fixtures';
 import {
     waitForCanvasReady,
-    waitForOpenSessionReady
+    waitForOpenSessionReady,
+    waitForOverviewTilesRendered
 } from './helpers/snapshot-helper';
 
 /**
@@ -29,6 +30,24 @@ test('adding a master to a 1,000-glyph font finishes and keeps the page responsi
         undefined,
         { timeout: 120_000 }
     );
+
+    // Opening Fustat compiles and paints overview tiles.
+    await waitForOverviewTilesRendered(page);
+    const startup = await page.evaluate(() => {
+        const textRun = (window as any).glyphCanvas?.textRunEditor;
+        return {
+            shapedCount: Array.isArray(textRun?.shapedGlyphs)
+                ? textRun.shapedGlyphs.length
+                : Array.isArray(textRun?.glyphNameBuffer)
+                  ? textRun.glyphNameBuffer.length
+                  : 0,
+            tileCount: document.querySelectorAll(
+                '#glyph-overview-container .glyph-tile'
+            ).length
+        };
+    });
+    expect(startup.shapedCount).toBeGreaterThan(0);
+    expect(startup.tileCount).toBeGreaterThan(0);
 
     const before = await page.evaluate(() => {
         const font = (window as any).currentFontModel;

@@ -23,16 +23,17 @@ import {
     LOCAL_WEBSITE_ORIGIN
 } from './helpers/cloud-collab-session';
 import {
+    CLOUD_TEST_FONT,
+    LOCAL_EDITOR_ORIGIN,
+    LOCAL_ROOM_ORIGIN,
+    acceptCloudInviteAndGetEditorHref,
     assertServiceReachable,
     collectPageErrors,
     dumpLiveSessionState,
+    editorHrefWithTestMode,
     gotoEditorPage,
     saveCurrentFontToCloud,
-    waitForCloudLiveIdle,
-    acceptCloudInviteAndGetEditorHref,
-    editorHrefWithTestMode,
-    LOCAL_EDITOR_ORIGIN,
-    LOCAL_ROOM_ORIGIN
+    waitForCloudLiveIdle
 } from './helpers/cloud-collab-e2e';
 
 test.describe.configure({ mode: 'serial' });
@@ -429,7 +430,7 @@ test('revoking a member closes an open glyph shard, and a new invite restores ed
     const opened = await openSavedFixture(
         browser,
         request,
-        'Fustat.glyphs',
+        CLOUD_TEST_FONT,
         `Fustat-revoke-${runId}`,
         emails.owner
     );

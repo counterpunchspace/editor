@@ -7,8 +7,15 @@ import {
 } from './cloud-collab-session';
 import { shouldIgnoreCrossWindowPageError } from './change-bridge-cross-window';
 
-export const E2E_VALIDATOR_TOKEN = 'e2e-p0-validator';
-export const E2E_COMPACTOR_TOKEN = 'e2e-p0-compactor';
+/**
+ * Font the cloud specs open and save. A 66-glyph subset of Fustat with the
+ * same three masters, components and kerning: every glyph becomes a room on
+ * staging, so the full 1,058-glyph Fustat made each save, deletion and
+ * leftover check take minutes.
+ */
+export const CLOUD_TEST_FONT = 'FustatMini.glyphs';
+/** Editor URL that loads CLOUD_TEST_FONT (and the other collab fixtures). */
+export const CLOUD_TEST_FONT_URL = '/?test=true&examples=collab-fixtures';
 
 export async function assertServiceReachable(
     request: { get: (url: string) => Promise<{ status: () => number }> },
@@ -144,6 +151,12 @@ export async function waitForCloudLiveIdle(
     timeoutMs = 90000
 ): Promise<void> {
     try {
+        // An edit made just before this call may not be queued yet, so the
+        // pending count can read 0 before the edit is sent. Wait for the
+        // engine's queued cloud commits first.
+        await page.evaluate(() =>
+            (window as any).patchSyncEngine?.waitForPendingCloudCommits?.()
+        );
         await page.waitForFunction(
             () => {
                 const plugin = (window as any).cloudPlugin;
@@ -462,23 +475,6 @@ async function requestDebugRoomControlOnce(
         },
         { assetId, body, operatorAuthorization }
     );
-}
-
-export async function probeWorkerAuth(
-    request: APIRequestContext,
-    url: string,
-    token: string
-): Promise<number> {
-    const response = await request.fetch(url, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/octet-stream'
-        },
-        data: Buffer.from([1, 2, 3]),
-        failOnStatusCode: false
-    });
-    return response.status();
 }
 
 export { LOCAL_EDITOR_ORIGIN, LOCAL_ROOM_ORIGIN, LOCAL_WEBSITE_ORIGIN };

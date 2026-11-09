@@ -13,6 +13,8 @@ import {
     makeCloudCollabEmails
 } from './cloud-collab-session';
 import {
+    CLOUD_TEST_FONT,
+    CLOUD_TEST_FONT_URL,
     LOCAL_EDITOR_ORIGIN,
     LOCAL_ROOM_ORIGIN,
     LOCAL_WEBSITE_ORIGIN,
@@ -132,14 +134,14 @@ export function expectR2ObjectsKept(before: Census, after: Census): void {
     }
 }
 
-export async function openAndSaveFustat(
+export async function openAndSaveCloudTestFont(
     page: Page,
     name: string
 ): Promise<string> {
-    await page.goto('/?test=true&examples=core');
+    await page.goto(CLOUD_TEST_FONT_URL);
     await waitForCanvasReady(page);
-    await openFileFromFilesView(page, 'Fustat.glyphs');
-    await waitForOpenSessionReady(page, 'Fustat.glyphs');
+    await openFileFromFilesView(page, CLOUD_TEST_FONT);
+    await waitForOpenSessionReady(page, CLOUD_TEST_FONT);
     await waitForBridgeReady(page);
     const assetId = await saveCurrentFontToCloud(page, name);
     await waitForCloudLiveIdle(page, 120000);

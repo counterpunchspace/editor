@@ -9,7 +9,9 @@
 # to preview.
 # --services ships website and collab only. The preview editor stays as it
 # is, so its users see no update. Tag: <preview editor version>+s.N.
-# Usage: ./previewrelease.sh [--services] [--dry-run]
+# The watch waits for every run to finish and reports all failures at once;
+# --fail-fast stops it at the first failed job.
+# Usage: ./previewrelease.sh [--services] [--dry-run] [--fail-fast]
 
 set -e
 
@@ -17,12 +19,14 @@ cd "$(dirname "$0")"
 
 DRY_RUN=false
 SERVICES=false
+WATCH_FLAGS=()
 for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY_RUN=true ;;
         --services) SERVICES=true ;;
+        --fail-fast) WATCH_FLAGS+=(--fail-fast) ;;
         *)
-            echo "Usage: ./previewrelease.sh [--services] [--dry-run]"
+            echo "Usage: ./previewrelease.sh [--services] [--dry-run] [--fail-fast]"
             exit 1
             ;;
     esac
@@ -76,4 +80,4 @@ echo "Preview Release started. Watching until it finishes..."
 # Sibling CI waits inside the workflow can run 90 minutes each.
 : "${CI_WATCH_TIMEOUT:=21600}"
 export CI_WATCH_TIMEOUT
-exec "$EDITOR_DIR/ci-watch.sh" --since "$WATCH_SINCE" "$EDITOR_DIR"
+exec "$EDITOR_DIR/ci-watch.sh" --since "$WATCH_SINCE" "${WATCH_FLAGS[@]+"${WATCH_FLAGS[@]}"}" "$EDITOR_DIR"

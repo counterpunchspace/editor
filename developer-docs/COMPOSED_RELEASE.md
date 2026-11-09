@@ -165,10 +165,10 @@ This is not the same as `CLOUD_E2E_PAT`. The PAT never talks to Cloudflare. Miss
 
 ## Real-email sign-in on staging
 
-Sign-in uses six-digit codes sent by email. Push CI and the cutover's staging deploy check it twice with real mail (IMAP secrets below, `SIGNUP_E2E_D1_NAME=context_users_staging`):
+Sign-in uses six-digit codes sent by email. Push CI and the cutover's staging deploy check it twice with real mail (IMAP secrets below, `SIGNUP_E2E_D1_NAME=context_users_staging`). In push CI both checks run in the `cloud · sign-in` job, next to the cloud e2e shards:
 
 - **Before the staging editor deploy**, `website/scripts/e2e-login-code-signup.mjs` signs up `+cp-e2e-{run_id}`: it reads the code from the inbox, checks that a wrong code is refused with tries left, signs in on the website, then asks for a second code from the staging editor origin and checks that the editor gets a working session token. It deletes the user and the mail.
-- **After the staging editor deploy**, the `sign-in-live` Playwright project (`tests/sign-in-live.spec.ts`) signs in through the real UI: `+cp-e2e-{run_id}-website` on the website login page (a wrong code, then the pasted code), and `+cp-e2e-{run_id}-editor` from the editor's Cloud tab (resend, a wrong code, then the first code). The editor must sign in without a reload, keep the open font, and a second editor tab must follow. `e2e-login-code-signup.mjs cleanup --roles website,editor` always runs afterwards.
+- **After the staging editor deploy**, the `sign-in-live` Playwright project (`tests/sign-in-live.spec.ts`) signs in through the real editor UI: `+cp-e2e-{run_id}-editor` from the editor's Cloud tab (resend, a wrong code, then the first code). The editor must sign in without a reload, keep the open font, and a second editor tab must follow. `e2e-login-code-signup.mjs cleanup --roles editor` always runs afterwards.
 
 The project never retries: a second attempt would hit the resend cooldown and the account's wrong-code budget. On preview and production the smoke accounts sign in the same way. Local `npm run test:cloud-collab` still uses `AUTH_TOKEN_ALLOW_INSECURE_LOCAL_FALLBACK`.
 

@@ -19,6 +19,12 @@
             "destination": "/user/NestedComponents.glyphs"
         },
         {
+            "testOnly": true,
+            "groups": ["collab-fixtures"],
+            "source": "examples/FustatMini.glyphs",
+            "destination": "/user/FustatMini.glyphs"
+        },
+        {
             "type": "directory",
             "testOnly": true,
             "source": "examples/YanoneKaffeesatz.glyphspackage",

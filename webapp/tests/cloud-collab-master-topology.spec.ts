@@ -21,12 +21,14 @@ import {
     LOCAL_WEBSITE_ORIGIN
 } from './helpers/cloud-collab-session';
 import {
+    CLOUD_TEST_FONT,
+    CLOUD_TEST_FONT_URL,
+    LOCAL_EDITOR_ORIGIN,
+    LOCAL_ROOM_ORIGIN,
     assertServiceReachable,
     collectPageErrors,
     saveCurrentFontToCloud,
-    waitForCloudLiveIdle,
-    LOCAL_EDITOR_ORIGIN,
-    LOCAL_ROOM_ORIGIN
+    waitForCloudLiveIdle
 } from './helpers/cloud-collab-e2e';
 import { openInviteeOnAsset } from './helpers/cloud-collab-bootstrap';
 
@@ -290,16 +292,18 @@ test('adding and removing a master reaches every catalog glyph for every client'
 });
 
 /**
- * A master added to a ~1,000-glyph font writes one packet per glyph shard.
- * Every packet must stay under the room's 64 KiB description cap (the room
- * refuses the write otherwise), and peers must fetch the shards they do not
- * hold live through the glyph revision signal.
+ * A master added to a font writes one packet per glyph shard. Every packet
+ * must stay under the room's 64 KiB description cap (the room refuses the
+ * write otherwise), and peers must fetch the shards they do not hold live
+ * through the glyph revision signal. The packet size does not depend on the
+ * glyph count, so the 66-glyph Fustat subset covers it; the full Fustat made
+ * this test drain about 1,000 cold shard writes on staging (11 minutes).
  */
-test('adding a master to a 1,000-glyph cloud font reaches every glyph for a peer', async ({
+test('adding a master to a three-master cloud font reaches every glyph for a peer', async ({
     browser,
     request
 }) => {
-    test.setTimeout(1500000);
+    test.setTimeout(600000);
     await assertCloudStackReachable(request);
     const runId = `masters-large-${Date.now().toString(36)}`;
     const emails = makeCloudCollabEmails(runId);
@@ -316,10 +320,10 @@ test('adding a master to a 1,000-glyph cloud font reaches every glyph for a peer
         await attachCloudCollabCookies(ownerContext, ownerSession);
         const ownerPage = await ownerContext.newPage();
         await collectPageErrors(ownerPage);
-        await ownerPage.goto('/?test=true&examples=core');
+        await ownerPage.goto(CLOUD_TEST_FONT_URL);
         await waitForCanvasReady(ownerPage);
-        await openFileFromFilesView(ownerPage, 'Fustat.glyphs');
-        await waitForOpenSessionReady(ownerPage, 'Fustat.glyphs');
+        await openFileFromFilesView(ownerPage, CLOUD_TEST_FONT);
+        await waitForOpenSessionReady(ownerPage, CLOUD_TEST_FONT);
         await waitForBridgeReady(ownerPage);
         const assetId = await saveCurrentFontToCloud(
             ownerPage,
@@ -328,7 +332,7 @@ test('adding a master to a 1,000-glyph cloud font reaches every glyph for a peer
         await waitForOpenSessionReady(ownerPage, assetId);
         await waitForCloudLiveIdle(ownerPage, 120000);
         const catalog = await catalogGlyphNames(ownerPage);
-        expect(catalog.length).toBeGreaterThan(1000);
+        expect(catalog.length).toBeGreaterThan(50);
 
         const invitee = await openInviteeOnAsset(
             browser,
@@ -349,8 +353,8 @@ test('adding a master to a 1,000-glyph cloud font reaches every glyph for a peer
         });
         expect(masterId).toBeTruthy();
         await settleCloudEdit(ownerPage);
-        // About 1,000 shard writes; on staging each loads a cold shard room.
-        await waitForCloudDurable(ownerPage, 720000);
+        // One shard write per glyph; on staging each loads a cold shard room.
+        await waitForCloudDurable(ownerPage, 240000);
 
         const ownerAfterAdd = await masterCoverage(ownerPage, masterId);
         expect(ownerAfterAdd.missing).toEqual([]);
@@ -370,7 +374,7 @@ test('adding a master to a 1,000-glyph cloud font reaches every glyph for a peer
                         missing: coverage.missing.length
                     };
                 },
-                { timeout: 300000, intervals: [2000] }
+                { timeout: 120000, intervals: [2000] }
             )
             .toEqual({ hasMaster: true, missing: 0 });
 
@@ -384,7 +388,7 @@ test('adding a master to a 1,000-glyph cloud font reaches every glyph for a peer
                 async () =>
                     (await masterCoverage(inviteePage, masterId)).missing
                         .length,
-                { timeout: 300000, intervals: [2000] }
+                { timeout: 120000, intervals: [2000] }
             )
             .toBe(0);
     } finally {

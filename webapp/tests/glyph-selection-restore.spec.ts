@@ -8,12 +8,14 @@ import {
     waitForOpenSessionReady
 } from './helpers/snapshot-helper';
 
-async function openYanoneFont(page: Page) {
+// A five-glyph fixture (a, adieresis = a + dieresiscomb) keeps the boot short.
+// The anchor remap itself is unit-tested in anchor-selection-remap.test.js.
+async function openNestedComponentsFont(page: Page) {
     await page.goto('/?test=true');
     await waitForCanvasReady(page);
-    await openFileFromFilesView(page, 'YanoneKaffeesatz.designspace');
+    await openFileFromFilesView(page, 'NestedComponents.glyphs');
     await waitForFontLoaded(page);
-    await waitForOpenSessionReady(page, 'YanoneKaffeesatz.designspace');
+    await waitForOpenSessionReady(page, 'NestedComponents.glyphs');
     await focusView(page, 'ControlOrMeta+Shift+E', 'view-editor');
     await page.waitForFunction(
         () => Number(window.fontManager?.editingFont?.length || 0) > 0,
@@ -41,7 +43,8 @@ async function prepareAnchorSelection(
             window.fontManager.updateEditingSubsetSnapshot?.([
                 'a',
                 'adieresis',
-                'dieresiscomb'
+                'dieresiscomb',
+                'dotaccentcomb'
             ]);
         }
         textRunEditor.shapeText?.(true);
@@ -156,7 +159,7 @@ test.describe('Glyph selection restore in browser', () => {
     test('restores anchor selection by name after entering a nested component', async ({
         page
     }) => {
-        await openYanoneFont(page);
+        await openNestedComponentsFont(page);
         await prepareAnchorSelection(page, 'aä', 0, 'top');
 
         await expect

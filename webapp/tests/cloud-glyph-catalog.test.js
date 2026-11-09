@@ -404,6 +404,44 @@ describe('live font-deps updates', () => {
         return { bridge, plugin, fontJson: bridge.getFontJsonSnapshot() };
     }
 
+    it('an unavailable cloud WAL makes the font read-only and refuses glyph syncs', async () => {
+        const { bridge, plugin } = startLiveSession({
+            upm: 1000,
+            glyphs: [{ name: 'a', layers: [liveLayer()] }]
+        });
+        // Use the real check instead of the session helper's stub.
+        delete plugin.canMutateCurrentAsset;
+        plugin._activeAssetId = 'live-deps-asset';
+        plugin._liveSession = {
+            walHealth: 'unavailable',
+            getAccessSnapshot: () => ({}),
+            persistMutationIntents: async () => false
+        };
+        window.cloudPlugin = plugin;
+
+        expect(await plugin.persistCloudMutationIntent(['font-core'])).toBe(
+            false
+        );
+        expect(plugin.canMutateCurrentAsset()).toBe(false);
+        expect(() =>
+            bridge.syncGlyphFromJson(
+                'a',
+                'blocked wal',
+                undefined,
+                undefined,
+                'layer-1',
+                undefined,
+                undefined,
+                undefined,
+                'test-sync',
+                null
+            )
+        ).toThrow(/read-only/);
+
+        plugin._liveSession.walHealth = 'ready';
+        expect(plugin.canMutateCurrentAsset()).toBe(true);
+    });
+
     it('patches component edges and reverse-close when a reference is committed', () => {
         const fontJson = {
             upm: 1000,

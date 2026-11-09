@@ -3,8 +3,10 @@ import { test, expect, type Page } from '@playwright/test';
 import { waitForCanvasReady } from './helpers/snapshot-helper';
 
 /**
- * Real sign-in with emailed codes on the staging website and editor: the
- * code is read from the real inbox over IMAP, typed wrong once, then pasted.
+ * Real sign-in with an emailed code in the staging editor: the code is read
+ * from the real inbox over IMAP, typed wrong once, then pasted. The website’s
+ * own sign-in is checked by `scripts/e2e-login-code-signup.mjs` in the
+ * website repo.
  * The editor signs in from the dialog without a reload, keeps the open font,
  * shows the account in Preferences, opens the Assistant with the free AI
  * credit, and a second editor tab follows. Not part of any other project.
@@ -16,8 +18,8 @@ import { waitForCanvasReady } from './helpers/snapshot-helper';
  *   SIGNUP_E2E_IMAP_USER, SIGNUP_E2E_IMAP_PASS, GITHUB_RUN_ID
  *   npx playwright test --project=sign-in-live
  *
- * Afterwards `node scripts/e2e-login-code-signup.mjs cleanup --roles
- * website,editor` in the website repo deletes both accounts and their mail.
+ * Afterwards `node scripts/e2e-login-code-signup.mjs cleanup --roles editor`
+ * in the website repo deletes the account and its mail.
  */
 
 type WaitForLoginCode = (options: {
@@ -184,42 +186,6 @@ test.beforeAll(() => {
     expect(websiteOrigin, 'SIGN_IN_LIVE_WEBSITE_URL').toContain('https://');
     expect(editorOrigin, 'SIGN_IN_LIVE_EDITOR_URL').toContain('https://');
     expect(imapPass, 'SIGNUP_E2E_IMAP_PASS').not.toBe('');
-});
-
-test('the website signs in with the emailed code', async ({ browser }) => {
-    test.setTimeout(240_000);
-    const waitForLoginCode = await mailbox();
-    const email = roleEmail('website');
-    const context = await browser.newContext();
-    try {
-        const page = await context.newPage();
-        await page.goto(`${websiteOrigin}/login`);
-        await page.fill('#email', email);
-        const sentAt = Date.now();
-        await page.click('#submitBtn');
-        await expect(page.locator('#loginCodeForm')).toBeVisible();
-        await expect(page.locator('#loginCodeEmail')).toHaveText(email);
-
-        const code = await waitForLoginCode({
-            user: imapUser,
-            pass: imapPass,
-            to: email,
-            sinceMs: sentAt,
-            exactRecipient: true
-        });
-
-        await pasteInto(page, '#loginCode', wrongCodeFor(code));
-        await expect(page.locator('#messageContainer')).toContainText(
-            'tries left'
-        );
-        await expect(page.locator('#loginCode')).toBeEnabled();
-
-        await pasteInto(page, '#loginCode', code);
-        await page.waitForURL(/\/account/, { timeout: 30_000 });
-        await expect(page.locator('#authSection')).toContainText(email);
-    } finally {
-        await context.close();
-    }
 });
 
 test('the editor signs in from the dialog and keeps the open font', async ({

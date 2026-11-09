@@ -75,6 +75,8 @@ import {
     collectPageErrors
 } from './helpers/cloud-collab-three-window';
 import {
+    CLOUD_TEST_FONT,
+    CLOUD_TEST_FONT_URL,
     glyphNodeXAt,
     moveGlyphNodeThroughModel
 } from './helpers/cloud-collab-e2e';
@@ -128,10 +130,10 @@ test.describe('three-window sync scenarios', () => {
         const mainErrors = await collectPageErrors(mainPage);
 
         try {
-            await mainPage.goto('/?test=true&examples=core');
+            await mainPage.goto(CLOUD_TEST_FONT_URL);
             await waitForCanvasReady(mainPage);
-            await openFileFromFilesView(mainPage, 'Fustat.glyphs');
-            await waitForOpenSessionReady(mainPage, 'Fustat.glyphs');
+            await openFileFromFilesView(mainPage, CLOUD_TEST_FONT);
+            await waitForOpenSessionReady(mainPage, CLOUD_TEST_FONT);
             await waitForBridgeReady(mainPage);
             await installJsonCanonicalizer(mainPage);
             await installFontModelSyncTracker(mainPage);
@@ -568,8 +570,7 @@ test.describe('three-window sync scenarios', () => {
                 await waitUntilGlyphLayerDataMatches(
                     mainPage,
                     inviteePage,
-                    glyphNames,
-                    10_000
+                    glyphNames
                 );
             } catch (error) {
                 const [ownerDump, inviteeDump] = await Promise.all([
@@ -1972,8 +1973,7 @@ test.describe('three-window sync scenarios', () => {
             );
             await waitForLiveAccess(
                 inviteePage,
-                (snapshot) => snapshot.openSocketCount === 0,
-                10000
+                (snapshot) => snapshot.openSocketCount === 0
             );
             expect((await getLiveAccessSnapshot(inviteePage)).canMutate).toBe(
                 false

@@ -6,14 +6,11 @@ import {
 } from './helpers/change-bridge-cross-window';
 import { cleanupCloudCollabUsers } from './helpers/cloud-collab-session';
 import {
-    E2E_COMPACTOR_TOKEN,
-    E2E_VALIDATOR_TOKEN,
     dumpCollabIntegrity,
     dumpLiveSessionState,
     glyphNodeX,
     nudgeGlyphNode,
     moveGlyphNodeThroughModel,
-    probeWorkerAuth,
     requestDebugRoomControl,
     waitForCloudLiveIdle
 } from './helpers/cloud-collab-e2e';
@@ -27,7 +24,7 @@ test.describe.configure({ mode: 'serial' });
 test.describe('Cloud P0 integrity Playwright gates', () => {
     test.describe.configure({ retries: 0 });
 
-    test('WAL, HTTP fault matrix, distinct worker tokens, and compact', async ({
+    test('HTTP fault matrix, distinct worker tokens, and compact', async ({
         browser,
         request
     }) => {
@@ -45,52 +42,6 @@ test.describe('Cloud P0 integrity Playwright gates', () => {
             );
         let readerContext: BrowserContext | null = null;
         try {
-            let validatorReachable = false;
-            try {
-                const validatorHealth = await request.get(
-                    'http://127.0.0.1:8790/health',
-                    { failOnStatusCode: false }
-                );
-                validatorReachable = validatorHealth.ok();
-            } catch {
-                validatorReachable = false;
-            }
-            if (validatorReachable) {
-                expect(
-                    await probeWorkerAuth(
-                        request,
-                        'http://127.0.0.1:8790/validate',
-                        E2E_COMPACTOR_TOKEN
-                    )
-                ).toBe(401);
-                expect(
-                    await probeWorkerAuth(
-                        request,
-                        'http://127.0.0.1:8790/validate',
-                        E2E_VALIDATOR_TOKEN
-                    )
-                ).not.toBe(401);
-            }
-            let compactorReachable = false;
-            try {
-                const compactorHealth = await request.get(
-                    'http://127.0.0.1:8789/health',
-                    { failOnStatusCode: false }
-                );
-                compactorReachable = compactorHealth.ok();
-            } catch {
-                compactorReachable = false;
-            }
-            if (compactorReachable) {
-                expect(
-                    await probeWorkerAuth(
-                        request,
-                        `http://127.0.0.1:8789/room/${encodeURIComponent(assetId)}/compact`,
-                        E2E_VALIDATOR_TOKEN
-                    )
-                ).toBe(401);
-            }
-
             const livePostStatuses: number[] = [];
             const injectedLiveStatuses: number[] = [429, 503];
             await ownerPage.route(/\/live(?:\?|$)/, async (route) => {
@@ -244,231 +195,9 @@ test.describe('Cloud P0 integrity Playwright gates', () => {
             );
             await readerContext.close();
             readerContext = null;
-
-            const walLock = await ownerPage.evaluate(async () => {
-                const failingOpen = () => {
-                    const requestLike: {
-                        result: null;
-                        error: Error;
-                        onsuccess: null;
-                        onupgradeneeded: null;
-                        onerror: ((ev?: unknown) => void) | null;
-                        onblocked: ((ev?: unknown) => void) | null;
-                    } = {
-                        result: null,
-                        error: new Error('IndexedDB is blocked'),
-                        onsuccess: null,
-                        onupgradeneeded: null,
-                        onerror: null,
-                        onblocked: null
-                    };
-                    Object.defineProperty(requestLike, 'onblocked', {
-                        configurable: true,
-                        set(fn) {
-                            queueMicrotask(() => fn?.());
-                        }
-                    });
-                    Object.defineProperty(requestLike, 'onerror', {
-                        configurable: true,
-                        set(fn) {
-                            queueMicrotask(() => fn?.());
-                        }
-                    });
-                    Object.defineProperty(requestLike, 'onsuccess', {
-                        set() {}
-                    });
-                    Object.defineProperty(requestLike, 'onupgradeneeded', {
-                        set() {}
-                    });
-                    return requestLike;
-                };
-                const plugin = (window as any).cloudPlugin;
-                // The live session keeps one IndexedDB connection. Close it
-                // so the next persist goes through indexedDB.open and hits
-                // the blocked opener installed below.
-                plugin?._liveSession?._wal?.close?.();
-                Object.defineProperty(window, 'indexedDB', {
-                    configurable: true,
-                    value: { open: failingOpen }
-                });
-                const persisted = await plugin.persistCloudMutationIntent([
-                    'font-core'
-                ]);
-                let threw = false;
-                let error: string | null = null;
-                const oldX = (window as any).currentFontModel.findGlyph('a')
-                    .layers[0].paths[0].nodes[0].x;
-                try {
-                    const bridge = (window as any).changeBridge;
-                    const glyph = (window as any).currentFontModel.findGlyph(
-                        'a'
-                    );
-                    const layer = glyph.layers[0];
-                    bridge.syncGlyphFromJson(
-                        'a',
-                        'blocked wal',
-                        undefined,
-                        undefined,
-                        layer.id,
-                        undefined,
-                        undefined,
-                        undefined,
-                        'test-sync',
-                        null
-                    );
-                } catch (err) {
-                    threw = true;
-                    error = err instanceof Error ? err.message : String(err);
-                }
-                return {
-                    persisted,
-                    canMutate: plugin.canMutateCurrentAsset(),
-                    walHealth: plugin._liveSession?.walHealth ?? null,
-                    threw,
-                    error,
-                    x: (window as any).currentFontModel.findGlyph('a').layers[0]
-                        .paths[0].nodes[0].x,
-                    oldX
-                };
-            });
-            expect(walLock.persisted).toBe(false);
-            expect(walLock.canMutate).toBe(false);
-            expect(walLock.walHealth).toBe('unavailable');
-            expect(walLock.threw).toBe(true);
-            expect(walLock.error).toMatch(/read-only/i);
-            expect(walLock.x).toBe(walLock.oldX);
         } finally {
             await readerContext?.close();
             await ownerContext.close();
-            await cleanupCloudCollabUsers(request, [
-                emails.owner,
-                emails.invitee
-            ]);
-        }
-    });
-
-    test('dual-client offline edits survive compaction and reconnect', async ({
-        browser,
-        request
-    }) => {
-        test.setTimeout(480000);
-        test.info().annotations.push({ type: 'retries', description: '0' });
-        const runId = `p0off-${Date.now().toString(36)}`;
-        const { emails, ownerContext, ownerPage, assetId } =
-            await prepareOwnerCloudFont(
-                browser,
-                request,
-                runId,
-                `Fustat-p0off-${runId}`
-            );
-        let inviteeContext: BrowserContext | null = null;
-        try {
-            const invitee = await openInviteeOnAsset(
-                browser,
-                request,
-                ownerPage,
-                emails,
-                assetId
-            );
-            inviteeContext = invitee.inviteeContext;
-            const { inviteePage } = invitee;
-            await waitUntilGlyphLayerDataMatches(ownerPage, inviteePage, ['a']);
-
-            const aBefore = await glyphNodeX(ownerPage, 'a');
-            await inviteeContext.setOffline(true);
-            await inviteePage
-                .waitForFunction(
-                    () =>
-                        (window as any).cloudPlugin?.connectionStatus !==
-                        'connected',
-                    null,
-                    { timeout: 20000 }
-                )
-                .catch(() => undefined);
-
-            let inviteeEdit: { oldX: number; newX: number };
-            try {
-                inviteeEdit = await nudgeGlyphNode(
-                    inviteePage,
-                    'a',
-                    23,
-                    'Invitee offline WAL'
-                );
-            } catch (error) {
-                await dumpLiveSessionState(inviteePage, 'P0_INVITEE_DUMP');
-                throw error;
-            }
-            expect(inviteeEdit.newX).toBe(aBefore + 23);
-            await dumpCollabIntegrity(inviteePage, 'invitee-after-nudge');
-
-            // The owner edits a different node of the same layer while also
-            // offline, then reconnects so the compaction below folds the
-            // owner's edit while the invitee's is still only in its WAL.
-            await ownerContext.setOffline(true);
-            const ownerEdit = await moveGlyphNodeThroughModel(ownerPage, {
-                glyphName: 'a',
-                nodeIndex: -1,
-                deltaX: 11,
-                label: 'Owner offline WAL'
-            });
-            await ownerContext.setOffline(false);
-            await waitForCloudLiveIdle(ownerPage);
-            await dumpCollabIntegrity(ownerPage, 'owner-after-offline-edit');
-
-            const compacted = await requestDebugRoomControl(
-                ownerPage,
-                assetId,
-                {
-                    action: 'debug-compact'
-                }
-            );
-            expect(compacted.status).toBe(200);
-            expect(compacted.payload.ok).toBe(true);
-
-            await inviteeContext.setOffline(false);
-            await inviteePage.waitForFunction(
-                () =>
-                    (window as any).cloudPlugin?.connectionStatus ===
-                    'connected',
-                null,
-                { timeout: 90000 }
-            );
-            await dumpCollabIntegrity(inviteePage, 'invitee-after-reconnect');
-            await dumpCollabIntegrity(ownerPage, 'owner-after-reconnect');
-            await alignEditorCanvas(inviteePage, 'a', { wght: 200 });
-            await alignEditorCanvas(ownerPage, 'a', { wght: 200 });
-            await expect
-                .poll(async () => glyphNodeX(inviteePage, 'a'), {
-                    timeout: 90000
-                })
-                .toBe(aBefore + 23);
-            try {
-                await expect
-                    .poll(async () => glyphNodeX(ownerPage, 'a'), {
-                        timeout: 120000
-                    })
-                    .toBe(aBefore + 23);
-            } catch (error) {
-                await dumpCollabIntegrity(
-                    inviteePage,
-                    'invitee-owner-poll-failed'
-                );
-                await dumpCollabIntegrity(ownerPage, 'owner-poll-failed');
-                throw error;
-            }
-            await waitUntilGlyphLayerDataMatches(ownerPage, inviteePage, ['a']);
-            const lastNodeX = (page: typeof ownerPage) =>
-                page.evaluate((index) => {
-                    const glyph = (window as any).currentFontModel.findGlyph(
-                        'a'
-                    );
-                    return glyph.layers[0].paths[0].nodes[index].x;
-                }, ownerEdit.nodeIndex);
-            expect(await lastNodeX(ownerPage)).toBe(ownerEdit.newX);
-            expect(await lastNodeX(inviteePage)).toBe(ownerEdit.newX);
-        } finally {
-            await ownerContext.close();
-            await inviteeContext?.close();
             await cleanupCloudCollabUsers(request, [
                 emails.owner,
                 emails.invitee

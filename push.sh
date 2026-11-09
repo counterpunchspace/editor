@@ -6,14 +6,26 @@
 # If the editor itself has nothing to push, this starts that same CI on
 # editor main so the website and collab you just pushed still get deployed.
 # Afterwards it runs ci-watch.sh and exits with its status (0 green, 1 red).
-# Usage: ./push.sh [--dry-run]
+# The watch waits for every job to finish and reports all failures at once, so
+# one round shows everything to fix. --fail-fast stops at the first failed job.
+# Usage: ./push.sh [--dry-run] [--fail-fast]
 
 set -euo pipefail
 
 EDITOR_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORKSPACE="$(cd "$EDITOR_DIR/.." && pwd)"
 DRY_RUN=0
-[ "${1:-}" = "--dry-run" ] && DRY_RUN=1
+WATCH_FLAGS=()
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run) DRY_RUN=1 ;;
+        --fail-fast) WATCH_FLAGS+=(--fail-fast) ;;
+        *)
+            echo "Usage: ./push.sh [--dry-run] [--fail-fast]"
+            exit 1
+            ;;
+    esac
+done
 
 REPOS=(
     "collab:$WORKSPACE/collab/collab"
@@ -94,7 +106,7 @@ fi
 
 echo ""
 echo "Pushed. Watching CI (the editor run deploys staging and runs the cloud-collab e2e)..."
-WATCH_ARGS=(--since "$WATCH_SINCE")
+WATCH_ARGS=(--since "$WATCH_SINCE" "${WATCH_FLAGS[@]+"${WATCH_FLAGS[@]}"}")
 for entry in "${TO_PUSH[@]}"; do
     WATCH_ARGS+=("${entry#*:}")
 done

@@ -264,6 +264,8 @@ jobs:
         if: needs.tested-build.outputs.skip != 'true' && github.event_name != 'pull_request'
         runs-on: ubuntu-latest
         timeout-minutes: 90
+        outputs:
+            website_sha: ${{ steps.shas.outputs.website }}
         steps:
             - name: Checkout editor
               uses: actions/checkout@v4
@@ -333,18 +335,6 @@ jobs:
                   export COMMIT_SHA="$(git -C "$COLLAB_ROOT" rev-parse HEAD)"
                   bash scripts/deploy-cloud-staging.sh site
 
-            - name: Real-email sign-in code check on staging
-              working-directory: _cloud_e2e/website
-              env:
-                  SIGNUP_E2E_ORIGIN: https://staging.counterpunch.space
-                  SIGNUP_E2E_EDITOR_ORIGIN: https://staging.editor.counterpunch.space
-                  SIGNUP_E2E_D1_NAME: context_users_staging
-                  SIGNUP_E2E_IMAP_USER: ${{ secrets.SIGNUP_E2E_IMAP_USER }}
-                  SIGNUP_E2E_IMAP_PASS: ${{ secrets.SIGNUP_E2E_IMAP_PASS }}
-                  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-                  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-              run: node scripts/e2e-login-code-signup.mjs
-
             - name: Deploy staging editor
               env:
                   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -371,10 +361,72 @@ jobs:
                   GITHUB_TOKEN: ${{ github.token }}
               run: node scripts/staging-state.mjs begin
 
+            - name: Record tested SHAs
+              id: shas
+              run: |
+                  echo "website=$(git -C _cloud_e2e/website rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+                  mkdir -p attestation
+                  jq -n \
+                    --arg editor "$GITHUB_SHA" \
+                    --arg website "$(git -C _cloud_e2e/website rev-parse HEAD)" \
+                    --arg collab "$(git -C _cloud_e2e/collab rev-parse HEAD)" \
+                    '{editor:$editor,website:$website,collab:$collab}' \
+                    > attestation/cloud-e2e-trio.json
+                  cat attestation/cloud-e2e-trio.json
+
+            - name: Upload trio SHA file
+              uses: actions/upload-artifact@v4
+              with:
+                  name: cloud-e2e-trio-shard
+                  path: attestation/cloud-e2e-trio.json
+
+    # The real-email sign-in checks run next to the e2e shards instead of
+    # holding them up inside the deploy job.
+    cloud-sign-in-live:
+        name: cloud · sign-in
+        needs: cloud-collab-staging-deploy
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        steps:
+            - name: Checkout editor
+              uses: actions/checkout@v4
+
+            - name: Checkout website
+              uses: actions/checkout@v4
+              with:
+                  repository: ${{ vars.WEBSITE_REPOSITORY || format('{0}/website', github.repository_owner) }}
+                  ref: ${{ needs.cloud-collab-staging-deploy.outputs.website_sha }}
+                  path: _cloud_e2e/website
+                  token: ${{ secrets.CLOUD_E2E_PAT || github.token }}
+
+            - name: Set up Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "24"
+
+            - name: Install website dependencies
+              run: npm ci
+              working-directory: _cloud_e2e/website
+
+            - name: Real-email sign-in code check on staging
+              working-directory: _cloud_e2e/website
+              env:
+                  SIGNUP_E2E_ORIGIN: https://staging.counterpunch.space
+                  SIGNUP_E2E_EDITOR_ORIGIN: https://staging.editor.counterpunch.space
+                  SIGNUP_E2E_D1_NAME: context_users_staging
+                  SIGNUP_E2E_IMAP_USER: ${{ secrets.SIGNUP_E2E_IMAP_USER }}
+                  SIGNUP_E2E_IMAP_PASS: ${{ secrets.SIGNUP_E2E_IMAP_PASS }}
+                  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+              run: node scripts/e2e-login-code-signup.mjs
+
+            - name: Install editor webapp dependencies
+              run: npm install --prefix webapp
+
             - name: Install Playwright Chromium for the sign-in check
               run: npx --prefix webapp playwright install --with-deps chromium
 
-            - name: Sign in on the staging website and editor with real email
+            - name: Sign in on the staging editor with real email
               working-directory: webapp
               env:
                   SIGN_IN_LIVE_E2E: "1"
@@ -394,24 +446,7 @@ jobs:
                   SIGNUP_E2E_IMAP_PASS: ${{ secrets.SIGNUP_E2E_IMAP_PASS }}
                   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
                   CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-              run: node scripts/e2e-login-code-signup.mjs cleanup --roles website,editor
-
-            - name: Record tested SHAs
-              run: |
-                  mkdir -p attestation
-                  jq -n \
-                    --arg editor "$GITHUB_SHA" \
-                    --arg website "$(git -C _cloud_e2e/website rev-parse HEAD)" \
-                    --arg collab "$(git -C _cloud_e2e/collab rev-parse HEAD)" \
-                    '{editor:$editor,website:$website,collab:$collab}' \
-                    > attestation/cloud-e2e-trio.json
-                  cat attestation/cloud-e2e-trio.json
-
-            - name: Upload trio SHA file
-              uses: actions/upload-artifact@v4
-              with:
-                  name: cloud-e2e-trio-shard
-                  path: attestation/cloud-e2e-trio.json
+              run: node scripts/e2e-login-code-signup.mjs cleanup --roles editor
 
     cloud-collab-e2e:
         name: cloud · ${{ matrix.group }}
@@ -430,12 +465,10 @@ jobs:
                     - lifecycle
                     - quota
                     - deletion
-                    - deletion-glyph
                     - sparse-closure
                     - master-topology
                     - three-window-sync
                     - three-window-relay
-                    - reconnect
         steps:
             - name: Checkout editor
               uses: actions/checkout@v4
@@ -485,7 +518,7 @@ jobs:
                   if-no-files-found: ignore
 
     cloud-collab-staging-leftovers:
-        needs: [tested-build, cloud-collab-e2e]
+        needs: [tested-build, cloud-collab-e2e, cloud-sign-in-live]
         if: always() && needs.tested-build.outputs.skip != 'true' && github.event_name != 'pull_request' && needs.cloud-collab-e2e.result != 'cancelled'
         runs-on: ubuntu-latest
         steps:
@@ -505,7 +538,7 @@ jobs:
 
     # Publishes the attestation only when every e2e shard passed and staging is clean.
     cloud-collab-e2e-result:
-        needs: [cloud-collab-e2e, cloud-collab-staging-leftovers]
+        needs: [cloud-collab-e2e, cloud-sign-in-live, cloud-collab-staging-leftovers]
         runs-on: ubuntu-latest
         steps:
             - name: Download shard trio

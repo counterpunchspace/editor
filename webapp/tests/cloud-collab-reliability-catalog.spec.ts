@@ -65,7 +65,7 @@ test('catalog add, rename, and delete settle on a peer and after compaction', as
         await waitForCloudLiveIdle(ownerPage);
         await expect
             .poll(async () => catalogGlyphCount(ownerPage, assetId), {
-                timeout: 30000
+                timeout: 60000
             })
             .toBe(before + 1);
         await inviteePage.waitForFunction(
@@ -95,7 +95,7 @@ test('catalog add, rename, and delete settle on a peer and after compaction', as
         await waitForCloudLiveIdle(ownerPage);
         await expect
             .poll(async () => catalogGlyphCount(ownerPage, assetId), {
-                timeout: 30000
+                timeout: 60000
             })
             .toBe(before);
         await inviteePage.waitForFunction(

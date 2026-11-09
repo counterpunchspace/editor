@@ -75,6 +75,10 @@ import {
     collectPageErrors
 } from './helpers/cloud-collab-three-window';
 
+import {
+    CLOUD_TEST_FONT,
+    CLOUD_TEST_FONT_URL
+} from './helpers/cloud-collab-e2e';
 test.describe.configure({ mode: 'serial' });
 
 test.describe('three-window relay scenarios', () => {
@@ -103,10 +107,10 @@ test.describe('three-window relay scenarios', () => {
         await installCrossWindowTrackersOnContext(viewerContext);
         const ownerPage = await ownerContext.newPage();
         try {
-            await ownerPage.goto('/?test=true&examples=core');
+            await ownerPage.goto(CLOUD_TEST_FONT_URL);
             await waitForCanvasReady(ownerPage);
-            await openFileFromFilesView(ownerPage, 'Fustat.glyphs');
-            await waitForOpenSessionReady(ownerPage, 'Fustat.glyphs');
+            await openFileFromFilesView(ownerPage, CLOUD_TEST_FONT);
+            await waitForOpenSessionReady(ownerPage, CLOUD_TEST_FONT);
             await waitForBridgeReady(ownerPage);
             await installJsonCanonicalizer(ownerPage);
             const assetId = await saveCurrentFontToCloud(

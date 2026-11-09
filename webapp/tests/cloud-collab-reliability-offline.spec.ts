@@ -10,7 +10,12 @@ import {
     waitUntilGlyphLayerDataMatches
 } from './helpers/change-bridge-cross-window';
 import { cleanupCloudCollabUsers } from './helpers/cloud-collab-session';
-import { glyphNodeX, nudgeGlyphNode } from './helpers/cloud-collab-e2e';
+import {
+    glyphNodeX,
+    nudgeGlyphNode,
+    requestDebugRoomControl,
+    waitForCloudLiveIdle
+} from './helpers/cloud-collab-e2e';
 import {
     openInviteeOnAsset,
     prepareOwnerCloudFont
@@ -245,7 +250,7 @@ test('glyph catch-up applies edits made while the peer was offline, including a 
     }
 });
 
-test('two-sided offline edits on the same glyph converge and a reload does not apply them twice', async ({
+test('two-sided offline edits on the same glyph survive compaction, converge, and a reload does not apply them twice', async ({
     browser,
     request
 }) => {
@@ -292,13 +297,21 @@ test('two-sided offline edits on the same glyph converge and a reload does not a
             13,
             'Invitee conflict last node'
         );
+        // The owner reconnects first and the room compacts while the
+        // invitee's edit is still only in its WAL; it must survive that.
         await ownerContext.setOffline(false);
-        await inviteeContext.setOffline(false);
         await ownerPage.waitForFunction(
             () => (window as any).cloudPlugin?.connectionStatus === 'connected',
             null,
             { timeout: 90000 }
         );
+        await waitForCloudLiveIdle(ownerPage);
+        const compacted = await requestDebugRoomControl(ownerPage, assetId, {
+            action: 'debug-compact'
+        });
+        expect(compacted.status, JSON.stringify(compacted.payload)).toBe(200);
+        expect(compacted.payload.ok).toBe(true);
+        await inviteeContext.setOffline(false);
         await inviteePage.waitForFunction(
             () => (window as any).cloudPlugin?.connectionStatus === 'connected',
             null,

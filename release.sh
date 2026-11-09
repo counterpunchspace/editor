@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Cut a production release of what the newest preview shipped.
-# Usage: ./release.sh <version-tag> [--dry-run]
-#        ./release.sh --services [--dry-run]
+# Usage: ./release.sh <version-tag> [--dry-run] [--fail-fast]
+#        ./release.sh --services [--dry-run] [--fail-fast]
 # Example: ./release.sh v1.2.3
 #
 # --services ships the website and collab commits of the newest preview and
@@ -17,6 +17,8 @@
 # version reuses the version and changelog commits.
 # --dry-run commits nothing and runs the release workflow up to its preflight
 # checks. See developer-docs/COMPOSED_RELEASE.md.
+# The watch waits for every run to finish and reports all failures at once;
+# --fail-fast stops it at the first failed job.
 
 set -euo pipefail
 
@@ -27,10 +29,12 @@ WORKSPACE="$(cd "$EDITOR_DIR/.." && pwd)"
 VERSION_TAG=""
 DRY_RUN=0
 SERVICES=0
+WATCH_FLAGS=()
 for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY_RUN=1 ;;
         --services) SERVICES=1 ;;
+        --fail-fast) WATCH_FLAGS+=(--fail-fast) ;;
         -*)
             echo "Error: unknown option $arg"
             exit 1
@@ -40,8 +44,8 @@ for arg in "$@"; do
 done
 
 usage() {
-    echo "Usage: ./release.sh <version-tag> [--dry-run]"
-    echo "       ./release.sh --services [--dry-run]"
+    echo "Usage: ./release.sh <version-tag> [--dry-run] [--fail-fast]"
+    echo "       ./release.sh --services [--dry-run] [--fail-fast]"
     echo "Example: ./release.sh v1.2.3"
 }
 if [ "$SERVICES" -eq 1 ] && [ -n "$VERSION_TAG" ]; then
@@ -113,7 +117,7 @@ if [ "$SERVICES" -eq 1 ]; then
     fi
     echo ""
     echo "Services release started. Watching until it finishes..."
-    exec "$EDITOR_DIR/ci-watch.sh" --since "$WATCH_SINCE" "$EDITOR_DIR"
+    exec "$EDITOR_DIR/ci-watch.sh" --since "$WATCH_SINCE" "${WATCH_FLAGS[@]+"${WATCH_FLAGS[@]}"}" "$EDITOR_DIR"
 fi
 
 existing=$(git ls-remote origin "refs/tags/${VERSION_TAG}" "refs/tags/${VERSION_TAG}^{}" | tail -1 | cut -f1)
@@ -132,7 +136,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
     fi
     echo "Dry run: committing nothing and starting release.yml up to the preflight checks..."
     gh workflow run release.yml --ref main -f version="$VERSION_TAG" -f dry_run=true
-    exec "$EDITOR_DIR/ci-watch.sh" --since "$WATCH_SINCE" "$EDITOR_DIR"
+    exec "$EDITOR_DIR/ci-watch.sh" --since "$WATCH_SINCE" "${WATCH_FLAGS[@]+"${WATCH_FLAGS[@]}"}" "$EDITOR_DIR"
 fi
 
 echo "Preparing release $VERSION_TAG..."
@@ -182,4 +186,4 @@ gh workflow run release.yml --ref main -f version="$VERSION_TAG"
 echo ""
 echo "Release $VERSION_TAG started. Watching CI and the Release workflow until they finish..."
 echo "The release will be at: https://github.com/counterpunchspace/editor/releases/tag/$VERSION_TAG"
-exec "$EDITOR_DIR/ci-watch.sh" --since "$WATCH_SINCE" "$EDITOR_DIR"
+exec "$EDITOR_DIR/ci-watch.sh" --since "$WATCH_SINCE" "${WATCH_FLAGS[@]+"${WATCH_FLAGS[@]}"}" "$EDITOR_DIR"

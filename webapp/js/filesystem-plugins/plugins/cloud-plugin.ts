@@ -217,6 +217,8 @@ type CloudSaveSizeWarningState = CloudAssetSizeWarningState & {
 };
 
 const GLYPH_ORPHAN_LIVE_LIST_LIMIT = 20000;
+/** Tries per glyph orphan post before waiting for the next catalog change. */
+const GLYPH_ORPHAN_SYNC_ATTEMPTS = 4;
 
 export class CloudPlugin extends FilesystemPlugin {
     private _cloudAdapter: CloudAdapter | null = null;
@@ -2891,6 +2893,9 @@ export class CloudPlugin extends FilesystemPlugin {
      * sends the full live list so orphans missed by a crash are reconciled.
      * Only owners and editors may do this; after a 403 we stop trying.
      */
+    /** First retry delay of a failed glyph orphan post; doubles after. */
+    _glyphOrphanRetryDelayMs = 500;
+
     private async _syncGlyphOrphans(assetId: string): Promise<void> {
         let state = this._glyphOrphanState;
         if (!state || state.assetId !== assetId) {
@@ -2929,33 +2934,50 @@ export class CloudPlugin extends FilesystemPlugin {
             state.known = live;
             return;
         }
-        try {
-            const resp = await fetch(
-                `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(assetId)}/glyph-orphans`,
-                {
-                    method: 'POST',
-                    credentials: 'include',
-                    headers: getCloudRequestHeaders({
-                        'Content-Type': 'application/json'
-                    }),
-                    body: JSON.stringify(body)
+        // A failed post leaves the server's glyph count too high until the
+        // next catalog change, so retry transient failures a few times.
+        for (
+            let attempt = 0;
+            attempt < GLYPH_ORPHAN_SYNC_ATTEMPTS;
+            attempt += 1
+        ) {
+            if (attempt > 0) {
+                await new Promise((resolve) =>
+                    setTimeout(
+                        resolve,
+                        this._glyphOrphanRetryDelayMs * 2 ** (attempt - 1)
+                    )
+                );
+            }
+            try {
+                const resp = await fetch(
+                    `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(assetId)}/glyph-orphans`,
+                    {
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: getCloudRequestHeaders({
+                            'Content-Type': 'application/json'
+                        }),
+                        body: JSON.stringify(body)
+                    }
+                );
+                if (resp.status === 403 || resp.status === 404) {
+                    state.forbidden = true;
+                    return;
                 }
-            );
-            if (resp.status === 403 || resp.status === 404) {
-                state.forbidden = true;
+                if (!resp.ok) {
+                    // `known` stays untouched, so a later sync resends the diff.
+                    console.warn(`Glyph orphan sync failed (${resp.status})`);
+                    continue;
+                }
+                if (body.live) {
+                    state.reconciled = true;
+                }
+                state.known = live;
                 return;
+            } catch (error) {
+                console.warn('Glyph orphan sync failed:', error);
             }
-            if (!resp.ok) {
-                // Leave `known` untouched so the diff is retried next time.
-                console.warn(`Glyph orphan sync failed (${resp.status})`);
-                return;
-            }
-            if (body.live) {
-                state.reconciled = true;
-            }
-            state.known = live;
-        } catch (error) {
-            console.warn('Glyph orphan sync failed:', error);
         }
     }
 

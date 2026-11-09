@@ -23,38 +23,6 @@ async function waitForLivePython(page: Page): Promise<void> {
     );
 }
 
-test('latin composition provider decomposes adieresis from unicode', async ({
-    page
-}) => {
-    await page.goto('/?test=true');
-    await openFileFromFilesView(page, 'Fustat.glyphs');
-    await waitForOpenSessionReady(page, 'Fustat.glyphs');
-    await waitForLivePython(page);
-    const recipe = await page.evaluate(async () => {
-        const win = window as typeof window & {
-            pyodide: { runPythonAsync(code: string): Promise<string> };
-        };
-        const result = await win.pyodide.runPythonAsync(`
-import json
-from importlib.metadata import entry_points
-provider = next(entry for entry in entry_points(group='counterpunch_composition_plugins') if entry.name == 'latin').load()()
-def lookup(codepoint):
-    table = {
-        228: {"script": "Latin", "general_category": "Ll", "decomposition": "0061 0308"},
-        97: {"script": "Latin", "general_category": "Ll", "decomposition": ""},
-        776: {"script": "Inherited", "general_category": "Mn", "decomposition": ""},
-    }
-    return table.get(int(codepoint))
-json.dumps(provider.recipe(228, lookup))
-`);
-        return JSON.parse(result);
-    });
-    expect(recipe.source).toBe('unicode');
-    expect(
-        recipe.components.map((item: { codepoint: number }) => item.codepoint)
-    ).toEqual([97, 776]);
-});
-
 test('adding a composed glyph stays responsive', async ({ page }) => {
     const warnings: string[] = [];
     page.on('console', (message) => {

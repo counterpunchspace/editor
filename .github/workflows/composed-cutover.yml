@@ -414,7 +414,7 @@ jobs:
                   SIGNUP_E2E_IMAP_PASS: ${{ secrets.SIGNUP_E2E_IMAP_PASS }}
                   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
                   CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-              run: node scripts/e2e-login-code-signup.mjs cleanup --roles website,editor
+              run: node scripts/e2e-login-code-signup.mjs cleanup --roles editor
 
     staging-e2e:
         name: staging · ${{ matrix.group }}

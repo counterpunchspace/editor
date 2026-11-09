@@ -2990,6 +2990,7 @@ describe('CloudPlugin glyph catch-up from core revision map', () => {
             plugin._currentFontJson = () => ({
                 glyphs: ids.current.map((id) => ({ id, name: id, layers: [] }))
             });
+            plugin._glyphOrphanRetryDelayMs = 0;
             return plugin;
         };
         const bodies = (fetchMock) =>
@@ -3042,6 +3043,54 @@ describe('CloudPlugin glyph catch-up from core revision map', () => {
             const sent = bodies(fetchMock);
             expect(sent[1].body).toEqual({ mark: ['b'] });
             expect(sent[2].body).toEqual({ mark: ['b'] });
+        });
+
+        test('retries a failed post right away so the glyph count settles', async () => {
+            const ids = { current: ['a', 'b'] };
+            const plugin = makePlugin(ids);
+            const originalFetch = global.fetch;
+            const fetchMock = jest
+                .fn()
+                .mockResolvedValueOnce({ ok: true, status: 200 })
+                .mockResolvedValueOnce({ ok: false, status: 503 })
+                .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+                .mockResolvedValueOnce({ ok: true, status: 200 });
+            global.fetch = fetchMock;
+            try {
+                await plugin._syncGlyphOrphans('asset-1');
+                ids.current = ['a'];
+                await plugin._syncGlyphOrphans('asset-1');
+                await plugin._syncGlyphOrphans('asset-1');
+            } finally {
+                global.fetch = originalFetch;
+            }
+            const sent = bodies(fetchMock);
+            expect(sent).toHaveLength(4);
+            expect(sent.slice(1).map((entry) => entry.body)).toEqual([
+                { mark: ['b'] },
+                { mark: ['b'] },
+                { mark: ['b'] }
+            ]);
+        });
+
+        test('gives up after a few failed posts and resends the diff next time', async () => {
+            const ids = { current: ['a', 'b'] };
+            const plugin = makePlugin(ids);
+            const originalFetch = global.fetch;
+            const fetchMock = jest.fn(async () => ({ ok: false, status: 500 }));
+            global.fetch = fetchMock;
+            try {
+                fetchMock.mockResolvedValueOnce({ ok: true, status: 200 });
+                await plugin._syncGlyphOrphans('asset-1');
+                ids.current = ['a'];
+                await plugin._syncGlyphOrphans('asset-1');
+                expect(fetchMock).toHaveBeenCalledTimes(5);
+                fetchMock.mockResolvedValueOnce({ ok: true, status: 200 });
+                await plugin._syncGlyphOrphans('asset-1');
+            } finally {
+                global.fetch = originalFetch;
+            }
+            expect(bodies(fetchMock)[5].body).toEqual({ mark: ['b'] });
         });
 
         test('stops after a 403 so viewers do not keep posting', async () => {

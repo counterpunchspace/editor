@@ -28,14 +28,16 @@ import {
     LOCAL_WEBSITE_ORIGIN
 } from './cloud-collab-session';
 import {
+    CLOUD_TEST_FONT,
+    CLOUD_TEST_FONT_URL,
+    LOCAL_EDITOR_ORIGIN,
+    LOCAL_ROOM_ORIGIN,
     assertServiceReachable,
     collectPageErrors,
     editorHrefWithTestMode,
     gotoEditorPage,
     saveCurrentFontToCloud,
-    waitForCloudLiveIdle,
-    LOCAL_EDITOR_ORIGIN,
-    LOCAL_ROOM_ORIGIN
+    waitForCloudLiveIdle
 } from './cloud-collab-e2e';
 
 export async function prepareOwnerCloudFont(
@@ -94,10 +96,10 @@ export async function prepareOwnerCloudFont(
     await attachCloudCollabCookies(ownerContext, ownerSession);
     const ownerPage = await ownerContext.newPage();
     await collectPageErrors(ownerPage);
-    await ownerPage.goto('/?test=true&examples=core');
+    await ownerPage.goto(CLOUD_TEST_FONT_URL);
     await waitForCanvasReady(ownerPage);
-    await openFileFromFilesView(ownerPage, 'Fustat.glyphs');
-    await waitForOpenSessionReady(ownerPage, 'Fustat.glyphs');
+    await openFileFromFilesView(ownerPage, CLOUD_TEST_FONT);
+    await waitForOpenSessionReady(ownerPage, CLOUD_TEST_FONT);
     await waitForBridgeReady(ownerPage);
     await installJsonCanonicalizer(ownerPage);
     await installFontModelSyncTracker(ownerPage);

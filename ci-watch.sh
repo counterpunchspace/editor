@@ -1,16 +1,21 @@
 #!/bin/bash
 
 # Watch GitHub CI for pushed commits with a live overview that redraws in place
-# every 20 seconds, until everything is green or something is red.
+# every 20 seconds, until every run has finished.
+#
+# By default it waits for all runs and jobs to finish, even after one fails,
+# and then reports every failure at once. That way one push shows everything
+# that needs fixing. --fail-fast stops at the first failure instead.
 #
 # Exit 0: every run for every commit succeeded.
-# Exit 1: a run or job failed (failed job, step and error lines are printed).
+# Exit 1: a run or job failed (each failed job, step and error lines are printed).
 # Exit 2: gave up waiting (no CI run appeared, or the 3 hour limit passed).
 #
 # Usage: ./ci-watch.sh                     # HEAD of collab, website and editor
 #        ./ci-watch.sh <dir>[:<sha>] ...   # specific repos (sha defaults to HEAD)
 #        ./ci-watch.sh --since <epoch> …   # ignore runs created before that time,
 #                                          # and include workflow_dispatch as well as push
+#        ./ci-watch.sh --fail-fast …       # stop at the first failed job
 # Env:   CI_WATCH_INTERVAL (seconds, default 20), CI_WATCH_TIMEOUT (default 10800)
 
 set -uo pipefail
@@ -38,9 +43,14 @@ COLS=$(tput cols 2>/dev/null || echo 100)
 [ "$COLS" -gt 120 ] && COLS=120
 
 SINCE=0
+FAIL_FAST=0
 ARGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
+        --fail-fast)
+            FAIL_FAST=1
+            shift
+            ;;
         --since)
             SINCE="${2:-}"
             if ! [[ "$SINCE" =~ ^[0-9]+$ ]]; then
@@ -135,10 +145,28 @@ report_failure() {
         done
 }
 
+add_red_run() {
+    local entry="$1"$'\t'"$2"$'\t'"$3" existing
+    for existing in "${RED_RUNS[@]+"${RED_RUNS[@]}"}"; do
+        [ "$existing" = "$entry" ] && return 0
+    done
+    RED_RUNS+=("$entry")
+}
+
+report_all_failures() {
+    local entry repo run_id url
+    for entry in "${RED_RUNS[@]}"; do
+        IFS=$'\t' read -r repo run_id url <<<"$entry"
+        report_failure "$repo" "$run_id" "$url"
+    done
+}
+
 while true; do
     FRAME=()
     ALL_DONE=1
-    RED_REPO=""; RED_RUN=""; RED_URL=""
+    # Every failed run, one "repo<TAB>run id<TAB>url" line each.
+    RED_RUNS=()
+    FAILED_JOBS=0
     NO_RUN_REPO=""
     RUN_URLS=()
 
@@ -181,8 +209,9 @@ while true; do
                 [ -n "$jstep" ] && detail="  ${DIM}$jstep${RESET}"
                 [ "$jstate" = "failure" ] && detail="  ${RED}$jstep${RESET}"
                 FRAME+=("  ${GRAY}${branch}${RESET} $(icon "$jstate") $(fit "$jname" 30) ${GRAY}$(fit "$jdur" 8)${RESET}${detail}")
-                if [ "$jstate" = "failure" -o "$jstate" = "timed_out" ] && [ -z "$RED_RUN" ]; then
-                    RED_REPO="$repo"; RED_RUN="$run_id"; RED_URL="$url"
+                if [ "$jstate" = "failure" -o "$jstate" = "timed_out" ]; then
+                    FAILED_JOBS=$((FAILED_JOBS + 1))
+                    add_red_run "$repo" "$run_id" "$url"
                 fi
             done < <(echo "$jobs" | jq -r "$DUR_JQ"'
                 .jobs[] | [
@@ -194,8 +223,8 @@ while true; do
                    else "" end)
                 ] | @tsv')
 
-            if [ "$state" = "failure" -o "$state" = "timed_out" -o "$state" = "cancelled" ] && [ -z "$RED_RUN" ]; then
-                RED_REPO="$repo"; RED_RUN="$run_id"; RED_URL="$url"
+            if [ "$state" = "failure" -o "$state" = "timed_out" -o "$state" = "cancelled" ]; then
+                add_red_run "$repo" "$run_id" "$url"
             fi
         done < <(echo "$runs" | jq -r "$DUR_JQ"'
             .[] | [.databaseId, .workflowName, '"$STATE_JQ"',
@@ -213,10 +242,14 @@ while true; do
     done
     PREV_LINES=${#FRAME[@]}
 
-    if [ -n "$RED_RUN" ]; then
-        report_failure "$RED_REPO" "$RED_RUN" "$RED_URL"
+    if [ "${#RED_RUNS[@]}" -gt 0 ] && [ "$FAIL_FAST" -eq 1 ]; then
+        report_all_failures
         print_urls
         exit 1
+    fi
+    if [ "${#RED_RUNS[@]}" -gt 0 ] && [ "$ALL_DONE" -eq 0 ]; then
+        echo "${RED}${FAILED_JOBS} job(s) failed so far.${RESET} ${DIM}Waiting for the rest to finish, so every failure is reported at once (--fail-fast stops here).${RESET}"
+        PREV_LINES=$((PREV_LINES + 1))
     fi
 
     if [ -n "$NO_RUN_REPO" ] && [ $((SECONDS - START)) -gt "$NO_RUN_GRACE" ]; then
@@ -229,6 +262,13 @@ while true; do
     # Green only counts after two consecutive complete polls, so runs or
     # jobs that appear late cannot be missed.
     if [ "$ALL_DONE" -eq 1 ]; then DONE_STREAK=$((DONE_STREAK + 1)); else DONE_STREAK=0; fi
+    if [ "$DONE_STREAK" -ge 2 ] && [ "${#RED_RUNS[@]}" -gt 0 ]; then
+        report_all_failures
+        echo ""
+        echo "${RED}${BOLD}RED${RESET} ${#RED_RUNS[@]} run(s) failed. Fix every failure above before pushing again."
+        print_urls
+        exit 1
+    fi
     if [ "$DONE_STREAK" -ge 2 ]; then
         echo "${GREEN}${BOLD}GREEN${RESET} all CI runs succeeded."
         print_urls
