@@ -195,6 +195,15 @@ test('sparse peers hydrate a new composite, a new base, and a new GSUB alternate
         await waitForOpenSessionReady(ownerPage, assetId);
         await waitForEditingCompile(ownerPage);
         await waitForCloudLiveIdle(ownerPage);
+        // Glyphs the sparse peer never opens. A glyph a peer adds while the
+        // session is live is fetched by design, so these are added before
+        // the invitee joins.
+        await ownerPage.evaluate(() => {
+            const font = (window as any).currentFontModel;
+            font.addGlyph('faraway', 'Base');
+            font.addGlyph('orphan', 'Base');
+        });
+        await settleCloudEdit(ownerPage);
         await focusView(ownerPage, 'ControlOrMeta+Shift+E', 'view-editor');
         const invitee = await openInviteeOnAsset(
             browser,
@@ -228,6 +237,8 @@ test('sparse peers hydrate a new composite, a new base, and a new GSUB alternate
         ).toBe(true);
         await expectGlyphBody(inviteePage, 'newcomp', false);
         await expectGlyphBody(linkedPage, 'newcomp', false);
+        await expectGlyphBody(inviteePage, 'faraway', false);
+        await expectGlyphBody(inviteePage, 'orphan', false);
 
         await ownerPage.evaluate(() => {
             (window as any).currentFontModel.addGlyph('newcomp', 'Base');
@@ -374,10 +385,6 @@ test('sparse peers hydrate a new composite, a new base, and a new GSUB alternate
                 (window as any).patchSyncEngine.listSparseWriteBlockers(['a'])
             )
         ).toEqual([]);
-        await ownerPage.evaluate(() => {
-            (window as any).currentFontModel.addGlyph('faraway', 'Base');
-        });
-        await settleCloudEdit(ownerPage);
         await expectGlyphBody(inviteePage, 'faraway', false);
         expect(
             await inviteePage.evaluate(() =>
@@ -395,11 +402,7 @@ test('sparse peers hydrate a new composite, a new base, and a new GSUB alternate
         await installJsonCanonicalizer(orphanLinkedPage);
         await waitForWindowSyncPeers(inviteePage, orphanLinkedPage);
         await expectGlyphBody(orphanLinkedPage, 'orphan', false);
-        await ownerPage.evaluate(() => {
-            (window as any).currentFontModel.addGlyph('orphan', 'Base');
-        });
-        await settleCloudEdit(ownerPage);
-        await expectGlyphBody(orphanLinkedPage, 'orphan', false);
+        await expectGlyphBody(inviteePage, 'orphan', false);
         await orphanLinkedPage.evaluate(async () => {
             await (window as any).cloudPlugin.ensureSparseHydration({
                 glyphNames: ['orphan'],

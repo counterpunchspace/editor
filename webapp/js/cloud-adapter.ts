@@ -207,6 +207,47 @@ import {
 
 const console = new Logger('CloudAdapter');
 
+/**
+ * What a refused remote update touched, so a protocol error names its
+ * sender and the keys it wrote. Never throws.
+ */
+export function describeRefusedRemoteUpdate(
+    update: Uint8Array,
+    origin: { documentId: string; logId?: number; senderClientId?: string }
+): Record<string, unknown> {
+    const summary: Record<string, unknown> = {
+        documentId: origin.documentId,
+        logId: origin.logId ?? null,
+        senderClientId: origin.senderClientId ?? null,
+        bytes: update.length
+    };
+    try {
+        const decoded = Y.decodeUpdate(update);
+        const keys = new Set<string>();
+        const yjsClients = new Set<number>();
+        for (const struct of decoded.structs) {
+            yjsClients.add(struct.id.client);
+            const item = struct as unknown as {
+                parent?: unknown;
+                parentSub?: string | null;
+            };
+            if (typeof item.parentSub === 'string') {
+                keys.add(item.parentSub);
+            }
+            if (typeof item.parent === 'string') {
+                keys.add(`root:${item.parent}`);
+            }
+        }
+        summary.yjsClients = [...yjsClients];
+        summary.keys = [...keys].slice(0, 40);
+        summary.deletes = decoded.ds.clients.size;
+    } catch (error) {
+        summary.decodeError =
+            error instanceof Error ? error.message : String(error);
+    }
+    return summary;
+}
+
 // ── CloudAdapter ─────────────────────────────────────────────────────────────
 
 /**
@@ -1600,7 +1641,11 @@ export class CloudAdapter implements FileSystemAdapter {
                 this._queueInboundUpdate({
                     update: live.update,
                     collaborationMessages: live.collaborationMessages,
-                    logId: frame.logId
+                    logId: frame.logId,
+                    clientId:
+                        typeof live.clientId === 'string'
+                            ? live.clientId
+                            : undefined
                 });
                 continue;
             }
@@ -1917,6 +1962,10 @@ export class CloudAdapter implements FileSystemAdapter {
                             typeof msg.logId === 'number' &&
                             Number.isInteger(msg.logId)
                                 ? (msg.logId as number)
+                                : undefined,
+                        clientId:
+                            typeof msg.clientId === 'string'
+                                ? msg.clientId
                                 : undefined
                     });
                 }
@@ -2453,7 +2502,8 @@ export class CloudAdapter implements FileSystemAdapter {
     /** Apply an incremental update broadcast from a peer. */
     private _applyRemoteUpdate(
         update: Uint8Array,
-        remoteCollaborationMessages?: CollaborationMessageEnvelope[]
+        remoteCollaborationMessages?: CollaborationMessageEnvelope[],
+        origin?: { logId?: number; senderClientId?: string }
     ): boolean {
         if (!this._bridge || update.length === 0) return false;
         try {
@@ -2483,7 +2533,16 @@ export class CloudAdapter implements FileSystemAdapter {
                 err instanceof MetadataFreeRemoteUpdateError
                     ? 'Cloud collaboration protocol error: remote update is missing semantic metadata'
                     : `Cloud collaboration update rejected: ${err instanceof Error ? err.message : String(err)}`;
-            console.error('CloudAdapter:', detail, err);
+            console.error(
+                'CloudAdapter:',
+                detail,
+                err,
+                describeRefusedRemoteUpdate(update, {
+                    documentId: this._documentId,
+                    logId: origin?.logId,
+                    senderClientId: origin?.senderClientId
+                })
+            );
             this._pendingInboundUpdates = [];
             this._terminalCloseDetail = detail;
             this._setStatus('error', detail);
@@ -2756,7 +2815,8 @@ export class CloudAdapter implements FileSystemAdapter {
                 message.update,
                 message.collaborationMessages?.length
                     ? message.collaborationMessages
-                    : undefined
+                    : undefined,
+                { logId: message.logId, senderClientId: message.clientId }
             );
             if (
                 applied &&

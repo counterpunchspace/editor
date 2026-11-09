@@ -828,6 +828,8 @@ export type CloudLiveUpdateMessage = {
     update: Uint8Array;
     collaborationMessages?: CollaborationMessageEnvelope[];
     logId?: number;
+    /** Sender's client id, kept for protocol error reports. */
+    clientId?: string;
 };
 
 type CloudVisibleRebaselineTargets = {

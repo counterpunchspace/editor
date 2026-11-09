@@ -2083,6 +2083,39 @@ describe('CloudAdapter durability failures', () => {
         });
     });
 
+    it('names the sender and written keys of a refused remote update', () => {
+        const {
+            describeRefusedRemoteUpdate
+        } = require('../js/cloud-adapter.ts');
+        const Y = require('yjs');
+        const doc = new Y.Doc();
+        doc.clientID = 4242;
+        let update = null;
+        doc.on('update', (bytes) => {
+            update = bytes;
+        });
+        doc.getMap('font').set('glyphCatalog', 'x');
+
+        const summary = describeRefusedRemoteUpdate(update, {
+            documentId: 'font-core',
+            logId: 17,
+            senderClientId: 'owner-client'
+        });
+
+        expect(summary).toMatchObject({
+            documentId: 'font-core',
+            logId: 17,
+            senderClientId: 'owner-client',
+            yjsClients: [4242]
+        });
+        expect(summary.keys).toContain('glyphCatalog');
+        expect(
+            describeRefusedRemoteUpdate(new Uint8Array([255, 1]), {
+                documentId: 'font-core'
+            }).decodeError
+        ).toBeTruthy();
+    });
+
     it('stops a queued inbound batch after a terminal remote update rejection', () => {
         const adapter = new CloudAdapter({ assetId: 'asset-123' });
         const close = jest.fn();
