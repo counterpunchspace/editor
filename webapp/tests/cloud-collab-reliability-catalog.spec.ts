@@ -50,12 +50,15 @@ test('catalog add, rename, and delete settle on a peer and after compaction', as
     let lateContext: BrowserContext | null = null;
     try {
         const before = await catalogGlyphCount(ownerPage, assetId);
+        // Sparse like a large font's peer, which is what this test covered
+        // while it used the full Fustat.
         const invitee = await openInviteeOnAsset(
             browser,
             request,
             ownerPage,
             emails,
-            assetId
+            assetId,
+            { sparse: true }
         );
         inviteeContext = invitee.inviteeContext;
         const { inviteePage } = invitee;
