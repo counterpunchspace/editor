@@ -1986,13 +1986,6 @@ export class TextRunEditor {
                 this.cursorPosition
             );
         }
-
-        // RTL live kerning preview may override caret X; LTR uses default edge.
-        const kerningCursorX =
-            window.glyphCanvas?.getTextModeKerningCursorFontX?.() ?? null;
-        if (kerningCursorX !== null && Number.isFinite(kerningCursorX)) {
-            this.cursorX = kerningCursorX;
-        }
     }
 
     handleKeyDown(e: KeyboardEvent) {

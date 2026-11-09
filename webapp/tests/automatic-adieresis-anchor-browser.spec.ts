@@ -2230,7 +2230,6 @@ test.describe('automatic adieresis anchor browser commit', () => {
                 workerLayer?.shapes?.[1]?.transform?.translation;
             return {
                 kerning: master.kerning?.['a:a'] ?? master.kerning?.['a']?.a,
-                pending: win.glyphCanvas.pendingTextModeKerningPreview,
                 firstAx: Number(shaped[0]?.ax ?? 0),
                 secondX: Number(shaped[1]?.x ?? 0),
                 ligatureX: Array.isArray(second) ? Number(second[0]) : null,
@@ -2240,7 +2239,6 @@ test.describe('automatic adieresis anchor browser commit', () => {
             };
         });
 
-        expect(after.pending).toBeNull();
         expect(after.kerning).toBe(180);
         const advanceDelta = after.firstAx - before.firstAx;
         const positionDelta = after.secondX - before.secondX;

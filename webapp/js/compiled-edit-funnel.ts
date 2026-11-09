@@ -224,10 +224,7 @@ function shouldPostponeDeferredFullCompile(): boolean {
         return false;
     }
 
-    return (
-        !!canvas.outlineEditor?.draggingSomething ||
-        !!canvas.hasActiveTextModeKerningPreviewBurst?.()
-    );
+    return !!canvas.outlineEditor?.draggingSomething;
 }
 
 /**

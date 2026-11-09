@@ -403,31 +403,6 @@ describe('CompiledEditFunnel', () => {
             ).toHaveBeenCalledTimes(callCountBefore + 1);
         });
 
-        test('re-arms when a kerning preview burst is active', async () => {
-            window.glyphCanvas.hasActiveTextModeKerningPreviewBurst = jest
-                .fn()
-                .mockReturnValue(true);
-
-            await process('keyboard-kerning-value', 'kerning-value');
-            const callCountBefore =
-                window.fontManager.currentFont.requestRecompileWithoutDataChange
-                    .mock.calls.length;
-
-            jest.advanceTimersByTime(500);
-            expect(
-                window.fontManager.currentFont.requestRecompileWithoutDataChange
-            ).toHaveBeenCalledTimes(callCountBefore);
-
-            window.glyphCanvas.hasActiveTextModeKerningPreviewBurst.mockReturnValue(
-                false
-            );
-            jest.advanceTimersByTime(500);
-
-            expect(
-                window.fontManager.currentFont.requestRecompileWithoutDataChange
-            ).toHaveBeenCalledTimes(callCountBefore + 1);
-        });
-
         test('skips deferred full compile when last mode was already full', async () => {
             window.fontManager.lastCompilationMode = 'full';
 

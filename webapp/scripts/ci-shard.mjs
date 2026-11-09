@@ -138,6 +138,7 @@ const GROUPS = {
             'tests/multiline-text.spec.ts',
             'tests/typing-pending-glyph.spec.ts',
             'tests/typing-arabic-cursor.spec.ts',
+            'tests/text-mode-kerning-live.spec.ts',
             'tests/compilation-lane-benchmark.spec.ts',
             'tests/perf-pipeline-benchmark.spec.ts'
         ],

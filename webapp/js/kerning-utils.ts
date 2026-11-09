@@ -262,10 +262,27 @@ export function setKerningPairValueOnMaster(
     isRTL: boolean = false
 ): void {
     try {
+        const flatKey = getFlatKerningPairKey(firstKey, secondKey);
+        const liveKerning = isRTL ? null : master.kerning;
+        if (
+            liveKerning &&
+            typeof liveKerning === 'object' &&
+            !(liveKerning instanceof Map)
+        ) {
+            // LTR kerning is stored flat: change just this pair, so the
+            // edit (and its undo and sync packet) is one key, not the
+            // whole map. RTL kerning goes through its setter, which also
+            // mirrors it into the format-specific data.
+            if (nextValue === null) {
+                delete liveKerning[flatKey];
+            } else {
+                liveKerning[flatKey] = nextValue;
+            }
+            return;
+        }
         const nextKerning = flattenKerningMap(
             isRTL ? master.kerning_rtl : master.kerning
         );
-        const flatKey = getFlatKerningPairKey(firstKey, secondKey);
         if (nextValue === null) {
             delete nextKerning[flatKey];
         } else {

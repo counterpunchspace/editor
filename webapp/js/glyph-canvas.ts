@@ -89,7 +89,6 @@ import {
     setKerningPairValueOnMaster,
     type KerningContainer
 } from './kerning-utils';
-import { KeyboardPreviewEditFunnel } from './keyboard-preview-edit-funnel';
 import { getPreviewArea } from './editor-preview-area-pref';
 import tippy from 'tippy.js';
 import {
@@ -336,19 +335,8 @@ type TextModeKerningOverlayCache = {
     candidatePairToAdjacencyKeys: Map<string, Set<string>>;
 };
 
-type PendingTextModeKerningPreview = {
-    masterId: string;
-    firstKey: string;
-    secondKey: string;
-    isRTL: boolean;
-    /** Kerning value already reflected in the current shaped glyph advances. */
-    baselineValue: number;
-    previewValue: number | null;
-    glyphIndex: number;
-    baselineAx: number;
-    /** RTL: baseline dx for every glyph visually left of the caret. */
-    baselineDxByGlyphIndex: Record<number, number> | null;
-};
+/** Nudges of one pair closer together than this share one undo step. */
+const TEXT_MODE_KERNING_BURST_MS = 1000;
 
 function getTextModeKerningPairKey(
     firstKey: string,
@@ -1140,9 +1128,12 @@ class GlyphCanvas {
     textModeKerningDraftScopeKey: string | null = null;
     textModeKerningDraftValue: string | null = null;
     textModeKerningOverlayCache: TextModeKerningOverlayCache | null = null;
-    private textModeKerningPreviewFunnel = new KeyboardPreviewEditFunnel();
-    private pendingTextModeKerningPreview: PendingTextModeKerningPreview | null =
-        null;
+    /** Nudges of one pair in quick succession share one undo step. */
+    private textModeKerningBurst: {
+        pairScopeKey: string;
+        historyItemId: string;
+        lastAt: number;
+    } | null = null;
 
     zoomAnimation: {
         active: boolean;
@@ -4617,7 +4608,7 @@ class GlyphCanvas {
         editingFontApplyQueue = Promise.resolve();
         this.textModeAutoPanAnchorScreen = null;
         this.pendingTextModeKerningCursorAnchor = false;
-        this.clearTextModeKerningLivePreview({ cancelCommit: true });
+        this.textModeKerningBurst = null;
         this.renderSuppressed = false;
         this.hasDeferredRenderRequest = false;
         this.editModeGlyphResyncInProgress = false;
@@ -8359,10 +8350,6 @@ class GlyphCanvas {
             return;
         }
 
-        if (this.pendingTextModeKerningPreview) {
-            void this.flushTextModeKerningPreviewCommit();
-        }
-
         this.textModeKerningSelectionScopeKey = scopeKey;
         this.textModeKerningSelectionPinned = false;
     }
@@ -8707,14 +8694,6 @@ class GlyphCanvas {
                       resolvedSelection.secondKey
                   )
                 : null;
-        const previewValue = this.getPendingTextModeKerningPreviewValue(
-            master?.id || null,
-            resolvedSelection.firstKey,
-            resolvedSelection.secondKey,
-            firstCluster.isRTL
-        );
-        const effectiveValue =
-            previewValue !== undefined ? previewValue : selectedValue;
         const selectedFirstLabel =
             firstOptions.find(
                 (option) => option.key === resolvedSelection.firstKey
@@ -8740,8 +8719,8 @@ class GlyphCanvas {
             selectedSecondKey: resolvedSelection.secondKey,
             selectedFirstLabel,
             selectedSecondLabel,
-            selectedValue: effectiveValue,
-            hasSelectedValue: effectiveValue !== null
+            selectedValue,
+            hasSelectedValue: selectedValue !== null
         };
     }
 
@@ -9156,14 +9135,6 @@ class GlyphCanvas {
             context.selectedSecondKey
         );
         if (currentValue === nextValue) {
-            // Preview already matches the typed value; still flush on blur
-            // so the deferred model write lands when leaving the field.
-            if (
-                options.flushImmediately &&
-                this.pendingTextModeKerningPreview
-            ) {
-                await this.flushTextModeKerningPreviewCommit();
-            }
             this.textModeKerningDraftPairKey = nextPairKey;
             this.textModeKerningDraftScopeKey =
                 this.getTextModeKerningDraftScopeKey(
@@ -9184,16 +9155,9 @@ class GlyphCanvas {
             return;
         }
 
-        this.applyTextModeKerningPreview(nextValue, context);
-        if (!this.pendingTextModeKerningPreview) {
-            // No live shape data (e.g. unit tests / off-canvas) — write now.
-            await this.commitTextModeKerningValueDirectly(nextValue, context);
-        } else {
-            this.scheduleTextModeKerningPreviewCommit();
-            if (options.flushImmediately) {
-                await this.flushTextModeKerningPreviewCommit();
-            }
-        }
+        // Write now: the compile that follows shows the value at every
+        // instance of the pair in the text.
+        await this.commitTextModeKerningValueDirectly(nextValue, context);
 
         if (focusCanvas) {
             // Blur before rebuilding the panel so restoreActivePropertyInput
@@ -9224,355 +9188,6 @@ class GlyphCanvas {
             String(currentValue + delta),
             context,
             true
-        );
-    }
-
-    private getPendingTextModeKerningPreviewValue(
-        masterId: string | null,
-        firstKey: string | null,
-        secondKey: string | null,
-        isRTL: boolean
-    ): number | null | undefined {
-        const pending = this.pendingTextModeKerningPreview;
-        if (
-            !pending ||
-            !masterId ||
-            !firstKey ||
-            !secondKey ||
-            pending.masterId !== masterId ||
-            pending.firstKey !== firstKey ||
-            pending.secondKey !== secondKey ||
-            pending.isRTL !== isRTL
-        ) {
-            return undefined;
-        }
-
-        return pending.previewValue;
-    }
-
-    private getTextModeKerningPreviewGlyphIndex(
-        firstCluster: TextRunClusterInfo,
-        secondCluster: TextRunClusterInfo,
-        isRTL: boolean
-    ): number {
-        const cluster = isRTL ? secondCluster : firstCluster;
-        return cluster.glyphIndex + cluster.glyphCount - 1;
-    }
-
-    /** Glyph indices with cluster.x strictly left of caretFontX (any BiDi run). */
-    private getGlyphIndicesVisuallyLeftOfCaret(caretFontX: number): number[] {
-        const clusterMap = this.textRunEditor?.clusterMap as
-            TextRunClusterInfo[] | undefined;
-        const shapedGlyphs = this.textRunEditor?.shapedGlyphs;
-        if (
-            !clusterMap?.length ||
-            !shapedGlyphs?.length ||
-            !this.textRunEditor
-        ) {
-            return [];
-        }
-
-        const caretLine =
-            this.textRunEditor.getLineRangeAt(this.textRunEditor.cursorPosition)
-                .lineIndex ?? 0;
-        const indices: number[] = [];
-        for (const cluster of clusterMap) {
-            if ((cluster.lineIndex ?? 0) !== caretLine) {
-                continue;
-            }
-            if (cluster.x >= caretFontX) {
-                continue;
-            }
-            const end = Math.min(
-                cluster.glyphIndex + cluster.glyphCount,
-                shapedGlyphs.length
-            );
-            for (let i = cluster.glyphIndex; i < end; i++) {
-                indices.push(i);
-            }
-        }
-        return indices;
-    }
-
-    private restoreTextModeKerningPreviewBaselines(
-        pending: PendingTextModeKerningPreview
-    ): void {
-        const shapedGlyphs = this.textRunEditor?.shapedGlyphs;
-        if (!shapedGlyphs) {
-            return;
-        }
-
-        if (pending.baselineDxByGlyphIndex) {
-            for (const [indexText, baselineDx] of Object.entries(
-                pending.baselineDxByGlyphIndex
-            )) {
-                const glyph = shapedGlyphs[Number(indexText)];
-                if (glyph) {
-                    glyph.dx = baselineDx;
-                }
-            }
-            return;
-        }
-
-        const glyph = shapedGlyphs[pending.glyphIndex];
-        if (glyph) {
-            glyph.ax = pending.baselineAx;
-        }
-    }
-
-    private applyTextModeKerningPreview(
-        previewValue: number | null,
-        context: TextModeKerningContext
-    ): void {
-        if (
-            !context.master?.id ||
-            !context.selectedFirstKey ||
-            !context.selectedSecondKey ||
-            !context.firstCluster ||
-            !context.secondCluster ||
-            !this.textRunEditor?.shapedGlyphs
-        ) {
-            return;
-        }
-
-        const glyphIndex = this.getTextModeKerningPreviewGlyphIndex(
-            context.firstCluster,
-            context.secondCluster,
-            context.isRTL
-        );
-        const glyph = this.textRunEditor.shapedGlyphs[glyphIndex];
-        if (!glyph) {
-            return;
-        }
-
-        let pending = this.pendingTextModeKerningPreview;
-        const samePair =
-            pending &&
-            pending.masterId === context.master.id &&
-            pending.firstKey === context.selectedFirstKey &&
-            pending.secondKey === context.selectedSecondKey &&
-            pending.isRTL === context.isRTL &&
-            pending.glyphIndex === glyphIndex;
-
-        if (!samePair) {
-            if (pending) {
-                // Commit the previous pair immediately so a fire-and-forget
-                // flush cannot race and write the newly staged preview.
-                this.textModeKerningPreviewFunnel.cancelPendingCommit();
-                const previous = pending;
-                this.restoreTextModeKerningPreviewBaselines(previous);
-                this.pendingTextModeKerningPreview = null;
-                const previousMaster = this.getSelectedTextModeKerningMaster();
-                if (previousMaster && previousMaster.id === previous.masterId) {
-                    const committedValue =
-                        getKerningPairValue(
-                            (previous.isRTL
-                                ? previousMaster.kerning_rtl
-                                : previousMaster.kerning) as
-                                KerningContainer | undefined,
-                            previous.firstKey,
-                            previous.secondKey
-                        ) ?? null;
-                    if (committedValue !== previous.previewValue) {
-                        this.writeTextModeKerningPairValue(
-                            previousMaster,
-                            previous.firstKey,
-                            previous.secondKey,
-                            previous.previewValue,
-                            previous.isRTL
-                        );
-                    }
-                }
-            }
-            const committedValue =
-                getKerningPairValue(
-                    (context.isRTL
-                        ? context.master.kerning_rtl
-                        : context.master.kerning) as
-                        KerningContainer | undefined,
-                    context.selectedFirstKey,
-                    context.selectedSecondKey
-                ) ?? 0;
-            let baselineDxByGlyphIndex: Record<number, number> | null = null;
-            if (context.isRTL) {
-                const caretFontX = Number.isFinite(this.textRunEditor.cursorX)
-                    ? this.textRunEditor.cursorX
-                    : context.secondCluster.x + context.secondCluster.width;
-                baselineDxByGlyphIndex =
-                    this.captureTextModeKerningPreviewRtlBaselines(caretFontX);
-            }
-            pending = {
-                masterId: context.master.id,
-                firstKey: context.selectedFirstKey,
-                secondKey: context.selectedSecondKey,
-                isRTL: context.isRTL,
-                baselineValue: committedValue,
-                previewValue: committedValue,
-                glyphIndex,
-                baselineAx: glyph.ax || 0,
-                baselineDxByGlyphIndex
-            };
-            this.pendingTextModeKerningPreview = pending;
-        }
-
-        pending!.previewValue = previewValue;
-        this.applyPendingTextModeKerningPreviewDelta();
-
-        this.textModeKerningDraftPairKey = getTextModeKerningPairKey(
-            context.selectedFirstKey,
-            context.selectedSecondKey
-        );
-        this.textModeKerningDraftScopeKey =
-            this.getTextModeKerningDraftScopeKey(
-                context.master.id,
-                context.isRTL
-            );
-        this.textModeKerningDraftValue =
-            previewValue === null ? '' : String(previewValue);
-
-        this.textRunEditor.buildClusterMap();
-        this.textRunEditor.updateCursorVisualPosition();
-        this.invalidateTextModeKerningOverlayCache();
-        this.render();
-    }
-
-    private captureTextModeKerningPreviewRtlBaselines(
-        caretFontX: number
-    ): Record<number, number> {
-        const baselineDxByGlyphIndex: Record<number, number> = {};
-        const shapedGlyphs = this.textRunEditor?.shapedGlyphs;
-        if (!shapedGlyphs) {
-            return baselineDxByGlyphIndex;
-        }
-
-        for (const index of this.getGlyphIndicesVisuallyLeftOfCaret(
-            caretFontX
-        )) {
-            const leftGlyph = shapedGlyphs[index];
-            if (leftGlyph) {
-                baselineDxByGlyphIndex[index] = leftGlyph.dx || 0;
-            }
-        }
-        return baselineDxByGlyphIndex;
-    }
-
-    private recaptureTextModeKerningPreviewBaselines(
-        pending: PendingTextModeKerningPreview
-    ): boolean {
-        const textRunEditor = this.textRunEditor;
-        const shapedGlyphs = textRunEditor?.shapedGlyphs;
-        if (!textRunEditor || !shapedGlyphs) {
-            return false;
-        }
-
-        const glyph = shapedGlyphs[pending.glyphIndex];
-        if (!glyph) {
-            return false;
-        }
-
-        const master = this.getSelectedTextModeKerningMaster();
-        if (!master || master.id !== pending.masterId) {
-            return false;
-        }
-
-        pending.baselineValue =
-            getKerningPairValue(
-                (pending.isRTL ? master.kerning_rtl : master.kerning) as
-                    KerningContainer | undefined,
-                pending.firstKey,
-                pending.secondKey
-            ) ?? 0;
-        pending.baselineAx = glyph.ax || 0;
-
-        if (pending.isRTL) {
-            const context = this.getCurrentTextModeKerningContext();
-            const caretFontX = Number.isFinite(textRunEditor.cursorX)
-                ? textRunEditor.cursorX
-                : context.secondCluster
-                  ? context.secondCluster.x + context.secondCluster.width
-                  : 0;
-            pending.baselineDxByGlyphIndex =
-                this.captureTextModeKerningPreviewRtlBaselines(caretFontX);
-        } else {
-            pending.baselineDxByGlyphIndex = null;
-        }
-
-        return true;
-    }
-
-    private applyPendingTextModeKerningPreviewDelta(): void {
-        const pending = this.pendingTextModeKerningPreview;
-        const shapedGlyphs = this.textRunEditor?.shapedGlyphs;
-        if (!pending || !shapedGlyphs) {
-            return;
-        }
-
-        const delta = (pending.previewValue ?? 0) - pending.baselineValue;
-        if (pending.isRTL && pending.baselineDxByGlyphIndex) {
-            const shift = -delta;
-            for (const [indexText, baselineDx] of Object.entries(
-                pending.baselineDxByGlyphIndex
-            )) {
-                const leftGlyph = shapedGlyphs[Number(indexText)];
-                if (leftGlyph) {
-                    leftGlyph.dx = baselineDx + shift;
-                }
-            }
-            return;
-        }
-
-        const glyph = shapedGlyphs[pending.glyphIndex];
-        if (glyph) {
-            glyph.ax = pending.baselineAx + delta;
-        }
-    }
-
-    private scheduleTextModeKerningPreviewCommit(): void {
-        if (!this.pendingTextModeKerningPreview) {
-            return;
-        }
-
-        this.textModeKerningPreviewFunnel.scheduleCommit(async () => {
-            await this.commitPendingTextModeKerningPreview();
-        });
-    }
-
-    private async flushTextModeKerningPreviewCommit(): Promise<void> {
-        await this.textModeKerningPreviewFunnel.flushPendingCommit();
-    }
-
-    private async commitPendingTextModeKerningPreview(): Promise<void> {
-        const pending = this.pendingTextModeKerningPreview;
-        if (!pending) {
-            return;
-        }
-
-        const master = this.getSelectedTextModeKerningMaster();
-        if (!master || master.id !== pending.masterId) {
-            this.clearTextModeKerningLivePreview({ cancelCommit: true });
-            return;
-        }
-
-        const committedValue =
-            getKerningPairValue(
-                (pending.isRTL ? master.kerning_rtl : master.kerning) as
-                    KerningContainer | undefined,
-                pending.firstKey,
-                pending.secondKey
-            ) ?? null;
-        if (committedValue === pending.previewValue) {
-            // Keep the live preview object so a later nudge on the same
-            // pair reuses the original shaped baseline instead of
-            // recapturing advances that still include the previous preview.
-            return;
-        }
-
-        this.writeTextModeKerningPairValue(
-            master,
-            pending.firstKey,
-            pending.secondKey,
-            pending.previewValue,
-            pending.isRTL
         );
     }
 
@@ -9610,6 +9225,43 @@ class GlyphCanvas {
             nextValue === null ? '' : String(nextValue);
     }
 
+    /**
+     * Each nudge is written and compiled at once. Nudges of the same pair
+     * less than a second apart (a held key, quick taps) share one history
+     * item, so a single undo takes the whole burst back.
+     */
+    private textModeKerningBurstHistoryItemId(
+        master: Master,
+        firstKey: string,
+        secondKey: string,
+        isRTL: boolean
+    ): string | null {
+        const pairScopeKey = [
+            master.id || '',
+            isRTL ? 'rtl' : 'ltr',
+            getTextModeKerningPairKey(firstKey, secondKey)
+        ].join('\u0000');
+        const now = performance.now();
+        const burst = this.textModeKerningBurst;
+        if (
+            burst &&
+            burst.pairScopeKey === pairScopeKey &&
+            now - burst.lastAt < TEXT_MODE_KERNING_BURST_MS
+        ) {
+            burst.lastAt = now;
+            return burst.historyItemId;
+        }
+        const historyItemId = `text-kerning-${now.toFixed(3)}-${Math.random()
+            .toString(36)
+            .slice(2, 8)}`;
+        this.textModeKerningBurst = {
+            pairScopeKey,
+            historyItemId,
+            lastAt: now
+        };
+        return historyItemId;
+    }
+
     private writeTextModeKerningPairValue(
         master: Master,
         firstKey: string,
@@ -9618,6 +9270,12 @@ class GlyphCanvas {
         isRTL: boolean
     ): void {
         window.patchSyncEngine?.beginTransaction('Edit kerning pair', null, {
+            historyItemId: this.textModeKerningBurstHistoryItemId(
+                master,
+                firstKey,
+                secondKey,
+                isRTL
+            ),
             compileChangeSource: 'keyboard-kerning-value',
             compileEditType: 'kerning-value'
         });
@@ -9640,71 +9298,6 @@ class GlyphCanvas {
 
         this.pendingTextModeKerningCursorAnchor = true;
         this.scheduleTextModeKerningCompile('kerning-property-panel');
-    }
-
-    /**
-     * True while a text-mode kerning nudge/field burst is still live
-     * (uncommitted preview, or a pending preview commit). Used to postpone
-     * the deferred full compile so its reshape cannot clobber the burst.
-     */
-    hasActiveTextModeKerningPreviewBurst(): boolean {
-        if (this.textModeKerningPreviewFunnel.hasPendingWork()) {
-            return true;
-        }
-
-        const pending = this.pendingTextModeKerningPreview;
-        if (!pending) {
-            return false;
-        }
-
-        const master = this.getSelectedTextModeKerningMaster();
-        if (!master || master.id !== pending.masterId) {
-            return false;
-        }
-
-        const committedValue =
-            getKerningPairValue(
-                (pending.isRTL ? master.kerning_rtl : master.kerning) as
-                    KerningContainer | undefined,
-                pending.firstKey,
-                pending.secondKey
-            ) ?? null;
-        return pending.previewValue !== committedValue;
-    }
-
-    /**
-     * After a kerning-only or full reshape, recapture shaped baselines and
-     * re-apply any newer uncommitted preview instead of clearing it.
-     */
-    reapplyTextModeKerningLivePreviewAfterReshape(): void {
-        const pending = this.pendingTextModeKerningPreview;
-        if (!pending) {
-            return;
-        }
-
-        if (!this.recaptureTextModeKerningPreviewBaselines(pending)) {
-            this.clearTextModeKerningLivePreview();
-            return;
-        }
-
-        this.applyPendingTextModeKerningPreviewDelta();
-        if (pending.previewValue === pending.baselineValue) {
-            this.pendingTextModeKerningPreview = null;
-            return;
-        }
-
-        this.textRunEditor?.buildClusterMap();
-        this.textRunEditor?.updateCursorVisualPosition();
-        this.invalidateTextModeKerningOverlayCache();
-    }
-
-    clearTextModeKerningLivePreview(
-        options: { cancelCommit?: boolean } = {}
-    ): void {
-        if (options.cancelCommit) {
-            this.textModeKerningPreviewFunnel.cancelPendingCommit();
-        }
-        this.pendingTextModeKerningPreview = null;
     }
 
     private updateTextModeKerningMirror(
@@ -12024,8 +11617,7 @@ class GlyphCanvas {
             this.handlePreviewAreaChanged
         );
 
-        this.clearTextModeKerningLivePreview({ cancelCommit: true });
-        this.textModeKerningPreviewFunnel.reset();
+        this.textModeKerningBurst = null;
 
         // Clear any pending blur timeout
         if (this.blurTimeoutId) {
@@ -12557,35 +12149,6 @@ class GlyphCanvas {
     }
 
     /**
-     * RTL live-preview caret: ride the moving left side (second right edge −
-     * delta). LTR uses the default between-glyph edge.
-     */
-    getTextModeKerningCursorFontX(): number | null {
-        if (this.outlineEditor?.active || !this.textRunEditor) {
-            return null;
-        }
-
-        const context = this.getCurrentTextModeKerningContext();
-        const pending = this.pendingTextModeKerningPreview;
-        if (
-            context.status !== 'ready' ||
-            !context.isRTL ||
-            !context.secondCluster ||
-            !pending?.isRTL ||
-            pending.masterId !== context.master?.id ||
-            pending.firstKey !== context.selectedFirstKey ||
-            pending.secondKey !== context.selectedSecondKey
-        ) {
-            return null;
-        }
-
-        const secondVisualEdge =
-            context.secondCluster.x + context.secondCluster.width;
-        const delta = (pending.previewValue ?? 0) - pending.baselineValue;
-        return secondVisualEdge - delta;
-    }
-
-    /**
      * Frame the current text run (or the caret when the buffer is empty).
      * Used after startup URL restore and for Cmd+0 in text mode.
      */
@@ -13001,7 +12564,6 @@ function setupFontLoadingListener() {
                         }
                         gc.textRunEditor!.setShapingFontBlob(fontBytesArray);
                         gc.textRunEditor!.shapeText(true);
-                        gc.reapplyTextModeKerningLivePreviewAfterReshape();
                         if (deferredIdleViewLock) {
                             gc.consumeIdleViewLockAfterReshape();
                         } else {
@@ -13073,7 +12635,6 @@ function setupFontLoadingListener() {
                         gc.captureTextModeKerningPanAnchor();
                     }
                     gc.textRunEditor!.shapeText(true);
-                    gc.reapplyTextModeKerningLivePreviewAfterReshape();
                     if (deferredIdleViewLock) {
                         gc.reapplyIdleViewLock();
                         gc.pendingTextModeKerningCursorAnchor = false;

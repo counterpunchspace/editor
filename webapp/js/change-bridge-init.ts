@@ -2424,8 +2424,22 @@ async function refreshGlyphOverviewFromCommittedEntries(
     }
 
     await refreshGlyphOverviewFromGlyphNames(changedGlyphNames, {
-        fallbackToFullRender: true
+        // Kerning and kern groups change no glyph tile.
+        fallbackToFullRender: !entries.every(isKerningOnlyEntry)
     });
+}
+
+/** A committed entry that changes kerning or kern groups and nothing else. */
+function isKerningOnlyEntry(entry: ChangeLogEntry): boolean {
+    const semantic = entry.semanticChangeLogEntries;
+    if (semantic?.length) {
+        return semantic.every(isKerningOnlyEntry);
+    }
+    const path = getPathSegments(entry.path);
+    if (path[0] === 'masters') {
+        return path[2] === 'kerning' || path[2] === 'kerning_rtl';
+    }
+    return path[0] === 'first_kern_groups' || path[0] === 'second_kern_groups';
 }
 
 /** Detect whether a committed entry changed the component graph of its glyph. */
