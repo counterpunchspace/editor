@@ -207,6 +207,29 @@ async function recheckOurSideFailure(
     return true;
 }
 
+// An imported release starts no paid check. Its creator presses "Run
+// checks", so the test does the same.
+async function startRegisteredChecks(
+    request: any,
+    sessionToken: string,
+    packageName: string,
+    latest: any
+): Promise<boolean> {
+    if (latest?.status !== 'registered') return false;
+    const response = await request.post(
+        `${website()}/api/creator/plugins/${packageName}/versions/${encodeURIComponent(latest.version)}/checks`,
+        {
+            headers: {
+                cookie: `session=${sessionToken}`,
+                origin: website()
+            },
+            failOnStatusCode: false
+        }
+    );
+    expect(response.ok(), await response.text()).toBeTruthy();
+    return true;
+}
+
 // A release held for a person never becomes ready on its own.
 function throwIfHeldForReview(packageName: string, latest: any) {
     const report = latest?.checks?.security?.report;
@@ -235,6 +258,17 @@ async function waitForReady(
         latest = plugin?.versions?.[0] || null;
         if (latest?.status === 'ready') return latest;
         throwIfHeldForReview(packageName, latest);
+        if (
+            await startRegisteredChecks(
+                request,
+                sessionToken,
+                packageName,
+                latest
+            )
+        ) {
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            continue;
+        }
         const wasDone = recheck.done;
         if (
             await recheckOurSideFailure(
@@ -293,6 +327,17 @@ async function waitForSecurityFailed(
             (item: any) => item.package === packageName
         );
         latest = plugin?.versions?.[0] || null;
+        if (
+            await startRegisteredChecks(
+                request,
+                sessionToken,
+                packageName,
+                latest
+            )
+        ) {
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            continue;
+        }
         const wasDone = recheck.done;
         if (
             await recheckOurSideFailure(
