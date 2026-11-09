@@ -179,6 +179,8 @@ export class TextRunEditor {
     spaceKeyTimer: number | null; // Timer for space key delay
     spaceKeyPressTime: number | null; // Timestamp when space was pressed
     spaceActivatedPreview: boolean; // Whether space key activated preview mode
+    /** The held space was already typed because another key came first. */
+    spaceTypedBeforeRelease = false;
     saveTextBufferToFontTimer: any; // Debounce timer for saveTextBufferToFont()
     cursorStyleBeforePreview: string | null; // Cursor style before entering preview mode
 
@@ -1999,9 +2001,13 @@ export class TextRunEditor {
             e.preventDefault();
 
             // Ignore key repeats - only handle the first press
-            if (this.spaceKeyTimer !== null) {
+            if (
+                this.spaceKeyTimer !== null ||
+                (this.spaceTypedBeforeRelease && e.repeat)
+            ) {
                 return;
             }
+            this.spaceTypedBeforeRelease = false;
 
             // Record press time
             this.spaceKeyPressTime = Date.now();
@@ -2017,6 +2023,8 @@ export class TextRunEditor {
 
             return;
         }
+
+        this.typeHeldSpaceBeforeNextKey(e);
 
         // Cmd+A / Ctrl+A - Select All
         if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
@@ -2149,6 +2157,27 @@ export class TextRunEditor {
         // Don't prevent default for unhandled keys - let browser shortcuts work
     }
 
+    /**
+     * A quick space press is typed on release, so a fast typist's next key
+     * often goes down while the space bar is still held. Type the space
+     * right then, before that key, so the text keeps the order the keys
+     * were pressed in. Modifier keys alone leave the space undecided.
+     */
+    private typeHeldSpaceBeforeNextKey(e: KeyboardEvent): void {
+        if (
+            this.spaceKeyTimer === null ||
+            this.spaceActivatedPreview ||
+            ['Shift', 'Alt', 'Control', 'Meta', 'CapsLock'].includes(e.key)
+        ) {
+            return;
+        }
+        clearTimeout(this.spaceKeyTimer);
+        this.spaceKeyTimer = null;
+        this.spaceKeyPressTime = null;
+        this.spaceTypedBeforeRelease = true;
+        this.insertText(' ');
+    }
+
     handleKeyUp(e: KeyboardEvent) {
         // Space bar release - either insert space or exit preview mode
         if (e.code === 'Space') {
@@ -2165,6 +2194,12 @@ export class TextRunEditor {
             }
 
             this.spaceKeyPressTime = null;
+
+            if (this.spaceTypedBeforeRelease) {
+                // Already typed when the next key went down.
+                this.spaceTypedBeforeRelease = false;
+                return;
+            }
 
             // Check if preview mode was activated
             if (this.spaceActivatedPreview) {
