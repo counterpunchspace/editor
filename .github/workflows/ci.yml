@@ -14,6 +14,7 @@ on:
     workflow_dispatch:
 
 permissions:
+    actions: read
     contents: read
 
 # Every cloud job shares one staging stack; a newer push replaces the older run
@@ -363,6 +364,13 @@ jobs:
                     --expect-collab "$(git -C "$COLLAB_ROOT" rev-parse HEAD)" \
                     --wait 300
 
+            - name: Claim staging, wiping it first if the last run did not finish clean
+              env:
+                  CLOUD_COLLAB_WEBSITE_URL: https://staging.counterpunch.space
+                  E2E_OPERATOR_TOKEN: ${{ secrets.E2E_OPERATOR_TOKEN }}
+                  GITHUB_TOKEN: ${{ github.token }}
+              run: node scripts/staging-state.mjs begin
+
             - name: Install Playwright Chromium for the sign-in check
               run: npx --prefix webapp playwright install --with-deps chromium
 
@@ -489,11 +497,11 @@ jobs:
               with:
                   node-version: "24"
 
-            - name: Remove staging e2e data and fail if any was left
+            - name: Remove this run's test data and fail if any room, row or object is left
               env:
                   CLOUD_COLLAB_WEBSITE_URL: https://staging.counterpunch.space
                   E2E_OPERATOR_TOKEN: ${{ secrets.E2E_OPERATOR_TOKEN }}
-              run: node scripts/staging-e2e-leftovers.mjs
+              run: node scripts/staging-state.mjs finish
 
     # Publishes the attestation only when every e2e shard passed and staging is clean.
     cloud-collab-e2e-result:
