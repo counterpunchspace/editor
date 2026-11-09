@@ -12,6 +12,7 @@
  */
 
 import {
+    FONT_DEPS_ENTRY_PATH,
     EXTERNAL_SOURCE_RELOAD_SOURCE,
     PatchSyncEngine,
     type CommittedChangeOrigin,
@@ -953,7 +954,11 @@ function collectNonGlyphChangeHints(
 
     for (const entry of entries) {
         const path = entry.path ?? '';
-        if (path === 'glyphRevisions' || path.startsWith('glyphRevisions.')) {
+        if (
+            path === 'glyphRevisions' ||
+            path.startsWith('glyphRevisions.') ||
+            path === FONT_DEPS_ENTRY_PATH
+        ) {
             continue;
         }
         const kerningEditType =
@@ -3081,7 +3086,14 @@ function initializeBridge(detail: {
     // authoritative Yjs packet is emitted; remote edits enter after apply.
     // YJS_ONLY: This funnel processes Yjs binary updates, not full
     // JSON. Entries carry workerReplayTargets for incremental layer cache updates.
-    bridge.onCommittedChange((entries, context) => {
+    bridge.onCommittedChange((allEntries, context) => {
+        // A font-deps packet is derived data: nothing to refresh or compile.
+        const entries = allEntries.filter(
+            (entry) => entry.path !== FONT_DEPS_ENTRY_PATH
+        );
+        if (allEntries.length && !entries.length) {
+            return;
+        }
         markAutoQaGlyphsFromCommittedEntries(entries);
         const workerForward = latestWorkerForward;
         const localUndoRedoContext =

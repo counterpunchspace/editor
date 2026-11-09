@@ -442,6 +442,94 @@ describe('live font-deps updates', () => {
         expect(plugin.canMutateCurrentAsset()).toBe(true);
     });
 
+    it('sends a font-deps write with collaboration metadata that a peer applies', () => {
+        const fontJson = {
+            upm: 1000,
+            glyphs: [
+                { name: 'a', layers: [liveLayer()] },
+                { name: 'n', layers: [liveLayer()] },
+                {
+                    name: 'adieresis',
+                    layers: [liveLayer([liveComponent('n')])]
+                }
+            ]
+        };
+        const { bridge, plugin, fontJson: live } = startLiveSession(fontJson);
+        const peer = new PatchSyncEngine('peer');
+        peer.initFromJson(JSON.parse(JSON.stringify(live)));
+        Y.applyUpdate(peer.depsDoc, Y.encodeStateAsUpdate(bridge.depsDoc));
+        const sent = [];
+        bridge.onLocalUpdate((update, message, _entries, documentId) => {
+            sent.push({ update, message, documentId });
+        });
+        live.glyphs.find(
+            (glyph) => glyph.name === 'adieresis'
+        ).layers[0].shapes[0].reference = 'a';
+        bridge.recordChange(
+            ['glyphs', 'adieresis', 'layers', 'layer-1', 'shapes', 0],
+            'reference',
+            'n',
+            'a'
+        );
+
+        const deps = sent.filter((packet) => packet.documentId === 'font-deps');
+        expect(deps).toHaveLength(1);
+        expect(deps[0].message?.changes?.length).toBeGreaterThan(0);
+        expect(() =>
+            peer.applyRemoteUpdate(
+                deps[0].update,
+                undefined,
+                [deps[0].message],
+                'font-deps',
+                { captureInUndo: false }
+            )
+        ).not.toThrow();
+        const aId = live.glyphs.find((glyph) => glyph.name === 'a').id;
+        const adiId = live.glyphs.find(
+            (glyph) => glyph.name === 'adieresis'
+        ).id;
+        expect(
+            readFontDepsIndex(peer.depsDoc.getMap('deps')).edges[adiId][aId]
+        ).toBe('component');
+        expect(
+            peer.getFontJsonSnapshot().glyphs.map((glyph) => glyph.name)
+        ).toEqual(['a', 'n', 'adieresis']);
+        plugin._stopTrackingActiveAssetSize();
+        bridge.destroy();
+        peer.destroy();
+    });
+
+    it('a catch-up that lands after a glyph was deleted does not bring it back', () => {
+        const {
+            bridge: owner,
+            plugin,
+            fontJson: live
+        } = startLiveSession({
+            upm: 1000,
+            glyphs: [
+                { name: 'a', layers: [liveLayer()] },
+                { name: 'x', layers: [liveLayer()] }
+            ]
+        });
+        const xId = live.glyphs.find((glyph) => glyph.name === 'x').id;
+        const xState = owner.encodeDocumentState(`glyph:${xId}`);
+        const peerJson = JSON.parse(JSON.stringify(live));
+        tombstoneCloudOwnedGlyphs(peerJson, [xId]);
+        peerJson.glyphs = peerJson.glyphs.filter((glyph) => glyph.name !== 'x');
+        const peer = new PatchSyncEngine('peer');
+        peer.initFromJson(peerJson);
+        peer.syncCloudOwnedProjection(catalogFromCoreJson(peerJson));
+
+        expect(peer.applyDocumentCatchUp(`glyph:${xId}`, xState)).toBe(false);
+        expect(
+            peer.getFontJsonSnapshot().glyphs.map((glyph) => glyph.name)
+        ).toEqual(['a']);
+        expect(peer.hasResidentGlyphDocument(`glyph:${xId}`)).toBe(false);
+        plugin._stopTrackingActiveAssetSize();
+        owner.destroy();
+        peer.destroy();
+    });
+
     it('patches component edges and reverse-close when a reference is committed', () => {
         const fontJson = {
             upm: 1000,

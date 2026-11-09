@@ -305,6 +305,8 @@ type TransactionFinalizer = (
  * Linked windows should all be able to undo these changes.
  */
 const USER_EDIT_ORIGIN = 'user-edit';
+/** Change-log path describing a font-deps packet on the wire. */
+export const FONT_DEPS_ENTRY_PATH = 'fontDeps';
 const SYSTEM_REMOTE_ORIGIN = 'system-remote';
 const HISTORY_REPLAY_ORIGIN = 'history-replay';
 const FONT_EDIT_ORIGIN = 'font-edit';
@@ -1428,6 +1430,9 @@ export class PatchSyncEngine {
         if (!state?.length) {
             return;
         }
+        if (this._isTombstonedGlyphDocument(documentId)) {
+            return;
+        }
         let repairedGlyphName: string | null = null;
         this._pushApplyKind(ApplyKind.Remote);
         try {
@@ -1508,6 +1513,11 @@ export class PatchSyncEngine {
         if (!update?.length) {
             return false;
         }
+        // A catch-up started before the glyph was deleted (a rename's, say)
+        // can land after the deletion; it must not bring the glyph back.
+        if (this._isTombstonedGlyphDocument(documentId)) {
+            return false;
+        }
         this.beginDeferredAfterSync();
         try {
             this.applyDocumentCheckpoint(documentId, update);
@@ -1530,6 +1540,17 @@ export class PatchSyncEngine {
             return false;
         }
         return true;
+    }
+
+    /** A glyph shard whose catalog entry is a tombstone (the glyph was deleted). */
+    private _isTombstonedGlyphDocument(documentId: string): boolean {
+        if (!documentId.startsWith('glyph:') || !this._fontJson) {
+            return false;
+        }
+        const catalog = catalogFromCoreJson(
+            this._fontJson as Record<string, unknown>
+        )?.glyphCatalog;
+        return isCatalogTombstone(catalog, documentId.slice('glyph:'.length));
     }
 
     glyphHasCatchUpRevision(documentId: string, revision: string): boolean {
@@ -1764,12 +1785,54 @@ export class PatchSyncEngine {
         }
     }
 
+    /**
+     * Write font-deps and send the delta with collaboration metadata. Peers
+     * refuse an undescribed packet, and a plain local-edit transaction here
+     * went out undescribed: it runs after the commit that caused it, so it
+     * had no change-log entries of its own.
+     */
+    private _writeFontDeps(sourceIds: string[], write: () => void): void {
+        const before = Y.encodeStateVector(this.depsDoc);
+        this._pushApplyKind(ApplyKind.ManualEmit);
+        try {
+            this.depsDoc.transact(write, FONT_EDIT_ORIGIN);
+        } finally {
+            this._popApplyKind();
+        }
+        const update = Y.encodeStateAsUpdate(this.depsDoc, before);
+        if (!update.length) {
+            return;
+        }
+        const entry = createLogEntry({
+            timestamp: Date.now(),
+            windowId: this.windowId,
+            windowRoleLabel: this._getWindowRoleLabel(),
+            historyItemId: this._createHistoryItemId(),
+            historyAction: 'change',
+            transactionLabel: 'Font dependencies',
+            transactionId: null,
+            op: 'set',
+            path: FONT_DEPS_ENTRY_PATH,
+            oldValue: undefined,
+            newValue: sourceIds,
+            replayOldValue: undefined,
+            replayNewValue: undefined,
+            compileChangeSource: 'cloud-font-deps',
+            compileEditType: null
+        });
+        this._emitLocalUpdate(update, [], FONT_DEPS_DOCUMENT_ID, {
+            skipCollaborationLog: true,
+            envelopeEntries: [entry]
+        });
+        this._noteBroadcastStateVector(FONT_DEPS_DOCUMENT_ID);
+    }
+
     syncFontDepsFromFontJson(
         fontJson: Record<string, unknown>,
         glyphNames?: string[]
     ): void {
         const depsMap = this.depsDoc.getMap('deps');
-        this.depsDoc.transact(() => {
+        this._writeFontDeps(glyphNames ?? [], () => {
             if (!glyphNames || glyphNames.length === 0) {
                 writeCompleteFontDepsIfLoaded(depsMap, fontJson);
                 return;
@@ -1817,19 +1880,19 @@ export class PatchSyncEngine {
                         : '0'
                 );
             }
-        }, FONT_EDIT_ORIGIN);
+        });
     }
 
     syncCompleteFontDepsFromLoadedGlyphs(
         fontJson: Record<string, unknown>
     ): boolean {
         let wrote = false;
-        this.depsDoc.transact(() => {
+        this._writeFontDeps([], () => {
             wrote = writeCompleteFontDepsIfLoaded(
                 this.depsDoc.getMap('deps'),
                 fontJson
             );
-        }, FONT_EDIT_ORIGIN);
+        });
         return wrote;
     }
 
@@ -2538,6 +2601,12 @@ export class PatchSyncEngine {
             uiBatch?: CommittedUiBatch;
             renameBatch?: WorkerRenameBatchPart;
             sharedEmission?: SharedLocalEmission;
+            /**
+             * Entries that describe the packet on the wire only. This
+             * window's worker and committed-change listeners still see
+             * `changeLogEntries` (derived data such as font-deps).
+             */
+            envelopeEntries?: ChangeLogEntry[];
         }
     ): void {
         // Undo/redo may append a coarse control entry for history-stack state,
@@ -2563,7 +2632,9 @@ export class PatchSyncEngine {
         } else {
             collaborationMessage =
                 createCollaborationMessageEnvelopeFromChangeLogEntries(
-                    describedEntries,
+                    options?.envelopeEntries?.length
+                        ? options.envelopeEntries
+                        : describedEntries,
                     {
                         localSequence,
                         source: 'change-bridge',
@@ -5937,7 +6008,10 @@ export class PatchSyncEngine {
                 syncEntireFont = true;
                 continue;
             }
-            if (topLevelKey === GLYPH_REVISIONS_KEY) {
+            if (
+                topLevelKey === GLYPH_REVISIONS_KEY ||
+                topLevelKey === FONT_DEPS_ENTRY_PATH
+            ) {
                 continue;
             }
             if (topLevelKey !== 'glyphs') {
