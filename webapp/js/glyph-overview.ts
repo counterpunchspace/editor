@@ -3,6 +3,7 @@
 // Uses direct canvas rendering for fast display
 
 import tippy, { Instance as TippyInstance } from 'tippy.js';
+import { showNotice } from './font-windows/dialogs';
 import 'tippy.js/dist/tippy.css';
 import { attachGlyphDataPopup } from './glyph-data-popup';
 import {
@@ -85,6 +86,7 @@ type OverviewSidebearingLayer = {
         error: string | null;
         value: number | null;
         affectedGlyphNames?: string[];
+        rejected?: boolean;
     };
     parent?: () =>
         | {
@@ -2592,7 +2594,14 @@ class GlyphOverview extends GlyphOverviewView {
         });
         try {
             for (const layer of layers) {
-                layer.applySidebearingInput(side, rawValue);
+                const resolution = layer.applySidebearingInput(side, rawValue);
+                if (resolution?.rejected) {
+                    // The same key is refused for every layer.
+                    if (resolution.error) {
+                        showNotice(resolution.error);
+                    }
+                    break;
+                }
             }
         } finally {
             bridge?.endTransaction();

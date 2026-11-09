@@ -1,6 +1,7 @@
 // Glyph Canvas Editor
 // Handles canvas-based glyph editing with pan/zoom and text rendering
 
+import { showNotice } from './font-windows/dialogs';
 import {
     getHighestVisibleVerticalMetricValue,
     getLowestVisibleVerticalMetricValue
@@ -8030,6 +8031,17 @@ class GlyphCanvas {
 
         this.setSidebearingKeyCompileContext();
         const resolution = layer.applySidebearingInput(side, value);
+        if (resolution.rejected) {
+            fontManager.setEditingCompileContext(
+                previousChangeSource,
+                previousEditType
+            );
+            if (resolution.error) {
+                showNotice(resolution.error);
+            }
+            this.updatePropertyPanel();
+            return;
+        }
         const glyphName =
             (typeof layer.parent === 'function'
                 ? layer.parent()?.name

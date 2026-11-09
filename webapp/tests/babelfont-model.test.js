@@ -3383,6 +3383,54 @@ describe('Babelfont Object Model', () => {
             serializeSpy.mockRestore();
         });
 
+        test('refuses a typed metrics key that names no glyph in the font', () => {
+            const glyphA = intermediateLayerFont.findGlyph('a');
+            const layer = glyphA.layers[0];
+            const widthBefore = layer.width;
+
+            for (const input of [
+                '=ghost',
+                'ghost+10',
+                '=|ghost@20',
+                '==ghost'
+            ]) {
+                const resolution = layer.applySidebearingInput('right', input);
+                expect(resolution.rejected).toBe(true);
+                expect(resolution.error).toBe(
+                    'There is no glyph “ghost” in this font, so the metrics key was not changed.'
+                );
+            }
+            const invalid = layer.applySidebearingInput('right', '=n+');
+            expect(invalid.rejected).toBe(true);
+            expect(invalid.error).toBe(
+                '“=n+” is not a valid metrics key, so it was not changed.'
+            );
+
+            expect(glyphA.rightMetricsKey).toBe('n');
+            expect(layer.rightMetricsKey ?? null).toBeNull();
+            expect(layer.width).toBe(widthBefore);
+        });
+
+        test('keeps a faulty metrics key a font was opened with', () => {
+            const glyphA = intermediateLayerFont.findGlyph('a');
+            const previous = glyphA.leftMetricsKey;
+            glyphA.leftMetricsKey = 'ghost';
+            try {
+                expect(glyphA.leftMetricsKey).toBe('ghost');
+                expect(
+                    glyphA.layers[0].resolveMetricsKey('left').error
+                ).toContain('Unknown glyph reference');
+                // A new key that names a missing glyph is still refused.
+                expect(
+                    glyphA.layers[0].applySidebearingInput('left', '=ghost2')
+                        .rejected
+                ).toBe(true);
+                expect(glyphA.leftMetricsKey).toBe('ghost');
+            } finally {
+                glyphA.leftMetricsKey = previous;
+            }
+        });
+
         test('height-offset sidebearing commits round the stored width after interpolation math', () => {
             const heightFont = Font.fromData({
                 upm: 1000,

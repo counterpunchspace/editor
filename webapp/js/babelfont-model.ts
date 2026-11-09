@@ -248,6 +248,8 @@ type MetricsKeyResolution = {
     isLocal: boolean;
     updateScope?: 'layer' | 'font';
     affectedGlyphNames?: string[];
+    /** The typed key was refused and nothing was stored. */
+    rejected?: boolean;
 };
 
 type ParsedMetricsKey =
@@ -3939,6 +3941,34 @@ function getGlyphNamePrefixMatch(
     }
 
     return null;
+}
+
+/**
+ * Why a typed metrics key must not be stored, or null when it may be.
+ * A key must name a glyph that exists in the font (loaded or not), so it can
+ * never point at nothing. Keys a font was opened with are left alone.
+ */
+export function metricsKeyInputRejection(
+    font: Font,
+    rawKey: string
+): string | null {
+    const input = rawKey.trim();
+    if (!input || isPlainNumericText(input)) {
+        return null;
+    }
+    const parsed = parseMetricsKey(font, input);
+    if (!('error' in parsed)) {
+        return null;
+    }
+    if (parsed.error.startsWith('Unknown glyph reference')) {
+        const body = input.replace(/^==?/, '').replace(/^\|/, '');
+        const name =
+            body.match(
+                /^(.*?)(?:@[+-]?\d+(?:\.\d+)?.*|[+\-*/][+-]?\d+(?:\.\d+)?)?$/
+            )?.[1] || body;
+        return `There is no glyph “${name}” in this font, so the metrics key was not changed.`;
+    }
+    return `“${input}” is not a valid metrics key, so it was not changed.`;
 }
 
 function parseMetricsKey(
@@ -8548,6 +8578,23 @@ export class Layer extends ArrayElementBase {
                         isLocal: false,
                         updateScope,
                         affectedGlyphNames: [...affectedGlyphNames]
+                    };
+                }
+
+                const font = this.getFont();
+                const rejection = font
+                    ? metricsKeyInputRejection(font, input)
+                    : null;
+                if (rejection) {
+                    return {
+                        input,
+                        value: null,
+                        error: rejection,
+                        referencedGlyphNames: [],
+                        isLocal: this.hasLocalSidebearingKey(side),
+                        updateScope: 'layer',
+                        affectedGlyphNames: glyphNameList,
+                        rejected: true
                     };
                 }
 
