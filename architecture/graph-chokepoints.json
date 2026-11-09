@@ -17,7 +17,7 @@
             "allowedCallers": [
                 "webapp/js/cloud-adapter.ts::_applyRemoteUpdate",
                 "webapp/js/cloud-adapter.ts::_restorePersistentOutboxIntoBridge",
-                "webapp/js/window-sync.ts::_flushPendingYjsUpdates"
+                "webapp/js/window-sync.ts::_applyInboundYjsMessages"
             ]
         },
         {
