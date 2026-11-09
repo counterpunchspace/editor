@@ -2,11 +2,12 @@ const fs = require('fs');
 const path = require('path');
 const {
     precacheUrlsFromAssets,
-    cdnUrlsFromHtml,
+    vendorUrlsFromHtml,
     pinnedUrlsFromAssets,
     computeBuildId,
     injectManifest
 } = require('../scripts/precache-manifest');
+const { vendorUrl } = require('../scripts/vendor-libraries');
 
 const SW_PATH = path.resolve(__dirname, '../coi-serviceworker.js');
 const INDEX_PATH = path.resolve(__dirname, '../index.html');
@@ -52,25 +53,25 @@ describe('precache manifest', () => {
         ]);
     });
 
-    test('collects every CDN URL from index.html', () => {
+    test('precaches every vendored file index.html loads, and nothing comes from another host', () => {
         const html = fs
             .readFileSync(INDEX_PATH, 'utf-8')
             .replace(
-                /<%= htmlWebpackPlugin\.options\.cdnBase %>/g,
-                'https://cdn.jsdelivr.net'
+                /<%= htmlWebpackPlugin\.options\.vendorUrl\('([^']+)', '([^']+)'\) %>/g,
+                (_match, name, file) => vendorUrl(name, file)
             );
-        const urls = cdnUrlsFromHtml(html);
-        const scriptSrcs = [
-            ...html.matchAll(
-                /(?:src|href)="(https:\/\/cdn\.jsdelivr\.net\/[^"]+)"/g
-            )
-        ].map((match) => match[1]);
+        const urls = vendorUrlsFromHtml(html);
+        const vendorSrcs = [
+            ...html.matchAll(/(?:src|href)="(vendor\/[^"]+)"/g)
+        ].map((match) => `./${match[1]}`);
 
-        expect(scriptSrcs.length).toBeGreaterThan(0);
-        for (const src of scriptSrcs) {
-            expect(urls).toContain(src);
-        }
-        expect(new Set(urls).size).toBe(urls.length);
+        expect(vendorSrcs.length).toBeGreaterThan(0);
+        expect(urls.sort()).toEqual([...new Set(vendorSrcs)].sort());
+        expect(urls).toContain('./vendor/harfbuzzjs@0.8.0/hb.js');
+        // Scripts and stylesheets are all same-origin (links may point out).
+        expect(html).not.toMatch(/<script[^>]*\ssrc="https?:\/\//);
+        expect(html).not.toMatch(/<link[^>]*\shref="https?:\/\//);
+        expect(html).not.toContain('cdn.jsdelivr.net');
     });
 
     test('pins the self-hosted Pyodide core outside the per-build app cache', () => {
@@ -82,9 +83,14 @@ describe('precache manifest', () => {
             'pyodide/v314.0.5/pyodide.asm.wasm',
             'pyodide/v314.0.5/python_stdlib.zip',
             'pyodide/v314.0.5/pyodide-lock.json',
-            'pyodide/v314.0.5/pyodide.js.map'
+            'pyodide/v314.0.5/pyodide.js.map',
+            'pyodide/v314.0.5/micropip-0.11.1-py3-none-any.whl',
+            // On-demand packages are cached when first used.
+            'pyodide/v314.0.5/packages/numpy-2.4.6-cp314-cp314-pyemscripten_2026_0_wasm32.whl',
+            'vendor/jquery@4.0.0/dist/jquery.min.js'
         ];
         expect(pinnedUrlsFromAssets(assets)).toEqual([
+            './pyodide/v314.0.5/micropip-0.11.1-py3-none-any.whl',
             './pyodide/v314.0.5/pyodide-lock.json',
             './pyodide/v314.0.5/pyodide.asm.mjs',
             './pyodide/v314.0.5/pyodide.asm.wasm',

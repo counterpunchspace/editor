@@ -20,6 +20,15 @@
         "tests/**/*.{js,ts,mjs}"
     ],
     "include": ["files", "dependencies", "unlisted"],
+    "ignoreDependencies": [
+        "ace-builds",
+        "diff",
+        "diff2html",
+        "harfbuzzjs",
+        "jquery",
+        "jquery.terminal",
+        "marked"
+    ],
     "ignoreIssues": {
         "tests/python-package-lazy-loader.test.js": ["unlisted"],
         "tests/cancellable-shard-transfer.test.js": ["unlisted"],

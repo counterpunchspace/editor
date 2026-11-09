@@ -23,9 +23,10 @@ function isCDNResource(url) {
     return url.includes('cdn.jsdelivr.net');
 }
 
-// Same-origin files under a version-pinned path (the self-hosted Pyodide
-// core) share the CDN cache, which survives app updates.
-const PINNED_PATH_RE = /\/pyodide\/v[^/]+\//;
+// Same-origin files under a version-pinned path (the Pyodide core and
+// packages, and third-party libraries under vendor/) share the CDN cache,
+// which survives app updates.
+const PINNED_PATH_RE = /\/(?:pyodide\/v[^/]+|vendor\/[^/]+@[^/]+)\//;
 
 function isPinnedResource(url) {
     if (isCDNResource(url)) {

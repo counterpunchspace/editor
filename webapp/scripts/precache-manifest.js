@@ -23,13 +23,15 @@ const EXCLUDED_ASSET_PATTERNS = [
     /^assets\/screenshots\//,
     // Version-pinned; precached into the cache that survives app updates.
     /^pyodide\//,
+    /^vendor\//,
     /(^|\/)README\.md$/,
     // Example sources are large and only opened on demand; the runtime
     // handler caches the ones a user opens.
     /^examples\/(?!examples-manifest\.json$)/
 ];
 
-const CDN_URL_RE = /https:\/\/cdn\.jsdelivr\.net\/[^"'\s<>)]+/g;
+// Third-party files under vendor/<package>@<version>/ (vendor-libraries.js).
+const VENDOR_URL_RE = /\bvendor\/[^/"'\s<>)]+@[^/"'\s<>)]+\/[^"'\s<>)]+/g;
 const PINNED_ASSET_RE = /^pyodide\/v[^/]+\/[^/]+$/;
 
 /** Same-origin files under a version-pinned path (the Pyodide core). */
@@ -52,8 +54,11 @@ function precacheUrlsFromAssets(assetNames) {
     return [SHELL_URL, ...urls];
 }
 
-function cdnUrlsFromHtml(html) {
-    return [...new Set(html.match(CDN_URL_RE) || [])].sort();
+/** The vendored files the page loads, precached with the Pyodide core. */
+function vendorUrlsFromHtml(html) {
+    return [...new Set(html.match(VENDOR_URL_RE) || [])]
+        .map((url) => `./${url}`)
+        .sort();
 }
 
 /**
@@ -106,7 +111,7 @@ module.exports = {
     BUILD_INFO_ASSET,
     isPrecachedAsset,
     precacheUrlsFromAssets,
-    cdnUrlsFromHtml,
+    vendorUrlsFromHtml,
     pinnedUrlsFromAssets,
     computeBuildId,
     injectManifest

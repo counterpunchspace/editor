@@ -213,17 +213,16 @@
                     }
                     window.__pyodideLoadStarted = true;
                     performance.mark('cp:python.loadPyodide.requested');
-                    // Core files are same-origin; packages resolve from
-                    // the CDN copy of the same Pyodide release.
+                    // The core and the packages the editor uses are
+                    // same-origin; pyodide-lock.json says where each
+                    // package is.
+                    var pyodideBaseUrl = new URL(
+                        'pyodide/v<%= htmlWebpackPlugin.options.pyodideVersion %>/',
+                        document.baseURI
+                    ).href;
                     loadPyodide({
-                        indexURL: new URL(
-                            'pyodide/v<%= htmlWebpackPlugin.options.pyodideVersion %>/',
-                            document.baseURI
-                        ).href,
-                        packageBaseUrl: new URL(
-                            '<%= htmlWebpackPlugin.options.cdnBase %>/pyodide/v<%= htmlWebpackPlugin.options.pyodideVersion %>/full/',
-                            document.baseURI
-                        ).href
+                        indexURL: pyodideBaseUrl,
+                        packageBaseUrl: pyodideBaseUrl
                     })
                         .then(function (pyodide) {
                             window.pyodide = pyodide;
@@ -252,37 +251,37 @@
                 };
             });
         </script>
-        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/jquery"></script>
-        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/jquery.terminal@2.42.0/js/jquery.terminal.min.js"></script>
-        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/jquery.terminal@2.42.0/js/unix_formatting.min.js"></script>
+        <script src="<%= htmlWebpackPlugin.options.vendorUrl('jquery', 'dist/jquery.min.js') %>"></script>
+        <script src="<%= htmlWebpackPlugin.options.vendorUrl('jquery.terminal', 'js/jquery.terminal.min.js') %>"></script>
+        <script src="<%= htmlWebpackPlugin.options.vendorUrl('jquery.terminal', 'js/unix_formatting.js') %>"></script>
         <link
-            href="<%= htmlWebpackPlugin.options.cdnBase %>/npm/jquery.terminal@2.42.0/css/jquery.terminal.min.css"
+            href="<%= htmlWebpackPlugin.options.vendorUrl('jquery.terminal', 'css/jquery.terminal.min.css') %>"
             rel="stylesheet"
         />
 
-        <!-- HarfBuzz.js for text shaping (v0.8.0) -->
-        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/harfbuzzjs@0.8.0/hb.js"></script>
-        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/harfbuzzjs@0.8.0/hbjs.js"></script>
+        <!-- HarfBuzz.js for text shaping -->
+        <script src="<%= htmlWebpackPlugin.options.vendorUrl('harfbuzzjs', 'hb.js') %>"></script>
+        <script src="<%= htmlWebpackPlugin.options.vendorUrl('harfbuzzjs', 'hbjs.js') %>"></script>
 
         <!-- Ace Editor for Python -->
-        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/ace-builds@1.32.2/src-min-noconflict/ace.js"></script>
-        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/ace-builds@1.32.2/src-min-noconflict/ext-language_tools.js"></script>
-        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/ace-builds@1.32.2/src-min-noconflict/mode-python.js"></script>
-        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/ace-builds@1.32.2/src-min-noconflict/theme-monokai.js"></script>
-        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/ace-builds@1.32.2/src-min-noconflict/theme-tomorrow.js"></script>
-        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/ace-builds@1.32.2/src-min-noconflict/theme-tomorrow_night.js"></script>
-        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/ace-builds@1.32.2/src-min-noconflict/ext-static_highlight.js"></script>
+        <script src="<%= htmlWebpackPlugin.options.vendorUrl('ace-builds', 'src-min-noconflict/ace.js') %>"></script>
+        <script src="<%= htmlWebpackPlugin.options.vendorUrl('ace-builds', 'src-min-noconflict/ext-language_tools.js') %>"></script>
+        <script src="<%= htmlWebpackPlugin.options.vendorUrl('ace-builds', 'src-min-noconflict/mode-python.js') %>"></script>
+        <script src="<%= htmlWebpackPlugin.options.vendorUrl('ace-builds', 'src-min-noconflict/theme-monokai.js') %>"></script>
+        <script src="<%= htmlWebpackPlugin.options.vendorUrl('ace-builds', 'src-min-noconflict/theme-tomorrow.js') %>"></script>
+        <script src="<%= htmlWebpackPlugin.options.vendorUrl('ace-builds', 'src-min-noconflict/theme-tomorrow_night.js') %>"></script>
+        <script src="<%= htmlWebpackPlugin.options.vendorUrl('ace-builds', 'src-min-noconflict/ext-static_highlight.js') %>"></script>
 
         <!-- Diff libraries -->
-        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/diff@5.1.0/dist/diff.min.js"></script>
+        <script src="<%= htmlWebpackPlugin.options.vendorUrl('diff', 'dist/diff.min.js') %>"></script>
         <link
             rel="stylesheet"
-            href="<%= htmlWebpackPlugin.options.cdnBase %>/npm/diff2html@3.4.47/bundles/css/diff2html.min.css"
+            href="<%= htmlWebpackPlugin.options.vendorUrl('diff2html', 'bundles/css/diff2html.min.css') %>"
         />
-        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/diff2html@3.4.47/bundles/js/diff2html-ui.min.js"></script>
+        <script src="<%= htmlWebpackPlugin.options.vendorUrl('diff2html', 'bundles/js/diff2html-ui.min.js') %>"></script>
 
         <!-- Markdown parser -->
-        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/marked@11.1.1/marked.min.js"></script>
+        <script src="<%= htmlWebpackPlugin.options.vendorUrl('marked', 'marked.min.js') %>"></script>
         <script>
             performance.mark('cp:app.headCdnScriptsParsed');
         </script>

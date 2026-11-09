@@ -6,9 +6,11 @@ const UnusedWebpackPlugin = require('unused-webpack-plugin');
 const webpack = require('webpack');
 const { execSync } = require('child_process');
 const precacheManifest = require('./scripts/precache-manifest');
+const { vendorUrl, vendorCopyPatterns } = require('./scripts/vendor-libraries');
+const { PyodidePackagesPlugin } = require('./scripts/pyodide-packages-plugin');
 
-// Pyodide's core ships from our own origin under a version-pinned path;
-// packages still load from the CDN through `packageBaseUrl`.
+// Pyodide's core and the packages the editor uses ship from our own origin
+// under a version-pinned path (see PyodidePackagesPlugin).
 const readJsonFile = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
 const PYODIDE_PACKAGE_DIR = path.dirname(
     require.resolve('pyodide/package.json')
@@ -24,9 +26,6 @@ if (PYODIDE_VERSION !== PLUGIN_CONTRACT_PYODIDE_VERSION) {
         `npm pyodide ${PYODIDE_VERSION} does not match plugin-contracts pyodideVersion ${PLUGIN_CONTRACT_PYODIDE_VERSION}`
     );
 }
-const PYODIDE_LOCK = readJsonFile(
-    path.join(PYODIDE_PACKAGE_DIR, 'pyodide-lock.json')
-);
 
 class GenerateDocsManifestPlugin {
     apply(compiler) {
@@ -113,16 +112,15 @@ class PrecacheManifestPlugin {
                                         precacheManifest.SERVICE_WORKER_ASSET
                                     ]),
                                 cdnUrls: [
-                                    ...precacheManifest.cdnUrlsFromHtml(
+                                    ...precacheManifest.vendorUrlsFromHtml(
                                         shell.source.source().toString()
                                     ),
+                                    // The Pyodide core and micropip.
                                     ...precacheManifest.pinnedUrlsFromAssets(
                                         compilation
                                             .getAssets()
                                             .map((asset) => asset.name)
-                                    ),
-                                    // Loaded on every boot.
-                                    `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/${PYODIDE_LOCK.packages.micropip.file_name}`
+                                    )
                                 ],
                                 buildId: precacheManifest.computeBuildId(
                                     precacheAssets.map((asset) => ({
@@ -274,17 +272,25 @@ module.exports = {
         new GenerateDocsManifestPlugin(),
         new BuildInfoPlugin(),
         new PrecacheManifestPlugin(),
+        new PyodidePackagesPlugin({
+            pyodideDir: PYODIDE_PACKAGE_DIR,
+            version: PYODIDE_VERSION,
+            outputDir: `pyodide/v${PYODIDE_VERSION}`,
+            cacheDir: path.join(
+                __dirname,
+                'node_modules',
+                '.cache',
+                'pyodide-packages',
+                `v${PYODIDE_VERSION}`
+            )
+        }),
         new HtmlWebpackPlugin({
             template: './index.html',
             inject: 'body',
             scriptLoading: 'blocking',
             chunks: ['bootstrap'],
-            // webpack-dev-server proxies /cdn-jsdelivr → jsDelivr so the
-            // editor loads CDN scripts same-origin (COEP-safe) even when the
-            // browser binary cannot reach the public CDN directly.
-            cdnBase: process.argv.includes('serve')
-                ? '/cdn-jsdelivr'
-                : 'https://cdn.jsdelivr.net',
+            // Third-party libraries ship under vendor/ (vendor-libraries.js).
+            vendorUrl,
             pyodideVersion: PYODIDE_VERSION
         }),
         new HtmlWebpackPlugin({
@@ -323,10 +329,13 @@ module.exports = {
                             '**/*.html',
                             '**/*.md',
                             '**/package.json',
-                            '**/pyodide.mjs'
+                            '**/pyodide.mjs',
+                            // Rewritten by PyodidePackagesPlugin.
+                            '**/pyodide-lock.json'
                         ]
                     }
                 },
+                ...vendorCopyPatterns(),
                 { from: 'data', to: 'data' },
                 { from: '_headers', to: '_headers', toType: 'file' },
                 {
@@ -404,15 +413,6 @@ module.exports = {
                 protocol: 'wss'
             }
         },
-        proxy: [
-            {
-                context: ['/cdn-jsdelivr'],
-                target: 'https://cdn.jsdelivr.net',
-                pathRewrite: { '^/cdn-jsdelivr': '' },
-                changeOrigin: true,
-                secure: true
-            }
-        ],
         headers: {
             'Cross-Origin-Embedder-Policy': 'require-corp',
             'Cross-Origin-Opener-Policy': 'same-origin',
