@@ -229,6 +229,10 @@ declare global {
                 [key: string]: unknown;
             } | null>;
             getSessionToken: () => string | null;
+            lastAuthCheckUnreachable: boolean;
+            authChecked: boolean;
+            isSessionPending: () => boolean;
+            rememberedSignInEmail: () => string;
             signIn: (options?: { reason?: string }) => Promise<{
                 email?: string;
                 [key: string]: unknown;

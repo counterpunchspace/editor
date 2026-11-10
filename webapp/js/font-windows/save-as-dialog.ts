@@ -31,7 +31,13 @@ import {
 } from './file-access';
 import { documentOpenState } from './window-registry';
 import {
+    CLOUD_UNREACHABLE_NOTE,
     chooseSaveDestination,
+    cloudEligibilityRefusal,
+    cloudStateWithWarning,
+    type CloudSaveEligibility,
+    type CloudSaveWarning,
+    type CloudState,
     type SaveDestination
 } from './save-destination';
 import { escapeHtml, icon, openDialog, reportError } from './dialogs';
@@ -95,63 +101,54 @@ function plugin<T extends FilesystemPlugin>(id: string): T | null {
 
 type CloudPluginLike = FilesystemPlugin & {
     handleSaveAs(name: string): Promise<boolean>;
-    checkEligibility?: () => Promise<{
-        cloudHostingEnabled: boolean;
-        maxFontsOwned: number | null;
-        fontsOwnedCount: number;
-    } | null>;
-    getCurrentSaveAsWarningState?: () => Promise<{
-        visible: boolean;
-        title: string;
-        label: string;
-        canSave: boolean;
-    } | null>;
+    checkEligibility?: (options?: {
+        fresh?: boolean;
+    }) => Promise<CloudSaveEligibility | null>;
+    getSaveAsBlocker?: () => Promise<{ note: string; title: string } | null>;
+    getCurrentSaveAsWarningState?: () => Promise<CloudSaveWarning | null>;
 };
 
-type CloudState = { available: boolean; note: string; blocked?: string };
-
-/** Whether the cloud can take this font, the same rules as the editor's. */
+/**
+ * Whether the cloud can take this font, the same rules as the editor's.
+ * Every reason a cloud save would be refused is found here, so the Cloud
+ * choice is disabled before the user picks it.
+ */
 async function cloudState(): Promise<CloudState> {
     const cloud = plugin<CloudPluginLike>('cloud');
     if (!cloud || !cloud.isVisibleInUI()) {
         return { available: false, note: 'Not available in this version' };
     }
-    if (!window.authManager?.isAuthenticated?.()) {
-        return { available: false, note: 'Log in to save to the cloud' };
+    const auth = window.authManager;
+    if (navigator.onLine === false) {
+        return { available: false, note: 'You’re offline' };
     }
-    const eligibility = await cloud.checkEligibility?.().catch(() => null);
-    if (!eligibility?.cloudHostingEnabled) {
-        return {
-            available: false,
-            note: 'Your plan doesn’t include cloud fonts'
-        };
+    if (!auth?.isAuthenticated?.()) {
+        return auth?.lastAuthCheckUnreachable
+            ? { available: false, note: CLOUD_UNREACHABLE_NOTE }
+            : { available: false, note: 'Log in to save to the cloud' };
     }
-    const { maxFontsOwned, fontsOwnedCount } = eligibility;
-    if (maxFontsOwned !== null && fontsOwnedCount >= maxFontsOwned) {
-        return {
-            available: false,
-            note: `All ${maxFontsOwned} cloud fonts in your plan are used`
-        };
-    }
-    const warning = await cloud
-        .getCurrentSaveAsWarningState?.()
+    // Fresh: the number of fonts owned changes with every save and delete.
+    const eligibility = await cloud
+        .checkEligibility?.({ fresh: true })
         .catch(() => null);
-    const used =
-        maxFontsOwned === null
-            ? 'Collaborate and share'
-            : `Collaborate and share · ${fontsOwnedCount} of ${maxFontsOwned} fonts used`;
-    if (warning?.visible && !warning.canSave) {
+    const refused = cloudEligibilityRefusal(eligibility ?? null);
+    if (refused) return refused;
+    const blocker = await cloud.getSaveAsBlocker?.().catch(() => null);
+    if (blocker) {
+        return { available: false, note: blocker.note, blocked: blocker.title };
+    }
+    try {
+        const warning = await cloud.getCurrentSaveAsWarningState?.();
+        return cloudStateWithWarning(eligibility ?? null, warning ?? null);
+    } catch (error) {
+        // The save reads the font the same way and would fail the same way.
+        console.warn('Cloud save check failed', error);
         return {
             available: false,
-            note: warning.label,
-            blocked: warning.title
+            note: 'This font can’t be saved to the cloud',
+            blocked: error instanceof Error ? error.message : String(error)
         };
     }
-    return {
-        available: true,
-        note: warning?.visible ? `${used} · ${warning.label}` : used,
-        blocked: warning?.visible ? warning.title : undefined
-    };
 }
 
 function currentDestination(): SaveDestination | null {

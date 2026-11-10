@@ -145,6 +145,7 @@ import {
     type CloudSaveSeedCapture,
     type CloudAsset,
     type CloudEligibility,
+    type CloudSaveAsBlocker,
     type CloudAssetLimits,
     type CloudAssetMember,
     type CloudAssetInvitation,
@@ -1704,30 +1705,57 @@ export class CloudPlugin extends FilesystemPlugin {
         await this._refreshOwnedCatalogAndSizes();
     }
 
+    /**
+     * What stops the current font from being saved to the cloud as a new
+     * font, known before any upload starts. Save As shows it on the Cloud
+     * choice; prepareToSeed refuses with the same reasons.
+     */
+    async getSaveAsBlocker(): Promise<CloudSaveAsBlocker | null> {
+        const eligibility = await this.checkEligibility();
+        const maxGlyphs = eligibility?.maxGlyphsPerFont ?? null;
+        const glyphCount = this._liveGlyphCount();
+        if (maxGlyphs !== null && glyphCount > maxGlyphs) {
+            const count = glyphCount.toLocaleString('en-US');
+            const max = maxGlyphs.toLocaleString('en-US');
+            return {
+                note: `Too many glyphs for your plan (${count} of ${max})`,
+                title: `Cloud save blocked: this font has ${glyphCount} glyphs, and your plan allows ${maxGlyphs} glyphs per cloud font.`
+            };
+        }
+        if (eligibility?.capabilities) {
+            const missingCaps = missingRequiredCloudCapabilities(
+                eligibility.capabilities
+            );
+            if (missingCaps.length) {
+                return {
+                    note: 'The cloud doesn’t support this version of Counterpunch yet',
+                    title: `Cloud save blocked: the server is missing capabilities (${missingCaps.join(', ')}).`
+                };
+            }
+        }
+        // Only a font opened from the cloud can have glyphs still on the server.
+        if (this.getCurrentAssetIdForSharing()) {
+            const gate = this.getMasterTopologyGate();
+            if (!gate.allowed) {
+                return {
+                    note: 'This font isn’t fully downloaded',
+                    title: window.patchSyncEngine?.hasSparseWorkingSet?.()
+                        ? 'Cloud save blocked: this font is only partly downloaded. Reopen it with all glyphs to save a copy.'
+                        : 'Cloud save blocked: some glyphs are still downloading. Try again once every glyph is loaded.'
+                };
+            }
+        }
+        return null;
+    }
+
     async prepareToSeed(): Promise<void> {
         const fontJson = this._currentFontJson();
         if (!fontJson) {
             return;
         }
-        await this.checkEligibility();
-        const glyphCount = listGlyphRecords(fontJson).length;
-        if (
-            this._eligibility?.maxGlyphsPerFont != null &&
-            glyphCount > this._eligibility.maxGlyphsPerFont
-        ) {
-            throw new Error(
-                `Cloud seed blocked: font has ${glyphCount} glyphs but this account allows ${this._eligibility.maxGlyphsPerFont}.`
-            );
-        }
-        if (this._eligibility?.capabilities) {
-            const missingCaps = missingRequiredCloudCapabilities(
-                this._eligibility.capabilities
-            );
-            if (missingCaps.length) {
-                throw new Error(
-                    `Cloud seed blocked: server is missing capabilities (${missingCaps.join(', ')}).`
-                );
-            }
+        const blocker = await this.getSaveAsBlocker();
+        if (blocker) {
+            throw new Error(blocker.title);
         }
         const owned = applyCloudOwnedData(fontJson);
         window.patchSyncEngine?.syncCloudOwnedProjection?.(owned);
@@ -2545,7 +2573,10 @@ export class CloudPlugin extends FilesystemPlugin {
      * Fetch (and cache) cloud eligibility for the current user.
      * Returns null if the user is not authenticated or an error occurs.
      */
-    async checkEligibility(): Promise<CloudEligibility | null> {
+    async checkEligibility(
+        options: { fresh?: boolean } = {}
+    ): Promise<CloudEligibility | null> {
+        if (options.fresh) this._eligibility = null;
         if (this._eligibility) return this._eligibility;
         const user = await this._ensureCloudUser({
             allowSignInPrompt: true

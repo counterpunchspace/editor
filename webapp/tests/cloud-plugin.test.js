@@ -2781,6 +2781,27 @@ describe('CloudPlugin glyph add quota', () => {
         expect(plugin.getCachedCanAddGlyphs(1).allowed).toBe(true);
     });
 
+    test('Save As is blocked up front when the font has more glyphs than the plan', async () => {
+        window.currentFontModel = { glyphs: [{}, {}, {}] };
+        const blocker = await plugin.getSaveAsBlocker();
+        expect(blocker.note).toBe('Too many glyphs for your plan (3 of 2)');
+        expect(blocker.title).toMatch(/3 glyphs.*allows 2 glyphs/);
+
+        window.currentFontModel = { glyphs: [{}, {}] };
+        await expect(plugin.getSaveAsBlocker()).resolves.toBeNull();
+    });
+
+    test('Save As is blocked up front while a cloud font is partly downloaded', async () => {
+        window.currentFontModel = { glyphs: [{}] };
+        plugin.getCurrentAssetIdForSharing = () => 'asset-1';
+        plugin.getMasterTopologyGate = () => ({ allowed: false });
+        const blocker = await plugin.getSaveAsBlocker();
+        expect(blocker.note).toBe('This font isn’t fully downloaded');
+
+        plugin.getMasterTopologyGate = () => ({ allowed: true });
+        await expect(plugin.getSaveAsBlocker()).resolves.toBeNull();
+    });
+
     test('allows adding up to the remaining live slots', () => {
         window.currentFontModel = { glyphs: [{}] };
         expect(plugin.getCachedCanAddGlyphs(1).allowed).toBe(true);

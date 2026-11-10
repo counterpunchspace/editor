@@ -229,6 +229,142 @@ describe('Save As starts where the font lives', () => {
     });
 });
 
+describe('Save As disables the Cloud choice with its reason', () => {
+    const {
+        CLOUD_UNREACHABLE_NOTE,
+        cloudEligibilityRefusal,
+        cloudStateWithWarning
+    } = require('../../js/font-windows/save-destination');
+    const eligible = {
+        cloudHostingEnabled: true,
+        maxFontsOwned: 5,
+        fontsOwnedCount: 2
+    };
+
+    test('an account with room is not refused', () => {
+        expect(cloudEligibilityRefusal(eligible)).toBeNull();
+        expect(
+            cloudEligibilityRefusal({ ...eligible, maxFontsOwned: null })
+        ).toBeNull();
+    });
+
+    test('a failed eligibility request is not blamed on the plan', () => {
+        expect(cloudEligibilityRefusal(null)).toEqual({
+            available: false,
+            note: CLOUD_UNREACHABLE_NOTE
+        });
+    });
+
+    test('the plan, a lapsed subscription and used-up fonts each say so', () => {
+        expect(
+            cloudEligibilityRefusal({ ...eligible, cloudHostingEnabled: false })
+                .note
+        ).toBe('Your plan doesn’t include cloud fonts');
+        expect(
+            cloudEligibilityRefusal({
+                ...eligible,
+                subscriptionLapse: { state: 'lapsed', message: 'Resubscribe.' }
+            })
+        ).toEqual({
+            available: false,
+            note: 'Your subscription has ended',
+            blocked: 'Resubscribe.'
+        });
+        expect(
+            cloudEligibilityRefusal({
+                ...eligible,
+                subscriptionLapse: { state: 'grace', message: 'Soon.' }
+            })
+        ).toBeNull();
+        expect(
+            cloudEligibilityRefusal({ ...eligible, fontsOwnedCount: 5 }).note
+        ).toBe('All 5 cloud fonts in your plan are used');
+        expect(
+            cloudEligibilityRefusal({
+                ...eligible,
+                maxFontsOwned: 1,
+                fontsOwnedCount: 1
+            }).note
+        ).toBe('The one cloud font in your plan is used');
+    });
+
+    test('a size warning keeps Cloud available, a size block does not', () => {
+        const warning = {
+            visible: true,
+            title: 'Near the limit.',
+            label: 'Near limit',
+            canSave: true
+        };
+        expect(cloudStateWithWarning(eligible, null)).toEqual({
+            available: true,
+            note: 'Collaborate and share · 2 of 5 fonts used',
+            blocked: undefined
+        });
+        expect(cloudStateWithWarning(eligible, warning)).toEqual({
+            available: true,
+            note: 'Collaborate and share · 2 of 5 fonts used · Near limit',
+            blocked: 'Near the limit.'
+        });
+        expect(
+            cloudStateWithWarning(eligible, {
+                ...warning,
+                label: 'Too large',
+                canSave: false
+            })
+        ).toEqual({
+            available: false,
+            note: 'Too large',
+            blocked: 'Near the limit.'
+        });
+    });
+});
+
+describe('The launcher’s Cloud group follows the account', () => {
+    const { cloudSection } = require('../../js/launcher/cloud-section');
+    const none = {
+        signedIn: false,
+        pending: false,
+        unreachable: false,
+        hasList: false,
+        loading: false,
+        failed: false
+    };
+
+    test('only a browser without a session is asked to log in', () => {
+        expect(cloudSection(none).body).toBe('login');
+        expect(cloudSection({ ...none, pending: true }).body).toBe('loading');
+        expect(cloudSection({ ...none, unreachable: true }).body).toBe(
+            'failed'
+        );
+    });
+
+    test('a known list stays up while it is refreshed', () => {
+        const listed = { ...none, pending: true, hasList: true };
+        expect(cloudSection({ ...listed, loading: true })).toEqual({
+            body: 'list',
+            status: 'Updating…'
+        });
+        expect(cloudSection({ ...listed, failed: true })).toEqual({
+            body: 'list',
+            status: 'Couldn’t update'
+        });
+        expect(
+            cloudSection({ ...none, signedIn: true, hasList: true })
+        ).toEqual({ body: 'list', status: '' });
+    });
+
+    test('without a list, loading and failure are told apart', () => {
+        const signedIn = { ...none, signedIn: true };
+        expect(cloudSection({ ...signedIn, loading: true }).body).toBe(
+            'loading'
+        );
+        expect(cloudSection({ ...signedIn, failed: true }).body).toBe('failed');
+        expect(
+            cloudSection({ ...signedIn, failed: true, loading: true }).body
+        ).toBe('loading');
+    });
+});
+
 describe('OtherFonts() reads and edits the fonts of the other windows', () => {
     const fakeWindows = [];
 

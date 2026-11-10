@@ -825,7 +825,12 @@ export interface CloudEligibility {
     warningShardBytes?: number;
     maxPacketBytes?: number;
     capabilities?: Record<string, number>;
+    /** Present while the user's own subscription has lapsed. */
+    subscriptionLapse?: { state?: string; message?: string };
 }
+
+/** Why Save As to the cloud can't start: a short note and the full reason. */
+export type CloudSaveAsBlocker = { note: string; title: string };
 
 export interface CloudAssetLimits {
     ownerUserId: string;

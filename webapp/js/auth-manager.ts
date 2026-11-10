@@ -78,6 +78,8 @@ class AuthManager {
     private announcedAuthenticated: boolean | null = null;
     /** The last session check failed because the website was unreachable. */
     lastAuthCheckUnreachable = false;
+    /** False until the first session check has answered or failed. */
+    authChecked = false;
 
     constructor() {
         this.websiteURL = this.getWebsiteURL();
@@ -217,6 +219,9 @@ class AuthManager {
                     credits: AuthCredits;
                 };
                 console.log('[Auth] API response data:', data);
+                // Set together with the user: a page drawn in between must
+                // not take a pending session for a signed-out one.
+                this.authChecked = true;
                 this.user = data.user;
                 this.subscription = data.subscription
                     ? {
@@ -233,6 +238,9 @@ class AuthManager {
                         }
                       : null;
                 this.credits = data.credits;
+                if (this.user?.email) {
+                    this.rememberSignInEmail(this.user.email);
+                }
                 console.log('[Auth] Subscription:', this.subscription);
                 console.log('[Auth] Credits:', this.credits);
                 this.onAuthStateChanged(true, this.user, this.subscription);
@@ -243,6 +251,7 @@ class AuthManager {
                 if (response.status === 401 && hasLocalSessionArtifacts) {
                     this.clearLocalSessionToken();
                 }
+                this.authChecked = true;
                 this.user = null;
                 this.subscription = null;
                 this.credits = null;
@@ -256,6 +265,7 @@ class AuthManager {
                     navigator.onLine === false) ||
                 error instanceof TypeError;
             this.lastAuthCheckUnreachable = offline;
+            this.authChecked = true;
             if (offline && this.user) {
                 return this.user;
             }
@@ -576,7 +586,19 @@ class AuthManager {
         return { ok: true };
     }
 
-    private rememberedSignInEmail(): string {
+    /**
+     * This browser holds a session the website hasn't confirmed yet: from
+     * page load until the first session check answers. Most likely signed
+     * in, so pages can show that instead of a log-in prompt.
+     */
+    isSessionPending(): boolean {
+        return (
+            !this.authChecked && !this.user && this.getSessionToken() !== null
+        );
+    }
+
+    /** The email last signed in with in this browser, or ''. */
+    rememberedSignInEmail(): string {
         try {
             return localStorage.getItem(SIGN_IN_EMAIL_KEY) ?? '';
         } catch {

@@ -47,6 +47,11 @@ export const cloudPluginSaveAsMethods = {
 
         if (!resp.ok) {
             const err = await resp.text().catch(() => '');
+            if (resp.status === 429) {
+                throw new Error(
+                    'Cloud save blocked: too many cloud fonts were created in a short time. Try again in a few minutes.'
+                );
+            }
             throw new Error(
                 `Failed to create cloud asset: ${resp.status} ${err}`
             );
@@ -54,6 +59,8 @@ export const cloudPluginSaveAsMethods = {
 
         const { asset } = (await resp.json()) as { asset: CloudAsset };
         const assetId = asset.id;
+        // The account now owns one more font.
+        this._eligibility = null;
 
         const { token, roomUrl } = await this._fetchRoomToken(assetId);
         this._disconnectCurrent();

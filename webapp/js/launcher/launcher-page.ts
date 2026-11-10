@@ -34,8 +34,10 @@ import {
     focusWindow,
     fontWindows,
     initWindowRegistry,
-    onWindowsChange
+    onWindowsChange,
+    unlinkedFontWindows
 } from '../font-windows/window-registry';
+import { cloudSection } from './cloud-section';
 import {
     askForFolder,
     newFontKey,
@@ -302,6 +304,10 @@ let recents = new Map<string, RecentFont>();
 const chains = new Map<string, string[]>();
 let browserFonts: string[] = [];
 let cloudAssets: CloudAsset[] | null = null;
+let cloudLoading = false;
+let cloudFailed = false;
+let cloudFetchedAt = 0;
+let cloudRequest = 0;
 const expanded = new Set<string>();
 // “Load outlines later” for cloud fonts: open sparse, downloading glyph
 // outlines as they are typed or opened (`sparse=true`). Off each time, like
@@ -463,12 +469,10 @@ function render(): void {
     const open = fontWindows().length;
     $('launcher-open-count').textContent = open ? `${open} open` : '';
 
-    const auth = window.authManager;
-    const signedIn = auth?.isAuthenticated?.() === true;
-    $('launcher-account').innerHTML =
-        signedIn && auth.user?.email
-            ? `${icon('account_circle')}${escapeHtml(auth.user.email)}`
-            : '';
+    const account = cloudAccount();
+    $('launcher-account').innerHTML = account.email
+        ? `${icon('account_circle')}${escapeHtml(account.email)}`
+        : '';
 
     let html = '';
     if (unsaved.length) {
@@ -490,20 +494,35 @@ function render(): void {
             )
         );
     }
-    const cloudBody = !signedIn
-        ? `<div class="launcher-callout"><span>Collaborate on fonts and open them anywhere.</span><button type="button" class="dialog-button" data-cloud-login>Log in</button></div>`
-        : cloudAssets === null
-          ? `<div class="launcher-empty">Loading…</div>`
-          : listHtml(
-                'cloud',
-                cloud,
-                'No cloud fonts yet. Save a font to the cloud with File → Save As.'
-            );
+    const section = cloudSection({
+        ...account,
+        hasList: cloudAssets !== null,
+        loading: cloudLoading,
+        failed: cloudFailed
+    });
+    const cloudBody =
+        section.body === 'login'
+            ? `<div class="launcher-callout"><span>Collaborate on fonts and open them anywhere.</span><button type="button" class="dialog-button" data-cloud-login>Log in</button></div>`
+            : section.body === 'loading'
+              ? `<div class="launcher-empty">Loading your cloud fonts…</div>`
+              : section.body === 'failed'
+                ? `<div class="launcher-callout"><span>Couldn’t load your cloud fonts.</span><button type="button" class="dialog-button" data-cloud-retry>Try again</button></div>`
+                : listHtml(
+                      'cloud',
+                      cloud,
+                      'No cloud fonts yet. Save a font to the cloud with File → Save As.'
+                  );
     const cloudOptions =
-        signedIn && cloud.length
+        section.body === 'list' && cloud.length
             ? `<label class="launcher-cloud-sparse" title="Download glyph outlines only as you type or open them"><input type="checkbox" data-cloud-sparse${cloudLoadOutlinesLater ? ' checked' : ''}>Load outlines later</label>`
             : '';
-    html += groupHtml('Cloud', 'cloud', cloudBody, '', cloudOptions);
+    html += groupHtml(
+        'Cloud',
+        'cloud',
+        cloudBody,
+        section.status,
+        cloudOptions
+    );
     html += groupHtml(
         'Browser storage',
         'web',
@@ -518,6 +537,11 @@ $('launcher-recents').addEventListener('click', async (event) => {
         await window.authManager?.signIn?.({
             reason: 'Log in to see your cloud fonts.'
         });
+        void refreshCloud();
+        return;
+    }
+    if (target.closest('[data-cloud-retry]')) {
+        void window.authManager?.checkAuthStatus?.();
         void refreshCloud();
         return;
     }
@@ -719,27 +743,170 @@ async function writeOpfsFile(
     await writable.close();
 }
 
-async function refreshCloud(): Promise<void> {
+/**
+ * The account as far as this page knows. A stored session counts before the
+ * website has confirmed it, so the launcher never shows a log-in prompt
+ * while the account is still loading.
+ */
+function cloudAccount(): {
+    signedIn: boolean;
+    pending: boolean;
+    unreachable: boolean;
+    email: string;
+} {
     const auth = window.authManager;
-    if (!auth?.isAuthenticated?.()) {
-        cloudAssets = null;
+    const signedIn = auth?.isAuthenticated?.() === true;
+    const pending = !signedIn && auth?.isSessionPending?.() === true;
+    const unreachable =
+        !signedIn &&
+        !pending &&
+        auth?.lastAuthCheckUnreachable === true &&
+        auth.getSessionToken() !== null;
+    const email = signedIn
+        ? (auth.user?.email ?? '')
+        : pending || unreachable
+          ? auth.rememberedSignInEmail()
+          : '';
+    return { signedIn, pending, unreachable, email };
+}
+
+/**
+ * The cloud fonts listed on the last visit, shown until the fresh list
+ * arrives. Value: `{ email, assets: [{ id, name, updatedAt, role }] }`.
+ */
+const CLOUD_FONTS_KEY = 'launcherCloudFonts';
+
+function isCloudAsset(value: unknown): value is CloudAsset {
+    const asset = value as Partial<CloudAsset> | null;
+    return (
+        !!asset &&
+        typeof asset.id === 'string' &&
+        typeof asset.name === 'string' &&
+        typeof asset.updatedAt === 'number'
+    );
+}
+
+function rememberedCloudFonts(email: string): CloudAsset[] | null {
+    try {
+        const stored: unknown = JSON.parse(
+            localStorage.getItem(CLOUD_FONTS_KEY) ?? 'null'
+        );
+        const data = stored as { email?: unknown; assets?: unknown } | null;
+        if (!email || data?.email !== email || !Array.isArray(data.assets)) {
+            return null;
+        }
+        return data.assets.filter(isCloudAsset);
+    } catch {
+        return null;
+    }
+}
+
+function rememberCloudFonts(email: string, assets: CloudAsset[]): void {
+    try {
+        localStorage.setItem(
+            CLOUD_FONTS_KEY,
+            JSON.stringify({
+                email,
+                assets: assets.map(({ id, name, updatedAt, role }) => ({
+                    id,
+                    name,
+                    updatedAt,
+                    role
+                }))
+            })
+        );
+    } catch {
+        // Storage may be unavailable; the list then loads from the website.
+    }
+}
+
+function forgetCloudFonts(): void {
+    try {
+        localStorage.removeItem(CLOUD_FONTS_KEY);
+    } catch {
+        // Nothing was stored.
+    }
+}
+
+/**
+ * Load the cloud fonts. With `maxAgeMs`, a list that recent (or one already
+ * loading) is kept; without, the list is always fetched again.
+ */
+async function refreshCloud(maxAgeMs = 0): Promise<void> {
+    const auth = window.authManager;
+    const account = cloudAccount();
+    if (!auth || !(account.signedIn || account.pending)) {
+        cloudRequest += 1;
+        cloudLoading = false;
+        cloudFetchedAt = 0;
+        if (!account.unreachable) {
+            cloudAssets = null;
+            cloudFailed = false;
+            if (auth?.authChecked) forgetCloudFonts();
+        }
         render();
         return;
     }
+    if (
+        maxAgeMs > 0 &&
+        (cloudLoading ||
+            (!cloudFailed && Date.now() - cloudFetchedAt < maxAgeMs))
+    ) {
+        render();
+        return;
+    }
+    const request = ++cloudRequest;
+    cloudLoading = true;
+    render();
     try {
         const response = await fetch(`${auth.websiteURL}/api/cloud/assets`, {
             credentials: 'include',
             headers: getCloudRequestHeaders()
         });
-        const data = response.ok
-            ? ((await response.json()) as { assets?: CloudAsset[] })
-            : {};
+        if (request !== cloudRequest) return;
+        if (!response.ok) {
+            throw new Error(`Listing cloud fonts failed: ${response.status}`);
+        }
+        const data = (await response.json()) as { assets?: CloudAsset[] };
+        if (request !== cloudRequest) return;
         cloudAssets = data.assets ?? [];
+        cloudFailed = false;
+        cloudFetchedAt = Date.now();
+        rememberCloudFonts(cloudAccount().email, cloudAssets);
     } catch (error) {
+        if (request !== cloudRequest) return;
         console.warn('Could not list cloud fonts', error);
-        cloudAssets = [];
+        cloudFailed = true;
     }
+    cloudLoading = false;
     render();
+}
+
+// A font just saved to the cloud in another window isn't in the list yet.
+// Each such font asks for the list once.
+const cloudKeysAsked = new Set<string>();
+
+function openCloudFontNotListed(): string | null {
+    if (cloudAssets === null) return null;
+    const listed = new Set(
+        cloudAssets.map((asset) => `${CLOUD_PREFIX}${asset.id}`)
+    );
+    const keys = unlinkedFontWindows().map((info) => info.documentKey);
+    for (const win of fontWindows()) {
+        try {
+            keys.push(win.counterpunchWindows?.documentKey ?? null);
+        } catch {
+            // The window closed while we looked.
+        }
+    }
+    return (
+        keys.find(
+            (key): key is string =>
+                !!key?.startsWith(CLOUD_PREFIX) &&
+                !listed.has(key) &&
+                !cloudKeysAsked.has(key)
+        ) ?? null
+    );
 }
 
 async function refresh(): Promise<void> {
@@ -761,19 +928,40 @@ async function refresh(): Promise<void> {
 
 // Other windows save and rename fonts: re-read whenever a window reports a
 // change, comes or goes, or the launcher gets focus. "… ago" labels tick.
-onWindowsChange(() => void refresh());
-addEventListener('focus', () => void refresh());
+const CLOUD_FOCUS_MAX_AGE_MS = 10_000;
+const CLOUD_AUTH_MAX_AGE_MS = 5_000;
+
+onWindowsChange(() => {
+    void refresh();
+    const saved = openCloudFontNotListed();
+    if (saved) {
+        cloudKeysAsked.add(saved);
+        void refreshCloud();
+    }
+});
+addEventListener('focus', () => {
+    void refresh();
+    void refreshCloud(CLOUD_FOCUS_MAX_AGE_MS);
+});
 document.addEventListener('visibilitychange', () => {
     if (!document.hidden) render();
 });
 setInterval(render, 60_000);
-addEventListener('authStateChanged', () => void refreshCloud());
+// Also fires when the first session check answers: the list is usually
+// loading or loaded by then.
+addEventListener('authStateChanged', () => {
+    void refreshCloud(CLOUD_AUTH_MAX_AGE_MS);
+});
 
+// The session check (started by the auth manager) and the cloud list load
+// side by side; last visit's list shows until the fresh one arrives.
+const startAccount = cloudAccount();
+if (startAccount.pending) {
+    cloudAssets = rememberedCloudFonts(startAccount.email);
+}
+void refresh();
+void refreshCloud();
 void seedExampleFonts().then(refresh);
-void window.authManager
-    ?.checkAuthStatus?.()
-    .catch(() => null)
-    .finally(() => void refreshCloud());
 
 // --- Updates ------------------------------------------------------------------
 //

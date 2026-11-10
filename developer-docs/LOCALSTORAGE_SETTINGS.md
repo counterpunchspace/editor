@@ -10,7 +10,7 @@ IndexedDB keys such as directory handles and export destinations are not include
 
 | Keys | Literal | Pattern |
 | ---: | ---: | ---: |
-| 36 | 33 | 3 |
+| 37 | 34 | 3 |
 
 | Key | Purpose | Operations | Files |
 | --- | --- | --- | --- |
@@ -33,6 +33,7 @@ IndexedDB keys such as directory handles and export destinations are not include
 | [`glyphCanvasTextBuffer`](#key-glyphcanvastextbuffer) | Persists glyph canvas text buffer. | getItem, setItem, removeItem | `webapp/js/font-manager.ts`, `webapp/js/glyph-canvas/textrun.ts` |
 | [`glyphFilterEditorMode`](#key-glyphfiltereditormode) | Persists glyph filter editor mode. | getItem, setItem | `webapp/js/glyph-filter-editor-modal.ts` |
 | [`lastFilesystemContext`](#key-lastfilesystemcontext) | Persists last filesystem context. | getItem, setItem | `webapp/js/file-browser.ts` |
+| [`launcherCloudFonts`](#key-launchercloudfonts) | The cloud fonts listed on the last visit, shown until the fresh list arrives. | getItem, setItem, removeItem | `webapp/js/launcher/launcher-page.ts` |
 | [`preferredTheme`](#key-preferredtheme) | Shared with the editor's theme switcher. | getItem, setItem | `webapp/js/font-info.ts`, `webapp/js/launcher/launcher-page.ts`, `webapp/js/script-editor.ts`, `webapp/js/theme-switcher.ts` |
 | [`pythonScript`](#key-pythonscript) | Persists python script. | getItem, setItem | `webapp/js/script-editor.ts` |
 | [`pythonScriptSavedContent`](#key-pythonscriptsavedcontent) | Persists python script saved content. | getItem, setItem | `webapp/js/script-editor.ts` |
@@ -242,12 +243,12 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Operations: `getItem`, `setItem`, `removeItem`
 - Default when unset: `Hamburgevons`
 - Sites:
-  - webapp/js/font-manager.ts:3073 `removeItem` via method `handleNewFont`
-  - webapp/js/font-manager.ts:3207 `getItem` via method `resolveEditingTextForCompile`
-  - webapp/js/glyph-canvas/textrun.ts:190 `getItem` via constructor `constructor`
-  - webapp/js/glyph-canvas/textrun.ts:542 `setItem` via method `setTextBuffer`
-  - webapp/js/glyph-canvas/textrun.ts:2411 `setItem` via method `loadTextBufferFromFont`
-  - webapp/js/glyph-canvas/textrun.ts:2448 `setItem` via method `saveTextBuffer`
+  - webapp/js/font-manager.ts:3144 `removeItem` via method `handleNewFont`
+  - webapp/js/font-manager.ts:3278 `getItem` via method `resolveEditingTextForCompile`
+  - webapp/js/glyph-canvas/textrun.ts:166 `getItem` via constructor `constructor`
+  - webapp/js/glyph-canvas/textrun.ts:518 `setItem` via method `setTextBuffer`
+  - webapp/js/glyph-canvas/textrun.ts:2488 `setItem` via method `loadTextBufferFromFont`
+  - webapp/js/glyph-canvas/textrun.ts:2525 `setItem` via method `saveTextBuffer`
 
 <a id="key-glyphfiltereditormode"></a>
 
@@ -268,8 +269,20 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: literal
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/file-browser.ts:2307 `setItem` via function `switchContext`
-  - webapp/js/file-browser.ts:3582 `getItem` via function `initFileBrowser`
+  - webapp/js/file-browser.ts:2320 `setItem` via function `switchContext`
+  - webapp/js/file-browser.ts:3625 `getItem` via function `initFileBrowser`
+
+<a id="key-launchercloudfonts"></a>
+
+## `launcherCloudFonts`
+
+- Purpose: The cloud fonts listed on the last visit, shown until the fresh list arrives.
+- Kind: literal
+- Operations: `getItem`, `setItem`, `removeItem`
+- Sites:
+  - webapp/js/launcher/launcher-page.ts:792 `getItem` via function `rememberedCloudFonts`
+  - webapp/js/launcher/launcher-page.ts:806 `setItem` via function `rememberCloudFonts`
+  - webapp/js/launcher/launcher-page.ts:825 `removeItem` via function `forgetCloudFonts`
 
 <a id="key-preferredtheme"></a>
 
@@ -281,8 +294,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Default when unset: `auto`
 - Sites:
   - webapp/js/font-info.ts:2957 `getItem` via function `getInitialTheme`
-  - webapp/js/launcher/launcher-page.ts:194 `getItem` via function `themePreference`
-  - webapp/js/launcher/launcher-page.ts:256 `setItem` via module `top-level module code`
+  - webapp/js/launcher/launcher-page.ts:206 `getItem` via function `themePreference`
+  - webapp/js/launcher/launcher-page.ts:268 `setItem` via module `top-level module code`
   - webapp/js/script-editor.ts:352 `getItem` via function `getInitialTheme`
   - webapp/js/theme-switcher.ts:56 `getItem` via method `init`
   - webapp/js/theme-switcher.ts:58 `setItem` via method `init`
@@ -375,8 +388,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: literal
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/auth-manager.ts:571 `getItem` via method `rememberedSignInEmail`
-  - webapp/js/auth-manager.ts:579 `setItem` via method `rememberSignInEmail`
+  - webapp/js/auth-manager.ts:600 `getItem` via method `rememberedSignInEmail`
+  - webapp/js/auth-manager.ts:608 `setItem` via method `rememberSignInEmail`
 
 <a id="key-tabkeepalivetimestamp"></a>
 
@@ -456,10 +469,10 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: pattern
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/file-browser.ts:2358 `getItem` via function `switchContext`
-  - webapp/js/file-browser.ts:3179 `setItem` via function `navigateToPath`
-  - webapp/js/file-browser.ts:3651 `getItem` via function `initFileBrowser`
-  - webapp/js/file-browser.ts:4099 `setItem` via module `top-level module code`
+  - webapp/js/file-browser.ts:2371 `getItem` via function `switchContext`
+  - webapp/js/file-browser.ts:3222 `setItem` via function `navigateToPath`
+  - webapp/js/file-browser.ts:3694 `getItem` via function `initFileBrowser`
+  - webapp/js/file-browser.ts:4142 `setItem` via module `top-level module code`
 
 <a id="key-linkedwindowoccupancy-sessionid-"></a>
 
