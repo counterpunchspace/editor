@@ -7,6 +7,7 @@ const DB_NAME = 'counterpunch-cloud-outbox';
 const STORE = 'pending-transactions';
 /** Schema without prepared/generation quarantine; one connection per WAL. */
 const DB_VERSION = 4;
+const FIRST_READABLE_DB_VERSION = 4;
 
 export type CloudWalState = 'applied' | 'sent' | 'acknowledged';
 
@@ -124,6 +125,8 @@ export class CloudWalPersistError extends Error {
     }
 }
 
+const WAL_PEER_CHANNEL = 'counterpunch-cloud-wal';
+
 export function recordKey(
     record: Pick<
         CloudWalRecord,
@@ -189,6 +192,53 @@ export class CloudDurableWal {
     private _unpersisted = new Set<string>();
     private _recoveryTimer: ReturnType<typeof setTimeout> | null = null;
     private _recoveryAttempts = 0;
+    /**
+     * Another tab on the same font loads the same rows. When one tab drops a
+     * row, the others hear it here, so their pending count and unload prompt
+     * do not wait for a row that is already gone.
+     */
+    private _peerChannel: BroadcastChannel | null = null;
+
+    private _ensurePeerChannel(): void {
+        if (this._peerChannel || typeof BroadcastChannel === 'undefined') {
+            return;
+        }
+        try {
+            this._peerChannel = new BroadcastChannel(WAL_PEER_CHANNEL);
+            // Node (tests, tooling) would otherwise stay alive for the channel.
+            (this._peerChannel as { unref?: () => void }).unref?.();
+            this._peerChannel.onmessage = (event: MessageEvent) => {
+                const keys = (event.data as { dropped?: unknown })?.dropped;
+                if (!Array.isArray(keys)) {
+                    return;
+                }
+                let changed = false;
+                for (const key of keys) {
+                    if (typeof key === 'string' && this._records.delete(key)) {
+                        this._unpersisted.delete(key);
+                        changed = true;
+                    }
+                }
+                if (changed) {
+                    this._emitChange();
+                }
+            };
+        } catch {
+            this._peerChannel = null;
+        }
+    }
+
+    private _announceDropped(keys: string[]): void {
+        if (!keys.length) {
+            return;
+        }
+        this._ensurePeerChannel();
+        try {
+            this._peerChannel?.postMessage({ dropped: keys });
+        } catch {
+            /* other tabs fall back to their next load */
+        }
+    }
 
     get health(): CloudWalHealth {
         return this._health;
@@ -324,17 +374,31 @@ export class CloudDurableWal {
             timer = setTimeout(() => {
                 settle(() => reject(new Error('IndexedDB open timed out')));
             }, 1500);
-            request.onupgradeneeded = () => {
+            request.onupgradeneeded = (event) => {
                 const db = request.result;
-                if (db.objectStoreNames.contains(STORE)) {
+                // Rows are unsent edits. Only the formats before version 4
+                // are unreadable; a later bump must migrate, not drop.
+                if (
+                    db.objectStoreNames.contains(STORE) &&
+                    event.oldVersion < FIRST_READABLE_DB_VERSION
+                ) {
                     db.deleteObjectStore(STORE);
                 }
-                db.createObjectStore(STORE, { keyPath: 'key' });
+                if (!db.objectStoreNames.contains(STORE)) {
+                    db.createObjectStore(STORE, { keyPath: 'key' });
+                }
             };
             request.onsuccess = () =>
                 settle(() => {
                     this._db = request.result;
                     this._db.onclose = () => {
+                        this._db = null;
+                        this._openPromise = null;
+                    };
+                    // A newer editor in another tab is upgrading the
+                    // database; holding it open would block that tab.
+                    this._db.onversionchange = () => {
+                        this._db?.close();
                         this._db = null;
                         this._openPromise = null;
                     };
@@ -390,6 +454,7 @@ export class CloudDurableWal {
             }
             this._loadedAssetId = assetId;
             this._loaded = true;
+            this._ensurePeerChannel();
             this._health = this._unpersisted.size ? 'unavailable' : 'ready';
             return records;
         } catch (error) {
@@ -565,6 +630,7 @@ export class CloudDurableWal {
         }
         this._records.delete(key);
         this._unpersisted.delete(key);
+        this._announceDropped([key]);
         this._emitChange();
     }
 
@@ -588,11 +654,14 @@ export class CloudDurableWal {
             tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error);
         });
-        for (const clientTransactionId of clientTransactionIds) {
-            const key = recordKey({ assetId, documentId, clientTransactionId });
+        const keys = clientTransactionIds.map((clientTransactionId) =>
+            recordKey({ assetId, documentId, clientTransactionId })
+        );
+        for (const key of keys) {
             this._records.delete(key);
             this._unpersisted.delete(key);
         }
+        this._announceDropped(keys);
         this._emitChange();
     }
 
@@ -606,5 +675,7 @@ export class CloudDurableWal {
             this._db = null;
         }
         this._openPromise = null;
+        this._peerChannel?.close();
+        this._peerChannel = null;
     }
 }

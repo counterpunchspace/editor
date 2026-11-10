@@ -1178,6 +1178,32 @@ class FontManager {
             this.fontDisplay?.querySelector('.font-window-role-badge') || null;
         this.dirtyIndicator = document.getElementById('file-dirty-indicator');
 
+        window.addEventListener('cloudAssetNoticeChanged', () => {
+            this.updateFontDisplay();
+        });
+        window.addEventListener('history-replay-blocked', (event) => {
+            const font = this.currentFontId
+                ? (this.openedFonts.get(this.currentFontId) ?? null)
+                : null;
+            const assetId = this.normalizeCloudAssetId(font);
+            const plugin = window.cloudPlugin;
+            if (!assetId || !plugin?.setAssetNotice) {
+                return;
+            }
+            const action =
+                (event as CustomEvent<{ historyAction?: string }>).detail
+                    ?.historyAction === 'redo'
+                    ? 'Redo'
+                    : 'Undo';
+            plugin.setAssetNotice(assetId, {
+                kind: 'history-blocked',
+                tone: 'warning',
+                title: `${action} skipped: a collaborator changed this since, and their edit was kept.`
+            });
+            setTimeout(() => {
+                plugin.clearAssetNotice?.(assetId, 'history-blocked');
+            }, 8000);
+        });
         window.addEventListener('cloud-persist-failed', (event) => {
             this.cloudPersistFailed = true;
             const detail = (
@@ -1416,6 +1442,16 @@ class FontManager {
                 title: sizeWarningState.title,
                 icon: sizeWarningState.icon,
                 tone: sizeWarningState.tone
+            };
+        }
+
+        const notice = window.cloudPlugin?.getAssetNotice?.(assetId);
+        if (notice) {
+            return {
+                visible: true,
+                title: `Cloud status: ${notice.title}`,
+                icon: notice.tone === 'error' ? 'cloud_off' : 'info',
+                tone: notice.tone
             };
         }
 
@@ -1894,6 +1930,13 @@ class FontManager {
         if (!font) return false;
         if (!font.isCloudBacked()) return !!font.hasUnsavedChanges;
         const assetId = font.path.replace(/^cloud:\/\//, '');
+        if (
+            font === this.currentFont &&
+            window.patchSyncEngine?.hasCloudPersistInFlight === true
+        ) {
+            // The edit is not in the outbox yet, so it is not counted below.
+            return true;
+        }
         return (
             (window.cloudPlugin?.getAssetPendingSyncCount?.(assetId) ?? 0) > 0
         );

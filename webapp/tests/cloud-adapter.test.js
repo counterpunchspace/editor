@@ -904,6 +904,53 @@ describe('CloudAdapter outbound updates', () => {
         expect(adapter._ws.send).not.toHaveBeenCalled();
     });
 
+    it('stops reconnecting once the room’s state fails to apply three times', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        adapter._bridge = {};
+        adapter._applyServerStateToBridge = jest.fn(() => {
+            throw new Error('apply failed');
+        });
+        const close = jest.fn();
+        adapter._ws = { readyState: 1, send: jest.fn(), close };
+        const page = JSON.stringify({
+            type: 'sync-response',
+            update: Buffer.from([1]).toString('base64'),
+            collaborationMessageHistory: []
+        });
+
+        adapter._handleMessage(page);
+        adapter._handleMessage(page);
+        expect(close).not.toHaveBeenCalled();
+        expect(adapter._terminalCloseDetail).toBeFalsy();
+
+        adapter._handleMessage(page);
+        expect(close).toHaveBeenCalledWith(4000, 'server-state-rejected');
+        expect(adapter._terminalCloseDetail).toMatch(/could not load/);
+        expect(adapter.status).toBe('error');
+        adapter.disconnect?.();
+    });
+
+    it('slows reconnects in a hidden tab with nothing to send', () => {
+        const {
+            cloudReconnectDelayMs,
+            CLOUD_RECONNECT_IDLE_AFTER_ATTEMPTS,
+            CLOUD_RECONNECT_IDLE_MAX_MS,
+            CLOUD_RECONNECT_MAX_MS
+        } = require('../js/cloud-adapter-support.ts');
+        const late = CLOUD_RECONNECT_IDLE_AFTER_ATTEMPTS;
+        // A visible tab, or one with unsent edits, keeps the 30 s ceiling.
+        expect(cloudReconnectDelayMs(late)).toBeLessThanOrEqual(
+            CLOUD_RECONNECT_MAX_MS * 1.2
+        );
+        // The first attempts stay quick even when hidden.
+        expect(cloudReconnectDelayMs(late - 1, true)).toBeLessThanOrEqual(
+            CLOUD_RECONNECT_MAX_MS * 1.2
+        );
+        expect(cloudReconnectDelayMs(late, true)).toBeGreaterThanOrEqual(
+            CLOUD_RECONNECT_IDLE_MAX_MS * 0.8
+        );
+    });
+
     it('advances appliedLogId for live updates only after the Yjs apply', async () => {
         const adapter = new CloudAdapter({ assetId: 'asset-123' });
         adapter._appliedLogId = 3;
@@ -2135,6 +2182,43 @@ describe('CloudAdapter durability failures', () => {
         expect(close).toHaveBeenCalledWith(4000, 'remote-update-rejected');
     });
 
+    it('resyncs after a refused remote update and only gives up after repeated refusals', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        const close = jest.fn();
+        const statuses = [];
+        adapter._onConnectionStatus = (status) => statuses.push(status);
+        const applyRemoteUpdate = jest.fn(() => {
+            throw new Error('layer is missing');
+        });
+        adapter._bridge = { applyRemoteUpdate };
+        adapter._ws = { readyState: 1, close };
+
+        adapter._queueInboundUpdate({ update: new Uint8Array([1]) });
+        adapter._queueInboundUpdate({ update: new Uint8Array([2]) });
+        adapter._flushPendingInboundUpdates();
+
+        // The rest of the batch is dropped; the socket reconnects and
+        // bootstraps instead of staying dead.
+        expect(applyRemoteUpdate).toHaveBeenCalledTimes(1);
+        expect(close).toHaveBeenCalledWith(4000, 'remote-update-rejected');
+        expect(adapter._terminalCloseDetail).toBeNull();
+        expect(
+            adapter._getTerminalCloseDetail(4000, 'remote-update-rejected')
+        ).toBeNull();
+        expect(statuses).toEqual(['connecting']);
+
+        adapter._inboundHaltedUntilReconnect = false;
+        adapter._applyRemoteUpdate(new Uint8Array([3]));
+        expect(adapter._terminalCloseDetail).toBeNull();
+
+        adapter._inboundHaltedUntilReconnect = false;
+        adapter._applyRemoteUpdate(new Uint8Array([4]));
+        expect(adapter._terminalCloseDetail).toBe(
+            'Cloud collaboration update rejected: layer is missing'
+        );
+        expect(statuses[statuses.length - 1]).toBe('error');
+    });
+
     it('marks the connection errored and closes on undurable ack', () => {
         const statuses = [];
         const adapter = new CloudAdapter({
@@ -2186,6 +2270,166 @@ describe('CloudAdapter durability failures', () => {
             detail: 'Sync upload exceeds byte limit'
         });
         expect(close).toHaveBeenCalledWith(4000, 'server-error');
+    });
+
+    it('an expired website session pauses sync without revoking access and resumes on sign-in', () => {
+        jest.useFakeTimers();
+        try {
+            const statuses = [];
+            const adapter = new CloudAdapter({
+                assetId: 'asset-123',
+                onConnectionStatus: (status, detail) => {
+                    statuses.push({ status, detail });
+                }
+            });
+            adapter.cacheAssetRole('asset-123', 'editor');
+            const reconnect = jest
+                .spyOn(adapter, '_connectWebSocket')
+                .mockResolvedValue();
+
+            adapter.markSignedOut();
+            expect(adapter.getAccessSnapshot().accessRevoked).toBe(false);
+            expect(adapter.getCachedAssetRole('asset-123')).toBe('editor');
+            expect(statuses[statuses.length - 1].status).toBe('error');
+            expect(statuses[statuses.length - 1].detail).toContain(
+                'signed out'
+            );
+            adapter._scheduleReconnect();
+            jest.advanceTimersByTime(60_000);
+            expect(reconnect).not.toHaveBeenCalled();
+
+            adapter.resumeAfterSignIn();
+            jest.advanceTimersByTime(60_000);
+            expect(reconnect).toHaveBeenCalledTimes(1);
+            adapter.disconnect();
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it('a write refused after a downgrade to viewer hands the unsent edits to the session', () => {
+        const onWriteAccessLost = jest.fn();
+        const adapter = new CloudAdapter({
+            assetId: 'asset-123',
+            onWriteAccessLost
+        });
+        adapter.cacheAssetRole('asset-123', 'editor');
+        adapter._pendingOutboundPackets = [{ update: new Uint8Array([1]) }];
+        adapter._ws = { readyState: 1, close: jest.fn() };
+
+        adapter._handleMessage(
+            JSON.stringify({
+                type: 'error',
+                message: 'Write access requires owner or editor role'
+            })
+        );
+
+        expect(onWriteAccessLost).toHaveBeenCalledTimes(1);
+        expect(adapter.getCachedAssetRole('asset-123')).toBe('viewer');
+        expect(adapter._terminalCloseDetail).toBeNull();
+    });
+
+    it('without a session, a refused write drops this room’s unsent edits', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        const drop = jest
+            .spyOn(adapter, '_dropDurableTransactions')
+            .mockImplementation(() => {});
+        jest.spyOn(adapter._wal, 'transactionIdsFor').mockReturnValue(
+            new Set(['tx-1', 'tx-2'])
+        );
+        adapter._pendingOutboundPackets = [{ update: new Uint8Array([1]) }];
+        adapter._ws = { readyState: 1, close: jest.fn() };
+
+        adapter._handleMessage(
+            JSON.stringify({
+                type: 'error',
+                message: 'Write access requires owner or editor role'
+            })
+        );
+
+        expect(drop).toHaveBeenCalledWith(['tx-1', 'tx-2']);
+        expect(adapter._pendingOutboundPackets).toEqual([]);
+    });
+
+    it('a busy room reconnects later each time instead of reporting an error', () => {
+        const statuses = [];
+        const adapter = new CloudAdapter({
+            assetId: 'asset-123',
+            onConnectionStatus: (status, detail) => {
+                statuses.push({ status, detail });
+            }
+        });
+        const close = jest.fn();
+        adapter._ws = { readyState: 1, close };
+
+        for (const code of [
+            'validator_unavailable',
+            'incomplete_limit',
+            'spool_busy'
+        ]) {
+            adapter._handleMessage(
+                JSON.stringify({
+                    type: 'error',
+                    code,
+                    message: code,
+                    retryable: true,
+                    seq: 1
+                })
+            );
+        }
+
+        expect(close).toHaveBeenLastCalledWith(4000, 'server-busy');
+        expect(statuses.some(({ status }) => status === 'error')).toBe(false);
+        expect(adapter._terminalCloseDetail).toBeNull();
+        expect(adapter._reconnectAttempt).toBe(3);
+
+        adapter._handleMessage(JSON.stringify({ type: 'ack', seq: 1 }));
+        expect(adapter._serverBusyCount).toBe(0);
+    });
+
+    it('stops resending a packet the room rejects for its content', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        const close = jest.fn();
+        adapter._ws = { readyState: 1, close };
+        const reject = () =>
+            adapter._handleMessage(
+                JSON.stringify({
+                    type: 'error',
+                    code: 'packet_too_large',
+                    message: 'packet_too_large'
+                })
+            );
+
+        for (let i = 0; i < 4; i += 1) {
+            reject();
+        }
+        expect(adapter._terminalCloseDetail).toBeNull();
+        expect(close).toHaveBeenLastCalledWith(4000, 'server-error');
+
+        reject();
+        expect(adapter._terminalCloseDetail).toContain('packet_too_large');
+        expect(close).toHaveBeenLastCalledWith(4000, 'update-rejected');
+    });
+
+    it('an acknowledged write resets the content rejection count', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        adapter._ws = { readyState: 1, close: jest.fn() };
+        const reject = () =>
+            adapter._handleMessage(
+                JSON.stringify({ type: 'error', message: 'Invalid Yjs update' })
+            );
+        for (let i = 0; i < 4; i += 1) {
+            reject();
+        }
+        adapter._handleMessage(
+            JSON.stringify({
+                type: 'ack',
+                clientTransactionId: 'tx-1',
+                durable: true
+            })
+        );
+        reject();
+        expect(adapter._terminalCloseDetail).toBeNull();
     });
 
     it('reconnects without surfacing an error when the room reports stale access', () => {
@@ -2720,9 +2964,8 @@ describe('CloudAdapter durability failures', () => {
                 })
             );
             jest.advanceTimersByTime(10000);
-            expect(socket.send).toHaveBeenCalledWith(
-                expect.stringContaining('"type":"ping"')
-            );
+            // The room answers only this exact text without waking up.
+            expect(socket.send).toHaveBeenCalledWith('{"type":"ping"}');
 
             adapter._lastInboundMessageAt = Date.now() - 26000;
             jest.advanceTimersByTime(10000);
@@ -4576,5 +4819,301 @@ describe('HTTP seed (POST /state for new rooms)', () => {
             )
         ).rejects.toThrow('aborted');
         expect(calls).toBe(1);
+    });
+});
+
+describe('large updates sent as several room transactions', () => {
+    const Ylib = require('yjs');
+    const {
+        MAX_YJS_PACKET_BYTES
+    } = require('../js/generated/collab-protocol-limits.ts');
+    const {
+        HTTP_PART_RETRY_DELAYS_MS
+    } = require('../js/cloud-adapter-support.ts');
+    const originalFetch = global.fetch;
+
+    afterEach(() => {
+        global.fetch = originalFetch;
+        jest.useRealTimers();
+    });
+
+    function largeEdit() {
+        const doc = new Ylib.Doc({ gc: false });
+        doc.getText('features').insert(0, 'feature liga {} liga;');
+        const base = Ylib.encodeStateAsUpdate(doc);
+        const before = Ylib.encodeStateVector(doc);
+        let text = '';
+        for (let i = 0; i < 360_000; i += 1) {
+            text += String.fromCharCode(97 + ((i * 7919) % 26));
+        }
+        doc.getText('features').insert(5, text);
+        const update = Ylib.encodeStateAsUpdate(doc, before);
+        expect(update.byteLength).toBeGreaterThan(MAX_YJS_PACKET_BYTES);
+        return { doc, base, update };
+    }
+
+    function rebuild(base, updates) {
+        const doc = new Ylib.Doc({ gc: false });
+        Ylib.applyUpdate(doc, base);
+        for (const update of updates) {
+            Ylib.applyUpdate(doc, update);
+        }
+        return doc.getText('features').toString();
+    }
+
+    async function adapterWithLargePacket() {
+        ensureTestWebSocketOpen();
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        const { doc, base, update } = largeEdit();
+        const collaborationMessage = makeLiveCollabMessage({
+            transactionId: 41,
+            path: 'features'
+        });
+        const later = makeLiveCollabMessage({
+            transactionId: 42,
+            path: 'glyphs.B:name'
+        });
+        const send = jest.fn();
+        adapter._bridge = {
+            advanceBroadcastLogCursor: jest.fn(),
+            onLocalUpdate: jest.fn(),
+            offLocalUpdate: jest.fn()
+        };
+        adapter._ws = { readyState: 1, send, close: jest.fn() };
+        adapter._clientId = 'client-1';
+        adapter._hasSynced = true;
+        const txId = await seedAdapterWal(
+            adapter,
+            update,
+            collaborationMessage
+        );
+        const laterTxId = collaborationMessageKey(later);
+        await adapter._wal.append({
+            assetId: adapter._assetId,
+            documentId: adapter._documentId,
+            clientTransactionId: laterTxId,
+            updateBytes: new Uint8Array([1, 2, 3]),
+            collaborationMessage: later,
+            state: 'applied',
+            createdAt: Date.now(),
+            attempts: 0
+        });
+        adapter._pendingOutboundPackets = [
+            { update, clientTransactionId: txId, collaborationMessage },
+            {
+                update: new Uint8Array([1, 2, 3]),
+                clientTransactionId: laterTxId,
+                collaborationMessage: later
+            }
+        ];
+        return { adapter, send, doc, base, txId, laterTxId };
+    }
+
+    it('sends the parts one at a time, the edit’s own id last, and then what waited', async () => {
+        const { adapter, send, doc, base, txId, laterTxId } =
+            await adapterWithLargePacket();
+        adapter._outboundFlushScheduled = true;
+        adapter._flushPendingOutboundUpdates();
+
+        const decoded = () =>
+            send.mock.calls.map(([frame]) => decodeSentLiveUpdateFrame(frame));
+        expect(send).toHaveBeenCalledTimes(1);
+        // The later packet waits for the large edit.
+        expect(adapter._pendingOutboundPackets).toHaveLength(1);
+        const total = adapter._partedOutbound.parts.length;
+        expect(total).toBeGreaterThan(1);
+
+        for (let i = 0; i < total; i += 1) {
+            const frame = decoded()[i];
+            expect(frame.update.byteLength).toBeLessThan(MAX_YJS_PACKET_BYTES);
+            expect(frame.collaborationMessages).toHaveLength(1);
+            if (i < total - 1) {
+                expect(frame.collaborationMessages[0].part).toEqual({
+                    of: txId,
+                    index: i,
+                    total
+                });
+                expect(frame.clientTransactionId).not.toBe(txId);
+            } else {
+                expect(frame.collaborationMessages[0].part).toBeUndefined();
+                expect(frame.clientTransactionId).toBe(txId);
+            }
+            adapter._recordDurableAck(frame.seq);
+            await flushCloudIo(adapter);
+        }
+
+        const frames = decoded();
+        expect(frames).toHaveLength(total + 1);
+        expect(frames[total].clientTransactionId).toBe(laterTxId);
+        expect(
+            rebuild(
+                base,
+                frames.slice(0, total).map((f) => f.update)
+            )
+        ).toBe(doc.getText('features').toString());
+        expect(adapter._partedOutbound).toBeNull();
+        adapter.disconnect();
+    });
+
+    it('sends a part refused for a full tail again after a pause', async () => {
+        jest.useFakeTimers();
+        const { adapter, send } = await adapterWithLargePacket();
+        adapter._outboundFlushScheduled = true;
+        adapter._flushPendingOutboundUpdates();
+        const first = decodeSentLiveUpdateFrame(send.mock.calls[0][0]);
+
+        adapter._noteServerError({ message: 'tail_full', code: 'tail_full' });
+        expect(adapter._outboundAckSentAtBySeq.has(first.seq)).toBe(false);
+        expect(send).toHaveBeenCalledTimes(1);
+        jest.advanceTimersByTime(1_000);
+        expect(send).toHaveBeenCalledTimes(2);
+        const again = decodeSentLiveUpdateFrame(send.mock.calls[1][0]);
+        expect(again.seq).toBeGreaterThan(first.seq);
+        expect(again.clientTransactionId).toBe(first.clientTransactionId);
+        expect(Array.from(again.update)).toEqual(Array.from(first.update));
+        adapter.disconnect();
+    });
+
+    it('resumes after a reconnect from the first unacknowledged part', async () => {
+        const { adapter, send, txId } = await adapterWithLargePacket();
+        adapter._outboundFlushScheduled = true;
+        adapter._flushPendingOutboundUpdates();
+        const first = decodeSentLiveUpdateFrame(send.mock.calls[0][0]);
+        adapter._recordDurableAck(first.seq);
+        await flushCloudIo(adapter);
+        expect(send).toHaveBeenCalledTimes(2);
+
+        // The socket drops; the edit is still in the outbox.
+        const nextSend = jest.fn();
+        adapter._ws = { readyState: 1, send: nextSend, close: jest.fn() };
+        adapter._resetLiveAckTracking();
+        adapter._pendingOutboundPackets = [];
+        adapter._requeueUnackedOutboxPackets();
+        expect(
+            adapter._pendingOutboundPackets.map((p) => p.clientTransactionId)
+        ).toContain(txId);
+        adapter._outboundFlushScheduled = true;
+        adapter._flushPendingOutboundUpdates();
+        const resumed = decodeSentLiveUpdateFrame(nextSend.mock.calls[0][0]);
+        expect(adapter._partedOutbound.parts.length).toBeGreaterThan(2);
+        expect(resumed.collaborationMessages[0].part.index).toBe(1);
+        adapter.disconnect();
+    });
+
+    it('holds a peer’s leading parts and applies the edit once with its own envelope', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        const { doc, base, update } = largeEdit();
+        const envelope = makeLiveCollabMessage({
+            transactionId: 51,
+            path: 'features'
+        });
+        const {
+            planOutboundParts
+        } = require('../js/cloud-adapter-outbound-parts.ts');
+        const parts = planOutboundParts({
+            update,
+            collaborationMessage: envelope
+        });
+        expect(parts.length).toBeGreaterThan(1);
+        const applied = [];
+        adapter._applyRemoteUpdate = jest.fn((bytes, envelopes) => {
+            applied.push({ bytes, envelopes });
+            return true;
+        });
+        parts.forEach((part, index) => {
+            adapter._queueInboundUpdate({
+                update: part.update,
+                collaborationMessages: part.collaborationMessage
+                    ? [part.collaborationMessage]
+                    : undefined,
+                logId: 10 + index,
+                clientId: 'peer'
+            });
+            adapter._flushPendingInboundUpdates();
+        });
+        expect(applied).toHaveLength(1);
+        expect(applied[0].envelopes).toEqual([envelope]);
+        expect(rebuild(base, [applied[0].bytes])).toBe(
+            doc.getText('features').toString()
+        );
+        expect(adapter._appliedLogId).toBe(10 + parts.length - 1);
+        adapter.disconnect();
+    });
+
+    it('publishes a large glyph update over HTTP part by part and waits out a full tail', async () => {
+        const savedDelays = [...HTTP_PART_RETRY_DELAYS_MS];
+        HTTP_PART_RETRY_DELAYS_MS.fill(0);
+        const { doc, base, update } = largeEdit();
+        const bodies = [];
+        let refusedOnce = false;
+        global.fetch = jest.fn(async (url, opts) => {
+            const body = JSON.parse(opts.body);
+            if (bodies.length === 1 && !refusedOnce) {
+                refusedOnce = true;
+                return {
+                    ok: false,
+                    status: 409,
+                    json: async () => ({
+                        error: 'tail_full',
+                        code: 'tail_full'
+                    })
+                };
+            }
+            bodies.push(body);
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    ok: true,
+                    durable: true,
+                    seq: body.seq,
+                    clientTransactionId: body.clientTransactionId
+                })
+            };
+        });
+        try {
+            const envelope = makeLiveCollabMessage({
+                transactionId: 61,
+                path: 'glyphs.A:layers.L0'
+            });
+            const published = await publishCloudDocumentUpdate({
+                token: 'room-token',
+                roomUrl: 'wss://rooms.example.com/room/asset-123',
+                websiteBaseUrl: 'https://editor.counterpunch.space',
+                assetId: 'asset-123',
+                documentId: 'glyph:abc-def',
+                update,
+                seq: 3,
+                collaborationMessage: envelope,
+                clientTransactionId: 'tx-http-large'
+            });
+            expect(published).toBe(true);
+            expect(refusedOnce).toBe(true);
+            expect(bodies.length).toBeGreaterThan(1);
+            const last = bodies[bodies.length - 1];
+            expect(last.clientTransactionId).toBe('tx-http-large');
+            expect(last.collaborationMessages[0].part).toBeUndefined();
+            for (const body of bodies.slice(0, -1)) {
+                expect(body.clientTransactionId).not.toBe('tx-http-large');
+                expect(body.collaborationMessages[0].part.of).toBe(
+                    collaborationMessageKey(envelope)
+                );
+            }
+            const updates = bodies.map((body) =>
+                Uint8Array.from(Buffer.from(body.update, 'base64'))
+            );
+            for (const part of updates) {
+                expect(part.byteLength).toBeLessThan(MAX_YJS_PACKET_BYTES);
+            }
+            expect(rebuild(base, updates)).toBe(
+                doc.getText('features').toString()
+            );
+        } finally {
+            HTTP_PART_RETRY_DELAYS_MS.splice(
+                0,
+                savedDelays.length,
+                ...savedDelays
+            );
+        }
     });
 });

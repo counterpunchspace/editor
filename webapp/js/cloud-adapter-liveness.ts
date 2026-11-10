@@ -5,6 +5,7 @@
  */
 import {
     CLIENT_RECONNECT_CLOSE_CODE,
+    CLOUD_KEEPALIVE_PING,
     CLOUD_LIVENESS_STALE_MS,
     CLOUD_PING_INTERVAL_MS
 } from './cloud-adapter-support';
@@ -45,7 +46,9 @@ export const cloudAdapterLivenessMethods = {
             return;
         }
         try {
-            ws.send(JSON.stringify({ type: 'ping', sentAt: Date.now() }));
+            // Exactly this text: the room answers it without waking, and
+            // any other payload wakes the room for every ping.
+            ws.send(CLOUD_KEEPALIVE_PING);
         } catch (error) {
             console.warn('CloudAdapter: ping failed', error);
         }

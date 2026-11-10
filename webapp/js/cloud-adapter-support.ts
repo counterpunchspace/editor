@@ -3,6 +3,10 @@
  * The WebSocket transport + outbox class lives in cloud-adapter.ts.
  */
 
+import {
+    needsOutboundParts,
+    planOutboundParts
+} from './cloud-adapter-outbound-parts';
 import type { PatchSyncEngine } from './patch-sync-engine';
 import type { ChangeLogEntry } from './change-log';
 import { Logger } from './logger';
@@ -52,23 +56,86 @@ export const CLOUD_GLYPH_CATCH_UP_CONCURRENCY = 4;
 export const CLOUD_GLYPH_PUBLISH_CONCURRENCY = 6;
 export const CLOUD_PING_INTERVAL_MS = 10_000;
 export const CLOUD_LIVENESS_STALE_MS = 25_000;
+/**
+ * Must match the room worker's KEEPALIVE_PING_MESSAGE byte for byte. The room
+ * answers this exact text while hibernated.
+ */
+export const CLOUD_KEEPALIVE_PING = '{"type":"ping"}';
 export const CLOUD_RECONNECT_BASE_MS = 1_000;
 export const CLOUD_RECONNECT_MAX_MS = 30_000;
 
-export function cloudReconnectDelayMs(attempt: number): number {
+/** Failed attempts (about two minutes) before an idle hidden tab slows down. */
+export const CLOUD_RECONNECT_IDLE_AFTER_ATTEMPTS = 8;
+export const CLOUD_RECONNECT_IDLE_MAX_MS = 5 * 60_000;
+
+/**
+ * `idle` is a hidden tab with nothing to send: once the quick attempts have
+ * failed it retries every few minutes, so a forgotten tab does not keep
+ * requesting room tokens through an outage. Showing the tab reconnects at once.
+ */
+export function cloudReconnectDelayMs(attempt: number, idle = false): number {
     const bounded = Math.max(0, attempt);
-    const exponential = Math.min(
-        CLOUD_RECONNECT_BASE_MS * 2 ** bounded,
-        CLOUD_RECONNECT_MAX_MS
-    );
+    const exponential =
+        idle && bounded >= CLOUD_RECONNECT_IDLE_AFTER_ATTEMPTS
+            ? CLOUD_RECONNECT_IDLE_MAX_MS
+            : Math.min(
+                  CLOUD_RECONNECT_BASE_MS * 2 ** Math.min(bounded, 30),
+                  CLOUD_RECONNECT_MAX_MS
+              );
     const jitter = 0.8 + Math.random() * 0.4;
     return Math.round(exponential * jitter);
 }
 
 export function isForbiddenCloudCredentialError(error: unknown): boolean {
     const message = error instanceof Error ? error.message : String(error);
-    return /room-token request failed: 40[13]\b/.test(message);
+    return (
+        /room-token request failed: 40[13]\b/.test(message) ||
+        subscriptionLapsedCredentialDetail(error) !== null
+    );
 }
+export const CLOUD_SUBSCRIPTION_LAPSED_CODE = 'subscription_lapsed';
+export const CLOUD_SUBSCRIPTION_LAPSED_MESSAGE =
+    'Collaboration on this font stopped because the owner’s subscription ended.';
+/**
+ * The website refused a room token because the owner’s subscription lapsed
+ * past the grace period (HTTP 402). Returns the message to show, or null.
+ */
+export function subscriptionLapsedCredentialDetail(
+    error: unknown
+): string | null {
+    if (
+        error instanceof Error &&
+        (error as Error & { code?: string }).code ===
+            CLOUD_SUBSCRIPTION_LAPSED_CODE
+    ) {
+        return error.message || CLOUD_SUBSCRIPTION_LAPSED_MESSAGE;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    const match = /room-token request failed: 402\b\s*([\s\S]*)$/.exec(message);
+    if (!match) {
+        return null;
+    }
+    try {
+        const body = JSON.parse(match[1]) as {
+            error?: string;
+            subscriptionLapse?: { message?: string };
+        };
+        return (
+            body?.subscriptionLapse?.message ||
+            body?.error ||
+            CLOUD_SUBSCRIPTION_LAPSED_MESSAGE
+        );
+    } catch {
+        return CLOUD_SUBSCRIPTION_LAPSED_MESSAGE;
+    }
+}
+/** The website session ended; access to the font itself is unchanged. */
+export function isSignedOutCloudCredentialError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return /room-token request failed: 401\b/.test(message);
+}
+export const CLOUD_SIGNED_OUT_MESSAGE =
+    'You are signed out. Sign in again to keep editing; unsent edits are kept on this device.';
 export const CLOUD_COLLAB_RELOAD_MESSAGE =
     'Please reload the editor to continue collaborating.';
 export const CLOUD_COLLAB_FORMAT_CHANGED_MESSAGE =
@@ -671,7 +738,7 @@ export async function catchUpCloudDocument(options: {
     return false;
 }
 
-export async function publishCloudDocumentUpdate(options: {
+type PublishCloudDocumentUpdateOptions = {
     token: string;
     roomUrl: string;
     websiteBaseUrl: string;
@@ -683,7 +750,41 @@ export async function publishCloudDocumentUpdate(options: {
     seq: number;
     clientTransactionId?: string | null;
     signal?: AbortSignal;
-}): Promise<boolean> {
+};
+
+/** Acknowledged parts per large HTTP edit, so a retried publish resumes. */
+const httpPartProgress = new Map<string, number>();
+const MAX_HTTP_PART_PROGRESS_ENTRIES = 200;
+/** Delays before sending a part again while the room’s tail is full. */
+export const HTTP_PART_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 15_000];
+
+function waitForRetry(ms: number, signal?: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+        if (signal?.aborted) {
+            reject(signal.reason ?? new Error('aborted'));
+            return;
+        }
+        const timer = setTimeout(() => {
+            signal?.removeEventListener('abort', onAbort);
+            resolve();
+        }, ms);
+        const onAbort = () => {
+            clearTimeout(timer);
+            reject(signal?.reason ?? new Error('aborted'));
+        };
+        signal?.addEventListener('abort', onAbort, { once: true });
+    });
+}
+
+/**
+ * POST one update to a glyph room over HTTP `/live`. An update too large for
+ * one room transaction is sent as several, one after another (see
+ * cloud-adapter-outbound-parts.ts); the result is true once the last part is
+ * durable.
+ */
+export async function publishCloudDocumentUpdate(
+    options: PublishCloudDocumentUpdateOptions
+): Promise<boolean> {
     if (
         !options.documentId ||
         options.documentId === FONT_CORE_DOCUMENT_ID ||
@@ -692,14 +793,75 @@ export async function publishCloudDocumentUpdate(options: {
     ) {
         return false;
     }
+    const clientTransactionId =
+        options.clientTransactionId || allocateClientTransactionId('http');
+    const parts = needsOutboundParts(options.update)
+        ? planOutboundParts({
+              update: options.update,
+              collaborationMessage: options.collaborationMessage,
+              clientTransactionId
+          })
+        : null;
+    if (!parts || parts.length <= 1) {
+        return publishCloudDocumentPart({ ...options, clientTransactionId });
+    }
+    let index = Math.min(
+        httpPartProgress.get(clientTransactionId) ?? 0,
+        parts.length - 1
+    );
+    for (; index < parts.length; index += 1) {
+        const part = parts[index];
+        for (let attempt = 0; ; attempt += 1) {
+            try {
+                const durable = await publishCloudDocumentPart({
+                    ...options,
+                    update: part.update,
+                    collaborationMessage: part.collaborationMessage ?? null,
+                    clientTransactionId:
+                        part.clientTransactionId || clientTransactionId
+                });
+                if (!durable) {
+                    return false;
+                }
+                break;
+            } catch (error) {
+                const status = (error as { status?: number }).status;
+                // A full tail clears once the room has compacted the parts
+                // before this one; a busy validator answers again shortly.
+                const retryable = status === 409 || status === 503;
+                if (!retryable || attempt >= HTTP_PART_RETRY_DELAYS_MS.length) {
+                    throw error;
+                }
+                await waitForRetry(
+                    HTTP_PART_RETRY_DELAYS_MS[attempt],
+                    options.signal
+                );
+            }
+        }
+        if (index < parts.length - 1) {
+            if (httpPartProgress.size >= MAX_HTTP_PART_PROGRESS_ENTRIES) {
+                const oldest = httpPartProgress.keys().next().value;
+                if (oldest !== undefined) {
+                    httpPartProgress.delete(oldest);
+                }
+            }
+            httpPartProgress.set(clientTransactionId, index + 1);
+        }
+    }
+    httpPartProgress.delete(clientTransactionId);
+    return true;
+}
+
+async function publishCloudDocumentPart(
+    options: PublishCloudDocumentUpdateOptions & { clientTransactionId: string }
+): Promise<boolean> {
     const liveUrl = normalizeCloudShardLiveHttpUrl(
         options.roomUrl,
         options.websiteBaseUrl,
         options.assetId,
         options.documentId
     );
-    const clientTransactionId =
-        options.clientTransactionId || allocateClientTransactionId('http');
+    const clientTransactionId = options.clientTransactionId;
     const body: Record<string, unknown> = {
         type: 'update',
         update: u8ToBase64(options.update),
@@ -790,6 +952,11 @@ export type CloudAdapterOptions = {
     deferVisibleRebaseline?: boolean;
     wal?: CloudDurableWal;
     refreshCredentials?: () => Promise<{ token: string; roomUrl: string }>;
+    /**
+     * The room refused an edit because this user may no longer write. The
+     * owner of the shared outbox (the session) discards every unsent edit.
+     */
+    onWriteAccessLost?: () => void;
 };
 
 export type CloudConnectionHealth = {

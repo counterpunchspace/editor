@@ -121,6 +121,8 @@ type YjsUpdatePacket = {
     update: BinaryPayload;
     collaborationMessage?: CollaborationMessageEnvelope;
     documentId?: string;
+    /** Main relays another person’s cloud edit; linked undo must respect it. */
+    fromCollaborator?: boolean;
 };
 
 type CloudConnectionRelayState = {
@@ -129,6 +131,10 @@ type CloudConnectionRelayState = {
     detail?: string;
     pendingSyncCount?: number;
     transferActivity?: 'idle' | 'sending' | 'receiving';
+    /** Main's verdict on writes: role, access, sign-in, outbox health. */
+    canMutate?: boolean;
+    /** A lasting message about this font (role change, billing). */
+    notice?: { kind: string; title: string; tone: 'warning' | 'error' };
 };
 
 // ── Protocol message types ──────────────────────────────────────────
@@ -229,6 +235,14 @@ interface CloudConnectionStatusMsg {
     sessionId: string;
 }
 
+/** Main could not store an edit for the cloud; linked windows show it too. */
+interface CloudPersistFailedMsg {
+    type: 'cloud-persist-failed';
+    detail: { documentId?: string; reason?: string; storageFull?: boolean };
+    windowId: string;
+    sessionId: string;
+}
+
 /** Main's answer to `main-ping` (liveness fallback without Web Locks). */
 interface MainHeartbeatMsg {
     type: 'main-heartbeat';
@@ -269,10 +283,31 @@ type SyncMessage =
     | WindowClosingMsg
     | MainWindowClosingMsg
     | CloudConnectionStatusMsg
+    | CloudPersistFailedMsg
     | MainHeartbeatMsg
     | MainPingMsg
     | MainDetachedMsg
     | ClaimMainMsg;
+
+/**
+ * Lets other tasks run between snapshot batches. A hidden main window
+ * throttles setTimeout to one call per second (per minute after a while),
+ * which would stretch a large snapshot past the linked window’s timeout.
+ * Message events are not throttled.
+ */
+function yieldToEventLoop(): Promise<void> {
+    if (typeof MessageChannel === 'undefined') {
+        return new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    return new Promise((resolve) => {
+        const channel = new MessageChannel();
+        channel.port1.onmessage = () => {
+            channel.port1.close();
+            resolve();
+        };
+        channel.port2.postMessage(null);
+    });
+}
 
 const MAIN_PING_INTERVAL_MS = 2000;
 const MAIN_PING_MISSES_BEFORE_LATCH = 3;
@@ -292,6 +327,7 @@ const WINDOW_SYNC_MESSAGE_TYPES = new Set([
     'window-closing',
     'main-window-closing',
     'cloud-connection-status',
+    'cloud-persist-failed',
     'main-heartbeat',
     'main-ping',
     'main-detached',
@@ -414,10 +450,23 @@ export class WindowSync {
                     'font-core'
                 );
             });
+            window.addEventListener?.(
+                'cloud-persist-failed',
+                this._onCloudPersistFailed
+            );
         }
 
         this._startMainLiveness();
     }
+
+    private _onCloudPersistFailed = (event: Event): void => {
+        if (window.windowRole?.isMainWindow?.() !== true) {
+            return;
+        }
+        this.broadcastCloudPersistFailure(
+            (event as CustomEvent<CloudPersistFailedMsg['detail']>).detail ?? {}
+        );
+    };
 
     /**
      * True when a linked window has latched read-only because main went away.
@@ -607,7 +656,8 @@ export class WindowSync {
             {
                 update,
                 documentId: documentId || 'font-core',
-                collaborationMessage
+                collaborationMessage,
+                fromCollaborator: true
             }
         ]);
     }
@@ -619,6 +669,25 @@ export class WindowSync {
             windowId: this._bridge.windowId,
             sessionId: this._sessionId
         });
+    }
+
+    broadcastCloudPersistFailure(
+        detail: CloudPersistFailedMsg['detail']
+    ): void {
+        this._send({
+            type: 'cloud-persist-failed',
+            detail,
+            windowId: this._bridge.windowId,
+            sessionId: this._sessionId
+        });
+    }
+
+    /** True while this linked window has no main to carry its edits. */
+    get linkedReadOnly(): boolean {
+        return (
+            window.windowRole?.isLinkedWindow?.() === true &&
+            (this._mainMissingLatched || this._mainDetached)
+        );
     }
 
     onMainWindowClosing(callback: () => void): () => void {
@@ -707,7 +776,7 @@ export class WindowSync {
             this._awaitingFullState = false;
             this._resolveFullStateBootstrap(
                 new Error(
-                    'Linked-window full-state transfer timed out — no peer window finished the resident snapshot within 60s'
+                    'Linked-window full-state transfer timed out — no part of the resident snapshot arrived for 60s'
                 )
             );
         }, FULL_STATE_TRANSFER_TIMEOUT_MS);
@@ -779,7 +848,7 @@ export class WindowSync {
             index += LINKED_WINDOW_GLYPH_BATCH
         ) {
             if (index > 0) {
-                await new Promise((resolve) => setTimeout(resolve, 0));
+                await yieldToEventLoop();
             }
             const documents = this._encodeDocuments(
                 liveIds.slice(index, index + LINKED_WINDOW_GLYPH_BATCH)
@@ -1219,6 +1288,10 @@ export class WindowSync {
             return;
         }
         this._destroyed = true;
+        window.removeEventListener?.(
+            'cloud-persist-failed',
+            this._onCloudPersistFailed
+        );
         if (this._missingGlyphHydrationTimer !== null) {
             clearTimeout(this._missingGlyphHydrationTimer);
             this._missingGlyphHydrationTimer = null;
@@ -1430,7 +1503,10 @@ export class WindowSync {
                             update,
                             undefined,
                             collaborationMessages,
-                            packet.documentId
+                            packet.documentId,
+                            packet.fromCollaborator === true
+                                ? { fromCollaborator: true }
+                                : undefined
                         );
                         if (window.windowRole?.isMainWindow()) {
                             window.cloudPlugin?.relayPeerWindowUpdateToCloud?.(
@@ -1445,6 +1521,23 @@ export class WindowSync {
                         'WindowSync: failed to apply inbound Yjs update:',
                         error
                     );
+                    if (
+                        window.windowRole?.isMainWindow?.() === true &&
+                        window.fontManager?.currentFont?.isCloudBacked?.() ===
+                            true
+                    ) {
+                        // The edit never reached the cloud relay; say so in
+                        // every window instead of dropping it quietly.
+                        window.dispatchEvent(
+                            new CustomEvent('cloud-persist-failed', {
+                                detail: {
+                                    documentId: packet.documentId,
+                                    reason: String(error),
+                                    storageFull: false
+                                }
+                            })
+                        );
+                    }
                 }
             }
         }
@@ -1662,6 +1755,16 @@ export class WindowSync {
             case 'cloud-connection-status':
                 if (msg.windowId === this._bridge.windowId) return;
                 window.cloudPlugin?.applyRelayedConnectionState?.(msg.state);
+                break;
+
+            case 'cloud-persist-failed':
+                if (msg.windowId === this._bridge.windowId) return;
+                if (window.windowRole?.isLinkedWindow?.() !== true) return;
+                window.dispatchEvent(
+                    new CustomEvent('cloud-persist-failed', {
+                        detail: msg.detail
+                    })
+                );
                 break;
         }
     }

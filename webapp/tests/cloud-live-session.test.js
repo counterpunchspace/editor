@@ -589,6 +589,362 @@ describe('CloudLiveSession', () => {
         }
     });
 
+    test('a relayed linked-window edit is in the WAL before its socket adapter sends it', async () => {
+        const originalIndexedDb = global.indexedDB;
+        global.indexedDB = createIndexedDbMock();
+        const envelope = (transactionId, glyphName) => ({
+            schemaVersion: 1,
+            transactionId,
+            localSequence: 1,
+            roomSequence: null,
+            baseRevision: null,
+            changes: [],
+            metadata: {
+                editType: 'glyph',
+                changedGlyphNames: [glyphName],
+                changedLayerIds: [],
+                workerReplayTargets: [],
+                historyItemId: transactionId,
+                historyAction: 'change',
+                undoScope: 'glyph'
+            },
+            source: 'test',
+            label: null,
+            summary: '',
+            windowId: 'linked',
+            timestamp: 1
+        });
+        const session = new CloudLiveSession({
+            assetId: 'asset-relay',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-relay',
+            bridge: {},
+            bootstrapMode: 'skip'
+        });
+        try {
+            await session.syncLiveDocumentIds(['glyph:aaa']);
+            const sent = [];
+            for (const adapter of session._adapters.values()) {
+                adapter.sendForwardedUpdate.mockImplementation(
+                    (_update, message) => {
+                        sent.push({
+                            documentId: adapter.documentId,
+                            transactionId: message.transactionId,
+                            inWal: session._wal
+                                .recordsFor(adapter.documentId)
+                                .some(
+                                    (record) =>
+                                        record.updateBytes?.[0] === _update[0]
+                                )
+                        });
+                    }
+                );
+            }
+            const results = await Promise.all([
+                session.relayForwardedUpdate(
+                    new Uint8Array([1]),
+                    envelope('relay-glyph', 'A'),
+                    'glyph:aaa'
+                ),
+                session.relayForwardedUpdate(
+                    new Uint8Array([2]),
+                    envelope('relay-core', 'A'),
+                    'font-core'
+                ),
+                session.relayForwardedUpdate(
+                    new Uint8Array([3]),
+                    envelope('relay-deps', 'A'),
+                    'font-deps'
+                )
+            ]);
+            expect(results).toEqual([true, true, true]);
+            expect(sent).toEqual([
+                {
+                    documentId: 'glyph:aaa',
+                    transactionId: 'relay-glyph',
+                    inWal: true
+                },
+                {
+                    documentId: 'font-core',
+                    transactionId: 'relay-core',
+                    inWal: true
+                },
+                {
+                    documentId: 'font-deps',
+                    transactionId: 'relay-deps',
+                    inWal: true
+                }
+            ]);
+            expect(session.pendingSyncCount).toBe(3);
+        } finally {
+            session.disconnect();
+            global.indexedDB = originalIndexedDb;
+        }
+    });
+
+    test('edits a closed glyph socket had not confirmed are replayed over HTTP after a glyph switch', async () => {
+        const originalIndexedDb = global.indexedDB;
+        global.indexedDB = createIndexedDbMock();
+        const session = new CloudLiveSession({
+            assetId: 'asset-switch',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-switch',
+            bridge: {},
+            bootstrapMode: 'skip'
+        });
+        try {
+            await session.syncLiveDocumentIds(['glyph:aaa']);
+            // The socket takes the edit but never acknowledges it.
+            await session.relayForwardedUpdate(
+                new Uint8Array([7]),
+                {
+                    schemaVersion: 1,
+                    transactionId: 'unacked-edit',
+                    localSequence: 1,
+                    roomSequence: null,
+                    baseRevision: null,
+                    changes: [],
+                    metadata: {
+                        editType: 'glyph',
+                        changedGlyphNames: ['A'],
+                        changedLayerIds: [],
+                        workerReplayTargets: [],
+                        historyItemId: 'unacked-edit',
+                        historyAction: 'change',
+                        undoScope: 'glyph'
+                    },
+                    source: 'test',
+                    label: null,
+                    summary: '',
+                    windowId: 'main',
+                    timestamp: 1
+                },
+                'glyph:aaa'
+            );
+            expect(session.pendingSyncCount).toBe(1);
+            global.fetch = jest.fn(async (_url, opts) => durableLiveAck(opts));
+            await session.syncLiveDocumentIds(['glyph:bbb']);
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            await session.flushPendingHttpPublishes();
+            const posts = global.fetch.mock.calls.filter(
+                (call) => call[1]?.method === 'POST'
+            );
+            expect(posts).toHaveLength(1);
+            expect(String(posts[0][0])).toContain('/shards/glyph/aaa/live');
+            expect(session.pendingSyncCount).toBe(0);
+        } finally {
+            session.disconnect();
+            global.indexedDB = originalIndexedDb;
+        }
+    });
+
+    test('unsent edits to a glyph without a socket are shown again after a reload', async () => {
+        const originalIndexedDb = global.indexedDB;
+        const originalFetch = global.fetch;
+        global.indexedDB = createIndexedDbMock();
+        const options = (bridge) => ({
+            assetId: 'asset-reload',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-reload',
+            bridge,
+            bootstrapMode: 'skip'
+        });
+        const message = {
+            schemaVersion: 1,
+            transactionId: 'offline-edit',
+            localSequence: 1,
+            roomSequence: null,
+            baseRevision: null,
+            changes: [],
+            metadata: {
+                editType: 'glyph',
+                changedGlyphNames: ['B'],
+                changedLayerIds: [],
+                workerReplayTargets: [],
+                historyItemId: 'offline-edit',
+                historyAction: 'change',
+                undoScope: 'glyph'
+            },
+            source: 'test',
+            label: null,
+            summary: '',
+            windowId: 'main',
+            timestamp: 1
+        };
+        const before = new CloudLiveSession(options({}));
+        let after = null;
+        try {
+            await before.syncLiveDocumentIds([]);
+            global.fetch = jest.fn(async () => {
+                throw new Error('offline');
+            });
+            await before.persistOutgoingUpdate(
+                new Uint8Array([5, 6]),
+                message,
+                'glyph:bbb'
+            );
+            before.disconnect();
+
+            // The reloaded font comes from the room, without the edit.
+            const bridge = {
+                hasResidentGlyphDocument: jest.fn(
+                    (documentId) => documentId === 'glyph:bbb'
+                ),
+                getCollaborationLog: jest.fn(() => []),
+                applyDocumentCatchUp: jest.fn(() => true),
+                applyRemoteUpdate: jest.fn(() => true)
+            };
+            global.fetch = jest.fn(async (url, opts) =>
+                opts?.method === 'POST'
+                    ? durableLiveAck(opts)
+                    : originalFetch(url, opts)
+            );
+            after = new CloudLiveSession(options(bridge));
+            await after.syncLiveDocumentIds([]);
+            await after.flushPendingHttpPublishes();
+            expect(bridge.applyRemoteUpdate).toHaveBeenCalledTimes(1);
+            const [update, , messages, documentId, applyOptions] =
+                bridge.applyRemoteUpdate.mock.calls[0];
+            expect([...update]).toEqual([5, 6]);
+            expect(messages[0].transactionId).toBe('offline-edit');
+            expect(documentId).toBe('glyph:bbb');
+            expect(applyOptions).toEqual({ captureInUndo: false });
+        } finally {
+            before.disconnect();
+            after?.disconnect();
+            global.indexedDB = originalIndexedDb;
+            global.fetch = originalFetch;
+        }
+    });
+
+    test('a failed glyph or dependency socket shows as an error and clears when it recovers', async () => {
+        const statuses = [];
+        const session = new CloudLiveSession({
+            assetId: 'asset-health',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-health',
+            bridge: {},
+            bootstrapMode: 'skip',
+            onConnectionStatus: (status, detail) => {
+                statuses.push({ status, detail });
+            }
+        });
+        try {
+            await session.syncLiveDocumentIds(['glyph:aaa']);
+            const optionsFor = (documentId) =>
+                CloudAdapter.mock.calls
+                    .map((call) => call[0])
+                    .filter((options) => options.documentId === documentId)
+                    .pop();
+            statuses.length = 0;
+            optionsFor('glyph:aaa').onConnectionStatus('error', 'glyph died');
+            optionsFor('font-deps').onConnectionStatus('error', 'deps died');
+            expect(statuses).toEqual([
+                { status: 'error', detail: 'glyph died' },
+                { status: 'error', detail: 'deps died' }
+            ]);
+            statuses.length = 0;
+            // One recovered, one still failed: the error stays.
+            optionsFor('glyph:aaa').onConnectionStatus('connected');
+            expect(statuses).toEqual([
+                { status: 'error', detail: 'deps died' }
+            ]);
+            statuses.length = 0;
+            optionsFor('font-deps').onConnectionStatus('connected');
+            expect(statuses).toEqual([
+                { status: 'connected', detail: undefined }
+            ]);
+        } finally {
+            session.disconnect();
+        }
+    });
+
+    test('a reconnect barrier that succeeds clears an earlier barrier error', async () => {
+        const statuses = [];
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            readyBarrierTimeoutMs: 40,
+            bridge: {},
+            bootstrapMode: 'skip',
+            onConnectionStatus: (status, detail) => {
+                statuses.push({ status, detail });
+            }
+        });
+        await session.syncLiveDocumentIds([]);
+        jest.useFakeTimers();
+        try {
+            const coreOptions = CloudAdapter.mock.calls
+                .map((call) => call[0])
+                .filter(
+                    (options) =>
+                        !options.documentId ||
+                        options.documentId === 'font-core'
+                )
+                .pop();
+            session.coreAdapter.isTransportSynced.mockReturnValue(false);
+            coreOptions.onConnectionStatus('connected');
+            await jest.advanceTimersByTimeAsync(80);
+            await Promise.resolve();
+            expect(statuses[statuses.length - 1].status).toBe('error');
+            session.coreAdapter.isTransportSynced.mockReturnValue(true);
+            coreOptions.onConnectionStatus('connected');
+            await jest.advanceTimersByTimeAsync(80);
+            await Promise.resolve();
+            expect(statuses[statuses.length - 1].status).toBe('connected');
+        } finally {
+            session.disconnect();
+            jest.useRealTimers();
+        }
+    });
+
+    test('a degraded first open retries the catch-up until it completes', async () => {
+        const statuses = [];
+        const createAdapter = CloudAdapter.getMockImplementation();
+        CloudAdapter.mockImplementationOnce((options) => {
+            const adapter = createAdapter(options);
+            adapter.isTransportSynced.mockReturnValue(false);
+            return adapter;
+        });
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            readyBarrierTimeoutMs: 40,
+            bridge: {},
+            bootstrapMode: 'skip',
+            onConnectionStatus: (status, detail) => {
+                statuses.push({ status, detail });
+            }
+        });
+        jest.useFakeTimers();
+        try {
+            const opened = session.syncLiveDocumentIds([]);
+            await jest.advanceTimersByTimeAsync(80);
+            await opened;
+            expect(statuses[statuses.length - 1].status).toBe('connected');
+            expect(statuses[statuses.length - 1].detail).toMatch(/^Degraded/);
+
+            session.coreAdapter.isTransportSynced.mockReturnValue(true);
+            await jest.advanceTimersByTimeAsync(11_000);
+            await Promise.resolve();
+            expect(statuses[statuses.length - 1]).toEqual({
+                status: 'connected',
+                detail: undefined
+            });
+        } finally {
+            session.disconnect();
+            jest.useRealTimers();
+        }
+    });
+
     test('sendForwardedUpdate POSTs when the glyph has no sticky socket', async () => {
         const session = new CloudLiveSession({
             assetId: 'asset-1',
@@ -1087,6 +1443,71 @@ describe('CloudLiveSession', () => {
             session.disconnect();
             jest.useRealTimers();
         }
+    });
+
+    test('edits refused after a downgrade to viewer are discarded once, not resent forever', async () => {
+        const discarded = [];
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: {},
+            bootstrapMode: 'skip',
+            onWriteAccessLost: (count) => discarded.push(count)
+        });
+        await session.syncLiveDocumentIds([]);
+        const rows = [
+            { documentId: 'font-core', clientTransactionId: 'a' },
+            { documentId: 'font-core', clientTransactionId: 'b' },
+            { documentId: 'glyph:A', clientTransactionId: 'c' }
+        ];
+        const dropped = [];
+        session._ensureWalLoaded = async () => {};
+        session._wal.replayableRecords = () =>
+            rows.filter((row) => !dropped.includes(row.clientTransactionId));
+        session._wal.acknowledgeMany = async (assetId, documentId, ids) => {
+            expect(assetId).toBe('asset-1');
+            dropped.push(...ids);
+        };
+        const core = session.coreAdapter;
+        core.discardUnsentEdits = jest.fn();
+        const adapterOptions = CloudAdapter.mock.calls.at(-1)[0];
+
+        // The core socket and an HTTP publish both report the refusal.
+        adapterOptions.onWriteAccessLost();
+        await session.discardUnsentEditsAfterWriteAccessLost();
+
+        expect(dropped.sort()).toEqual(['a', 'b', 'c']);
+        expect(core.discardUnsentEdits).toHaveBeenCalled();
+        expect(discarded).toEqual([3]);
+        session.disconnect();
+    });
+
+    test('a lapsed subscription stops reconnects with the website’s message', async () => {
+        const message =
+            'Collaboration on this font stopped on 15 November 2026.';
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: {},
+            bootstrapMode: 'skip',
+            refreshCredentials: async () => {
+                const error = new Error(message);
+                error.code = 'subscription_lapsed';
+                throw error;
+            }
+        });
+        await session.syncLiveDocumentIds([]);
+        await expect(session._refreshCredentialsOnce()).rejects.toThrow(
+            message
+        );
+        expect(session.coreAdapter.markAccessRevoked).toHaveBeenCalledWith(
+            message
+        );
+        session.disconnect();
     });
 
     test('marks adapters revoked when credential refresh returns 403', async () => {

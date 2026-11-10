@@ -719,9 +719,37 @@ class AuthManager {
      * Logout - clears session only on the editor domain
      */
     async logout() {
+        await this.revokeSessionOnServer();
         this.clearLocalSessionToken();
         this.resetSignedOutState();
         this.postToOtherTabs({ type: 'signed-out' });
+    }
+
+    /**
+     * Signing out ends the session everywhere: the website bumps the account
+     * epoch, so every copy of the token stops working. Signing out locally
+     * still happens if the website cannot be reached.
+     */
+    private async revokeSessionOnServer(): Promise<void> {
+        const token = this.sessionToken || this.getSessionToken();
+        try {
+            const response = await fetch(`${this.websiteURL}/api/auth/logout`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { Authorization: `Bearer ${token}` } : {})
+                },
+                body: '{}'
+            });
+            if (!response.ok) {
+                console.warn(
+                    `[Auth] Server sign-out failed with ${response.status}`
+                );
+            }
+        } catch (error) {
+            console.warn('[Auth] Server sign-out failed:', error);
+        }
     }
 
     private resetSignedOutState() {

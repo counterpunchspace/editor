@@ -12,7 +12,9 @@ export const cloudAdapterFsMethods = {
     async scanDirectory(_path: string): Promise<Record<string, FileInfo>> {
         try {
             const resp = await fetch(
-                `${this._websiteBaseUrl}/api/cloud/assets`,
+                // presence=1: this listing shows who is connected. Other
+                // listings leave it off so they do not wake every font’s room.
+                `${this._websiteBaseUrl}/api/cloud/assets?presence=1`,
                 {
                     credentials: 'include',
                     headers: getCloudRequestHeaders()

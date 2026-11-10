@@ -87,6 +87,17 @@ export type CollaborationMessageMetadata = {
     originatingLayerId?: string | null;
 };
 
+/**
+ * Marks a leading part of a large edit sent as several room transactions.
+ * `of` is the transaction key of the edit’s own envelope, which the last part
+ * carries unmarked.
+ */
+export type CloudEnvelopePart = {
+    of: string;
+    index: number;
+    total: number;
+};
+
 export interface CollaborationMessageEnvelope {
     schemaVersion: 1;
     transactionId: string;
@@ -100,6 +111,7 @@ export interface CollaborationMessageEnvelope {
     summary: string;
     windowId: string | null;
     timestamp: number;
+    part?: CloudEnvelopePart;
 }
 
 export type DerivedForwardChange = {

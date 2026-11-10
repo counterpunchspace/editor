@@ -374,6 +374,97 @@ describe('CloudPlugin.openAsset', () => {
         mockHydrateCache = null;
     });
 
+    test('a collaborator can leave a shared font, the owner cannot', async () => {
+        const roles = new Map([
+            ['asset-shared', 'editor'],
+            ['asset-own', 'owner']
+        ]);
+        plugin.getCachedAssetRole = (id) => roles.get(id) ?? null;
+        plugin._cacheAssetRole = (id, role) => roles.set(id, role ?? null);
+        const target = (id) => ({
+            path: `cloud://${id}`,
+            name: 'Font',
+            isDir: false
+        });
+        expect(
+            plugin.supportsFileContextAction('leave', target('asset-shared'))
+        ).toBe(true);
+        expect(
+            plugin.supportsFileContextAction('leave', target('asset-own'))
+        ).toBe(false);
+
+        plugin._ensureCloudUser = jest.fn(async () => ({ id: 'user-7' }));
+        plugin.removeMember = jest.fn(async () => {});
+        await plugin.leaveAsset('asset-shared');
+        expect(plugin.removeMember).toHaveBeenCalledWith(
+            'user-7',
+            'asset-shared'
+        );
+        expect(plugin.getCachedAssetRole('asset-shared')).toBeNull();
+    });
+
+    test('a lapsed owner subscription shows the website’s message and stops with a coded error', async () => {
+        const originalFetch = global.fetch;
+        const message =
+            'The owner’s subscription has ended, so collaboration on this font stopped on 15 November 2026.';
+        global.fetch = jest.fn(async () => ({
+            ok: false,
+            status: 402,
+            text: async () =>
+                JSON.stringify({
+                    error: message,
+                    code: 'subscription_lapsed',
+                    subscriptionLapse: { state: 'lapsed', message }
+                })
+        }));
+        try {
+            const error = await CloudPlugin.prototype._fetchRoomToken
+                .call(plugin, 'asset-1')
+                .catch((caught) => caught);
+            expect(error.message).toBe(message);
+            expect(error.code).toBe('subscription_lapsed');
+            expect(plugin.getAssetNotice('asset-1')).toEqual({
+                kind: 'subscription-lapse',
+                tone: 'error',
+                title: message
+            });
+        } finally {
+            global.fetch = originalFetch;
+        }
+    });
+
+    test('a subscription in its grace period warns until resubscribed', async () => {
+        const originalFetch = global.fetch;
+        const message =
+            'Your subscription has ended. Collaboration on your cloud fonts stops on 15 November 2026 unless you resubscribe.';
+        const tokenResponse = (body) => ({
+            ok: true,
+            status: 200,
+            text: async () =>
+                JSON.stringify({
+                    token: 'a.eyJyb2xlIjoib3duZXIifQ.c',
+                    roomUrl: 'ws://localhost:8787/room/asset-1',
+                    ...body
+                })
+        });
+        global.fetch = jest.fn(async () =>
+            tokenResponse({ subscriptionLapse: { state: 'grace', message } })
+        );
+        try {
+            await CloudPlugin.prototype._fetchRoomToken.call(plugin, 'asset-1');
+            expect(plugin.getAssetNotice('asset-1')).toMatchObject({
+                tone: 'warning',
+                title: message
+            });
+
+            global.fetch = jest.fn(async () => tokenResponse({}));
+            await CloudPlugin.prototype._fetchRoomToken.call(plugin, 'asset-1');
+            expect(plugin.getAssetNotice('asset-1')).toBeNull();
+        } finally {
+            global.fetch = originalFetch;
+        }
+    });
+
     afterEach(() => {
         window.authManager = originalAuthManager;
         window.alert = originalAlert;
@@ -2248,6 +2339,86 @@ describe('CloudPlugin sharing APIs', () => {
         expect(plugin.canMutateCurrentAsset()).toBe(false);
         expect(plugin.getLiveAccessSnapshot().canMutate).toBe(false);
         expect(plugin.getLiveAccessSnapshot().accessRevoked).toBe(true);
+    });
+
+    test('a linked window follows main’s write verdict and locks while main is gone', () => {
+        const originalRole = window.windowRole;
+        const originalSync = window.windowSync;
+        try {
+            window.fontManager.currentFont.sourcePlugin = plugin;
+            window.fontManager.currentFont.isCloudBacked = () => true;
+            window.windowRole = {
+                isMainWindow: () => false,
+                isLinkedWindow: () => true
+            };
+            window.windowSync = { linkedReadOnly: false };
+
+            plugin.applyRelayedConnectionState({
+                assetId: 'asset-1',
+                status: 'connected',
+                canMutate: true
+            });
+            expect(plugin.canMutateCurrentAsset()).toBe(true);
+
+            // Main is a viewer, signed out, revoked or has a broken outbox.
+            plugin.applyRelayedConnectionState({
+                assetId: 'asset-1',
+                status: 'connected',
+                canMutate: false
+            });
+            expect(plugin.canMutateCurrentAsset()).toBe(false);
+
+            plugin.applyRelayedConnectionState({
+                assetId: 'asset-1',
+                status: 'connected',
+                canMutate: true
+            });
+            window.windowSync = { linkedReadOnly: true };
+            expect(plugin.canMutateCurrentAsset()).toBe(false);
+        } finally {
+            window.windowRole = originalRole;
+            window.windowSync = originalSync;
+        }
+    });
+
+    test('main relays its write verdict and re-sends it when the role changes', () => {
+        const originalRole = window.windowRole;
+        const originalSync = window.windowSync;
+        try {
+            const roles = new Map();
+            const adapter = plugin.getAdapter();
+            adapter.cacheAssetRole.mockImplementation((assetId, role) =>
+                roles.set(assetId, role)
+            );
+            adapter.getCachedAssetRole.mockImplementation(
+                (assetId) => roles.get(assetId) ?? null
+            );
+            window.windowRole = {
+                isMainWindow: () => true,
+                isLinkedWindow: () => false
+            };
+            const broadcastCloudConnectionStatus = jest.fn();
+            window.windowSync = { broadcastCloudConnectionStatus };
+            plugin._activeAssetId = 'asset-1';
+            plugin._connectionStatusByAssetId.set('asset-1', 'connected');
+
+            plugin._cacheAssetRole('asset-1', 'editor');
+            expect(broadcastCloudConnectionStatus).toHaveBeenLastCalledWith(
+                expect.objectContaining({ assetId: 'asset-1', canMutate: true })
+            );
+
+            plugin._cacheAssetRole('asset-1', 'viewer');
+            expect(broadcastCloudConnectionStatus).toHaveBeenLastCalledWith(
+                expect.objectContaining({
+                    assetId: 'asset-1',
+                    canMutate: false
+                })
+            );
+            expect(plugin.getRelayConnectionState().canMutate).toBe(false);
+        } finally {
+            window.windowRole = originalRole;
+            window.windowSync = originalSync;
+        }
     });
 
     test('treats tail_full as read-only while still a member', () => {

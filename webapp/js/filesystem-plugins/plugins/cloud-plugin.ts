@@ -25,6 +25,10 @@ import {
     type CloudShardIoOptions,
     normalizeCloudRoomWebSocketUrl
 } from '../../cloud-adapter';
+import {
+    CLOUD_SUBSCRIPTION_LAPSED_CODE,
+    CLOUD_SUBSCRIPTION_LAPSED_MESSAGE
+} from '../../cloud-adapter-support';
 import { cloudPluginOpenMethods } from './cloud-plugin-open';
 import { cloudPluginSaveAsMethods } from './cloud-plugin-save-as';
 import { cloudPluginLiveMethods } from './cloud-plugin-live';
@@ -198,6 +202,15 @@ export type {
     CloudShareState
 } from './cloud-plugin-support';
 
+export type CloudAssetNotice = {
+    kind: string;
+    title: string;
+    tone: 'warning' | 'error';
+};
+
+const WRITE_ACCESS_LOST_NOTICE = 'write-access-lost';
+const SUBSCRIPTION_LAPSE_NOTICE = 'subscription-lapse';
+
 const console = new Logger('CloudPlugin');
 const CLOUD_PLUGIN_UI_ENABLED = true;
 const CLOUD_ASSET_DELETED_MESSAGE = 'Cloud asset was deleted';
@@ -240,6 +253,13 @@ export class CloudPlugin extends FilesystemPlugin {
     private _relayedConnectionDetail: string | undefined;
     private _relayedPendingSyncCount = 0;
     private _relayedTransferActivity: CloudTransferActivity = 'idle';
+    /** Main's own verdict; null until main has relayed one. */
+    private _relayedCanMutate: boolean | null = null;
+    /**
+     * Lasting messages per font, shown in the cloud warning badge until the
+     * cause goes away (role change that discarded edits, billing lapse).
+     */
+    private _assetNoticeByAssetId = new Map<string, CloudAssetNotice>();
     private _sparsePreviewOnly = false;
     private _eligibility: CloudEligibility | null = null;
     private _assetLimits: CloudAssetLimits | null = null;
@@ -403,6 +423,10 @@ export class CloudPlugin extends FilesystemPlugin {
         window.addEventListener('authStateChanged', (event) => {
             const detail = (event as CustomEvent<{ isAuthenticated: boolean }>)
                 .detail;
+            if (detail?.isAuthenticated) {
+                // A session that expired mid-edit stopped the sync; resume it.
+                this._liveSession?.resumeAfterSignIn();
+            }
             const panel = document.getElementById('cloud-panel');
             if (
                 detail?.isAuthenticated &&
@@ -452,6 +476,15 @@ export class CloudPlugin extends FilesystemPlugin {
         role: CloudAssetRole | null | undefined
     ): void {
         this._getCloudAdapter().cacheAssetRole(assetId, role);
+        if (
+            window.windowRole?.isMainWindow?.() &&
+            assetId === this._activeAssetId
+        ) {
+            // Linked windows take their write permission from this window.
+            window.windowSync?.broadcastCloudConnectionStatus?.(
+                this.getRelayConnectionState()
+            );
+        }
         window.dispatchEvent(
             new CustomEvent('cloudAssetRoleChanged', {
                 detail: { assetId, role: role ?? null }
@@ -469,6 +502,46 @@ export class CloudPlugin extends FilesystemPlugin {
 
     getAssetConnectionDetail(assetId: string): string | undefined {
         return this._connectionDetailByAssetId.get(assetId);
+    }
+
+    getAssetNotice(assetId: string): CloudAssetNotice | null {
+        return this._assetNoticeByAssetId.get(assetId) ?? null;
+    }
+
+    setAssetNotice(assetId: string, notice: CloudAssetNotice | null): void {
+        const previous = this._assetNoticeByAssetId.get(assetId) ?? null;
+        if (
+            previous?.kind === notice?.kind &&
+            previous?.title === notice?.title &&
+            previous?.tone === notice?.tone
+        ) {
+            return;
+        }
+        if (notice) {
+            this._assetNoticeByAssetId.set(assetId, notice);
+        } else {
+            this._assetNoticeByAssetId.delete(assetId);
+        }
+        if (
+            window.windowRole?.isMainWindow() &&
+            assetId === this._activeAssetId
+        ) {
+            window.windowSync?.broadcastCloudConnectionStatus?.(
+                this.getRelayConnectionState()
+            );
+        }
+        window.dispatchEvent(
+            new CustomEvent('cloudAssetNoticeChanged', {
+                detail: { assetId, notice }
+            })
+        );
+    }
+
+    /** Clears a notice only if it is still the one of this kind. */
+    clearAssetNotice(assetId: string, kind: string): void {
+        if (this._assetNoticeByAssetId.get(assetId)?.kind === kind) {
+            this.setAssetNotice(assetId, null);
+        }
     }
 
     getAssetSizeWarningState(
@@ -800,6 +873,48 @@ export class CloudPlugin extends FilesystemPlugin {
         if (!currentFont?.isCloudBacked?.()) {
             return true;
         }
+        if (window.windowRole?.isLinkedWindow?.()) {
+            // Main owns the cloud session: its role, access, sign-in and
+            // outbox health decide, and an edit made while main is gone
+            // would never reach the cloud.
+            if (
+                this._relayedCanMutate === false ||
+                window.windowSync?.linkedReadOnly === true
+            ) {
+                return false;
+            }
+        }
+        if (!this._sessionAllowsMutation()) {
+            return false;
+        }
+        const glyphName = window.glyphCanvas?.getCurrentGlyphName?.();
+        // Text mode reports the sentinel string "undefined" from
+        // getCurrentGlyphName. That must not lock the canvas: it blocked
+        // double-click-to-edit while Cmd+Enter still worked. Only refuse
+        // writes once a real sparse-hidden glyph is being edited.
+        const editingSparseHiddenGlyph =
+            !!window.glyphCanvas?.outlineEditor?.active &&
+            !!glyphName &&
+            glyphName !== 'undefined' &&
+            window.patchSyncEngine?.hasSparseWorkingSet?.() &&
+            window.patchSyncEngine.isSparseWorkingGlyphName?.(glyphName) ===
+                false;
+        if (editingSparseHiddenGlyph) {
+            return false;
+        }
+        if (
+            window.glyphCanvas?.outlineEditor?.active &&
+            glyphName &&
+            glyphName !== 'undefined' &&
+            this._sparseWriteBlocked(glyphName)
+        ) {
+            return false;
+        }
+        return true;
+    }
+
+    /** Role, access, connection and outbox health; nothing glyph-specific. */
+    private _sessionAllowsMutation(): boolean {
         const sessionSnapshot = this._liveSession?.getAccessSnapshot();
         if (
             sessionSnapshot?.accessRevoked === true ||
@@ -829,29 +944,6 @@ export class CloudPlugin extends FilesystemPlugin {
             this._eligibility &&
             missingRequiredCloudCapabilities(this._eligibility.capabilities)
                 .length
-        ) {
-            return false;
-        }
-        const glyphName = window.glyphCanvas?.getCurrentGlyphName?.();
-        // Text mode reports the sentinel string "undefined" from
-        // getCurrentGlyphName. That must not lock the canvas: it blocked
-        // double-click-to-edit while Cmd+Enter still worked. Only refuse
-        // writes once a real sparse-hidden glyph is being edited.
-        const editingSparseHiddenGlyph =
-            !!window.glyphCanvas?.outlineEditor?.active &&
-            !!glyphName &&
-            glyphName !== 'undefined' &&
-            window.patchSyncEngine?.hasSparseWorkingSet?.() &&
-            window.patchSyncEngine.isSparseWorkingGlyphName?.(glyphName) ===
-                false;
-        if (editingSparseHiddenGlyph) {
-            return false;
-        }
-        if (
-            window.glyphCanvas?.outlineEditor?.active &&
-            glyphName &&
-            glyphName !== 'undefined' &&
-            this._sparseWriteBlocked(glyphName)
         ) {
             return false;
         }
@@ -1103,6 +1195,12 @@ export class CloudPlugin extends FilesystemPlugin {
                 status,
                 pendingSyncCount: this.getAssetPendingSyncCount(assetId),
                 transferActivity: this.getAssetTransferActivity(assetId),
+                ...(assetId === this._activeAssetId
+                    ? { canMutate: this._sessionAllowsMutation() }
+                    : {}),
+                ...(this._assetNoticeByAssetId.has(assetId)
+                    ? { notice: this._assetNoticeByAssetId.get(assetId) }
+                    : {}),
                 ...(detail ? { detail } : {})
             });
             if (status === 'connected') {
@@ -1135,6 +1233,12 @@ export class CloudPlugin extends FilesystemPlugin {
                 status,
                 pendingSyncCount: this.getAssetPendingSyncCount(assetId),
                 transferActivity: this.getAssetTransferActivity(assetId),
+                ...(assetId === this._activeAssetId
+                    ? { canMutate: this._sessionAllowsMutation() }
+                    : {}),
+                ...(this._assetNoticeByAssetId.has(assetId)
+                    ? { notice: this._assetNoticeByAssetId.get(assetId) }
+                    : {}),
                 ...(detail ? { detail } : {})
             });
         }
@@ -1430,9 +1534,14 @@ export class CloudPlugin extends FilesystemPlugin {
         detail?: string;
         pendingSyncCount?: number;
         transferActivity?: CloudTransferActivity;
+        canMutate?: boolean;
+        notice?: CloudAssetNotice;
     } {
         const detail = this._activeAssetId
             ? this.getAssetConnectionDetail(this._activeAssetId)
+            : undefined;
+        const notice = this._activeAssetId
+            ? this._assetNoticeByAssetId.get(this._activeAssetId)
             : undefined;
         return {
             assetId: this._activeAssetId,
@@ -1444,9 +1553,11 @@ export class CloudPlugin extends FilesystemPlugin {
                       ),
                       transferActivity: this.getAssetTransferActivity(
                           this._activeAssetId
-                      )
+                      ),
+                      canMutate: this._sessionAllowsMutation()
                   }
                 : {}),
+            ...(notice ? { notice } : {}),
             ...(detail ? { detail } : {})
         };
     }
@@ -1457,12 +1568,19 @@ export class CloudPlugin extends FilesystemPlugin {
         detail?: string;
         pendingSyncCount?: number;
         transferActivity?: CloudTransferActivity;
+        canMutate?: boolean;
+        notice?: CloudAssetNotice;
     }): void {
         if (window.windowRole?.isMainWindow()) {
             return;
         }
+        if (state.assetId) {
+            this.setAssetNotice(state.assetId, state.notice ?? null);
+        }
 
         this._relayedAssetId = state.assetId;
+        this._relayedCanMutate =
+            typeof state.canMutate === 'boolean' ? state.canMutate : null;
         this._relayedConnectionStatus = state.status as CloudConnectionStatus;
         this._relayedConnectionDetail = state.detail;
         this._relayedPendingSyncCount = Math.max(
@@ -1533,11 +1651,26 @@ export class CloudPlugin extends FilesystemPlugin {
             return;
         }
         if (this._liveSession) {
-            this._liveSession.sendForwardedUpdate(
-                update,
-                collaborationMessage,
-                documentId
-            );
+            const reportFailure = (reason: string) => {
+                console.error(
+                    `Cloud durability persist failed for a linked-window edit of ${documentId || 'font-core'}: ${reason}`
+                );
+                window.dispatchEvent(
+                    new CustomEvent('cloud-persist-failed', {
+                        detail: { documentId, reason, storageFull: false }
+                    })
+                );
+            };
+            void this._liveSession
+                .relayForwardedUpdate(update, collaborationMessage, documentId)
+                .then(
+                    (durable) => {
+                        if (!durable) {
+                            reportFailure('rejected');
+                        }
+                    },
+                    (error) => reportFailure(String(error))
+                );
             return;
         }
         this._cloudAdapter?.sendForwardedUpdate(update, collaborationMessage);
@@ -1769,6 +1902,17 @@ export class CloudPlugin extends FilesystemPlugin {
                     .replace(/^cloud:\/\//, '')
                     .trim();
                 return this.getCachedAssetRole(assetId) === 'owner';
+            }
+            case 'leave': {
+                if (target.isDir) {
+                    return false;
+                }
+                const role = this.getCachedAssetRole(
+                    String(target.path || '')
+                        .replace(/^cloud:\/\//, '')
+                        .trim()
+                );
+                return role === 'editor' || role === 'viewer';
             }
             default:
                 return super.supportsFileContextAction(action, target);
@@ -2843,6 +2987,22 @@ export class CloudPlugin extends FilesystemPlugin {
         this._postCatalogGlyphCount(assetId);
     }
 
+    /** A collaborator removes a shared font from their own list. */
+    async leaveAsset(assetId: string): Promise<void> {
+        const user = await this._ensureCloudUser({
+            allowSignInPrompt: true
+        });
+        const userId = typeof user?.id === 'string' ? user.id : '';
+        if (!userId) {
+            throw new Error('Authentication required');
+        }
+        if (this.getCurrentAssetIdForSharing() === assetId) {
+            this.disconnectFromRoom();
+        }
+        await this.removeMember(userId, assetId);
+        this._cacheAssetRole(assetId, null);
+    }
+
     async deleteAsset(assetId?: string): Promise<void> {
         const user = await this._ensureCloudUser({
             allowSignInPrompt: true
@@ -3199,6 +3359,7 @@ export class CloudPlugin extends FilesystemPlugin {
         generationId?: string;
     }): Promise<void> {
         window.windowSync?.notifyCloudBootstrapPending?.();
+        this.clearAssetNotice(options.assetId, WRITE_ACCESS_LOST_NOTICE);
         const session = new CloudLiveSession({
             assetId: options.assetId,
             websiteBaseUrl: this._websiteBaseUrl,
@@ -3236,7 +3397,21 @@ export class CloudPlugin extends FilesystemPlugin {
                 );
                 return { token: next.token, roomUrl: next.roomUrl };
             },
-            keepRequestedGlyphSockets: this.getCurrentAssetRole() === 'viewer',
+            // Viewers hold one glyph socket like editors. Edits to the other
+            // glyphs in the text arrive through the revision-signal catch-up;
+            // a socket per text glyph kept dozens of rooms awake per viewer.
+            keepRequestedGlyphSockets: false,
+            onWriteAccessLost: (discarded) => {
+                this._cacheAssetRole(options.assetId, 'viewer');
+                this.setAssetNotice(options.assetId, {
+                    kind: WRITE_ACCESS_LOST_NOTICE,
+                    tone: 'warning',
+                    title:
+                        discarded > 0
+                            ? `You can only view this font now. ${discarded === 1 ? 'One edit that wasn’t saved yet was' : `${discarded} edits that weren’t saved yet were`} discarded. Reopen the font to see the saved version.`
+                            : 'You can only view this font now.'
+                });
+            },
             onSocketsReady: () => {
                 if (this._attachingSession !== session) {
                     return;
@@ -3319,9 +3494,6 @@ export class CloudPlugin extends FilesystemPlugin {
             if (!this._liveSession) {
                 return;
             }
-            this._liveSession.setKeepRequestedGlyphSockets(
-                this.getCurrentAssetRole() === 'viewer'
-            );
             const glyphDocumentIds = liveGlyphDocumentIdsFromSubset(
                 bridge,
                 this._liveGlyphNamesForSync()
@@ -3517,12 +3689,31 @@ export class CloudPlugin extends FilesystemPlugin {
             token?: string;
             roomUrl?: string;
             code?: string;
+            error?: string;
             generationId?: string;
+            subscriptionLapse?: { state?: string; message?: string };
         } = {};
         try {
             data = body ? JSON.parse(body) : {};
         } catch {
             data = {};
+        }
+        if (
+            resp.status === 402 &&
+            data.code === CLOUD_SUBSCRIPTION_LAPSED_CODE
+        ) {
+            const message =
+                data.subscriptionLapse?.message ||
+                data.error ||
+                CLOUD_SUBSCRIPTION_LAPSED_MESSAGE;
+            this.setAssetNotice(assetId, {
+                kind: SUBSCRIPTION_LAPSE_NOTICE,
+                tone: 'error',
+                title: message
+            });
+            const error = new Error(message) as Error & { code?: string };
+            error.code = CLOUD_SUBSCRIPTION_LAPSED_CODE;
+            throw error;
         }
         if (!resp.ok) {
             throw new Error(
@@ -3534,6 +3725,19 @@ export class CloudPlugin extends FilesystemPlugin {
         }
         if (!data.token || !data.roomUrl) {
             throw new Error('room-token response missing token or roomUrl');
+        }
+        // A lapsed owner’s fonts keep working for a grace period; say until when.
+        if (
+            data.subscriptionLapse?.state === 'grace' &&
+            data.subscriptionLapse.message
+        ) {
+            this.setAssetNotice(assetId, {
+                kind: SUBSCRIPTION_LAPSE_NOTICE,
+                tone: 'warning',
+                title: data.subscriptionLapse.message
+            });
+        } else {
+            this.clearAssetNotice(assetId, SUBSCRIPTION_LAPSE_NOTICE);
         }
         this._cacheAssetRole(assetId, extractRoleFromRoomToken(data.token));
         return {

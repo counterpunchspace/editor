@@ -53,6 +53,44 @@ describe('CloudDurableWal on IndexedDB', () => {
         return result;
     }
 
+    test('an edit confirmed in one tab stops counting as unsent in another tab on the same font', async () => {
+        const { wal: first } = await open();
+        await first.append(record('shared'));
+        const { wal: second } = await open();
+        expect(second.pendingCount).toBe(1);
+        const changed = new Promise((resolve) => second.onChange(resolve));
+
+        await first.acknowledge(record('shared'));
+
+        await changed;
+        expect(second.pendingCount).toBe(0);
+    });
+
+    test('a newer editor in another tab can upgrade the database without losing unsent edits', async () => {
+        const { wal: writer } = await open();
+        await writer.append(record('unsent'));
+        // The other tab opens a higher version while this log is still open.
+        const upgraded = await new Promise((resolve, reject) => {
+            const request = global.indexedDB.open(
+                'counterpunch-cloud-outbox',
+                99
+            );
+            request.onblocked = () => reject(new Error('upgrade was blocked'));
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => resolve(request.result);
+        });
+        const rows = await new Promise((resolve, reject) => {
+            const request = upgraded
+                .transaction(upgraded.objectStoreNames[0], 'readonly')
+                .objectStore(upgraded.objectStoreNames[0])
+                .getAll();
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => resolve(request.result);
+        });
+        upgraded.close();
+        expect(rows.map((row) => row.clientTransactionId)).toEqual(['unsent']);
+    });
+
     test('appended rows survive closing and reopening the log', async () => {
         const { wal: writer } = await open();
         await writer.append(

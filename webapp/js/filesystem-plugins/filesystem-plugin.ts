@@ -18,7 +18,8 @@ export type FileContextAction =
     | 'open-in-script-editor'
     | 'download'
     | 'rename'
-    | 'delete';
+    | 'delete'
+    | 'leave';
 
 export interface FileContextTarget {
     path: string;
@@ -191,6 +192,8 @@ export abstract class FilesystemPlugin {
             case 'rename':
             case 'delete':
                 return true;
+            case 'leave':
+                return false;
             default:
                 return false;
         }

@@ -693,6 +693,50 @@ describe('linked window resident snapshot', () => {
         window.fontCompilation = previousFontCompilation;
     });
 
+    test('a hidden main window finishes a large snapshot without waiting on throttled timers', async () => {
+        // Hidden tabs run setTimeout at most once a minute after a while; the
+        // snapshot must not depend on timers to move between batches.
+        jest.useFakeTimers();
+        const previousMessageChannel = global.MessageChannel;
+        // jsdom has no MessageChannel; browsers deliver it unthrottled.
+        global.MessageChannel = class {
+            constructor() {
+                this.port1 = { onmessage: null, close() {} };
+                this.port2 = {
+                    postMessage: () =>
+                        Promise.resolve().then(() => this.port1.onmessage?.({}))
+                };
+            }
+        };
+        try {
+            window.cloudPlugin = { isSparsePreviewOnly: () => false };
+            const liveIds = Array.from(
+                { length: 100 },
+                (_, index) => `glyph:${index}`
+            );
+            const { sync, sent } = makeSync({
+                windowId: 'main',
+                getChangeLog: () => [],
+                getCollaborationLog: () => [],
+                onLocalUpdate: () => {},
+                hasSparseWorkingSet: () => false,
+                listSparseWorkingGlyphIds: () => [],
+                listLiveGlyphDocumentIds: () => liveIds,
+                encodeDocumentState: () => new Uint8Array([2])
+            });
+
+            await sync.sendFullStateSnapshot();
+
+            expect(sent.map((message) => message.type).at(-1)).toBe(
+                'full-state-end'
+            );
+            sync.destroy();
+        } finally {
+            global.MessageChannel = previousMessageChannel;
+            jest.useRealTimers();
+        }
+    });
+
     test('a failed post aborts the snapshot and does not finish it', async () => {
         window.cloudPlugin = { isSparsePreviewOnly: () => false };
         const liveIds = Array.from(

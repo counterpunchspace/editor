@@ -12,6 +12,8 @@ import {
     CLOUD_GLYPH_CATCH_UP_CONCURRENCY,
     CLOUD_GLYPH_PUBLISH_CONCURRENCY,
     isForbiddenCloudCredentialError,
+    isSignedOutCloudCredentialError,
+    subscriptionLapsedCredentialDetail,
     publishCloudDocumentUpdate,
     runCloudVisibleReconnectRebaseline,
     type CloudAdapterAccessSnapshot,
@@ -66,7 +68,24 @@ export type CloudLiveSessionOptions = {
     generationId?: string | null;
     /** Fired once the shard sockets exist, before the ready barrier. */
     onSocketsReady?: () => void;
+    /**
+     * The room refused edits because this user is now a viewer. The unsent
+     * edits were discarded; `discarded` is how many.
+     */
+    onWriteAccessLost?: (discarded: number) => void;
 };
+
+function roleFromRoomToken(token: string): string | null {
+    try {
+        const part = String(token || '').split('.')[1] || '';
+        const padded = part.replace(/-/g, '+').replace(/_/g, '/');
+        const json = atob(padded + '='.repeat((4 - (padded.length % 4)) % 4));
+        const role = (JSON.parse(json) as { role?: unknown }).role;
+        return typeof role === 'string' ? role : null;
+    } catch {
+        return null;
+    }
+}
 
 export type GlyphCatchUpTarget = {
     documentId: string;
@@ -188,17 +207,30 @@ async function runWithConcurrency<T>(
     await Promise.all(executing);
 }
 
+const MAX_REFUSED_HTTP_PUBLISHES = 6;
+const READY_BARRIER_ERROR_KEY = '\u0000ready-barrier';
+
+const DEGRADED_BARRIER_RETRY_BASE_MS = 10_000;
+const DEGRADED_BARRIER_RETRY_MAX_MS = 120_000;
+
 export class CloudLiveSession {
     private readonly _adapters = new Map<string, CloudAdapter>();
     private readonly _options: CloudLiveSessionOptions;
     private _desiredDocumentIds = new Set<string>([FONT_CORE_DOCUMENT_ID]);
     private _reportedConnected = false;
     private _readyOnce = false;
+    /** First open let the user in before catch-up finished; it is retried. */
+    private _degradedRetries = 0;
     private _barrierPromise: Promise<void> | null = null;
     private _httpReceivingCount = 0;
     private _httpPublishingCount = 0;
+    private _relayChain: Promise<void> = Promise.resolve();
+    /** Documents (or the reconnect barrier) currently failed, with detail. */
+    private _erroredDocuments = new Map<string, string>();
+    private _signedOut = false;
     private _httpPublishSeq = 0;
     private _httpPublishQueue: Array<() => Promise<void>> = [];
+    private _writeAccessLostHandling: Promise<void> | null = null;
     private _httpPublishActive = 0;
     private readonly _httpPublishInFlight = new Set<Promise<void>>();
     private readonly _httpEnqueueInFlight = new Set<Promise<void>>();
@@ -377,10 +409,82 @@ export class CloudLiveSession {
         };
     }
 
+    /**
+     * The room refused edits from this user, who is now a viewer. Those edits
+     * can never be saved, and keeping them would resend them on every
+     * reconnect and restore them into the font on every reload. Drop every
+     * unsent edit for this font and tell the plugin how many.
+     */
+    discardUnsentEditsAfterWriteAccessLost(): Promise<void> {
+        if (this._writeAccessLostHandling) {
+            return this._writeAccessLostHandling;
+        }
+        this._writeAccessLostHandling = (async () => {
+            this._httpPublishQueue = [];
+            for (const adapter of this._adapters.values()) {
+                adapter.discardUnsentEdits?.();
+            }
+            await this._ensureWalLoaded();
+            const idsByDocument = new Map<string, string[]>();
+            for (const record of this._wal.replayableRecords()) {
+                const ids = idsByDocument.get(record.documentId) ?? [];
+                ids.push(record.clientTransactionId);
+                idsByDocument.set(record.documentId, ids);
+            }
+            let discarded = 0;
+            for (const [documentId, ids] of idsByDocument) {
+                try {
+                    await this._wal.acknowledgeMany(
+                        this._options.assetId,
+                        documentId,
+                        ids
+                    );
+                    discarded += ids.length;
+                } catch (error) {
+                    console.warn(
+                        `CloudLiveSession: could not discard refused edits for ${documentId}:`,
+                        error
+                    );
+                }
+            }
+            pushCollabIntegrityEvent('write-access-lost', {
+                assetId: this._options.assetId,
+                discarded
+            });
+            this._emitPendingSyncCount();
+            this._options.onWriteAccessLost?.(discarded);
+        })().finally(() => {
+            this._writeAccessLostHandling = null;
+        });
+        return this._writeAccessLostHandling;
+    }
+
     markAccessRevoked(detail = 'Access revoked'): void {
         for (const adapter of this._adapters.values()) {
             adapter.markAccessRevoked?.(detail);
         }
+    }
+
+    /** The user signed in again: reconnect what a 401 had stopped. */
+    resumeAfterSignIn(): void {
+        if (this._disconnected) {
+            return;
+        }
+        this._signedOut = false;
+        for (const adapter of this._adapters.values()) {
+            adapter.resumeAfterSignIn?.();
+        }
+        for (const documentId of this._desiredDocumentIds) {
+            if (
+                documentId.startsWith('glyph:') &&
+                !this._adapters.has(documentId)
+            ) {
+                void this._connectDocument(documentId);
+            }
+        }
+        void this._replayPendingHttpWal({ includeLiveAdapters: false }).catch(
+            () => undefined
+        );
     }
 
     captureIntegritySnapshot(): Record<string, unknown> {
@@ -535,6 +639,49 @@ export class CloudLiveSession {
         this.coreAdapter?.sendForwardedUpdate(update, collaborationMessage);
     }
 
+    /**
+     * Send an edit made in a linked window of this font. The socket outbox
+     * only sends packets whose transaction is in the write-ahead log, so the
+     * row is written first; relayed edits keep their order.
+     * Resolves false when the edit could not be made durable before sending.
+     */
+    relayForwardedUpdate(
+        update: Uint8Array,
+        collaborationMessage?: CollaborationMessageEnvelope | null,
+        documentId?: string
+    ): Promise<boolean> {
+        const resolvedId = documentId || FONT_CORE_DOCUMENT_ID;
+        const relay = this._relayChain.then(async () => {
+            let durable = true;
+            // Glyphs without a socket write their own row before the POST.
+            const socketDocumentId = this._adapters.has(resolvedId)
+                ? resolvedId
+                : resolvedId.startsWith('glyph:')
+                  ? null
+                  : FONT_CORE_DOCUMENT_ID;
+            if (collaborationMessage && socketDocumentId) {
+                try {
+                    durable = await this.persistOutgoingUpdate(
+                        update,
+                        collaborationMessage,
+                        socketDocumentId
+                    );
+                } catch (error) {
+                    // The row stays in memory and sendable (see
+                    // persistOutgoingUpdate); only durability is reported.
+                    durable = false;
+                }
+            }
+            this.sendForwardedUpdate(update, collaborationMessage, documentId);
+            return durable;
+        });
+        this._relayChain = relay.then(
+            () => undefined,
+            () => undefined
+        );
+        return relay;
+    }
+
     disconnect(): void {
         this._disconnected = true;
         this._lifetimeAbort.abort();
@@ -555,6 +702,7 @@ export class CloudLiveSession {
         this._desiredDocumentIds = new Set([FONT_CORE_DOCUMENT_ID]);
         this._reportedConnected = false;
         this._readyOnce = false;
+        this._degradedRetries = 0;
         this._barrierPromise = null;
         this._httpReceivingCount = 0;
         this._httpPublishingCount = 0;
@@ -777,12 +925,28 @@ export class CloudLiveSession {
         }
         const infrastructureAlreadyLive = this._hasLiveCoreAndDeps();
         this._desiredDocumentIds = desired;
+        const droppedGlyphIds = new Set<string>();
         for (const [documentId, adapter] of [...this._adapters]) {
             if (!desired.has(documentId)) {
                 adapter.disconnect();
                 this._adapters.delete(documentId);
                 this._clearGlyphConnectRetry(documentId);
+                this._clearDocumentError(documentId);
+                if (documentId.startsWith('glyph:')) {
+                    droppedGlyphIds.add(documentId);
+                }
             }
+        }
+        if (droppedGlyphIds.size) {
+            // Edits the closed socket had not confirmed go out over HTTP.
+            void this._replayPendingHttpWal({
+                documentIds: droppedGlyphIds
+            }).catch((error) => {
+                console.warn(
+                    'CloudLiveSession: replay after glyph switch failed:',
+                    error
+                );
+            });
         }
         if (!this._adapters.has(FONT_CORE_DOCUMENT_ID)) {
             await this._connectDocument(FONT_CORE_DOCUMENT_ID);
@@ -909,8 +1073,17 @@ export class CloudLiveSession {
             return true;
         } catch (error) {
             console.warn('CloudLiveSession: credential refresh failed:', error);
+            if (isSignedOutCloudCredentialError(error)) {
+                this._signedOut = true;
+                for (const adapter of this._adapters.values()) {
+                    adapter.markSignedOut?.();
+                }
+                throw error;
+            }
             if (isForbiddenCloudCredentialError(error)) {
-                this.markAccessRevoked();
+                this.markAccessRevoked(
+                    subscriptionLapsedCredentialDetail(error) ?? undefined
+                );
                 throw error;
             }
             return false;
@@ -940,6 +1113,11 @@ export class CloudLiveSession {
                     (record) =>
                         record.clientTransactionId === clientTransactionId
                 ) || null;
+        if (retry && !walRecord && this._wal.isLoaded) {
+            // The row was dropped while this retry waited (for example the
+            // edits were discarded after a role change). Nothing to send.
+            return;
+        }
         if (!walRecord && this._wal.isLoaded) {
             walRecord = {
                 assetId: this._options.assetId,
@@ -1009,7 +1187,37 @@ export class CloudLiveSession {
                             continue;
                         }
                     }
-                    if (attempt === 4) {
+                    if (
+                        status === 403 &&
+                        refreshed &&
+                        roleFromRoomToken(this._token) === 'viewer'
+                    ) {
+                        // A fresh token says viewer: the room will refuse
+                        // this edit every time.
+                        void this.discardUnsentEditsAfterWriteAccessLost();
+                        return;
+                    }
+                    // The room refused the content; the same bytes fail again.
+                    const refused =
+                        status === 400 || status === 413 || status === 422;
+                    if (attempt === 4 || refused) {
+                        if (
+                            refused &&
+                            Number(walRecord?.attempts || 0) >=
+                                MAX_REFUSED_HTTP_PUBLISHES - 1
+                        ) {
+                            const detail = `Cloud collaboration could not sync an edit (HTTP ${status}). Later edits are kept on this device.`;
+                            console.warn(
+                                `CloudLiveSession: ${documentId} publish refused; giving up:`,
+                                error
+                            );
+                            this._erroredDocuments.set(
+                                `http:${documentId}`,
+                                detail
+                            );
+                            this._options.onConnectionStatus?.('error', detail);
+                            return;
+                        }
                         if (walRecord) {
                             walRecord.attempts =
                                 Number(walRecord.attempts || 0) + 1;
@@ -1178,7 +1386,7 @@ export class CloudLiveSession {
                 if (isCore) {
                     this._onCoreAdapterStatus(status, detail);
                 } else {
-                    this._onGlyphAdapterStatus(status);
+                    this._onGlyphAdapterStatus(status, detail, documentId);
                 }
                 if (status === 'connected') {
                     resolveConnected?.();
@@ -1194,6 +1402,9 @@ export class CloudLiveSession {
             },
             onTransferActivityChange: () => {
                 this._emitTransferActivity();
+            },
+            onWriteAccessLost: () => {
+                void this.discardUnsentEditsAfterWriteAccessLost();
             },
             refreshCredentials: async () => {
                 await this._refreshCredentialsOnce();
@@ -1304,14 +1515,53 @@ export class CloudLiveSession {
             }
             this._reportedConnected = false;
         }
+        if (status === 'error') {
+            this._erroredDocuments.set(
+                FONT_CORE_DOCUMENT_ID,
+                detail || 'cloud connection error'
+            );
+        }
         this._options.onConnectionStatus?.(status, detail);
     }
 
-    private _onGlyphAdapterStatus(_status: CloudConnectionStatus): void {
+    private _onGlyphAdapterStatus(
+        status: CloudConnectionStatus,
+        detail?: string,
+        documentId?: string
+    ): void {
         // Glyph (and deps) sockets must not flip the session into
         // "Catching up" / visible rebaseline. That path recompiles the
         // editing font and redraws the overview, which freezes the UI.
         this._clearNonCoreRebaselineFlags();
+        if (!documentId || this._disconnected) {
+            return;
+        }
+        // A dead glyph or dependency socket still loses edits, so it shows.
+        if (status === 'error') {
+            if (this._desiredDocumentIds.has(documentId)) {
+                this._erroredDocuments.set(
+                    documentId,
+                    detail || 'cloud connection error'
+                );
+                this._options.onConnectionStatus?.('error', detail);
+            }
+        } else if (status === 'connected') {
+            this._clearDocumentError(documentId);
+        }
+    }
+
+    private _clearDocumentError(documentId: string): void {
+        if (!this._erroredDocuments.delete(documentId)) {
+            return;
+        }
+        if (this._erroredDocuments.size) {
+            const [remaining] = this._erroredDocuments.values();
+            this._options.onConnectionStatus?.('error', remaining);
+            return;
+        }
+        if (this._readyOnce && this._reportedConnected) {
+            this._options.onConnectionStatus?.('connected');
+        }
     }
 
     private async _runSessionReadyBarrier(): Promise<void> {
@@ -1341,7 +1591,15 @@ export class CloudLiveSession {
             const needsRebaseline = this.coreAdapter?.needsVisibleRebaseline;
             this._reportedConnected = true;
             this._readyOnce = true;
-            if (!stayConnected) {
+            // A barrier that completes ends an earlier core failure.
+            const recovered =
+                [
+                    this._erroredDocuments.delete(FONT_CORE_DOCUMENT_ID),
+                    this._erroredDocuments.delete(READY_BARRIER_ERROR_KEY)
+                ].some(Boolean) && this._erroredDocuments.size === 0;
+            const wasDegraded = this._degradedRetries > 0;
+            this._degradedRetries = 0;
+            if (!stayConnected || recovered || wasDegraded) {
                 this._options.onConnectionStatus?.('connected');
             }
             if (needsRebaseline) {
@@ -1363,7 +1621,7 @@ export class CloudLiveSession {
         } catch (error) {
             const detail =
                 error instanceof Error ? error.message : String(error);
-            if (!this._readyOnce) {
+            if (!this._readyOnce || this._degradedRetries > 0) {
                 // First open may stay degraded so a large hydrate is not
                 // fail-closed. After the first ready, reconnect barriers fail closed.
                 console.warn(
@@ -1375,15 +1633,42 @@ export class CloudLiveSession {
                     'connected',
                     `Degraded: ${detail}`
                 );
+                this._scheduleDegradedBarrierRetry();
                 return;
             }
+            this._erroredDocuments.set(READY_BARRIER_ERROR_KEY, detail);
             this._options.onConnectionStatus?.('error', detail);
             throw error;
         }
     }
 
+    /**
+     * A degraded first open skipped part of the catch-up (shard state,
+     * outbox replay). Nothing else reruns it while the core socket stays
+     * up, so retry until it completes.
+     */
+    private _scheduleDegradedBarrierRetry(): void {
+        if (this._disconnected) {
+            return;
+        }
+        this._degradedRetries += 1;
+        const delayMs = Math.min(
+            DEGRADED_BARRIER_RETRY_BASE_MS * 2 ** (this._degradedRetries - 1),
+            DEGRADED_BARRIER_RETRY_MAX_MS
+        );
+        const timer = setTimeout(() => {
+            this._timers.delete(timer);
+            if (this._disconnected || this._degradedRetries === 0) {
+                return;
+            }
+            void this._runSessionReadyBarrier().catch(() => undefined);
+        }, delayMs);
+        this._timers.add(timer);
+    }
+
     private async _replayPendingHttpWal(options?: {
         includeLiveAdapters?: boolean;
+        documentIds?: Set<string>;
     }): Promise<void> {
         await this._ensureWalLoaded();
         if (this._wal.health !== 'ready') {
@@ -1399,11 +1684,24 @@ export class CloudLiveSession {
                 state: record.state
             }))
         });
+        const shownIds = new Set<string>();
+        for (const item of this._options.bridge.getCollaborationLog?.() ?? []) {
+            if (typeof item?.id === 'string') {
+                shownIds.add(item.id);
+            }
+        }
         for (const record of records) {
             if (!record.documentId.startsWith('glyph:')) {
                 continue;
             }
             if (!includeLiveAdapters && this._adapters.has(record.documentId)) {
+                continue;
+            }
+            if (
+                options?.documentIds &&
+                (!options.documentIds.has(record.documentId) ||
+                    this._adapters.has(record.documentId))
+            ) {
                 continue;
             }
             if (!record.collaborationMessage) {
@@ -1413,10 +1711,50 @@ export class CloudLiveSession {
             if (!update.length) {
                 continue;
             }
+            this._restoreWalRecordIntoBridge(record, update, shownIds);
             await this._enqueueDependentPublish(
                 record.documentId,
                 update,
                 record.collaborationMessage
+            );
+        }
+    }
+
+    /**
+     * After a reload the font comes from the room, which does not have the
+     * unsent edits yet. Glyphs with a socket restore theirs in the adapter;
+     * this does the same for glyphs that publish over HTTP.
+     */
+    private _restoreWalRecordIntoBridge(
+        record: CloudWalRecord,
+        update: Uint8Array,
+        shownIds: Set<string>
+    ): void {
+        const bridge = this._options.bridge;
+        if (
+            this._adapters.has(record.documentId) ||
+            shownIds.has(record.clientTransactionId) ||
+            bridge.hasResidentGlyphDocument?.(record.documentId) !== true ||
+            typeof bridge.applyRemoteUpdate !== 'function'
+        ) {
+            return;
+        }
+        try {
+            bridge.applyRemoteUpdate(
+                update,
+                undefined,
+                record.collaborationMessage
+                    ? [record.collaborationMessage]
+                    : [],
+                record.documentId,
+                { captureInUndo: false }
+            );
+            shownIds.add(record.clientTransactionId);
+        } catch (error) {
+            console.warn(
+                'CloudLiveSession: failed to restore an unsent glyph edit:',
+                error,
+                record.clientTransactionId
             );
         }
     }

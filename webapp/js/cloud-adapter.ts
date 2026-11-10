@@ -85,6 +85,12 @@ import {
 } from './cloud-adapter-outbox';
 import { pushCollabIntegrityEvent } from './cloud-collab-integrity-debug';
 import {
+    CloudPartedInboundBuffer,
+    needsOutboundParts,
+    planOutboundParts,
+    type CloudOutboundWirePart
+} from './cloud-adapter-outbound-parts';
+import {
     withCloudAccessToken,
     normalizeCloudRoomWebSocketUrl,
     normalizeCloudRoomHttpUrl,
@@ -109,6 +115,10 @@ export {
 export {
     cloudReconnectDelayMs,
     isForbiddenCloudCredentialError,
+    isSignedOutCloudCredentialError,
+    subscriptionLapsedCredentialDetail,
+    CLOUD_SUBSCRIPTION_LAPSED_CODE,
+    CLOUD_SIGNED_OUT_MESSAGE,
     refreshEditorAfterGlyphDocumentCatchUp,
     catchUpCloudDocument,
     publishCloudDocumentUpdate,
@@ -145,6 +155,7 @@ export type {
 
 import {
     AUTHENTICATION_MAX_WAIT_MS,
+    subscriptionLapsedCredentialDetail as subscriptionLapsedDetail,
     AUTHENTICATION_TIMEOUT_MS,
     CLIENT_RECONNECT_CLOSE_CODE,
     CLOUD_ASSET_DELETED_MESSAGE,
@@ -171,6 +182,7 @@ import {
     base64ToU8,
     catchUpCloudDocument,
     cloudReconnectDelayMs,
+    CLOUD_RECONNECT_IDLE_AFTER_ATTEMPTS,
     dedupeCollaborationMessages,
     emitShardIoProgress,
     formatPackHttpError,
@@ -178,6 +190,8 @@ import {
     getDefaultRoomWorkerUrl,
     getLiveUpdateChunkKey,
     importCollaborationMessageHistory,
+    isSignedOutCloudCredentialError,
+    CLOUD_SIGNED_OUT_MESSAGE,
     isForbiddenCloudCredentialError,
     isPackUnsupportedStatus,
     parseRequiredJsonResponse,
@@ -256,6 +270,33 @@ export function describeRefusedRemoteUpdate(
  * Implements the FileSystemAdapter interface so it can be wrapped in a
  * FilesystemPlugin. File I/O methods are stubs for Phase 0.
  */
+/** Refused peer updates that are answered with a resync before giving up. */
+const MAX_REMOTE_REFUSAL_RESYNCS = 2;
+const REMOTE_REFUSAL_WINDOW_MS = 5 * 60_000;
+
+/** Resends of a packet the room rejects for its content before giving up. */
+const MAX_PERMANENT_REJECTION_RESENDS = 5;
+/** Consecutive failures to apply the room’s state before giving up. */
+const MAX_SERVER_STATE_FAILURES = 3;
+const PERMANENT_UPDATE_REJECTIONS = new Set([
+    'packet_too_large',
+    'Invalid Yjs update',
+    'Bad update message',
+    'Bad live update',
+    'Bad binary frame',
+    'Chunked live updates are no longer supported'
+]);
+
+function isPermanentUpdateRejection(
+    code: string | undefined,
+    detail: string
+): boolean {
+    return (
+        PERMANENT_UPDATE_REJECTIONS.has(code ?? '') ||
+        PERMANENT_UPDATE_REJECTIONS.has(detail)
+    );
+}
+
 export class CloudAdapter implements FileSystemAdapter {
     private _assetId: string;
     private _websiteBaseUrl: string;
@@ -282,6 +323,7 @@ export class CloudAdapter implements FileSystemAdapter {
     private _fontModelReadyHandler: ((e: Event) => void) | null = null;
     private _browserOfflineHandler: (() => void) | null = null;
     private _browserOnlineHandler: (() => void) | null = null;
+    private _visibilityHandler: (() => void) | null = null;
     private _destroyed = false;
     private _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     private _pingTimer: ReturnType<typeof setInterval> | null = null;
@@ -307,6 +349,24 @@ export class CloudAdapter implements FileSystemAdapter {
     private _tailFull = false;
     private _pendingOutboundPackets: CloudOutboundUpdatePacket[] = [];
     private _outboundFlushScheduled = false;
+    /**
+     * A large edit being sent as several room transactions, one at a time.
+     * Later packets wait until its last part is acknowledged.
+     */
+    private _partedOutbound: {
+        ws: WebSocket;
+        packet: CloudOutboundUpdatePacket;
+        parts: CloudOutboundWirePart[];
+        baseTransactionId: string | null;
+        next: number;
+        inFlightSeq: number | null;
+        tailFullRetries: number;
+        retryTimer: ReturnType<typeof setTimeout> | null;
+    } | null = null;
+    /** Acknowledged parts per large edit, kept across reconnects to resume. */
+    private _partedOutboundProgress = new Map<string, number>();
+    /** Leading parts of peers’ large edits, held until their last part. */
+    private _partedInbound = new CloudPartedInboundBuffer();
     private _outboundBroadcastEntryCounts = new Map<number, number>();
     private _outboundPendingTransactionIds = new Map<number, string[]>();
     private _outboundAckSentAtBySeq = new Map<number, number>();
@@ -337,9 +397,18 @@ export class CloudAdapter implements FileSystemAdapter {
     }> | null = null;
     private _directConnection: { token: string; roomUrl: string } | null = null;
     private _lastAppliedServerUpdate: Uint8Array | null = null;
+    private _onWriteAccessLost: (() => void) | null = null;
     private _refreshCredentials:
         (() => Promise<{ token: string; roomUrl: string }>) | null = null;
     private _terminalCloseDetail: string | null = null;
+    /** A peer update was refused; drop the rest until the socket resyncs. */
+    private _inboundHaltedUntilReconnect = false;
+    private _remoteRefusalTimes: number[] = [];
+    private _signedOut = false;
+    /** Consecutive room rejections that a resend cannot fix. */
+    private _permanentRejectionCount = 0;
+    private _serverBusyCount = 0;
+    private _serverStateApplyFailures = 0;
     private _documentId: string;
     private _lastSyncCollaborationMessages:
         CollaborationMessageEnvelope[] | undefined;
@@ -359,6 +428,7 @@ export class CloudAdapter implements FileSystemAdapter {
             options.onTransferActivityChange ?? null;
         this._wal = options.wal ?? new CloudDurableWal();
         this._refreshCredentials = options.refreshCredentials ?? null;
+        this._onWriteAccessLost = options.onWriteAccessLost ?? null;
     }
 
     get walHealth(): CloudWalHealth {
@@ -551,6 +621,32 @@ export class CloudAdapter implements FileSystemAdapter {
         this._setStatus('error', detail);
     }
 
+    /** The website session ended. Stop reconnecting until sign-in. */
+    markSignedOut(): void {
+        if (this._accessRevoked) {
+            return;
+        }
+        this._reconnectForbidden = true;
+        this._signedOut = true;
+        this._clearReconnectTimer();
+        this._setStatus('error', CLOUD_SIGNED_OUT_MESSAGE);
+    }
+
+    /** Reconnect after the user signed in again. */
+    resumeAfterSignIn(): void {
+        if (!this._signedOut || this._accessRevoked || this._destroyed) {
+            return;
+        }
+        this._signedOut = false;
+        this._reconnectForbidden = false;
+        this._reconnectAttempt = 0;
+        const ws = this._ws;
+        if (!ws || ws.readyState === WebSocket.CLOSED) {
+            this._setStatus('connecting');
+            this._scheduleReconnect();
+        }
+    }
+
     probeUnauthorizedLiveWrite(): boolean {
         const ws = this._ws;
         const clientId = this._clientId;
@@ -706,6 +802,15 @@ export class CloudAdapter implements FileSystemAdapter {
         this._flushDurableWaiters();
     }
 
+    /** Forget queued and in-flight edits; their outbox rows are dropped by the caller. */
+    discardUnsentEdits(): void {
+        this._pendingOutboundPackets = [];
+        this._outboundFlushScheduled = false;
+        this._outboundPendingTransactionIds.clear();
+        this._clearOutboundAckTimeout();
+        this._emitPendingSyncCountChange();
+    }
+
     sendForwardedUpdate(
         update: Uint8Array,
         collaborationMessage?: CollaborationMessageEnvelope | null
@@ -808,6 +913,24 @@ export class CloudAdapter implements FileSystemAdapter {
         this._browserOnlineHandler = () => this._handleBrowserOnline();
         window.addEventListener('offline', this._browserOfflineHandler);
         window.addEventListener('online', this._browserOnlineHandler);
+        if (typeof document !== 'undefined') {
+            this._visibilityHandler = () => {
+                // A hidden tab may be waiting minutes for its next attempt.
+                if (
+                    !document.hidden &&
+                    !this._destroyed &&
+                    this._reconnectTimer !== null &&
+                    this._reconnectAttempt > CLOUD_RECONNECT_IDLE_AFTER_ATTEMPTS
+                ) {
+                    this._reconnectAttempt = 0;
+                    this._scheduleReconnect();
+                }
+            };
+            document.addEventListener(
+                'visibilitychange',
+                this._visibilityHandler
+            );
+        }
     }
 
     private _unsubscribeBrowserNetworkEvents(): void {
@@ -818,6 +941,13 @@ export class CloudAdapter implements FileSystemAdapter {
         if (this._browserOnlineHandler) {
             window.removeEventListener('online', this._browserOnlineHandler);
             this._browserOnlineHandler = null;
+        }
+        if (this._visibilityHandler) {
+            document.removeEventListener(
+                'visibilitychange',
+                this._visibilityHandler
+            );
+            this._visibilityHandler = null;
         }
     }
 
@@ -1048,6 +1178,10 @@ export class CloudAdapter implements FileSystemAdapter {
             for (const id of ids) {
                 inFlightIds.add(id);
             }
+        }
+        const parted = this._activePartedOutbound();
+        if (parted?.baseTransactionId) {
+            inFlightIds.add(parted.baseTransactionId);
         }
 
         for (const record of this._wal.replayableRecords()) {
@@ -1569,6 +1703,7 @@ export class CloudAdapter implements FileSystemAdapter {
                 this._outboundFlushScheduled = false;
                 this._pendingInboundUpdates = [];
                 this._inboundFlushScheduled = false;
+                this._inboundHaltedUntilReconnect = false;
                 const terminalDetail = this._getTerminalCloseDetail(
                     event.code,
                     event.reason
@@ -1972,6 +2107,8 @@ export class CloudAdapter implements FileSystemAdapter {
                 break;
 
             case 'ack':
+                this._permanentRejectionCount = 0;
+                this._serverBusyCount = 0;
                 if (typeof msg.clientTransactionId === 'string') {
                     const txId = msg.clientTransactionId;
                     if (msg.durable !== true) {
@@ -2033,6 +2170,21 @@ export class CloudAdapter implements FileSystemAdapter {
                         seq: typeof msg.seq === 'number' ? msg.seq : null
                     });
                     break;
+                } else if (
+                    code === 'validator_unavailable' ||
+                    code === 'incomplete_limit' ||
+                    code === 'spool_busy'
+                ) {
+                    // The room could not take the edit right now. It stays in
+                    // the local queue; reconnect resends it, later each time
+                    // while the room stays busy.
+                    this._serverBusyCount += 1;
+                    this._reconnectAttempt = Math.max(
+                        this._reconnectAttempt,
+                        this._serverBusyCount
+                    );
+                    this._setStatus('connecting', 'Cloud room is busy');
+                    this._ws?.close(CLIENT_RECONNECT_CLOSE_CODE, 'server-busy');
                 } else if (detail === 'Access epoch is stale') {
                     // Access-epoch bumps are expected during membership changes.
                     // Reconnect with a fresh room token without surfacing a user
@@ -2045,12 +2197,41 @@ export class CloudAdapter implements FileSystemAdapter {
                 } else if (
                     detail === 'Write access requires owner or editor role'
                 ) {
-                    // Read-only members still have a valid live session; the
-                    // room rejected a mutation. Keep the socket so catch-up
-                    // and owner edits continue to flow.
+                    // The owner made this user a viewer while edits were
+                    // unsent. The room refuses them every time, so resending
+                    // them on each reconnect would loop. Discard them; the
+                    // live session continues read-only.
+                    this.cacheAssetRole(this._assetId, 'viewer');
+                    if (this._onWriteAccessLost) {
+                        this._onWriteAccessLost();
+                    } else {
+                        const ids = [
+                            ...this._wal.transactionIdsFor(this._documentId)
+                        ];
+                        this.discardUnsentEdits();
+                        this._dropDurableTransactions(ids);
+                    }
                     break;
                 } else if (detail === CLOUD_ASSET_DELETED_MESSAGE) {
                     this._setStatus('error', detail);
+                } else if (
+                    isPermanentUpdateRejection(code, detail) &&
+                    ++this._permanentRejectionCount >=
+                        MAX_PERMANENT_REJECTION_RESENDS
+                ) {
+                    // The room will refuse this packet every time. Stop
+                    // resending it; the edit stays in the local queue.
+                    const terminalDetail = `Cloud collaboration could not sync an edit (${detail}). Later edits are kept on this device.`;
+                    pushCollabIntegrityEvent('update-permanently-rejected', {
+                        documentId: this._documentId,
+                        detail
+                    });
+                    this._terminalCloseDetail = terminalDetail;
+                    this._setStatus('error', terminalDetail);
+                    this._ws?.close(
+                        CLIENT_RECONNECT_CLOSE_CODE,
+                        'update-rejected'
+                    );
                 } else {
                     this._setStatus('error', detail);
                     this._ws?.close(
@@ -2210,12 +2391,32 @@ export class CloudAdapter implements FileSystemAdapter {
                 }
             }
             this._initialServerStateApplied = true;
+            this._serverStateApplyFailures = 0;
             console.log(
                 `CloudAdapter: applied server state (${update.length} bytes)`
             );
             return true;
         } catch (err) {
             console.error('CloudAdapter: failed to apply server state:', err);
+            this._serverStateApplyFailures += 1;
+            pushCollabIntegrityEvent('server-state-apply-failed', {
+                assetId: this._assetId,
+                documentId: this._documentId,
+                bytes: update.length,
+                failures: this._serverStateApplyFailures,
+                error: String(err)
+            });
+            if (this._serverStateApplyFailures >= MAX_SERVER_STATE_FAILURES) {
+                // Reconnecting fetches the same state; stop the silent loop.
+                const detail =
+                    'Cloud collaboration could not load the saved state of this font. Reload the editor; unsent edits are kept on this device.';
+                this._terminalCloseDetail = detail;
+                this._setStatus('error', detail);
+                this._ws?.close(
+                    CLIENT_RECONNECT_CLOSE_CODE,
+                    'server-state-rejected'
+                );
+            }
             return false;
         }
     }
@@ -2512,7 +2713,7 @@ export class CloudAdapter implements FileSystemAdapter {
                 undefined,
                 remoteCollaborationMessages,
                 this._documentId,
-                { captureInUndo: false }
+                { captureInUndo: false, fromCollaborator: true }
             );
             if (!didApply) {
                 return false;
@@ -2544,8 +2745,27 @@ export class CloudAdapter implements FileSystemAdapter {
                 })
             );
             this._pendingInboundUpdates = [];
-            this._terminalCloseDetail = detail;
-            this._setStatus('error', detail);
+            this._inboundHaltedUntilReconnect = true;
+            const now = Date.now();
+            this._remoteRefusalTimes = this._remoteRefusalTimes.filter(
+                (time) => now - time < REMOTE_REFUSAL_WINDOW_MS
+            );
+            this._remoteRefusalTimes.push(now);
+            if (
+                err instanceof MetadataFreeRemoteUpdateError ||
+                this._remoteRefusalTimes.length > MAX_REMOTE_REFUSAL_RESYNCS
+            ) {
+                this._terminalCloseDetail = detail;
+                this._setStatus('error', detail);
+            } else {
+                // Reconnect and bootstrap from the room's checkpoint and
+                // tail; unacknowledged local edits are requeued on close.
+                pushCollabIntegrityEvent('remote-update-resync', {
+                    documentId: this._documentId,
+                    attempt: this._remoteRefusalTimes.length
+                });
+                this._setStatus('connecting', detail);
+            }
             this._ws?.close(
                 CLIENT_RECONNECT_CLOSE_CODE,
                 'remote-update-rejected'
@@ -2659,6 +2879,11 @@ export class CloudAdapter implements FileSystemAdapter {
             return;
         }
 
+        if (this._activePartedOutbound()) {
+            // A large edit is going out part by part; the rest wait for it.
+            return;
+        }
+
         const walTransactionIds = this._wal.transactionIdsFor(this._documentId);
         const packets = this._pendingOutboundPackets.filter(
             (packet) =>
@@ -2681,6 +2906,15 @@ export class CloudAdapter implements FileSystemAdapter {
 
         for (let packetIndex = 0; packetIndex < packets.length; packetIndex++) {
             const packet = packets[packetIndex];
+            if (needsOutboundParts(packet.update)) {
+                const parts = planOutboundParts(packet);
+                if (parts && parts.length > 1) {
+                    // Send it alone, part by part; what follows waits.
+                    restoreUnsent(packetIndex + 1);
+                    this._startPartedOutbound(packet, parts);
+                    break;
+                }
+            }
             const seq = ++this._seq;
             const collaborationMessages = packet.collaborationMessage
                 ? [
@@ -2756,6 +2990,171 @@ export class CloudAdapter implements FileSystemAdapter {
         this._emitTransferActivity();
 
         this._bridge?.advanceBroadcastLogCursor(broadcastEntryCount);
+        this._onOutboundPartAcked(seq);
+    }
+
+    /** The large edit in flight on the current socket, or null. */
+    private _activePartedOutbound(): CloudAdapter['_partedOutbound'] {
+        const state = this._partedOutbound;
+        if (!state) {
+            return null;
+        }
+        if (state.ws === this._ws && state.ws.readyState === WebSocket.OPEN) {
+            return state;
+        }
+        // Its socket is gone. The edit is still in the outbox and is sent
+        // again after the reconnect, from the first unacknowledged part.
+        if (state.retryTimer) {
+            clearTimeout(state.retryTimer);
+        }
+        this._partedOutbound = null;
+        return null;
+    }
+
+    private _startPartedOutbound(
+        packet: CloudOutboundUpdatePacket,
+        parts: CloudOutboundWirePart[]
+    ): void {
+        if (!this._ws) {
+            this._pendingOutboundPackets.unshift(packet);
+            return;
+        }
+        const baseTransactionId = packet.clientTransactionId ?? null;
+        const resumed = baseTransactionId
+            ? (this._partedOutboundProgress.get(baseTransactionId) ?? 0)
+            : 0;
+        this._partedOutbound = {
+            ws: this._ws,
+            packet,
+            parts,
+            baseTransactionId,
+            next: Math.min(Math.max(0, resumed), parts.length - 1),
+            inFlightSeq: null,
+            tailFullRetries: 0,
+            retryTimer: null
+        };
+        pushCollabIntegrityEvent('parted-outbound-start', {
+            documentId: this._documentId,
+            bytes: packet.update.byteLength,
+            parts: parts.length,
+            resumedAt: this._partedOutbound.next
+        });
+        this._sendNextOutboundPart();
+    }
+
+    private _sendNextOutboundPart(): void {
+        const state = this._activePartedOutbound();
+        if (!state || state.inFlightSeq !== null) {
+            return;
+        }
+        state.retryTimer = null;
+        const part = state.parts[state.next];
+        const seq = ++this._seq;
+        const collaborationMessage = part.collaborationMessage
+            ? fitEnvelopeForWire(part.collaborationMessage, {
+                  documentId: this._documentId
+              })
+            : null;
+        const isLast = state.next === state.parts.length - 1;
+        if (isLast && collaborationMessage?.changes.length) {
+            this._outboundBroadcastEntryCounts.set(
+                seq,
+                collaborationMessage.changes.length
+            );
+        }
+        if (part.clientTransactionId) {
+            this._outboundPendingTransactionIds.set(seq, [
+                part.clientTransactionId
+            ]);
+        }
+        this._outboundAckSentAtBySeq.set(seq, Date.now());
+        this._armOutboundAckTimeout();
+        state.inFlightSeq = seq;
+        try {
+            state.ws.send(
+                encodeLiveUpdateFrame({
+                    clientId: this._clientId ?? '',
+                    seq,
+                    update: part.update,
+                    clientTransactionId: part.clientTransactionId ?? null,
+                    collaborationMessages: collaborationMessage
+                        ? [collaborationMessage]
+                        : null
+                })
+            );
+        } catch (error) {
+            console.warn(
+                'CloudAdapter: failed to send part of a large update; will retry after reconnect:',
+                error
+            );
+            this._outboundPendingTransactionIds.delete(seq);
+            this._outboundBroadcastEntryCounts.delete(seq);
+            this._outboundAckSentAtBySeq.delete(seq);
+            this._partedOutbound = null;
+            this._pendingOutboundPackets.unshift(state.packet);
+            return;
+        }
+        this._noteTransferActivity('sending');
+    }
+
+    private _onOutboundPartAcked(seq: number): void {
+        const state = this._partedOutbound;
+        if (!state || state.inFlightSeq !== seq) {
+            return;
+        }
+        state.inFlightSeq = null;
+        state.tailFullRetries = 0;
+        state.next += 1;
+        if (state.next < state.parts.length) {
+            if (state.baseTransactionId) {
+                this._partedOutboundProgress.set(
+                    state.baseTransactionId,
+                    state.next
+                );
+            }
+            queueMicrotask(() => this._sendNextOutboundPart());
+            return;
+        }
+        if (state.baseTransactionId) {
+            this._partedOutboundProgress.delete(state.baseTransactionId);
+        }
+        this._partedOutbound = null;
+        pushCollabIntegrityEvent('parted-outbound-done', {
+            documentId: this._documentId,
+            parts: state.parts.length
+        });
+        if (
+            this._pendingOutboundPackets.length &&
+            !this._outboundFlushScheduled
+        ) {
+            this._outboundFlushScheduled = true;
+            queueMicrotask(() => this._flushPendingOutboundUpdates());
+        }
+    }
+
+    /**
+     * The room’s uncompacted journal holds about one packet, so the parts of a
+     * large edit regularly meet a full tail while the room compacts. Send the
+     * refused part again shortly instead of waiting for the ack timeout and a
+     * reconnect.
+     */
+    private _retryOutboundPartAfterTailFull(): void {
+        const state = this._activePartedOutbound();
+        if (!state || state.inFlightSeq === null || state.retryTimer) {
+            return;
+        }
+        const seq = state.inFlightSeq;
+        this._outboundPendingTransactionIds.delete(seq);
+        this._outboundBroadcastEntryCounts.delete(seq);
+        this._outboundAckSentAtBySeq.delete(seq);
+        this._armOutboundAckTimeout();
+        state.inFlightSeq = null;
+        const delayMs = Math.min(15_000, 1_000 * 2 ** state.tailFullRetries);
+        state.tailFullRetries += 1;
+        state.retryTimer = setTimeout(
+            () => this._sendNextOutboundPart(),
+            delayMs
+        );
     }
 
     private _enqueuePendingDurabilityMessages(
@@ -2806,16 +3205,40 @@ export class CloudAdapter implements FileSystemAdapter {
         this._inboundFlushScheduled = false;
         const messages = this._pendingInboundUpdates;
         this._pendingInboundUpdates = [];
-        if (!messages.length || this._terminalCloseDetail) {
+        if (
+            !messages.length ||
+            this._terminalCloseDetail ||
+            this._inboundHaltedUntilReconnect
+        ) {
             return;
         }
 
+        // Parts of a peer’s large edit whose last part never came are room
+        // state like any tail row: apply them without their envelope.
+        for (const expired of this._partedInbound.takeExpired()) {
+            try {
+                this._applyServerStateToBridge(expired);
+            } catch (error) {
+                console.warn(
+                    'CloudAdapter: failed to apply an unfinished large update:',
+                    error
+                );
+            }
+        }
+
         for (const message of messages) {
-            const applied = this._applyRemoteUpdate(
+            const accepted = this._partedInbound.accept(
                 message.update,
                 message.collaborationMessages?.length
                     ? message.collaborationMessages
-                    : undefined,
+                    : undefined
+            );
+            if (accepted.kind === 'hold') {
+                continue;
+            }
+            const applied = this._applyRemoteUpdate(
+                accepted.update,
+                accepted.envelopes,
                 { logId: message.logId, senderClientId: message.clientId }
             );
             if (
@@ -2828,7 +3251,10 @@ export class CloudAdapter implements FileSystemAdapter {
                     message.logId
                 );
             }
-            if (this._terminalCloseDetail) {
+            if (
+                this._terminalCloseDetail ||
+                this._inboundHaltedUntilReconnect
+            ) {
                 return;
             }
         }
@@ -2851,15 +3277,20 @@ export class CloudAdapter implements FileSystemAdapter {
         });
 
         if (!resp.ok) {
-            if (resp.status === 401 || resp.status === 403) {
-                this.markAccessRevoked(
-                    resp.status === 403 ? 'Access revoked' : 'Unauthorized'
-                );
+            if (resp.status === 401) {
+                this.markSignedOut();
+            } else if (resp.status === 403) {
+                this.markAccessRevoked('Access revoked');
             }
             const body = await resp.text().catch(() => '');
-            throw new Error(
+            const error = new Error(
                 `room-token request failed: ${resp.status} ${body}`
             );
+            const lapsed = subscriptionLapsedDetail(error);
+            if (lapsed) {
+                this.markAccessRevoked(lapsed);
+            }
+            throw error;
         }
 
         const data = await parseRequiredJsonResponse<{
@@ -2882,6 +3313,10 @@ export class CloudAdapter implements FileSystemAdapter {
 
     private _noteServerError(error: CloudAccessServerError): void {
         this._lastServerError = error;
+        const code = (error as { code?: string }).code;
+        if (code === 'tail_full' || error.message === 'tail_full') {
+            this._retryOutboundPartAfterTailFull();
+        }
     }
 
     private async _refreshCompactStatus(): Promise<void> {
@@ -3024,6 +3459,10 @@ export class CloudAdapter implements FileSystemAdapter {
                     this._directConnection = { token, roomUrl };
                 }
             } catch (error) {
+                if (isSignedOutCloudCredentialError(error)) {
+                    this.markSignedOut();
+                    return;
+                }
                 if (isForbiddenCloudCredentialError(error)) {
                     this.markAccessRevoked('Access revoked');
                     return;
@@ -3067,7 +3506,11 @@ export class CloudAdapter implements FileSystemAdapter {
             return;
         }
         this._clearReconnectTimer();
-        const delayMs = cloudReconnectDelayMs(this._reconnectAttempt);
+        const idle =
+            typeof document !== 'undefined' &&
+            document.hidden === true &&
+            this.pendingSyncCount === 0;
+        const delayMs = cloudReconnectDelayMs(this._reconnectAttempt, idle);
         this._reconnectAttempt += 1;
         this._reconnectTimer = setTimeout(() => {
             if (this._destroyed) {

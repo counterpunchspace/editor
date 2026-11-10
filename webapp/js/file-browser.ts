@@ -1240,6 +1240,16 @@ function createFileContextMenuHtml(
         `);
     }
 
+    // Leave (a shared cloud font the user does not own)
+    if (supportsAction('leave')) {
+        items.push(`
+            <div class="plugin-menu-item" data-action="leave">
+                <span class="material-symbols-outlined">logout</span>
+                <span>Leave Font</span>
+            </div>
+        `);
+    }
+
     // Delete (for both files and folders)
     if (supportsAction('delete')) {
         items.push(`
@@ -1360,6 +1370,9 @@ function setupFileContextMenus() {
                                     break;
                                 case 'delete':
                                     await deleteItem(path, name, isDir);
+                                    break;
+                                case 'leave':
+                                    await leaveSharedFont(path, name);
                                     break;
                             }
                         });
@@ -2648,6 +2661,36 @@ async function deleteItem(itemPath: string, itemName: string, isDir: boolean) {
     } catch (error: unknown) {
         console.error('[FileBrowser]', 'Error deleting item:', error);
         alert(`Error deleting item: ${getErrorMessage(error)}`);
+    }
+}
+
+async function leaveSharedFont(itemPath: string, itemName: string) {
+    const assetId = itemPath.replace(/^cloud:\/\//, '').trim();
+    if (!assetId || !window.cloudPlugin?.leaveAsset) {
+        return;
+    }
+    if (
+        !confirm(
+            `Leave “${itemName}”? It disappears from your fonts. The owner can invite you again.`
+        )
+    ) {
+        return;
+    }
+    try {
+        await withFileDialogBusy(
+            {
+                message: `Leaving ${itemName}...`,
+                actionLabel: 'Leaving...',
+                useLoadingCursor: true
+            },
+            async () => {
+                await window.cloudPlugin!.leaveAsset(assetId);
+                await refreshFileSystem();
+            }
+        );
+    } catch (error: unknown) {
+        console.error('[FileBrowser]', 'Error leaving font:', error);
+        alert(`Could not leave the font: ${getErrorMessage(error)}`);
     }
 }
 

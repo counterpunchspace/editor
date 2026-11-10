@@ -7,6 +7,7 @@
  * updates to other windows via BroadcastChannel.
  */
 
+import { cloudPacketBytesForLimit } from './cloud-update-split';
 import * as Y from 'yjs';
 import { assertCompileStamp } from './edit-intent';
 import { rebasePythonExecutionBaseline } from './python-execution-baseline';
@@ -322,7 +323,23 @@ function assertCloudAssetMutable(): void {
 
 export type ApplyRemoteUpdateOptions = {
     captureInUndo?: boolean;
+    /**
+     * The update is another person’s edit (from the cloud room), not one
+     * relayed from this user’s own linked window. Undo must not overwrite it.
+     */
+    fromCollaborator?: boolean;
 };
+
+/** Most recent collaborator-touched paths kept for the undo guard. */
+const MAX_COLLABORATOR_TOUCHES = 2000;
+
+function historyPathsOverlap(left: string, right: string): boolean {
+    return (
+        left === right ||
+        left.startsWith(`${right}.`) ||
+        right.startsWith(`${left}.`)
+    );
+}
 const GLYPH_REVISION_ORIGIN = 'glyph-revision-signal';
 const LAYER_EDIT_ORIGIN_PREFIX = 'layer-edit:';
 
@@ -638,6 +655,12 @@ export class PatchSyncEngine {
         names: Set<string>;
     } | null = null;
     /** Change log of all recorded changes */
+    /**
+     * Paths a collaborator changed, with the change-log length at that time.
+     * Undo replays stored values, so replaying an item over a later
+     * collaborator edit of the same path would silently revert their work.
+     */
+    private _collaboratorTouches: Array<{ seq: number; path: string }> = [];
     private _changeLog: ChangeLogEntry[] = [];
     /** Unique window identifier */
     readonly windowId: string;
@@ -663,6 +686,8 @@ export class PatchSyncEngine {
     private _cloudWalCommitChain: Promise<void> = Promise.resolve();
     /** Serializes persist-then-deliver of local cloud emits after apply. */
     private _cloudEmitPersistChain: Promise<void> = Promise.resolve();
+    /** Local cloud emits whose outbox write has not finished yet. */
+    private _cloudEmitPersistsInFlight = 0;
     /**
      * While a multi-document commit is emitting, catalog projection waits
      * and lands as one core write after every glyph packet has been delivered.
@@ -1518,11 +1543,32 @@ export class PatchSyncEngine {
         if (this._isTombstonedGlyphDocument(documentId)) {
             return false;
         }
+        // Only a glyph already held here counts: hydrating a glyph for the
+        // first time is not anyone’s edit.
+        const stateBefore = this.hasResidentGlyphDocument(documentId)
+            ? this.encodeDocumentStateVector(documentId)
+            : null;
         this.beginDeferredAfterSync();
         try {
             this.applyDocumentCheckpoint(documentId, update);
         } finally {
             this.endDeferredAfterSync();
+        }
+        if (stateBefore) {
+            // Catch-up brings in other people’s edits of a glyph that has no
+            // live socket here; guard undo for the whole glyph.
+            const glyphName = this._glyphNameById.get(
+                documentId.slice('glyph:'.length)
+            );
+            if (
+                glyphName &&
+                !stateVectorsEqual(
+                    stateBefore,
+                    this.encodeDocumentStateVector(documentId)
+                )
+            ) {
+                this._noteCollaboratorTouches([`glyphs.${glyphName}`]);
+            }
         }
         if (documentId !== FONT_DEPS_DOCUMENT_ID) {
             // Live WS catch-up is often a delta vs the HTTP-hydrated SV.
@@ -2708,8 +2754,12 @@ export class PatchSyncEngine {
         if (
             typeof plugin?.persistOutgoingCloudUpdate === 'function' &&
             collaborationMessage &&
+            // Linked windows have no cloud session; the main window writes
+            // the durable row when it relays the edit.
+            !window.windowRole?.isLinkedWindow?.() &&
             window.fontManager?.currentFont?.isCloudBacked?.() === true
         ) {
+            this._cloudEmitPersistsInFlight += 1;
             this._cloudEmitPersistChain = this._cloudEmitPersistChain
                 .then(() =>
                     Promise.resolve(
@@ -2755,10 +2805,18 @@ export class PatchSyncEngine {
                 .then(
                     () => undefined,
                     () => undefined
-                );
+                )
+                .then(() => {
+                    this._cloudEmitPersistsInFlight -= 1;
+                });
             return;
         }
         deliver();
+    }
+
+    /** True while a local edit is still on its way into the cloud outbox. */
+    get hasCloudPersistInFlight(): boolean {
+        return this._cloudEmitPersistsInFlight > 0;
     }
 
     private _reportCloudPersistFailure(
@@ -5489,6 +5547,21 @@ export class PatchSyncEngine {
         if (!historyItem) {
             return null;
         }
+        if (this._historyItemOverlapsLaterCollaboratorEdit(historyItem)) {
+            console.warn(
+                `Skipping ${historyAction}: a collaborator changed the same data after history item ${historyItem.id}`
+            );
+            window.dispatchEvent(
+                new CustomEvent('history-replay-blocked', {
+                    detail: {
+                        reason: 'collaborator-edit',
+                        historyAction,
+                        historyItemId: historyItem.id
+                    }
+                })
+            );
+            return null;
+        }
         if (!this._canReplayHistoryItem(historyItem, historyAction)) {
             console.warn(
                 `Skipping ${historyAction}: history item ${historyItem.id} has no replayable values`
@@ -5770,6 +5843,13 @@ export class PatchSyncEngine {
             }
             if (!didChange) {
                 return false;
+            }
+            if (options?.fromCollaborator) {
+                this._noteCollaboratorTouches(
+                    effectiveRemoteEntries.map((entry) =>
+                        String(entry.path || '')
+                    )
+                );
             }
             this._reconcileGlyphDocsAfterRemoteEntries(effectiveRemoteEntries);
             this._bindAppliedGlyphDocument(resolvedDocumentId);
@@ -8228,7 +8308,9 @@ export class PatchSyncEngine {
             const decision = this._askCollabSubmitPermission(
                 pendingPackets.map((packet) => ({
                     documentId: packet.documentId,
-                    packetBytes: packet.update.byteLength,
+                    // A large update travels as several room transactions;
+                    // only a value too large to split is refused.
+                    packetBytes: cloudPacketBytesForLimit(packet.update),
                     shardBytes: packet.shardBytes
                 }))
             );
@@ -8989,8 +9071,11 @@ export class PatchSyncEngine {
         if (
             collaborationMessage &&
             typeof plugin?.persistOutgoingCloudUpdate === 'function' &&
+            // As for edits: main writes the durable row when it relays.
+            !window.windowRole?.isLinkedWindow?.() &&
             window.fontManager?.currentFont?.isCloudBacked?.() === true
         ) {
+            this._cloudEmitPersistsInFlight += 1;
             this._cloudEmitPersistChain = this._cloudEmitPersistChain
                 .then(() =>
                     Promise.resolve(
@@ -9016,7 +9101,10 @@ export class PatchSyncEngine {
                             FONT_CORE_DOCUMENT_ID,
                             error instanceof Error ? error : String(error)
                         )
-                );
+                )
+                .then(() => {
+                    this._cloudEmitPersistsInFlight -= 1;
+                });
         }
         for (const cb of this._glyphRevisionListeners) {
             cb(update, entries, collaborationMessage);
@@ -9735,6 +9823,45 @@ export class PatchSyncEngine {
 
     private _cloneRuntimeValue(value: unknown): unknown {
         return cloneHistoryValue(value);
+    }
+
+    private _noteCollaboratorTouches(paths: string[]): void {
+        const seq = this._changeLog.length;
+        for (const path of new Set(paths)) {
+            if (path) {
+                this._collaboratorTouches.push({ seq, path });
+            }
+        }
+        if (this._collaboratorTouches.length > MAX_COLLABORATOR_TOUCHES) {
+            this._collaboratorTouches.splice(
+                0,
+                this._collaboratorTouches.length - MAX_COLLABORATOR_TOUCHES
+            );
+        }
+    }
+
+    private _historyItemOverlapsLaterCollaboratorEdit(
+        item: HistoryStackItem
+    ): boolean {
+        if (!this._collaboratorTouches.length) {
+            return false;
+        }
+        if (
+            this._collaboratorTouches[this._collaboratorTouches.length - 1]
+                .seq > this._changeLog.length
+        ) {
+            // The change log was reset; its indexes no longer line up.
+            this._collaboratorTouches = [];
+            return false;
+        }
+        const paths = item.entries
+            .map((entry) => String(entry.path || ''))
+            .filter(Boolean);
+        return this._collaboratorTouches.some(
+            (touch) =>
+                touch.seq > item.transitionSeq &&
+                paths.some((path) => historyPathsOverlap(path, touch.path))
+        );
     }
 
     private _canReplayHistoryItem(

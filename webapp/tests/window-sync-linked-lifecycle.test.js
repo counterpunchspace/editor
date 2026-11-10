@@ -230,6 +230,46 @@ describe('linked window lifecycle', () => {
         expect(overlay?.querySelector('[data-action="make-main"]')).toBeNull();
     });
 
+    test('a linked window reports read-only once main is gone', async () => {
+        navigator.locks = createLockManager();
+        const main = makeSync(MAIN_ROLE, 'main');
+        const linked = makeSync(LINKED_ROLE, 'linked');
+        await settle();
+        window.windowRole = LINKED_ROLE;
+        expect(linked.linkedReadOnly).toBe(false);
+
+        window.windowRole = MAIN_ROLE;
+        main.destroy();
+        window.windowRole = LINKED_ROLE;
+        await settle();
+
+        expect(linked.linkedReadOnly).toBe(true);
+        window.windowRole = MAIN_ROLE;
+        expect(linked.linkedReadOnly).toBe(false);
+    });
+
+    test('main’s failed cloud persist shows in linked windows', async () => {
+        makeSync(MAIN_ROLE, 'main');
+        makeSync(LINKED_ROLE, 'linked');
+        const seen = [];
+        const listener = (event) => seen.push(event.detail);
+
+        window.windowRole = MAIN_ROLE;
+        window.dispatchEvent(
+            new CustomEvent('cloud-persist-failed', {
+                detail: { documentId: 'glyph:a', reason: 'rejected' }
+            })
+        );
+        window.addEventListener('cloud-persist-failed', listener);
+        window.windowRole = LINKED_ROLE;
+        await settle();
+        window.removeEventListener('cloud-persist-failed', listener);
+
+        // Both test windows share one `window`, so each relays the event once.
+        expect(seen.length).toBeGreaterThan(0);
+        expect(seen[0]).toEqual({ documentId: 'glyph:a', reason: 'rejected' });
+    });
+
     test('destroy clears the bootstrap timeout and pending hydration requests', async () => {
         jest.useFakeTimers();
         try {

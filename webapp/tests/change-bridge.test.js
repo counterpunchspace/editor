@@ -10234,6 +10234,95 @@ describe('syncGlyphFromJson', () => {
         receiverBridge.destroy();
     });
 
+    test('undo does not overwrite a collaborator’s later edit of the same point', () => {
+        const localFontJson = makeMinimalFont();
+        const collaboratorFontJson = cloneValue(localFontJson);
+        const local = new ChangeBridge('local-undo-guard');
+        const collaborator = new ChangeBridge('collaborator-undo-guard');
+        const collaboratorPackets = attachPacketCapture(collaborator);
+        local.initFromJson(localFontJson);
+        collaborator.setFontJson(collaboratorFontJson);
+        collaborator.applyDocumentSetState(local.encodeDocumentSet());
+        const syncDrag = (bridge) =>
+            bridge.syncGlyphFromJson(
+                'A',
+                'Drag point',
+                undefined,
+                undefined,
+                'layer-1',
+                undefined,
+                undefined,
+                undefined,
+                'test-sync',
+                null
+            );
+
+        const localPackets = attachPacketCapture(local);
+        localFontJson.glyphs[0].layers[0].shapes[0].nodes[0].x = 123;
+        syncDrag(local);
+        expect(local.canUndo('A', 'layer-1')).toBe(true);
+        // The collaborator sees the local edit, then moves the point again.
+        applyCapturedPackets(collaborator, localPackets);
+
+        collaboratorFontJson.glyphs[0].layers[0].shapes[0].nodes[0].x = 200;
+        syncDrag(collaborator);
+        for (const packet of collaboratorPackets) {
+            local.applyRemoteUpdate(
+                packet.update,
+                undefined,
+                packet.collaborationMessage
+                    ? [packet.collaborationMessage]
+                    : undefined,
+                packet.documentId,
+                { captureInUndo: false, fromCollaborator: true }
+            );
+        }
+        expect(getYDocLayerNodeValue(local, 'A', 'layer-1', 0, 0, 'x')).toBe(
+            200
+        );
+
+        const blocked = jest.fn();
+        window.addEventListener('history-replay-blocked', blocked);
+        try {
+            expect(local.undo('A', 'layer-1')).toBeNull();
+        } finally {
+            window.removeEventListener('history-replay-blocked', blocked);
+        }
+        expect(blocked).toHaveBeenCalledTimes(1);
+        expect(getYDocLayerNodeValue(local, 'A', 'layer-1', 0, 0, 'x')).toBe(
+            200
+        );
+
+        local.destroy();
+        collaborator.destroy();
+    });
+
+    test('undo still works when a collaborator edited something else', () => {
+        const localFontJson = makeMinimalFont();
+        const local = new ChangeBridge('local-undo-unrelated');
+        local.initFromJson(localFontJson);
+        localFontJson.glyphs[0].layers[0].shapes[0].nodes[0].x = 123;
+        local.syncGlyphFromJson(
+            'A',
+            'Drag point',
+            undefined,
+            undefined,
+            'layer-1',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
+        local._noteCollaboratorTouches(['glyphs.B.layers.layer-1.width']);
+
+        expect(local.undo('A', 'layer-1')).not.toBeNull();
+        expect(
+            getYDocLayerNodeValue(local, 'A', 'layer-1', 0, 0, 'x')
+        ).not.toBe(123);
+        local.destroy();
+    });
+
     test('linked window applies a model-setter point move synced from serialized font JSON', () => {
         const senderFontJson = makeMinimalFont();
         const receiverFontJson = cloneValue(senderFontJson);
