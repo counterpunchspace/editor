@@ -5,6 +5,12 @@
 import '../auth-manager';
 import { Logger } from '../logger';
 import { getCloudRequestHeaders } from '../cloud-website-api';
+import { deleteCloudAssetUntilComplete } from '../cloud-delete-asset';
+import {
+    fetchExampleFiles,
+    isExampleFontPath,
+    loadExampleManifest
+} from '../example-fonts';
 import {
     allDiskDocuments,
     allRecentFonts,
@@ -42,6 +48,7 @@ import {
 import {
     escapeHtml,
     icon,
+    openDialog,
     reportError,
     showNotice
 } from '../font-windows/dialogs';
@@ -269,14 +276,23 @@ $('launcher-theme').addEventListener('click', (event) => {
 
 // --- Recent fonts -----------------------------------------------------------
 
+// Fonts on this computer can only be taken off the list; browser-storage
+// fonts and cloud fonts the user owns can be deleted.
+type RowAction = 'forget' | 'delete';
+
 type Row = OpenableFont & {
     icon: string;
     lastOpened: number | null;
     where?: string[];
-    removable?: boolean;
+    action?: RowAction;
 };
 
-type CloudAsset = { id: string; name: string; updatedAt: number };
+type CloudAsset = {
+    id: string;
+    name: string;
+    updatedAt: number;
+    role?: string;
+};
 
 let diskDocs: DiskDocument[] = [];
 let recents = new Map<string, RecentFont>();
@@ -330,11 +346,13 @@ function rowHtml(row: Row): string {
                 : '';
         meta = `<span class="launcher-open-badge">Open</span><button type="button" class="dialog-button" data-jump="${escapeHtml(row.key)}"${title}>${icon('jump_to_element')}Jump to</button>`;
     }
-    const remove =
-        row.removable && !state
-            ? `<button type="button" class="launcher-icon-button remove" data-remove="${escapeHtml(row.key)}" aria-label="Remove from list" title="Remove from list">${icon('close')}</button>`
-            : '';
-    return `<div class="launcher-row" role="button" tabindex="0" data-open="${escapeHtml(row.key)}">${icon(row.icon)}<span class="name-line"><span class="name">${escapeHtml(row.name)}</span>${whereHtml(row.where)}</span><span class="meta">${meta}${remove}</span></div>`;
+    let action = '';
+    if (row.action === 'forget' && !state) {
+        action = `<button type="button" class="launcher-icon-button remove" data-remove="${escapeHtml(row.key)}" aria-label="Remove from list" title="Remove from list">${icon('close')}</button>`;
+    } else if (row.action === 'delete' && !state) {
+        action = `<button type="button" class="launcher-icon-button remove" data-delete="${escapeHtml(row.key)}" aria-label="Delete…" title="Delete…">${icon('delete')}</button>`;
+    }
+    return `<div class="launcher-row" role="button" tabindex="0" data-open="${escapeHtml(row.key)}">${icon(row.icon)}<span class="name-line"><span class="name">${escapeHtml(row.name)}</span>${whereHtml(row.where)}</span><span class="meta">${meta}${action}</span></div>`;
 }
 
 function unsavedRows(): Row[] {
@@ -367,7 +385,7 @@ function diskRows(): Row[] {
                 icon: rowIcon(doc.name),
                 lastOpened: recents.get(key)?.lastOpened ?? doc.addedAt,
                 where: chains.get(doc.id),
-                removable: true
+                action: 'forget' as const
             };
         })
         .sort((a, b) => (b.lastOpened ?? 0) - (a.lastOpened ?? 0));
@@ -382,7 +400,11 @@ function browserRows(): Row[] {
                 name,
                 format: fontFormatOf(name),
                 icon: rowIcon(name),
-                lastOpened: recents.get(key)?.lastOpened ?? null
+                lastOpened: recents.get(key)?.lastOpened ?? null,
+                action:
+                    examplesKnown && !isExampleFontPath(`/user/${name}`)
+                        ? ('delete' as const)
+                        : undefined
             };
         })
         .sort((a, b) => (b.lastOpened ?? 0) - (a.lastOpened ?? 0));
@@ -396,7 +418,9 @@ function cloudRows(): Row[] {
                 key,
                 name: asset.name,
                 icon: 'cloud',
-                lastOpened: recents.get(key)?.lastOpened ?? asset.updatedAt
+                lastOpened: recents.get(key)?.lastOpened ?? asset.updatedAt,
+                // Only the owner can delete; the server refuses everyone else.
+                action: asset.role === 'owner' ? ('delete' as const) : undefined
             };
         })
         .sort((a, b) => (b.lastOpened ?? 0) - (a.lastOpened ?? 0));
@@ -509,6 +533,12 @@ $('launcher-recents').addEventListener('click', async (event) => {
         void refresh();
         return;
     }
+    const del = target.closest<HTMLElement>('[data-delete]');
+    if (del) {
+        const row = rowsByKey.get(del.dataset.delete ?? '');
+        if (row) confirmDelete(row);
+        return;
+    }
     const jump = target.closest<HTMLElement>('[data-jump]');
     const row = jump ?? target.closest<HTMLElement>('[data-open]');
     const key = jump?.dataset.jump ?? row?.dataset.open;
@@ -520,6 +550,72 @@ $('launcher-recents').addEventListener('click', async (event) => {
     const font = rowsByKey.get(key);
     if (font) openFontWindow(font, { sparse: cloudLoadOutlinesLater });
 });
+
+const CLOUD_PREFIX = 'cloud:///';
+const BROWSER_PREFIX = 'memory:///user/';
+
+function confirmDelete(row: Row): void {
+    const cloud = row.key.startsWith(CLOUD_PREFIX);
+    const dialog = openDialog({ title: `Delete “${row.name}”?` });
+    dialog.body.innerHTML = `
+        <p>${
+            cloud
+                ? 'This deletes the font from the cloud, for you and everyone you shared it with.'
+                : 'This deletes the font from this browser’s storage.'
+        } It can’t be undone.</p>
+        <div class="font-window-dialog-actions">
+            <button type="button" class="dialog-button" data-close>Cancel</button>
+            <button type="button" class="dialog-button dialog-button-danger" data-confirm-delete>Delete</button>
+        </div>`;
+    const button = dialog.body.querySelector<HTMLButtonElement>(
+        '[data-confirm-delete]'
+    );
+    button?.addEventListener('click', async () => {
+        button.disabled = true;
+        button.textContent = 'Deleting…';
+        try {
+            await deleteFont(row);
+            dialog.close();
+        } catch (error) {
+            dialog.close();
+            reportError(error);
+        }
+    });
+    // Take focus from the row's trash button, so Enter confirms instead of
+    // opening the dialog again.
+    button?.focus();
+}
+
+async function deleteFont(row: Row): Promise<void> {
+    // The font may have been opened since the list was drawn.
+    if (documentOpenState(row.key)) {
+        throw new Error(`Close “${row.name}” before deleting it.`);
+    }
+    if (row.key.startsWith(CLOUD_PREFIX)) {
+        const auth = window.authManager;
+        if (!auth?.websiteURL) throw new Error('Log in to delete cloud fonts.');
+        await deleteCloudAssetUntilComplete({
+            websiteBaseUrl: auth.websiteURL,
+            assetId: row.key.slice(CLOUD_PREFIX.length)
+        });
+        await removeRecentFont(row.key);
+        await refreshCloud();
+        return;
+    }
+    if (row.key.startsWith(BROWSER_PREFIX)) {
+        if (isExampleFontPath(row.key.slice('memory://'.length))) {
+            throw new Error(`“${row.name}” is an example font.`);
+        }
+        const root = await navigator.storage.getDirectory();
+        const user = await root.getDirectoryHandle('user');
+        // Packages (.ufo, .glyphspackage) are folders.
+        await user.removeEntry(row.key.slice(BROWSER_PREFIX.length), {
+            recursive: true
+        });
+        await removeRecentFont(row.key);
+        await refresh();
+    }
+}
 
 $('launcher-recents').addEventListener('change', (event) => {
     const target = event.target as HTMLInputElement;
@@ -555,6 +651,69 @@ async function readBrowserFonts(): Promise<string[]> {
     } catch {
         return []; // nothing saved in browser storage yet
     }
+}
+
+// The sample font opens from browser storage, so the launcher writes any
+// missing example font there too (font windows rewrite them on every start).
+// Browser-storage fonts get no delete button until the examples are known.
+let examplesKnown = false;
+
+async function seedExampleFonts(): Promise<void> {
+    try {
+        const entries = await loadExampleManifest().finally(() => {
+            examplesKnown = true;
+            render();
+        });
+        if (!entries) return;
+        const root = await navigator.storage.getDirectory();
+        const missing = [];
+        for (const entry of entries) {
+            if (!(await opfsEntryExists(root, entry.destination))) {
+                missing.push(entry);
+            }
+        }
+        for (const file of await fetchExampleFiles(missing)) {
+            await writeOpfsFile(root, file.name, file);
+        }
+    } catch (error) {
+        console.warn('Could not write the example fonts', error);
+    }
+}
+
+async function opfsEntryExists(
+    root: FileSystemDirectoryHandle,
+    path: string
+): Promise<boolean> {
+    const parts = path.split('/').filter(Boolean);
+    let dir = root;
+    try {
+        for (const part of parts.slice(0, -1)) {
+            dir = await dir.getDirectoryHandle(part);
+        }
+        const name = parts[parts.length - 1];
+        await dir.getFileHandle(name).catch(() => dir.getDirectoryHandle(name));
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+async function writeOpfsFile(
+    root: FileSystemDirectoryHandle,
+    path: string,
+    data: Blob
+): Promise<void> {
+    const parts = path.split('/').filter(Boolean);
+    let dir = root;
+    for (const part of parts.slice(0, -1)) {
+        dir = await dir.getDirectoryHandle(part, { create: true });
+    }
+    const file = await dir.getFileHandle(parts[parts.length - 1], {
+        create: true
+    });
+    const writable = await file.createWritable();
+    await writable.write(data);
+    await writable.close();
 }
 
 async function refreshCloud(): Promise<void> {
@@ -607,7 +766,7 @@ document.addEventListener('visibilitychange', () => {
 setInterval(render, 60_000);
 addEventListener('authStateChanged', () => void refreshCloud());
 
-void refresh();
+void seedExampleFonts().then(refresh);
 void window.authManager
     ?.checkAuthStatus?.()
     .catch(() => null)
