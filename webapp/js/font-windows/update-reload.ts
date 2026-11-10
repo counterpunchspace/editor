@@ -53,6 +53,6 @@ onNewVersionActive(() => {
     }
     showNotice(
         'Counterpunch was updated in another window. This window keeps your unsaved changes on the previous version; save them, then reload.',
-        { label: 'Reload', run: () => location.reload() }
+        { label: 'Reload', run: () => location.reload(), persistent: true }
     );
 });

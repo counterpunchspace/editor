@@ -56,8 +56,11 @@ import '../font-windows/pending-opens';
 import {
     activateUpdate,
     onNewVersionActive,
-    waitingUpdate
+    releaseNotesUrl,
+    waitingUpdate,
+    workerVersion
 } from '../app-update';
+import { showUpdateInfo } from '../update-info';
 
 const console = new Logger('Launcher');
 
@@ -782,17 +785,34 @@ onNewVersionActive(() => location.reload());
 
 const UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1000;
 const UPDATE_CHECK_THROTTLE_MS = 60 * 1000;
-let lastUpdateCheck = 0;
-let updateOffered = false;
+$('launcher-update-info').addEventListener('click', showUpdateInfo);
 
+const UPDATE_ACTIVATE_TIMEOUT_MS = 10 * 1000;
+let lastUpdateCheck = 0;
+
+// The offer stays in the left bar until the update is applied, here or in
+// another window.
 async function offerWaitingUpdate(): Promise<void> {
     const worker = await waitingUpdate();
-    if (!worker || updateOffered) return;
-    updateOffered = true;
-    showNotice('A new version of Counterpunch is ready.', {
-        label: 'Update',
-        run: () => activateUpdate(worker)
-    });
+    if (!worker) return;
+    const button = $<HTMLButtonElement>('launcher-update-button');
+    button.onclick = () => {
+        button.disabled = true;
+        activateUpdate(worker);
+        // A newer download can replace the waiting one: offer that instead.
+        setTimeout(() => {
+            button.disabled = false;
+            void offerWaitingUpdate();
+        }, UPDATE_ACTIVATE_TIMEOUT_MS);
+    };
+    $('launcher-update').hidden = false;
+    const version = await workerVersion(worker);
+    if (!version) return;
+    $('launcher-update-label').textContent =
+        `Update available:\n${version.displayVersion}`;
+    const changelog = $<HTMLAnchorElement>('launcher-update-changelog');
+    changelog.href = releaseNotesUrl(version.tag);
+    changelog.hidden = false;
 }
 
 async function checkForUpdate(): Promise<void> {

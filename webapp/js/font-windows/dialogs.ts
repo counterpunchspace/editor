@@ -72,10 +72,13 @@ export function openDialog(options: {
 
 let noticeHost: HTMLElement | null = null;
 
-/** A short message at the bottom of the window, with an optional action. */
+/**
+ * A short message at the bottom of the window, with an optional action. A
+ * persistent notice can't be dismissed; it stays until its action is taken.
+ */
 export function showNotice(
     message: string,
-    action?: { label: string; run: () => void }
+    action?: { label: string; run: () => void; persistent?: boolean }
 ): void {
     noticeHost ??= Object.assign(document.createElement('div'), {
         className: 'font-window-notices'
@@ -98,13 +101,15 @@ export function showNotice(
         });
         notice.append(button);
     }
-    const dismiss = document.createElement('button');
-    dismiss.type = 'button';
-    dismiss.className = 'info-popup-close';
-    dismiss.setAttribute('aria-label', 'Dismiss');
-    dismiss.innerHTML = icon('close');
-    dismiss.addEventListener('click', () => notice.remove());
-    notice.append(dismiss);
+    if (!action?.persistent) {
+        const dismiss = document.createElement('button');
+        dismiss.type = 'button';
+        dismiss.className = 'info-popup-close';
+        dismiss.setAttribute('aria-label', 'Dismiss');
+        dismiss.innerHTML = icon('close');
+        dismiss.addEventListener('click', () => notice.remove());
+        notice.append(dismiss);
+    }
     noticeHost.append(notice);
     if (!action) setTimeout(() => notice.remove(), 7000);
 }

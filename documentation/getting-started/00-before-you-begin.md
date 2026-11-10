@@ -35,6 +35,11 @@ Even though now locally installed, the editor’s Python environment will not be
 
 Counterpunch starts with the launcher, where you start a new font or open one; see [The launcher and where fonts live](../files/01-files-view-basics.md). On first visit it also asks for a Settings Folder for your scripts, filters and plugins; see [Settings Folder and fonts on disk](04-project-and-settings-folders.md). Browsers ask again for file access after a restart, unless Counterpunch is installed as an app. This is a result of the editor not being a native OS app.
 
-Reloading the page does not load a new version, because the app is cached on purpose. When an update is ready, Preferences (the gear, or `Cmd/Ctrl+,`) shows an orange notification, and the launcher offers **Update** too. Open Preferences to read the version, check for updates, and use Update plus the changelog link. Updating moves all open Counterpunch windows to the new version: windows without unsaved changes reload by themselves, and a window with unsaved changes keeps them and offers a reload once you have saved. That behaviour is the same online and in the installed app.
+A new version downloads in the background and then waits. Counterpunch switches to it in one of two ways:
+
+- **You click Update.** When an update is ready, Preferences (the gear, or `Cmd/Ctrl+,`) shows an orange notification, and the launcher shows a notice at the bottom of its left bar. Both name the new version and link to its changelog. Updating moves all open Counterpunch windows to the new version: windows without unsaved changes reload by themselves, and a window with unsaved changes keeps them and offers a reload once you have saved.
+- **You close every Counterpunch window.** Once no tab or app window is left open, the new version takes over, and Counterpunch starts with it the next time you open it.
+
+Reloading a window, or closing only some of them, keeps the version you have, because the app is cached on purpose. The question mark next to either update notice explains this in the app. Open Preferences to read the version you are running and to check for updates. That behaviour is the same online and in the installed app.
 
 Continue with [What is Counterpunch?](01-what-is-counterpunch.md).

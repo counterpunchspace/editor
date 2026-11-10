@@ -65,6 +65,49 @@ export async function waitingUpdate(): Promise<ServiceWorker | null> {
     return registration?.waiting ?? null;
 }
 
+const RELEASES_URL = 'https://github.com/counterpunchspace/editor/releases/tag';
+const WORKER_VERSION_TIMEOUT_MS = 2000;
+
+/** The release page of a version, by its tag. */
+export const releaseNotesUrl = (tag: string) => `${RELEASES_URL}/${tag}`;
+
+export type WorkerVersion = { tag: string; displayVersion: string };
+
+/** Ask a service worker which version it holds. */
+export function workerVersion(
+    worker: ServiceWorker
+): Promise<WorkerVersion | null> {
+    return new Promise((resolve) => {
+        const channel = new MessageChannel();
+        const timeoutId = setTimeout(
+            () => resolve(null),
+            WORKER_VERSION_TIMEOUT_MS
+        );
+        channel.port1.onmessage = (event: MessageEvent) => {
+            clearTimeout(timeoutId);
+            const data: unknown = event.data;
+            if (
+                data &&
+                typeof data === 'object' &&
+                'version' in data &&
+                typeof data.version === 'string'
+            ) {
+                resolve({
+                    tag: data.version,
+                    displayVersion:
+                        'displayVersion' in data &&
+                        typeof data.displayVersion === 'string'
+                            ? data.displayVersion
+                            : data.version
+                });
+                return;
+            }
+            resolve(null);
+        };
+        worker.postMessage({ type: 'GET_VERSION' }, [channel.port2]);
+    });
+}
+
 /** Let the waiting update take over; every window then follows. */
 export function activateUpdate(worker: ServiceWorker): void {
     markApplyingUpdate();

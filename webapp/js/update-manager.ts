@@ -10,18 +10,19 @@
  */
 
 import { Logger } from './logger';
-import { markApplyingUpdate } from './app-update';
+import {
+    markApplyingUpdate,
+    releaseNotesUrl,
+    workerVersion
+} from './app-update';
+import { showUpdateInfo } from './update-info';
 
 const console = new Logger('UpdateManager');
-
-const CHANGELOG_RELEASES_URL =
-    'https://github.com/counterpunchspace/editor/releases/tag';
 
 export const AUTO_CHECK_THROTTLE_MS = 60 * 1000;
 export const AUTO_CHECK_INTERVAL_MS = 10 * 60 * 1000;
 export const FOCUS_POLL_MS = 1000;
 const APPLY_UPDATE_TIMEOUT_MS = 10 * 1000;
-const WORKER_VERSION_TIMEOUT_MS = 2000;
 
 let lastAutoCheckAt = 0;
 let checkInFlight = false;
@@ -173,8 +174,7 @@ export function hasAvailableUpdate(
 }
 
 export function changelogUrlForUpdate(pending: PendingUpdate): string {
-    const releaseTag = pending.tag || pending.version;
-    return `${CHANGELOG_RELEASES_URL}/${releaseTag}`;
+    return releaseNotesUrl(pending.tag || pending.version);
 }
 
 export function pendingUpdateFromSw(info: SwVersionInfo): PendingUpdate {
@@ -290,40 +290,16 @@ async function fetchPublishedSwVersion(): Promise<SwVersionInfo | null> {
     return parseSwVersions(await response.text());
 }
 
-function askWorkerVersion(
+async function askWorkerVersion(
     worker: ServiceWorker
 ): Promise<SwVersionInfo | null> {
-    return new Promise((resolve) => {
-        const channel = new MessageChannel();
-        const timeoutId = window.setTimeout(
-            () => resolve(null),
-            WORKER_VERSION_TIMEOUT_MS
-        );
-        channel.port1.onmessage = (event: MessageEvent) => {
-            window.clearTimeout(timeoutId);
-            const data: unknown = event.data;
-            if (
-                data &&
-                typeof data === 'object' &&
-                'version' in data &&
-                typeof data.version === 'string'
-            ) {
-                const displayVersion =
-                    'displayVersion' in data &&
-                    typeof data.displayVersion === 'string'
-                        ? data.displayVersion
-                        : data.version;
-                resolve({
-                    tag: data.version,
-                    displayVersion,
-                    isPreview: isPreviewReleaseId(data.version, displayVersion)
-                });
-                return;
-            }
-            resolve(null);
-        };
-        worker.postMessage({ type: 'GET_VERSION' }, [channel.port2]);
-    });
+    const version = await workerVersion(worker);
+    return (
+        version && {
+            ...version,
+            isPreview: isPreviewReleaseId(version.tag, version.displayVersion)
+        }
+    );
 }
 
 function setUpdateDownloading(downloading: boolean): void {
@@ -773,6 +749,9 @@ export function initPreferencesVersionUi(): void {
         ?.addEventListener('click', () => {
             void forceReinstallFromNetwork();
         });
+    document
+        .getElementById('settings-update-info-btn')
+        ?.addEventListener('click', showUpdateInfo);
 
     document.addEventListener('counterpunch:update-available', () => {
         const statusEl = document.getElementById('settings-update-status');

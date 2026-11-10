@@ -328,8 +328,60 @@ body.dragging .launcher-drop-zone {
 }
 
 .launcher-side-foot {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
     margin-top: auto;
     padding-top: 16px;
+}
+
+.launcher-update {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--launcher-line);
+    border-radius: 8px;
+    background-color: var(--launcher-card);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.launcher-update[hidden] {
+    display: none;
+}
+
+.launcher-update > span {
+    flex: 1;
+}
+
+/* The version number goes on its own line. */
+#launcher-update-label {
+    white-space: pre-line;
+}
+
+.launcher-update-info {
+    border: 0;
+    background: none;
+    padding: 0;
+    margin-left: 2px;
+    color: var(--accent-cyan);
+    cursor: pointer;
+    vertical-align: middle;
+    opacity: 0.7;
+}
+
+.launcher-update-info:hover {
+    opacity: 1;
+}
+
+.launcher-update-info .material-symbols-outlined {
+    display: block;
+    font-size: 16px;
+}
+
+.launcher-update .launcher-link:not([hidden]) {
+    display: block;
 }
 
 .launcher-notice {
