@@ -29,6 +29,10 @@ import {
     linkedWindowSyncChannel
 } from './window-sync';
 import type { FilesystemPlugin } from './filesystem-plugins';
+import {
+    LinkedLivePreviewReceiver,
+    type LinkedPreviewHost
+} from './linked-live-preview';
 import { fontCompilation, fullFontCompilation } from './font-compilation';
 import { timelineSpanEnd, timelineSpanStart } from './perf-timeline';
 import { Logger } from './logger';
@@ -49,6 +53,7 @@ import {
     deriveGlyphNamesFromPaths,
     deriveGlyphName,
     deriveLayerId,
+    deriveLayerIdFromPath,
     getPathSegments,
     normalizeWorkerReplayTargets,
     type ChangeLogEntry,
@@ -1726,6 +1731,78 @@ async function refreshCanvasFromCommittedModelSync(
     }
 }
 
+/**
+ * What a linked window does with the live previews another window posts
+ * (see linked-live-preview.ts): the same steps the editing window takes for
+ * its own live drag, minus recording or committing anything.
+ */
+export function createLinkedPreviewHost(
+    bridge: PatchSyncEngine
+): LinkedPreviewHost {
+    return {
+        isBusyLocally: () => {
+            const oe = window.glyphCanvas?.outlineEditor;
+            return (
+                oe?.draggingSomething === true ||
+                oe?.hasPendingKeyboardPreviewCommit?.() === true
+            );
+        },
+        applyModelLayers: (records) => bridge.applyLivePreviewLayers(records),
+        revertModelLayers: (targets) => bridge.revertLivePreviewLayers(targets),
+        stageOverlay: (records) =>
+            window.fontManager?.stageLinkedLivePreviewOverlay(records) ??
+            Promise.resolve(false),
+        requestCompile: (compile) => {
+            if (
+                fontCompilation?.isInitialized &&
+                !fontCompilation.hasWorkerCacheDocument?.()
+            ) {
+                return;
+            }
+            const fm = window.fontManager;
+            const currentFont = fm?.currentFont;
+            if (!fm || !currentFont) {
+                return;
+            }
+            // The editing window patches advances live during a sidebearing
+            // drag and compiles outlines only. This window has no such
+            // patch, so it compiles the way anchor previews do: the font
+            // includes layout and the text reshapes to the new widths.
+            const editType = (
+                compile.editType === 'sidebearing' ? 'anchor' : compile.editType
+            ) as typeof fm.lastEditType;
+            fm.setEditingCompileContext(compile.changeSource, editType);
+            currentFont.requestRecompileWithoutDataChange({
+                compileContext: {
+                    changeSource: compile.changeSource,
+                    editType,
+                    dataFreshnessMode: 'live-drag-worker-preview'
+                }
+            });
+            window.autoCompileManager?.checkAndSchedule?.();
+        },
+        repaint: async (glyphNames) => {
+            window.dispatchEvent(
+                new CustomEvent('glyphChanged', {
+                    detail: {
+                        glyphName: glyphNames[0],
+                        glyphNames
+                    }
+                })
+            );
+            await refreshCanvasFromCommittedModelSync(undefined, undefined, {
+                preferExactLayerDataRefresh: true
+            });
+        },
+        clearOverlay: () =>
+            window.fontManager?.clearLiveDragPreview({ notifyPeers: false }),
+        recompile: () => {
+            window.fontManager?.currentFont?.requestRecompileWithoutDataChange();
+            window.autoCompileManager?.checkAndSchedule?.();
+        }
+    };
+}
+
 function isDirectSidebearingUndoRedo(
     historyItem: HistoryStackItem | null
 ): boolean {
@@ -3363,6 +3440,26 @@ function initializeBridge(detail: {
 
     const sync = new WindowSync(bridge, channelName);
     window.windowSync = sync;
+    const livePreviewReceiver = new LinkedLivePreviewReceiver(
+        createLinkedPreviewHost(bridge)
+    );
+    sync.setLivePreviewReceiver(livePreviewReceiver);
+    bridge.onCommittedChange((entries, context) => {
+        if (context.origin !== 'remote') {
+            return;
+        }
+        const touchedLayerIds = new Set<string>();
+        for (const entry of entries) {
+            for (const target of entry.workerReplayTargets ?? []) {
+                touchedLayerIds.add(target.layerId);
+            }
+            const layerId = deriveLayerIdFromPath(entry.path);
+            if (layerId) {
+                touchedLayerIds.add(layerId);
+            }
+        }
+        livePreviewReceiver.settle(touchedLayerIds);
+    });
     if (linkedPeerBootstrapActive && linkedPeerOpenDetail) {
         const openDetail = linkedPeerOpenDetail;
         sync.setResidentSnapshotConsumer((fontData) => {

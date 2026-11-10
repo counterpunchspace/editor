@@ -2513,7 +2513,8 @@ class GlyphOverview extends GlyphOverviewView {
                       findReplacementInput: () =>
                           this.propertyPanel?.querySelector(
                               `.glyph-property-input[data-property-field="side-${side}"]`
-                          ) as HTMLInputElement | null
+                          ) as HTMLInputElement | null,
+                      burstScope: () => this.getSelectedGlyphNames().join(',')
                   })
                 : null;
 

@@ -3,6 +3,13 @@ type ArrowAdjustableTextInputOptions = {
     getValue: () => number;
     applyValue: (value: number) => void | Promise<void>;
     findReplacementInput?: () => HTMLInputElement | null;
+    /**
+     * What the field edits (layer, selection, cell). Together with the field
+     * itself it names the edit burst: a held arrow key is one history item
+     * and one cloud send, not one per repeat. `false` when `applyValue` runs
+     * its own burst.
+     */
+    burstScope?: (() => string) | false;
 };
 
 export class ArrowAdjustableTextInput {
@@ -10,6 +17,7 @@ export class ArrowAdjustableTextInput {
     private getValue: () => number;
     private applyValue: (value: number) => void | Promise<void>;
     private findReplacementInput?: () => HTMLInputElement | null;
+    private burstScope?: (() => string) | false;
     private _isApplyingStep = false;
 
     constructor(options: ArrowAdjustableTextInputOptions) {
@@ -17,6 +25,7 @@ export class ArrowAdjustableTextInput {
         this.getValue = options.getValue;
         this.applyValue = options.applyValue;
         this.findReplacementInput = options.findReplacementInput;
+        this.burstScope = options.burstScope;
 
         this.input.addEventListener('keydown', this.handleKeyDown);
     }
@@ -46,6 +55,16 @@ export class ArrowAdjustableTextInput {
         replacementInput.setSelectionRange(valueLength, valueLength);
     }
 
+    private getBurstKey(): string {
+        const field =
+            this.input.dataset.propertyField ||
+            this.input.name ||
+            this.input.id ||
+            'field';
+        const scope = this.burstScope ? this.burstScope() : '';
+        return ['arrow-field', field, scope].join(':');
+    }
+
     private handleKeyDown = async (event: KeyboardEvent): Promise<void> => {
         if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') {
             return;
@@ -68,7 +87,14 @@ export class ArrowAdjustableTextInput {
         this.input.value = String(nextValue);
 
         try {
-            await this.applyValue(nextValue);
+            const engine = window.patchSyncEngine;
+            if (this.burstScope !== false && engine?.runInEditBurst) {
+                await engine.runInEditBurst(this.getBurstKey(), () =>
+                    this.applyValue(nextValue)
+                );
+            } else {
+                await this.applyValue(nextValue);
+            }
         } finally {
             this._isApplyingStep = false;
             this.focusReplacementInput();

@@ -5761,6 +5761,23 @@ export class OutlineEditor {
         }
     }
 
+    /**
+     * Process a scheduled sidebearing drag frame now. The canvas pointer
+     * pump calls this so the work counts toward its rest time instead of
+     * running in a frame callback, where it would be served before worker
+     * results and linked-window messages.
+     */
+    processScheduledSidebearingDragFrame(): void {
+        if (this._sidebearingDragFrame === null) {
+            return;
+        }
+        cancelAnimationFrame(this._sidebearingDragFrame);
+        this._sidebearingDragFrame = null;
+        if (this.isDraggingSidebearing && this.layerData) {
+            this.processSidebearingDragFrame();
+        }
+    }
+
     private processSidebearingDragFrame(): void {
         const { glyphX, glyphY } = this.transformMouseToComponentSpace();
         const previousGlyphX = this.lastGlyphX;

@@ -772,6 +772,196 @@ function makeSeededRandom(seed: number): () => number {
     };
 }
 
+/** A live drag must keep redrawing in both windows; see the smoke test. */
+const LIVE_DRAG_MS = 2500;
+const LIVE_DRAG_MIN_REDRAWS = 6;
+const LIVE_DRAG_MAX_GAP_MS = 600;
+
+/** Edit a, the first glyph of “aä”, through the text run like a click does. */
+async function enterLiveDragEditMode(page: Page): Promise<void> {
+    await page.evaluate(() => {
+        (window as any).glyphCanvas.textRunEditor.setTextBuffer('aä');
+    });
+    await expect
+        .poll(
+            async () => {
+                await page.evaluate(async () => {
+                    const glyphCanvas = (window as any).glyphCanvas;
+                    if (!glyphCanvas.outlineEditor.active) {
+                        await glyphCanvas.textRunEditor.selectGlyphByIndex(
+                            0,
+                            true
+                        );
+                    }
+                });
+                return page.evaluate(() => {
+                    const glyphCanvas = (window as any).glyphCanvas;
+                    const outlineEditor = glyphCanvas.outlineEditor;
+                    return (
+                        glyphCanvas.textRunEditor.shapedGlyphs?.length === 2 &&
+                        outlineEditor.active === true &&
+                        glyphCanvas.getActiveEditModeRootGlyphName?.() ===
+                            'a' &&
+                        !!outlineEditor.getActiveGlyphRunOrigin?.()
+                    );
+                });
+            },
+            { timeout: 60000, intervals: [500] }
+        )
+        .toBe(true);
+    await page.waitForTimeout(1000);
+}
+
+async function liveDragPoint(
+    page: Page,
+    target: 'top-anchor' | 'left-sidebearing'
+): Promise<{ x: number; y: number }> {
+    return page.evaluate((target) => {
+        const glyphCanvas = (window as any).glyphCanvas;
+        const outlineEditor = glyphCanvas.outlineEditor;
+        const origin = outlineEditor.getActiveGlyphRunOrigin();
+        let fontX: number;
+        let fontY: number;
+        if (target === 'top-anchor') {
+            const anchor = outlineEditor.layerData.anchors.find(
+                (candidate: any) => candidate.name === 'top'
+            );
+            fontX = origin.x + anchor.x;
+            fontY = (origin.y || 0) + anchor.y;
+        } else {
+            const handle = outlineEditor
+                .getVisibleSidebearingHandles()
+                .find((candidate: any) => candidate.side === 'left');
+            fontX = origin.x + handle.x;
+            fontY = handle.y;
+        }
+        const point = glyphCanvas.viewportManager.fontToScreenCoordinates(
+            fontX,
+            fontY
+        );
+        const rect = glyphCanvas.canvas.getBoundingClientRect();
+        return { x: rect.left + point.x, y: rect.top + point.y };
+    }, target);
+}
+
+/**
+ * Press, move sideways back and forth with real pointer input, release.
+ * Moves go out at a fixed rate without waiting for the page, as a mouse
+ * does: that pressure is what once starved compiles and linked windows.
+ */
+async function dragWithRealPointer(
+    page: Page,
+    start: { x: number; y: number },
+    amplitude: number
+): Promise<number> {
+    await page.mouse.move(start.x, start.y);
+    await page.waitForTimeout(100);
+    await page.mouse.down();
+    const startedAt = Date.now();
+    const sent: Array<Promise<void>> = [];
+    for (let step = 1; Date.now() - startedAt < LIVE_DRAG_MS; step += 1) {
+        const phase = (step % 120) / 120;
+        const offset =
+            (phase < 0.5 ? phase * 2 : 2 - phase * 2) * amplitude +
+            Math.sign(amplitude) * 2;
+        sent.push(page.mouse.move(start.x + offset, start.y).catch(() => {}));
+        await new Promise((resolve) => setTimeout(resolve, 8));
+    }
+    const durationMs = Date.now() - startedAt;
+    await Promise.all(sent);
+    await page.mouse.up();
+    return durationMs;
+}
+
+/** Record when the ä this window draws changes: outline and advance. */
+async function startAdieresisRedrawLog(page: Page): Promise<void> {
+    await page.evaluate(() => {
+        const win = window as any;
+        if (win.__adieresisRedrawLog) {
+            win.__adieresisRedrawLog.stop = true;
+        }
+        const startedAt = performance.now();
+        const log = {
+            stop: false,
+            outlines: [] as number[],
+            advances: [] as number[]
+        };
+        win.__adieresisRedrawLog = log;
+        let lastOutline: string | null = null;
+        let lastAdvance: number | null = null;
+        const sample = () => {
+            if (log.stop) {
+                return;
+            }
+            const textRunEditor = win.glyphCanvas.textRunEditor;
+            const shaped = textRunEditor.shapedGlyphs?.[1];
+            let outline = '';
+            try {
+                outline = String(textRunEditor.hbFont?.glyphToPath(shaped.g));
+            } catch {
+                outline = '';
+            }
+            const advance = Math.round(Number(shaped?.ax));
+            const at = Math.round(performance.now() - startedAt);
+            if (lastOutline !== null && outline !== lastOutline) {
+                log.outlines.push(at);
+            }
+            if (lastAdvance !== null && advance !== lastAdvance) {
+                log.advances.push(at);
+            }
+            lastOutline = outline;
+            lastAdvance = advance;
+            requestAnimationFrame(sample);
+        };
+        requestAnimationFrame(sample);
+    });
+}
+
+async function stopAdieresisRedrawLog(
+    page: Page,
+    untilMs: number
+): Promise<{ outlines: number[]; outlineMaxGap: number; advances: number[] }> {
+    return page.evaluate((untilMs) => {
+        const log = (window as any).__adieresisRedrawLog;
+        log.stop = true;
+        const outlines = (log.outlines as number[]).filter(
+            (at) => at <= untilMs
+        );
+        const advances = (log.advances as number[]).filter(
+            (at) => at <= untilMs
+        );
+        let outlineMaxGap = outlines.length ? outlines[0] : untilMs;
+        for (let index = 1; index < outlines.length; index += 1) {
+            outlineMaxGap = Math.max(
+                outlineMaxGap,
+                outlines[index] - outlines[index - 1]
+            );
+        }
+        if (outlines.length) {
+            outlineMaxGap = Math.max(
+                outlineMaxGap,
+                untilMs - outlines[outlines.length - 1]
+            );
+        }
+        return { outlines, outlineMaxGap, advances };
+    }, untilMs);
+}
+
+async function readAdieresisLayer(page: Page): Promise<unknown> {
+    return page.evaluate(() => {
+        const layer = (window as any).currentFontModel
+            ?.findGlyph?.('adieresis')
+            ?.findLayerById?.('L0');
+        return {
+            width: layer?.width,
+            components: (layer?.components || []).map((component: any) => ({
+                reference: component.reference,
+                translation: component.transform?.translation
+            }))
+        };
+    });
+}
+
 async function setAAdieresisEditingContext(page: Page): Promise<void> {
     await page.evaluate(async () => {
         const glyphCanvas = (window as any).glyphCanvas;
@@ -2251,6 +2441,75 @@ test.describe('Linked window editing compile regression', () => {
             } else {
                 expectedStates.push(actualSenderState);
             }
+        }
+
+        await context.close();
+    });
+
+    test('anchor and sidebearing drags on a redraw the automatic ä live in both windows', async ({
+        browser
+    }) => {
+        test.setTimeout(240000);
+
+        const { context, mainPage, linkedPage } = await openLinkedEditingPair(
+            browser,
+            loadAAdieresisTestFont,
+            { dependentGlyphs: A_DEPENDENT_GLYPHS }
+        );
+        await enterLiveDragEditMode(mainPage);
+        await enterLiveDragEditMode(linkedPage);
+        await mainPage.bringToFront();
+
+        for (const target of ['top-anchor', 'left-sidebearing'] as const) {
+            const start = await liveDragPoint(mainPage, target);
+            await startAdieresisRedrawLog(mainPage);
+            await startAdieresisRedrawLog(linkedPage);
+            const durationMs = await dragWithRealPointer(
+                mainPage,
+                start,
+                target === 'top-anchor' ? -60 : -40
+            );
+            const logs = {
+                'editing window': await stopAdieresisRedrawLog(
+                    mainPage,
+                    durationMs
+                ),
+                'linked window': await stopAdieresisRedrawLog(
+                    linkedPage,
+                    durationMs
+                )
+            };
+            for (const [label, log] of Object.entries(logs)) {
+                // Live, not only at the commit: the ä the window draws
+                // changes again and again while the pointer moves.
+                expect
+                    .soft(log.outlines.length, `${target}: ä redrawn, ${label}`)
+                    .toBeGreaterThanOrEqual(LIVE_DRAG_MIN_REDRAWS);
+                expect
+                    .soft(
+                        log.outlineMaxGap,
+                        `${target}: longest time without a new ä, ${label}`
+                    )
+                    .toBeLessThanOrEqual(LIVE_DRAG_MAX_GAP_MS);
+                if (target === 'left-sidebearing') {
+                    // ä takes the width of a.
+                    expect
+                        .soft(
+                            log.advances.length,
+                            `${target}: ä advance follows a, ${label}`
+                        )
+                        .toBeGreaterThanOrEqual(LIVE_DRAG_MIN_REDRAWS);
+                }
+            }
+
+            // After the commit both windows hold the same ä.
+            await expect
+                .poll(
+                    async () =>
+                        JSON.stringify(await readAdieresisLayer(linkedPage)),
+                    { timeout: 20000 }
+                )
+                .toBe(JSON.stringify(await readAdieresisLayer(mainPage)));
         }
 
         await context.close();

@@ -2814,7 +2814,8 @@ export class CloudAdapter implements FileSystemAdapter {
             this._enqueueOutboundPacket(update, collaborationMessage);
         };
 
-        this._bridge.onLocalUpdate(sendUpdate);
+        // Flagged as cloud-bound: the engine hands a burst over once, merged.
+        this._bridge.onLocalUpdate(sendUpdate, { cloud: true });
         const sendRevisionSignal = (
             update: Uint8Array,
             entries: ChangeLogEntry[],
@@ -2845,7 +2846,9 @@ export class CloudAdapter implements FileSystemAdapter {
                 })
             );
         };
-        this._bridge.onGlyphRevisionSignal?.(sendRevisionSignal);
+        this._bridge.onGlyphRevisionSignal?.(sendRevisionSignal, {
+            cloud: true
+        });
         this._localUpdateUnsubscribe = () => {
             this._bridge?.offLocalUpdate(sendUpdate);
             this._bridge?.offGlyphRevisionSignal?.(sendRevisionSignal);

@@ -9,6 +9,12 @@
 import type { PatchSyncEngine } from './patch-sync-engine';
 import type { ChangeLogEntry } from './change-log';
 import { Logger } from './logger';
+import APP_SETTINGS from './settings';
+import {
+    LivePreviewThrottle,
+    type LinkedLivePreviewReceiver,
+    type LivePreviewPayload
+} from './linked-live-preview';
 import type { CollaborationLogItem } from './patch-sync-engine';
 import {
     createCollaborationMessageEnvelopeFromChangeLogEntries,
@@ -121,6 +127,8 @@ type YjsUpdatePacket = {
     update: BinaryPayload;
     collaborationMessage?: CollaborationMessageEnvelope;
     documentId?: string;
+    /** Edit burst the packet belongs to; main relays it to the room merged. */
+    burstKey?: string;
     /** Main relays another person’s cloud edit; linked undo must respect it. */
     fromCollaborator?: boolean;
 };
@@ -270,7 +278,25 @@ interface ClaimMainMsg {
     sessionId: string;
 }
 
+/** A drag or key burst in progress; the commit follows as a `yjs-update`. */
+interface LivePreviewMsg {
+    type: 'live-preview';
+    previewId: string;
+    payload: LivePreviewPayload;
+    windowId: string;
+    sessionId: string;
+}
+
+interface LivePreviewEndMsg {
+    type: 'live-preview-end';
+    previewId: string;
+    windowId: string;
+    sessionId: string;
+}
+
 type SyncMessage =
+    | LivePreviewMsg
+    | LivePreviewEndMsg
     | YjsUpdateMsg
     | FullStateRequestMsg
     | FullStateBeginMsg
@@ -331,7 +357,9 @@ const WINDOW_SYNC_MESSAGE_TYPES = new Set([
     'main-heartbeat',
     'main-ping',
     'main-detached',
-    'claim-main'
+    'claim-main',
+    'live-preview',
+    'live-preview-end'
 ]);
 
 export function parseWindowSyncMessage(raw: unknown): SyncMessage | null {
@@ -367,6 +395,25 @@ export class WindowSync {
     private _mainWindowClosingListeners = new Set<() => void>();
     private _pendingOutboundPackets: YjsUpdatePacket[] = [];
     private _outboundFlushScheduled = false;
+    private _livePreviewReceiver: LinkedLivePreviewReceiver | null = null;
+    private _livePreviewId: string | null = null;
+    private _livePreviewSerial = 0;
+    private _livePreviewLastAt = 0;
+    private _livePreviewThrottle = new LivePreviewThrottle<LivePreviewPayload>(
+        (payload) => {
+            if (!this._livePreviewId) {
+                return;
+            }
+            this._send({
+                type: 'live-preview',
+                previewId: this._livePreviewId,
+                payload,
+                windowId: this._bridge.windowId,
+                sessionId: this._sessionId
+            });
+        },
+        APP_SETTINGS.LINKED_LIVE_PACE_MS
+    );
     private _pendingYjsMessages: YjsUpdateMsg[] = [];
     private _inboundFlushScheduled = false;
     private _sessionId: string;
@@ -428,28 +475,32 @@ export class WindowSync {
             // microtask-batched so a single user transaction that emits several
             // Yjs updates produces one channel message and one receiver refresh.
             bridge.onLocalUpdate(
-                (_update, collaborationMessage, _entries, documentId) => {
+                (_update, collaborationMessage, _entries, documentId, meta) => {
                     this._queueOutboundBroadcast(
                         _update,
                         collaborationMessage,
-                        documentId
+                        documentId,
+                        meta?.burstKey
                     );
                 }
             );
-            bridge.onGlyphRevisionSignal?.((update, entries) => {
-                this._queueOutboundBroadcast(
-                    update,
-                    createCollaborationMessageEnvelopeFromChangeLogEntries(
-                        entries,
-                        {
-                            localSequence: 0,
-                            source: 'window-sync.glyph-revision',
-                            windowId: bridge.windowId
-                        }
-                    ),
-                    'font-core'
-                );
-            });
+            bridge.onGlyphRevisionSignal?.(
+                (update, entries, _message, meta) => {
+                    this._queueOutboundBroadcast(
+                        update,
+                        createCollaborationMessageEnvelopeFromChangeLogEntries(
+                            entries,
+                            {
+                                localSequence: 0,
+                                source: 'window-sync.glyph-revision',
+                                windowId: bridge.windowId
+                            }
+                        ),
+                        'font-core',
+                        meta?.burstKey
+                    );
+                }
+            );
             window.addEventListener?.(
                 'cloud-persist-failed',
                 this._onCloudPersistFailed
@@ -1318,6 +1369,9 @@ export class WindowSync {
             this._awaitingFullState = false;
             this._resolveFullStateBootstrap(destroyed);
         }
+        this._livePreviewThrottle.cancel();
+        this._livePreviewReceiver?.destroy();
+        this._livePreviewReceiver = null;
         this._flushOutboundBroadcast();
         if (window.windowRole?.isMainWindow?.() === true) {
             this._send({
@@ -1367,15 +1421,64 @@ export class WindowSync {
         }
     }
 
+    /** Another window is open on this font, so previews have an audience. */
+    hasLinkedPeers(): boolean {
+        return this._peers.size > 0;
+    }
+
+    setLivePreviewReceiver(receiver: LinkedLivePreviewReceiver | null): void {
+        this._livePreviewReceiver?.destroy();
+        this._livePreviewReceiver = receiver;
+    }
+
+    /** Post the newest state of a drag or key burst to the other windows. */
+    queueLivePreview(payload: LivePreviewPayload): void {
+        const now = performance.now?.() ?? Date.now();
+        if (!this._livePreviewId || now - this._livePreviewLastAt > 2000) {
+            this._livePreviewId = `${this._bridge.windowId}:${++this._livePreviewSerial}`;
+        }
+        this._livePreviewLastAt = now;
+        this._livePreviewThrottle.push(payload);
+    }
+
+    /** The gesture is over; peers drop what the commit has not replaced. */
+    endLivePreview(): void {
+        const previewId = this._livePreviewId;
+        this._livePreviewThrottle.flush();
+        this._livePreviewId = null;
+        // The commit goes first, or peers would show the old state in between.
+        this._flushOutboundBroadcast();
+        if (previewId) {
+            this._send({
+                type: 'live-preview-end',
+                previewId,
+                windowId: this._bridge.windowId,
+                sessionId: this._sessionId
+            });
+        }
+    }
+
+    /** A commit supersedes previews still waiting to go out. */
+    private _dropPendingLivePreview(): void {
+        this._livePreviewThrottle.cancel();
+        this._livePreviewId = null;
+    }
+
     private _queueOutboundBroadcast(
         update: Uint8Array,
         collaborationMessage?: CollaborationMessageEnvelope | null,
-        documentId?: string
+        documentId?: string,
+        burstKey?: string | null
     ): void {
+        this._dropPendingLivePreview();
         const packet: YjsUpdatePacket = {
             update,
             documentId: documentId || 'font-core'
         };
+        if (burstKey) {
+            // Main holds the burst back from the room until it ends.
+            packet.burstKey = burstKey;
+        }
         if (isCollaborationMessageEnvelope(collaborationMessage)) {
             packet.collaborationMessage = collaborationMessage;
         }
@@ -1509,11 +1612,23 @@ export class WindowSync {
                                 : undefined
                         );
                         if (window.windowRole?.isMainWindow()) {
-                            window.cloudPlugin?.relayPeerWindowUpdateToCloud?.(
-                                update,
-                                packet.collaborationMessage ?? null,
-                                packet.documentId
-                            );
+                            if (
+                                typeof this._bridge.relayPeerPacketToCloud ===
+                                'function'
+                            ) {
+                                this._bridge.relayPeerPacketToCloud(
+                                    update,
+                                    packet.collaborationMessage ?? null,
+                                    packet.documentId,
+                                    packet.burstKey
+                                );
+                            } else {
+                                window.cloudPlugin?.relayPeerWindowUpdateToCloud?.(
+                                    update,
+                                    packet.collaborationMessage ?? null,
+                                    packet.documentId
+                                );
+                            }
                         }
                     }
                 } catch (error) {
@@ -1561,6 +1676,18 @@ export class WindowSync {
         }
 
         switch (msg.type) {
+            case 'live-preview':
+                if (msg.windowId === this._bridge.windowId) return;
+                this._peers.add(msg.windowId);
+                if (this._fullStateBootstrapResolve) return;
+                this._livePreviewReceiver?.receive(msg.previewId, msg.payload);
+                break;
+
+            case 'live-preview-end':
+                if (msg.windowId === this._bridge.windowId) return;
+                this._livePreviewReceiver?.end(msg.previewId);
+                break;
+
             case 'yjs-update':
                 if (msg.windowId === this._bridge.windowId) return;
                 this._peers.add(msg.windowId);
@@ -1707,6 +1834,7 @@ export class WindowSync {
 
             case 'window-closing':
                 this._peers.delete(msg.windowId);
+                this._livePreviewReceiver?.endFromWindow(msg.windowId);
                 break;
 
             case 'main-heartbeat':

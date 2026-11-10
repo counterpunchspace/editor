@@ -1021,7 +1021,7 @@ export class CloudLiveSession {
                 )
             );
         };
-        bridge.onLocalUpdate(handler);
+        bridge.onLocalUpdate(handler, { cloud: true });
         this._localUpdateUnsubscribe = () => {
             bridge.offLocalUpdate?.(handler);
         };

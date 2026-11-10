@@ -648,7 +648,9 @@ export class KerningEditorDialog {
                             }
                         }
                         return null;
-                    }
+                    },
+                    burstScope: () =>
+                        [this.direction, masterIndex, first, second].join(',')
                 })
             );
         });

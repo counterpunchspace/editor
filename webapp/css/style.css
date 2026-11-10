@@ -488,9 +488,7 @@
     width: auto;
 }
 
-.add-glyph-results-toolbar:has(
-        + .add-glyph-category-filters:not([hidden])
-    ) {
+.add-glyph-results-toolbar:has(+ .add-glyph-category-filters:not([hidden])) {
     margin-bottom: 10px;
 }
 
@@ -718,7 +716,11 @@
 }
 
 .add-glyph-set-coverage.is-complete {
-    background: color-mix(in srgb, var(--accent-green) 18%, var(--background-primary));
+    background: color-mix(
+        in srgb,
+        var(--accent-green) 18%,
+        var(--background-primary)
+    );
     color: var(--accent-green);
 }
 
@@ -2404,6 +2406,37 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     font-size: 16px;
     color: var(--text-faint);
     line-height: 1;
+}
+
+/* Development aid: pen while an edit burst is going out, check once final. */
+.history-burst-indicator {
+    font-size: 16px;
+    color: var(--text-faint);
+    line-height: 1;
+}
+
+.history-burst-indicator[data-burst-state='finalized'] {
+    color: var(--accent-green);
+}
+
+.history-burst-indicator.is-flashing {
+    animation: history-burst-pen-flash 0.4s ease-out;
+}
+
+@keyframes history-burst-pen-flash {
+    0% {
+        color: var(--accent-orange);
+        transform: scale(1.35);
+    }
+    100% {
+        color: var(--text-faint);
+        transform: scale(1);
+    }
+}
+
+.history-entry-pending .history-entry-summary {
+    color: var(--text-secondary);
+    font-weight: 400;
 }
 
 .history-hidden-run {

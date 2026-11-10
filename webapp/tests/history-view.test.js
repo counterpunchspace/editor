@@ -811,4 +811,145 @@ describe('history view', () => {
         expect(document.querySelectorAll('.history-entry')).toHaveLength(2);
         expect(document.body.textContent).toContain('Edit B');
     });
+
+    describe('edit burst indicators', () => {
+        const wait = () => new Promise((resolve) => setTimeout(resolve, 40));
+        const burstEvent = (detail) =>
+            window.dispatchEvent(
+                new CustomEvent('editBurst', {
+                    detail: {
+                        burstId: 'burst-1',
+                        key: 'kerning:A:V',
+                        origin: 'local',
+                        ticks: 1,
+                        ...detail
+                    }
+                })
+            );
+        const mountWithRow = () => {
+            resetLogCounter();
+            mountHistoryView({
+                collaborationItems: [
+                    baseItem({
+                        id: 'message-1',
+                        timestamp: 1000,
+                        summary: 'Edit kerning pair',
+                        label: 'Edit kerning pair',
+                        historyItemId: 'history-1',
+                        historyAction: 'change',
+                        undoScope: 'layer',
+                        originatingGlyphName: 'A',
+                        originatingLayerId: 'layer-1',
+                        updateByteLength: 12,
+                        changedGlyphNames: ['A'],
+                        changedLayerIds: ['layer-1'],
+                        workerReplayTargets: [
+                            { glyphName: 'A', layerId: 'layer-1' }
+                        ],
+                        changes: [
+                            { op: 'set', path: 'glyphs.A:layers.layer-1:width' }
+                        ]
+                    })
+                ],
+                changeLogEntries: [
+                    createLogEntry({
+                        timestamp: 1000,
+                        windowId: 'main-1',
+                        windowRoleLabel: 'main',
+                        historyItemId: 'history-1',
+                        historyAction: 'change',
+                        transactionLabel: 'Edit kerning pair',
+                        transactionId: 1,
+                        op: 'set',
+                        undoScope: 'layer',
+                        path: 'glyphs.A:layers.layer-1:width',
+                        oldValue: 600,
+                        newValue: 700
+                    })
+                ]
+            });
+        };
+
+        test('a tick shows a pen on the row, the end a check', async () => {
+            mountWithRow();
+            window.isDevelopment = jest.fn(() => true);
+
+            burstEvent({ phase: 'tick', historyItemId: 'history-1' });
+            await wait();
+            let icon = document.querySelector('.history-burst-indicator');
+            expect(icon.textContent).toBe('edit');
+            expect(icon.dataset.burstState).toBe('active');
+            expect(icon.classList.contains('is-flashing')).toBe(true);
+
+            burstEvent({
+                phase: 'finalized',
+                historyItemId: 'history-1',
+                ticks: 4
+            });
+            await wait();
+            icon = document.querySelector('.history-burst-indicator');
+            expect(icon.textContent).toBe('check');
+            expect(icon.dataset.burstState).toBe('finalized');
+            // The check stays; it does not fade.
+            expect(icon.classList.contains('is-flashing')).toBe(false);
+        });
+
+        test('a tick restarts the flash on a row that already has the pen', async () => {
+            mountWithRow();
+            window.isDevelopment = jest.fn(() => true);
+            burstEvent({ phase: 'tick', historyItemId: 'history-1' });
+            await wait();
+            const icon = document.querySelector('.history-burst-indicator');
+            icon.classList.remove('is-flashing');
+
+            burstEvent({
+                phase: 'tick',
+                historyItemId: 'history-1',
+                ticks: 2
+            });
+
+            expect(icon.classList.contains('is-flashing')).toBe(true);
+        });
+
+        test('a gesture that has not committed has a provisional row', async () => {
+            mountWithRow();
+            window.isDevelopment = jest.fn(() => true);
+
+            burstEvent({
+                phase: 'tick',
+                burstId: 'live-1',
+                key: 'live:layer-1',
+                historyItemId: null
+            });
+            await wait();
+            const pending = document.querySelector('.history-entry-pending');
+            expect(pending).not.toBeNull();
+            expect(pending.textContent).toContain('Editing');
+
+            // The commit names the row; the provisional one goes.
+            burstEvent({
+                phase: 'finalized',
+                burstId: 'live-1',
+                key: 'live:layer-1',
+                historyItemId: 'history-1'
+            });
+            await wait();
+            expect(document.querySelector('.history-entry-pending')).toBeNull();
+            expect(
+                document.querySelector('.history-burst-indicator').textContent
+            ).toBe('check');
+        });
+
+        test('shows nothing outside development', async () => {
+            mountWithRow();
+
+            burstEvent({ phase: 'tick', historyItemId: 'history-1' });
+            await wait();
+
+            expect(
+                document.querySelector('.history-burst-indicator')
+            ).toBeNull();
+            expect(document.querySelector('.history-entry-pending')).toBeNull();
+        });
+    });
 });

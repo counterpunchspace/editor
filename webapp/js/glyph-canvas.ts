@@ -81,6 +81,8 @@ import {
 } from './perf-timeline';
 import { SavedVariationState } from './saved-variation-state';
 import { ArrowAdjustableTextInput } from './arrow-adjustable-text-input';
+import { InFlightPacer } from './in-flight-pacer';
+import { LatestSamplePump } from './latest-sample-pump';
 import { LayerDataNormalizer } from './layer-data-normalizer';
 import {
     buildOrderedKerningPairs,
@@ -335,8 +337,24 @@ type TextModeKerningOverlayCache = {
     candidatePairToAdjacencyKeys: Map<string, Set<string>>;
 };
 
-/** Nudges of one pair closer together than this share one undo step. */
-const TEXT_MODE_KERNING_BURST_MS = 1000;
+/** Screen px around the kerning handle that grab it. */
+const TEXT_MODE_KERNING_HANDLE_HIT_RADIUS = 10;
+/** A kerning write whose compile never lands frees the next one after this. */
+const TEXT_MODE_KERNING_WRITE_MAX_WAIT_MS = 300;
+
+/**
+ * The editing window follows the pointer as closely as it can: after
+ * handling a move it rests for half as long as that took, which still
+ * leaves a third of the main thread to compile results and linked windows.
+ */
+const POINTER_PUMP_OPTIONS = { restRatio: 0.5 };
+
+/** One paced kerning write: the value and the pair it belongs to. */
+interface TextModeKerningWrite {
+    value: number;
+    context: TextModeKerningContext;
+    focusCanvas: boolean;
+}
 
 function getTextModeKerningPairKey(
     firstKey: string,
@@ -789,7 +807,24 @@ class GlyphCanvas {
     shouldSkipIdleViewLock(): boolean {
         return !!(
             this.outlineEditor?.draggingSomething ||
-            this.outlineEditor?.isLiveSidebearingInteractionActive?.()
+            this.outlineEditor?.isLiveSidebearingInteractionActive?.() ||
+            this.isLiveTextModeKerningGestureActive()
+        );
+    }
+
+    /**
+     * True while this window drags the kerning handle or has a kerning
+     * write waiting for its compile (a held key, quick taps). The idle
+     * viewer lock holds every paint until the next reshape; ticks of a
+     * gesture follow each other faster than that, so the lock would be
+     * taken again before the canvas ever painted and the text would stand
+     * still until the gesture ends. The kerning-only compile keeps the pan
+     * steady on its own when no lock is pending.
+     */
+    isLiveTextModeKerningGestureActive(): boolean {
+        return (
+            this.textModeKerningHandleDrag !== null ||
+            this.textModeKerningWrites.busy
         );
     }
 
@@ -1128,12 +1163,52 @@ class GlyphCanvas {
     textModeKerningDraftScopeKey: string | null = null;
     textModeKerningDraftValue: string | null = null;
     textModeKerningOverlayCache: TextModeKerningOverlayCache | null = null;
-    /** Nudges of one pair in quick succession share one undo step. */
-    private textModeKerningBurst: {
-        pairScopeKey: string;
-        historyItemId: string;
-        lastAt: number;
+    /** The pointer is over the kerning handle on the text caret. */
+    textModeKerningHandleHovered = false;
+    /** A drag of the kerning handle: value = start value ± pointer travel. */
+    textModeKerningHandleDrag: {
+        startClientX: number;
+        startValue: number;
+        isRTL: boolean;
+        context: TextModeKerningContext;
+        writeKey: string;
+        /** The value under the pointer; the handle and label show it. */
+        target: number;
+        /** The value last written to the font. */
+        written: number;
+        /** The value the shaped text shows (the last compiled write). */
+        shaped: number;
     } | null = null;
+    /**
+     * Kerning writes wait for the compile of the previous one, so a held
+     * key or a drag renders every step instead of queueing commits.
+     */
+    private readonly textModeKerningWrites =
+        new InFlightPacer<TextModeKerningWrite>(
+            (write) => this.applyTextModeKerningWrite(write),
+            {
+                // Every write is a commit that linked windows apply and
+                // compile, so writes keep their pace. A kerning compile
+                // takes about as long, so this window loses nothing.
+                minGapMs: APP_SETTINGS.LINKED_LIVE_PACE_MS,
+                maxWaitMs: TEXT_MODE_KERNING_WRITE_MAX_WAIT_MS
+            }
+        );
+    private textModeKerningCompileListenerArmed = false;
+    /** Canvas pointer moves: drag handling, then hover detection. */
+    private readonly pointerMoves = new LatestSamplePump<MouseEvent>(
+        (event) => {
+            this.onMouseMove(event);
+            this.outlineEditor.processScheduledSidebearingDragFrame();
+            this.onMouseMoveHover(event);
+        },
+        POINTER_PUMP_OPTIONS
+    );
+    /** Pointer moves of a kerning handle drag (a document listener). */
+    private readonly kerningHandleMoves = new LatestSamplePump<MouseEvent>(
+        (event) => this.moveTextModeKerningHandle(event),
+        POINTER_PUMP_OPTIONS
+    );
 
     zoomAnimation: {
         active: boolean;
@@ -2108,14 +2183,25 @@ class GlyphCanvas {
         );
 
         // Mouse events for panning
-        this.canvas!.addEventListener('mousedown', (e) => this.onMouseDown(e));
-        this.canvas!.addEventListener('mousemove', (e) => this.onMouseMove(e));
+        // Pointer moves go through the pump: a drag must not keep the main
+        // thread busy with input alone, or compile results and linked
+        // windows wait until the pointer stops. Every other pointer event
+        // first handles a move that is still waiting.
+        this.canvas!.addEventListener('mousedown', (e) => {
+            this.pointerMoves.flush();
+            this.onMouseDown(e);
+        });
+        this.canvas!.addEventListener('mousemove', (e) =>
+            this.pointerMoves.push(e)
+        );
         this.canvas!.addEventListener('mouseup', (e) => {
+            this.pointerMoves.flush();
             void this.onMouseUp(e);
         });
-        this.canvas!.addEventListener('mouseleave', (e) =>
-            this.onMouseLeave(e)
-        );
+        this.canvas!.addEventListener('mouseleave', (e) => {
+            this.pointerMoves.flush();
+            this.onMouseLeave(e);
+        });
         this.canvas!.addEventListener('contextmenu', (e) => {
             const rect = this.canvas!.getBoundingClientRect();
             this.mouseX = e.clientX - rect.left;
@@ -2136,11 +2222,6 @@ class GlyphCanvas {
         this.canvas!.addEventListener('wheel', (e) => this.onWheel(e), {
             passive: false
         });
-
-        // Mouse move for hover detection
-        this.canvas!.addEventListener('mousemove', (e) =>
-            this.onMouseMoveHover(e)
-        );
 
         // Keyboard events for cursor and text input
         this.canvas!.addEventListener('keydown', (e) => {
@@ -3592,6 +3673,16 @@ class GlyphCanvas {
             return;
         }
 
+        // The kerning handle on the text caret is grabbed before text clicks.
+        if (
+            !this.outlineEditor.active &&
+            e.button === 0 &&
+            !e.shiftKey &&
+            this.beginTextModeKerningHandleDrag(e)
+        ) {
+            return;
+        }
+
         await this.outlineEditor.onSingleClick(e);
 
         if (this.outlineEditor.draggingSomething) {
@@ -3645,6 +3736,10 @@ class GlyphCanvas {
     onMouseMove(e: MouseEvent): void {
         if (this.isSelectingText) {
             this.updateTextSelectionDrag(e);
+            return;
+        }
+        if (this.textModeKerningHandleDrag) {
+            // The document listener of the drag moves the handle.
             return;
         }
 
@@ -3767,8 +3862,15 @@ class GlyphCanvas {
         this.outlineEditor.hoveredAddPointPreview = null;
         this.outlineEditor.hoveredCommandCurvePreview = null;
 
+        const hadKerningHandleHover =
+            !this.textModeKerningHandleDrag &&
+            this.textModeKerningHandleHovered;
+        if (hadKerningHandleHover) {
+            this.textModeKerningHandleHovered = false;
+        }
+
         // Re-render only if there was a hover state to clear
-        if (hadHover) {
+        if (hadHover || hadKerningHandleHover) {
             this.render();
         }
     }
@@ -3805,6 +3907,7 @@ class GlyphCanvas {
 
     onMouseMoveHover(e: MouseEvent): void {
         if (this.isSelectingText) return;
+        if (this.textModeKerningHandleDrag) return;
         if (this.outlineEditor.draggingSomething) return; // Don't detect hover while dragging
 
         // Focus events are unreliable on Cmd+Tab; re-sync from hasFocus() here.
@@ -3826,6 +3929,10 @@ class GlyphCanvas {
         if (!this.measurementTool.shouldBlockHitDetection()) {
             this.outlineEditor.performHitDetection(e);
             this.updateHoveredGlyph();
+        }
+
+        if (this.updateTextModeKerningHandleHover()) {
+            this.render();
         }
 
         // Update cursor style based on position (after updating hover states)
@@ -3872,6 +3979,12 @@ class GlyphCanvas {
         // In outline editor mode, let it control the cursor
         if (this.outlineEditor.active) {
             this.outlineEditor.cursorStyle();
+            return;
+        }
+
+        // The kerning handle on the caret drags sideways.
+        if (this.textModeKerningHandleHovered) {
+            this.canvas!.style.cursor = 'ew-resize';
             return;
         }
 
@@ -4608,7 +4721,7 @@ class GlyphCanvas {
         editingFontApplyQueue = Promise.resolve();
         this.textModeAutoPanAnchorScreen = null;
         this.pendingTextModeKerningCursorAnchor = false;
-        this.textModeKerningBurst = null;
+        void window.patchSyncEngine?.flushPendingCloudSends?.();
         this.renderSuppressed = false;
         this.hasDeferredRenderRequest = false;
         this.editModeGlyphResyncInProgress = false;
@@ -9127,9 +9240,12 @@ class GlyphCanvas {
             return;
         }
 
-        const currentValue = context.hasSelectedValue
-            ? context.selectedValue
-            : null;
+        const pendingValue = this.textModeKerningWrites.pendingValue(
+            this.getTextModeKerningWriteKey(context)
+        )?.value;
+        const currentValue =
+            pendingValue ??
+            (context.hasSelectedValue ? context.selectedValue : null);
         const nextPairKey = getTextModeKerningPairKey(
             context.selectedFirstKey,
             context.selectedSecondKey
@@ -9155,9 +9271,18 @@ class GlyphCanvas {
             return;
         }
 
-        // Write now: the compile that follows shows the value at every
-        // instance of the pair in the text.
-        await this.commitTextModeKerningValueDirectly(nextValue, context);
+        // Write now when no kerning compile is pending; otherwise the pacer
+        // writes the latest value once it lands. The compile that follows
+        // shows the value at every instance of the pair in the text.
+        if (nextValue === null) {
+            this.textModeKerningWrites.flush();
+            await this.commitTextModeKerningValueDirectly(nextValue, context);
+        } else {
+            this.textModeKerningWrites.push(
+                this.getTextModeKerningWriteKey(context),
+                { value: nextValue, context, focusCanvas: false }
+            );
+        }
 
         if (focusCanvas) {
             // Blur before rebuilding the panel so restoreActivePropertyInput
@@ -9183,11 +9308,78 @@ class GlyphCanvas {
             return;
         }
 
-        const currentValue = context.selectedValue ?? 0;
-        await this.commitTextModeKerningValue(
-            String(currentValue + delta),
+        // A nudge while the previous one compiles adds to the value that
+        // is waiting, so no step of a held key is lost.
+        const writeKey = this.getTextModeKerningWriteKey(context);
+        const currentValue =
+            this.textModeKerningWrites.pendingValue(writeKey)?.value ??
+            context.selectedValue ??
+            0;
+        this.textModeKerningWrites.push(writeKey, {
+            value: currentValue + delta,
             context,
-            true
+            focusCanvas: true
+        });
+    }
+
+    private getTextModeKerningWriteKey(
+        context: TextModeKerningContext
+    ): string {
+        return [
+            context.master?.id || '',
+            context.isRTL ? 'rtl' : 'ltr',
+            getTextModeKerningPairKey(
+                context.selectedFirstKey || '',
+                context.selectedSecondKey || ''
+            )
+        ].join(':');
+    }
+
+    /** Write one paced kerning value, then wait for its compile. */
+    private applyTextModeKerningWrite(write: TextModeKerningWrite): void {
+        this.armTextModeKerningCompileListener();
+        const drag = this.textModeKerningHandleDrag;
+        if (
+            drag &&
+            this.getTextModeKerningWriteKey(write.context) === drag.writeKey
+        ) {
+            drag.written = write.value;
+        }
+        void this.commitTextModeKerningValueDirectly(
+            write.value,
+            write.context
+        );
+        if (write.focusCanvas) {
+            // Blur before rebuilding the panel so restoreActivePropertyInput
+            // does not steal focus back from the canvas.
+            const active = document.activeElement as HTMLElement | null;
+            if (active && this.propertyPanel?.contains(active)) {
+                active.blur();
+            }
+        }
+        this.updatePropertyPanel();
+        if (write.focusCanvas) {
+            this.focusCanvasForTextModeKerning();
+        }
+        this.render();
+    }
+
+    private armTextModeKerningCompileListener(): void {
+        if (this.textModeKerningCompileListenerArmed) {
+            return;
+        }
+        this.textModeKerningCompileListenerArmed = true;
+        window.addEventListener(
+            'editingFontCompiled',
+            () => {
+                this.textModeKerningCompileListenerArmed = false;
+                const drag = this.textModeKerningHandleDrag;
+                if (drag) {
+                    drag.shaped = drag.written;
+                }
+                this.textModeKerningWrites.settle();
+            },
+            { once: true }
         );
     }
 
@@ -9226,42 +9418,10 @@ class GlyphCanvas {
     }
 
     /**
-     * Each nudge is written and compiled at once. Nudges of the same pair
-     * less than a second apart (a held key, quick taps) share one history
-     * item, so a single undo takes the whole burst back.
+     * Each nudge is written and compiled at once, and linked windows follow
+     * it. Nudges of one pair in a burst (a held key, quick taps, a handle
+     * drag) share one history item and reach the room as one send.
      */
-    private textModeKerningBurstHistoryItemId(
-        master: Master,
-        firstKey: string,
-        secondKey: string,
-        isRTL: boolean
-    ): string | null {
-        const pairScopeKey = [
-            master.id || '',
-            isRTL ? 'rtl' : 'ltr',
-            getTextModeKerningPairKey(firstKey, secondKey)
-        ].join('\u0000');
-        const now = performance.now();
-        const burst = this.textModeKerningBurst;
-        if (
-            burst &&
-            burst.pairScopeKey === pairScopeKey &&
-            now - burst.lastAt < TEXT_MODE_KERNING_BURST_MS
-        ) {
-            burst.lastAt = now;
-            return burst.historyItemId;
-        }
-        const historyItemId = `text-kerning-${now.toFixed(3)}-${Math.random()
-            .toString(36)
-            .slice(2, 8)}`;
-        this.textModeKerningBurst = {
-            pairScopeKey,
-            historyItemId,
-            lastAt: now
-        };
-        return historyItemId;
-    }
-
     private writeTextModeKerningPairValue(
         master: Master,
         firstKey: string,
@@ -9269,31 +9429,42 @@ class GlyphCanvas {
         value: number | null,
         isRTL: boolean
     ): void {
-        window.patchSyncEngine?.beginTransaction('Edit kerning pair', null, {
-            historyItemId: this.textModeKerningBurstHistoryItemId(
-                master,
-                firstKey,
-                secondKey,
-                isRTL
-            ),
-            compileChangeSource: 'keyboard-kerning-value',
-            compileEditType: 'kerning-value'
-        });
-        try {
-            setKerningPairValueOnMaster(
-                master,
-                firstKey,
-                secondKey,
-                value,
-                isRTL
+        const write = (): void => {
+            window.patchSyncEngine?.beginTransaction(
+                'Edit kerning pair',
+                null,
+                {
+                    compileChangeSource: 'keyboard-kerning-value',
+                    compileEditType: 'kerning-value'
+                }
             );
-            this.patchTextModeKerningOverlayCachePair(
-                master,
-                firstKey,
-                secondKey
-            );
-        } finally {
-            window.patchSyncEngine?.endTransaction();
+            try {
+                setKerningPairValueOnMaster(
+                    master,
+                    firstKey,
+                    secondKey,
+                    value,
+                    isRTL
+                );
+                this.patchTextModeKerningOverlayCachePair(
+                    master,
+                    firstKey,
+                    secondKey
+                );
+            } finally {
+                window.patchSyncEngine?.endTransaction();
+            }
+        };
+        const burstKey = [
+            'kerning',
+            master.id || '',
+            isRTL ? 'rtl' : 'ltr',
+            getTextModeKerningPairKey(firstKey, secondKey)
+        ].join(':');
+        if (window.patchSyncEngine?.runInEditBurst) {
+            window.patchSyncEngine.runInEditBurst(burstKey, write);
+        } else {
+            write();
         }
 
         this.pendingTextModeKerningCursorAnchor = true;
@@ -9309,6 +9480,191 @@ class GlyphCanvas {
         mirror.classList.toggle(
             'glyph-kerning-value-mirror-empty',
             !input.value.trim()
+        );
+    }
+
+    /**
+     * The kerning handle sits on the text caret near its bottom, like the
+     * sidebearing handles on the glyph edges: at the lowest metric, but
+     * kept inside the visible canvas when zoomed in.
+     */
+    getTextModeKerningHandle(): {
+        x: number;
+        y: number;
+        value: number;
+        isRTL: boolean;
+    } | null {
+        if (
+            !this.textRunEditor ||
+            !this.viewportManager ||
+            this.outlineEditor.active ||
+            this.outlineEditor.isPreviewMode ||
+            this.featureChangeAnimator?.isActive() ||
+            this.measurementTool.shouldDrawTextModeMeasurements()
+        ) {
+            return null;
+        }
+        const context = this.getCurrentTextModeKerningContext();
+        if (
+            context.status !== 'ready' ||
+            !context.metrics ||
+            !context.secondCluster
+        ) {
+            return null;
+        }
+        // While dragging, the shaped text lags the pointer by a compile;
+        // offset the caret by the difference so the handle stays under it.
+        const drag = this.textModeKerningHandleDrag;
+        const lead = drag
+            ? (drag.target - drag.shaped) * (drag.isRTL ? -1 : 1)
+            : 0;
+        const x = this.textRunEditor.cursorX + lead;
+        if (!Number.isFinite(x)) {
+            return null;
+        }
+        const metricValues = Object.values(context.metrics).filter(
+            (metricValue) => Number.isFinite(metricValue)
+        );
+        const lineY = context.secondCluster.y ?? 0;
+        const lowestY = Math.min(...metricValues, 0) + lineY;
+        const highestY = Math.max(...metricValues, 0) + lineY;
+        const scale = this.viewportManager.scale;
+        const panY = this.viewportManager.panY;
+        const frame = this.getCanvasContentFrame();
+        const visibleBottom = frame.top + frame.height;
+        const handleViewportInset = 10;
+        const desiredScreenY = -lowestY * scale + panY;
+        const highestScreenY = -highestY * scale + panY;
+        const clampedScreenY = Math.max(
+            highestScreenY,
+            Math.min(desiredScreenY, visibleBottom - handleViewportInset)
+        );
+        return {
+            x,
+            y: -(clampedScreenY - panY) / scale,
+            value: drag ? drag.target : (context.selectedValue ?? 0),
+            isRTL: context.isRTL
+        };
+    }
+
+    private isPointerOverTextModeKerningHandle(): boolean {
+        const handle = this.getTextModeKerningHandle();
+        if (!handle || !this.viewportManager) {
+            return false;
+        }
+        const { scale, panX, panY } = this.viewportManager;
+        return (
+            Math.hypot(
+                this.mouseX - (handle.x * scale + panX),
+                this.mouseY - (-handle.y * scale + panY)
+            ) <= TEXT_MODE_KERNING_HANDLE_HIT_RADIUS
+        );
+    }
+
+    /** Hover feedback for the handle; true when the hover state changed. */
+    private updateTextModeKerningHandleHover(): boolean {
+        const hovered =
+            this.textModeKerningHandleDrag !== null ||
+            this.isPointerOverTextModeKerningHandle();
+        if (hovered === this.textModeKerningHandleHovered) {
+            return false;
+        }
+        this.textModeKerningHandleHovered = hovered;
+        return true;
+    }
+
+    private beginTextModeKerningHandleDrag(e: MouseEvent): boolean {
+        if (!this.isPointerOverTextModeKerningHandle()) {
+            return false;
+        }
+        const context = this.getCurrentTextModeKerningContext();
+        if (
+            context.status !== 'ready' ||
+            !context.master ||
+            !context.selectedFirstKey ||
+            !context.selectedSecondKey
+        ) {
+            return false;
+        }
+        const startValue = context.selectedValue ?? 0;
+        this.textModeKerningHandleDrag = {
+            startClientX: e.clientX,
+            startValue,
+            isRTL: context.isRTL,
+            context,
+            writeKey: this.getTextModeKerningWriteKey(context),
+            target: startValue,
+            written: startValue,
+            shaped: startValue
+        };
+        this.textModeKerningHandleHovered = true;
+        document.addEventListener(
+            'mousemove',
+            this.boundTextModeKerningHandleMouseMove
+        );
+        document.addEventListener(
+            'mouseup',
+            this.boundTextModeKerningHandleMouseUp
+        );
+        this.canvas!.style.cursor = 'ew-resize';
+        this.render();
+        return true;
+    }
+
+    private boundTextModeKerningHandleMouseMove = (e: MouseEvent): void => {
+        this.kerningHandleMoves.push(e);
+    };
+
+    private moveTextModeKerningHandle(e: MouseEvent): void {
+        const drag = this.textModeKerningHandleDrag;
+        if (!drag || !this.viewportManager) {
+            return;
+        }
+        // The handle follows the pointer: the caret moves right when the
+        // value grows in LTR and left when it grows in RTL.
+        const travel =
+            (e.clientX - drag.startClientX) / this.viewportManager.scale;
+        const value = Math.round(
+            drag.startValue + (drag.isRTL ? -travel : travel)
+        );
+        if (value === drag.target) {
+            return;
+        }
+        drag.target = value;
+        // Each write is a commit the other windows follow; the pacer sends
+        // the latest value once the previous one has compiled. The handle
+        // follows the pointer meanwhile.
+        this.textModeKerningWrites.push(drag.writeKey, {
+            value,
+            context: drag.context,
+            focusCanvas: false
+        });
+        this.render();
+    }
+
+    private boundTextModeKerningHandleMouseUp = (e: MouseEvent): void => {
+        this.kerningHandleMoves.flush();
+        this.endTextModeKerningHandleDrag();
+        this.updateTextModeKerningHandleHover();
+        this.updateCursorStyle(e);
+        this.render();
+    };
+
+    private endTextModeKerningHandleDrag(): void {
+        const drag = this.textModeKerningHandleDrag;
+        if (!drag) {
+            return;
+        }
+        this.kerningHandleMoves.cancel();
+        this.textModeKerningWrites.flush();
+        this.textModeKerningHandleDrag = null;
+        document.removeEventListener(
+            'mousemove',
+            this.boundTextModeKerningHandleMouseMove
+        );
+        document.removeEventListener(
+            'mouseup',
+            this.boundTextModeKerningHandleMouseUp
         );
     }
 
@@ -9547,7 +9903,8 @@ class GlyphCanvas {
                     findReplacementInput: () =>
                         this.propertyPanel?.querySelector(
                             `.glyph-property-input[data-property-field="anchor-${field}"]`
-                        ) as HTMLInputElement | null
+                        ) as HTMLInputElement | null,
+                    burstScope: () => this.outlineEditor.selectedLayerId ?? ''
                 });
 
                 input.addEventListener('change', () => {
@@ -9774,7 +10131,8 @@ class GlyphCanvas {
                     findReplacementInput: () =>
                         this.propertyPanel?.querySelector(
                             `.glyph-property-input[data-property-field="guide-${field}"]`
-                        ) as HTMLInputElement | null
+                        ) as HTMLInputElement | null,
+                    burstScope: () => this.outlineEditor.selectedLayerId ?? ''
                 });
 
                 input.addEventListener('change', () => {
@@ -10119,7 +10477,9 @@ class GlyphCanvas {
                               findReplacementInput: () =>
                                   this.propertyPanel?.querySelector(
                                       `.glyph-property-input[data-property-field="component-${field}"]`
-                                  ) as HTMLInputElement | null
+                                  ) as HTMLInputElement | null,
+                              burstScope: () =>
+                                  this.outlineEditor.selectedLayerId ?? ''
                           });
 
                 input.addEventListener('change', () => {
@@ -10427,7 +10787,8 @@ class GlyphCanvas {
                       findReplacementInput: () =>
                           this.propertyPanel?.querySelector(
                               `.glyph-property-input[data-property-field="side-${side}"]`
-                          ) as HTMLInputElement | null
+                          ) as HTMLInputElement | null,
+                      burstScope: () => this.outlineEditor.selectedLayerId ?? ''
                   });
 
             input.addEventListener('change', () => {
@@ -10687,7 +11048,9 @@ class GlyphCanvas {
                 findReplacementInput: () =>
                     this.propertyPanel?.querySelector(
                         '.glyph-property-input[data-property-field="text-mode-kerning-value"]'
-                    ) as HTMLInputElement | null
+                    ) as HTMLInputElement | null,
+                // The pair write runs its own kerning burst.
+                burstScope: false
             });
 
             input.addEventListener('input', () => {
@@ -11617,7 +11980,10 @@ class GlyphCanvas {
             this.handlePreviewAreaChanged
         );
 
-        this.textModeKerningBurst = null;
+        this.endTextModeKerningHandleDrag();
+        this.pointerMoves.cancel();
+        this.textModeKerningWrites.cancel();
+        void window.patchSyncEngine?.flushPendingCloudSends?.();
 
         // Clear any pending blur timeout
         if (this.blurTimeoutId) {
@@ -12429,8 +12795,14 @@ function setupFontLoadingListener() {
                 );
                 const isLivePreview =
                     detail?.dataFreshnessMode === 'live-drag-worker-preview';
+                // A kerning-only result is newer than what is shown (the
+                // out-of-order check below still guards that), so it renders
+                // even when a later kerning tick is already queued.
+                const isKerningProgress =
+                    detail?.compilationMode === 'kerning-only';
                 if (
                     !isLivePreview &&
+                    !isKerningProgress &&
                     Number.isFinite(incomingRevision) &&
                     Number.isFinite(latestRequestedRevision) &&
                     incomingRevision < latestRequestedRevision

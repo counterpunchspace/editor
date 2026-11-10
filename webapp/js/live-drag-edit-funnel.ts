@@ -300,6 +300,9 @@ export class LiveDragEditFunnel {
             compileRequest.changeSource,
             compileRequest.editType
         );
+        // Linked windows follow the preview as this window stages it. The
+        // post is paced there; this window compiles as often as it can.
+        fm.broadcastLinkedLivePreview?.(compileRequest);
         currentFont.requestRecompileWithoutDataChange({
             compileContext: {
                 changeSource: compileRequest.changeSource,

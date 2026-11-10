@@ -462,6 +462,7 @@ export class GlyphCanvasRenderer {
 
         // Draw cursor
         this.drawCursor();
+        this.drawTextModeKerningHandle();
 
         this.ctx.restore();
 
@@ -5973,6 +5974,55 @@ export class GlyphCanvasRenderer {
 
         return startIdx;
     }
+    /**
+     * The handle that drags the kerning of the pair at the caret. Like the
+     * sidebearing handles it keeps a constant screen size and stays inside
+     * the visible canvas; the glyph canvas places it.
+     */
+    private drawTextModeKerningHandle(): void {
+        const handle = this.glyphCanvas.getTextModeKerningHandle?.();
+        if (!handle) {
+            return;
+        }
+
+        const invScale = 1 / this.viewportManager.scale;
+        const isDragging = this.glyphCanvas.textModeKerningHandleDrag !== null;
+        const isHovered =
+            isDragging || this.glyphCanvas.textModeKerningHandleHovered;
+        // Same colours as the kerning overlay: green for positive, red for
+        // negative values, neutral without kerning.
+        const computedStyle = getComputedStyle(document.documentElement);
+        const accent = computedStyle
+            .getPropertyValue(
+                handle.value > 0
+                    ? '--accent-green'
+                    : handle.value < 0
+                      ? '--accent-red'
+                      : '--text-secondary'
+            )
+            .trim();
+        const fillAlpha =
+            APP_SETTINGS.OUTLINE_EDITOR.SIDEBEARING_HANDLE_FILL_ALPHA;
+        const fillColor = isDragging
+            ? accent
+            : isHovered
+              ? withColorAlpha(accent, fillAlpha)
+              : `rgba(255, 255, 255, ${fillAlpha})`;
+        const radius =
+            6 * invScale * outlineChromeStateScale(isDragging, isHovered);
+
+        this.ctx.save();
+        this.ctx.translate(handle.x, handle.y);
+        this.paintOutlineChrome(
+            'circle',
+            radius,
+            accent,
+            fillColor,
+            APP_SETTINGS.OUTLINE_EDITOR.NODE_CHROME_STROKE_WIDTH * invScale
+        );
+        this.ctx.restore();
+    }
+
     drawCursor() {
         // Draw the text cursor at the current position
         // Don't draw cursor if not visible, in glyph edit mode, in preview mode, or when measurement tool is active in text mode

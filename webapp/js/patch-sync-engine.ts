@@ -79,8 +79,17 @@ import {
     resetLogCounter,
     isDerivedLayerChangePath
 } from './change-log';
+import type { Babelfont } from './babelfont';
 import { Logger } from './logger';
 import { ApplyKind } from './apply-kind';
+import APP_SETTINGS from './settings';
+import {
+    CloudSendHold,
+    EditBurstTracker,
+    type EditBurst,
+    type HeldCloudPacket
+} from './edit-burst';
+import { mergeEnvelopesForWire } from './cloud-envelope-budget';
 import { pushCollabIntegrityEvent } from './cloud-collab-integrity-debug';
 import { bytesToBase64, CloudWalPersistError } from './cloud-durable-wal';
 import {
@@ -144,6 +153,51 @@ import {
 
 const console = new Logger('PatchSyncEngine');
 
+/**
+ * One envelope for the packets of a held send. A burst writes the same value
+ * many times; the room and its collaborators need the change once, from the
+ * value before the burst to the value after it, under the burst’s own label.
+ */
+function mergeBurstEnvelopes(
+    envelopes: CollaborationMessageEnvelope[],
+    documentId: string,
+    isBurst: boolean
+): CollaborationMessageEnvelope | null {
+    if (!isBurst) {
+        return mergeEnvelopesForWire(envelopes, { documentId });
+    }
+    const collapsed: CollaborationMessageEnvelope['changes'] = [];
+    for (const change of envelopes.flatMap((envelope) => envelope.changes)) {
+        const previous = collapsed[collapsed.length - 1];
+        if (
+            previous &&
+            previous.op === 'set' &&
+            change.op === 'set' &&
+            previous.path === change.path &&
+            !previous.glyphRenames &&
+            !change.glyphRenames
+        ) {
+            collapsed[collapsed.length - 1] = {
+                ...previous,
+                replayNewValue: change.replayNewValue
+            };
+            continue;
+        }
+        collapsed.push(change);
+    }
+    const [first, ...rest] = envelopes;
+    const merged = mergeEnvelopesForWire(
+        [
+            { ...first, changes: collapsed },
+            ...rest.map((envelope) => ({ ...envelope, changes: [] }))
+        ],
+        { documentId }
+    );
+    return merged
+        ? { ...merged, summary: first.summary, label: first.label }
+        : null;
+}
+
 type Unsafe = ReturnType<typeof JSON.parse>;
 type YjsUpdate = Uint8Array<ArrayBufferLike>;
 type OptionalLayerField = 'anchors' | 'guides' | 'format_specific';
@@ -155,12 +209,26 @@ type LayerSnapshotSyncTarget = WorkerReplayTarget & {
 
 export type { ChangeLogEntry } from './change-log';
 
+/** What a listener may need to know about the commit behind a packet. */
+export type LocalUpdateMeta = {
+    /** The edit burst the packet belongs to; null for a one-off edit. */
+    burstKey: string | null;
+};
+
 export type LocalUpdateListener = (
     update: YjsUpdate,
     collaborationMessage?: CollaborationMessageEnvelope | null,
     changeLogEntries?: ChangeLogEntry[],
-    documentId?: string
+    documentId?: string,
+    meta?: LocalUpdateMeta
 ) => void;
+
+/**
+ * Listeners flagged `cloud` send packets to the room. The engine hands them
+ * a burst’s packets once, merged, after the burst ends; every other
+ * listener sees each packet at once.
+ */
+export type LocalUpdateListenerOptions = { cloud?: boolean };
 
 /** Compile source stamped on changes that reload a font's own files. */
 export const EXTERNAL_SOURCE_RELOAD_SOURCE = 'external-source-reload';
@@ -210,7 +278,8 @@ export type GlyphRevisionSignalListener = (
     update: YjsUpdate,
     entries: ChangeLogEntry[],
     /** The envelope persisted to the WAL; senders must reuse it so the ACK matches the row. */
-    collaborationMessage?: CollaborationMessageEnvelope | null
+    collaborationMessage?: CollaborationMessageEnvelope | null,
+    meta?: LocalUpdateMeta
 ) => void;
 
 export class MetadataFreeRemoteUpdateError extends Error {
@@ -688,6 +757,32 @@ export class PatchSyncEngine {
     private _cloudEmitPersistChain: Promise<void> = Promise.resolve();
     /** Local cloud emits whose outbox write has not finished yet. */
     private _cloudEmitPersistsInFlight = 0;
+    /** Continuous gestures: one history item and one cloud send per burst. */
+    private _editBursts = new EditBurstTracker({
+        idleMs: APP_SETTINGS.KEYBOARD_PREVIEW_COMMIT_DEBOUNCE,
+        maxMs: APP_SETTINGS.EDIT_BURST_MAX_MS,
+        createHistoryItemId: () => this._createHistoryItemId()
+    });
+    /** Holds the cloud-bound copy of a burst; see `CloudSendHold`. */
+    private _cloudHold = new CloudSendHold({
+        minGapMs: APP_SETTINGS.CLOUD_SEND_MIN_GAP_MS,
+        trailingMs: APP_SETTINGS.CLOUD_SEND_TRAILING_MS,
+        flush: (packets) => this._flushHeldCloudPackets(packets)
+    });
+    /** Bursts opened by `runInEditBurst` that have not returned yet. */
+    private _ambientBursts: EditBurst[] = [];
+    /** Layers each live-preview burst stages; its commit closes it. */
+    private _liveBurstLayers = new Map<string, Set<string>>();
+    /** The burst the open outermost transaction began in. */
+    private _txBurst: EditBurst | null = null;
+    /** Listeners that send to the room (see `LocalUpdateListenerOptions`). */
+    private _cloudLocalListeners = new Set<LocalUpdateListener>();
+    private _cloudRevisionListeners = new Set<GlyphRevisionSignalListener>();
+    /** Packets emitted in one synchronous task are one commit for the rate limit. */
+    private _cloudCommitSerial = 0;
+    private _cloudCommitOpen = false;
+    private _unbindBurstFinalize: (() => void) | null = null;
+    private _pageHideHandler: (() => void) | null = null;
     /**
      * While a multi-document commit is emitting, catalog projection waits
      * and lands as one core write after every glyph packet has been delivered.
@@ -835,7 +930,11 @@ export class PatchSyncEngine {
     }
 
     private _getCurrentHistoryItemId(): string {
-        return this._txHistoryItemId ?? this._createHistoryItemId();
+        return (
+            this._txHistoryItemId ??
+            this._currentBurst()?.historyItemId ??
+            this._createHistoryItemId()
+        );
     }
 
     private _collectLayerFingerprintSnapshot(
@@ -998,6 +1097,19 @@ export class PatchSyncEngine {
         };
         this._bindDocUpdates(this.yDoc, FONT_CORE_DOCUMENT_ID);
         this._bindDocUpdates(this.depsDoc, FONT_DEPS_DOCUMENT_ID);
+        this._unbindBurstFinalize = this._editBursts.onFinalize((burst) => {
+            this._liveBurstLayers.delete(burst.key);
+            this._cloudHold.flushBurst(burst.key);
+            return this.waitForPendingCloudCommits();
+        });
+        if (typeof window !== 'undefined' && window.addEventListener) {
+            // A tab that closes must not take a held burst with it.
+            this._pageHideHandler = () => {
+                void this._editBursts.finalizeAll();
+                this._cloudHold.flushAll();
+            };
+            window.addEventListener('pagehide', this._pageHideHandler);
+        }
     }
 
     private _isLocalEditOrigin: (origin: unknown) => boolean = () => false;
@@ -2720,7 +2832,9 @@ export class PatchSyncEngine {
                 collaborationMessageKey(collaborationMessage)
             );
         }
-        const deliver = (): void => {
+        const burstKey = this._currentBurstKey();
+        const meta: LocalUpdateMeta = { burstKey };
+        const deliver = (includeCloudListeners = true): void => {
             pushCollabIntegrityEvent('emit-local', {
                 documentId,
                 bytes: update.length,
@@ -2728,7 +2842,19 @@ export class PatchSyncEngine {
                 entries: emissionEntries.length
             });
             for (const cb of this._localUpdateListeners) {
-                cb(update, collaborationMessage, describedEntries, documentId);
+                if (
+                    !includeCloudListeners &&
+                    this._cloudLocalListeners.has(cb)
+                ) {
+                    continue;
+                }
+                cb(
+                    update,
+                    collaborationMessage,
+                    describedEntries,
+                    documentId,
+                    meta
+                );
             }
             if (options?.renameBatch) {
                 this._yjsWorkerCallback?.(update, emissionEntries, documentId, {
@@ -2759,6 +2885,23 @@ export class PatchSyncEngine {
             !window.windowRole?.isLinkedWindow?.() &&
             window.fontManager?.currentFont?.isCloudBacked?.() === true
         ) {
+            const holdDecision = this._cloudHold.submit(
+                {
+                    kind: 'local',
+                    burstKey,
+                    documentId,
+                    update,
+                    envelope: collaborationMessage,
+                    entries: describedEntries
+                },
+                this._currentCloudCommitId()
+            );
+            if (holdDecision === 'held') {
+                // Every local consumer sees the edit now; the room gets the
+                // burst once, merged, when it ends.
+                deliver(false);
+                return;
+            }
             this._cloudEmitPersistsInFlight += 1;
             this._cloudEmitPersistChain = this._cloudEmitPersistChain
                 .then(() =>
@@ -2816,7 +2959,10 @@ export class PatchSyncEngine {
 
     /** True while a local edit is still on its way into the cloud outbox. */
     get hasCloudPersistInFlight(): boolean {
-        return this._cloudEmitPersistsInFlight > 0;
+        // A burst the room has not been sent yet is still on its way too.
+        return (
+            this._cloudEmitPersistsInFlight > 0 || this._cloudHold.hasPending()
+        );
     }
 
     private _reportCloudPersistFailure(
@@ -3053,13 +3199,327 @@ export class PatchSyncEngine {
     }
 
     /** Register a callback for local Y.Doc updates (for broadcasting). */
-    onLocalUpdate(cb: LocalUpdateListener): void {
+    onLocalUpdate(
+        cb: LocalUpdateListener,
+        options?: LocalUpdateListenerOptions
+    ): void {
         this._localUpdateListeners.add(cb);
+        if (options?.cloud) {
+            this._cloudLocalListeners.add(cb);
+        }
     }
 
     /** Unregister a callback previously passed to onLocalUpdate. */
     offLocalUpdate(cb: LocalUpdateListener): void {
         this._localUpdateListeners.delete(cb);
+        this._cloudLocalListeners.delete(cb);
+    }
+
+    // ── Edit bursts ──────────────────────────────────────────────
+
+    /**
+     * Run a gesture tick (one key repeat, one arrow-adjusted field step) as
+     * part of burst `key`. Transactions that `fn` begins before it returns
+     * (its synchronous part) share the burst's history item, and the room
+     * gets the burst once, merged, after the gesture pauses. Local consumers
+     * (worker, UI, linked windows) still see every tick at once. Work that
+     * `fn` awaits afterwards is not part of the burst, so an unrelated edit
+     * made meanwhile never joins it.
+     *
+     * `shareHistory: false` keeps the commits' own history items and holds
+     * only the cloud send.
+     */
+    runInEditBurst<T>(
+        key: string,
+        fn: () => T,
+        options?: { shareHistory?: boolean }
+    ): T {
+        const burst = this._editBursts.tick(key, options);
+        this._ambientBursts.push(burst);
+        try {
+            return fn();
+        } finally {
+            const index = this._ambientBursts.lastIndexOf(burst);
+            if (index >= 0) {
+                this._ambientBursts.splice(index, 1);
+            }
+        }
+    }
+
+    /**
+     * A drag or key nudge stages its layers without committing. Each stage
+     * is a tick of a burst that the commit ends: the commit becomes the
+     * burst's history item.
+     */
+    noteLivePreviewTick(layerIds: string[]): void {
+        const ids = [...new Set(layerIds)].sort();
+        if (!ids.length) {
+            return;
+        }
+        const key = `live:${ids.join(',')}`;
+        this._editBursts.tick(key, {
+            shareHistory: false,
+            // A drag may pause; the commit ends the burst, not the idle timer.
+            idleMs: APP_SETTINGS.EDIT_BURST_MAX_MS
+        });
+        this._liveBurstLayers.set(key, new Set(ids));
+    }
+
+    private _finalizeLiveBursts(
+        committedLayerIds: string[],
+        historyItemId: string
+    ): void {
+        const committed = new Set(committedLayerIds);
+        for (const [key, layerIds] of [...this._liveBurstLayers]) {
+            if (![...layerIds].some((layerId) => committed.has(layerId))) {
+                continue;
+            }
+            this._liveBurstLayers.delete(key);
+            const burst = this._editBursts.get(key);
+            if (burst) {
+                burst.historyItemId = historyItemId;
+            }
+            void this._editBursts.finalize(key);
+        }
+    }
+
+    /** The burst a commit made now belongs to, if any. */
+    private _currentBurst(): EditBurst | null {
+        return (
+            this._txBurst ??
+            this._ambientBursts[this._ambientBursts.length - 1] ??
+            null
+        );
+    }
+
+    private _currentBurstKey(): string | null {
+        return this._currentBurst()?.key ?? null;
+    }
+
+    /**
+     * Packets of one commit share an id for the cloud rate limit: a commit
+     * starts here, and packets emitted without one (font-deps writes)
+     * follow the commit before them in the same task.
+     */
+    private _beginCloudCommit(): void {
+        this._cloudCommitSerial += 1;
+        this._openCloudCommitWindow();
+    }
+
+    private _openCloudCommitWindow(): void {
+        if (this._cloudCommitOpen) {
+            return;
+        }
+        this._cloudCommitOpen = true;
+        queueMicrotask(() => {
+            this._cloudCommitOpen = false;
+        });
+    }
+
+    private _currentCloudCommitId(): number {
+        if (!this._cloudCommitOpen) {
+            this._cloudCommitSerial += 1;
+            this._openCloudCommitWindow();
+        }
+        return this._cloudCommitSerial;
+    }
+
+    /**
+     * A packet another window of this font made, relayed by main to the
+     * room. Burst packets and quick series are held and merged exactly like
+     * this window's own.
+     */
+    relayPeerPacketToCloud(
+        update: Uint8Array,
+        collaborationMessage: CollaborationMessageEnvelope | null | undefined,
+        documentId: string | undefined,
+        burstKey: string | null | undefined
+    ): void {
+        const relay = (
+            relayUpdate: Uint8Array,
+            envelope: CollaborationMessageEnvelope | null | undefined,
+            relayDocumentId: string | undefined
+        ): void => {
+            window.cloudPlugin?.relayPeerWindowUpdateToCloud?.(
+                relayUpdate,
+                envelope ?? null,
+                relayDocumentId
+            );
+        };
+        const key = burstKey || null;
+        if (key) {
+            this._editBursts.tick(key, {
+                shareHistory: false,
+                origin: 'remote',
+                historyItemId: collaborationMessage?.metadata?.historyItemId
+            });
+        }
+        if (
+            !collaborationMessage ||
+            window.fontManager?.currentFont?.isCloudBacked?.() !== true
+        ) {
+            relay(update, collaborationMessage, documentId);
+            return;
+        }
+        const decision = this._cloudHold.submit(
+            {
+                kind: 'relay',
+                burstKey: key,
+                documentId: documentId || FONT_CORE_DOCUMENT_ID,
+                update,
+                envelope: collaborationMessage,
+                entries: []
+            },
+            this._currentCloudCommitId()
+        );
+        if (decision === 'passthrough') {
+            relay(update, collaborationMessage, documentId);
+        }
+    }
+
+    /** Send everything held back to the room now (save, close, undo). */
+    async flushPendingCloudSends(): Promise<void> {
+        await this._editBursts.finalizeAll();
+        this._cloudHold.flushAll();
+        await this.waitForPendingCloudCommits();
+    }
+
+    /** True while a burst's cloud send is still held. */
+    get hasHeldCloudSends(): boolean {
+        return this._cloudHold.hasPending();
+    }
+
+    private _flushHeldCloudPackets(packets: HeldCloudPacket[]): void {
+        const groups = new Map<string, HeldCloudPacket[]>();
+        for (const packet of packets) {
+            const groupKey = `${packet.kind}\u0000${packet.documentId}`;
+            const group = groups.get(groupKey);
+            if (group) {
+                group.push(packet);
+            } else {
+                groups.set(groupKey, [packet]);
+            }
+        }
+        // Glyph rows first: the core revision row depends on them.
+        const ordered = [...groups.values()].sort(
+            (left, right) =>
+                Number(!left[0].documentId.startsWith('glyph:')) -
+                Number(!right[0].documentId.startsWith('glyph:'))
+        );
+        const dependsOn: string[] = [];
+        for (const group of ordered) {
+            const documentId = group[0].documentId;
+            const update =
+                group.length === 1
+                    ? group[0].update
+                    : Y.mergeUpdates(group.map((packet) => packet.update));
+            const envelopes = group
+                .map((packet) => packet.envelope)
+                .filter(
+                    (envelope): envelope is CollaborationMessageEnvelope =>
+                        !!envelope
+                );
+            const envelope =
+                envelopes.length > 1
+                    ? (mergeBurstEnvelopes(
+                          envelopes,
+                          documentId,
+                          group.every((packet) => packet.burstKey)
+                      ) ?? envelopes[envelopes.length - 1])
+                    : (envelopes[0] ?? null);
+            if (group[0].kind === 'relay') {
+                window.cloudPlugin?.relayPeerWindowUpdateToCloud?.(
+                    update,
+                    envelope,
+                    documentId
+                );
+                continue;
+            }
+            const entries = group.flatMap((packet) => packet.entries);
+            this._persistAndDeliverToCloud(
+                update,
+                envelope,
+                documentId,
+                entries,
+                documentId.startsWith('glyph:') ? undefined : [...dependsOn]
+            );
+            if (envelope && documentId.startsWith('glyph:')) {
+                dependsOn.push(collaborationMessageKey(envelope));
+            }
+        }
+    }
+
+    /** Write the outbox row, then hand the packet to the cloud listeners. */
+    private _persistAndDeliverToCloud(
+        update: YjsUpdate,
+        envelope: CollaborationMessageEnvelope | null,
+        documentId: string,
+        entries: ChangeLogEntry[],
+        dependsOn?: string[]
+    ): void {
+        const plugin = window.cloudPlugin;
+        const meta: LocalUpdateMeta = { burstKey: null };
+        // Taken now: a bridge replaced before the outbox write finishes has
+        // already dropped its listeners, and the packet must still go out.
+        const cloudListeners = [...this._cloudLocalListeners];
+        const deliverToCloud = (): void => {
+            // Revision rows travel the same way: the core socket takes them
+            // from this hook, as it does every other core packet.
+            for (const cb of cloudListeners) {
+                cb(update, envelope, entries, documentId, meta);
+            }
+        };
+        if (typeof plugin?.persistOutgoingCloudUpdate !== 'function') {
+            deliverToCloud();
+            return;
+        }
+        this._cloudEmitPersistsInFlight += 1;
+        this._cloudEmitPersistChain = this._cloudEmitPersistChain
+            .then(() =>
+                Promise.resolve(
+                    plugin.persistOutgoingCloudUpdate(
+                        update,
+                        envelope,
+                        documentId,
+                        dependsOn
+                    )
+                )
+            )
+            .then(
+                (ok) => {
+                    pushCollabIntegrityEvent('emit-persist', {
+                        documentId,
+                        bytes: update.length,
+                        ok: ok !== false,
+                        held: true
+                    });
+                    if (ok === false) {
+                        this._reportCloudPersistFailure(documentId, 'rejected');
+                    }
+                    deliverToCloud();
+                },
+                (error) => {
+                    pushCollabIntegrityEvent('emit-persist', {
+                        documentId,
+                        bytes: update.length,
+                        ok: false,
+                        held: true,
+                        error: String(error)
+                    });
+                    this._reportCloudPersistFailure(
+                        documentId,
+                        error instanceof Error ? error : String(error)
+                    );
+                    deliverToCloud();
+                }
+            )
+            .then(
+                () => undefined,
+                () => undefined
+            )
+            .then(() => {
+                this._cloudEmitPersistsInFlight -= 1;
+            });
     }
 
     /**
@@ -3081,12 +3541,19 @@ export class PatchSyncEngine {
         this._committedChangeListeners.delete(cb);
     }
 
-    onGlyphRevisionSignal(cb: GlyphRevisionSignalListener): void {
+    onGlyphRevisionSignal(
+        cb: GlyphRevisionSignalListener,
+        options?: LocalUpdateListenerOptions
+    ): void {
         this._glyphRevisionListeners.add(cb);
+        if (options?.cloud) {
+            this._cloudRevisionListeners.add(cb);
+        }
     }
 
     offGlyphRevisionSignal(cb: GlyphRevisionSignalListener): void {
         this._glyphRevisionListeners.delete(cb);
+        this._cloudRevisionListeners.delete(cb);
     }
 
     /** Register a callback to mark the font as dirty. */
@@ -3170,6 +3637,18 @@ export class PatchSyncEngine {
 
     /** Clean up resources. */
     destroy(): void {
+        this._cloudHold.flushAll();
+        this._cloudHold.destroy();
+        this._editBursts.destroy();
+        this._unbindBurstFinalize?.();
+        this._unbindBurstFinalize = null;
+        if (this._pageHideHandler && typeof window !== 'undefined') {
+            window.removeEventListener('pagehide', this._pageHideHandler);
+            this._pageHideHandler = null;
+        }
+        this._cloudLocalListeners.clear();
+        this._cloudRevisionListeners.clear();
+        this._liveBurstLayers.clear();
         for (const unsub of this._docUpdateUnsubscribers) {
             unsub();
         }
@@ -3717,8 +4196,12 @@ export class PatchSyncEngine {
             this._txCompileEditType = stamp.compileEditType;
             this._txId = this._nextTxId++;
             this._txStartTimeMs = performance.now();
+            this._txBurst =
+                this._ambientBursts[this._ambientBursts.length - 1] ?? null;
             this._txHistoryItemId =
-                historyMetadata?.historyItemId ?? this._createHistoryItemId();
+                historyMetadata?.historyItemId ??
+                this._txBurst?.historyItemId ??
+                this._createHistoryItemId();
             this._txPromptGroupId = historyMetadata?.promptGroupId ?? null;
             this._txHistorySummary = historyMetadata?.historySummary ?? null;
             this._txHistoryTarget = historyTarget ?? null;
@@ -3776,6 +4259,7 @@ export class PatchSyncEngine {
             this._txId = null;
             this._txStartTimeMs = null;
             this._txHistoryItemId = null;
+            this._txBurst = null;
             this._txPromptGroupId = null;
             this._txHistorySummary = null;
             this._txHistoryTarget = null;
@@ -5537,6 +6021,9 @@ export class PatchSyncEngine {
         historyTargetKey: string | null | undefined,
         surface: HistoryUndoSurface | null | undefined
     ): UndoRedoResult | null {
+        // A tick after undo must start a new history item, not extend the
+        // one just undone; the held cloud send also goes out first.
+        void this._editBursts.finalizeAll();
         const historyItem = this._resolveUndoHistoryItem(
             glyphName,
             layerId,
@@ -7451,6 +7938,73 @@ export class PatchSyncEngine {
         return true;
     }
 
+    /**
+     * Show another window's uncommitted layers in this window's model
+     * without recording a change or touching the documents. The commit that
+     * follows replaces them; `revertLivePreviewLayers` undoes them.
+     */
+    applyLivePreviewLayers(
+        records: Array<{
+            glyphName: string;
+            layerId: string;
+            layerData: Babelfont.Layer;
+        }>
+    ): void {
+        const fontModel = (window as Unsafe).fontManager?.currentFont
+            ?.fontModel;
+        if (!fontModel) {
+            return;
+        }
+        withSuppressedModelRecording(() => {
+            for (const record of records) {
+                const modelLayer = fontModel
+                    .findGlyph?.(record.glyphName)
+                    ?.findLayerById?.(record.layerId);
+                const data = record.layerData as Unsafe;
+                if (
+                    !modelLayer ||
+                    typeof modelLayer.syncFromEditorLayerData !== 'function'
+                ) {
+                    continue;
+                }
+                modelLayer.syncFromEditorLayerData({
+                    width: data.width,
+                    ...(data.height !== undefined
+                        ? { height: data.height }
+                        : {}),
+                    ...(data.vertWidth !== undefined
+                        ? { vertWidth: data.vertWidth }
+                        : {}),
+                    ...(data.shapes !== undefined
+                        ? { shapes: data.shapes }
+                        : {}),
+                    ...(data.anchors !== undefined
+                        ? { anchors: data.anchors }
+                        : {}),
+                    ...(data.guides !== undefined
+                        ? { guides: data.guides }
+                        : {}),
+                    ...(data.format_specific !== undefined
+                        ? { format_specific: data.format_specific }
+                        : {})
+                });
+                modelLayer.invalidateContentCaches?.();
+            }
+        });
+    }
+
+    /** The model layers go back to what the documents hold. */
+    revertLivePreviewLayers(
+        targets: Array<{ glyphName: string; layerId: string }>
+    ): void {
+        // The Yjs documents are the authority; the stored JSON may share
+        // objects with the model layers the preview just replaced.
+        for (const target of targets) {
+            this._patchLayerFromYDoc(target);
+        }
+        this._syncPatchedLayersIntoObjectModel(targets);
+    }
+
     private _syncPatchedLayersIntoObjectModel(
         scopeHints: Array<{ glyphName: string; layerId: string }>
     ): void {
@@ -8420,6 +8974,15 @@ export class PatchSyncEngine {
         this._flushDestroyedGlyphDocs();
         this._onDirty?.();
 
+        if (this._liveBurstLayers.size > 0 && !this._isApplyingRemote) {
+            this._finalizeLiveBursts(
+                changeLogEntries
+                    .map((entry) => deriveLayerIdFromPath(entry.path))
+                    .filter((layerId): layerId is string => Boolean(layerId)),
+                nextHistoryItemId
+            );
+        }
+
         if (effectiveOperations.length === 1) {
             console.log(
                 `[PatchSyncEngine] Change recorded: ${joinPathWithGlyphSeparator(effectiveOperations[0].path)}`
@@ -9068,6 +9631,8 @@ export class PatchSyncEngine {
                 windowId: this.windowId
             });
         const plugin = window.cloudPlugin;
+        const burstKey = this._currentBurstKey();
+        const meta: LocalUpdateMeta = { burstKey };
         if (
             collaborationMessage &&
             typeof plugin?.persistOutgoingCloudUpdate === 'function' &&
@@ -9075,6 +9640,25 @@ export class PatchSyncEngine {
             !window.windowRole?.isLinkedWindow?.() &&
             window.fontManager?.currentFont?.isCloudBacked?.() === true
         ) {
+            const holdDecision = this._cloudHold.submit(
+                {
+                    kind: 'local',
+                    burstKey,
+                    documentId: FONT_CORE_DOCUMENT_ID,
+                    update,
+                    envelope: collaborationMessage,
+                    entries
+                },
+                this._currentCloudCommitId()
+            );
+            if (holdDecision === 'held') {
+                for (const cb of this._glyphRevisionListeners) {
+                    if (!this._cloudRevisionListeners.has(cb)) {
+                        cb(update, entries, collaborationMessage, meta);
+                    }
+                }
+                return;
+            }
             this._cloudEmitPersistsInFlight += 1;
             this._cloudEmitPersistChain = this._cloudEmitPersistChain
                 .then(() =>
@@ -9107,7 +9691,7 @@ export class PatchSyncEngine {
                 });
         }
         for (const cb of this._glyphRevisionListeners) {
-            cb(update, entries, collaborationMessage);
+            cb(update, entries, collaborationMessage, meta);
         }
     }
 
@@ -9115,6 +9699,7 @@ export class PatchSyncEngine {
         glyphIds: string[],
         emitLocalGlyphUpdates: () => void
     ): void {
+        this._beginCloudCommit();
         const tokens = this._allocateGlyphRevisionTokens(glyphIds);
         // Revision stamps are applied in the same glyph transactions as outline
         // writes when possible; keep an explicit stamp for undo/redo paths.

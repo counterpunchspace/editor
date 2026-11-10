@@ -17287,6 +17287,13 @@ describe('Text-mode kerning property panel', () => {
         expect(canvas.textRunEditor.cursorX).toBe(beforeCaret);
     });
 
+    // The next kerning write waits for the compile of the previous one.
+    const kerningCompileLands = async () => {
+        canvas['textModeKerningWrites'].settle();
+        // Writes also keep the live-edit pace.
+        await new Promise((resolve) => setTimeout(resolve, 130));
+    };
+
     test('alt arrow keys write text-mode kerning at once', async () => {
         setTextRunState();
 
@@ -17299,6 +17306,7 @@ describe('Text-mode kerning property panel', () => {
         expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(-41);
         // No faked advance: the compile that follows reshapes the text.
         expect(canvas.textRunEditor.shapedGlyphs[0].ax).toBe(40);
+        await kerningCompileLands();
 
         await canvas.onKeyDown(
             new KeyboardEvent('keydown', {
@@ -17308,6 +17316,7 @@ describe('Text-mode kerning property panel', () => {
             })
         );
         expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(-31);
+        await kerningCompileLands();
 
         await canvas.onKeyDown(
             new KeyboardEvent('keydown', {
@@ -17320,20 +17329,21 @@ describe('Text-mode kerning property panel', () => {
         expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(69);
     });
 
-    test('nudges of one pair less than a second apart share one undo step', async () => {
-        const nowSpy = jest.spyOn(performance, 'now');
-        const historyItemIds = [];
+    test('nudges of one pair are ticks of one edit burst', async () => {
+        const burstKeys = [];
         window.patchSyncEngine = {
-            beginTransaction: jest.fn((label, target, metadata) => {
-                historyItemIds.push(metadata?.historyItemId);
-            }),
+            beginTransaction: jest.fn(),
             endTransaction: jest.fn(),
             recordChange: jest.fn(),
-            recordRemove: jest.fn()
+            recordRemove: jest.fn(),
+            // The engine gives a burst one history item and one cloud send.
+            runInEditBurst: jest.fn((key, fn) => {
+                burstKeys.push(key);
+                return fn();
+            })
         };
         setTextRunState();
-        const nudge = async (at) => {
-            nowSpy.mockReturnValue(at);
+        const nudge = async () => {
             await canvas.onKeyDown(
                 new KeyboardEvent('keydown', {
                     key: 'ArrowLeft',
@@ -17342,21 +17352,264 @@ describe('Text-mode kerning property panel', () => {
             );
         };
 
-        try {
-            await nudge(1000);
-            await nudge(1500);
-            await nudge(2400);
-            // More than a second after the last nudge: a new undo step.
-            await nudge(3500);
+        await nudge();
+        await kerningCompileLands();
+        await nudge();
+        await kerningCompileLands();
+        await nudge();
 
-            expect(historyItemIds).toHaveLength(4);
-            expect(historyItemIds[0]).toEqual(expect.any(String));
-            expect(historyItemIds[1]).toBe(historyItemIds[0]);
-            expect(historyItemIds[2]).toBe(historyItemIds[0]);
-            expect(historyItemIds[3]).not.toBe(historyItemIds[0]);
-        } finally {
-            nowSpy.mockRestore();
-        }
+        expect(burstKeys).toHaveLength(3);
+        expect(burstKeys[0]).toEqual(expect.stringContaining('kerning:'));
+        expect(new Set(burstKeys).size).toBe(1);
+    });
+
+    test('nudges while a kerning compile runs add up and write once', async () => {
+        setTextRunState();
+        const nudge = async (key) => {
+            await canvas.onKeyDown(
+                new KeyboardEvent('keydown', { key, altKey: true })
+            );
+        };
+
+        await nudge('ArrowLeft');
+        expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(-41);
+
+        // A held key repeats faster than the text compiles.
+        await nudge('ArrowLeft');
+        await nudge('ArrowLeft');
+        await nudge('ArrowLeft');
+        expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(-41);
+
+        await kerningCompileLands();
+        // No step is lost: the three waiting nudges land as one write.
+        expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(-44);
+    });
+
+    test('kerning writes keep the linked pace even when compiles are fast', async () => {
+        setTextRunState();
+        const pace = require('../js/settings').default.LINKED_LIVE_PACE_MS;
+        await canvas.onKeyDown(
+            new KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true })
+        );
+        await canvas.onKeyDown(
+            new KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true })
+        );
+
+        // The compile lands at once, but every write is a commit the
+        // linked windows apply and compile: the next one waits.
+        canvas['textModeKerningWrites'].settle();
+        await new Promise((resolve) => setTimeout(resolve, pace / 3));
+        expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(-41);
+
+        await new Promise((resolve) => setTimeout(resolve, pace));
+        expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(-42);
+    });
+
+    test('a kerning write whose compile never lands frees the next', async () => {
+        setTextRunState();
+        await canvas.onKeyDown(
+            new KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true })
+        );
+        await canvas.onKeyDown(
+            new KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true })
+        );
+        expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(-41);
+
+        await new Promise((resolve) => setTimeout(resolve, 400));
+
+        expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(-42);
+    });
+
+    test('a live kerning gesture never takes the view lock that holds painting', async () => {
+        setTextRunState();
+
+        await canvas.onKeyDown(
+            new KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true })
+        );
+
+        // The write waits for its compile: the gesture is live. A lock
+        // taken now would be taken again by the next tick before the
+        // canvas painted, and the text would stand still until the end.
+        expect(canvas.isLiveTextModeKerningGestureActive()).toBe(true);
+        expect(canvas.captureIdleViewLock({ kerningPair: true })).toBe(false);
+        expect(canvas.shouldDeferCanvasPaint()).toBe(false);
+
+        await kerningCompileLands();
+        expect(canvas.isLiveTextModeKerningGestureActive()).toBe(false);
+    });
+
+    test('canvas pointer moves keep the latest position and mouse up handles it first', () => {
+        const order = [];
+        canvas.onMouseMove = jest.fn((event) =>
+            order.push(`move:${event.clientX}`)
+        );
+        canvas.onMouseMoveHover = jest.fn();
+        canvas.onMouseUp = jest.fn(async () => {
+            order.push('up');
+        });
+        // The previous move was expensive: the thread is still resting.
+        canvas['pointerMoves'].notBefore = performance.now() + 1000;
+
+        canvas.canvas.dispatchEvent(
+            new MouseEvent('mousemove', { clientX: 1 })
+        );
+        canvas.canvas.dispatchEvent(
+            new MouseEvent('mousemove', { clientX: 2 })
+        );
+        expect(order).toEqual([]);
+
+        canvas.canvas.dispatchEvent(new MouseEvent('mouseup', {}));
+
+        expect(order).toEqual(['move:2', 'up']);
+    });
+
+    describe('kerning handle', () => {
+        const placeViewport = ({ scale, panX, panY }) => {
+            canvas.viewportManager.scale = scale;
+            canvas.viewportManager.panX = panX;
+            canvas.viewportManager.panY = panY;
+            canvas.getCanvasContentFrame = () => ({
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+                width: 800,
+                height: 600
+            });
+        };
+        const pointerOnHandle = () => {
+            const handle = canvas.getTextModeKerningHandle();
+            const { scale, panX, panY } = canvas.viewportManager;
+            canvas.mouseX = handle.x * scale + panX;
+            canvas.mouseY = -handle.y * scale + panY;
+            return handle;
+        };
+
+        test('sits on the caret at the lowest metric', () => {
+            setTextRunState();
+            placeViewport({ scale: 0.5, panX: 100, panY: 300 });
+
+            const handle = canvas.getTextModeKerningHandle();
+
+            expect(handle.x).toBe(canvas.textRunEditor.cursorX);
+            expect(handle.y).toBe(-200);
+            expect(handle.isRTL).toBe(false);
+        });
+
+        test('stays inside the visible canvas when zoomed in', () => {
+            setTextRunState();
+            placeViewport({ scale: 0.5, panX: 100, panY: 900 });
+
+            const handle = canvas.getTextModeKerningHandle();
+            const screenY = -handle.y * 0.5 + 900;
+
+            // The lowest metric is off screen; the handle keeps the inset
+            // the sidebearing handles keep from the bottom edge.
+            expect(screenY).toBe(590);
+        });
+
+        test('is not offered without a kerning pair at the caret', () => {
+            placeViewport({ scale: 0.5, panX: 100, panY: 300 });
+            canvas.textRunEditor.cursorPosition = 0;
+
+            expect(canvas.getTextModeKerningHandle()).toBeNull();
+        });
+
+        test('dragging it sideways sets the pair value, one burst', () => {
+            const burstKeys = [];
+            window.patchSyncEngine = {
+                beginTransaction: jest.fn(),
+                endTransaction: jest.fn(),
+                recordChange: jest.fn(),
+                recordRemove: jest.fn(),
+                runInEditBurst: jest.fn((key, fn) => {
+                    burstKeys.push(key);
+                    return fn();
+                })
+            };
+            setTextRunState();
+            placeViewport({ scale: 0.5, panX: 100, panY: 300 });
+            pointerOnHandle();
+
+            expect(
+                canvas['beginTextModeKerningHandleDrag']({
+                    clientX: 100,
+                    button: 0
+                })
+            ).toBe(true);
+            document.dispatchEvent(
+                new MouseEvent('mousemove', { clientX: 130 })
+            );
+            document.dispatchEvent(new MouseEvent('mouseup', {}));
+
+            // 30 screen px at 50% zoom are 60 font units.
+            expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(20);
+            expect(canvas.textModeKerningHandleDrag).toBeNull();
+            expect(burstKeys.length).toBeGreaterThan(0);
+            expect(new Set(burstKeys).size).toBe(1);
+        });
+
+        test('stays under the pointer while the text compiles', () => {
+            setTextRunState();
+            placeViewport({ scale: 0.5, panX: 100, panY: 300 });
+            const start = pointerOnHandle();
+
+            canvas['beginTextModeKerningHandleDrag']({
+                clientX: 100,
+                button: 0
+            });
+            document.dispatchEvent(
+                new MouseEvent('mousemove', { clientX: 110 })
+            );
+            // The first write is in flight; the next waits for its compile.
+            document.dispatchEvent(
+                new MouseEvent('mousemove', { clientX: 130 })
+            );
+            canvas['kerningHandleMoves'].flush();
+
+            expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(-20);
+            const handle = canvas.getTextModeKerningHandle();
+            expect(handle.value).toBe(20);
+            // 30 screen px at 50% zoom: 60 units right of where it began.
+            expect(handle.x).toBe(start.x + 60);
+
+            document.dispatchEvent(new MouseEvent('mouseup', {}));
+            expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(20);
+        });
+
+        test('follows the pointer in right-to-left text', () => {
+            setTextRunState({ rtl: true });
+            placeViewport({ scale: 0.5, panX: 100, panY: 300 });
+            pointerOnHandle();
+
+            canvas['beginTextModeKerningHandleDrag']({
+                clientX: 100,
+                button: 0
+            });
+            document.dispatchEvent(
+                new MouseEvent('mousemove', { clientX: 130 })
+            );
+            document.dispatchEvent(new MouseEvent('mouseup', {}));
+
+            expect(
+                canvas['getCurrentTextModeKerningContext']().selectedValue
+            ).toBe(-60);
+        });
+
+        test('is only grabbed when the pointer is on it', () => {
+            setTextRunState();
+            placeViewport({ scale: 0.5, panX: 100, panY: 300 });
+            pointerOnHandle();
+            canvas.mouseX += 40;
+
+            expect(
+                canvas['beginTextModeKerningHandleDrag']({
+                    clientX: 100,
+                    button: 0
+                })
+            ).toBe(false);
+            expect(canvas.textModeKerningHandleDrag).toBeNull();
+        });
     });
 
     test('a kerning nudge updates the active overlay at once', async () => {

@@ -46,6 +46,22 @@ const APP_SETTINGS = {
     // Used by outline/anchor/sidebearing keyboard preview and text-mode kerning.
     KEYBOARD_PREVIEW_COMMIT_DEBOUNCE: 1000, // ms
 
+    // Continuous edits (key repeat, arrow-adjusted fields) share one history
+    // item and one cloud send. The burst ends after the idle delay above, or
+    // after this long at the latest.
+    EDIT_BURST_MAX_MS: 10000, // ms
+    // Cloud sends that follow each other faster than the minimum gap are
+    // merged into one that goes out after the trailing delay. Isolated edits
+    // are not delayed.
+    CLOUD_SEND_MIN_GAP_MS: 200, // ms
+    CLOUD_SEND_TRAILING_MS: 250, // ms
+    // Linked windows follow a live edit (a drag, a key burst, kerning
+    // ticks) at most this often. The editing window itself is not paced:
+    // it renders and compiles as often as it can. Each step a linked
+    // window follows costs it a compile and a reshape on the main thread
+    // the windows share, so the pace keeps that share small.
+    LINKED_LIVE_PACE_MS: 100, // ms
+
     // Axis animation settings
     AXIS_ANIMATION_WAVELENGTH: 5000, // ms - wavelength of sine wave for axis animation
 

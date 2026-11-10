@@ -103,6 +103,25 @@ describe('LiveDragEditFunnel', () => {
         ).toHaveBeenCalledTimes(1);
     });
 
+    test('posts every live compile to the linked windows', async () => {
+        window.fontManager.broadcastLinkedLivePreview = jest.fn();
+        const funnel = new LiveDragEditFunnel();
+
+        funnel.queue({
+            kind: 'anchor',
+            compile: { changeSource: 'mouse-drag-anchor', editType: 'anchor' },
+            run: () => true
+        });
+        await funnel.drainAndClearQueued();
+
+        expect(
+            window.fontManager.broadcastLinkedLivePreview
+        ).toHaveBeenCalledWith({
+            changeSource: 'mouse-drag-anchor',
+            editType: 'anchor'
+        });
+    });
+
     test('does not wake live compile while worker Yjs document is not ready', async () => {
         const originalFontCompilation = window.fontCompilation;
         window.fontCompilation = {

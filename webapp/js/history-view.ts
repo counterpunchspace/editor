@@ -5,6 +5,7 @@ import {
     getUndoReachabilityForContext
 } from './change-log';
 import { getUndoRedoContext } from './undo-redo-context';
+import { EDIT_BURST_EVENT, type EditBurstEventDetail } from './edit-burst';
 import { Logger } from './logger';
 import tippy, { type Instance as TippyInstance } from 'tippy.js';
 import { getTheme } from './tippy-utils';
@@ -64,6 +65,13 @@ class HistoryViewController {
     private collaborationItems: CollaborationLogItem[] = [];
     private showUnreachable = false;
     private revealHiddenRunIndex: number | null = null;
+    /**
+     * Development aid: where each edit burst stands. A burst has a pen while
+     * its ticks go out and a check once it is final and sent to the room.
+     */
+    private burstPhases = new Map<string, 'active' | 'finalized'>();
+    /** Bursts that have ticked but not committed yet: no history row exists. */
+    private pendingBursts = new Set<string>();
 
     constructor() {
         if (document.readyState === 'loading') {
@@ -170,7 +178,174 @@ class HistoryViewController {
         this.listEl = this.rootEl.querySelector('[data-role="history-list"]');
     }
 
+    private onEditBurst = (event: Event): void => {
+        if (!(window.isDevelopment?.() ?? false)) {
+            return;
+        }
+        const detail = (event as CustomEvent<EditBurstEventDetail>).detail;
+        if (!detail?.burstId) {
+            return;
+        }
+
+        if (detail.phase === 'finalized') {
+            const hadPending = this.pendingBursts.delete(detail.burstId);
+            if (detail.historyItemId) {
+                this.rememberBurstPhase(detail.historyItemId, 'finalized');
+            }
+            if (hadPending || !this.paintBurstIndicator(detail)) {
+                this.scheduleRender();
+            }
+            return;
+        }
+
+        if (!detail.historyItemId) {
+            // The gesture has not committed: a provisional row stands in.
+            const isNew = !this.pendingBursts.has(detail.burstId);
+            this.pendingBursts.add(detail.burstId);
+            if (isNew) {
+                this.scheduleRender();
+            } else {
+                this.flashBurstIndicator(
+                    this.listEl?.querySelector(
+                        `[data-burst-id="${detail.burstId}"] .history-burst-indicator`
+                    ) ?? null
+                );
+            }
+            return;
+        }
+
+        this.rememberBurstPhase(detail.historyItemId, 'active');
+        if (!this.paintBurstIndicator(detail)) {
+            // The row appears with the commit; it renders flashing.
+            this.scheduleRender();
+        }
+    };
+
+    private rememberBurstPhase(
+        historyItemId: string,
+        phase: 'active' | 'finalized'
+    ): void {
+        this.burstPhases.delete(historyItemId);
+        this.burstPhases.set(historyItemId, phase);
+        while (this.burstPhases.size > 200) {
+            const oldest = this.burstPhases.keys().next().value;
+            if (oldest === undefined) {
+                break;
+            }
+            this.burstPhases.delete(oldest);
+        }
+    }
+
+    /** Update the indicator of an existing row in place; false when there is none. */
+    private paintBurstIndicator(detail: EditBurstEventDetail): boolean {
+        const historyItemId = detail.historyItemId;
+        if (!historyItemId || !this.listEl) {
+            return false;
+        }
+        const row = Array.from(
+            this.listEl.querySelectorAll<HTMLElement>('[data-history-item-ids]')
+        ).find((candidate) =>
+            (candidate.dataset.historyItemIds ?? '')
+                .split(' ')
+                .includes(historyItemId)
+        );
+        const icon = row?.querySelector<HTMLElement>(
+            '.history-burst-indicator'
+        );
+        if (!icon) {
+            return false;
+        }
+        this.applyBurstIndicatorState(icon, detail.phase === 'finalized');
+        if (detail.phase === 'tick') {
+            this.flashBurstIndicator(icon);
+        }
+        return true;
+    }
+
+    private applyBurstIndicatorState(
+        icon: HTMLElement,
+        finalized: boolean
+    ): void {
+        icon.textContent = finalized ? 'check' : 'edit';
+        icon.dataset.burstState = finalized ? 'finalized' : 'active';
+        if (finalized) {
+            icon.classList.remove('is-flashing');
+            this.burstFlashAnimations.get(icon)?.cancel();
+        }
+        icon.title = finalized
+            ? 'Final; a cloud font has sent it'
+            : 'Still being edited; the cloud gets it when you pause';
+        icon.setAttribute('aria-label', icon.title);
+    }
+
+    /** A short pulse that restarts at every tick. */
+    private flashBurstIndicator(icon: HTMLElement | null): void {
+        if (!icon) {
+            return;
+        }
+        icon.classList.add('is-flashing');
+        if (typeof icon.animate !== 'function') {
+            return;
+        }
+        // Restart with the Web Animations API. Toggling the class back on
+        // would need a forced layout per tick, which stalls drags.
+        this.burstFlashAnimations.get(icon)?.cancel();
+        this.burstFlashAnimations.set(
+            icon,
+            icon.animate(
+                [
+                    { color: 'var(--accent-orange)', transform: 'scale(1.35)' },
+                    { color: 'var(--text-faint)', transform: 'scale(1)' }
+                ],
+                { duration: 400, easing: 'ease-out' }
+            )
+        );
+    }
+
+    private readonly burstFlashAnimations = new WeakMap<
+        HTMLElement,
+        Animation
+    >();
+
+    private burstIndicatorHtml(item: HistoryDisplayItem): string {
+        if (!(window.isDevelopment?.() ?? false)) {
+            return '';
+        }
+        let phase: 'active' | 'finalized' | null = null;
+        for (const historyItemId of item.historyItemIds) {
+            phase = this.burstPhases.get(historyItemId) ?? phase;
+        }
+        if (!phase) {
+            return '';
+        }
+        const finalized = phase === 'finalized';
+        const label = finalized
+            ? 'Final; a cloud font has sent it'
+            : 'Still being edited; the cloud gets it when you pause';
+        return `<span class="history-burst-indicator material-symbols-outlined${finalized ? '' : ' is-flashing'}" data-burst-state="${finalized ? 'finalized' : 'active'}" title="${label}" aria-label="${label}">${finalized ? 'check' : 'edit'}</span>`;
+    }
+
+    private createPendingBurstRow(burstId: string): HTMLElement {
+        const row = document.createElement('div');
+        row.className =
+            'history-entry history-entry-flat history-entry-pending';
+        row.dataset.burstId = burstId;
+        row.innerHTML = `
+            <div class="history-entry-main">
+                <div class="history-entry-title-row">
+                    <div class="history-entry-summary">Editing…</div>
+                    <div class="history-entry-trailing">
+                        <span class="history-burst-indicator material-symbols-outlined is-flashing" data-burst-state="active" title="Still being edited; the cloud gets it when you pause" aria-label="Still being edited">edit</span>
+                    </div>
+                </div>
+            </div>
+        `;
+        return row;
+    }
+
     private bindWindowEvents(): void {
+        window.addEventListener(EDIT_BURST_EVENT, this.onEditBurst);
+
         window.addEventListener('fontModelReady', () => {
             this.connectToBridge();
             this.attachTextRunListener();
@@ -368,6 +543,12 @@ class HistoryViewController {
         const fragment = document.createDocumentFragment();
         let revealElement: HTMLElement | null = null;
 
+        if (window.isDevelopment?.() ?? false) {
+            for (const burstId of [...this.pendingBursts].reverse()) {
+                fragment.appendChild(this.createPendingBurstRow(burstId));
+            }
+        }
+
         for (const node of listNodes) {
             if (node.kind === 'hidden-run') {
                 const marker = this.createHiddenRunMarker(
@@ -504,12 +685,14 @@ class HistoryViewController {
         const originLabel = this.buildOriginLabel(item);
         const cascadeCount = this.countDownstreamRecompositions(item);
         const isDev = window.isDevelopment?.() ?? false;
+        row.dataset.historyItemIds = item.historyItemIds.join(' ');
 
         row.innerHTML = `
             <div class="history-entry-main">
                 <div class="history-entry-title-row">
                     <div class="history-entry-summary">${this.escapeHtml(item.summary)}</div>
                     <div class="history-entry-trailing">
+                        ${this.burstIndicatorHtml(item)}
                         ${
                             cascadeCount > 0
                                 ? `<span class="history-cascade-icon material-symbols-outlined" title="Also updated ${cascadeCount} dependent layer${cascadeCount === 1 ? '' : 's'}" aria-label="Also updated ${cascadeCount} dependent layers">account_tree</span>`

@@ -58,6 +58,10 @@ import {
 import { sidebarErrorDisplay } from './sidebar-error-display';
 import type { FilesystemPlugin } from './filesystem-plugins';
 import { Logger } from './logger';
+import type {
+    LivePreviewCompile,
+    LivePreviewLayerRecord
+} from './linked-live-preview';
 import {
     showProceedDialog,
     showUnsavedChangesDialog
@@ -155,6 +159,14 @@ type FolderSourceEntries = { files: Record<string, string>; removed: string[] };
 const FOLDER_WRITE_CONCURRENCY = 8;
 
 const console = new Logger('FontManager');
+
+/** A live stage older than this is not posted to linked windows. */
+const LINKED_PREVIEW_STAGE_MAX_AGE_MS = 1000;
+
+/** A plain copy of layer data that any window message can carry. */
+function toPlainLayerData<T>(layerData: T): T {
+    return JSON.parse(JSON.stringify(layerData)) as T;
+}
 
 let startupOpenSessionActive = false;
 let startupOpenSessionEditingCompileCount = 0;
@@ -1050,6 +1062,13 @@ class FontManager {
      * result until input becomes idle starves the visible drag path.
      */
     private lastAppliedLivePreviewRevision: number = -1;
+    /**
+     * Highest revision of any applied editing compile. A kerning-only result
+     * newer than this is shown even when a later request is queued: during a
+     * held key or a handle drag every request is soon superseded, and
+     * dropping them all would freeze the text until the gesture ends.
+     */
+    private lastAppliedEditingRevision: number = -1;
     closureCache: {
         subsetGlyphs: string[];
         activeFeatures: string;
@@ -1067,6 +1086,14 @@ class FontManager {
     pendingBabelfontJsonSyncAfterDrag: boolean;
     pendingCommittedKeyboardDriftCheckAfterDrag: boolean;
     workerCacheUpdatePromise: Promise<void> | null;
+    /**
+     * Layers the last live stage sent to the worker, for the live compile
+     * request that follows it; linked windows get the same.
+     */
+    private _stagedLinkedPreview: {
+        updates: LayerCacheUpdate[];
+        stagedAt: number;
+    } | null = null;
     forceFullEditingCacheRefresh: boolean;
     workerLayerFingerprintCache: Map<string, string>;
     lastWorkerDocumentEpoch: number;
@@ -1134,6 +1161,7 @@ class FontManager {
         this.lastCompilationMode = 'full';
         this.lastFullCompiledDataVersion = -1;
         this.lastAppliedLivePreviewRevision = -1;
+        this.lastAppliedEditingRevision = -1;
         this.closureCache = null;
         this.editingSubsetSnapshotGlyphs = [];
         this.editingSubsetSnapshotKey = '';
@@ -4320,9 +4348,14 @@ class FontManager {
                     isLivePreviewCompile &&
                     Number.isFinite(previewRevision) &&
                     previewRevision > this.lastAppliedLivePreviewRevision;
+                const mayApplyKerningProgress =
+                    compilationMode === 'kerning-only' &&
+                    Number.isFinite(previewRevision) &&
+                    previewRevision > this.lastAppliedEditingRevision;
                 isStaleCompileResult =
                     responseRevisionKey !== currentRevisionKey &&
-                    !mayApplyLivePreview;
+                    !mayApplyLivePreview &&
+                    !mayApplyKerningProgress;
                 if (isStaleCompileResult) {
                     timelineMark('font.compileEditing.staleResultObserved');
                 }
@@ -4353,6 +4386,12 @@ class FontManager {
             ) {
                 this.lastAppliedLivePreviewRevision =
                     Number(responseRevisionKey);
+            }
+            if (Number.isFinite(Number(responseRevisionKey))) {
+                this.lastAppliedEditingRevision = Math.max(
+                    this.lastAppliedEditingRevision,
+                    Number(responseRevisionKey)
+                );
             }
             timelineSpanEnd(applyCompiledResultSpanId);
             const duration = (performance.now() - startTime).toFixed(2);
@@ -7312,6 +7351,10 @@ class FontManager {
                     'Incremental worker preview overlay failed during live drag refresh'
                 );
             }
+            this._stagedLinkedPreview = {
+                updates: pendingLayerUpdates,
+                stagedAt: performance.now()
+            };
         })();
 
         this.workerCacheUpdatePromise = previewPromise;
@@ -7355,7 +7398,78 @@ class FontManager {
         );
     }
 
-    clearLiveDragPreview(): void {
+    /**
+     * Post the layers staged last to the linked windows, so they follow the
+     * gesture before it commits (see linked-live-preview.ts).
+     */
+    broadcastLinkedLivePreview(compile: LivePreviewCompile | null): void {
+        const sync = window.windowSync;
+        // Each stage is posted once, by the compile request right after it;
+        // a stage left over from an earlier gesture is never posted.
+        const staged =
+            this._stagedLinkedPreview &&
+            performance.now() - this._stagedLinkedPreview.stagedAt <
+                LINKED_PREVIEW_STAGE_MAX_AGE_MS
+                ? this._stagedLinkedPreview.updates
+                : null;
+        this._stagedLinkedPreview = null;
+        if (!staged?.length) {
+            return;
+        }
+        window.patchSyncEngine?.noteLivePreviewTick?.(
+            staged.map((update) => update.layerId)
+        );
+        if (!sync?.hasLinkedPeers?.()) {
+            return;
+        }
+        const model: LivePreviewLayerRecord[] = [];
+        for (const update of staged) {
+            const layer = this.currentFont?.fontModel
+                ?.findGlyph?.(update.glyphName)
+                ?.findLayerById?.(update.layerId);
+            // Automatic layers recompose in the receiving window.
+            if (!layer || layer.isAutomaticAlignedLayer?.()) {
+                continue;
+            }
+            const layerData = layer.toJSON?.();
+            if (layerData && typeof layerData === 'object') {
+                model.push({
+                    glyphName: update.glyphName,
+                    layerId: update.layerId,
+                    layerData
+                });
+            }
+        }
+        // The window message must be plain data: layers recomposed during
+        // the drag (an automatically aligned Ä, say) can hold live model
+        // arrays that cannot be copied to another window. postMessage then
+        // fails, and linked windows would never see the drag.
+        sync.queueLivePreview({
+            overlay: staged.map((update) => ({
+                glyphName: update.glyphName,
+                layerId: update.layerId,
+                layerData: toPlainLayerData(update.layerData)
+            })),
+            model: model.map((record) => ({
+                ...record,
+                layerData: toPlainLayerData(record.layerData)
+            })),
+            compile
+        });
+    }
+
+    /** A linked window stages what the editing window posted. */
+    stageLinkedLivePreviewOverlay(
+        records: LivePreviewLayerRecord[]
+    ): Promise<boolean> {
+        return this.submitLayerUpdatesToWorkerPreview(records);
+    }
+
+    clearLiveDragPreview(options?: { notifyPeers?: boolean }): void {
+        this._stagedLinkedPreview = null;
+        if (options?.notifyPeers !== false) {
+            window.windowSync?.endLivePreview?.();
+        }
         if (!fontCompilation?.isInitialized) {
             return;
         }
