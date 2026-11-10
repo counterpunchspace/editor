@@ -12,6 +12,7 @@
  */
 
 import {
+    CATCH_UP_COMPILE_SOURCE,
     FONT_DEPS_ENTRY_PATH,
     EXTERNAL_SOURCE_RELOAD_SOURCE,
     PatchSyncEngine,
@@ -20,7 +21,16 @@ import {
 } from './patch-sync-engine';
 import * as Y from 'yjs';
 import { fromYType } from './change-bridge-ydoc';
-import { FONT_CORE_DOCUMENT_ID } from './filesystem-plugins/cloud-document-set';
+import {
+    decodePackedXY,
+    LAYER_GEOMETRY_TOPOLOGY_KEY,
+    LAYER_NODE_POSITIONS_KEY,
+    LAYER_SHAPE_DATA_KEY
+} from './layer-geometry-ydoc';
+import {
+    FONT_CORE_DOCUMENT_ID,
+    isGlyphRevisionPath
+} from './filesystem-plugins/cloud-document-set';
 import { Font } from './babelfont-model';
 import {
     WindowSync,
@@ -83,6 +93,52 @@ function enqueueCommittedChangeRefresh(
     committedChangeRefreshGeneration += 1;
     committedChangeRefreshQueue = committedChangeRefreshQueue.then(task, task);
     return committedChangeRefreshQueue;
+}
+
+function isCatchUpOnlyCommittedPacket(entries: ChangeLogEntry[]): boolean {
+    return (
+        entries.length > 0 &&
+        entries.every(
+            (entry) => entry.compileChangeSource === CATCH_UP_COMPILE_SOURCE
+        )
+    );
+}
+
+let pendingCatchUpRefresh: {
+    entries: ChangeLogEntry[];
+    workerForwards: Promise<void>[];
+} | null = null;
+
+/**
+ * Catch-ups arrive one shard at a time (a master added elsewhere touches
+ * every glyph). They all compile full, so the ones still queued behind a
+ * running refresh merge into one refresh instead of one compile each.
+ */
+function enqueueCatchUpRefresh(
+    entries: ChangeLogEntry[],
+    workerForwards: Promise<void>[]
+): void {
+    if (pendingCatchUpRefresh) {
+        pendingCatchUpRefresh.entries.push(...entries);
+        pendingCatchUpRefresh.workerForwards.push(...workerForwards);
+        return;
+    }
+    const pending = {
+        entries: [...entries],
+        workerForwards: [...workerForwards]
+    };
+    pendingCatchUpRefresh = pending;
+    void enqueueCommittedChangeRefresh(() => {
+        if (pendingCatchUpRefresh === pending) {
+            pendingCatchUpRefresh = null;
+        }
+        return handleCommittedChangeRefresh(pending.entries, 'remote', {
+            awaitWorkerSync: async () => {
+                await Promise.all(pending.workerForwards);
+                await fontCompilation.awaitWorkerDocumentReadyForCompile();
+            }
+        });
+    });
 }
 
 /** Return the completion promise for all packets enqueued so far. */
@@ -497,13 +553,66 @@ function applyDirectLayerOperationToSnapshot(
             cloneBridgeValue(value);
     };
 
+    const value =
+        operation.applyNewValue === undefined
+            ? operation.newValue
+            : operation.applyNewValue;
+
+    // The snapshot is resting layer JSON, but point and shape writes address
+    // the stored geometry by id. Copying those storage paths into it would
+    // make the cascade delta delete them from the layer, so apply them to the
+    // node or shape they name instead.
+    const storageKey = String(propertyPath[0]);
+    if (
+        storageKey === LAYER_NODE_POSITIONS_KEY ||
+        storageKey === LAYER_SHAPE_DATA_KEY ||
+        storageKey === LAYER_GEOMETRY_TOPOLOGY_KEY
+    ) {
+        const shapes = Array.isArray(nextSnapshot.shapes)
+            ? (nextSnapshot.shapes as Unsafe[])
+            : [];
+        const elementId = String(propertyPath[1] ?? '');
+        if (
+            storageKey === LAYER_NODE_POSITIONS_KEY &&
+            propertyPath.length === 2 &&
+            operation.op !== 'remove'
+        ) {
+            const { x, y } = decodePackedXY(value);
+            for (const shape of shapes) {
+                const node = Array.isArray(shape?.nodes)
+                    ? shape.nodes.find(
+                          (candidate: Unsafe) => candidate?.id === elementId
+                      )
+                    : null;
+                if (node) {
+                    node.x = x;
+                    node.y = y;
+                }
+            }
+        } else if (
+            storageKey === LAYER_SHAPE_DATA_KEY &&
+            propertyPath.length >= 3
+        ) {
+            const shape = shapes.find(
+                (candidate) => candidate?.id === elementId
+            );
+            if (shape) {
+                applyPathOperation(
+                    shape,
+                    propertyPath.slice(2),
+                    operation.op === 'remove' ? 'remove' : 'set',
+                    value
+                );
+            }
+        }
+        return nextSnapshot;
+    }
+
     applyPathOperation(
         nextSnapshot,
         propertyPath,
         operation.op === 'remove' ? 'remove' : 'set',
-        operation.applyNewValue === undefined
-            ? operation.newValue
-            : operation.applyNewValue
+        value
     );
 
     return nextSnapshot;
@@ -2635,7 +2744,7 @@ export async function handleCommittedChangeRefresh(
     if (origin === 'remote') {
         const awaitWorkerSync =
             dependencies?.awaitWorkerSync ??
-            (() => fontCompilation.awaitWorkerDocumentSync());
+            (() => fontCompilation.awaitWorkerDocumentReadyForCompile());
         await awaitCommittedWorkerCacheSettled(awaitWorkerSync);
 
         const replayTargets = collectReplayTargetsFromEntries(entries);
@@ -2684,7 +2793,7 @@ export async function handleCommittedChangeRefresh(
 
         const awaitWorkerSync =
             dependencies?.awaitWorkerSync ??
-            (() => fontCompilation.awaitWorkerDocumentSync());
+            (() => fontCompilation.awaitWorkerDocumentReadyForCompile());
         await awaitCommittedWorkerCacheSettled(awaitWorkerSync);
 
         if (window.fontManager) {
@@ -3164,9 +3273,14 @@ function initializeBridge(detail: {
     // YJS_ONLY: This funnel processes Yjs binary updates, not full
     // JSON. Entries carry workerReplayTargets for incremental layer cache updates.
     bridge.onCommittedChange((allEntries, context) => {
-        // A font-deps packet is derived data: nothing to refresh or compile.
+        // Font-deps packets and glyph-revision stamps are derived data:
+        // nothing to refresh or compile. A revision stamp only announces a
+        // glyph edit; the glyph’s own packet or its catch-up carries it, and
+        // compiling on the stamp alone would build from the old outline.
         const entries = allEntries.filter(
-            (entry) => entry.path !== FONT_DEPS_ENTRY_PATH
+            (entry) =>
+                entry.path !== FONT_DEPS_ENTRY_PATH &&
+                !isGlyphRevisionPath(entry.path)
         );
         if (allEntries.length && !entries.length) {
             return;
@@ -3190,6 +3304,13 @@ function initializeBridge(detail: {
         if (!refresh) {
             return;
         }
+        if (
+            refresh.origin === 'remote' &&
+            isCatchUpOnlyCommittedPacket(refresh.entries)
+        ) {
+            enqueueCatchUpRefresh(refresh.entries, refresh.workerForwards);
+            return;
+        }
         const localCompileContext =
             refresh.origin === 'local'
                 ? resolveLocalCommittedCompileContext(refresh.entries)
@@ -3198,7 +3319,7 @@ function initializeBridge(detail: {
             handleCommittedChangeRefresh(refresh.entries, refresh.origin, {
                 awaitWorkerSync: async () => {
                     await Promise.all(refresh.workerForwards);
-                    await fontCompilation.awaitWorkerDocumentSync();
+                    await fontCompilation.awaitWorkerDocumentReadyForCompile();
                 },
                 ...(localCompileContext ? { localCompileContext } : {}),
                 ...(refresh.undo ? { localUndoRedoContext: refresh.undo } : {})

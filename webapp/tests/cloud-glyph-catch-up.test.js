@@ -517,6 +517,101 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         expect(glyphWidth(receiver, 'B')).toBe(777);
     });
 
+    test('catch-up of a resident glyph reaches committed listeners as a collaborator edit', () => {
+        const writer = createEngine('writer');
+        const receiver = hydrateReceiverFromWriter(writer.bridge);
+        const committed = [];
+        receiver.onCommittedChange((entries, context) =>
+            committed.push({ entries, context })
+        );
+        window.changeBridge = writer.bridge;
+        writer.font.findGlyph('B').layers[0].width = 777;
+        const liveTail = writer.bridge.encodeDocumentState(
+            glyphDocumentId('id-b')
+        );
+
+        expect(
+            receiver.applyDocumentCatchUp(glyphDocumentId('id-b'), liveTail)
+        ).toBe(true);
+        expect(committed).toHaveLength(1);
+        expect(committed[0].context).toMatchObject({
+            origin: 'remote',
+            documentId: glyphDocumentId('id-b')
+        });
+        expect(committed[0].entries).toEqual([
+            expect.objectContaining({
+                op: 'set',
+                path: 'glyphs.B:layers.layer-1:width',
+                oldValue: 400,
+                newValue: 777,
+                compileChangeSource: 'remote-catch-up',
+                compileEditType: null,
+                workerReplayTargets: [{ glyphName: 'B', layerId: 'layer-1' }]
+            })
+        ]);
+
+        // The same checkpoint again changes nothing here.
+        receiver.applyDocumentCatchUp(glyphDocumentId('id-b'), liveTail);
+        expect(committed).toHaveLength(1);
+    });
+
+    test('first hydration of a glyph through catch-up is nobody’s edit', () => {
+        const writer = createEngine('writer');
+        const receiver = new PatchSyncEngine('receiver');
+        receiver.setFontJson(
+            JSON.parse(JSON.stringify(writer.bridge.getFontJsonSnapshot()))
+        );
+        receiver.applyDocumentSetState(
+            writer.bridge
+                .encodeDocumentSet()
+                .filter((shard) => shard.documentId !== glyphDocumentId('id-b'))
+        );
+        expect(receiver.hasResidentGlyphDocument(glyphDocumentId('id-b'))).toBe(
+            false
+        );
+        const committed = jest.fn();
+        receiver.onCommittedChange(committed);
+
+        receiver.applyDocumentCatchUp(
+            glyphDocumentId('id-b'),
+            writer.bridge.encodeDocumentState(glyphDocumentId('id-b'))
+        );
+
+        expect(committed).not.toHaveBeenCalled();
+    });
+
+    test('core catch-up describes the core keys it changed', () => {
+        const writer = createEngine('writer');
+        const receiver = hydrateReceiverFromWriter(writer.bridge);
+        const committed = [];
+        receiver.onCommittedChange((entries, context) =>
+            committed.push({ entries, context })
+        );
+        window.changeBridge = writer.bridge;
+        writer.font.masters[0].name = 'Bold';
+
+        receiver.applyDocumentCatchUp(
+            FONT_CORE_DOCUMENT_ID,
+            writer.bridge.encodeDocumentState(FONT_CORE_DOCUMENT_ID)
+        );
+
+        expect(committed).toHaveLength(1);
+        expect(committed[0].context).toMatchObject({
+            origin: 'remote',
+            documentId: FONT_CORE_DOCUMENT_ID
+        });
+        const paths = committed[0].entries.map((entry) => entry.path);
+        expect(paths.some((path) => path.startsWith('masters'))).toBe(true);
+        expect(paths.some((path) => path.startsWith('glyphRevisions'))).toBe(
+            false
+        );
+        expect(
+            committed[0].entries.every(
+                (entry) => entry.compileChangeSource === 'remote-catch-up'
+            )
+        ).toBe(true);
+    });
+
     test('catch-up retries until the live glyph stamp matches the core revision', async () => {
         const writer = createEngine('writer');
         const receiver = hydrateReceiverFromWriter(writer.bridge);

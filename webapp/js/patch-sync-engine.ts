@@ -233,6 +233,14 @@ export type LocalUpdateListenerOptions = { cloud?: boolean };
 /** Compile source stamped on changes that reload a font's own files. */
 export const EXTERNAL_SOURCE_RELOAD_SOURCE = 'external-source-reload';
 
+/** Compile source stamped on what a collaborator catch-up changed here. */
+export const CATCH_UP_COMPILE_SOURCE = 'remote-catch-up';
+
+/** A resident document as it was before a catch-up applied. */
+type CatchUpDescription =
+    | { kind: 'glyph'; glyphId: string; snapshot: Record<string, unknown> }
+    | { kind: 'core'; snapshot: Record<string, unknown> };
+
 export type CommittedChangeOrigin = 'local' | 'remote';
 
 /** Several documents emitted by one commit, so UI can refresh once. */
@@ -1660,6 +1668,7 @@ export class PatchSyncEngine {
         const stateBefore = this.hasResidentGlyphDocument(documentId)
             ? this.encodeDocumentStateVector(documentId)
             : null;
+        const describedBefore = this._readCatchUpDescription(documentId);
         this.beginDeferredAfterSync();
         try {
             this.applyDocumentCheckpoint(documentId, update);
@@ -1691,6 +1700,13 @@ export class PatchSyncEngine {
                 this._workerDocumentReplaceCallback?.(documentId, workerState);
             }
         }
+        if (describedBefore) {
+            this._emitCatchUpCommittedChange(
+                documentId,
+                update,
+                describedBefore
+            );
+        }
         if (
             expectedRevision &&
             !this.glyphHasCatchUpRevision(documentId, expectedRevision)
@@ -1698,6 +1714,132 @@ export class PatchSyncEngine {
             return false;
         }
         return true;
+    }
+
+    /**
+     * What a catch-up may change, read before it applies: the glyph of a
+     * resident glyph shard, or the core keys of a hydrated font. Null for a
+     * document hydrated here for the first time, which is nobody’s edit.
+     */
+    private _readCatchUpDescription(
+        documentId: string
+    ): CatchUpDescription | null {
+        if (documentId === FONT_CORE_DOCUMENT_ID) {
+            const snapshot = this._readCoreCatchUpSnapshot();
+            return snapshot ? { kind: 'core', snapshot } : null;
+        }
+        const glyphId = glyphIdFromDocumentId(documentId);
+        if (!glyphId || !this.hasResidentGlyphDocument(documentId)) {
+            return null;
+        }
+        const glyphName = this._glyphNameById.get(glyphId);
+        const snapshot = glyphName
+            ? this._readNormalizedGlyphSnapshotFromYDoc(glyphName, {
+                  ignoreExisting: true
+              })
+            : null;
+        return glyphName && snapshot
+            ? { kind: 'glyph', glyphId, snapshot }
+            : null;
+    }
+
+    /** Core keys of the font JSON; glyphs live in their own shards. */
+    private _readCoreCatchUpSnapshot(): Record<string, unknown> | null {
+        if (!this._fontJson) {
+            return null;
+        }
+        const snapshot: Record<string, unknown> = {};
+        for (const [key, value] of Object.entries(this._fontJson)) {
+            if (key !== 'glyphs' && key !== GLYPH_REVISIONS_KEY) {
+                snapshot[key] = value;
+            }
+        }
+        return Object.keys(snapshot).length
+            ? (this._cloneRuntimeValue(snapshot) as Record<string, unknown>)
+            : null;
+    }
+
+    /**
+     * A catch-up is a checkpoint, not a packet, but for this window it is a
+     * collaborator’s edit like any other: it must reach the committed funnel
+     * so the canvas, the overview (with dependents) and the editing compile
+     * see it. The entries describe what the checkpoint changed here; they are
+     * not recorded in history.
+     */
+    private _emitCatchUpCommittedChange(
+        documentId: string,
+        update: YjsUpdate,
+        before: CatchUpDescription
+    ): void {
+        let beforeRoot: Record<string, unknown>;
+        let afterRoot: Record<string, unknown>;
+        if (before.kind === 'glyph') {
+            const glyphName = this._glyphNameById.get(before.glyphId);
+            const after = glyphName
+                ? this._readNormalizedGlyphSnapshotFromYDoc(glyphName, {
+                      ignoreExisting: true
+                  })
+                : null;
+            beforeRoot = { glyphs: [before.snapshot] };
+            afterRoot = { glyphs: after ? [after] : [] };
+        } else {
+            beforeRoot = before.snapshot;
+            afterRoot = this._readCoreCatchUpSnapshot() ?? {};
+        }
+        const timestamp = Date.now();
+        const historyItemId = `catch-up-${documentId}-${timestamp}`;
+        const entries = diffFontDataToPatchPairs(beforeRoot, afterRoot).flatMap(
+            ({ forward, inverse }) => {
+                const path = forward.path;
+                if (
+                    path[0] === GLYPH_REVISIONS_KEY ||
+                    path[0] === FONT_DEPS_ENTRY_PATH
+                ) {
+                    return [];
+                }
+                const glyphName =
+                    path[0] === 'glyphs' && path.length >= 2
+                        ? String(path[1])
+                        : null;
+                const layerId =
+                    glyphName && path[2] === 'layers' && path.length >= 4
+                        ? String(path[3])
+                        : null;
+                return [
+                    createLogEntry({
+                        timestamp,
+                        windowId: 'remote',
+                        windowRoleLabel: this._getWindowRoleLabel(),
+                        historyAction: 'change',
+                        transactionLabel: 'Collaborator edit',
+                        transactionId: null,
+                        historyItemId,
+                        op: forward.op === 'replace' ? 'set' : forward.op,
+                        undoScope: layerId
+                            ? 'layer'
+                            : glyphName
+                              ? 'glyph'
+                              : 'font',
+                        path: joinPathWithGlyphSeparator(path),
+                        oldValue:
+                            inverse.op === 'remove' ? undefined : inverse.value,
+                        newValue:
+                            forward.op === 'remove' ? undefined : forward.value,
+                        compileChangeSource: CATCH_UP_COMPILE_SOURCE,
+                        compileEditType: null,
+                        ...(glyphName && layerId
+                            ? { workerReplayTargets: [{ glyphName, layerId }] }
+                            : {})
+                    })
+                ];
+            }
+        );
+        if (!entries.length) {
+            return;
+        }
+        for (const cb of this._committedChangeListeners) {
+            cb(entries, { origin: 'remote', update, documentId });
+        }
     }
 
     /** A glyph shard whose catalog entry is a tombstone (the glyph was deleted). */

@@ -393,3 +393,142 @@ export async function collectPageErrors(page: Page): Promise<string[]> {
     });
     return errors;
 }
+
+/** Glyph names this window holds a live cloud socket for (main windows). */
+export async function liveGlyphNames(page: Page): Promise<string[]> {
+    return page.evaluate(() => {
+        const bridge = (window as any).changeBridge;
+        const ids: string[] =
+            (window as any).cloudPlugin?._liveSession?.liveDocumentIds?.() ??
+            [];
+        return ids
+            .filter((id) => id.startsWith('glyph:'))
+            .map(
+                (id) =>
+                    bridge?._glyphNameById?.get(id.slice('glyph:'.length)) ?? id
+            );
+    });
+}
+
+/** Point the editing text run at `text` and select the glyph at `selectedIndex`. */
+export async function setEditingText(
+    page: Page,
+    text: string,
+    selectedIndex: number
+): Promise<void> {
+    await page.evaluate(
+        async ({ value, index }) => {
+            const glyphCanvas = (window as any).glyphCanvas;
+            const editor = glyphCanvas?.textRunEditor;
+            editor?.setTextBuffer?.(value);
+            await editor?.shapeText?.(true);
+            await editor?.selectGlyphByIndex?.(index, true);
+            await glyphCanvas?.doUIUpdateAsync?.();
+        },
+        { value: text, index: selectedIndex }
+    );
+}
+
+/**
+ * What the compiled editing font draws for the text run: every shaped
+ * glyph’s outline and advance, read from the font HarfBuzz shapes with.
+ */
+export async function compiledTextRun(
+    page: Page
+): Promise<Array<{ path: string; advance: number }>> {
+    return page.evaluate(() => {
+        const editor = (window as any).glyphCanvas?.textRunEditor;
+        const shaped: Array<{ g: number; ax: number }> =
+            editor?.shapedGlyphs ?? [];
+        return shaped.map((glyph) => ({
+            path: String(editor.hbFont?.glyphToPath(glyph.g) ?? ''),
+            advance: Math.round(Number(glyph.ax))
+        }));
+    });
+}
+
+/** Paint these glyphs’ overview tiles now, as scrolling them in would. */
+export async function paintOverviewTiles(
+    page: Page,
+    glyphNames: string[]
+): Promise<void> {
+    await page.evaluate(
+        (names) =>
+            (window as any).glyphOverviewInstance?.refreshChangedGlyphTiles?.(
+                names
+            ),
+        glyphNames
+    );
+}
+
+/**
+ * Per glyph: whether its overview tile holds an outline other than what this
+ * window’s worker holds now (an empty tile fetches when shown), and that
+ * worker outline at `location` for comparing windows.
+ */
+export async function overviewTileState(
+    page: Page,
+    glyphNames: string[],
+    location: Record<string, number>
+): Promise<
+    Array<{ name: string; tileStale: boolean; outline: string | null }>
+> {
+    return page.evaluate(
+        async ({ names, fixedLocation }) => {
+            const w = window as any;
+            const overview = w.glyphOverviewInstance;
+            const outlinesAt = async (at: Record<string, number>) => {
+                const response = await w.fontCompilation.sendMessage({
+                    type: 'getGlyphOutlines',
+                    glyphNames: names,
+                    location: at,
+                    flattenComponents: false
+                });
+                return JSON.parse(response.outlinesJson || '[]') as Array<{
+                    name: string;
+                    shapes: unknown;
+                    width: unknown;
+                }>;
+            };
+            // Anchor order is not drawn and may differ between windows.
+            const drawable = (outline?: { shapes: unknown; width: unknown }) =>
+                outline
+                    ? JSON.stringify(
+                          { shapes: outline.shapes, width: outline.width },
+                          (key, value) =>
+                              key === 'anchors' && Array.isArray(value)
+                                  ? [...value].sort((left, right) =>
+                                        String(left?.name).localeCompare(
+                                            String(right?.name)
+                                        )
+                                    )
+                                  : value
+                      )
+                    : null;
+            const atTile = await outlinesAt(overview?.currentLocation ?? {});
+            const atFixed = await outlinesAt(fixedLocation);
+            const tiles = Array.from(
+                overview?.tiles?.values?.() ?? []
+            ) as Array<{
+                glyphName: string;
+                cachedData?: { shapes: unknown; width: unknown };
+            }>;
+            return names.map((name) => {
+                const tile = tiles.find((entry) => entry.glyphName === name);
+                const current = drawable(
+                    atTile.find((outline) => outline.name === name)
+                );
+                return {
+                    name,
+                    tileStale:
+                        !!tile?.cachedData &&
+                        drawable(tile.cachedData) !== current,
+                    outline: drawable(
+                        atFixed.find((outline) => outline.name === name)
+                    )
+                };
+            });
+        },
+        { names: glyphNames, fixedLocation: location }
+    );
+}

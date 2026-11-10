@@ -108,6 +108,11 @@ closes them.
 Edits that are not on a peer’s WebSocket subset still arrive: core publishes
 `glyphRevisions`, then every instance HTTP-catches-up the glyph live vector
 until `sync.revision` matches, and main relays that to linked windows.
+In every window, a catch-up that changes a glyph (or `font-core`) it already
+held is a collaborator’s edit like a live packet: it enters the committed
+funnel, so the canvas, the overview tiles of the glyph and its dependents,
+and the editing compile all take the new data. The revision stamp by itself
+compiles and repaints nothing.
 Catch-up is a checkpoint, not history replay. A linked window bootstraps
 from the main window’s resident document set (core, deps, and every glyph
 shard main currently holds), sent in batches, and seeds the Rust worker

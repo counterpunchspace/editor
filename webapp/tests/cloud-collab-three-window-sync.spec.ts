@@ -72,7 +72,12 @@ import {
     waitForLiveAccess,
     probeRoomShardState,
     glyphShardPath,
-    collectPageErrors
+    collectPageErrors,
+    compiledTextRun,
+    liveGlyphNames,
+    overviewTileState,
+    paintOverviewTiles,
+    setEditingText
 } from './helpers/cloud-collab-three-window';
 import {
     CLOUD_TEST_FONT,
@@ -318,6 +323,10 @@ test.describe('three-window sync scenarios', () => {
             await alignEditorCanvas(inviteePage, 'a', { wght: 200 });
 
             // ── 3. Baseline: verify both windows start with the same data ──
+            // The owner window can reload once while the cloud copy opens
+            // (cross-origin isolation); restore the page-side test helpers.
+            await installJsonCanonicalizer(mainPage);
+            await installJsonCanonicalizer(linkedPage);
             const mainBaselineData = await extractGlyphLayerData(
                 mainPage,
                 glyphNames
@@ -1769,6 +1778,310 @@ test.describe('three-window sync scenarios', () => {
                 await expect
                     .poll(() => sharedLayerNodes(page), { timeout: 60000 })
                     .toEqual(expectedSharedLayerNodes);
+            }
+
+            // ── 15. Edits to glyphs no other window has open ─────────────
+            // Every window has `a` open, so an edit to `idotless`, `p` or `o`
+            // reaches the others only as a core revision stamp plus a glyph
+            // catch-up (main relays that to the linked window). Each window
+            // must compile and repaint overview tiles from the new data, not
+            // from the stamp alone, including the automatic composites built
+            // on them (`i` = `idotless` + `dotaccentcomb`, `q` = `p`) and the
+            // glyphs whose metrics keys follow them (`e` and `p` follow `o`).
+            const offEditorGlyphs = ['idotless', 'i', 'p', 'q', 'e', 'o'];
+            const allPages = [mainPage, linkedPage, inviteePage];
+            const tileLocation = { wght: 200 };
+            // A main window holds one live glyph socket: the last distinct
+            // glyph of the edited glyph plus the text run. End on `z`.
+            for (const page of allPages) {
+                await setEditingText(page, 'aipqez', 0);
+                await setAxisSliderValue(page, 'wght', tileLocation.wght);
+                await waitForEditingCompile(page);
+            }
+            for (const page of [mainPage, inviteePage]) {
+                await expect
+                    .poll(() => liveGlyphNames(page), { timeout: 30000 })
+                    .toEqual(['z']);
+            }
+            const compiledRunText = async (page: Page) =>
+                JSON.stringify(await compiledTextRun(page));
+            const expectAllWindowsShow = async (
+                sender: Page,
+                label: string
+            ) => {
+                const expectedRun = await compiledRunText(sender);
+                const expectedTiles = (
+                    await overviewTileState(
+                        sender,
+                        offEditorGlyphs,
+                        tileLocation
+                    )
+                ).map(({ name, outline }) => ({
+                    name,
+                    tileStale: false,
+                    outline
+                }));
+                for (const page of allPages) {
+                    await expect
+                        .poll(() => compiledRunText(page), {
+                            timeout: 60000,
+                            message: `${label}: compiled text run`
+                        })
+                        .toBe(expectedRun);
+                    await expect
+                        .poll(
+                            () =>
+                                overviewTileState(
+                                    page,
+                                    offEditorGlyphs,
+                                    tileLocation
+                                ),
+                            {
+                                timeout: 60000,
+                                message: `${label}: overview tiles`
+                            }
+                        )
+                        .toEqual(expectedTiles);
+                }
+            };
+            await waitForEditingCompile(mainPage);
+            for (const page of allPages) {
+                await paintOverviewTiles(page, offEditorGlyphs);
+            }
+            await expectAllWindowsShow(mainPage, 'baseline');
+
+            const editOffEditorGlyph = async (
+                sender: Page,
+                label: string,
+                edit: () => Promise<unknown>
+            ) => {
+                // Every tile holds data before the edit, so one the edit
+                // leaves untouched shows up as stale, not as empty.
+                for (const page of allPages) {
+                    await paintOverviewTiles(page, offEditorGlyphs);
+                }
+                const runBefore = await compiledRunText(sender);
+                await edit();
+                await waitForEditingCompile(sender);
+                await expect
+                    .poll(() => compiledRunText(sender), {
+                        timeout: 60000,
+                        message: `${label}: sender compile`
+                    })
+                    .not.toBe(runBefore);
+                await expectAllWindowsShow(sender, label);
+            };
+
+            await editOffEditorGlyph(
+                inviteePage,
+                'invitee outline idotless',
+                () =>
+                    moveGlyphNodeThroughModel(inviteePage, {
+                        glyphName: 'idotless',
+                        layerId: thinLayerId,
+                        nodeIndex: 0,
+                        deltaX: 23,
+                        label: 'Invitee outline idotless'
+                    })
+            );
+            // FustatMini’s composites are not aligned automatically; the owner
+            // turns that on for `i`, a component edit every window must take.
+            await mainPage.evaluate(async (layerId) => {
+                const w = window as any;
+                const layer = w.currentFontModel
+                    .findGlyph('i')
+                    .findLayerById(layerId);
+                w.patchSyncEngine.beginTransaction(
+                    'Automatic alignment',
+                    null,
+                    {
+                        compileChangeSource: 'component-property',
+                        compileEditType: null
+                    }
+                );
+                try {
+                    for (const shape of layer.shapes) {
+                        const component = shape.asComponent?.();
+                        if (component) {
+                            component.automaticAlignment = true;
+                        }
+                    }
+                } finally {
+                    w.patchSyncEngine.endTransaction();
+                }
+                await w.patchSyncEngine.waitForPendingCloudCommits?.();
+            }, thinLayerId);
+            for (const page of allPages) {
+                await expect
+                    .poll(
+                        () =>
+                            page.evaluate(
+                                (layerId) =>
+                                    (window as any).currentFontModel
+                                        .findGlyph('i')
+                                        .findLayerById(layerId)
+                                        .isAutomaticAlignedLayer() === true,
+                                thinLayerId
+                            ),
+                        { timeout: 60000 }
+                    )
+                    .toBe(true);
+            }
+            await expectAllWindowsShow(mainPage, 'owner automatic alignment i');
+
+            // Moving the base’s top anchor recomposes the automatically
+            // aligned `i`: its dot moves in every window.
+            const iShapesBeforeAnchor = await extractRawLayerShapes(
+                mainPage,
+                'i',
+                thinLayerId!
+            );
+            let recomposed: string[] = [];
+            await editOffEditorGlyph(
+                mainPage,
+                'owner anchor idotless',
+                async () => {
+                    recomposed = await mainPage.evaluate(async (layerId) => {
+                        const w = window as any;
+                        const fontModel = w.currentFontModel;
+                        const layer = fontModel
+                            .findGlyph('idotless')
+                            .findLayerById(layerId);
+                        const top = layer.anchors.find(
+                            (anchor: any) => anchor.name === 'top'
+                        );
+                        const affected = new Set(['idotless']);
+                        w.changeBridge.runWithoutRecording(() => {
+                            top.x += 40;
+                            top.y += 60;
+                            for (const name of fontModel.rebuildAutomaticCompositesForGlyphs(
+                                new Set(['idotless']),
+                                {
+                                    preferredLayerId: layerId,
+                                    preferredSourceGlyphName: 'idotless'
+                                }
+                            )) {
+                                affected.add(name);
+                            }
+                        });
+                        w.fontManager.currentFont.syncJsonFromModel();
+                        const targets = [...affected].map((glyphName) => ({
+                            glyphName,
+                            layerId
+                        }));
+                        w.changeBridge.syncLayersFromJson(
+                            targets,
+                            'Drag anchor',
+                            undefined,
+                            undefined,
+                            undefined,
+                            targets,
+                            'mouse-drag-anchor',
+                            'mouse-drag-anchor',
+                            null
+                        );
+                        await w.patchSyncEngine.waitForPendingCloudCommits?.();
+                        return [...affected];
+                    }, thinLayerId);
+                }
+            );
+            expect(recomposed).toContain('i');
+            const iShapesAfterAnchor = await extractRawLayerShapes(
+                mainPage,
+                'i',
+                thinLayerId!
+            );
+            expect(iShapesAfterAnchor).not.toEqual(iShapesBeforeAnchor);
+            for (const page of [linkedPage, inviteePage]) {
+                await expect
+                    .poll(
+                        () => extractRawLayerShapes(page, 'i', thinLayerId!),
+                        {
+                            timeout: 60000
+                        }
+                    )
+                    .toEqual(iShapesAfterAnchor);
+            }
+            await editOffEditorGlyph(linkedPage, 'linked width o', () =>
+                linkedPage.evaluate(async (layerId) => {
+                    const w = window as any;
+                    const layer = w.currentFontModel
+                        .findGlyph('o')
+                        .findLayerById(layerId);
+                    const bridge = w.patchSyncEngine;
+                    bridge.beginTransaction('Set width', null, {
+                        compileChangeSource: 'keyboard-sidebearing',
+                        compileEditType: null
+                    });
+                    try {
+                        layer.width = layer.width + 30;
+                    } finally {
+                        bridge.endTransaction();
+                    }
+                }, thinLayerId)
+            );
+            await editOffEditorGlyph(inviteePage, 'invitee kerning p:q', () =>
+                inviteePage.evaluate(async (masterId) => {
+                    const w = window as any;
+                    const master = w.currentFontModel.masters.find(
+                        (candidate: any) => candidate.id === masterId
+                    );
+                    const bridge = w.patchSyncEngine;
+                    bridge.beginTransaction('Edit kerning pair', null, {
+                        compileChangeSource: 'keyboard-kerning-value',
+                        compileEditType: 'kerning-value'
+                    });
+                    try {
+                        master.kerning = { ...master.kerning, 'p:q': -80 };
+                    } finally {
+                        bridge.endTransaction();
+                    }
+                    await bridge.waitForPendingCloudCommits?.();
+                }, thinLayerId)
+            );
+            await editOffEditorGlyph(mainPage, 'owner outline p', () =>
+                moveGlyphNodeThroughModel(mainPage, {
+                    glyphName: 'p',
+                    layerId: thinLayerId,
+                    nodeIndex: 0,
+                    deltaX: -17,
+                    label: 'Owner outline p'
+                })
+            );
+            // Undo of the owner’s open glyph `a` (not live anywhere either)
+            // returns `a` and its composites in every window.
+            const aBeforeOwnerEdit = await glyphNodeXAt(
+                mainPage,
+                'a',
+                thinLayerId!,
+                0
+            );
+            await editOffEditorGlyph(mainPage, 'owner outline a', () =>
+                moveGlyphNodeThroughModel(mainPage, {
+                    glyphName: 'a',
+                    layerId: thinLayerId,
+                    nodeIndex: 0,
+                    deltaX: 13,
+                    label: 'Owner outline a'
+                })
+            );
+            await editOffEditorGlyph(mainPage, 'owner undo outline a', () =>
+                mainPage.evaluate(async (layerId) => {
+                    const w = window as any;
+                    await w.runBridgeUndoRedo('undo', 'a', 'a', layerId, null);
+                    await w.patchSyncEngine.waitForPendingCloudCommits?.();
+                }, thinLayerId)
+            );
+            for (const page of allPages) {
+                await expect
+                    .poll(() => glyphNodeXAt(page, 'a', thinLayerId!, 0), {
+                        timeout: 60000
+                    })
+                    .toBe(aBeforeOwnerEdit);
+            }
+            // Still only `z` live: every edit above arrived as a catch-up.
+            for (const page of [mainPage, inviteePage]) {
+                expect(await liveGlyphNames(page)).toEqual(['z']);
             }
 
             const dataBeforeReload = await extractGlyphLayerData(

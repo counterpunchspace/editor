@@ -5,7 +5,8 @@ const {
     syncRustCacheAndRefreshCanvas,
     buildCascadingRecompositionOperations,
     runBridgeUndoRedo,
-    committedEntriesTouchAxes
+    committedEntriesTouchAxes,
+    getCommittedChangeRefreshPromise
 } = require('../js/change-bridge-init');
 const {
     fontCompilation,
@@ -13,6 +14,7 @@ const {
 } = require('../js/font-compilation');
 const { sidebarErrorDisplay } = require('../js/sidebar-error-display');
 const { PatchSyncEngine: ChangeBridge } = require('../js/patch-sync-engine');
+const { fromYType } = require('../js/change-bridge-ydoc');
 
 describe('handleRemoteChangeRefresh', () => {
     test('shared glyph overview refresh helper adds dependent composites and preserves immediate sender refresh detail', async () => {
@@ -3354,6 +3356,91 @@ describe('bridge Yjs worker callback', () => {
         );
     });
 
+    test('a remote revision stamp waits for the catch-up, and queued catch-ups compile once with their dependents', async () => {
+        const requestRecompileWithoutDataChange = jest.fn(function () {
+            this.compileRequestVersion += 1;
+        });
+        const glyphChanged = jest.fn();
+        fontCompilation.isInitialized = false;
+        jest.spyOn(
+            fontCompilation,
+            'seedWorkerDocumentSet'
+        ).mockResolvedValue();
+        jest.spyOn(
+            fontCompilation,
+            'seedWorkerYDocFromState'
+        ).mockResolvedValue();
+        window.windowRole = {
+            isLinkedWindow: () => false,
+            isMainWindow: () => true,
+            getRoleLabel: () => 'main'
+        };
+        window.autoCompileManager = { checkAndSchedule: jest.fn() };
+        window.fontManager = {
+            clearEditingCompileContext: jest.fn(),
+            currentFont: {
+                changeVersion: 1,
+                compileRequestVersion: 1,
+                requestRecompileWithoutDataChange,
+                markDirty: jest.fn(),
+                fontModel: {
+                    collectComponentDependentGlyphs: jest.fn(
+                        (names) => new Set(names.has('A') ? ['Adieresis'] : [])
+                    )
+                }
+            }
+        };
+        const bridge = initializeBridgeHarness();
+        const emitRemote = (entries, documentId) => {
+            for (const callback of bridge._committedChangeListeners) {
+                callback(entries, {
+                    origin: 'remote',
+                    update: new Uint8Array(),
+                    documentId
+                });
+            }
+        };
+        window.addEventListener('glyphChanged', glyphChanged);
+        try {
+            emitRemote(
+                [{ op: 'set', path: 'glyphRevisions.id-a', newValue: 'r2' }],
+                'font-core'
+            );
+            // The stamp enqueues nothing, so the shared queue may still hold
+            // an earlier test’s refresh that failed on the absent worker.
+            await getCommittedChangeRefreshPromise().catch(() => {});
+            expect(requestRecompileWithoutDataChange).not.toHaveBeenCalled();
+            expect(glyphChanged).not.toHaveBeenCalled();
+
+            const catchUpEntry = (glyphName) => ({
+                op: 'set',
+                path: `glyphs.${glyphName}:layers.layer-1:shapes`,
+                compileChangeSource: 'remote-catch-up',
+                compileEditType: null,
+                workerReplayTargets: [{ glyphName, layerId: 'layer-1' }]
+            });
+            emitRemote([catchUpEntry('A')], 'glyph:id-a');
+            emitRemote([catchUpEntry('B')], 'glyph:id-b');
+            await getCommittedChangeRefreshPromise();
+        } finally {
+            window.removeEventListener('glyphChanged', glyphChanged);
+        }
+
+        expect(requestRecompileWithoutDataChange).toHaveBeenCalledTimes(1);
+        expect(requestRecompileWithoutDataChange).toHaveBeenCalledWith({
+            compileContext: expect.objectContaining({
+                changeSource: 'remote-catch-up',
+                editType: null
+            })
+        });
+        expect(glyphChanged).toHaveBeenCalledTimes(1);
+        expect(glyphChanged.mock.calls[0][0].detail.glyphNames.sort()).toEqual([
+            'A',
+            'Adieresis',
+            'B'
+        ]);
+    });
+
     test('forwards feature-code Yjs updates to Rust with empty glyph metadata', async () => {
         const forwardWorkerYjsUpdate = jest.fn().mockResolvedValue(true);
         const workerSeedSpy = jest
@@ -4086,6 +4173,80 @@ describe('buildCascadingRecompositionOperations', () => {
                 ]
             })
         ]);
+    });
+
+    test('a point move re-derived by metrics keys keeps the layer’s stored point positions', () => {
+        const fontJson = makeBridgeFont();
+        fontJson.glyphs[0].layers[0].shapes = [
+            {
+                closed: true,
+                nodes: [
+                    { x: 100, y: 0, nodetype: 'Line' },
+                    { x: 200, y: 0, nodetype: 'Line' },
+                    { x: 200, y: 500, nodetype: 'Line' }
+                ]
+            }
+        ];
+        const bridge = new ChangeBridge('cascade-test');
+        bridge.initFromJson(fontJson);
+        const yLayer = bridge
+            .getYValue(['glyphs', 'A'])
+            .get('layers')
+            .get('layer-1');
+        const nodeId = fromYType(yLayer).shapes[0].nodes[0].id;
+        expect(nodeId).toBeTruthy();
+
+        // The model after the edit: the point moved and its metrics key
+        // re-derived the width of the same layer.
+        const modelNode = fontJson.glyphs[0].layers[0].shapes[0].nodes[0];
+        modelNode.id = nodeId;
+        modelNode.x = 123;
+        fontJson.glyphs[0].layers[0].width = 623;
+        window.fontManager = {
+            currentFont: {
+                fontModel: {
+                    findGlyph: jest.fn(() => ({
+                        findLayerById: jest.fn(() => ({
+                            id: 'layer-1',
+                            getMatchingLayerOnGlyph: jest.fn(() => null)
+                        }))
+                    })),
+                    rebuildAutomaticCompositesForGlyphs: jest.fn(
+                        () => new Set()
+                    ),
+                    recomputeMetricsKeys: jest.fn(() => new Set(['A']))
+                }
+            }
+        };
+
+        const operations = buildCascadingRecompositionOperations(bridge, [
+            {
+                op: 'set',
+                path: [
+                    'glyphs',
+                    'A',
+                    'layers',
+                    'layer-1',
+                    'nodePositionsById',
+                    nodeId
+                ],
+                oldValue: '100 0',
+                newValue: '123 0'
+            },
+            {
+                op: 'set',
+                path: ['glyphs', 'A', 'layers', 'layer-1', 'width'],
+                oldValue: 600,
+                newValue: 623
+            }
+        ]);
+
+        for (const operation of operations) {
+            expect(Object.keys(operation.newValue)).not.toEqual(
+                expect.arrayContaining(['nodePositionsById'])
+            );
+            expect(operation.newValue.shapes).toBeUndefined();
+        }
     });
 
     test('emits null tombstones when cascade recomposition removes layer fields', () => {
