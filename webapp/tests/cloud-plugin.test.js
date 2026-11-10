@@ -1931,6 +1931,35 @@ describe('CloudPlugin.openAsset', () => {
     });
 });
 
+describe('CloudPlugin live glyph socket', () => {
+    afterEach(() => {
+        delete window.fontManager;
+        delete window.glyphCanvas;
+    });
+
+    test('the glyph open in the editor keeps the live glyph socket', () => {
+        const {
+            stickyLiveGlyphDocumentIds
+        } = require('../js/cloud-live-session');
+        const plugin = new CloudPlugin();
+        const syncLiveDocumentIds = jest.fn().mockResolvedValue();
+        plugin._liveSession = { syncLiveDocumentIds };
+        window.fontManager = { getActiveEditorGlyphName: () => 'b' };
+        window.glyphCanvas = {
+            textRunEditor: { glyphNameBuffer: ['a', 'b', 'c'] }
+        };
+
+        plugin._startEditingSubsetSync({
+            glyphDocumentIdForName: (name) => `glyph:${name}`
+        });
+        plugin._stopEditingSubsetSync();
+
+        const requested = syncLiveDocumentIds.mock.calls.at(-1)[0];
+        expect(requested).toEqual(['glyph:a', 'glyph:c', 'glyph:b']);
+        expect(stickyLiveGlyphDocumentIds(requested)).toEqual(['glyph:b']);
+    });
+});
+
 describe('CloudPlugin UI availability', () => {
     test('is visible in UI when the plugin flag is enabled', () => {
         const plugin = new CloudPlugin();

@@ -3500,23 +3500,22 @@ export class CloudPlugin extends FilesystemPlugin {
     }
 
     private _liveGlyphNamesForSync(): string[] {
-        // Viewers and editors both follow the current glyph plus the shaped
-        // text run. getLiveVisibleGlyphNames also includes the compile subset
+        // Viewers and editors both follow the shaped text run plus the current
+        // glyph. getLiveVisibleGlyphNames also includes the compile subset
         // snapshot, which opens a Fustat catalog of empty glyph Durable Objects
         // and races GET /state on the glyph the e2e actually probes.
+        // A session that holds one glyph socket keeps the last name, so the
+        // glyph open in the editor goes last: collaborators’ edits to it then
+        // arrive live instead of by catch-up.
         const names = [
-            ...activeEditorGlyphNames(),
             ...((window as any).glyphCanvas?.textRunEditor?.glyphNameBuffer ||
-                [])
-        ];
-        return [
-            ...new Set(
-                names.filter(
-                    (name) =>
-                        typeof name === 'string' && name && name !== 'undefined'
-                )
-            )
-        ];
+                []),
+            ...activeEditorGlyphNames()
+        ].filter(
+            (name): name is string =>
+                typeof name === 'string' && !!name && name !== 'undefined'
+        );
+        return names.filter((name, index) => names.lastIndexOf(name) === index);
     }
 
     private _startEditingSubsetSync(bridge: PatchSyncEngine): void {

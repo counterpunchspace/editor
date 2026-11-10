@@ -93,7 +93,8 @@ document, because Yjs leaves an update with missing earlier clocks pending
 forever.
 
 Only the main window holds cloud Durable Object sockets (`font-core`,
-`font-deps`, and the sticky live glyph). Linked windows talk to main over document-scoped
+`font-deps`, and the sticky live glyph: the glyph open in the editor, or in
+text mode the selected glyph). Linked windows talk to main over document-scoped
 BroadcastChannel. Chrome stays per window (`windowUi.*`).
 
 Each main window names its own channel for the document it holds, and its

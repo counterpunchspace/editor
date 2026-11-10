@@ -1791,17 +1791,17 @@ test.describe('three-window sync scenarios', () => {
             const offEditorGlyphs = ['idotless', 'i', 'p', 'q', 'e', 'o'];
             const allPages = [mainPage, linkedPage, inviteePage];
             const tileLocation = { wght: 200 };
-            // A main window holds one live glyph socket: the last distinct
-            // glyph of the edited glyph plus the text run. End on `z`.
+            // A main window holds one live glyph socket, for the glyph open in
+            // the editor (`a`); every other watched glyph arrives by catch-up.
             for (const page of allPages) {
-                await setEditingText(page, 'aipqez', 0);
+                await setEditingText(page, 'aipqe', 0);
                 await setAxisSliderValue(page, 'wght', tileLocation.wght);
                 await waitForEditingCompile(page);
             }
             for (const page of [mainPage, inviteePage]) {
                 await expect
                     .poll(() => liveGlyphNames(page), { timeout: 30000 })
-                    .toEqual(['z']);
+                    .toEqual(['a']);
             }
             const compiledRunText = async (page: Page) =>
                 JSON.stringify(await compiledTextRun(page));
@@ -2048,8 +2048,8 @@ test.describe('three-window sync scenarios', () => {
                     label: 'Owner outline p'
                 })
             );
-            // Undo of the owner’s open glyph `a` (not live anywhere either)
-            // returns `a` and its composites in every window.
+            // The owner’s open glyph `a` is live in the main windows: its edit
+            // and undo arrive as live packets and every window recompiles.
             const aBeforeOwnerEdit = await glyphNodeXAt(
                 mainPage,
                 'a',
@@ -2079,9 +2079,9 @@ test.describe('three-window sync scenarios', () => {
                     })
                     .toBe(aBeforeOwnerEdit);
             }
-            // Still only `z` live: every edit above arrived as a catch-up.
+            // Still only `a` live: the other glyphs’ edits arrived as catch-ups.
             for (const page of [mainPage, inviteePage]) {
-                expect(await liveGlyphNames(page)).toEqual(['z']);
+                expect(await liveGlyphNames(page)).toEqual(['a']);
             }
 
             const dataBeforeReload = await extractGlyphLayerData(
