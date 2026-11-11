@@ -1,0 +1,140 @@
+# Nightly five-window cloud fuzz on staging (tests/cloud-collab-fuzz.spec.ts).
+#
+# Runs against whatever staging serves (the last push.sh), with the spec from
+# that same editor commit. Every night picks a new seed; the run log and the
+# job summary name it, so a failure can be repeated with FUZZ_SEED=<n>, or
+# from the Actions page with "Run workflow" and that seed.
+#
+# It claims staging like the push CI does, so the two never overlap, and
+# finishes with the same leak check: both accounts, the font, every glyph and
+# every room must be gone, with no rows or stored objects left.
+
+name: Nightly fuzz
+
+on:
+    schedule:
+        - cron: "0 3 * * *"
+    workflow_dispatch:
+        inputs:
+            seed:
+                description: "Seed (a number, or random)"
+                default: random
+            steps:
+                description: "Single steps in the first phase"
+                default: "40"
+
+permissions:
+    contents: read
+    actions: read
+
+concurrency:
+    group: nightly-fuzz
+    cancel-in-progress: false
+
+jobs:
+    fuzz:
+        name: cloud · fuzz
+        runs-on: ubuntu-latest
+        timeout-minutes: 180
+        steps:
+            - name: Read the editor commit staging serves
+              id: staging
+              run: |
+                  commit="$(curl -fsS https://staging.editor.counterpunch.space/build-info.json | jq -r .commit)"
+                  if ! [[ "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+                    echo "Staging did not report an editor commit: $commit"
+                    exit 1
+                  fi
+                  echo "Staging serves editor $commit"
+                  echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+            - name: Checkout that editor commit
+              uses: actions/checkout@v4
+              with:
+                  ref: ${{ steps.staging.outputs.commit }}
+
+            - name: Set up Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "24"
+
+            - name: Install editor webapp dependencies
+              run: npm install --prefix webapp
+
+            - name: Install Playwright Chromium
+              run: npx --prefix webapp playwright install --with-deps chromium
+
+            - name: Pick the seed
+              id: seed
+              env:
+                  INPUT_SEED: ${{ inputs.seed || 'random' }}
+              run: |
+                  seed="$INPUT_SEED"
+                  if [ "$seed" = "random" ] || [ -z "$seed" ]; then
+                    seed="$(node -e 'console.log(Math.floor(Math.random() * 2 ** 31))')"
+                  fi
+                  if ! [[ "$seed" =~ ^[0-9]+$ ]]; then
+                    echo "Seed must be a number or random: $seed"
+                    exit 1
+                  fi
+                  echo "Seed $seed"
+                  echo "seed=$seed" >> "$GITHUB_OUTPUT"
+
+            - name: Claim staging, wiping it first if the last run did not finish clean
+              id: claim
+              env:
+                  CLOUD_COLLAB_WEBSITE_URL: https://staging.counterpunch.space
+                  E2E_OPERATOR_TOKEN: ${{ secrets.E2E_OPERATOR_TOKEN }}
+                  GITHUB_TOKEN: ${{ github.token }}
+              run: node scripts/staging-state.mjs begin
+
+            - name: Run the fuzz on staging
+              working-directory: webapp
+              env:
+                  CLOUD_COLLAB_FUZZ: "1"
+                  CLOUD_COLLAB_E2E: "1"
+                  CLOUD_COLLAB_REMOTE: "1"
+                  CLOUD_E2E_EDITOR_URL: https://staging.editor.counterpunch.space
+                  CLOUD_COLLAB_WEBSITE_URL: https://staging.counterpunch.space
+                  CLOUD_COLLAB_ROOM_URL: https://staging.rooms.counterpunch.space
+                  E2E_OPERATOR_TOKEN: ${{ secrets.E2E_OPERATOR_TOKEN }}
+                  FUZZ_SEED: ${{ steps.seed.outputs.seed }}
+                  FUZZ_STEPS: ${{ inputs.steps || '40' }}
+              run: npx playwright test --project=cloud-collab-fuzz --reporter=list
+
+            # Runs after a failure or a cancel too, but only if this run holds
+            # staging: otherwise it would delete another run's data.
+            - name: Remove this run's test data and fail if any room, row or object is left
+              if: always() && steps.claim.outcome == 'success'
+              env:
+                  CLOUD_COLLAB_WEBSITE_URL: https://staging.counterpunch.space
+                  E2E_OPERATOR_TOKEN: ${{ secrets.E2E_OPERATOR_TOKEN }}
+              run: node scripts/staging-state.mjs finish
+
+            - name: Summary
+              if: always()
+              env:
+                  SEED: ${{ steps.seed.outputs.seed }}
+                  STAGING_COMMIT: ${{ steps.staging.outputs.commit }}
+                  OUTCOME: ${{ job.status }}
+              run: |
+                  now="$(curl -fsS https://staging.editor.counterpunch.space/build-info.json | jq -r .commit || true)"
+                  {
+                    echo "### Nightly fuzz: $OUTCOME"
+                    echo ""
+                    echo "- Seed: \`$SEED\`"
+                    echo "- Editor commit: \`$STAGING_COMMIT\`"
+                    if [ -n "$now" ] && [ "$now" != "$STAGING_COMMIT" ]; then
+                      echo "- Staging was redeployed during the run (now \`$now\`), so a failure may come from the switch."
+                    fi
+                    echo ""
+                    echo "Repeat locally with \`FUZZ_SEED=$SEED\`, or here with Run workflow and seed $SEED."
+                  } >> "$GITHUB_STEP_SUMMARY"
+
+            - name: Upload Playwright results
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: nightly-fuzz-${{ steps.seed.outputs.seed }}
+                  path: webapp/test-results
+                  if-no-files-found: ignore
