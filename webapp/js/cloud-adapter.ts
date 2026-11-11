@@ -197,6 +197,7 @@ import {
     parseRequiredJsonResponse,
     publishCloudDocumentUpdate,
     refreshEditorAfterGlyphDocumentCatchUp,
+    relayGlyphStateToLinkedWindows,
     runCloudVisibleReconnectRebaseline,
     sha256Digest,
     sha256Hex,
@@ -2337,6 +2338,7 @@ export class CloudAdapter implements FileSystemAdapter {
                         localUpdate
                     );
                 }
+                relayGlyphStateToLinkedWindows(this._bridge, this._documentId);
                 refreshEditorAfterGlyphDocumentCatchUp(this._documentId);
                 return;
             }

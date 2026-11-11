@@ -1651,6 +1651,26 @@ describe('CloudPlugin.openAsset', () => {
         expect(plugin.getAssetConnectionDetail('asset-1')).toBeUndefined();
     });
 
+    test('a reloaded linked window keeps main’s relayed state when it opens the font', () => {
+        window.windowRole = {
+            isMainWindow: () => false,
+            isLinkedWindow: () => true
+        };
+        plugin.applyRelayedConnectionState({
+            assetId: 'asset-1',
+            status: 'connected',
+            pendingSyncCount: 0,
+            canMutate: true
+        });
+
+        // Opening the font from main’s snapshot disconnects any session of
+        // the linked window’s own; main’s state must survive it.
+        plugin._disconnectCurrent();
+
+        expect(plugin._relayedAssetId).toBe('asset-1');
+        expect(plugin.connectionStatus).toBe('connected');
+    });
+
     test('includes stored connection detail in full-state relay snapshots', () => {
         plugin._activeAssetId = 'asset-1';
 
@@ -3194,6 +3214,69 @@ describe('CloudPlugin glyph catch-up from core revision map', () => {
                 [{ documentId: 'glyph:id-new', expectedRevision: 'rev-1' }],
                 { includeLiveDocuments: true }
             );
+        } finally {
+            plugin._stopTrackingActiveAssetSize?.();
+            window.fontManager = originalFontManager;
+            window.glyphCanvas = originalCanvas;
+            jest.useRealTimers();
+        }
+    });
+
+    test('retries catch-up of a loaded glyph until the expected revision arrives', async () => {
+        jest.useFakeTimers();
+        const plugin = new CloudPlugin();
+        const catchUpDocuments = jest.fn().mockResolvedValue([]);
+        plugin._liveSession = { catchUpDocuments };
+        let caughtUp = false;
+        plugin._activeAssetSizeBridge = {
+            hasSparseWorkingSet: () => false,
+            listSparseWorkingGlyphIds: () => [],
+            glyphDocumentIdForName: () => null,
+            // Loaded and in the model, but still without the edit: the
+            // collaborator’s HTTP publish has not reached the room yet.
+            hasResidentGlyphDocument: () => true,
+            catalogGlyphIsInModel: () => true,
+            materializeResidentCatalogGlyph: () => {},
+            listGlyphRevisionTokens: () => [
+                { glyphId: 'id-stale', revision: 'rev-2' }
+            ],
+            glyphHasCatchUpRevision: () => caughtUp
+        };
+        const originalFontManager = window.fontManager;
+        const originalCanvas = window.glyphCanvas;
+        window.fontManager = {
+            getActiveEditorGlyphName: () => 'a',
+            getConstrainedEditingSubsetGlyphs: () => ['a'],
+            getEditingSubsetSnapshot: () => ['a'],
+            getLiveVisibleGlyphNames: () => ['a'],
+            deriveSubsetGlyphsFromText: () => ['a'],
+            resolveEditingTextForCompile: () => 'a'
+        };
+        window.glyphCanvas = { textRunEditor: { glyphNameBuffer: [] } };
+        try {
+            plugin._syncGlyphCatchUpFromCommittedChange(
+                [{ path: 'glyphRevisions.id-stale', newValue: 'rev-2' }],
+                { origin: 'remote', documentId: 'font-core' }
+            );
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(catchUpDocuments).toHaveBeenCalledTimes(1);
+            await jest.advanceTimersByTimeAsync(1500);
+            await Promise.resolve();
+            expect(catchUpDocuments).toHaveBeenCalledTimes(2);
+            expect(catchUpDocuments).toHaveBeenLastCalledWith(
+                [{ documentId: 'glyph:id-stale', expectedRevision: 'rev-2' }],
+                { includeLiveDocuments: true }
+            );
+            // Still behind after the second try: keep trying.
+            await jest.advanceTimersByTimeAsync(1500);
+            await Promise.resolve();
+            expect(catchUpDocuments).toHaveBeenCalledTimes(3);
+            // Once the revision is in, retries stop.
+            caughtUp = true;
+            await jest.advanceTimersByTimeAsync(4500);
+            await Promise.resolve();
+            expect(catchUpDocuments).toHaveBeenCalledTimes(3);
         } finally {
             plugin._stopTrackingActiveAssetSize?.();
             window.fontManager = originalFontManager;

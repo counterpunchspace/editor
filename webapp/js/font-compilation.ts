@@ -592,6 +592,10 @@ export class FontCompilation {
             });
 
         this.pendingWorkerDocumentSync = settledCurrent.then(() => settledNext);
+        // Callers that await the sync still see a failure; the stored chain
+        // itself must not surface as an unhandled rejection while nobody
+        // waits on it (the failed sender recovers by reseeding).
+        this.pendingWorkerDocumentSync.catch(() => undefined);
         return syncPromise;
     }
 
@@ -793,6 +797,11 @@ export class FontCompilation {
                 'Failed to replace worker Yjs documents after catch-up',
                 error
             );
+            // The worker kept its old documents; rebuild them from the
+            // bridge so the next compile does not use stale outlines.
+            void window.fontManager
+                ?.reseedWorkerFromBridge?.('worker document replace failed')
+                .catch(() => undefined);
         });
     }
 

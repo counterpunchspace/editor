@@ -410,12 +410,33 @@ export type ApplyRemoteUpdateOptions = {
 /** Most recent collaborator-touched paths kept for the undo guard. */
 const MAX_COLLABORATOR_TOUCHES = 2000;
 
+function historyPathSegments(path: string): string[] {
+    return getPathSegments(path)
+        .map((segment) => String(segment))
+        .filter((segment) => segment !== '');
+}
+
+/**
+ * Two change paths touch the same data when one contains the other,
+ * compared segment by segment: a glyph name is one segment even with dots,
+ * so `adieresis` does not contain `adieresis.ss01`.
+ */
 function historyPathsOverlap(left: string, right: string): boolean {
-    return (
-        left === right ||
-        left.startsWith(`${right}.`) ||
-        right.startsWith(`${left}.`)
-    );
+    if (left === right) {
+        return true;
+    }
+    const leftSegments = historyPathSegments(left);
+    const rightSegments = historyPathSegments(right);
+    if (!leftSegments.length || !rightSegments.length) {
+        return false;
+    }
+    const shared = Math.min(leftSegments.length, rightSegments.length);
+    for (let index = 0; index < shared; index += 1) {
+        if (leftSegments[index] !== rightSegments[index]) {
+            return false;
+        }
+    }
+    return true;
 }
 const GLYPH_REVISION_ORIGIN = 'glyph-revision-signal';
 const LAYER_EDIT_ORIGIN_PREFIX = 'layer-edit:';
@@ -1675,22 +1696,17 @@ export class PatchSyncEngine {
         } finally {
             this.endDeferredAfterSync();
         }
-        if (stateBefore) {
-            // Catch-up brings in other people’s edits of a glyph that has no
-            // live socket here; guard undo for the whole glyph.
-            const glyphName = this._glyphNameById.get(
-                documentId.slice('glyph:'.length)
-            );
-            if (
-                glyphName &&
-                !stateVectorsEqual(
-                    stateBefore,
-                    this.encodeDocumentStateVector(documentId)
-                )
-            ) {
-                this._noteCollaboratorTouches([`glyphs.${glyphName}`]);
-            }
-        }
+        // Catch-up brings in other people’s edits of a glyph that has no live
+        // socket here; undo must not overwrite them.
+        const touchedGlyphName =
+            stateBefore &&
+            !stateVectorsEqual(
+                stateBefore,
+                this.encodeDocumentStateVector(documentId)
+            )
+                ? (this._glyphNameById.get(documentId.slice('glyph:'.length)) ??
+                  null)
+                : null;
         if (documentId !== FONT_DEPS_DOCUMENT_ID) {
             // Live WS catch-up is often a delta vs the HTTP-hydrated SV.
             // Worker replace seeds an empty Yrs doc, so it must receive a
@@ -1700,11 +1716,20 @@ export class PatchSyncEngine {
                 this._workerDocumentReplaceCallback?.(documentId, workerState);
             }
         }
-        if (describedBefore) {
-            this._emitCatchUpCommittedChange(
-                documentId,
-                update,
-                describedBefore
+        const described = describedBefore
+            ? this._emitCatchUpCommittedChange(
+                  documentId,
+                  update,
+                  describedBefore
+              )
+            : null;
+        if (touchedGlyphName) {
+            // Guard exactly what changed; the whole glyph only when the
+            // change could not be described.
+            this._noteCollaboratorTouches(
+                described
+                    ? described.map((entry) => String(entry.path || ''))
+                    : [joinPathWithGlyphSeparator(['glyphs', touchedGlyphName])]
             );
         }
         if (
@@ -1770,7 +1795,7 @@ export class PatchSyncEngine {
         documentId: string,
         update: YjsUpdate,
         before: CatchUpDescription
-    ): void {
+    ): ChangeLogEntry[] {
         let beforeRoot: Record<string, unknown>;
         let afterRoot: Record<string, unknown>;
         if (before.kind === 'glyph') {
@@ -1835,11 +1860,12 @@ export class PatchSyncEngine {
             }
         );
         if (!entries.length) {
-            return;
+            return entries;
         }
         for (const cb of this._committedChangeListeners) {
             cb(entries, { origin: 'remote', update, documentId });
         }
+        return entries;
     }
 
     /** A glyph shard whose catalog entry is a tombstone (the glyph was deleted). */
@@ -6401,7 +6427,8 @@ export class PatchSyncEngine {
                       createChangeLogEntriesFromCollaborationMessageEnvelope(
                           message,
                           {
-                              windowRoleLabel: this._getWindowRoleLabel()
+                              windowRoleLabel: this._getWindowRoleLabel(),
+                              localWindowId: this.windowId
                           }
                       )
                   ) ?? []);
@@ -7790,40 +7817,6 @@ export class PatchSyncEngine {
     importCollaborationMessages(messages: CollaborationLogItem[]): void {
         this._collaborationLog = [...messages];
         this._notifyCollaborationLogListeners();
-    }
-
-    /**
-     * Replace the imported baseline while preserving unsent local entries.
-     * Used by cloud bootstrap so reconnects do not discard offline edits.
-     */
-    mergeImportedChangeLog(entries: ChangeLogEntry[]): void {
-        const importedEntries = entries.map((entry) =>
-            normalizeChangeLogEntry(entry)
-        );
-        const pendingBroadcastEntries = this._changeLog
-            .slice(this._lastBroadcastLogIndex)
-            .map((entry) => normalizeChangeLogEntry(entry));
-        const mergedEntries = [...importedEntries, ...pendingBroadcastEntries];
-        const seenEntryKeys = new Set<string>();
-
-        this._changeLog = mergedEntries.filter((entry) => {
-            const entryKey = [
-                entry.windowId,
-                String(entry.transactionId),
-                String(entry.timestamp),
-                entry.historyAction,
-                entry.op,
-                entry.path
-            ].join(':');
-            if (seenEntryKeys.has(entryKey)) {
-                return false;
-            }
-            seenEntryKeys.add(entryKey);
-            return true;
-        });
-        this._lastBroadcastLogIndex = importedEntries.length;
-        this._lastLocalUpdateLogIndex = this._changeLog.length;
-        this._notifyChangeLogListeners();
     }
 
     mergeImportedCollaborationMessages(messages: CollaborationLogItem[]): void {
@@ -10178,9 +10171,64 @@ export class PatchSyncEngine {
             : orderedEntries;
 
         this._replayHistoryEntries(replayEntries, direction);
-        return resettleDerivedLayers
+        const settled = resettleDerivedLayers
             ? this._resettleDerivedLayersAfterOriginReplay(item)
             : [];
+        const recomposed = this._recomposeStaleAutomaticLayersAfterReplay(item);
+        return recomposed.length
+            ? normalizeWorkerReplayTargets([...settled, ...recomposed])
+            : settled;
+    }
+
+    /**
+     * A replay restores stored component positions. When it switches
+     * automatic alignment back on (or restores a composite whose base
+     * anchors moved since), those positions are stale: recompose the
+     * replayed automatic layers, unrecorded, within the same replay.
+     */
+    private _recomposeStaleAutomaticLayersAfterReplay(
+        item: HistoryStackItem
+    ): WorkerReplayTarget[] {
+        const fontModel = this._getResettleFontModel() as Unsafe;
+        if (!fontModel) {
+            return [];
+        }
+        const targets = this._collectOriginLayerTargets(
+            item,
+            item.entries.filter(
+                (entry) =>
+                    !isDerivedLayerChangePath(
+                        entry.path,
+                        item.originatingGlyphName
+                    )
+            )
+        ).filter((target) => target.glyphName && target.layerId);
+        if (!targets.length) {
+            return [];
+        }
+        this._syncPatchedLayerTargetsFromYDoc(targets);
+        const recomposed: WorkerReplayTarget[] = [];
+        for (const target of targets) {
+            const layer = fontModel
+                .findGlyph?.(target.glyphName)
+                ?.findLayerById?.(target.layerId);
+            if (!layer?.isAutomaticAlignedLayer?.()) {
+                continue;
+            }
+            layer.invalidateContentCaches?.();
+            const changed = this.runWithoutRecording(
+                () => layer.rebuildAutomaticComposition?.() === true
+            );
+            if (!changed) {
+                continue;
+            }
+            this._applySettledLayerFromFontJson(
+                target.glyphName,
+                target.layerId
+            );
+            recomposed.push(target);
+        }
+        return recomposed;
     }
 
     /** Apply already-ordered forward entries in the given direction, one Yjs transaction per document. */
@@ -11607,13 +11655,12 @@ export class PatchSyncEngine {
             typeof mergedLayerRecord.width !== 'number' ||
             !Number.isFinite(mergedLayerRecord.width)
         ) {
-            const incomingHasWidth = Object.prototype.hasOwnProperty.call(
-                incomingLayerRecord,
-                'width'
-            );
+            // A remote update can arrive before one it builds on: Yjs holds
+            // part of it back, and the layer briefly has no valid width.
+            // Keep the width this window has until the rest arrives; a
+            // throw here stops the socket and the rest never comes.
             const existingWidth = existingLayerRecord.width;
             if (
-                !incomingHasWidth &&
                 typeof existingWidth === 'number' &&
                 Number.isFinite(existingWidth)
             ) {

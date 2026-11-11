@@ -3370,12 +3370,10 @@ export class CloudPlugin extends FilesystemPlugin {
         this._hydrationGeneration += 1;
         this._overviewHydrateQueued = [];
         window.windowSync?.notifyCloudBootstrapPending?.();
-        if (window.windowRole?.isLinkedWindow()) {
-            this._relayedAssetId = null;
-            this._relayedConnectionStatus = 'disconnected';
-            this._relayedConnectionDetail = undefined;
-            this._relayedPendingSyncCount = 0;
-        }
+        // A linked window keeps the state main relayed: main owns the cloud
+        // session and relays every change. A reloaded linked window opens
+        // its font after main's relay arrived, and wiping it here left the
+        // window read-only until main's state happened to change.
     }
 
     private async _attachLiveSession(options: {

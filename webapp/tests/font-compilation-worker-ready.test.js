@@ -227,6 +227,36 @@ describe('FontCompilation worker document readiness', () => {
         expect(fontCompilation.workerCacheDocumentReady).toBe(false);
     });
 
+    test('a failed worker sync nobody awaits is not an unhandled rejection', async () => {
+        const { fontCompilation, getPostedMessage } =
+            createReadyFontCompilation();
+        const unhandled = jest.fn();
+        process.on('unhandledRejection', unhandled);
+        try {
+            const messagePromise = fontCompilation.sendMessage({
+                type: 'applyYjsUpdate',
+                update: new Uint8Array([4, 5, 6]),
+                changedGlyphs: ['a']
+            });
+            messagePromise.catch(() => undefined);
+            fontCompilation.handleWorkerMessage({
+                data: {
+                    id: getPostedMessage().id,
+                    type: 'applyYjsUpdate',
+                    error: 'Layer deserialization error'
+                }
+            });
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            expect(unhandled).not.toHaveBeenCalled();
+            // Whoever awaits the sync still learns that it failed.
+            await expect(
+                fontCompilation.awaitWorkerDocumentSync()
+            ).rejects.toThrow('Layer deserialization error');
+        } finally {
+            process.off('unhandledRejection', unhandled);
+        }
+    });
+
     test('cached editing compiles send the incremental sentinel when the worker document is ready', async () => {
         const { fontCompilation } = createReadyFontCompilation();
         const sendMessageSpy = jest

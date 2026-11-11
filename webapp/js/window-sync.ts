@@ -1607,8 +1607,13 @@ export class WindowSync {
                             undefined,
                             collaborationMessages,
                             packet.documentId,
+                            // A collaborator’s edit is theirs to undo: like
+                            // main, keep it out of this window’s history.
                             packet.fromCollaborator === true
-                                ? { fromCollaborator: true }
+                                ? {
+                                      fromCollaborator: true,
+                                      captureInUndo: false
+                                  }
                                 : undefined
                         );
                         if (window.windowRole?.isMainWindow()) {

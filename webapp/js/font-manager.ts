@@ -5987,7 +5987,11 @@ class FontManager {
             .catch(() => undefined)
             .then(async () => {
                 await this.workerPreviewSendQueue.catch(() => undefined);
-                await fontCompilation?.awaitWorkerDocumentSync();
+                // A failed sync is what a reseed repairs: wait for it to
+                // settle, not to succeed.
+                await fontCompilation
+                    ?.awaitWorkerDocumentSync()
+                    .catch(() => undefined);
                 return this.recoverWorkerCacheFromAuthoritativeState(reason, {
                     quiet: true
                 });

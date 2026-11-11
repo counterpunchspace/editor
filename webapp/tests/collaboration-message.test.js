@@ -12,6 +12,47 @@ const {
 const { createLogEntry } = require('../js/change-log');
 
 describe('collaboration-message scaffold', () => {
+    test('an undo that targets this window’s own item names it as this window does', () => {
+        // Main undoes an edit its linked window made: main knows the item as
+        // "linked:history-item-5" and the linked window as "history-item-5".
+        const undoEntry = createLogEntry({
+            timestamp: 1,
+            windowId: 'main',
+            windowRoleLabel: 'main',
+            historyAction: 'undo',
+            historyItemId: 'history-item-9',
+            targetHistoryItemId: 'linked:history-item-5',
+            transactionLabel: 'Undo',
+            transactionId: null,
+            op: 'set',
+            undoScope: 'layer',
+            path: 'glyphs.o:layers.M2:width',
+            oldValue: 520,
+            newValue: 500
+        });
+        const envelope = createCollaborationMessageEnvelopeFromChangeLogEntries(
+            [undoEntry],
+            { localSequence: 1, source: 'test', windowId: 'main' }
+        );
+
+        const [inLinked] =
+            createChangeLogEntriesFromCollaborationMessageEnvelope(envelope, {
+                windowRoleLabel: 'linked',
+                localWindowId: 'linked'
+            });
+        expect(inLinked.targetHistoryItemId).toBe('history-item-5');
+        expect(inLinked.historyItemId).toBe('main:history-item-9');
+
+        const [elsewhere] =
+            createChangeLogEntriesFromCollaborationMessageEnvelope(envelope, {
+                windowRoleLabel: 'linked',
+                localWindowId: 'other'
+            });
+        expect(elsewhere.targetHistoryItemId).toBe(
+            'main:linked:history-item-5'
+        );
+    });
+
     test('createCollaborationMessageEnvelope normalizes optional top-level fields and clones arrays', () => {
         const metadata = {
             editType: 'outline',

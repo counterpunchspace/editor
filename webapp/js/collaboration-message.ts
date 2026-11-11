@@ -438,12 +438,24 @@ export function createChangeLogEntriesFromCollaborationMessageEnvelope(
     envelope: CollaborationMessageEnvelope,
     options: {
         windowRoleLabel: string;
+        /** The receiving window: ids it named itself come back unprefixed. */
+        localWindowId?: string | null;
     }
 ): ChangeLogEntry[] {
     const historyItemPrefix = envelope.windowId ?? 'remote';
-    const namespacedHistoryItemId = `${historyItemPrefix}:${envelope.metadata.historyItemId}`;
+    // The sender prefixed ids from other windows with their window id. An
+    // id this window created is its own again, so an undo in main of a
+    // linked window's edit targets the item the linked window holds.
+    const localPrefix = options.localWindowId
+        ? `${options.localWindowId}:`
+        : null;
+    const namespace = (id: string): string =>
+        localPrefix && id.startsWith(localPrefix)
+            ? id.slice(localPrefix.length)
+            : `${historyItemPrefix}:${id}`;
+    const namespacedHistoryItemId = namespace(envelope.metadata.historyItemId);
     const namespacedTargetHistoryItemId = envelope.metadata.targetHistoryItemId
-        ? `${historyItemPrefix}:${envelope.metadata.targetHistoryItemId}`
+        ? namespace(envelope.metadata.targetHistoryItemId)
         : null;
 
     return envelope.changes.map((change) =>

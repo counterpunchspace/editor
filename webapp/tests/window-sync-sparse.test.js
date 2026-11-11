@@ -805,3 +805,53 @@ describe('linked window resident snapshot', () => {
         sync.destroy();
     });
 });
+
+describe('linked window collaborator relay', () => {
+    const previousWindowRole = window.windowRole;
+
+    afterEach(() => {
+        window.windowRole = previousWindowRole;
+    });
+
+    test('keeps a relayed collaborator edit out of this window’s undo history', () => {
+        window.windowRole = {
+            sessionId: 'test',
+            isMainWindow: () => false,
+            isLinkedWindow: () => true
+        };
+        const applyRemoteUpdate = jest.fn(() => true);
+        const bridge = {
+            windowId: 'linked',
+            onLocalUpdate: () => {},
+            applyRemoteUpdate
+        };
+        const sync = new WindowSync(bridge, 'test-collaborator-relay');
+        sync._applyInboundYjsMessages(
+            [
+                {
+                    updates: [
+                        {
+                            update: new Uint8Array([1]),
+                            documentId: 'glyph:x',
+                            fromCollaborator: true
+                        },
+                        {
+                            update: new Uint8Array([2]),
+                            documentId: 'glyph:y'
+                        }
+                    ]
+                }
+            ],
+            { updateBytes: 0, collaborationMessageCount: 0 }
+        );
+
+        // The collaborator’s packet: theirs to undo, not this window’s.
+        expect(applyRemoteUpdate.mock.calls[0][4]).toEqual({
+            fromCollaborator: true,
+            captureInUndo: false
+        });
+        // A packet from main (same user, same browser) stays undoable here.
+        expect(applyRemoteUpdate.mock.calls[1][4]).toBeUndefined();
+        sync.destroy();
+    });
+});

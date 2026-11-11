@@ -10297,6 +10297,49 @@ describe('syncGlyphFromJson', () => {
         collaborator.destroy();
     });
 
+    test('a remote layer caught without its width keeps the width it had', () => {
+        const bridge = new ChangeBridge('remote-partial-width');
+        bridge.initFromJson(makeMinimalFont());
+        // An update that arrives before the one it builds on leaves the
+        // width briefly unreadable; this must not throw and stop syncing.
+        const normalized = bridge._normalizeLayerSnapshot(
+            'layer-1',
+            { id: 'layer-1', width: undefined, shapes: [] },
+            { id: 'layer-1', width: 600, shapes: [] }
+        );
+        expect(normalized.width).toBe(600);
+        expect(() =>
+            bridge._normalizeLayerSnapshot(
+                'layer-1',
+                { id: 'layer-1', width: undefined, shapes: [] },
+                { id: 'layer-1', shapes: [] }
+            )
+        ).toThrow(/invalid width/);
+        bridge.destroy();
+    });
+
+    test('the undo guard compares glyph names and layers whole', () => {
+        const local = new ChangeBridge('local-undo-paths');
+        local.initFromJson(makeMinimalFont());
+        const blocks = (ownPath, touchPath) => {
+            local._collaboratorTouches = [];
+            local._noteCollaboratorTouches([touchPath]);
+            return local._historyItemOverlapsLaterCollaboratorEdit({
+                entries: [{ path: ownPath }],
+                transitionSeq: -1
+            });
+        };
+        const own = 'glyphs.A.ss01:layers.layer-1:width';
+        // An edit to the base glyph is not an edit to its .ss01 variant.
+        expect(blocks(own, 'glyphs.A')).toBe(false);
+        expect(blocks(own, 'glyphs.A:')).toBe(false);
+        expect(blocks(own, 'glyphs.A.ss01:')).toBe(true);
+        // Another master of the same glyph is other data.
+        expect(blocks(own, 'glyphs.A.ss01:layers.layer-2:width')).toBe(false);
+        expect(blocks(own, 'glyphs.A.ss01:layers.layer-1:width')).toBe(true);
+        local.destroy();
+    });
+
     test('undo still works when a collaborator edited something else', () => {
         const localFontJson = makeMinimalFont();
         const local = new ChangeBridge('local-undo-unrelated');

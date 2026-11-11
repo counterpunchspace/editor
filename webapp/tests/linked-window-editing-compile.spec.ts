@@ -5,6 +5,7 @@ import {
     waitForFontLoaded
 } from './helpers/snapshot-helper';
 import { rectLineNodes } from './helpers/babelfont-test-data';
+import { makeSeededRandom } from './helpers/seeded-random';
 
 const A_DEPENDENT_GLYPHS = [
     'adieresis',
@@ -762,14 +763,6 @@ function expectAdieresisSampleContainsBase(
         adieresisSample.width,
         `${label}: adieresis should preserve the base a width. a=${JSON.stringify(aSample)} adieresis=${JSON.stringify(adieresisSample)}`
     ).toBeGreaterThan(aSample.width * 0.8);
-}
-
-function makeSeededRandom(seed: number): () => number {
-    let state = seed >>> 0;
-    return () => {
-        state = (state * 1664525 + 1013904223) >>> 0;
-        return state / 0x100000000;
-    };
 }
 
 /** A live drag must keep redrawing in both windows; see the smoke test. */

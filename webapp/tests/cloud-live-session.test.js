@@ -233,6 +233,55 @@ describe('CloudLiveSession', () => {
         global.fetch = originalFetch;
     });
 
+    test('an HTTP publish carries the glyph’s earlier unsent edits', () => {
+        const Y = require('yjs');
+        const doc = new Y.Doc();
+        const updates = [];
+        doc.on('update', (update) => updates.push(update));
+        doc.getMap('layer').set('width', 500);
+        doc.getMap('layer').set('width', 520);
+        const [first, second] = updates;
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: {},
+            bootstrapMode: 'skip'
+        });
+        session._wal = {
+            isLoaded: true,
+            recordsFor: () => [
+                {
+                    clientTransactionId: 'tx-1',
+                    createdAt: 1,
+                    state: 'applied',
+                    updateBytes: first
+                },
+                {
+                    clientTransactionId: 'tx-2',
+                    createdAt: 2,
+                    state: 'applied',
+                    updateBytes: second
+                }
+            ]
+        };
+
+        // The second edit alone builds on the first: a room holds it back.
+        const alone = new Y.Doc();
+        Y.applyUpdate(alone, second);
+        expect(alone.getMap('layer').get('width')).toBeUndefined();
+
+        const payload = session._withEarlierUnsentUpdates(
+            'glyph:a',
+            'tx-2',
+            second
+        );
+        const room = new Y.Doc();
+        Y.applyUpdate(room, payload);
+        expect(room.getMap('layer').get('width')).toBe(520);
+    });
+
     test('production-mode live session attachment uses connectWithCredentials', async () => {
         const session = new CloudLiveSession({
             assetId: 'asset-1',

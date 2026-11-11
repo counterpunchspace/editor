@@ -648,7 +648,7 @@ describe('CloudAdapter outbound updates', () => {
         }
     });
 
-    it('imports persisted mutation history from sync-response bootstrap', () => {
+    it('imports persisted mutation history from sync-response bootstrap as collaborator items, not undo history', () => {
         const adapter = new CloudAdapter({ assetId: 'asset-123' });
         const historyEntry = createLogEntry({
             timestamp: 1,
@@ -718,18 +718,8 @@ describe('CloudAdapter outbound updates', () => {
             })
         );
 
-        expect(bridge.mergeImportedChangeLog).toHaveBeenCalledWith(
-            expect.arrayContaining([
-                expect.objectContaining({
-                    path: 'glyphs.A:name',
-                    transactionLabel: 'Bootstrap'
-                }),
-                expect.objectContaining({
-                    path: 'glyphs.B:name',
-                    transactionLabel: 'Pending Local'
-                })
-            ])
-        );
+        // The room’s history is not undo history: undo is author-only.
+        expect(bridge.mergeImportedChangeLog).not.toHaveBeenCalled();
         expect(bridge.mergeImportedCollaborationMessages).toHaveBeenCalledWith(
             expect.arrayContaining([
                 expect.objectContaining({

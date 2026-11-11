@@ -5,6 +5,7 @@
  * the active editor glyph. Dependent glyph shards publish over HTTP POST
  * and peers pull them with GET `/live` after font-core revision signals.
  */
+import * as Y from 'yjs';
 import { fitEnvelopeForWire } from './cloud-envelope-budget';
 import {
     CloudAdapter,
@@ -208,6 +209,8 @@ async function runWithConcurrency<T>(
 }
 
 const MAX_REFUSED_HTTP_PUBLISHES = 6;
+/** Merged HTTP publishes stay well under the room's packet limit. */
+const MAX_MERGED_HTTP_PUBLISH_BYTES = 128 * 1024;
 const READY_BARRIER_ERROR_KEY = '\u0000ready-barrier';
 
 const DEGRADED_BARRIER_RETRY_BASE_MS = 10_000;
@@ -1149,6 +1152,14 @@ export class CloudLiveSession {
         this._httpPublishQueue.push(async () => {
             const { assetId, websiteBaseUrl } = this._options;
             let refreshed = false;
+            // Send this glyph's earlier unsent edits along: retries and a
+            // switch between socket and HTTP can reorder sends, and a room
+            // that gets an update before the one it builds on holds it back.
+            const payload = this._withEarlierUnsentUpdates(
+                documentId,
+                clientTransactionId,
+                update
+            );
             for (let attempt = 0; attempt < 5; attempt += 1) {
                 if (this._disconnected) {
                     return;
@@ -1160,7 +1171,7 @@ export class CloudLiveSession {
                         websiteBaseUrl,
                         assetId,
                         documentId,
-                        update,
+                        update: payload,
                         collaborationMessage,
                         seq,
                         clientId: `http:${assetId}`,
@@ -1260,6 +1271,47 @@ export class CloudLiveSession {
             }
         });
         this._pumpHttpPublishQueue();
+    }
+
+    /**
+     * This update merged with the same glyph's earlier unacknowledged edits
+     * from the write-ahead log, so the room never receives an edit without
+     * the edits it builds on. The room applies parts it already has as
+     * no-ops. Falls back to the update alone if the merge would be too big.
+     */
+    private _withEarlierUnsentUpdates(
+        documentId: string,
+        clientTransactionId: string,
+        update: Uint8Array
+    ): Uint8Array {
+        if (!this._wal.isLoaded) {
+            return update;
+        }
+        const records = this._wal.recordsFor(documentId);
+        const own = records.find(
+            (record) => record.clientTransactionId === clientTransactionId
+        );
+        const createdAt = own?.createdAt ?? Number.POSITIVE_INFINITY;
+        const earlier = records
+            .filter(
+                (record) =>
+                    record.state !== 'acknowledged' &&
+                    record.clientTransactionId !== clientTransactionId &&
+                    record.createdAt <= createdAt
+            )
+            .map((record) => walUpdateBytes(record))
+            .filter((bytes) => bytes.byteLength > 0);
+        if (!earlier.length) {
+            return update;
+        }
+        try {
+            const merged = Y.mergeUpdates([...earlier, update]);
+            return merged.byteLength <= MAX_MERGED_HTTP_PUBLISH_BYTES
+                ? merged
+                : update;
+        } catch {
+            return update;
+        }
     }
 
     private _pumpHttpPublishQueue(): void {

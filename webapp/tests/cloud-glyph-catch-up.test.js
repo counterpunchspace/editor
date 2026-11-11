@@ -907,12 +907,13 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         global.fetch = originalFetch;
     });
 
-    test('relays every framed tail transaction to linked windows', async () => {
+    test('relays the glyph document as main holds it to linked windows', async () => {
         const previousRole = window.windowRole;
         const previousSync = window.windowSync;
         const relay = jest.fn();
         const bridge = {
-            applyDocumentCatchUp: jest.fn(() => true)
+            applyDocumentCatchUp: jest.fn(() => true),
+            encodeDocumentState: jest.fn(() => new Uint8Array([9, 9]))
         };
         window.windowRole = { isMainWindow: () => true };
         window.windowSync = { broadcastCloudRelayUpdate: relay };
@@ -935,10 +936,52 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
                 })
             ).resolves.toBe(true);
             expect(bridge.applyDocumentCatchUp).toHaveBeenCalledTimes(2);
-            expect(relay).toHaveBeenCalledTimes(2);
+            // One full state, not the tail: a linked window that lacks what
+            // the tail builds on would never apply it.
+            expect(bridge.encodeDocumentState).toHaveBeenCalledWith(
+                glyphDocumentId('id-b')
+            );
             expect(relay.mock.calls.map(([bytes]) => [...bytes])).toEqual([
-                [1, 2, 3],
-                [4, 5, 6]
+                [9, 9]
+            ]);
+        } finally {
+            global.fetch = originalFetch;
+            window.windowRole = previousRole;
+            window.windowSync = previousSync;
+        }
+    });
+
+    test('relays what main applied even before the expected revision arrives', async () => {
+        const previousRole = window.windowRole;
+        const previousSync = window.windowSync;
+        const relay = jest.fn();
+        const bridge = {
+            applyDocumentCatchUp: jest.fn(() => true),
+            glyphHasCatchUpRevision: jest.fn(() => false),
+            encodeDocumentState: jest.fn(() => new Uint8Array([7]))
+        };
+        window.windowRole = { isMainWindow: () => true };
+        window.windowSync = { broadcastCloudRelayUpdate: relay };
+        const originalFetch = global.fetch;
+        global.fetch = jest.fn(async () =>
+            framedLiveResponseWithTails([new Uint8Array([1, 2, 3])])
+        );
+        try {
+            await expect(
+                catchUpCloudDocument({
+                    bridge,
+                    token: 'token',
+                    roomUrl: 'wss://rooms.example/room/asset-1',
+                    websiteBaseUrl: 'https://editor.example',
+                    assetId: 'asset-1',
+                    documentId: glyphDocumentId('id-b'),
+                    expectedRevision: 'rev-2',
+                    maxAttempts: 1,
+                    wait: async () => {}
+                })
+            ).rejects.toThrow('revision mismatch');
+            expect(relay.mock.calls.map(([bytes]) => [...bytes])).toEqual([
+                [7]
             ]);
         } finally {
             global.fetch = originalFetch;

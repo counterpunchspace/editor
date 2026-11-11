@@ -18,7 +18,6 @@ import {
 import { throwIfAborted, yieldToUi } from './yield-to-ui';
 import {
     collaborationMessageKey,
-    createChangeLogEntriesFromCollaborationMessageEnvelope,
     createCollaborationMessageEnvelopesFromChangeLogEntries,
     createLinkedWindowCatchUpEnvelope,
     type CollaborationMessageEnvelope
@@ -410,6 +409,35 @@ function editorGlyphNamesShowingCloudDocument(documentId: string): string[] {
 }
 
 /**
+ * After a main window applies cloud state for a glyph, its linked windows get
+ * the glyph document as main now holds it. A catch-up or socket bootstrap may
+ * bring only a tail of transactions, and a linked window that lacks what the
+ * tail builds on would keep it pending and never show it, or compile a layer
+ * without its width. The full state merges into whatever the linked window
+ * has.
+ */
+export function relayGlyphStateToLinkedWindows(
+    bridge: Pick<PatchSyncEngine, 'encodeDocumentState'>,
+    documentId: string
+): void {
+    if (!window.windowRole?.isMainWindow?.()) {
+        return;
+    }
+    const bytes = bridge.encodeDocumentState?.(documentId);
+    if (!bytes?.byteLength) {
+        return;
+    }
+    window.windowSync?.broadcastCloudRelayUpdate?.(
+        bytes,
+        createLinkedWindowCatchUpEnvelope(
+            documentId,
+            window.windowRole?.instanceId ?? null
+        ),
+        documentId
+    );
+}
+
+/**
  * Glyph catch-up patches the Y.Doc and overview tiles, but the outline
  * editor keeps the layer snapshot loaded at restore. Reload that snapshot
  * the same way a layer switch does.
@@ -501,18 +529,13 @@ export async function catchUpCloudDocument(options: {
             options.bridge.applyDocumentCheckpoint?.(options.documentId, bytes);
             applied = true;
         }
+        if (applied) {
+            // Main keeps what it applied even when the revision is not there
+            // yet, so its linked windows must have it too.
+            relayGlyphStateToLinkedWindows(options.bridge, options.documentId);
+        }
         if (applied && !revisionSatisfied()) {
             applied = false;
-        }
-        if (applied && window.windowRole?.isMainWindow()) {
-            window.windowSync?.broadcastCloudRelayUpdate?.(
-                bytes,
-                createLinkedWindowCatchUpEnvelope(
-                    options.documentId,
-                    window.windowRole?.instanceId ?? null
-                ),
-                options.documentId
-            );
         }
         return applied;
     };
@@ -662,6 +685,7 @@ export async function catchUpCloudDocument(options: {
                 continue;
             }
             let applied = false;
+            let appliedAny = false;
             const updatesToApply = payloadsToApply.length
                 ? payloadsToApply
                 : [update];
@@ -682,6 +706,15 @@ export async function catchUpCloudDocument(options: {
                     );
                     applied = true;
                 }
+                appliedAny ||= applied;
+            }
+            if (appliedAny) {
+                // Main keeps these parts even when the revision is not there
+                // yet, so its linked windows must have them too.
+                relayGlyphStateToLinkedWindows(
+                    options.bridge,
+                    options.documentId
+                );
             }
             if (
                 applied &&
@@ -699,20 +732,6 @@ export async function catchUpCloudDocument(options: {
                     `Live glyph catch-up revision mismatch for ${options.documentId}`
                 );
                 continue;
-            }
-            if (window.windowRole?.isMainWindow()) {
-                for (const part of updatesToApply) {
-                    if (part.byteLength) {
-                        window.windowSync?.broadcastCloudRelayUpdate?.(
-                            part,
-                            createLinkedWindowCatchUpEnvelope(
-                                options.documentId,
-                                window.windowRole?.instanceId ?? null
-                            ),
-                            options.documentId
-                        );
-                    }
-                }
             }
             refreshEditorAfterGlyphDocumentCatchUp(options.documentId);
             return true;
@@ -1099,13 +1118,9 @@ export function importCollaborationMessageHistory(
         return;
     }
 
-    bridge.mergeImportedChangeLog(
-        envelopes.flatMap((message) =>
-            createChangeLogEntriesFromCollaborationMessageEnvelope(message, {
-                windowRoleLabel: window.windowRole?.getRoleLabel?.() ?? 'main'
-            })
-        )
-    );
+    // The room’s history lists every author’s edits. It goes to the History
+    // view as collaborator items only: undo is author-only, and this
+    // window’s own edits are already in its change log.
     bridge.mergeImportedCollaborationMessages(
         envelopes.map((message) => ({
             id: collaborationMessageKey(message),

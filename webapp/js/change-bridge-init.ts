@@ -128,17 +128,39 @@ function enqueueCatchUpRefresh(
         workerForwards: [...workerForwards]
     };
     pendingCatchUpRefresh = pending;
-    void enqueueCommittedChangeRefresh(() => {
+    enqueueCommittedChangeRefresh(() => {
         if (pendingCatchUpRefresh === pending) {
             pendingCatchUpRefresh = null;
         }
         return handleCommittedChangeRefresh(pending.entries, 'remote', {
-            awaitWorkerSync: async () => {
-                await Promise.all(pending.workerForwards);
-                await fontCompilation.awaitWorkerDocumentReadyForCompile();
-            }
+            awaitWorkerSync: () =>
+                awaitWorkerReadyForRefresh(pending.workerForwards)
         });
-    });
+    }).catch(logRefreshFailure);
+}
+
+/**
+ * Wait for the compiler worker before a refresh compiles. A worker update
+ * that fails (a catch-up can bring a shard in an in-between state) reseeds
+ * the worker from the bridge; compile from that, not skip the refresh.
+ */
+async function awaitWorkerReadyForRefresh(
+    workerForwards: Promise<void>[]
+): Promise<void> {
+    try {
+        await Promise.all(workerForwards);
+        await fontCompilation.awaitWorkerDocumentReadyForCompile();
+    } catch (error) {
+        console.warn(
+            '[ChangeBridge] Worker sync failed; compiling after its recovery',
+            error
+        );
+        await fontCompilation.awaitWorkerDocumentReadyForCompile();
+    }
+}
+
+function logRefreshFailure(error: unknown): void {
+    console.warn('[ChangeBridge] Committed change refresh failed', error);
 }
 
 /** Return the completion promise for all packets enqueued so far. */
@@ -3315,16 +3337,14 @@ function initializeBridge(detail: {
             refresh.origin === 'local'
                 ? resolveLocalCommittedCompileContext(refresh.entries)
                 : undefined;
-        void enqueueCommittedChangeRefresh(() =>
+        enqueueCommittedChangeRefresh(() =>
             handleCommittedChangeRefresh(refresh.entries, refresh.origin, {
-                awaitWorkerSync: async () => {
-                    await Promise.all(refresh.workerForwards);
-                    await fontCompilation.awaitWorkerDocumentReadyForCompile();
-                },
+                awaitWorkerSync: () =>
+                    awaitWorkerReadyForRefresh(refresh.workerForwards),
                 ...(localCompileContext ? { localCompileContext } : {}),
                 ...(refresh.undo ? { localUndoRedoContext: refresh.undo } : {})
             })
-        );
+        ).catch(logRefreshFailure);
     });
 
     // Main names a fresh channel for this document; a linked window joins

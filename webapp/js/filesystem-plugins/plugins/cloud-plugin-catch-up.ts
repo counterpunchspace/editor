@@ -265,7 +265,17 @@ export const cloudPluginCatchUpMethods = {
                         typeof bridge.catalogGlyphIsInModel !== 'function' ||
                         bridge.catalogGlyphIsInModel(target.documentId) ===
                             true;
-                    if (resident && modeled) {
+                    // Loaded is not caught up: a collaborator’s glyph edit
+                    // published over HTTP can reach the room after its core
+                    // revision stamp, so a catch-up may finish without it.
+                    const current =
+                        !target.expectedRevision ||
+                        typeof bridge.glyphHasCatchUpRevision !== 'function' ||
+                        bridge.glyphHasCatchUpRevision(
+                            target.documentId,
+                            target.expectedRevision
+                        ) === true;
+                    if (resident && modeled && current) {
                         this._glyphCatchUpAttempts.delete(target.documentId);
                         this._glyphCatchUpForceBody.delete(glyphId);
                     } else if (glyphId) {

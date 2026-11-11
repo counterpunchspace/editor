@@ -216,7 +216,8 @@ export default defineConfig({
             ],
             testIgnore: [
                 '**/cloud-collab-preview-smoke.spec.ts',
-                '**/cloud-collab-product-smoke.spec.ts'
+                '**/cloud-collab-product-smoke.spec.ts',
+                '**/cloud-collab-fuzz.spec.ts'
             ],
             timeout: 480000,
             // Each retry reseeds fonts on shared staging (up to 1,000 glyph
@@ -243,6 +244,36 @@ export default defineConfig({
                 contextOptions: {}
             }
         },
+        // The five-window live fuzz is long; it runs on request with
+        // CLOUD_COLLAB_FUZZ=1 and never retries, so a failure keeps its seed.
+        ...(process.env.CLOUD_COLLAB_FUZZ === '1'
+            ? [
+                  {
+                      name: 'cloud-collab-fuzz',
+                      testMatch: ['**/cloud-collab-fuzz.spec.ts'],
+                      timeout: 3600000,
+                      retries: 0,
+                      use: {
+                          ...devices['Desktop Chrome'],
+                          launchOptions: {
+                              ...CLOUD_COLLAB_LAUNCH_BROWSER,
+                              args: [
+                                  '--enable-features=SharedArrayBuffer',
+                                  '--disable-http2',
+                                  '--disable-extensions',
+                                  '--disable-component-extensions-with-background-pages',
+                                  '--disable-background-networking',
+                                  '--disable-sync',
+                                  '--no-default-browser-check',
+                                  '--no-first-run'
+                              ],
+                              chromiumSandbox: false
+                          },
+                          contextOptions: {}
+                      }
+                  }
+              ]
+            : []),
         // The smoke specs run once against real accounts: a retry would find
         // the first attempt's font and fail the free-trial quota.
         ...[

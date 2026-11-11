@@ -799,8 +799,30 @@ glyph closure on open.
 A linked window asks main to hydrate (`hydration-request`). Main performs
 the HTTP fetch and relays new shards plus `sparse-residency` (working ids,
 resident ids, preview-only). Cloud HTTP catch-up on main is fanned out on
-BC. A MetadataFree glyph packet (`window-sync.catch-up`) on a linked window
-is applied as `applyDocumentCatchUp`.
+BC as the full glyph document main now holds, also when main connects a
+glyph socket: a tail alone could build on structs a linked window lacks,
+which Yjs then holds back for good. A MetadataFree glyph packet
+(`window-sync.catch-up`) on a linked window is applied as
+`applyDocumentCatchUp`.
+
+A client's updates to one glyph must reach the room in order: an update
+that arrives before the one it builds on is held back (its deletions apply,
+its inserts wait), so a layer briefly reads without a width or anchor
+position. HTTP publishes therefore carry the glyph's earlier
+unacknowledged WAL rows, merged; receivers keep the last good value of such
+a layer instead of throwing, so the socket stays up until the missing part
+arrives. Catch-up retries until the glyph has the stamped revision, since an
+HTTP publish can land after its core revision stamp.
+
+Undo stays with the author of the edit. A main window and its linked
+windows share one history; packets between them are undoable in each.
+Collaborator packets main relays (`fromCollaborator: true`) are applied
+with `captureInUndo: false`, as main applies them from the socket, so a
+linked window can never undo another account’s edit, or the same
+account’s edit from another browser. Catch-ups never enter history, and
+neither does the message history a room sends when a socket connects:
+it goes to the collaboration log, which the History view lists as
+collaborator items.
 
 | Path | Linked windows |
 | --- | --- |
