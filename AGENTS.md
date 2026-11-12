@@ -138,6 +138,11 @@ Do it in the same change. Never hand-edit generated docs.
 - Add a Playwright spec only when the behavior absolutely cannot be proven with Jest unit tests. Playwright specs add a lot of CI runtime. Prove model, sync, and math logic with Jest unit tests instead.
 - Ask the user before adding a new Playwright spec file or a new test to an existing spec, and wait for a yes. Say what it would prove that Jest cannot, and roughly how long it adds to CI. A spec written only to investigate a problem is deleted before you finish, unless the user agreed to keep it.
 
+### Engineer Interaction Language
+
+- Write everything in Simplified Technical English
+- follow Zinsser's four principles of quality writing: Simplicity, Brevity, Clarity, Humanity
+
 ## Push and release (agents)
 
 Only when the user explicitly asks.
