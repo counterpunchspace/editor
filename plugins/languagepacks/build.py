@@ -59,7 +59,7 @@ PACKAGES = (
     {
         "name": "counterpunch_arabic",
         "distribution": "counterpunch-arabic",
-        "version": "1.5.0",
+        "version": "1.5.1",
         "root": EDITOR / "plugins" / "languagepacks" / "arabic" / "counterpunch_arabic",
         "files": [
             "__init__.py",
