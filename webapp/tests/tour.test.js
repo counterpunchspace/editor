@@ -1404,6 +1404,141 @@ describe('tour intro', () => {
         expect(markKeys()).toEqual(['65,59', '65,90']);
     });
 
+    test('Draw presses off the mark are dropped; near presses land on it', async () => {
+        const { getTourSlide } = require('../js/tour-slides');
+        const { showTourSlide } = require('../js/tour-spotlight');
+        window.glyphCanvas.outlineEditor = {
+            active: true,
+            layerData: { shapes: [] },
+            getEditToolUiSnapshot: () => ({ stickyTool: 'pen' })
+        };
+        mockLss04Background();
+        window.glyphCanvas.textRunEditor.selectedGlyphIndex = 0;
+        const canvas = window.glyphCanvas.canvas;
+        document.body.append(canvas);
+        canvas.getBoundingClientRect = () => ({
+            x: 0,
+            y: 0,
+            left: 0,
+            top: 0,
+            right: 800,
+            bottom: 600,
+            width: 800,
+            height: 600,
+            toJSON() {}
+        });
+        await showTourSlide(getTourSlide('draw-tool'), {
+            onContinue: () => {},
+            onRestart: () => {}
+        });
+        const restart = () =>
+            document.querySelector('[data-tour-action="restart"]');
+        expect(restart().hidden).toBe(true);
+        const received = [];
+        canvas.addEventListener('mousedown', (event) => {
+            received.push([event.clientX, event.clientY]);
+        });
+        const press = (clientX, clientY) => {
+            const options = {
+                bubbles: true,
+                cancelable: true,
+                clientX,
+                clientY
+            };
+            canvas.dispatchEvent(new MouseEvent('mousedown', options));
+            canvas.dispatchEvent(new MouseEvent('mousemove', options));
+            canvas.dispatchEvent(new MouseEvent('mouseup', options));
+        };
+        press(150, 300);
+        expect(received).toEqual([]);
+        expect(
+            document
+                .querySelector('.tour-drawing-guides')
+                .classList.contains('is-nudging')
+        ).toBe(true);
+        expect(restart().hidden).toBe(true);
+        press(264, 8);
+        expect(received).toEqual([[254, 0]]);
+        expect(restart().hidden).toBe(false);
+    });
+
+    test('a double-click that does not open l.ss04 keeps the Enter Edit Mode slide', async () => {
+        const { getTourSlide } = require('../js/tour-slides');
+        const { showTourSlide } = require('../js/tour-spotlight');
+        const slide = getTourSlide('enter-edit-mode');
+        let continued = 0;
+        await showTourSlide(slide, () => {
+            continued += 1;
+        });
+        const rect = slide.cutouts[0].resolve();
+        const doubleClick = () =>
+            document.dispatchEvent(
+                new MouseEvent('dblclick', {
+                    bubbles: true,
+                    cancelable: true,
+                    clientX: rect.left + rect.width / 2,
+                    clientY: rect.top + rect.height / 2
+                })
+            );
+        doubleClick();
+        await delay(2300);
+        expect(continued).toBe(0);
+        window.glyphCanvas.outlineEditor = {
+            active: true,
+            currentGlyphName: 'l.ss04'
+        };
+        doubleClick();
+        await delay(1800);
+        expect(continued).toBe(1);
+    }, 15000);
+
+    test('Back restores the previous slide and the close button ends the tour', async () => {
+        const viewport = window.glyphCanvas.viewportManager;
+        Object.assign(viewport, { scale: 1, panX: 10, panY: 20 });
+        window.glyphCanvas.render = jest.fn();
+        await tour.startTour();
+        expect(document.querySelector('[data-tour-action="back"]')).toBeNull();
+        expect(
+            document.querySelector('[data-tour-action="cancel"]')
+        ).not.toBeNull();
+        document
+            .querySelector('[data-tour-action="continue"]')
+            .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        await waitForSlideFade();
+        expect(document.querySelector('.tour-tooltip h3').textContent).toBe(
+            'Active OpenType features'
+        );
+        expect(
+            document.querySelector('[data-tour-action="restart"]')
+        ).toBeNull();
+        expect(
+            [
+                ...document.querySelectorAll(
+                    '.tour-tooltip-header [data-tour-action]'
+                )
+            ].map((button) => button.dataset.tourAction)
+        ).toEqual(['back', 'cancel']);
+        const setEnabledFeatures =
+            window.glyphCanvas.featuresManager.setEnabledFeatures;
+        setEnabledFeatures.mockClear();
+        Object.assign(viewport, { scale: 0.2, panX: 0, panY: 0 });
+        document
+            .querySelector('[data-tour-action="back"]')
+            .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        await delay(2000);
+        expect(document.querySelector('.tour-tooltip h3').textContent).toBe(
+            'Text Mode'
+        );
+        expect(setEnabledFeatures).toHaveBeenCalledWith([]);
+        expect(viewport).toMatchObject({ scale: 1, panX: 10, panY: 20 });
+        document
+            .querySelector('[data-tour-action="cancel"]')
+            .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(window.__tourSpotlightHost.visible).toBe(false);
+        expect(localStorage.getItem('tourSkipped')).toBe('true');
+        expect(document.getElementById('tour-launch-chip').hidden).toBe(false);
+    }, 15000);
+
     test('formats OS keyboard shortcuts as pre chips', async () => {
         const { getTourSlide } = require('../js/tour-slides');
         const { showTourSlide } = require('../js/tour-spotlight');

@@ -15417,7 +15417,7 @@ export class OutlineEditor {
         return true;
     }
 
-    private selectAllNodesInContour(contourIndex: number): boolean {
+    selectAllNodesInContour(contourIndex: number): boolean {
         const currentLayerData = this.getCurrentLayerDataFromStack();
         const contour = getEditableContour(
             currentLayerData?.shapes?.[contourIndex]

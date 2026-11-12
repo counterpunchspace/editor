@@ -1,25 +1,38 @@
 /**
  * Interactive app tour. Starts with an intro modal after the first-launch
- * folder prompt, then spotlight slides (added later).
+ * folder prompt, then spotlight slides. Every slide can be ended, stepped
+ * back from, or (action slides) restarted; each rebuilds its `stage`.
  */
 
+import { hideAll as hideAllTippies } from 'tippy.js';
 import { Logger } from './logger';
 import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
 import { showUnsavedChangesDialog } from './ui/confirm-dialog';
 import {
     getTourSlideByIndex,
-    selectTourMasterByName,
     TOUR_FUSTAT_PATH,
-    TOUR_REGULAR_MASTER_NAME,
-    TOUR_SAMPLE_TEXT,
     TOUR_SLIDE_ORDER
 } from './tour-slides';
 import {
+    beginTourSlideRestore,
+    getCurrentTourSlide,
     hideTourSpotlight,
+    isTourSlideIdle,
     showTourSlide,
     transitionTourSlide,
-    wait
+    type TourNavigation
 } from './tour-spotlight';
+import {
+    captureTourGlyphSnapshot,
+    captureTourViewport,
+    isTourStageIntact,
+    restoreTourGlyphSnapshot,
+    restoreTourStage,
+    restoreTourViewport,
+    type TourGlyphSnapshot,
+    type TourViewport
+} from './tour-stage';
+import { resetTourDrawingSession } from './tour-drawing';
 
 const console = new Logger('Tour');
 
@@ -48,6 +61,9 @@ const LAUNCH_BUTTON_DISMISSED_STORAGE_KEY = 'tourLaunchButtonDismissed';
  */
 const COMPLETED_STORAGE_KEY = 'tourCompleted';
 
+/** Let a wrong-glyph or wrong-mode state settle before restoring the step. */
+const STAGE_WATCHDOG_DELAY_MS = 400;
+
 type TourHost = {
     introShownThisLoad: boolean;
     introOverlay: HTMLElement | null;
@@ -55,6 +71,16 @@ type TourHost = {
     escapeBinding: ModalEscapeBinding | null;
     starting: boolean;
     slideIndex: number;
+    /** Bumped by every navigation and by ending the tour. */
+    navToken: number;
+    /** Drawing glyph as it was when each slide was first reached. */
+    snapshots: Array<TourGlyphSnapshot | null>;
+    /** Canvas zoom and pan once each slide was first shown. */
+    viewports: Array<TourViewport | null>;
+    /** Font the snapshots belong to. */
+    snapshotFont: unknown;
+    watchdogTimer: number;
+    unbindWatchdog: (() => void) | null;
 };
 
 function getHost(): TourHost {
@@ -66,7 +92,13 @@ function getHost(): TourHost {
             launchChip: null,
             escapeBinding: null,
             starting: false,
-            slideIndex: 0
+            slideIndex: 0,
+            navToken: 0,
+            snapshots: [],
+            viewports: [],
+            snapshotFont: null,
+            watchdogTimer: 0,
+            unbindWatchdog: null
         };
     }
     return holder.__tourHost;
@@ -233,114 +265,6 @@ async function openFustatForTour(): Promise<boolean> {
     return true;
 }
 
-function viewAnimationDelayMs(): number {
-    const animation = window.VIEW_SETTINGS?.animation;
-    if (animation?.enabled && typeof animation.duration === 'number') {
-        return animation.duration + 40;
-    }
-    return 0;
-}
-
-function waitForNextAnimationFrame(): Promise<void> {
-    return new Promise((resolve) => {
-        requestAnimationFrame(() => resolve());
-    });
-}
-
-async function maximizeEditorView(): Promise<void> {
-    window.focusView?.('view-editor');
-    await wait(viewAnimationDelayMs());
-    window.resizeView?.('view-editor');
-    await wait(viewAnimationDelayMs());
-    window.resizeView?.('view-editor');
-    await wait(viewAnimationDelayMs());
-}
-
-/** Same settle + fit as font load after the sample text is set. */
-async function fitTourSampleTextViewport(): Promise<void> {
-    await waitForTourSampleCompiledGlyphs();
-    await waitForNextAnimationFrame();
-    await waitForNextAnimationFrame();
-    await window.glyphCanvas?.applyInitialViewportFit?.();
-}
-
-function tourSampleTextHasCompiledGlyphs(): boolean {
-    const textRun = window.glyphCanvas?.textRunEditor;
-    const glyphs = textRun?.shapedGlyphs || [];
-    if (glyphs.length === 0) {
-        return false;
-    }
-    const names = textRun?.glyphNameBuffer;
-    if (Array.isArray(names) && names.length === glyphs.length) {
-        return names.every((name) => !!name && name !== '.notdef');
-    }
-    return glyphs.every((glyph) => (glyph.g ?? 0) !== 0);
-}
-
-async function waitForTourSampleCompiledGlyphs(): Promise<void> {
-    if (tourSampleTextHasCompiledGlyphs()) {
-        return;
-    }
-    const started = Date.now();
-    await new Promise<void>((resolve) => {
-        let settled = false;
-        const finish = () => {
-            if (settled) {
-                return;
-            }
-            settled = true;
-            window.removeEventListener('glyphCanvasRendered', onPulse);
-            window.clearInterval(intervalId);
-            resolve();
-        };
-        const onPulse = () => {
-            if (
-                tourSampleTextHasCompiledGlyphs() ||
-                Date.now() - started >= 8000
-            ) {
-                finish();
-            }
-        };
-        const intervalId = window.setInterval(onPulse, 50);
-        window.addEventListener('glyphCanvasRendered', onPulse);
-    });
-}
-
-async function resetReachableOpenTypeFeatures(): Promise<void> {
-    const manager = window.glyphCanvas?.featuresManager;
-    if (typeof manager?.setEnabledFeatures === 'function') {
-        try {
-            await manager.setEnabledFeatures([]);
-            return;
-        } catch {
-            // Features UI may not be ready; fall through to button clicks.
-        }
-    }
-
-    const buttons = document.querySelectorAll<HTMLButtonElement>(
-        'button[data-feature-tag]'
-    );
-    for (const button of buttons) {
-        if (button.disabled || !button.classList.contains('enabled')) {
-            continue;
-        }
-        button.click();
-    }
-}
-
-async function prepareEditorForFirstSlide(): Promise<void> {
-    await maximizeEditorView();
-    const canvas = window.glyphCanvas;
-    if (canvas?.outlineEditor?.active) {
-        canvas.exitGlyphEditMode();
-    }
-    await selectTourMasterByName(TOUR_REGULAR_MASTER_NAME);
-    canvas?.outlineEditor?.setGuidelinesVisible?.(false);
-    await resetReachableOpenTypeFeatures();
-    canvas?.textRunEditor?.setTextBuffer(TOUR_SAMPLE_TEXT);
-    await fitTourSampleTextViewport();
-}
-
 function markTourStarted(): void {
     try {
         localStorage.setItem(STARTED_STORAGE_KEY, 'true');
@@ -350,6 +274,16 @@ function markTourStarted(): void {
     updateTourLaunchButton();
 }
 
+function endTourSession(): void {
+    const host = getHost();
+    host.navToken += 1;
+    host.unbindWatchdog?.();
+    host.unbindWatchdog = null;
+    window.clearTimeout(host.watchdogTimer);
+    resetTourDrawingSession();
+    hideTourSpotlight();
+}
+
 export function completeTour(): void {
     try {
         localStorage.setItem(COMPLETED_STORAGE_KEY, 'true');
@@ -357,8 +291,55 @@ export function completeTour(): void {
     } catch {
         // Ignore localStorage access failures.
     }
-    hideTourSpotlight();
+    endTourSession();
     updateTourLaunchButton();
+}
+
+/** Ends the tour where it is. Title bar and Help menu can start it again. */
+export function cancelTour(): void {
+    endTourSession();
+    skipTour();
+    console.log('Cancelled tour at', TOUR_SLIDE_ORDER[getHost().slideIndex]);
+}
+
+function navigationFor(index: number): TourNavigation {
+    return {
+        onContinue: onTourContinue,
+        onBack: index > 0 ? () => void goToTourSlide(index - 1) : undefined,
+        onRestart: () => void goToTourSlide(index),
+        onCancel: cancelTour
+    };
+}
+
+function rememberSlideSnapshot(index: number): void {
+    const host = getHost();
+    if (host.snapshots[index] === undefined) {
+        host.snapshots[index] = captureTourGlyphSnapshot();
+    }
+}
+
+function rememberSlideViewport(index: number): void {
+    const host = getHost();
+    if (host.slideIndex === index && host.viewports[index] === undefined) {
+        host.viewports[index] = captureTourViewport();
+    }
+}
+
+/**
+ * Viewport a slide is restored to. Every component slide uses the one
+ * Component Glyphs fitted, so going back does not zoom out to the text.
+ */
+function savedViewportFor(index: number): TourViewport | null {
+    const host = getHost();
+    const slide = getTourSlideByIndex(index);
+    if (slide?.stage.kind === 'edieresis') {
+        for (let i = index - 1; i >= 0; i--) {
+            if (getTourSlideByIndex(i)?.stage.kind !== 'edieresis') {
+                return host.viewports[i] ?? null;
+            }
+        }
+    }
+    return host.viewports[index] ?? null;
 }
 
 function onTourContinue(): void {
@@ -371,17 +352,104 @@ function onTourContinue(): void {
         return;
     }
     host.slideIndex = nextIndex;
-    void transitionTourSlide(nextSlide, onTourContinue);
+    // Going forward again after Back replays the slide from here.
+    host.snapshots.length = nextIndex;
+    host.viewports.length = nextIndex;
+    rememberSlideSnapshot(nextIndex);
+    void transitionTourSlide(nextSlide, navigationFor(nextIndex)).then(() =>
+        rememberSlideViewport(nextIndex)
+    );
 }
 
-async function presentCurrentSlide(): Promise<void> {
+/**
+ * Back (`index` = current - 1) and Restart step (`index` = current):
+ * rebuild that slide’s stage and outlines, then show it.
+ */
+async function goToTourSlide(index: number): Promise<void> {
     const host = getHost();
-    const slide = getTourSlideByIndex(host.slideIndex);
+    const slide = getTourSlideByIndex(index);
     if (!slide) {
-        console.error('Tour slide missing at', host.slideIndex);
         return;
     }
-    await showTourSlide(slide, onTourContinue);
+    const token = ++host.navToken;
+    window.clearTimeout(host.watchdogTimer);
+    try {
+        await beginTourSlideRestore();
+        if (token !== host.navToken) {
+            return;
+        }
+        host.slideIndex = index;
+        await restoreTourStage(slide.stage, host.snapshots[index] ?? null);
+        if (token !== host.navToken) {
+            return;
+        }
+        const viewport = savedViewportFor(index);
+        if (viewport) {
+            restoreTourViewport(viewport);
+        }
+        await showTourSlide(slide, navigationFor(index));
+        rememberSlideViewport(index);
+        console.log('Tour moved to', slide.id);
+    } catch (error) {
+        console.error('Failed to restore tour slide', slide.id, error);
+        if (token === host.navToken) {
+            await showTourSlide(slide, navigationFor(index));
+        }
+    }
+}
+
+function checkTourStage(): void {
+    const host = getHost();
+    host.watchdogTimer = 0;
+    const slide = getCurrentTourSlide();
+    if (!slide || !isTourSlideIdle() || isTourStageIntact(slide.stage)) {
+        return;
+    }
+    console.log('Tour left the stage of', slide.id, '- restoring');
+    void goToTourSlide(host.slideIndex);
+}
+
+/** Restores the step when the user ends up in a state it cannot continue from. */
+function bindTourStageWatchdog(): void {
+    const host = getHost();
+    if (host.unbindWatchdog) {
+        return;
+    }
+    const schedule = () => {
+        window.clearTimeout(host.watchdogTimer);
+        host.watchdogTimer = window.setTimeout(
+            checkTourStage,
+            STAGE_WATCHDOG_DELAY_MS
+        );
+    };
+    const events = [
+        'editorModeChanged',
+        'glyphStackChanged',
+        'glyphCanvasRendered'
+    ];
+    for (const type of events) {
+        window.addEventListener(type, schedule);
+    }
+    host.unbindWatchdog = () => {
+        for (const type of events) {
+            window.removeEventListener(type, schedule);
+        }
+    };
+}
+
+/** A restarted tour starts from the outlines the first run found. */
+function resetTourSnapshots(): void {
+    const host = getHost();
+    const font = window.fontManager?.currentFont ?? null;
+    const pristine = host.snapshots[0];
+    host.viewports = [];
+    if (font && host.snapshotFont === font && pristine) {
+        restoreTourGlyphSnapshot(pristine);
+        host.snapshots = [pristine];
+        return;
+    }
+    host.snapshotFont = font;
+    host.snapshots = [captureTourGlyphSnapshot()];
 }
 
 /**
@@ -400,9 +468,20 @@ export async function startTour(): Promise<void> {
         }
         markTourStarted();
         closeTourIntro();
+        endTourSession();
+        // An open menu would float above the spotlight, unreachable.
+        hideAllTippies({ duration: 0 });
         host.slideIndex = 0;
-        await prepareEditorForFirstSlide();
-        await presentCurrentSlide();
+        resetTourSnapshots();
+        const slide = getTourSlideByIndex(0);
+        if (!slide) {
+            console.error('Tour has no slides');
+            return;
+        }
+        await restoreTourStage(slide.stage, null);
+        await showTourSlide(slide, navigationFor(0));
+        rememberSlideViewport(0);
+        bindTourStageWatchdog();
         console.log(
             'Started tour',
             TOUR_SLIDE_ORDER[host.slideIndex] || '(empty)'
