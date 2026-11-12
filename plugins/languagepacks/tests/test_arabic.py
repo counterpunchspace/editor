@@ -555,6 +555,10 @@ def test_character_set_and_recipe_round_trip():
     assert recipe["positions"]["isol"] == ["uni066E", "twoDotsHorizontalAbove-ar"]
     assert composition.recipe(0x0041, lambda codepoint: {"script": "Latin"}) is None
     assert composition.recipe_for_name("shaddaFatha-ar") is None
+    # rlig outputs lam_alef-ar.fina; as a mark it would shape with no advance.
+    assert composition.recipe_for_name("lam_alef-ar.fina")["category"] == "Letter"
+    assert composition.recipe_for_name("kafDotless-ar.fina")["category"] == "Letter"
+    assert composition.recipe_for_name("lam_alef-ar.medi") is None
 
 
 def _calt(result, block):

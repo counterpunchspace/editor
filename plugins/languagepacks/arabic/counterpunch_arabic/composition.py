@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from counterpunch_arabic.font_source import ArabicFontSource
+from counterpunch_arabic.font_source import ArabicFontSource, _split
 from counterpunch_arabic.renames import ArabicRenames
 
 
@@ -33,7 +33,7 @@ class ArabicCompositionProvider:
     def recipe_for_name(self, name: str) -> dict[str, Any] | None:
         entry = self._font.unencoded.get(name)
         if entry is None:
-            return None
+            return self._form_recipe(name)
         recipe: dict[str, Any] = {
             "source": "arabic",
             "positions": entry.get("positions") or {},
@@ -41,6 +41,24 @@ class ArabicCompositionProvider:
         }
         if entry.get("components"):
             recipe["components"] = list(entry["components"])
+        return recipe
+
+    def _form_recipe(self, name: str) -> dict[str, Any] | None:
+        # A positional form of an unencoded glyph, such as lam_alef-ar.fina,
+        # needs its own category. Without one the host makes it a mark.
+        root, suffix = _split(name)
+        if not suffix or root not in self._font.unencoded:
+            return None
+        if name not in self._font.glyphs:
+            return None
+        recipe: dict[str, Any] = {
+            "source": "arabic",
+            "positions": {},
+            "category": self._font.category(name),
+        }
+        components = self._font.components(name)
+        if components:
+            recipe["components"] = [self._font.token_for(part) for part in components]
         return recipe
 
     def anchors(self, identity_or_name: int | str) -> list[str]:
