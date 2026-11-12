@@ -93,4 +93,4 @@ Coverage: 🟢 Should work · 🟡 Partial · 🔴 Missing
 | Source file I/O | 🟢 | |
 | Plugin system | 🟡 | Most plugin types not yet implemented, no auto-update yet |
 | OpenType feature code generator | 🟡 | Infrastructure and basic demos exist |
-| Live online collaboration | 🟡 | Basic implementation exists |
+| Live online collaboration | 🟡 | Basic implementation works, chat/tasks/live pointers/follow me still missing |
