@@ -381,6 +381,36 @@ describe('FontCompilation worker document readiness', () => {
         );
     });
 
+    test('a queued worker document replace sends the document as it is when the replace runs', async () => {
+        const { fontCompilation } = createReadyFontCompilation();
+        const replaced = [];
+        fontCompilation.worker.postMessage = jest.fn((message) => {
+            if (message.type === 'replaceYdocDocuments') {
+                replaced.push(
+                    ...message.documents.map((document) => [
+                        document.documentId,
+                        [...document.state]
+                    ])
+                );
+            }
+            queueMicrotask(() => {
+                fontCompilation.handleWorkerMessage({
+                    data: { id: message.id, type: message.type, success: true }
+                });
+            });
+        });
+        let current = new Uint8Array([1]);
+        fontCompilation.scheduleReplaceWorkerDocument(
+            'glyph:a',
+            current,
+            () => current
+        );
+        // An edit lands before the replace runs; the worker already has it.
+        current = new Uint8Array([1, 2]);
+        await fontCompilation.workerDocumentReplaceFlush;
+        expect(replaced).toEqual([['glyph:a', [1, 2]]]);
+    });
+
     test('cached editing compiles wait for queued worker document replaces', async () => {
         const { fontCompilation } = createReadyFontCompilation();
         const postedTypes = [];

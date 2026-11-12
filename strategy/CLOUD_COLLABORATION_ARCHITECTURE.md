@@ -553,6 +553,20 @@ sync, subset catch-up, WAL replay, and HTTP flush.
 - **After the first ready:** later reconnect barriers that fail report
   `error` (not `connected`).
 
+The barrier runs when the core socket changes into `connected` (first open
+or reconnect), never again while it stays connected. A socket reports
+`connected` once per connection: the room’s ack of each later edit does not
+report it again. A glyph whose live socket has synced is never fetched over
+HTTP by catch-up; the room sends that socket every update, also those
+published over HTTP. The three-window spec checks that edits to the open
+glyph leave and arrive as frames on its socket, with no HTTP request for it.
+
+Every byte a window applies reaches its compile worker, in order. An update
+the window’s document already had, or holds pending until an earlier one
+arrives, still goes to the worker, held and merged in front of the next
+update for that document. A queued worker document replace reads the
+document when it runs, so updates forwarded in between are not overwritten.
+
 Reconnect sends `sync-request` with integer `checkpointLogId` and
 `appliedLogId`, then applies tail replay or `rebaseline_required`, then
 resends unacked WAL rows in `dependsOn` order. There is no

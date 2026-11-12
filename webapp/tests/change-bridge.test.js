@@ -6707,6 +6707,34 @@ describe('WindowSync', () => {
         window.fontCompilation = originalFontCompilation;
     });
 
+    test('a remote update held back by Yjs still reaches the worker hook', () => {
+        const bridge = new ChangeBridge('held-back-receiver');
+        bridge.initFromJson(makeMinimalFont());
+        const remote = new Y.Doc();
+        Y.applyUpdate(remote, bridge.encodeDocumentState('font-core'));
+        const updates = [];
+        remote.on('update', (update) => updates.push(update));
+        remote.getMap('heldBackTest').set('first', 1);
+        remote.getMap('heldBackTest').set('second', 2);
+        const workerUpdates = [];
+        bridge.setYjsWorkerCallback((update, entries, documentId) => {
+            workerUpdates.push({ update, entries, documentId });
+        });
+        // The second update arrives first: Yjs keeps it pending, the
+        // document does not change, and the worker must still get the bytes.
+        const changed = bridge.applyRemoteUpdate(
+            updates[1],
+            [{ op: 'set', path: 'heldBackTest.second', value: 2 }],
+            undefined,
+            'font-core'
+        );
+        expect(changed).toBe(false);
+        expect(workerUpdates).toEqual([
+            { update: updates[1], entries: [], documentId: 'font-core' }
+        ]);
+        bridge.destroy();
+    });
+
     test('metadata-only no-op layer snapshot skips receiver side effects', () => {
         const fontJson1 = makeMinimalFont();
         const bridge1 = new ChangeBridge('metadata-noop-sender');
@@ -6748,7 +6776,14 @@ describe('WindowSync', () => {
 
         flushTimers();
 
-        expect(receiverWorkerUpdates).toHaveLength(0);
+        // The bytes still reach the worker hook, with no entries: the worker
+        // side only holds them for the next update (no cache work), so its
+        // Y.Doc never misses bytes the receiver’s document already has.
+        expect(
+            receiverWorkerUpdates.every(
+                ({ changeLogEntries }) => changeLogEntries.length === 0
+            )
+        ).toBe(true);
         expect(bridge2.getChangeLog()).toHaveLength(receiverLogStart);
         expect(
             bridge2.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])

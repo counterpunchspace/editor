@@ -2644,6 +2644,12 @@ export class CloudAdapter implements FileSystemAdapter {
     }
 
     private async _maybeMarkInitialSyncConnected(): Promise<void> {
+        // Every ack of a later edit lands here. Once connected there is
+        // nothing to mark; reporting `connected` again made the session rerun
+        // its whole ready barrier (HTTP catch-up of every live glyph) per edit.
+        if (this._status === 'connected') {
+            return;
+        }
         const syncGeneration = this._syncGeneration;
         if (this._canMarkInitialSyncConnected(syncGeneration)) {
             this._clearInitialSyncTimeout();

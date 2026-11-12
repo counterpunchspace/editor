@@ -3072,6 +3072,40 @@ describe('CloudPlugin glyph catch-up from core revision map', () => {
         }
     });
 
+    test('skips the HTTP catch-up of a glyph whose live socket is synced', async () => {
+        const plugin = new CloudPlugin();
+        const catchUpDocuments = jest.fn().mockResolvedValue([]);
+        plugin._liveSession = {
+            catchUpDocuments,
+            hasSyncedLiveDocument: (documentId) => documentId === 'glyph:live-a'
+        };
+        plugin._enqueueGlyphCatchUp = plugin._enqueueGlyphCatchUp.bind(plugin);
+        plugin._activeAssetSizeBridge = {
+            hasSparseWorkingSet: () => false,
+            listSparseWorkingGlyphIds: () => [],
+            glyphDocumentIdForName: () => null,
+            listGlyphRevisionTokens: () => [
+                { glyphId: 'live-a', revision: 'rev-2' },
+                { glyphId: 'other-b', revision: 'rev-3' }
+            ],
+            glyphHasCatchUpRevision: () => false
+        };
+        const originalCanvas = window.glyphCanvas;
+        window.glyphCanvas = { textRunEditor: { glyphNameBuffer: [] } };
+        try {
+            plugin._enqueueGlyphCatchUp(['live-a', 'other-b'], {
+                includeUnloaded: true
+            });
+            await Promise.resolve();
+            expect(catchUpDocuments).toHaveBeenCalledWith(
+                [{ documentId: 'glyph:other-b', expectedRevision: 'rev-3' }],
+                { includeLiveDocuments: true }
+            );
+        } finally {
+            window.glyphCanvas = originalCanvas;
+        }
+    });
+
     test('HTTP-catches a glyph whose core revision changed after its shard was unloaded', async () => {
         const plugin = new CloudPlugin();
         const catchUpDocuments = jest.fn().mockResolvedValue([]);

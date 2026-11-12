@@ -938,11 +938,15 @@ describe('CloudLiveSession', () => {
                 )
                 .pop();
             session.coreAdapter.isTransportSynced.mockReturnValue(false);
+            // A reconnect passes through connecting.
+            coreOptions.onConnectionStatus('connecting');
             coreOptions.onConnectionStatus('connected');
             await jest.advanceTimersByTimeAsync(80);
             await Promise.resolve();
             expect(statuses[statuses.length - 1].status).toBe('error');
             session.coreAdapter.isTransportSynced.mockReturnValue(true);
+            // A reconnect passes through connecting.
+            coreOptions.onConnectionStatus('connecting');
             coreOptions.onConnectionStatus('connected');
             await jest.advanceTimersByTimeAsync(80);
             await Promise.resolve();
@@ -1333,6 +1337,8 @@ describe('CloudLiveSession', () => {
             .find((options) => options.documentId === 'font-core');
         expect(coreOptions).toBeTruthy();
         coreOptions.onConnectionStatus('connecting');
+        // A reconnect passes through connecting.
+        coreOptions.onConnectionStatus('connecting');
         coreOptions.onConnectionStatus('connected');
         await new Promise((resolve) => {
             setTimeout(resolve, 80);
@@ -1482,6 +1488,8 @@ describe('CloudLiveSession', () => {
                     !call[0].documentId || call[0].documentId === 'font-core'
             )[0];
             expect(coreOptions).toBeTruthy();
+            // A reconnect passes through connecting.
+            coreOptions.onConnectionStatus('connecting');
             coreOptions.onConnectionStatus('connected');
             await jest.advanceTimersByTimeAsync(80);
             await Promise.resolve();
@@ -1619,6 +1627,8 @@ describe('CloudLiveSession', () => {
                 (call) =>
                     !call[0].documentId || call[0].documentId === 'font-core'
             )[0];
+            // A reconnect passes through connecting.
+            coreOptions.onConnectionStatus('connecting');
             coreOptions.onConnectionStatus('connected');
             await jest.advanceTimersByTimeAsync(80);
             await Promise.resolve();
@@ -1627,6 +1637,34 @@ describe('CloudLiveSession', () => {
         } finally {
             session.disconnect();
             jest.useRealTimers();
+        }
+    });
+
+    test('a repeated connected report from the core socket does not rerun the catch-up', async () => {
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: {},
+            bootstrapMode: 'skip'
+        });
+        try {
+            await session.syncLiveDocumentIds([]);
+            const coreOptions = CloudAdapter.mock.calls.find(
+                (call) =>
+                    !call[0].documentId || call[0].documentId === 'font-core'
+            )[0];
+            const barrier = jest.spyOn(session, '_runSessionReadyBarrier');
+            // An edit’s ack, or a tail_full detail, while already connected.
+            coreOptions.onConnectionStatus('connected');
+            coreOptions.onConnectionStatus('connected', 'tail_full');
+            expect(barrier).not.toHaveBeenCalled();
+            coreOptions.onConnectionStatus('connecting');
+            coreOptions.onConnectionStatus('connected');
+            expect(barrier).toHaveBeenCalledTimes(1);
+        } finally {
+            session.disconnect();
         }
     });
 
@@ -1663,6 +1701,8 @@ describe('CloudLiveSession', () => {
                     !call[0].documentId || call[0].documentId === 'font-core'
             )[0];
             const before = statuses.length;
+            // A reconnect passes through connecting.
+            coreOptions.onConnectionStatus('connecting');
             coreOptions.onConnectionStatus('connected');
             const deadline = Date.now() + 1000;
             while (

@@ -6498,6 +6498,12 @@ export class PatchSyncEngine {
                 targetDoc.off('afterTransaction', observeRemoteTransaction);
             }
             if (!didChange) {
+                // This document already had the bytes, or keeps them pending
+                // until an earlier update arrives. The worker’s copy may not:
+                // with no entries the bytes are held and merged in front of
+                // the next update sent for this document, so the worker never
+                // misses them (Yjs ignores what it already has).
+                this._yjsWorkerCallback?.(update, [], resolvedDocumentId);
                 return false;
             }
             if (options?.fromCollaborator) {

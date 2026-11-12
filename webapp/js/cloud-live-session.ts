@@ -226,6 +226,7 @@ export class CloudLiveSession {
     private _degradedRetries = 0;
     private _barrierPromise: Promise<void> | null = null;
     private _httpReceivingCount = 0;
+    private _coreAdapterStatus: CloudConnectionStatus | null = null;
     private _httpPublishingCount = 0;
     private _relayChain: Promise<void> = Promise.resolve();
     /** Documents (or the reconnect barrier) currently failed, with detail. */
@@ -515,6 +516,22 @@ export class CloudLiveSession {
 
     hasLiveDocument(documentId: string): boolean {
         return this._adapters.has(documentId);
+    }
+
+    /**
+     * A live socket for this document that finished its initial sync. The
+     * room sends it every update, also those published over HTTP, so the
+     * document needs no HTTP catch-up.
+     */
+    hasSyncedLiveDocument(documentId: string): boolean {
+        const adapter = this._adapters.get(documentId);
+        if (!adapter) {
+            return false;
+        }
+        return (
+            typeof adapter.getAccessSnapshot === 'function' &&
+            adapter.getAccessSnapshot().status === 'connected'
+        );
     }
 
     async catchUpDocuments(
@@ -1422,6 +1439,10 @@ export class CloudLiveSession {
         let resolveConnected: (() => void) | null = null;
         let rejectConnected: ((err: Error) => void) | null = null;
         const isCore = documentId === FONT_CORE_DOCUMENT_ID;
+        if (isCore) {
+            // A new core adapter starts unconnected.
+            this._coreAdapterStatus = null;
+        }
         const connectedPromise = isCore
             ? new Promise<void>((res, rej) => {
                   resolveConnected = res;
@@ -1538,7 +1559,14 @@ export class CloudLiveSession {
         status: CloudConnectionStatus,
         detail?: string
     ): void {
+        const previousStatus = this._coreAdapterStatus;
+        this._coreAdapterStatus = status;
         if (status === 'connected') {
+            // Only a change into `connected` (first open or reconnect) needs
+            // the barrier; a repeated report (a `tail_full` detail) does not.
+            if (previousStatus === 'connected') {
+                return;
+            }
             if (!this._readyOnce) {
                 this._options.onConnectionStatus?.('syncing', 'Catching up');
             }

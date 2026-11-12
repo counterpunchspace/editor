@@ -211,6 +211,13 @@ export const cloudPluginCatchUpMethods = {
                 expectedRevision: entry.revision
             }))
             .filter((target) => {
+                // The open glyph’s synced socket already receives every
+                // update; fetching it again over HTTP only adds work.
+                if (
+                    this._liveSession.hasSyncedLiveDocument?.(target.documentId)
+                ) {
+                    return false;
+                }
                 if (this._glyphCatchUpInFlight.has(target.documentId)) {
                     this._glyphCatchUpAgain.add(target.documentId);
                     return false;

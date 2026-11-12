@@ -345,6 +345,19 @@ describe('CloudAdapter room worker defaults', () => {
         }
     });
 
+    it('an ack after the socket is connected reports nothing and fetches no status', async () => {
+        const statuses = [];
+        const adapter = new CloudAdapter({
+            assetId: 'asset-123',
+            onConnectionStatus: (status) => statuses.push(status)
+        });
+        adapter._status = 'connected';
+        adapter._refreshCompactStatus = jest.fn();
+        await adapter._maybeMarkInitialSyncConnected();
+        expect(statuses).toEqual([]);
+        expect(adapter._refreshCompactStatus).not.toHaveBeenCalled();
+    });
+
     it('keeps connectDirect disabled in production while connectWithCredentials works', async () => {
         const originalIsDevelopment = window.isDevelopment;
         window.isDevelopment = jest.fn(() => false);

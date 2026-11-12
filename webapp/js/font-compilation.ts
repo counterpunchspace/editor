@@ -537,6 +537,10 @@ export class FontCompilation {
     pendingWorkerDocumentSync: Promise<void>;
     pendingWorkerDocumentSyncCount: number;
     pendingWorkerDocumentReplaces: Map<string, Uint8Array>;
+    pendingWorkerDocumentReaders: Map<
+        string,
+        () => Uint8Array | null | undefined
+    >;
     workerDocumentReplaceFlush: Promise<unknown> | null;
     compileFeatureOverlay: string;
 
@@ -555,6 +559,7 @@ export class FontCompilation {
         this.pendingWorkerDocumentSync = Promise.resolve();
         this.pendingWorkerDocumentSyncCount = 0;
         this.pendingWorkerDocumentReplaces = new Map();
+        this.pendingWorkerDocumentReaders = new Map();
         this.workerDocumentReplaceFlush = null;
         this.compileFeatureOverlay = '';
     }
@@ -751,9 +756,17 @@ export class FontCompilation {
         }
     }
 
+    /**
+     * Replace one worker document after the syncs already queued. Pass
+     * `readCurrent` to read the document when the replace runs: updates
+     * forwarded between scheduling and the flush are already in the worker,
+     * and an older snapshot written over them would drop them, leaving every
+     * later update of that document pending in the worker.
+     */
     scheduleReplaceWorkerDocument(
         documentId: string,
-        state: Uint8Array | ArrayBufferLike | null | undefined
+        state: Uint8Array | ArrayBufferLike | null | undefined,
+        readCurrent?: () => Uint8Array | null | undefined
     ): void {
         if (!documentId || !state) {
             return;
@@ -764,6 +777,11 @@ export class FontCompilation {
             return;
         }
         this.pendingWorkerDocumentReplaces.set(documentId, bytes);
+        if (readCurrent) {
+            this.pendingWorkerDocumentReaders.set(documentId, readCurrent);
+        } else {
+            this.pendingWorkerDocumentReaders.delete(documentId);
+        }
         this._ensureWorkerDocumentReplaceFlush();
     }
 
@@ -778,8 +796,18 @@ export class FontCompilation {
                 while (this.pendingWorkerDocumentReplaces.size > 0) {
                     const documents = Array.from(
                         this.pendingWorkerDocumentReplaces.entries()
-                    ).map(([documentId, bytes]) => ({ documentId, bytes }));
+                    ).map(([documentId, bytes]) => {
+                        const current =
+                            this.pendingWorkerDocumentReaders.get(
+                                documentId
+                            )?.();
+                        return {
+                            documentId,
+                            bytes: current?.length ? current : bytes
+                        };
+                    });
                     this.pendingWorkerDocumentReplaces.clear();
+                    this.pendingWorkerDocumentReaders.clear();
                     const work = this.replaceWorkerDocuments(documents);
                     this.trackWorkerDocumentSync(work);
                     await work;

@@ -75,6 +75,9 @@ import {
     collectPageErrors,
     compiledTextRun,
     liveGlyphNames,
+    markCloudRoomTraffic,
+    recordCloudRoomTraffic,
+    expectGlyphEditOverWebSocket,
     overviewTileState,
     paintOverviewTiles,
     setEditingText
@@ -128,6 +131,9 @@ test.describe('three-window sync scenarios', () => {
         const inviteeContext = await browser.newContext();
         await installCrossWindowTrackersOnContext(ownerContext);
         await installCrossWindowTrackersOnContext(inviteeContext);
+        // Before any page opens, so every room socket is seen.
+        const ownerTraffic = recordCloudRoomTraffic(ownerContext);
+        const inviteeTraffic = recordCloudRoomTraffic(inviteeContext);
         await attachCloudCollabCookies(ownerContext, ownerSession);
         await attachCloudCollabCookies(inviteeContext, inviteeSession);
 
@@ -2048,15 +2054,43 @@ test.describe('three-window sync scenarios', () => {
                     label: 'Owner outline p'
                 })
             );
-            // The owner’s open glyph `a` is live in the main windows: its edit
-            // and undo arrive as live packets and every window recompiles.
+            // The open glyph `a` is live in both main windows: each edit and
+            // undo leaves the sender as a frame on `a`’s room socket and
+            // enters the other main window the same way, with no HTTP request
+            // for `a` on either side. Every window recompiles.
+            const aDocumentId: string = await mainPage.evaluate(() =>
+                (window as any).changeBridge.glyphDocumentIdForName('a')
+            );
+            expect(aDocumentId).toMatch(/^glyph:/);
             const aBeforeOwnerEdit = await glyphNodeXAt(
                 mainPage,
                 'a',
                 thinLayerId!,
                 0
             );
-            await editOffEditorGlyph(mainPage, 'owner outline a', () =>
+            const liveEditOfA = async (
+                sender: Page,
+                label: string,
+                edit: () => Promise<unknown>
+            ) => {
+                const [senderTraffic, receiverTraffic] =
+                    sender === mainPage
+                        ? [ownerTraffic, inviteeTraffic]
+                        : [inviteeTraffic, ownerTraffic];
+                const mark = markCloudRoomTraffic(
+                    senderTraffic,
+                    receiverTraffic
+                );
+                await editOffEditorGlyph(sender, label, edit);
+                await expectGlyphEditOverWebSocket(
+                    label,
+                    aDocumentId,
+                    senderTraffic,
+                    receiverTraffic,
+                    mark
+                );
+            };
+            await liveEditOfA(mainPage, 'owner outline a', () =>
                 moveGlyphNodeThroughModel(mainPage, {
                     glyphName: 'a',
                     layerId: thinLayerId,
@@ -2065,8 +2099,24 @@ test.describe('three-window sync scenarios', () => {
                     label: 'Owner outline a'
                 })
             );
-            await editOffEditorGlyph(mainPage, 'owner undo outline a', () =>
+            await liveEditOfA(mainPage, 'owner undo outline a', () =>
                 mainPage.evaluate(async (layerId) => {
+                    const w = window as any;
+                    await w.runBridgeUndoRedo('undo', 'a', 'a', layerId, null);
+                    await w.patchSyncEngine.waitForPendingCloudCommits?.();
+                }, thinLayerId)
+            );
+            await liveEditOfA(inviteePage, 'invitee outline a', () =>
+                moveGlyphNodeThroughModel(inviteePage, {
+                    glyphName: 'a',
+                    layerId: thinLayerId,
+                    nodeIndex: 0,
+                    deltaX: -11,
+                    label: 'Invitee outline a'
+                })
+            );
+            await liveEditOfA(inviteePage, 'invitee undo outline a', () =>
+                inviteePage.evaluate(async (layerId) => {
                     const w = window as any;
                     await w.runBridgeUndoRedo('undo', 'a', 'a', layerId, null);
                     await w.patchSyncEngine.waitForPendingCloudCommits?.();

@@ -1,7 +1,12 @@
 /**
  * Shared helpers for cloud-collab three-window Playwright specs.
  */
-import { expect, type APIRequestContext, type Page } from '@playwright/test';
+import {
+    expect,
+    type APIRequestContext,
+    type BrowserContext,
+    type Page
+} from '@playwright/test';
 import { shouldIgnoreCrossWindowPageError } from './change-bridge-cross-window';
 import { LOCAL_EDITOR_ORIGIN, LOCAL_ROOM_ORIGIN } from './cloud-collab-session';
 
@@ -531,4 +536,156 @@ export async function overviewTileState(
         },
         { names: glyphNames, fixedLocation: location }
     );
+}
+
+/** Room traffic one browser context sent and received, seen by Playwright. */
+export interface CloudRoomTraffic {
+    frames: { url: string; direction: 'sent' | 'received'; binary: boolean }[];
+    requests: { url: string; method: string; body: string }[];
+    /** Socket opens and closes, in order. */
+    sockets: { url: string; event: 'open' | 'close' }[];
+}
+
+/**
+ * Record every WebSocket frame and every HTTP request to a room, for all
+ * pages of `context`, from now on. Install it before the pages open: a socket
+ * opened earlier is invisible to Playwright.
+ */
+export function recordCloudRoomTraffic(
+    context: BrowserContext
+): CloudRoomTraffic {
+    const traffic: CloudRoomTraffic = {
+        frames: [],
+        requests: [],
+        sockets: []
+    };
+    const watchPage = (page: Page) => {
+        page.on('websocket', (socket) => {
+            const url = socket.url();
+            traffic.sockets.push({ url, event: 'open' });
+            socket.on('close', () => {
+                traffic.sockets.push({ url, event: 'close' });
+            });
+            socket.on('framesent', (frame) => {
+                traffic.frames.push({
+                    url,
+                    direction: 'sent',
+                    binary: typeof frame.payload !== 'string'
+                });
+            });
+            socket.on('framereceived', (frame) => {
+                traffic.frames.push({
+                    url,
+                    direction: 'received',
+                    binary: typeof frame.payload !== 'string'
+                });
+            });
+        });
+    };
+    context.pages().forEach(watchPage);
+    context.on('page', watchPage);
+    context.on('request', (request) => {
+        if (!/\/room\//.test(request.url())) {
+            return;
+        }
+        traffic.requests.push({
+            url: request.url(),
+            method: request.method(),
+            body: request.postDataBuffer()?.toString('latin1') ?? ''
+        });
+    });
+    return traffic;
+}
+
+/** Where both recorders stand now, to compare against after an edit. */
+export function markCloudRoomTraffic(
+    ...recorders: CloudRoomTraffic[]
+): number[][] {
+    return recorders.map((traffic) => [
+        traffic.frames.length,
+        traffic.requests.length,
+        traffic.sockets.length
+    ]);
+}
+
+/**
+ * Since `mark`, the edit to glyph document `documentId` left `sender` as a
+ * binary frame on that glyph’s room socket and entered `receiver` the same
+ * way, and neither context touched that glyph over HTTP: no `/shards/glyph/…`
+ * request and no pack that names it.
+ */
+export async function expectGlyphEditOverWebSocket(
+    label: string,
+    documentId: string,
+    sender: CloudRoomTraffic,
+    receiver: CloudRoomTraffic,
+    mark: number[][]
+): Promise<void> {
+    const glyphId = documentId.replace(/^glyph:/, '');
+    const shardPath = `/shards/glyph/${glyphId}`;
+    const onGlyphSocket = (url: string) =>
+        new URL(url).pathname.endsWith(shardPath);
+    const since = (traffic: CloudRoomTraffic, index: number) => ({
+        frames: traffic.frames
+            .slice(mark[index][0])
+            .filter((frame) => frame.binary && onGlyphSocket(frame.url)),
+        requests: traffic.requests
+            .slice(mark[index][1])
+            .filter(
+                (request) =>
+                    request.url.includes(shardPath) ||
+                    request.body.includes(glyphId)
+            )
+    });
+    // The receiver already shows the edit; Playwright may report the frame
+    // a moment later.
+    await expect
+        .poll(
+            () =>
+                since(sender, 0).frames.filter(
+                    (frame) => frame.direction === 'sent'
+                ).length,
+            {
+                timeout: 10000,
+                message: `${label}: the sender sends the edit on the glyph’s socket`
+            }
+        )
+        .toBeGreaterThan(0);
+    await expect
+        .poll(
+            () =>
+                since(receiver, 1).frames.filter(
+                    (frame) => frame.direction === 'received'
+                ).length,
+            {
+                timeout: 10000,
+                message: `${label}: the receiver gets the edit on the glyph’s socket`
+            }
+        )
+        .toBeGreaterThan(0);
+    const socketEvents = (traffic: CloudRoomTraffic, index: number) =>
+        traffic.sockets
+            .slice(mark[index][2])
+            .filter((entry) => onGlyphSocket(entry.url))
+            .map((entry) => entry.event);
+    expect(
+        {
+            sender: socketEvents(sender, 0),
+            receiver: socketEvents(receiver, 1)
+        },
+        `${label}: the glyph’s sockets stay open through the edit`
+    ).toEqual({ sender: [], receiver: [] });
+    expect(
+        [
+            ...since(sender, 0).requests.map((request) => ['sender', request]),
+            ...since(receiver, 1).requests.map((request) => [
+                'receiver',
+                request
+            ])
+        ].map(
+            ([side, request]: any) =>
+                `${side}: ${request.method} ${new URL(request.url).pathname}`
+        ),
+        `${label}: no HTTP request for the live glyph`
+    ).toEqual([]);
 }

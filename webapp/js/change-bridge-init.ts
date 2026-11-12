@@ -3455,11 +3455,19 @@ function initializeBridge(detail: {
 
     bridge.setWorkerDocumentReplaceCallback((documentId, state) => {
         heldWorkerUpdates.delete(documentId);
-        fontCompilation.scheduleReplaceWorkerDocument(documentId, state);
+        // Read the document when the replace runs, not now: updates forwarded
+        // in between must not be overwritten by this older snapshot.
+        const readCurrent = () => bridge.encodeDocumentState(documentId);
+        fontCompilation.scheduleReplaceWorkerDocument(
+            documentId,
+            state,
+            readCurrent
+        );
         if (fullFontCompilation.hasWorkerCacheDocument()) {
             fullFontCompilation.scheduleReplaceWorkerDocument(
                 documentId,
-                state
+                state,
+                readCurrent
             );
         }
     });
