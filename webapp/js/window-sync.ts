@@ -20,6 +20,8 @@ import {
     createCollaborationMessageEnvelopeFromChangeLogEntries,
     createLinkedWindowCatchUpEnvelope,
     isCollaborationMessageEnvelope,
+    toWireReplayValues,
+    withFullReplayValues,
     type CollaborationMessageEnvelope
 } from './collaboration-message';
 import {
@@ -131,6 +133,8 @@ type YjsUpdatePacket = {
     burstKey?: string;
     /** Main relays another person’s cloud edit; linked undo must respect it. */
     fromCollaborator?: boolean;
+    /** Glyph rows a glyph-revision stamp announces; main holds it for them. */
+    dependsOn?: string[];
 };
 
 type CloudConnectionRelayState = {
@@ -475,10 +479,17 @@ export class WindowSync {
             // microtask-batched so a single user transaction that emits several
             // Yjs updates produces one channel message and one receiver refresh.
             bridge.onLocalUpdate(
-                (_update, collaborationMessage, _entries, documentId, meta) => {
+                (_update, collaborationMessage, entries, documentId, meta) => {
+                    // Linked windows share this history: they need the full
+                    // replay values the cloud envelope leaves out.
                     this._queueOutboundBroadcast(
                         _update,
-                        collaborationMessage,
+                        isCollaborationMessageEnvelope(collaborationMessage)
+                            ? withFullReplayValues(
+                                  collaborationMessage,
+                                  entries
+                              )
+                            : collaborationMessage,
                         documentId,
                         meta?.burstKey
                     );
@@ -497,7 +508,8 @@ export class WindowSync {
                             }
                         ),
                         'font-core',
-                        meta?.burstKey
+                        meta?.burstKey,
+                        meta?.dependsOn
                     );
                 }
             );
@@ -1468,7 +1480,8 @@ export class WindowSync {
         update: Uint8Array,
         collaborationMessage?: CollaborationMessageEnvelope | null,
         documentId?: string,
-        burstKey?: string | null
+        burstKey?: string | null,
+        dependsOn?: string[]
     ): void {
         this._dropPendingLivePreview();
         const packet: YjsUpdatePacket = {
@@ -1478,6 +1491,9 @@ export class WindowSync {
         if (burstKey) {
             // Main holds the burst back from the room until it ends.
             packet.burstKey = burstKey;
+        }
+        if (dependsOn?.length) {
+            packet.dependsOn = dependsOn;
         }
         if (isCollaborationMessageEnvelope(collaborationMessage)) {
             packet.collaborationMessage = collaborationMessage;
@@ -1617,20 +1633,30 @@ export class WindowSync {
                                 : undefined
                         );
                         if (window.windowRole?.isMainWindow()) {
+                            // The room gets the wire form, not the full
+                            // replay values meant for linked windows.
+                            const wireEnvelope = isCollaborationMessageEnvelope(
+                                packet.collaborationMessage
+                            )
+                                ? toWireReplayValues(
+                                      packet.collaborationMessage
+                                  )
+                                : null;
                             if (
                                 typeof this._bridge.relayPeerPacketToCloud ===
                                 'function'
                             ) {
                                 this._bridge.relayPeerPacketToCloud(
                                     update,
-                                    packet.collaborationMessage ?? null,
+                                    wireEnvelope,
                                     packet.documentId,
-                                    packet.burstKey
+                                    packet.burstKey,
+                                    packet.dependsOn
                                 );
                             } else {
                                 window.cloudPlugin?.relayPeerWindowUpdateToCloud?.(
                                     update,
-                                    packet.collaborationMessage ?? null,
+                                    wireEnvelope,
                                     packet.documentId
                                 );
                             }

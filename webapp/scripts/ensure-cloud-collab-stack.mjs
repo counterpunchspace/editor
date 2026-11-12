@@ -688,6 +688,9 @@ export async function ensureCloudCollabStack() {
                 'WEBSITE_CONTROL_URL=http://127.0.0.1:8786',
                 'CLOUD_AUTHORIZE_SERVICE_TOKEN=e2e-p0-authorize',
                 'CLOUD_ATTEST_SERVICE_TOKEN=e2e-p0-attest',
+                // Room debug status (/room/:roomId/status, localhost only):
+                // specs read each room’s update counters to prove traffic.
+                'ROOM_STATUS_SERVICE_TOKEN=e2e-room-status',
                 'AUTH_TOKEN_SECRET=counterpunch-local-dev-auth-token-secret',
                 'AUTH_TOKEN_ALLOW_INSECURE_LOCAL_FALLBACK=true'
             ].join('\n') + '\n';
@@ -725,6 +728,8 @@ export async function ensureCloudCollabStack() {
                 'CLOUD_AUTHORIZE_SERVICE_TOKEN:e2e-p0-authorize',
                 '--var',
                 'CLOUD_ATTEST_SERVICE_TOKEN:e2e-p0-attest',
+                '--var',
+                'ROOM_STATUS_SERVICE_TOKEN:e2e-room-status',
                 '--var',
                 `EDITOR_ALLOWED_ORIGINS:${EDITOR_ORIGINS}`,
                 '--var',

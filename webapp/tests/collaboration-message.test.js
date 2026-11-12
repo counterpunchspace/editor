@@ -7,7 +7,9 @@ const {
     isCollaborationMessageEnvelope,
     createNamedChangePairFromEntry,
     createNamedChangePairFromJsonPatchPair,
-    createSyntheticChangeOperationsFromNamedChangePairs
+    createSyntheticChangeOperationsFromNamedChangePairs,
+    withFullReplayValues,
+    toWireReplayValues
 } = require('../js/collaboration-message.ts');
 const { createLogEntry } = require('../js/change-log');
 
@@ -613,5 +615,49 @@ describe('collaboration-message scaffold', () => {
         expect(envelope.changes[0].replayNewValue).toBeUndefined();
         expect(envelope.changes[0].path).toBe('glyphs.A:');
         expect(JSON.stringify(envelope).length).toBeLessThan(65536);
+    });
+});
+
+describe('replay values for linked windows', () => {
+    const makeEntry = (path, oldValue, newValue) =>
+        createLogEntry({
+            timestamp: 1,
+            windowId: 'w1',
+            historyItemId: 'item-1',
+            historyAction: 'change',
+            transactionLabel: 'Automatic alignment',
+            transactionId: null,
+            op: 'set',
+            undoScope: 'glyph',
+            path,
+            oldValue,
+            newValue
+        });
+
+    test('a linked window gets object replay values the wire leaves out', () => {
+        const entries = [
+            makeEntry(
+                'glyphs.i:layers.M1:shapes.0.format_specific',
+                { alignment: -1 },
+                { alignment: 1 }
+            ),
+            makeEntry('glyphs.i:layers.M1:width', 210, 214)
+        ];
+        const wire = createCollaborationMessageEnvelopeFromChangeLogEntries(
+            entries,
+            { localSequence: 1, source: 'change-bridge', windowId: 'w1' }
+        );
+        expect(wire.changes[0].replayOldValue).toBeUndefined();
+        const full = withFullReplayValues(wire, entries);
+        expect(full.changes[0].replayOldValue).toEqual({ alignment: -1 });
+        expect(full.changes[0].replayNewValue).toEqual({ alignment: 1 });
+        expect(full.changes[1].replayOldValue).toBe(210);
+        // Back to the wire form for the room, same identity.
+        const back = toWireReplayValues(full);
+        expect(back.changes[0].replayOldValue).toBeUndefined();
+        expect(back.changes[1].replayNewValue).toBe(214);
+        expect(back.messageId ?? back.transactionId).toBe(
+            wire.messageId ?? wire.transactionId
+        );
     });
 });

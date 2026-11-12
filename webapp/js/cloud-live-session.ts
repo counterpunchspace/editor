@@ -668,7 +668,8 @@ export class CloudLiveSession {
     relayForwardedUpdate(
         update: Uint8Array,
         collaborationMessage?: CollaborationMessageEnvelope | null,
-        documentId?: string
+        documentId?: string,
+        dependsOn?: string[]
     ): Promise<boolean> {
         const resolvedId = documentId || FONT_CORE_DOCUMENT_ID;
         const relay = this._relayChain.then(async () => {
@@ -684,7 +685,8 @@ export class CloudLiveSession {
                     durable = await this.persistOutgoingUpdate(
                         update,
                         collaborationMessage,
-                        socketDocumentId
+                        socketDocumentId,
+                        dependsOn
                     );
                 } catch (error) {
                     // The row stays in memory and sendable (see

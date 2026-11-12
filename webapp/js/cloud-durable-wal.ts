@@ -301,6 +301,41 @@ export class CloudDurableWal {
             .sort((a, b) => a.createdAt - b.createdAt);
     }
 
+    /**
+     * True while a row this transaction depends on (`dependsOn`) is still
+     * pending, in any document. A glyph-revision stamp must not reach peers
+     * before the glyph bytes it announces are in their rooms.
+     */
+    hasPendingDependencies(
+        documentId: string,
+        clientTransactionId: string
+    ): boolean {
+        let record: CloudWalRecord | undefined;
+        for (const candidate of this._records.values()) {
+            if (
+                candidate.documentId === documentId &&
+                candidate.clientTransactionId === clientTransactionId
+            ) {
+                record = candidate;
+                break;
+            }
+        }
+        const dependsOn = record?.dependsOn ?? [];
+        if (!dependsOn.length) {
+            return false;
+        }
+        const wanted = new Set(dependsOn);
+        for (const candidate of this._records.values()) {
+            if (
+                wanted.has(candidate.clientTransactionId) &&
+                this._isPending(candidate)
+            ) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     transactionIdsFor(documentId: string): Set<string> {
         const ids = new Set<string>();
         for (const record of this._records.values()) {

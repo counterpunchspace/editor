@@ -4,6 +4,7 @@ import {
     deriveLayerIdFromPath,
     deriveObjectInfoFromPath,
     getPathSegments,
+    historyReplayValue,
     joinPathWithGlyphSeparator,
     normalizeGlyphRenames,
     normalizeWorkerReplayTargets,
@@ -262,6 +263,84 @@ export function collaborationWireReplayValue(value: unknown): unknown {
         return value;
     }
     return undefined;
+}
+
+/**
+ * The cloud wire keeps only string, number and boolean replay values. A linked
+ * window shares its main window’s history, so it must get the full values,
+ * objects included (a component’s `format_specific`, a layer snapshot), or
+ * it cannot undo or redo the other window’s edit. Fills them in from the
+ * change-log entries the envelope was built from.
+ */
+export function withFullReplayValues(
+    envelope: CollaborationMessageEnvelope,
+    entries: readonly ChangeLogEntry[] | null | undefined
+): CollaborationMessageEnvelope {
+    if (!entries?.length) {
+        return envelope;
+    }
+    const byChange = new Map<string, ChangeLogEntry[]>();
+    for (const entry of entries) {
+        const key = `${entry.op}\u0000${entry.path}`;
+        const queue = byChange.get(key);
+        if (queue) {
+            queue.push(entry);
+        } else {
+            byChange.set(key, [entry]);
+        }
+    }
+    let filled = false;
+    const changes = envelope.changes.map((change) => {
+        const entry = byChange.get(`${change.op}\u0000${change.path}`)?.shift();
+        if (!entry) {
+            return change;
+        }
+        const replayOldValue =
+            change.replayOldValue !== undefined
+                ? change.replayOldValue
+                : historyReplayValue(entry, 'undo');
+        const replayNewValue =
+            change.replayNewValue !== undefined
+                ? change.replayNewValue
+                : historyReplayValue(entry, 'redo');
+        if (
+            replayOldValue === change.replayOldValue &&
+            replayNewValue === change.replayNewValue
+        ) {
+            return change;
+        }
+        filled = true;
+        return {
+            ...change,
+            replayOldValue: cloneValue(replayOldValue),
+            replayNewValue: cloneValue(replayNewValue)
+        };
+    });
+    return filled ? { ...envelope, changes } : envelope;
+}
+
+/** Back to what the cloud wire carries (see `withFullReplayValues`). */
+export function toWireReplayValues(
+    envelope: CollaborationMessageEnvelope
+): CollaborationMessageEnvelope {
+    let stripped = false;
+    const changes = envelope.changes.map((change) => {
+        const replayOldValue = collaborationWireReplayValue(
+            change.replayOldValue
+        );
+        const replayNewValue = collaborationWireReplayValue(
+            change.replayNewValue
+        );
+        if (
+            replayOldValue === change.replayOldValue &&
+            replayNewValue === change.replayNewValue
+        ) {
+            return change;
+        }
+        stripped = true;
+        return { ...change, replayOldValue, replayNewValue };
+    });
+    return stripped ? { ...envelope, changes } : envelope;
 }
 
 /**

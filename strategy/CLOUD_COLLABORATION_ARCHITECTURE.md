@@ -561,6 +561,26 @@ HTTP by catch-up; the room sends that socket every update, also those
 published over HTTP. The three-window spec checks that edits to the open
 glyph leave and arrive as frames on its socket, with no HTTP request for it.
 
+**Minimal traffic per edit.** An edit costs one update in each room it
+changes (font-core takes two when the edit also writes core data, such as
+kerning groups, besides the glyph revision stamp). The stamp leaves the core
+socket only once the glyph rows it announces (`dependsOn`) are acked, also for
+a linked window’s edit relayed by its main window, so peers never fetch a
+glyph before its bytes are in the room (after 10 seconds it goes anyway). The sender’s main window posts each changed glyph it does not hold
+live once (`POST …/live`) and sends a frame for font-core, font-deps and any
+changed glyph it holds live. Every other main window gets each changed glyph
+once: a frame if it holds the glyph live, otherwise one `GET …/live`. Linked
+windows touch no room; their main window relays everything to them, also
+updates it already had. Catch-up fetches a glyph only when its core revision
+stamp says it changed: a loaded glyph without a stamp has not changed since
+it was loaded. Each window remembers the room log id it holds per glyph and
+asks only for later entries. Glyph shards written over HTTP are compacted
+right after each write, so that cursor is usually behind the checkpoint; the
+client sends `rebaseline=state` and the room answers with the folded state in
+the same response. The three-window spec and the fuzz’s single steps assert
+this against each room’s own update counters (debug status, local stack;
+on staging, against what the sender sent).
+
 Every byte a window applies reaches its compile worker, in order. An update
 the window’s document already had, or holds pending until an earlier one
 arrives, still goes to the worker, held and merged in front of the next

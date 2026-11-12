@@ -76,6 +76,10 @@ import {
     compiledTextRun,
     liveGlyphNames,
     markCloudRoomTraffic,
+    summarizeRoomTraffic,
+    readRoomCounters,
+    diffRoomCounters,
+    expectMinimalRoomTraffic,
     recordCloudRoomTraffic,
     expectGlyphEditOverWebSocket,
     overviewTileState,
@@ -1856,10 +1860,87 @@ test.describe('three-window sync scenarios', () => {
             }
             await expectAllWindowsShow(mainPage, 'baseline');
 
+            // Each edit below must cost the minimum the rooms prove: one
+            // update per changed room, one POST from the uploading window and
+            // one GET in the other main window per changed glyph (or one
+            // frame each for rooms held live), and nothing in linked windows.
+            const pageLabels = new Map<Page, string>([
+                [mainPage, 'main'],
+                [linkedPage, 'linked'],
+                [inviteePage, 'invitee']
+            ]);
+            const measureRoomTraffic = async (
+                label: string,
+                sender: Page,
+                liveGlyphs: string[],
+                run: () => Promise<void>
+            ) => {
+                const glyphNameById: Map<string, string> = new Map(
+                    await mainPage.evaluate(() => [
+                        ...((window as any).changeBridge?._glyphNameById ??
+                            new Map())
+                    ])
+                );
+                // Every room of the font, so a write to any glyph shows up.
+                const roomDocs = [
+                    'font-core',
+                    'font-deps',
+                    ...[...glyphNameById.keys()].map((id) => `glyph:${id}`)
+                ];
+                const named = (id: string) =>
+                    id.startsWith('glyph:')
+                        ? `glyph/${glyphNameById.get(id.slice(6)) ?? id}`
+                        : id;
+                // Let earlier work settle so it is not counted here.
+                await mainPage.waitForTimeout(2000);
+                const roomsBefore = await readRoomCounters(mainPage, roomDocs);
+                const mark = markCloudRoomTraffic(ownerTraffic, inviteeTraffic);
+                await run();
+                // Late retries or catch-ups would show up in this window.
+                await mainPage.waitForTimeout(3000);
+                const traffic = summarizeRoomTraffic(
+                    [ownerTraffic, inviteeTraffic],
+                    mark,
+                    pageLabels,
+                    glyphNameById
+                );
+                const roomDelta = diffRoomCounters(
+                    roomsBefore,
+                    await readRoomCounters(mainPage, roomDocs)
+                );
+                const rooms = roomDelta
+                    ? Object.fromEntries(
+                          Object.entries(roomDelta).map(([id, delta]) => [
+                              named(id),
+                              delta
+                          ])
+                      )
+                    : null;
+                console.log(
+                    `[traffic] ${label} ${JSON.stringify({
+                        detail: traffic.detail,
+                        frames: traffic.frames,
+                        bytes: traffic.bytes,
+                        rooms
+                    })}`
+                );
+                const uploader = sender === inviteePage ? 'invitee' : 'main';
+                expectMinimalRoomTraffic({
+                    label,
+                    traffic,
+                    rooms,
+                    uploader,
+                    downloader: uploader === 'main' ? 'invitee' : 'main',
+                    quiet: ['linked'],
+                    liveGlyphs
+                });
+            };
+
             const editOffEditorGlyph = async (
                 sender: Page,
                 label: string,
-                edit: () => Promise<unknown>
+                edit: () => Promise<unknown>,
+                liveGlyphs: string[] = []
             ) => {
                 // Every tile holds data before the edit, so one the edit
                 // leaves untouched shows up as stale, not as empty.
@@ -1867,15 +1948,22 @@ test.describe('three-window sync scenarios', () => {
                     await paintOverviewTiles(page, offEditorGlyphs);
                 }
                 const runBefore = await compiledRunText(sender);
-                await edit();
-                await waitForEditingCompile(sender);
-                await expect
-                    .poll(() => compiledRunText(sender), {
-                        timeout: 60000,
-                        message: `${label}: sender compile`
-                    })
-                    .not.toBe(runBefore);
-                await expectAllWindowsShow(sender, label);
+                await measureRoomTraffic(
+                    label,
+                    sender,
+                    liveGlyphs,
+                    async () => {
+                        await edit();
+                        await waitForEditingCompile(sender);
+                        await expect
+                            .poll(() => compiledRunText(sender), {
+                                timeout: 60000,
+                                message: `${label}: sender compile`
+                            })
+                            .not.toBe(runBefore);
+                        await expectAllWindowsShow(sender, label);
+                    }
+                );
             };
 
             await editOffEditorGlyph(
@@ -2081,7 +2169,7 @@ test.describe('three-window sync scenarios', () => {
                     senderTraffic,
                     receiverTraffic
                 );
-                await editOffEditorGlyph(sender, label, edit);
+                await editOffEditorGlyph(sender, label, edit, ['a']);
                 await expectGlyphEditOverWebSocket(
                     label,
                     aDocumentId,

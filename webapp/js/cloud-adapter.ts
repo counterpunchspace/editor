@@ -298,6 +298,9 @@ function isPermanentUpdateRejection(
     );
 }
 
+/** Longest a glyph-revision packet waits for the glyph rows it announces. */
+const MAX_DEPENDENCY_HOLD_MS = 10_000;
+
 export class CloudAdapter implements FileSystemAdapter {
     private _assetId: string;
     private _websiteBaseUrl: string;
@@ -488,6 +491,8 @@ export class CloudAdapter implements FileSystemAdapter {
         }
         this._walUnsubscribe = this._wal.onChange(() => {
             this._flushDurableWaiters();
+            // A packet held for its dependencies goes out once they are acked.
+            this.noteOutboundWalReady();
         });
     }
 
@@ -496,6 +501,9 @@ export class CloudAdapter implements FileSystemAdapter {
      * flush leaves it queued; this runs again once the row is durable so the
      * core socket actually sends it.
      */
+    /** When each held glyph-revision packet started waiting for its rows. */
+    private readonly _dependencyHoldSince = new Map<string, number>();
+
     noteOutboundWalReady(): void {
         if (
             this._destroyed ||
@@ -2356,6 +2364,10 @@ export class CloudAdapter implements FileSystemAdapter {
         }
         this._bridge.applyFullState(update);
         this._bridge.mergeRemoteUpdates?.(unsent);
+        // A reconnect or tail replay of font-core (kerning, metrics, the
+        // glyph catalog) must reach linked windows too; they get no other
+        // copy of what this state brings.
+        relayGlyphStateToLinkedWindows(this._bridge, this._documentId);
     }
 
     private _shouldReseedWorkerAfterServerState(update: Uint8Array): boolean {
@@ -2723,9 +2735,10 @@ export class CloudAdapter implements FileSystemAdapter {
                 this._documentId,
                 { captureInUndo: false, fromCollaborator: true }
             );
-            if (!didApply) {
-                return false;
-            }
+            // Relay even when this document did not change: it may already
+            // have had the bytes, or hold them pending until an earlier update
+            // arrives, while a linked window does not have them. Yjs ignores
+            // what a window already has and completes pending updates later.
             if (
                 window.windowRole?.isMainWindow() &&
                 remoteCollaborationMessages?.[0]
@@ -2736,7 +2749,7 @@ export class CloudAdapter implements FileSystemAdapter {
                     this._documentId
                 );
             }
-            return true;
+            return didApply;
         } catch (err) {
             const detail =
                 err instanceof MetadataFreeRemoteUpdateError
@@ -2896,11 +2909,55 @@ export class CloudAdapter implements FileSystemAdapter {
         }
 
         const walTransactionIds = this._wal.transactionIdsFor(this._documentId);
-        const packets = this._pendingOutboundPackets.filter(
+        const ready = this._pendingOutboundPackets.filter(
             (packet) =>
                 !packet.clientTransactionId ||
                 walTransactionIds.has(packet.clientTransactionId)
         );
+        // A glyph-revision stamp waits until the glyph rows it depends on
+        // are acked: sent earlier, peers fetch the glyph before its bytes are
+        // in the room and have to fetch it again. Later packets keep order.
+        // A dependency that is never acked (refused for good) must not hold
+        // the core socket forever: after a while the stamp goes out anyway,
+        // as it did before, and peers retry their fetch.
+        const now = Date.now();
+        const firstBlocked = ready.findIndex((packet) => {
+            const id = packet.clientTransactionId;
+            if (
+                !id ||
+                !this._wal.hasPendingDependencies?.(this._documentId, id)
+            ) {
+                return false;
+            }
+            const since = this._dependencyHoldSince.get(id) ?? now;
+            this._dependencyHoldSince.set(id, since);
+            if (now - since < MAX_DEPENDENCY_HOLD_MS) {
+                return true;
+            }
+            console.warn(
+                `CloudAdapter: ${this._documentId} packet ${id} sent after ${MAX_DEPENDENCY_HOLD_MS} ms without the glyph rows it announces`
+            );
+            return false;
+        });
+        if (firstBlocked >= 0) {
+            this._ensureDurabilitySubscription();
+            const blockedId = ready[firstBlocked].clientTransactionId!;
+            const waited =
+                now - (this._dependencyHoldSince.get(blockedId) ?? now);
+            setTimeout(
+                () => this.noteOutboundWalReady(),
+                Math.max(50, MAX_DEPENDENCY_HOLD_MS - waited)
+            );
+        }
+        for (const packet of firstBlocked >= 0
+            ? ready.slice(0, firstBlocked)
+            : ready) {
+            if (packet.clientTransactionId) {
+                this._dependencyHoldSince.delete(packet.clientTransactionId);
+            }
+        }
+        const packets =
+            firstBlocked >= 0 ? ready.slice(0, firstBlocked) : ready;
         this._pendingOutboundPackets = this._pendingOutboundPackets.filter(
             (packet) => !packets.includes(packet)
         );

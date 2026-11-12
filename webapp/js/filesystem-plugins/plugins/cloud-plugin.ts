@@ -1646,7 +1646,8 @@ export class CloudPlugin extends FilesystemPlugin {
         ) => void
             ? T
             : never,
-        documentId?: string
+        documentId?: string,
+        dependsOn?: string[]
     ): void {
         if (!window.windowRole?.isMainWindow()) {
             return;
@@ -1663,7 +1664,12 @@ export class CloudPlugin extends FilesystemPlugin {
                 );
             };
             void this._liveSession
-                .relayForwardedUpdate(update, collaborationMessage, documentId)
+                .relayForwardedUpdate(
+                    update,
+                    collaborationMessage,
+                    documentId,
+                    dependsOn
+                )
                 .then(
                     (durable) => {
                         if (!durable) {

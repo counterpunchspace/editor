@@ -464,6 +464,46 @@ export function refreshEditorAfterGlyphDocumentCatchUp(
     void outlineEditor?.interpolateCurrentGlyph?.(true);
 }
 
+/**
+ * The room log id each loaded glyph document already holds, per asset. A
+ * catch-up asks only for log entries after it; without one, `/live` from log
+ * zero is refused once the room has a checkpoint and the window downloads the
+ * whole shard from `/state`. Used only while the document stays loaded.
+ */
+const glyphLogCursors = new Map<string, number>();
+const MAX_GLYPH_LOG_CURSORS = 20_000;
+
+function glyphLogCursorKey(assetId: string, documentId: string): string {
+    return `${assetId}\u0000${documentId}`;
+}
+
+function rememberGlyphLogCursor(
+    assetId: string,
+    documentId: string,
+    logId: number
+): void {
+    if (!Number.isFinite(logId) || logId <= 0) {
+        return;
+    }
+    const key = glyphLogCursorKey(assetId, documentId);
+    if ((glyphLogCursors.get(key) ?? 0) >= logId) {
+        return;
+    }
+    glyphLogCursors.delete(key);
+    glyphLogCursors.set(key, logId);
+    if (glyphLogCursors.size > MAX_GLYPH_LOG_CURSORS) {
+        const oldest = glyphLogCursors.keys().next().value;
+        if (oldest !== undefined) {
+            glyphLogCursors.delete(oldest);
+        }
+    }
+}
+
+/** Forget every cursor (tests, and a window that drops its documents). */
+export function resetGlyphLogCursors(): void {
+    glyphLogCursors.clear();
+}
+
 export async function catchUpCloudDocument(options: {
     bridge: PatchSyncEngine;
     token: string;
@@ -489,7 +529,20 @@ export async function catchUpCloudDocument(options: {
         afterLogId = cursor;
         liveUrl.searchParams.set('afterLogId', String(cursor));
     };
-    setAfterLogId(0);
+    const resident =
+        typeof options.bridge.hasResidentGlyphDocument !== 'function' ||
+        options.bridge.hasResidentGlyphDocument(options.documentId) === true;
+    // When the cursor is below the room’s checkpoint, the room answers with the
+    // folded shard state (`X-Catch-Up: state`) instead of a 409 and a second
+    // request to /state.
+    liveUrl.searchParams.set('rebaseline', 'state');
+    setAfterLogId(
+        resident
+            ? (glyphLogCursors.get(
+                  glyphLogCursorKey(options.assetId, options.documentId)
+              ) ?? 0)
+            : 0
+    );
     const maxAttempts = Math.max(
         1,
         options.maxAttempts ?? CLOUD_GLYPH_CATCH_UP_MAX_ATTEMPTS
@@ -529,35 +582,52 @@ export async function catchUpCloudDocument(options: {
             options.bridge.applyDocumentCheckpoint?.(options.documentId, bytes);
             applied = true;
         }
-        if (applied) {
-            // Main keeps what it applied even when the revision is not there
-            // yet, so its linked windows must have it too.
-            relayGlyphStateToLinkedWindows(options.bridge, options.documentId);
-        }
+        // Main keeps what it received even when the revision is not there yet
+        // or its own document had it already; its linked windows may not.
+        relayGlyphStateToLinkedWindows(options.bridge, options.documentId);
         if (applied && !revisionSatisfied()) {
             applied = false;
         }
         return applied;
     };
 
-    const applyCertifiedCheckpoint = async (): Promise<boolean> => {
+    const applyCertifiedCheckpoint = async (
+        stateResponse?: Response
+    ): Promise<boolean> => {
         const stateUrl = normalizeCloudShardHttpUrl(
             options.roomUrl,
             options.websiteBaseUrl,
             options.assetId,
             options.documentId
         );
-        const response = await fetch(stateUrl, {
-            method: 'GET',
-            headers: {
-                Authorization: `Bearer ${options.token}`,
-                Accept: 'application/octet-stream'
-            }
-        });
+        const response =
+            stateResponse ??
+            (await fetch(stateUrl, {
+                method: 'GET',
+                headers: {
+                    Authorization: `Bearer ${options.token}`,
+                    Accept: 'application/octet-stream'
+                }
+            }));
         if (!response.ok) {
             return false;
         }
-        return applyCatchUpBytes(new Uint8Array(await response.arrayBuffer()));
+        const through = Number(response.headers.get('X-Checkpoint-Log-Id'));
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        const ok = applyCatchUpBytes(bytes);
+        if (bytes.byteLength) {
+            // The state is the checkpoint folded with the live tail through
+            // this log id; later catch-ups start after it.
+            rememberGlyphLogCursor(
+                options.assetId,
+                options.documentId,
+                through
+            );
+            if (Number.isInteger(through) && through > afterLogId) {
+                setAfterLogId(through);
+            }
+        }
+        return ok;
     };
 
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
@@ -636,7 +706,19 @@ export async function catchUpCloudDocument(options: {
                 );
                 continue;
             }
+            if (response.headers.get('X-Catch-Up') === 'state') {
+                fetchedCertifiedCheckpoint = true;
+                if (await applyCertifiedCheckpoint(response)) {
+                    refreshEditorAfterGlyphDocumentCatchUp(options.documentId);
+                    return true;
+                }
+                lastError = new Error(
+                    `Live glyph catch-up revision mismatch for ${options.documentId}`
+                );
+                continue;
+            }
             const contentType = response.headers.get('content-type') || '';
+            let tailHighWater = Number.NaN;
             let update: Uint8Array = new Uint8Array();
             let collaborationMessageHistory:
                 CollaborationMessageEnvelope[] | undefined;
@@ -646,7 +728,9 @@ export async function catchUpCloudDocument(options: {
             ) {
                 const bytes = new Uint8Array(await response.arrayBuffer());
                 const frames = decodeCollabLiveFrames(bytes);
-                const hasTerminal = frames.some((frame) => frame.type === 3);
+                const terminal = frames.find((frame) => frame.type === 3);
+                const hasTerminal = !!terminal;
+                tailHighWater = Number(terminal?.logId);
                 if (!hasTerminal) {
                     lastError = new Error(
                         `Live glyph catch-up missing terminal frame for ${options.documentId}`
@@ -708,9 +792,19 @@ export async function catchUpCloudDocument(options: {
                 }
                 appliedAny ||= applied;
             }
-            if (appliedAny) {
+            // Everything through the tail’s high-water log id is now in the
+            // document; a retry or the next catch-up starts after it.
+            rememberGlyphLogCursor(
+                options.assetId,
+                options.documentId,
+                tailHighWater
+            );
+            if (Number.isInteger(tailHighWater) && tailHighWater > afterLogId) {
+                setAfterLogId(tailHighWater);
+            }
+            if (updatesToApply.some((part) => part.byteLength)) {
                 // Main keeps these parts even when the revision is not there
-                // yet, so its linked windows must have them too.
+                // yet or it had them already; its linked windows may not.
                 relayGlyphStateToLinkedWindows(
                     options.bridge,
                     options.documentId

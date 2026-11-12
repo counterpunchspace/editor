@@ -540,8 +540,23 @@ export async function overviewTileState(
 
 /** Room traffic one browser context sent and received, seen by Playwright. */
 export interface CloudRoomTraffic {
-    frames: { url: string; direction: 'sent' | 'received'; binary: boolean }[];
-    requests: { url: string; method: string; body: string }[];
+    frames: {
+        url: string;
+        direction: 'sent' | 'received';
+        binary: boolean;
+        bytes: number;
+        page: Page;
+    }[];
+    requests: {
+        url: string;
+        method: string;
+        body: string;
+        page: Page | null;
+        /** Filled in once the response has finished. */
+        requestBytes?: number;
+        responseBytes?: number;
+        status?: number;
+    }[];
     /** Socket opens and closes, in order. */
     sockets: { url: string; event: 'open' | 'close' }[];
 }
@@ -559,6 +574,10 @@ export function recordCloudRoomTraffic(
         requests: [],
         sockets: []
     };
+    const frameBytes = (payload: string | Buffer) =>
+        typeof payload === 'string'
+            ? Buffer.byteLength(payload)
+            : payload.byteLength;
     const watchPage = (page: Page) => {
         page.on('websocket', (socket) => {
             const url = socket.url();
@@ -570,14 +589,18 @@ export function recordCloudRoomTraffic(
                 traffic.frames.push({
                     url,
                     direction: 'sent',
-                    binary: typeof frame.payload !== 'string'
+                    binary: typeof frame.payload !== 'string',
+                    bytes: frameBytes(frame.payload),
+                    page
                 });
             });
             socket.on('framereceived', (frame) => {
                 traffic.frames.push({
                     url,
                     direction: 'received',
-                    binary: typeof frame.payload !== 'string'
+                    binary: typeof frame.payload !== 'string',
+                    bytes: frameBytes(frame.payload),
+                    page
                 });
             });
         });
@@ -588,11 +611,47 @@ export function recordCloudRoomTraffic(
         if (!/\/room\//.test(request.url())) {
             return;
         }
-        traffic.requests.push({
+        const record: CloudRoomTraffic['requests'][number] = {
             url: request.url(),
             method: request.method(),
-            body: request.postDataBuffer()?.toString('latin1') ?? ''
-        });
+            body: request.postDataBuffer()?.toString('latin1') ?? '',
+            page: (() => {
+                try {
+                    return request.frame().page();
+                } catch {
+                    return null;
+                }
+            })()
+        };
+        traffic.requests.push(record);
+        pendingSizes.set(request, record);
+    });
+    const pendingSizes = new Map<
+        import('@playwright/test').Request,
+        CloudRoomTraffic['requests'][number]
+    >();
+    context.on('requestfinished', (request) => {
+        const record = pendingSizes.get(request);
+        if (!record) {
+            return;
+        }
+        pendingSizes.delete(request);
+        void Promise.all([request.sizes(), request.response()])
+            .then(([sizes, response]) => {
+                record.requestBytes =
+                    sizes.requestBodySize + sizes.requestHeadersSize;
+                record.responseBytes =
+                    sizes.responseBodySize + sizes.responseHeadersSize;
+                record.status = response?.status();
+            })
+            .catch(() => {});
+    });
+    context.on('requestfailed', (request) => {
+        const record = pendingSizes.get(request);
+        if (record) {
+            record.status = -1;
+            pendingSizes.delete(request);
+        }
     });
     return traffic;
 }
@@ -688,4 +747,319 @@ export async function expectGlyphEditOverWebSocket(
         ),
         `${label}: no HTTP request for the live glyph`
     ).toEqual([]);
+}
+
+/** A room path without asset id and token: `glyph/<name>/live`, `font-core/live`, `pack`. */
+function roomRoute(url: string, glyphNameById: Map<string, string>): string {
+    const path = new URL(url).pathname;
+    const shard = path.match(
+        /\/shards\/(glyph\/[^/]+|font-core|font-deps)(\/.*)?$/
+    );
+    if (shard) {
+        const [, doc, rest = ''] = shard;
+        const name = doc.startsWith('glyph/')
+            ? `glyph/${glyphNameById.get(doc.slice('glyph/'.length)) ?? doc.slice('glyph/'.length)}`
+            : doc;
+        return `${name}${rest}`;
+    }
+    return path.replace(/^\/room\/[^/]+/, '') || '/';
+}
+
+export interface RoomTrafficSummary {
+    /** Per window label: "METHOD route" → count. */
+    requests: Record<string, Record<string, number>>;
+    /** Per window label: every request in order, with afterLogId and status. */
+    detail: Record<string, string[]>;
+    /** Per window label: "socket route sent|received" → frames. */
+    frames: Record<string, Record<string, number>>;
+    bytes: Record<
+        string,
+        { httpUp: number; httpDown: number; wsUp: number; wsDown: number }
+    >;
+}
+
+/**
+ * What each window sent and received since `mark` (from
+ * `markCloudRoomTraffic(...recorders)`), with glyph ids shown as names.
+ */
+export function summarizeRoomTraffic(
+    recorders: CloudRoomTraffic[],
+    mark: number[][],
+    pageLabels: Map<Page, string>,
+    glyphNameById: Map<string, string>
+): RoomTrafficSummary {
+    const summary: RoomTrafficSummary = {
+        requests: {},
+        detail: {},
+        frames: {},
+        bytes: {}
+    };
+    const label = (page: Page | null) =>
+        (page && pageLabels.get(page)) || 'other';
+    const bytesFor = (name: string) =>
+        (summary.bytes[name] ??= {
+            httpUp: 0,
+            httpDown: 0,
+            wsUp: 0,
+            wsDown: 0
+        });
+    recorders.forEach((traffic, index) => {
+        for (const request of traffic.requests.slice(mark[index][1])) {
+            const name = label(request.page);
+            const key = `${request.method} ${roomRoute(request.url, glyphNameById)}`;
+            const bucket = (summary.requests[name] ??= {});
+            bucket[key] = (bucket[key] ?? 0) + 1;
+            const after = new URL(request.url).searchParams.get('afterLogId');
+            (summary.detail[name] ??= []).push(
+                `${key}${after !== null ? ` after=${after}` : ''} → ${request.status ?? '?'} (${request.method === 'POST' ? `${request.body.length}B up` : `${request.responseBytes ?? '?'}B down`})`
+            );
+            bytesFor(name).httpUp += request.requestBytes ?? 0;
+            bytesFor(name).httpDown += request.responseBytes ?? 0;
+        }
+        for (const frame of traffic.frames.slice(mark[index][0])) {
+            if (!frame.binary) {
+                continue;
+            }
+            const name = label(frame.page);
+            const key = `${roomRoute(frame.url, glyphNameById)} ${frame.direction}`;
+            const bucket = (summary.frames[name] ??= {});
+            bucket[key] = (bucket[key] ?? 0) + 1;
+            if (frame.direction === 'sent') {
+                bytesFor(name).wsUp += frame.bytes;
+            } else {
+                bytesFor(name).wsDown += frame.bytes;
+            }
+        }
+    });
+    return summary;
+}
+
+export interface RoomCounters {
+    updatesApplied: number;
+    updateCount: number;
+    updateMs: number;
+    bytesIn: number;
+    bytesOut: number;
+    peersFannedOut: number;
+    syncRequests: number;
+    auths: number;
+    lastLogId: number;
+    lastCheckpointLogId: number;
+}
+
+/** Local stack only (ensure-cloud-collab-stack.mjs). */
+const ROOM_STATUS_TOKEN = 'e2e-room-status';
+
+/**
+ * Each room’s own counters from its debug status (`/room/<asset>:<shard>/status`,
+ * local stack only), read from Node, so the reads are not part of the
+ * browser traffic measured.
+ */
+export async function readRoomCounters(
+    page: Page,
+    documentIds: string[]
+): Promise<Record<string, RoomCounters> | null> {
+    // Room debug status is open only on the local stack.
+    if (process.env.CLOUD_COLLAB_REMOTE === '1') {
+        return null;
+    }
+    const session = await page.evaluate(() => {
+        const s = (window as any).cloudPlugin?._liveSession;
+        return {
+            roomUrl: s?._roomUrl as string,
+            assetId: s?._options?.assetId as string
+        };
+    });
+    const base = new URL(session.roomUrl);
+    base.protocol = base.protocol === 'wss:' ? 'https:' : 'http:';
+    const out: Record<string, RoomCounters> = {};
+    for (const documentId of documentIds) {
+        const url = new URL(base.toString());
+        // The debug route names the room raw: `<asset>:<shard>`, colons included.
+        url.pathname = `/room/${session.assetId}:${documentId}/status`;
+        url.search = '';
+        const response = await fetch(url, {
+            headers: { Authorization: `Bearer ${ROOM_STATUS_TOKEN}` }
+        });
+        const body: any = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(
+                `room status ${documentId}: ${response.status} ${JSON.stringify(body).slice(0, 200)}`
+            );
+        }
+        const runtime = body?.operationalMetrics?.runtime ?? {};
+        out[documentId] = {
+            updatesApplied: Number(body?.totalUpdatesApplied ?? 0),
+            updateCount: Number(runtime.update?.count ?? 0),
+            updateMs: Number(runtime.update?.durationTotalMs ?? 0),
+            bytesIn: Number(runtime.update?.bytesInTotal ?? 0),
+            bytesOut: Number(runtime.update?.bytesOutTotal ?? 0),
+            peersFannedOut: Number(runtime.update?.peersFannedOutTotal ?? 0),
+            syncRequests: Number(runtime.syncRequest?.count ?? 0),
+            auths: Number(runtime.auth?.count ?? 0),
+            lastLogId: Number(body?.lastLogId ?? 0),
+            lastCheckpointLogId: Number(body?.lastCheckpointLogId ?? 0)
+        };
+    }
+    return out;
+}
+
+/** `after - before` per room, dropping rooms where nothing changed. */
+export function diffRoomCounters(
+    before: Record<string, RoomCounters> | null,
+    after: Record<string, RoomCounters> | null
+): Record<string, Partial<RoomCounters>> | null {
+    if (!before || !after) {
+        return null;
+    }
+    const out: Record<string, Partial<RoomCounters>> = {};
+    for (const [documentId, next] of Object.entries(after)) {
+        const prev = before[documentId];
+        const delta: Partial<RoomCounters> = {};
+        for (const key of Object.keys(next) as (keyof RoomCounters)[]) {
+            const change = next[key] - (prev?.[key] ?? 0);
+            if (change) {
+                delta[key] = change;
+            }
+        }
+        if (Object.keys(delta).length) {
+            out[documentId] = delta;
+        }
+    }
+    return out;
+}
+
+/**
+ * The minimum an edit may cost, derived from what the rooms actually changed:
+ * every changed room took exactly one update, and nothing else moved.
+ *
+ * - The `uploader` (the main window that talks to the cloud for the sender)
+ *   sends one frame per changed font room (font-core, font-deps) and per
+ *   changed glyph it holds live, and one HTTP POST per other changed glyph.
+ * - Every `downloader` (the other main windows) receives one frame per
+ *   changed font room and per changed glyph it holds live, and makes one GET
+ *   per other changed glyph, and nothing else.
+ * - `quiet` windows (linked windows, which get everything from their main
+ *   window) touch no room at all. An edit that changed nothing costs nothing.
+ */
+export function expectMinimalRoomTraffic(options: {
+    label: string;
+    traffic: RoomTrafficSummary;
+    /** Null where room counters cannot be read (staging). */
+    rooms: Record<string, Partial<RoomCounters>> | null;
+    uploader: string | { name: string; live: string[] };
+    downloader?: string;
+    downloaders?: { name: string; live: string[] }[];
+    quiet: string[];
+    /** Glyphs every main window holds live (three-window spec). */
+    liveGlyphs?: string[];
+}): void {
+    const { label, traffic, rooms, quiet } = options;
+    const shared = options.liveGlyphs ?? [];
+    const uploader =
+        typeof options.uploader === 'string'
+            ? { name: options.uploader, live: shared }
+            : options.uploader;
+    const downloaders =
+        options.downloaders ??
+        (options.downloader
+            ? [{ name: options.downloader, live: shared }]
+            : []);
+    let changed: string[];
+    if (rooms) {
+        changed = Object.entries(rooms)
+            .filter(([, delta]) => (delta.updatesApplied ?? 0) > 0)
+            .map(([room]) => room)
+            .sort();
+        // font-core may take two: the edit’s own core data and the glyph
+        // revision stamp, which goes out once the glyph rows are in.
+        const allowed = (room: string) =>
+            room === 'font-core' &&
+            changed.some((other) => other.startsWith('glyph/')) &&
+            rooms[room].updatesApplied === 2
+                ? 2
+                : 1;
+        expect(
+            Object.fromEntries(
+                changed.map((room) => [room, rooms[room].updatesApplied])
+            ),
+            `${label}: each changed room took exactly one update`
+        ).toEqual(
+            Object.fromEntries(changed.map((room) => [room, allowed(room)]))
+        );
+    } else {
+        // Without room counters (staging), what the uploader sent is the
+        // changed set; the checks below still demand each once, nothing more.
+        changed = [
+            ...Object.keys(traffic.requests[uploader.name] ?? {})
+                .filter((key) => /^POST glyph\/[^ ]+\/live$/.test(key))
+                .map((key) => key.slice('POST '.length, -'/live'.length)),
+            ...Object.keys(traffic.frames[uploader.name] ?? {})
+                .filter((key) => key.endsWith(' sent'))
+                .map((key) => key.slice(0, -' sent'.length))
+        ].sort();
+    }
+    if (changed.some((room) => room.startsWith('glyph/'))) {
+        expect(changed, `${label}: a glyph edit stamps font-core`).toContain(
+            'font-core'
+        );
+    }
+    const split = (live: string[]) => {
+        const held = new Set(live.map((name) => `glyph/${name}`));
+        return {
+            overSocket: changed.filter(
+                (room) => !room.startsWith('glyph/') || held.has(room)
+            ),
+            overHttp: changed.filter(
+                (room) => room.startsWith('glyph/') && !held.has(room)
+            )
+        };
+    };
+    // Each peer gets each room update exactly once.
+    const updatesIn = (key: string) => {
+        const room = key.replace(/ (sent|received)$/, '');
+        return rooms
+            ? (rooms[room]?.updatesApplied ?? 1)
+            : (traffic.frames[uploader.name]?.[`${room} sent`] ?? 1);
+    };
+    const count = (keys: string[]) =>
+        Object.fromEntries(
+            keys.map((key) => [
+                key,
+                / (sent|received)$/.test(key) ? updatesIn(key) : 1
+            ])
+        );
+    const up = split(uploader.live);
+    expect(
+        {
+            requests: traffic.requests[uploader.name] ?? {},
+            frames: traffic.frames[uploader.name] ?? {}
+        },
+        `${label}: ${uploader.name} sends each change once and fetches nothing`
+    ).toEqual({
+        requests: count(up.overHttp.map((room) => `POST ${room}/live`)),
+        frames: count(up.overSocket.map((room) => `${room} sent`))
+    });
+    for (const downloader of downloaders) {
+        const down = split(downloader.live);
+        expect(
+            {
+                requests: traffic.requests[downloader.name] ?? {},
+                frames: traffic.frames[downloader.name] ?? {}
+            },
+            `${label}: ${downloader.name} gets each change once and nothing else`
+        ).toEqual({
+            requests: count(down.overHttp.map((room) => `GET ${room}/live`)),
+            frames: count(down.overSocket.map((room) => `${room} received`))
+        });
+    }
+    for (const name of quiet) {
+        expect(
+            {
+                requests: traffic.requests[name] ?? {},
+                frames: traffic.frames[name] ?? {}
+            },
+            `${label}: ${name} touches no room`
+        ).toEqual({ requests: {}, frames: {} });
+    }
 }

@@ -345,6 +345,92 @@ describe('CloudAdapter room worker defaults', () => {
         }
     });
 
+    it('holds a glyph-revision packet until the glyph rows it announces are acked', async () => {
+        let pending = true;
+        let onWalChange = null;
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        adapter._wal = {
+            transactionIdsFor: () => new Set(['core-1']),
+            hasPendingDependencies: () => pending,
+            pendingCountFor: () => 0,
+            onChange: (listener) => {
+                onWalChange = listener;
+                return () => {};
+            }
+        };
+        const send = jest.fn();
+        adapter._ws = { readyState: WebSocket.OPEN, send };
+        adapter._bridge = {};
+        adapter._clientId = 'client-1';
+        adapter._pendingOutboundPackets = [
+            { update: new Uint8Array([1, 2, 3]), clientTransactionId: 'core-1' }
+        ];
+        adapter._outboundFlushScheduled = true;
+        adapter._flushPendingOutboundUpdates();
+        expect(send).not.toHaveBeenCalled();
+        expect(adapter._pendingOutboundPackets).toHaveLength(1);
+        // The glyph row is acked: the stamp goes out.
+        pending = false;
+        onWalChange();
+        await Promise.resolve();
+        expect(send).toHaveBeenCalledTimes(1);
+        expect(adapter._pendingOutboundPackets).toHaveLength(0);
+        adapter._destroyed = true;
+    });
+
+    it('relays font-core server state to linked windows', () => {
+        const relay = jest.fn();
+        const originalRole = window.windowRole;
+        const originalSync = window.windowSync;
+        window.windowRole = { isMainWindow: () => true };
+        window.windowSync = { broadcastCloudRelayUpdate: relay };
+        try {
+            const adapter = new CloudAdapter({
+                assetId: 'asset-123',
+                documentId: 'font-core'
+            });
+            const coreState = new Uint8Array([4, 5, 6]);
+            adapter._bridge = {
+                applyFullState: jest.fn(),
+                mergeRemoteUpdates: jest.fn(),
+                encodeDocumentState: jest.fn(() => coreState)
+            };
+            adapter._applyServerStateToBridge(new Uint8Array([1, 2]));
+            expect(relay).toHaveBeenCalledWith(
+                coreState,
+                expect.anything(),
+                'font-core'
+            );
+        } finally {
+            window.windowRole = originalRole;
+            window.windowSync = originalSync;
+        }
+    });
+
+    it('relays a live update to linked windows even when main already had it', () => {
+        const relay = jest.fn();
+        const originalRole = window.windowRole;
+        const originalSync = window.windowSync;
+        window.windowRole = { isMainWindow: () => true };
+        window.windowSync = { broadcastCloudRelayUpdate: relay };
+        try {
+            const adapter = new CloudAdapter({
+                assetId: 'asset-123',
+                documentId: 'glyph:g1'
+            });
+            // Main’s document did not change (it had the bytes, or keeps
+            // them pending); a linked window may still lack them.
+            adapter._bridge = { applyRemoteUpdate: jest.fn(() => false) };
+            const envelope = { source: 'cloud', messageId: 'm1' };
+            const update = new Uint8Array([1, 2, 3]);
+            expect(adapter._applyRemoteUpdate(update, [envelope])).toBe(false);
+            expect(relay).toHaveBeenCalledWith(update, envelope, 'glyph:g1');
+        } finally {
+            window.windowRole = originalRole;
+            window.windowSync = originalSync;
+        }
+    });
+
     it('an ack after the socket is connected reports nothing and fetches no status', async () => {
         const statuses = [];
         const adapter = new CloudAdapter({

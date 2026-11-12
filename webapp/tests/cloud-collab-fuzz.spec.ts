@@ -56,7 +56,15 @@ import {
     overviewTileState,
     paintOverviewTiles,
     saveCurrentFontToCloud,
-    waitForCloudLiveIdle
+    waitForCloudLiveIdle,
+    recordCloudRoomTraffic,
+    markCloudRoomTraffic,
+    summarizeRoomTraffic,
+    readRoomCounters,
+    diffRoomCounters,
+    expectMinimalRoomTraffic,
+    liveGlyphNames,
+    type CloudRoomTraffic
 } from './helpers/cloud-collab-three-window';
 import { acceptCloudInviteAndGetEditorHref } from './helpers/cloud-collab-e2e';
 import { makeSeededRandom } from './helpers/seeded-random';
@@ -107,6 +115,11 @@ type HistoryItem = {
     group: HistoryGroup;
     /** Glyph whose history holds the edit; null for font-wide (kerning). */
     historyGlyph: string | null;
+    /**
+     * The glyph edit also changed font-wide data (an automatic alignment
+     * toggle can write kerning groups): undo reaches it from any glyph.
+     */
+    fontWide?: boolean;
     master: FuzzMasterId;
     description: string;
     changed: string[];
@@ -115,6 +128,8 @@ type HistoryItem = {
     /** Step of the edit. */
     step: number;
     undone: boolean;
+    /** Step of its latest undo, while undone. */
+    undoneAt?: number;
 };
 
 /**
@@ -216,8 +231,11 @@ test.describe('cloud collaboration fuzz', () => {
             'invitee'
         );
         const contexts: BrowserContext[] = [];
+        // Room traffic of every browser, recorded before any page opens.
+        const roomTraffic: CloudRoomTraffic[] = [];
         const newContext = async (session: typeof ownerSession) => {
             const context = await browser.newContext();
+            roomTraffic.push(recordCloudRoomTraffic(context));
             await installCrossWindowTrackersOnContext(context);
             await attachCloudCollabCookies(context, session);
             contexts.push(context);
@@ -666,13 +684,182 @@ test.describe('cloud collaboration fuzz', () => {
             const historyGlyphOf = (edit: FuzzEdit) =>
                 edit.kind === 'kern' ? null : edit.glyph;
             const reachableFrom = (item: HistoryItem, glyph: string) =>
-                item.historyGlyph === glyph || item.historyGlyph === null;
-            // Undo in a glyph takes that glyph's latest edit, and a
-            // font-wide edit only when the glyph has none.
+                item.historyGlyph === glyph ||
+                item.historyGlyph === null ||
+                item.fontWide === true;
+            // Undo in a glyph takes that glyph's latest edit, and an edit
+            // that changed font-wide data only when the glyph has none.
             const undoTargetIn = (list: HistoryItem[], glyph: string) =>
                 list.filter((item) => item.historyGlyph === glyph).at(-1) ??
-                list.filter((item) => item.historyGlyph === null).at(-1) ??
+                list
+                    .filter(
+                        (item) =>
+                            item.historyGlyph === null || item.fontWide === true
+                    )
+                    .at(-1) ??
                 null;
+            // Redo follows one stack per surface (glyph and master; font-wide
+            // edits belong to every surface): an undone edit stays redoable
+            // until a newer edit of that history lands on the same surface.
+            const onSurface = (
+                item: HistoryItem,
+                glyph: string,
+                master: FuzzMasterId
+            ) =>
+                (item.historyGlyph === glyph && item.master === master) ||
+                item.historyGlyph === null ||
+                item.fontWide === true;
+            const redoableFrom = (
+                group: HistoryGroup,
+                glyph: string,
+                master: FuzzMasterId
+            ) =>
+                (redoStacks.get(group) ?? [])
+                    .filter(
+                        (undone) =>
+                            onSurface(undone, glyph, master) &&
+                            !items.some(
+                                (other) =>
+                                    other.group === group &&
+                                    other.step > (undone.undoneAt ?? -1) &&
+                                    onSurface(other, glyph, master)
+                            )
+                    )
+                    .sort((a, b) => (a.undoneAt ?? 0) - (b.undoneAt ?? 0));
+            /** Did this window’s latest edit also change data outside glyphs? */
+            const latestEditIsFontWide = (page: Page) =>
+                page.evaluate(() => {
+                    const log: any[] =
+                        (window as any).patchSyncEngine?._changeLog ?? [];
+                    const own = log.filter(
+                        (entry) =>
+                            entry.historyAction === 'change' &&
+                            entry.transactionLabel !== 'Glyph revision'
+                    );
+                    const last = own.at(-1);
+                    if (!last) {
+                        return false;
+                    }
+                    return own
+                        .filter(
+                            (entry) =>
+                                entry.historyItemId === last.historyItemId
+                        )
+                        .some(
+                            (entry) =>
+                                !String(entry.path || '').startsWith('glyphs.')
+                        );
+                });
+
+            // ── Traffic: each step costs the minimum the rooms prove ─────
+            // One update per changed room; the sender’s main window posts
+            // each changed glyph once (or sends it on the socket it holds
+            // live), every other main window fetches it once (or receives it
+            // on its socket), and linked windows touch no room.
+            const mainOf = (fuzzWindow: FuzzWindow) =>
+                fuzzWindow.name === 'L1'
+                    ? 'M'
+                    : fuzzWindow.name === 'L2'
+                      ? 'I'
+                      : fuzzWindow.name;
+            const trafficLabels = () =>
+                new Map<Page, string>(
+                    windows.map((fuzzWindow) => [
+                        fuzzWindow.page,
+                        fuzzWindow.name
+                    ])
+                );
+            const glyphNamesById = async () =>
+                new Map<string, string>(
+                    await mainPage.evaluate(() => [
+                        ...((window as any).changeBridge?._glyphNameById ??
+                            new Map())
+                    ])
+                );
+            const beginTrafficMeasure = async () => {
+                for (const fuzzWindow of windows) {
+                    await waitForCloudLiveIdle(fuzzWindow.page).catch(() => {});
+                }
+                await mainPage.waitForTimeout(1500);
+                const names = await glyphNamesById();
+                const roomDocs = [
+                    'font-core',
+                    'font-deps',
+                    ...[...names.keys()].map((id) => `glyph:${id}`)
+                ];
+                const live: Record<string, string[]> = {};
+                for (const name of ['M', 'O2', 'I']) {
+                    live[name] = await liveGlyphNames(
+                        windows.find((w) => w.name === name)!.page
+                    );
+                }
+                return {
+                    names,
+                    roomDocs,
+                    live,
+                    rooms: await readRoomCounters(mainPage, roomDocs),
+                    mark: markCloudRoomTraffic(...roomTraffic)
+                };
+            };
+            const expectMinimalStepTraffic = async (
+                label: string,
+                sender: FuzzWindow,
+                measured: Awaited<ReturnType<typeof beginTrafficMeasure>>
+            ) => {
+                // Late catch-ups or retries would land in this window.
+                await mainPage.waitForTimeout(2500);
+                const traffic = summarizeRoomTraffic(
+                    roomTraffic,
+                    measured.mark,
+                    trafficLabels(),
+                    measured.names
+                );
+                const named = (id: string) =>
+                    id.startsWith('glyph:')
+                        ? `glyph/${measured.names.get(id.slice(6)) ?? id}`
+                        : id;
+                const roomDelta = diffRoomCounters(
+                    measured.rooms,
+                    await readRoomCounters(mainPage, measured.roomDocs)
+                );
+                const rooms = roomDelta
+                    ? Object.fromEntries(
+                          Object.entries(roomDelta).map(([id, delta]) => [
+                              named(id),
+                              delta
+                          ])
+                      )
+                    : null;
+                const uploader = mainOf(sender);
+                try {
+                    expectMinimalRoomTraffic({
+                        label,
+                        traffic,
+                        rooms,
+                        uploader: {
+                            name: uploader,
+                            live: measured.live[uploader]
+                        },
+                        downloaders: ['M', 'O2', 'I']
+                            .filter((name) => name !== uploader)
+                            .map((name) => ({
+                                name,
+                                live: measured.live[name]
+                            })),
+                        quiet: ['L1', 'L2']
+                    });
+                } catch (error) {
+                    console.log(
+                        `[fuzz] traffic ${label} ${JSON.stringify({
+                            live: measured.live,
+                            detail: traffic.detail,
+                            frames: traffic.frames,
+                            rooms
+                        })}`
+                    );
+                    throw error;
+                }
+            };
 
             const runStep = async (step: number) => {
                 const window = pick(windows);
@@ -681,7 +868,15 @@ test.describe('cloud collaboration fuzz', () => {
                 const own = items.filter(
                     (item) => item.group === group && !item.undone
                 );
-                const redoStack = redoStacks.get(group) ?? [];
+                // Undone edits redoable from their own surface.
+                const redoable = (redoStacks.get(group) ?? []).filter(
+                    (undone) =>
+                        redoableFrom(
+                            group,
+                            undone.historyGlyph ?? 'a',
+                            undone.master
+                        ).includes(undone)
+                );
                 let edit: FuzzEdit;
                 let target: HistoryItem | null = null;
                 let crossUser = false;
@@ -692,8 +887,12 @@ test.describe('cloud collaboration fuzz', () => {
                     const glyph = picked.historyGlyph ?? 'a';
                     target = undoTargetIn(own, glyph)!;
                     edit = { kind: 'undo', glyph, master: target.master };
-                } else if (roll < 0.28 && redoStack.length) {
-                    target = redoStack.at(-1)!;
+                } else if (roll < 0.28 && redoable.length) {
+                    target = redoable.reduce((latest, item) =>
+                        (item.undoneAt ?? 0) > (latest.undoneAt ?? 0)
+                            ? item
+                            : latest
+                    );
                     edit = {
                         kind: 'redo',
                         glyph: target.historyGlyph ?? 'a',
@@ -721,9 +920,8 @@ test.describe('cloud collaboration fuzz', () => {
                         };
                         if (
                             edit.kind === 'redo' &&
-                            redoStack.some((mine) =>
-                                reachableFrom(mine, item.historyGlyph!)
-                            )
+                            redoableFrom(group, item.historyGlyph!, item.master)
+                                .length
                         ) {
                             edit = { ...edit, kind: 'undo' };
                         }
@@ -738,8 +936,21 @@ test.describe('cloud collaboration fuzz', () => {
 
                 const before = flatten(snapshot);
                 await paintTiles();
+                // Open the glyph first: moving the live socket to it is not
+                // part of the edit’s cost.
+                await openFuzzGlyph(
+                    window.page,
+                    edit.kind === 'kern' ? 'a' : edit.glyph,
+                    edit.master
+                );
+                const measured = await beginTrafficMeasure();
                 await applyFuzzEdit(window.page, edit);
                 snapshot = await checkAll(`step ${step} (${description})`);
+                await expectMinimalStepTraffic(
+                    `step ${step} (${description})`,
+                    window,
+                    measured
+                );
                 const after = flatten(snapshot);
                 const changed = changedKeys(before, after);
                 const diagnostics = async () => {
@@ -780,7 +991,7 @@ test.describe('cloud collaboration fuzz', () => {
                             ? items.filter(
                                   (item) => item.group === group && !item.undone
                               )
-                            : redoStack;
+                            : redoableFrom(group, edit.glyph, edit.master);
                     // Which own item, if any, this change reverts or restores.
                     const matched = changed.length
                         ? ownItems.find((item) => {
@@ -823,8 +1034,10 @@ test.describe('cloud collaboration fuzz', () => {
                         );
                     }
                     if (crossUser && changed.length) {
-                        throw failure(
-                            `${edit.kind} on a glyph this history never edited changed the font`
+                        throw new Error(
+                            await failureText(
+                                `${edit.kind} on a glyph this history never edited changed the font`
+                            )
                         );
                     }
                     // Undo must not be refused where its target is certain:
@@ -858,6 +1071,8 @@ test.describe('cloud collaboration fuzz', () => {
                     });
                     if (reverted) {
                         reverted.undone = edit.kind === 'undo';
+                        reverted.undoneAt =
+                            edit.kind === 'undo' ? step : undefined;
                         const stack = redoStacks.get(group) ?? [];
                         redoStacks.set(
                             group,
@@ -870,9 +1085,13 @@ test.describe('cloud collaboration fuzz', () => {
                     if (!changed.length) {
                         throw failure('the edit changed nothing');
                     }
+                    const historyGlyph = historyGlyphOf(edit);
                     items.push({
                         group,
-                        historyGlyph: historyGlyphOf(edit),
+                        historyGlyph,
+                        fontWide:
+                            historyGlyph !== null &&
+                            (await latestEditIsFontWide(window.page)),
                         master: edit.master,
                         description,
                         changed,
@@ -881,7 +1100,8 @@ test.describe('cloud collaboration fuzz', () => {
                         step,
                         undone: false
                     });
-                    redoStacks.set(group, []);
+                    // A new edit discards redo only on its own surface; see
+                    // `redoableFrom`.
                     changeLog.push({ step, keys: changed, by: null });
                 }
             };

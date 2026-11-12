@@ -218,6 +218,19 @@ export const cloudPluginCatchUpMethods = {
                 ) {
                     return false;
                 }
+                // A loaded glyph with no revision stamp has not changed since
+                // it was loaded: nobody edited it. Fetching it again on every
+                // core change only downloads what this window already has.
+                if (
+                    !target.expectedRevision &&
+                    !this._glyphCatchUpForceBody.has(
+                        target.documentId.slice('glyph:'.length)
+                    ) &&
+                    bridge.hasResidentGlyphDocument?.(target.documentId) ===
+                        true
+                ) {
+                    return false;
+                }
                 if (this._glyphCatchUpInFlight.has(target.documentId)) {
                     this._glyphCatchUpAgain.add(target.documentId);
                     return false;

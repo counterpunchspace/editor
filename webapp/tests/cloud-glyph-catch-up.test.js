@@ -15,6 +15,7 @@ global.TextEncoder = TextEncoder;
  */
 const { PatchSyncEngine } = require('../js/patch-sync-engine');
 const { Font } = require('../js/babelfont-model');
+const { resetGlyphLogCursors } = require('../js/cloud-adapter-support');
 const {
     catchUpCloudDocument,
     refreshEditorAfterGlyphDocumentCatchUp
@@ -250,6 +251,10 @@ function revisionFor(bridge, glyphId) {
 }
 
 describe('glyph catch-up for edits outside the receiver subset', () => {
+    beforeEach(() => {
+        resetGlyphLogCursors();
+    });
+
     afterEach(() => {
         delete window.changeBridge;
     });
@@ -990,7 +995,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         }
     });
 
-    test('catch-up reads the journal from log id 0', async () => {
+    test('a first catch-up reads the journal from log id 0', async () => {
         const writer = createEngine('writer');
         const receiver = hydrateReceiverFromWriter(writer.bridge);
         window.changeBridge = writer.bridge;
@@ -1018,6 +1023,154 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
                 wait: async () => {}
             });
             expect(glyphWidth(receiver, 'B')).toBe(777);
+        } finally {
+            global.fetch = originalFetch;
+        }
+    });
+
+    test('a later catch-up asks only for log entries after the ones it holds', async () => {
+        const writer = createEngine('writer');
+        const receiver = hydrateReceiverFromWriter(writer.bridge);
+        window.changeBridge = writer.bridge;
+        const urls = [];
+        const originalFetch = global.fetch;
+        const catchUp = () =>
+            catchUpCloudDocument({
+                bridge: receiver,
+                token: 'token',
+                roomUrl: 'wss://rooms.example/room/asset-1',
+                websiteBaseUrl: 'https://editor.example',
+                assetId: 'asset-1',
+                documentId: glyphDocumentId('id-b'),
+                expectedRevision: revisionFor(writer.bridge, 'id-b'),
+                maxAttempts: 2,
+                wait: async () => {}
+            });
+        try {
+            writer.font.findGlyph('B').layers[0].width = 701;
+            let state = writer.bridge.encodeDocumentState(
+                glyphDocumentId('id-b')
+            );
+            global.fetch = jest.fn(async (input) => {
+                urls.push(String(input));
+                return framedLiveResponse(state);
+            });
+            await catchUp();
+            writer.font.findGlyph('B').layers[0].width = 702;
+            state = writer.bridge.encodeDocumentState(glyphDocumentId('id-b'));
+            await catchUp();
+            expect(glyphWidth(receiver, 'B')).toBe(702);
+            expect(
+                urls.map((url) => new URL(url).searchParams.get('afterLogId'))
+            ).toEqual(['0', '1']);
+        } finally {
+            global.fetch = originalFetch;
+        }
+    });
+
+    test('a state download sets where the next catch-up starts', async () => {
+        const writer = createEngine('writer');
+        const receiver = hydrateReceiverFromWriter(writer.bridge);
+        window.changeBridge = writer.bridge;
+        writer.font.findGlyph('B').layers[0].width = 733;
+        const state = writer.bridge.encodeDocumentState(
+            glyphDocumentId('id-b')
+        );
+        const urls = [];
+        const originalFetch = global.fetch;
+        global.fetch = jest.fn(async (input) => {
+            const url = String(input);
+            urls.push(url);
+            if (url.includes('/live')) {
+                return {
+                    ok: false,
+                    status: 409,
+                    headers: new Headers({
+                        'content-type': 'application/json'
+                    }),
+                    json: async () => ({
+                        code: 'rebaseline_required',
+                        lastCheckpointLogId: 40
+                    })
+                };
+            }
+            return {
+                ok: true,
+                status: 200,
+                headers: new Headers({ 'X-Checkpoint-Log-Id': '57' }),
+                arrayBuffer: async () =>
+                    state.buffer.slice(
+                        state.byteOffset,
+                        state.byteOffset + state.byteLength
+                    )
+            };
+        });
+        const catchUp = () =>
+            catchUpCloudDocument({
+                bridge: receiver,
+                token: 'token',
+                roomUrl: 'wss://rooms.example/room/asset-1',
+                websiteBaseUrl: 'https://editor.example',
+                assetId: 'asset-1',
+                documentId: glyphDocumentId('id-b'),
+                maxAttempts: 1,
+                wait: async () => {}
+            });
+        try {
+            await catchUp();
+            expect(glyphWidth(receiver, 'B')).toBe(733);
+            urls.length = 0;
+            await catchUp();
+            expect(new URL(urls[0]).searchParams.get('afterLogId')).toBe('57');
+        } finally {
+            global.fetch = originalFetch;
+        }
+    });
+
+    test('a catch-up behind the checkpoint takes the state in one request', async () => {
+        const writer = createEngine('writer');
+        const receiver = hydrateReceiverFromWriter(writer.bridge);
+        window.changeBridge = writer.bridge;
+        writer.font.findGlyph('B').layers[0].width = 744;
+        const state = writer.bridge.encodeDocumentState(
+            glyphDocumentId('id-b')
+        );
+        const urls = [];
+        const originalFetch = global.fetch;
+        global.fetch = jest.fn(async (input) => {
+            urls.push(String(input));
+            return {
+                ok: true,
+                status: 200,
+                headers: new Headers({
+                    'content-type': 'application/octet-stream',
+                    'X-Catch-Up': 'state',
+                    'X-Checkpoint-Log-Id': '9'
+                }),
+                arrayBuffer: async () =>
+                    state.buffer.slice(
+                        state.byteOffset,
+                        state.byteOffset + state.byteLength
+                    )
+            };
+        });
+        try {
+            await catchUpCloudDocument({
+                bridge: receiver,
+                token: 'token',
+                roomUrl: 'wss://rooms.example/room/asset-1',
+                websiteBaseUrl: 'https://editor.example',
+                assetId: 'asset-1',
+                documentId: glyphDocumentId('id-b'),
+                expectedRevision: revisionFor(writer.bridge, 'id-b'),
+                maxAttempts: 2,
+                wait: async () => {}
+            });
+            expect(glyphWidth(receiver, 'B')).toBe(744);
+            expect(urls).toHaveLength(1);
+            expect(new URL(urls[0]).searchParams.get('rebaseline')).toBe(
+                'state'
+            );
         } finally {
             global.fetch = originalFetch;
         }

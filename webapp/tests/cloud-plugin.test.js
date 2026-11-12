@@ -3106,6 +3106,45 @@ describe('CloudPlugin glyph catch-up from core revision map', () => {
         }
     });
 
+    test('does not refetch a loaded glyph nobody edited since it was loaded', async () => {
+        const plugin = new CloudPlugin();
+        const catchUpDocuments = jest.fn().mockResolvedValue([]);
+        plugin._liveSession = { catchUpDocuments };
+        plugin._activeAssetSizeBridge = {
+            hasSparseWorkingSet: () => false,
+            listSparseWorkingGlyphIds: () => [],
+            glyphDocumentIdForName: (name) => `glyph:id-${name}`,
+            // Only `e` has a revision stamp: someone edited it.
+            listGlyphRevisionTokens: () => [
+                { glyphId: 'id-e', revision: 'rev-4' }
+            ],
+            glyphHasCatchUpRevision: () => false,
+            hasResidentGlyphDocument: () => true
+        };
+        const originalFontManager = window.fontManager;
+        const originalCanvas = window.glyphCanvas;
+        window.fontManager = {
+            getActiveEditorGlyphName: () => 'q',
+            getConstrainedEditingSubsetGlyphs: () => ['q', 'e'],
+            getEditingSubsetSnapshot: () => ['q', 'e'],
+            getLiveVisibleGlyphNames: () => ['q', 'e'],
+            deriveSubsetGlyphsFromText: () => ['q', 'e'],
+            resolveEditingTextForCompile: () => 'qe'
+        };
+        window.glyphCanvas = { textRunEditor: { glyphNameBuffer: ['q', 'e'] } };
+        try {
+            plugin._catchUpFromCoreRevisionMap();
+            await Promise.resolve();
+            expect(catchUpDocuments).toHaveBeenCalledTimes(1);
+            expect(catchUpDocuments.mock.calls[0][0]).toEqual([
+                { documentId: 'glyph:id-e', expectedRevision: 'rev-4' }
+            ]);
+        } finally {
+            window.fontManager = originalFontManager;
+            window.glyphCanvas = originalCanvas;
+        }
+    });
+
     test('HTTP-catches a glyph whose core revision changed after its shard was unloaded', async () => {
         const plugin = new CloudPlugin();
         const catchUpDocuments = jest.fn().mockResolvedValue([]);

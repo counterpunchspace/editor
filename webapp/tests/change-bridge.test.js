@@ -6707,6 +6707,27 @@ describe('WindowSync', () => {
         window.fontCompilation = originalFontCompilation;
     });
 
+    test('main relays a linked window’s revision stamp with the rows it waits for', () => {
+        const bridge = new ChangeBridge('relay-depends-on');
+        bridge.initFromJson(makeMinimalFont());
+        const originalPlugin = window.cloudPlugin;
+        const relay = jest.fn();
+        window.cloudPlugin = { relayPeerWindowUpdateToCloud: relay };
+        try {
+            const update = new Uint8Array([1, 2]);
+            const envelope = { source: 'window-sync.glyph-revision' };
+            bridge.relayPeerPacketToCloud(update, envelope, 'font-core', null, [
+                'glyph-row-1'
+            ]);
+            expect(relay).toHaveBeenCalledWith(update, envelope, 'font-core', [
+                'glyph-row-1'
+            ]);
+        } finally {
+            window.cloudPlugin = originalPlugin;
+            bridge.destroy();
+        }
+    });
+
     test('a remote update held back by Yjs still reaches the worker hook', () => {
         const bridge = new ChangeBridge('held-back-receiver');
         bridge.initFromJson(makeMinimalFont());
@@ -6733,6 +6754,44 @@ describe('WindowSync', () => {
             { update: updates[1], entries: [], documentId: 'font-core' }
         ]);
         bridge.destroy();
+    });
+
+    test('the other window can undo a linked window’s edit of an object value', () => {
+        const fontJson = makeMinimalFont();
+        const linked = new ChangeBridge('object-undo-linked');
+        linked.initFromJson(fontJson);
+        const main = new ChangeBridge('object-undo-main');
+        main.applyDocumentSetState(linked.encodeDocumentSet());
+        main.setFontJson(cloneValue(fontJson));
+        const syncLinked = new WindowSync(linked, 'font-channel-object-undo');
+        const syncMain = new WindowSync(main, 'font-channel-object-undo');
+        const layerPath = ['glyphs', 'A', 'layers', 'layer-1'];
+        const formatSpecific = () => {
+            const value = main.getYValue([...layerPath, 'format_specific']);
+            return value?.toJSON ? value.toJSON() : value;
+        };
+        linked.recordChange(
+            layerPath,
+            'format_specific',
+            { alignment: -1 },
+            { alignment: 1 }
+        );
+        flushTimers();
+        expect(formatSpecific()).toEqual({
+            alignment: 1
+        });
+        // The cloud wire drops object replay values; the linked-window
+        // channel must keep them, or undo here finds nothing to replay.
+        expect(main.canUndo('A', 'layer-1')).toBe(true);
+        main.undo('A', 'layer-1');
+        flushTimers();
+        expect(formatSpecific()).toEqual({
+            alignment: -1
+        });
+        syncLinked.destroy();
+        syncMain.destroy();
+        linked.destroy();
+        main.destroy();
     });
 
     test('metadata-only no-op layer snapshot skips receiver side effects', () => {

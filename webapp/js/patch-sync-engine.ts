@@ -213,6 +213,8 @@ export type { ChangeLogEntry } from './change-log';
 export type LocalUpdateMeta = {
     /** The edit burst the packet belongs to; null for a one-off edit. */
     burstKey: string | null;
+    /** Glyph rows a glyph-revision stamp announces (main holds it for them). */
+    dependsOn?: string[];
 };
 
 export type LocalUpdateListener = (
@@ -3501,7 +3503,8 @@ export class PatchSyncEngine {
         update: Uint8Array,
         collaborationMessage: CollaborationMessageEnvelope | null | undefined,
         documentId: string | undefined,
-        burstKey: string | null | undefined
+        burstKey: string | null | undefined,
+        dependsOn?: string[]
     ): void {
         const relay = (
             relayUpdate: Uint8Array,
@@ -3511,7 +3514,10 @@ export class PatchSyncEngine {
             window.cloudPlugin?.relayPeerWindowUpdateToCloud?.(
                 relayUpdate,
                 envelope ?? null,
-                relayDocumentId
+                relayDocumentId,
+                // Only the packet this call relays carries them; a merged
+                // burst gets new ids and is not held.
+                relayUpdate === update ? dependsOn : undefined
             );
         };
         const key = burstKey || null;
@@ -9773,7 +9779,7 @@ export class PatchSyncEngine {
             });
         const plugin = window.cloudPlugin;
         const burstKey = this._currentBurstKey();
-        const meta: LocalUpdateMeta = { burstKey };
+        const meta: LocalUpdateMeta = { burstKey, dependsOn: [...dependsOn] };
         if (
             collaborationMessage &&
             typeof plugin?.persistOutgoingCloudUpdate === 'function' &&
