@@ -3,6 +3,7 @@
 // opens in its own window, linked to this one (see font-windows/).
 
 import '../auth-manager';
+import { trackEditorEvent } from '../editor-analytics';
 import { Logger } from '../logger';
 import { getCloudRequestHeaders } from '../cloud-website-api';
 import { deleteCloudAssetUntilComplete } from '../cloud-delete-asset';
@@ -1031,3 +1032,5 @@ if (!window.isTestMode?.() && !window.isDevelopment?.()) {
         void checkForUpdate();
     }, UPDATE_CHECK_INTERVAL_MS);
 }
+
+trackEditorEvent('Editor loaded', { page: 'launcher' });

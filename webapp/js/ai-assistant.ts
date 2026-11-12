@@ -4,6 +4,8 @@
 // Tools and instructions live in assistant-config.ts.
 
 import { resolveWebsiteURL } from './website-url';
+import { trackEditorEvent } from './editor-analytics';
+import { withCampaignTags } from './campaign-tags';
 import { Logger } from './logger';
 import { fontFormatKind, fontFormatOf } from './font-windows/font-formats';
 import {
@@ -781,6 +783,8 @@ class AIAssistant {
     [key: string]: any;
 
     messagesContainer: HTMLElement | null;
+    /** “Assistant credit used up” was reported for this page. */
+    reportedNoAccess = false;
     promptInput: HTMLTextAreaElement | null;
     sendButton: HTMLElement | null;
     chatContainer: HTMLElement | null;
@@ -931,6 +935,12 @@ class AIAssistant {
             subscriptionContainer.style.display = 'none';
             this.lockAssistantInput(true);
         } else if (!this.canUseAssistant()) {
+            if (!this.reportedNoAccess) {
+                // Signed in, but the free credit is used up and there is
+                // no plan: the step before an upgrade.
+                this.reportedNoAccess = true;
+                trackEditorEvent('Assistant credit used up');
+            }
             chatContainer.style.display = 'none';
             chatContainer.classList.remove('assistant-input-only');
             loginContainer.style.display = 'none';
@@ -1005,7 +1015,10 @@ class AIAssistant {
         if (accountBtn)
             // A new tab, so open fonts stay open.
             accountBtn.addEventListener('click', () => {
-                window.open(`${this.getWebsiteURL()}/account`, '_blank');
+                window.open(
+                    withCampaignTags(`${this.getWebsiteURL()}/account`),
+                    '_blank'
+                );
             });
 
         document

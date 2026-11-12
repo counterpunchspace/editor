@@ -4,6 +4,7 @@
 // drops both. See APP.md "User glyph filters".
 
 import tippy, { type Instance as TippyInstance } from 'tippy.js';
+import { withCampaignTags } from './campaign-tags';
 import { Logger } from './logger';
 import { getTheme } from './tippy-utils';
 import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
@@ -622,7 +623,9 @@ class GlyphFilterEditor {
             } else if (action === 'account') {
                 // A new tab, so open fonts stay open.
                 window.open(
-                    `${window.authManager?.websiteURL ?? ''}/account`,
+                    withCampaignTags(
+                        `${window.authManager?.websiteURL ?? ''}/account`
+                    ),
                     '_blank'
                 );
             }

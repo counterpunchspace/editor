@@ -4,6 +4,8 @@
  */
 
 import { resolveWebsiteURL } from './website-url';
+import { trackEditorEvent } from './editor-analytics';
+import { getCampaignTags, withCampaignTags } from './campaign-tags';
 import {
     describeLoginCodeError,
     parseLoginCodeErrorBody
@@ -80,6 +82,7 @@ class AuthManager {
     lastAuthCheckUnreachable = false;
     /** False until the first session check has answered or failed. */
     authChecked = false;
+    private campaignReturnReported = false;
 
     constructor() {
         this.websiteURL = this.getWebsiteURL();
@@ -182,6 +185,23 @@ class AuthManager {
     /**
      * Check current authentication status with the website
      */
+    /**
+     * A signed-in account arrived through a campaign link: the website
+     * credits its later payments to that campaign. Once per page; the
+     * server ignores repeats.
+     */
+    private reportCampaignReturn(headers: Record<string, string>): void {
+        const tags = getCampaignTags();
+        if (this.campaignReturnReported || !tags.utm_campaign) return;
+        this.campaignReturnReported = true;
+        void fetch(`${this.websiteURL}/api/campaigns/return`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { ...headers, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ trackingParams: tags })
+        }).catch(() => {});
+    }
+
     async checkAuthStatus(): Promise<AuthUser | null> {
         if (this.initialAuthBootstrapPromise) {
             await this.initialAuthBootstrapPromise;
@@ -244,6 +264,7 @@ class AuthManager {
                 console.log('[Auth] Subscription:', this.subscription);
                 console.log('[Auth] Credits:', this.credits);
                 this.onAuthStateChanged(true, this.user, this.subscription);
+                this.reportCampaignReturn(headers);
                 return this.user;
             } else {
                 const errorData = await response.json().catch(() => ({}));
@@ -475,6 +496,9 @@ class AuthManager {
             return Promise.resolve(this.user);
         }
         if (!this.signInPromise) {
+            trackEditorEvent('Sign-in shown', {
+                reason: options.reason ?? ''
+            });
             this.signInPromise = showSignInDialog({
                 reason: options.reason,
                 initialEmail: this.rememberedSignInEmail(),
@@ -502,7 +526,10 @@ class AuthManager {
                 {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email })
+                    body: JSON.stringify({
+                        email,
+                        trackingParams: getCampaignTags()
+                    })
                 }
             );
             const body: unknown = await response.json().catch(() => ({}));
@@ -807,7 +834,10 @@ function initSettingsAuth() {
 
     if (accountBtn) {
         accountBtn.addEventListener('click', () => {
-            window.open(`${window.authManager.websiteURL}/account`, '_blank');
+            window.open(
+                withCampaignTags(`${window.authManager.websiteURL}/account`),
+                '_blank'
+            );
         });
     }
 

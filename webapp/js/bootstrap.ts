@@ -456,6 +456,7 @@ if (document.readyState === 'loading') {
 }
 
 import './auth-manager'; // Authentication with fonteditorwebsite
+import { trackEditorEvent } from './editor-analytics';
 import { initLinkNavigationGuard } from './link-navigation';
 initLinkNavigationGuard();
 import './ai-assistant';
@@ -569,3 +570,5 @@ if (
         getStatus: () => _cloudPlugin.connectionStatus
     };
 }
+
+trackEditorEvent('Editor loaded', { page: 'font' });

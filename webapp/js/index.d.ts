@@ -35,6 +35,8 @@ declare global {
     // Any property augmentation we make to the Window interface
     // should be declared here.
     interface Window {
+        /** Campaign tags from the website link (campaign-tags.ts). */
+        campaignTags?: { get: (hops?: number) => Record<string, string> };
         // Undo/redo & collaboration
         patchSyncEngine: PatchSyncEngine | undefined;
         changeBridge: PatchSyncEngine | undefined;

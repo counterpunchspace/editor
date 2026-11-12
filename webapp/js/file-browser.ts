@@ -1,6 +1,7 @@
 // File Browser for in-browser memfs
 // Shows the Pyodide file system in view 3
 
+import { campaignQuery } from './campaign-tags';
 import tippy, { Instance as TippyInstance } from 'tippy.js';
 import 'tippy.js/dist/tippy.css';
 import {
@@ -4041,8 +4042,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            // No font asked for: this window becomes the launcher.
-            window.location.replace('launcher.html');
+            // No font asked for: this window becomes the launcher, keeping
+            // the campaign it was opened with.
+            window.location.replace(`launcher.html${campaignQuery()}`);
         } catch (error: any) {
             console.error(
                 '[FileBrowser]',

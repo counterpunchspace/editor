@@ -2,6 +2,7 @@ import {
     FontDestinationManifest,
     fontDestinationPluginManager
 } from './font-destination-plugin-manager';
+import { withCampaignTags } from './campaign-tags';
 import {
     downloadPluginWheel,
     fetchPluginCatalog,
@@ -361,7 +362,9 @@ function openPurchaseSheet(
         change.textContent = 'Change';
         change.addEventListener('click', () => {
             window.open(
-                `${resolveWebsiteURL()}/account/payment?return=editor`,
+                withCampaignTags(
+                    `${resolveWebsiteURL()}/account/payment?return=editor`
+                ),
                 '_blank'
             );
         });
@@ -470,7 +473,9 @@ function openPurchaseSheet(
             change.textContent = 'Change payment method';
             change.addEventListener('click', () => {
                 window.open(
-                    `${resolveWebsiteURL()}/account/payment?return=editor`,
+                    withCampaignTags(
+                        `${resolveWebsiteURL()}/account/payment?return=editor`
+                    ),
                     '_blank'
                 );
             });
@@ -779,7 +784,9 @@ function renderCatalog(
                     }
                 } else if (actionName === 'payment-method') {
                     window.open(
-                        `${resolveWebsiteURL()}/account/payment?return=editor`,
+                        withCampaignTags(
+                            `${resolveWebsiteURL()}/account/payment?return=editor`
+                        ),
                         '_blank'
                     );
                 } else if (actionName === 'buy') {
