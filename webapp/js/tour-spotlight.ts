@@ -25,11 +25,15 @@ import {
 import type { StickyEditTool } from './glyph-canvas/edit-tools';
 import {
     getTourComponentDepth,
+    getTourEditRootGlyphName,
     isTourEditingComponent
 } from './tour-components';
 import {
     clearTourDrawingGuides,
+    findTourGuideGateTarget,
+    getTourGuideGate,
     isTourDrawingGoalMet,
+    nudgeTourDrawingGuides,
     syncTourDrawingGuides
 } from './tour-drawing';
 
@@ -47,6 +51,16 @@ export const TOUR_AFTER_SLIDER_MS = 500;
 const DEFAULT_CUTOUT_PADDING = 24;
 const TOUR_TOOL_FLASH_MS = 420;
 const TOUR_TOOL_FLASH_TIMES = 3;
+/** How long a glyph double-click may take to open the expected glyph. */
+const DOUBLE_CLICK_EDIT_TIMEOUT_MS = 2000;
+
+/** Tooltip actions. Only `onContinue` is required. */
+export type TourNavigation = {
+    onContinue: () => void;
+    onBack?: () => void;
+    onRestart?: () => void;
+    onCancel?: () => void;
+};
 
 let requiredToolFlashToken = 0;
 let requiredToolFlashStartedAt = 0;
@@ -71,6 +85,11 @@ type SpotlightHost = {
     previewingSampleText: boolean;
     sampleTextTrackFrame: number;
     onContinue: (() => void) | null;
+    navigation: TourNavigation | null;
+    /** Back / Restart step is rebuilding app state; input stays blocked. */
+    restoring: boolean;
+    /** An action happened and the tour is checking it before advancing. */
+    pendingAdvance: boolean;
     resizeObserver: ResizeObserver | null;
     listenersBound: boolean;
     slideUnbind: (() => void) | null;
@@ -94,6 +113,9 @@ function getHost(): SpotlightHost {
             previewingSampleText: false,
             sampleTextTrackFrame: 0,
             onContinue: null,
+            navigation: null,
+            restoring: false,
+            pendingAdvance: false,
             resizeObserver: null,
             listenersBound: false,
             slideUnbind: null
@@ -512,7 +534,7 @@ function paintSampleTextPreview(): void {
 }
 
 function shouldPaintTourGeometry(host: SpotlightHost): boolean {
-    if (!host.slide || !host.visible) {
+    if (!host.slide || !host.visible || host.restoring) {
         return false;
     }
     if (!host.advancing) {
@@ -662,6 +684,12 @@ function bindSlideInteraction(slide: TourSlide): void {
         if (isTourChromeEvent(event)) {
             return;
         }
+        if (event.type === 'contextmenu') {
+            // Context menus can delete, decompose or switch glyphs.
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            return;
+        }
         const interactiveHoles = resolvedCutouts(slide.cutouts).filter(
             ({ cutout }) => cutout.interactive
         );
@@ -714,6 +742,105 @@ function bindSlideInteraction(slide: TourSlide): void {
         window.removeEventListener('mouseup', endPassthrough, true);
         setHitPassthrough(false);
     });
+
+    const gate = getTourGuideGate(slide.drawingGuides);
+    if (gate && slide.drawingGuides) {
+        const kind = slide.drawingGuides;
+        /** Client point a snapped press was moved to, until its mouseup. */
+        let snappedPress: { x: number; y: number } | null = null;
+        /** Presses replayed on the mark; they pass the gate untouched. */
+        const replayed = new WeakSet<Event>();
+        const block = (event: Event) => {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+        };
+        const dispatchAt = (
+            type: 'mousemove' | 'mousedown' | 'mouseup',
+            point: { x: number; y: number },
+            source: MouseEvent
+        ) => {
+            const replay = new MouseEvent(type, {
+                bubbles: true,
+                cancelable: true,
+                clientX: point.x,
+                clientY: point.y,
+                button: source.button,
+                buttons: source.buttons,
+                detail: source.detail,
+                shiftKey: source.shiftKey,
+                altKey: source.altKey,
+                metaKey: source.metaKey,
+                ctrlKey: source.ctrlKey
+            });
+            replayed.add(replay);
+            window.glyphCanvas?.canvas?.dispatchEvent(replay);
+        };
+        const isLiveCanvasEvent = (event: MouseEvent) =>
+            !replayed.has(event) &&
+            host.visible &&
+            host.slide === slide &&
+            !host.advancing &&
+            !!window.glyphCanvas?.canvas &&
+            event.target === window.glyphCanvas.canvas;
+        const onDown = (event: MouseEvent) => {
+            if (!isLiveCanvasEvent(event)) {
+                return;
+            }
+            if (snappedPress) {
+                // The previous press was released outside the window.
+                dispatchAt('mouseup', snappedPress, event);
+                snappedPress = null;
+            }
+            if (event.button !== 0) {
+                block(event);
+                return;
+            }
+            if (slide.requireTool && !isRequiredToolActive(slide.requireTool)) {
+                // The pointer lock flashes the tool the user needs first.
+                return;
+            }
+            const target = findTourGuideGateTarget(kind, {
+                x: event.clientX,
+                y: event.clientY
+            });
+            if (!target) {
+                block(event);
+                nudgeTourDrawingGuides();
+                return;
+            }
+            revealTourRestart();
+            if (gate === 'grab') {
+                return;
+            }
+            block(event);
+            snappedPress = target;
+            dispatchAt('mousemove', target, event);
+            dispatchAt('mousedown', target, event);
+        };
+        const onMove = (event: MouseEvent) => {
+            // A drag would pull handles out of new nodes or move them.
+            if (snappedPress && !replayed.has(event)) {
+                block(event);
+            }
+        };
+        const onUp = (event: MouseEvent) => {
+            if (!snappedPress || replayed.has(event)) {
+                return;
+            }
+            block(event);
+            const point = snappedPress;
+            snappedPress = null;
+            dispatchAt('mouseup', point, event);
+        };
+        window.addEventListener('mousedown', onDown, true);
+        window.addEventListener('mousemove', onMove, true);
+        window.addEventListener('mouseup', onUp, true);
+        cleanups.push(() => {
+            window.removeEventListener('mousedown', onDown, true);
+            window.removeEventListener('mousemove', onMove, true);
+            window.removeEventListener('mouseup', onUp, true);
+        });
+    }
 
     const selector = slide.advanceOnClick;
     if (selector) {
@@ -861,13 +988,33 @@ function bindSlideInteraction(slide: TourSlide): void {
                 event.stopImmediatePropagation();
                 return;
             }
-            if (advanced) {
+            if (advanced || slide.advanceWhenComponentDepth !== undefined) {
+                // Component slides advance when the nesting depth changes.
                 return;
             }
             advanced = true;
-            void finishWithReaction(undefined, {
-                afterApplyMs: slide.advanceDelayMs ?? TOUR_AFTER_APPLY_MS
-            });
+            void (async () => {
+                const expected = slide.expectEditGlyph;
+                if (expected) {
+                    host.pendingAdvance = true;
+                    const opened = await waitForCondition(
+                        () => getTourEditRootGlyphName() === expected,
+                        DOUBLE_CLICK_EDIT_TIMEOUT_MS
+                    );
+                    host.pendingAdvance = false;
+                    if (!opened) {
+                        // Missed the glyph: stay on this slide.
+                        advanced = false;
+                        return;
+                    }
+                }
+                if (!host.visible || host.slide !== slide) {
+                    return;
+                }
+                void finishWithReaction(undefined, {
+                    afterApplyMs: slide.advanceDelayMs ?? TOUR_AFTER_APPLY_MS
+                });
+            })();
         };
         document.addEventListener('dblclick', handler, true);
         cleanups.push(() => {
@@ -956,7 +1103,6 @@ function bindSlideInteraction(slide: TourSlide): void {
                 afterApplyMs: slide.advanceDelayMs ?? TOUR_AFTER_SLIDER_MS
             });
         };
-        const waitForDrop = goal === 'handles-placed';
         const onPointerUp = () => {
             window.requestAnimationFrame(() => {
                 maybeAdvance();
@@ -964,19 +1110,16 @@ function bindSlideInteraction(slide: TourSlide): void {
         };
         document.addEventListener('mouseup', onPointerUp, true);
         document.addEventListener('keyup', maybeAdvance, true);
+        document.addEventListener('dblclick', maybeAdvance, true);
+        // The outline can update after mouseup; goals ignore drags in progress.
+        window.addEventListener('glyphCanvasRendered', maybeAdvance);
         cleanups.push(() => {
             document.removeEventListener('mouseup', onPointerUp, true);
             document.removeEventListener('keyup', maybeAdvance, true);
+            document.removeEventListener('dblclick', maybeAdvance, true);
+            window.removeEventListener('glyphCanvasRendered', maybeAdvance);
         });
-        if (!waitForDrop) {
-            document.addEventListener('dblclick', maybeAdvance, true);
-            window.addEventListener('glyphCanvasRendered', maybeAdvance);
-            cleanups.push(() => {
-                document.removeEventListener('dblclick', maybeAdvance, true);
-                window.removeEventListener('glyphCanvasRendered', maybeAdvance);
-            });
-            maybeAdvance();
-        }
+        maybeAdvance();
     }
 
     if (slide.advanceWhenComponentDepth !== undefined) {
@@ -1257,6 +1400,9 @@ export function isTourKeyEventAllowed(event: KeyboardEvent): boolean {
     if (isBrowserReloadShortcut(event)) {
         return true;
     }
+    if (host.restoring) {
+        return false;
+    }
     const cmdOrCtrl = event.metaKey || event.ctrlKey;
     const key = typeof event.key === 'string' ? event.key.toLowerCase() : '';
     if (
@@ -1304,7 +1450,7 @@ export function isTourKeyEventAllowed(event: KeyboardEvent): boolean {
     }
     const target = event.target as HTMLElement | null;
     if (
-        target?.closest?.('[data-tour-action="continue"]') &&
+        target?.closest?.('[data-tour-action]') &&
         (event.key === 'Enter' || event.key === ' ')
     ) {
         return true;
@@ -1401,49 +1547,171 @@ function bindSpotlightChrome(): void {
     });
 }
 
+function tooltipButton(
+    action: string,
+    label: string,
+    onClick: () => void,
+    primary = false
+): HTMLButtonElement {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = primary
+        ? 'dialog-button dialog-button-primary'
+        : 'dialog-button';
+    button.dataset.tourAction = action;
+    button.textContent = label;
+    button.addEventListener('click', onClick);
+    return button;
+}
+
+function tooltipIconButton(
+    action: string,
+    label: string,
+    icon: string,
+    onClick: () => void
+): HTMLButtonElement {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'tour-tooltip-icon';
+    button.dataset.tourAction = action;
+    button.setAttribute('aria-label', label);
+    button.title = label;
+    const symbol = document.createElement('span');
+    symbol.className = 'material-symbols-outlined';
+    symbol.setAttribute('aria-hidden', 'true');
+    symbol.textContent = icon;
+    button.append(symbol);
+    button.addEventListener('click', onClick);
+    return button;
+}
+
+/** Show Restart Step once the user has started the exercise. */
+function revealTourRestart(): void {
+    const restart = getHost().tooltip?.querySelector<HTMLButtonElement>(
+        '[data-tour-action="restart"]'
+    );
+    if (restart) {
+        restart.hidden = false;
+    }
+}
+
+/** Tooltip buttons only act while their slide is up and idle. */
+function guardSlideAction(slide: TourSlide, action: () => void): () => void {
+    return () => {
+        const host = getHost();
+        if (
+            host.slide !== slide ||
+            !host.visible ||
+            host.advancing ||
+            host.restoring
+        ) {
+            return;
+        }
+        action();
+    };
+}
+
 function fillTooltip(slide: TourSlide): void {
     const host = getHost();
     if (!host.tooltip) {
         return;
     }
+    const navigation = host.navigation;
     const titleId = 'tour-tooltip-title';
     host.tooltip.setAttribute('aria-labelledby', titleId);
     host.tooltip.replaceChildren();
 
+    const header = document.createElement('div');
+    header.className = 'tour-tooltip-header';
     const title = document.createElement('h3');
     title.id = titleId;
     title.textContent = slide.tooltip.title;
-
-    host.tooltip.append(title);
+    header.append(title);
+    const tools = document.createElement('div');
+    tools.className = 'tour-tooltip-tools';
+    if (navigation?.onBack) {
+        tools.append(
+            tooltipIconButton(
+                'back',
+                'Back',
+                'arrow_back',
+                guardSlideAction(slide, navigation.onBack)
+            )
+        );
+    }
+    // Only multi-action drawing exercises restart; the button shows once
+    // the first press counts (see `revealTourRestart`).
+    if (getTourGuideGate(slide.drawingGuides) && navigation?.onRestart) {
+        const restart = tooltipIconButton(
+            'restart',
+            'Restart Step',
+            'restart_alt',
+            guardSlideAction(slide, navigation.onRestart)
+        );
+        restart.hidden = true;
+        tools.append(restart);
+    }
+    if (navigation?.onCancel) {
+        const onCancel = navigation.onCancel;
+        // Ending the tour works even while a step is advancing.
+        tools.append(
+            tooltipIconButton('cancel', 'End Tour', 'close', () => {
+                if (host.slide === slide && host.visible) {
+                    onCancel();
+                }
+            })
+        );
+    }
+    if (tools.childElementCount > 0) {
+        header.append(tools);
+    }
+    host.tooltip.append(header);
     appendTooltipBody(host.tooltip, slide.tooltip.body);
 
+    const buttons: HTMLButtonElement[] = [];
     if (slide.tooltip.continueLabel) {
+        buttons.push(
+            tooltipButton(
+                'continue',
+                slide.tooltip.continueLabel,
+                guardSlideAction(slide, () => {
+                    host.onContinue?.();
+                }),
+                true
+            )
+        );
+    }
+    if (buttons.length > 0) {
         const actions = document.createElement('div');
         actions.className = 'tour-tooltip-actions';
-        const continueBtn = document.createElement('button');
-        continueBtn.type = 'button';
-        continueBtn.className = 'dialog-button dialog-button-primary';
-        continueBtn.dataset.tourAction = 'continue';
-        continueBtn.textContent = slide.tooltip.continueLabel;
-        continueBtn.addEventListener('click', () => {
-            host.onContinue?.();
-        });
-        actions.append(continueBtn);
+        actions.append(...buttons);
         host.tooltip.append(actions);
     }
 }
 
+function toNavigation(
+    navigation: TourNavigation | (() => void)
+): TourNavigation {
+    return typeof navigation === 'function'
+        ? { onContinue: navigation }
+        : navigation;
+}
+
 export async function showTourSlide(
     slide: TourSlide,
-    onContinue: () => void,
+    navigation: TourNavigation | (() => void),
     options?: { keepCutouts?: boolean }
 ): Promise<void> {
     bindSpotlightChrome();
     const host = getHost();
+    const nav = toNavigation(navigation);
     host.slide = slide;
-    host.onContinue = onContinue;
+    host.navigation = nav;
+    host.onContinue = nav.onContinue;
     host.visible = true;
     host.advancing = false;
+    host.restoring = false;
+    host.pendingAdvance = false;
     host.previewingSampleText = false;
     stopSampleTextTracking();
     setViewShortcutLock(slide);
@@ -1471,7 +1739,10 @@ export async function showTourSlide(
     host.root?.classList.add('is-visible');
     requestAnimationFrame(() => {
         if (host.slide) {
-            paintSpotlight(host.slide, { punchHits: keepCutouts });
+            // A throttled frame can land after the slide became interactive.
+            paintSpotlight(host.slide, {
+                punchHits: keepCutouts || host.slideUnbind !== null
+            });
         }
         host.root?.classList.add('is-cutouts-visible');
         host.root?.classList.add('is-tooltip-visible');
@@ -1509,7 +1780,7 @@ function onTourGeometryChange(): void {
 
 export async function transitionTourSlide(
     slide: TourSlide,
-    onContinue: () => void
+    navigation: TourNavigation | (() => void)
 ): Promise<void> {
     const previous = getHost().slide;
     const keepCutouts = Boolean(
@@ -1523,7 +1794,48 @@ export async function transitionTourSlide(
         setCutoutsVisible(false);
     }
     await wait(FADE_MS);
-    await showTourSlide(slide, onContinue, { keepCutouts });
+    await showTourSlide(slide, navigation, { keepCutouts });
+}
+
+/**
+ * Fade the current slide out and block all input while Back or Restart
+ * step rebuilds app state. `showTourSlide` ends the block.
+ */
+export async function beginTourSlideRestore(): Promise<void> {
+    const host = getHost();
+    if (!host.visible) {
+        return;
+    }
+    host.restoring = true;
+    unbindSlideInteraction();
+    stopSampleTextTracking();
+    setHitPassthrough(false);
+    setTooltipVisible(false);
+    setCutoutsVisible(false);
+    clearTourDrawingGuides();
+    host.hitLayer?.replaceChildren();
+    const blocker = document.createElement('div');
+    blocker.className = 'tour-spotlight-hit-piece';
+    blocker.style.inset = '0';
+    host.hitLayer?.append(blocker);
+    await wait(FADE_MS);
+}
+
+/** True while a slide waits for the user (not advancing or restoring). */
+export function isTourSlideIdle(): boolean {
+    const host = getHost();
+    return (
+        host.visible &&
+        !!host.slide &&
+        !host.advancing &&
+        !host.restoring &&
+        !host.pendingAdvance &&
+        host.slideUnbind !== null
+    );
+}
+
+export function getCurrentTourSlide(): TourSlide | null {
+    return getHost().slide;
 }
 
 export function hideTourSpotlight(): void {
@@ -1531,7 +1843,10 @@ export function hideTourSpotlight(): void {
     host.visible = false;
     host.slide = null;
     host.onContinue = null;
+    host.navigation = null;
     host.advancing = false;
+    host.restoring = false;
+    host.pendingAdvance = false;
     host.previewingSampleText = false;
     stopSampleTextTracking();
     setHitPassthrough(false);
@@ -1550,6 +1865,10 @@ export function hideTourSpotlight(): void {
     host.tippy?.hide();
     clearTourDrawingGuides();
     window.setTimeout(() => {
+        if (host.visible) {
+            // The tour was started again during the fade.
+            return;
+        }
         host.tippy?.destroy();
         host.tippy = null;
         host.root?.remove();
@@ -1561,6 +1880,20 @@ export function hideTourSpotlight(): void {
         host.hitLayer = null;
         host.tooltip = null;
     }, FADE_MS);
+}
+
+async function waitForCondition(
+    condition: () => boolean,
+    timeoutMs: number
+): Promise<boolean> {
+    const started = Date.now();
+    while (!condition()) {
+        if (Date.now() - started >= timeoutMs) {
+            return false;
+        }
+        await wait(50);
+    }
+    return true;
 }
 
 export function wait(ms: number): Promise<void> {

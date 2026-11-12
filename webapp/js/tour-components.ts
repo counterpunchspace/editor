@@ -39,7 +39,7 @@ const LETTER_BASE_GLYPH_NAMES: Record<string, string> = {
     a: 'a'
 };
 
-function componentReferenceMatches(
+export function componentReferenceMatches(
     actual: string | undefined,
     wanted: string
 ): boolean {
@@ -430,4 +430,17 @@ export function getTourComponentDepth(): number {
 
 export function isTourEditingComponent(): boolean {
     return window.glyphCanvas?.outlineEditor?.isEditingComponent?.() === true;
+}
+
+/** Glyph open in Edit Mode, below any component levels; null in Text Mode. */
+export function getTourEditRootGlyphName(): string | null {
+    const editor = window.glyphCanvas?.outlineEditor;
+    if (!editor?.active) {
+        return null;
+    }
+    const stack =
+        typeof editor.parseGlyphStack === 'function'
+            ? editor.parseGlyphStack()
+            : [];
+    return stack[0]?.glyphName ?? editor.currentGlyphName ?? null;
 }

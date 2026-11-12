@@ -7,6 +7,7 @@ import {
     captureTourDrawArea,
     getDrawAreaFontRect,
     resetTourDrawingSession,
+    resetTourHandleProgress,
     type TourAdvanceWhen,
     type TourDrawingGuides
 } from './tour-drawing';
@@ -48,8 +49,39 @@ export type TourTooltip = {
     placement?: 'top' | 'bottom' | 'left' | 'right';
 };
 
+/**
+ * App state a slide starts from. Back and Restart step rebuild it, and the
+ * tour restores it when the user leaves it (e.g. opens another glyph).
+ */
+export type TourStage =
+    | {
+          kind: 'text';
+          ss04: boolean;
+          /** Master to preview, or a `wght` location between masters. */
+          master?: string;
+          wght?: number;
+      }
+    | {
+          /** Edit Mode on the first `l.ss04`. */
+          kind: 'edit-l';
+          layer: 'interpolated' | 'master';
+          selectContour?: boolean;
+      }
+    | {
+          /** Edit Mode on `edieresis`, inside these nested components. */
+          kind: 'edieresis';
+          components: string[];
+      }
+    | {
+          kind: 'panels';
+          focus?: string;
+          /** Press the focused panel’s shortcut once more. */
+          enlarge?: boolean;
+      };
+
 export type TourSlide = {
     id: string;
+    stage: TourStage;
     cutouts: TourCutout[];
     tooltip: TourTooltip;
     /**
@@ -93,6 +125,11 @@ export type TourSlide = {
     };
     /** Double-clicking this sample-text letter (e.g. `m`) advances. */
     advanceOnGlyphDoubleClick?: string;
+    /**
+     * With `advanceOnGlyphDoubleClick`: only advance once Edit Mode shows
+     * this glyph, so a double-click that missed does not skip ahead.
+     */
+    expectEditGlyph?: string;
     /** Advance after the user drags a node on the letter cutout. */
     advanceOnNodeDrag?: boolean;
     /**
@@ -168,6 +205,8 @@ export const TOUR_COMPONENT_E = 'e';
 export const TOUR_LETTER_L = 'l';
 export const TOUR_COMPONENT_DIERESIS = 'dieresiscomb';
 export const TOUR_COMPONENT_DOTACCENT = 'dotaccentcomb';
+/** Inside the axis-sliders slide’s 500–700 target range. */
+export const TOUR_INTERPOLATED_WGHT = 600;
 
 function tourBody(text: string, action: string): string {
     const wrapped = action.startsWith('_') ? action : `_${action}_`;
@@ -812,9 +851,17 @@ function prepareBackgroundGuideSlide(): void {
     }
 }
 
+function prepareHandlesSlide(): void {
+    resetTourHandleProgress();
+    prepareBackgroundGuideSlide();
+}
+
+const EDIT_L_MASTER: TourStage = { kind: 'edit-l', layer: 'master' };
+
 export const TOUR_SLIDES: Record<string, TourSlide> = {
     'text-mode': {
         id: 'text-mode',
+        stage: { kind: 'text', ss04: false, master: TOUR_REGULAR_MASTER_NAME },
         tooltip: {
             title: 'Text Mode',
             body: 'In **Text Mode** you type the letters and words you want to design.',
@@ -834,6 +881,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'ss04-features': {
         id: 'ss04-features',
+        stage: { kind: 'text', ss04: false, master: TOUR_REGULAR_MASTER_NAME },
         tooltip: {
             title: 'Active OpenType features',
             body: tourBody(
@@ -867,6 +915,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'masters-list': {
         id: 'masters-list',
+        stage: { kind: 'text', ss04: true, master: TOUR_REGULAR_MASTER_NAME },
         tooltip: {
             title: 'Masters List',
             body: tourBody(
@@ -882,6 +931,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'axis-sliders': {
         id: 'axis-sliders',
+        stage: { kind: 'text', ss04: true, master: TOUR_EXTRABOLD_MASTER_NAME },
         tooltip: {
             title: 'Axis Sliders',
             body: tourBody(
@@ -915,6 +965,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'enter-edit-mode': {
         id: 'enter-edit-mode',
+        stage: { kind: 'text', ss04: true, wght: TOUR_INTERPOLATED_WGHT },
         tooltip: {
             title: 'Enter Edit Mode',
             body: tourBody(
@@ -925,12 +976,14 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
             placement: 'top'
         },
         advanceOnGlyphDoubleClick: TOUR_LETTER_L,
+        expectEditGlyph: 'l.ss04',
         advanceDelayMs: 1000,
         prepare: prepareEnterEditModeSlide,
         cutouts: [enterEditLetterCutout()]
     },
     'cant-edit-interpolations': {
         id: 'cant-edit-interpolations',
+        stage: { kind: 'edit-l', layer: 'interpolated' },
         tooltip: {
             title: 'Can’t Edit Interpolations',
             body: tourBody(
@@ -953,6 +1006,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'select-tool': {
         id: 'select-tool',
+        stage: EDIT_L_MASTER,
         tooltip: {
             title: 'Select Tool',
             body: tourBody(
@@ -973,6 +1027,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'select-contour': {
         id: 'select-contour',
+        stage: EDIT_L_MASTER,
         tooltip: {
             title: 'Select Contour',
             body: tourBody(
@@ -995,6 +1050,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'delete-objects': {
         id: 'delete-objects',
+        stage: { kind: 'edit-l', layer: 'master', selectContour: true },
         tooltip: {
             title: 'Delete Objects',
             body: tourBody(
@@ -1015,6 +1071,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'draw-tool': {
         id: 'draw-tool',
+        stage: EDIT_L_MASTER,
         tooltip: {
             title: 'Draw Tool',
             body: tourBody(
@@ -1037,6 +1094,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'convert-tool': {
         id: 'convert-tool',
+        stage: EDIT_L_MASTER,
         tooltip: {
             title: 'Convert Tool',
             body: tourBody(
@@ -1059,6 +1117,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'smooth-curve-toggle': {
         id: 'smooth-curve-toggle',
+        stage: EDIT_L_MASTER,
         tooltip: {
             title: 'Smooth Curve Toggle',
             body: tourBody(
@@ -1081,6 +1140,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'place-handles': {
         id: 'place-handles',
+        stage: EDIT_L_MASTER,
         tooltip: {
             title: 'Curve Handles',
             body: tourBody(
@@ -1095,7 +1155,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
         drawingGuides: 'lss04-handles',
         advanceWhen: 'handles-placed',
         advanceDelayMs: 500,
-        prepare: prepareBackgroundGuideSlide,
+        prepare: prepareHandlesSlide,
         cutouts: [
             drawAreaCutout(),
             toolCutout('select-tool', TOUR_SELECT_TOOL_SELECTOR)
@@ -1103,6 +1163,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'component-glyphs': {
         id: 'component-glyphs',
+        stage: EDIT_L_MASTER,
         tooltip: {
             title: 'Component Glyphs',
             body: tourAction('Double-click a component glyph to edit it.'),
@@ -1110,12 +1171,14 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
             placement: 'top'
         },
         advanceOnGlyphDoubleClick: TOUR_EDIERESIS_LETTER,
+        expectEditGlyph: 'edieresis',
         advanceDelayMs: 1000,
         prepare: prepareEdieresisSlide,
         cutouts: [letterCutout('edieresis', TOUR_EDIERESIS_LETTER)]
     },
     'component-e': {
         id: 'component-e',
+        stage: { kind: 'edieresis', components: [] },
         tooltip: {
             title: 'Component Glyphs',
             body: tourBody(
@@ -1132,6 +1195,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'exit-components': {
         id: 'exit-components',
+        stage: { kind: 'edieresis', components: [TOUR_COMPONENT_E] },
         tooltip: {
             title: 'Exit Components',
             body: tourAction(
@@ -1150,6 +1214,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'enter-another-component': {
         id: 'enter-another-component',
+        stage: { kind: 'edieresis', components: [] },
         tooltip: {
             title: 'Enter Another Component',
             body: tourAction(
@@ -1165,6 +1230,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'nested-components': {
         id: 'nested-components',
+        stage: { kind: 'edieresis', components: [TOUR_COMPONENT_DIERESIS] },
         tooltip: {
             title: 'Nested Components',
             body: tourBody(
@@ -1181,6 +1247,10 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'exit-nested-components': {
         id: 'exit-nested-components',
+        stage: {
+            kind: 'edieresis',
+            components: [TOUR_COMPONENT_DIERESIS, TOUR_COMPONENT_DOTACCENT]
+        },
         tooltip: {
             title: 'Exit Nested Components',
             body: tourBody(
@@ -1198,6 +1268,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'exit-edit-mode': {
         id: 'exit-edit-mode',
+        stage: { kind: 'edieresis', components: [] },
         tooltip: {
             title: 'Exit Edit Mode',
             body: tourAction(
@@ -1214,6 +1285,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'glyph-overview-panel': {
         id: 'glyph-overview-panel',
+        stage: { kind: 'panels' },
         tooltip: {
             title: 'Glyph Overview Panel',
             body: tourBody(
@@ -1231,6 +1303,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'enlarge-panel-keyboard': {
         id: 'enlarge-panel-keyboard',
+        stage: { kind: 'panels', focus: 'view-overview' },
         tooltip: {
             title: 'Enlarge Panel by Keyboard',
             body: tourBody(
@@ -1253,6 +1326,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'glyph-filters': {
         id: 'glyph-filters',
+        stage: { kind: 'panels', focus: 'view-overview', enlarge: true },
         tooltip: {
             title: 'Glyph Filters',
             body: 'The sidebar contains filters that show certain subsets of the font. The filters in the upper section ship with the app by default.',
@@ -1272,6 +1346,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'user-filters': {
         id: 'user-filters',
+        stage: { kind: 'panels', focus: 'view-overview', enlarge: true },
         tooltip: {
             title: 'User Filters',
             body: 'The lower section is for your own custom-made filters. These are powered by Python scripts. Check the **Documentation** (see Help menu) for how to create them.',
@@ -1291,6 +1366,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'font-info-panel': {
         id: 'font-info-panel',
+        stage: { kind: 'panels' },
         tooltip: {
             title: 'Font Info Panel',
             body: tourBody(
@@ -1308,6 +1384,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'font-info-sections': {
         id: 'font-info-sections',
+        stage: { kind: 'panels', focus: 'view-fontinfo' },
         tooltip: {
             title: 'Font Info Sections',
             body: 'Use the dropdown menu in the title bar to switch between the different sections.',
@@ -1325,6 +1402,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'close-panels-keyboard': {
         id: 'close-panels-keyboard',
+        stage: { kind: 'panels', focus: 'view-fontinfo' },
         tooltip: {
             title: 'Close Panels by Keyboard',
             body: tourBody(
@@ -1348,6 +1426,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'auxiliary-panels': {
         id: 'auxiliary-panels',
+        stage: { kind: 'panels' },
         tooltip: {
             title: 'Auxiliary Panels',
             body: tourBody(
@@ -1365,6 +1444,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'assistant': {
         id: 'assistant',
+        stage: { kind: 'panels', focus: 'view-assistant' },
         tooltip: {
             title: 'Assistant',
             body: 'The Assistant is an AI chat assistant you can use to find and fix technical issues in the font, create glyph filters and other reusable Python scripts, or ask question about how to use the editor. The usage **requires a user account** and you get some **free credits** each month to get started.',
@@ -1376,6 +1456,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'allow-font-edits': {
         id: 'allow-font-edits',
+        stage: { kind: 'panels', focus: 'view-assistant' },
         tooltip: {
             title: 'Allow Font Edits',
             body: 'You may prohibit or allow the assistant to make changes to your font or Python scripts. Toggle the permission with this button.',
@@ -1387,6 +1468,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'script-editor': {
         id: 'script-editor',
+        stage: { kind: 'panels' },
         tooltip: {
             title: 'Script Editor',
             body: 'The **Script Editor** is used to manually edit reusable Python scripts or glyph filters (which are also Python scripts).',
@@ -1399,6 +1481,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'konsole': {
         id: 'konsole',
+        stage: { kind: 'panels' },
         tooltip: {
             title: 'Konsole',
             body: 'The **Konsole** panel is a Python terminal used for quick font introspection or command execution. It’s also used for outputting `print()` commands from Python scripts.',
@@ -1411,6 +1494,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'history': {
         id: 'history',
+        stage: { kind: 'panels' },
         tooltip: {
             title: 'History',
             body: 'The **History** panel contains a timeline of all edits. You can undo them with `Cmd/Ctrl+Z`. Each edit has a context, called **undo surface**, and you can undo edits only from within the same undo surface. Example: Edits to a layer can only be undone when you’re back in the same layer.',
@@ -1423,6 +1507,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'find-help': {
         id: 'find-help',
+        stage: { kind: 'panels' },
         tooltip: {
             title: 'Find Help',
             body: 'The Help menu contains a link to the complete Documentation (and you can repeat the tour here), and various panels contain buttons that take you directly to the relevant documentation sections.\n\nHave fun making fonts.',

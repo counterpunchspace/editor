@@ -13,6 +13,9 @@ const GUIDE_RING_COUNT = 4;
 const GUIDE_RING_OPACITY = [1, 0.55, 0.3, 0.14];
 /** Drop a handle within this many CSS pixels of the frozen mark. */
 const HANDLE_DROP_CLIENT_PX = 28;
+/** A canvas press counts for a gated mark within this many CSS pixels. */
+const GUIDE_GATE_CLIENT_PX = 24;
+const GUIDE_NUDGE_MS = 600;
 const ON_CURVE_MATCH_UNITS = 24;
 
 export type TourDrawingGuides =
@@ -89,6 +92,15 @@ export function resetTourDrawingSession(): void {
         completedHandleKeys: new Set(),
         handleQueue: null
     };
+}
+
+/** Forget which curve handles were placed, so the handle step starts over. */
+export function resetTourHandleProgress(): void {
+    session.handleRest = null;
+    session.handleTarget = null;
+    session.handleDragStarted = false;
+    session.completedHandleKeys = new Set();
+    session.handleQueue = null;
 }
 
 export function captureTourDrawArea(): void {
@@ -959,6 +971,79 @@ function getGuidePoints(kind: TourDrawingGuides): FontPoint[] {
         });
     }
     return handleGuidePoints();
+}
+
+/**
+ * `snap`: a canvas press only counts on a mark and lands exactly on it, so
+ * stray clicks cannot add nodes or curves the later steps don’t expect.
+ * `grab`: a press must start on the handle that is to be dragged next.
+ */
+export type TourGuideGate = 'snap' | 'grab';
+
+export function getTourGuideGate(
+    kind: TourDrawingGuides | undefined
+): TourGuideGate | null {
+    if (
+        kind === 'lss04-oncurves' ||
+        kind === 'lss04-segments' ||
+        kind === 'lss04-smooth'
+    ) {
+        return 'snap';
+    }
+    if (kind === 'lss04-handles') {
+        return 'grab';
+    }
+    return null;
+}
+
+/** Client point of the mark (or grabbable handle) nearest to a press. */
+export function findTourGuideGateTarget(
+    kind: TourDrawingGuides,
+    client: FontPoint
+): FontPoint | null {
+    let points: FontPoint[];
+    if (getTourGuideGate(kind) === 'grab') {
+        completeActiveHandleIfDropped();
+        const current = activeHandleMove()?.current;
+        points = current ? [current] : [];
+    } else {
+        points = getGuidePoints(kind);
+    }
+    let best: FontPoint | null = null;
+    let bestDistance = GUIDE_GATE_CLIENT_PX;
+    for (const point of points) {
+        const pointClient = fontPointToClient(point);
+        if (!pointClient) {
+            continue;
+        }
+        const distance = Math.hypot(
+            pointClient.x - client.x,
+            pointClient.y - client.y
+        );
+        if (distance <= bestDistance) {
+            best = pointClient;
+            bestDistance = distance;
+        }
+    }
+    return best;
+}
+
+let guideNudgeTimer = 0;
+
+/** Pulse the marks after a press that missed them. */
+export function nudgeTourDrawingGuides(): void {
+    const svg = guidesRoot;
+    if (!svg) {
+        return;
+    }
+    svg.classList.remove('is-nudging');
+    // Restart the animation when presses come in quick succession.
+    void svg.getBoundingClientRect();
+    svg.classList.add('is-nudging');
+    window.clearTimeout(guideNudgeTimer);
+    guideNudgeTimer = window.setTimeout(() => {
+        svg.classList.remove('is-nudging');
+    }, GUIDE_NUDGE_MS);
 }
 
 function ensureGuidesRoot(parent: HTMLElement): SVGSVGElement {
