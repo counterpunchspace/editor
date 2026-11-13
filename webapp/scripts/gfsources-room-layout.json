@@ -1,0 +1,10 @@
+{
+    "note": "Room budgets for the proposed cloud layout. The compactor benchmark in the collab repo (scripts/real-room-bench.mjs) sets these numbers.",
+    "bucketRoomBytes": 2097152,
+    "bucketRoomStructs": 60000,
+    "glyphRoomBytes": 5242880,
+    "glyphRoomStructs": 280000,
+    "catalogBucketGlyphs": 4000,
+    "kerningBucketPairs": 40000,
+    "dumpMinBytes": 262144
+}
