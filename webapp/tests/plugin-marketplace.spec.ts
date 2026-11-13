@@ -758,32 +758,72 @@ test('register, buy, and install the free and commercial plugins', async ({
                 timeout: 60000
             });
             // The plugin payment method configuration offers more than cards.
-            // Stripe’s checkout markup changes over time: pick the card
-            // option by its old test id, its radio value or its label.
-            await accountPage
-                .locator(
-                    '[data-testid="card-accordion-item"], input[type="radio"][value="card"]'
-                )
-                .or(accountPage.getByRole('radio', { name: /^Card\b/ }))
-                .or(accountPage.getByRole('button', { name: /^Card\b/ }))
-                .or(accountPage.getByText('Card', { exact: true }))
-                .filter({ visible: true })
-                .first()
-                .click({ timeout: 60000 });
-            await expect(accountPage.locator('#cardNumber')).toBeVisible({
+            // Stripe’s checkout now draws its form in an embedded payment
+            // element (an iframe); older sessions still show it on the page.
+            const legacyCard = accountPage.locator(
+                '[data-testid="card-accordion-item"]'
+            );
+            const embeddedFrame = accountPage.locator(
+                'iframe[src*="elements-inner-habanero"]'
+            );
+            await expect(legacyCard.or(embeddedFrame).first()).toBeVisible({
                 timeout: 60000
             });
-            await accountPage.locator('#cardNumber').fill('4242424242424242');
-            await accountPage.locator('#cardExpiry').fill('12 / 34');
-            await accountPage.locator('#cardCvc').fill('123');
-            await accountPage.locator('#billingName').fill('Plugin Buyer');
-            await accountPage.locator('#billingCountry').selectOption('DE');
-            await accountPage
-                .locator('#billingAddressLine1')
-                .fill('Alexanderplatz 1');
-            await accountPage.locator('#billingPostalCode').fill('10115');
-            await accountPage.locator('#billingLocality').fill('Berlin');
-            await accountPage.locator('button[type="submit"]').click();
+            if (await legacyCard.count()) {
+                await legacyCard.click();
+                await accountPage
+                    .locator('#cardNumber')
+                    .fill('4242424242424242');
+                await accountPage.locator('#cardExpiry').fill('12 / 34');
+                await accountPage.locator('#cardCvc').fill('123');
+                await accountPage.locator('#billingName').fill('Plugin Buyer');
+                await accountPage.locator('#billingCountry').selectOption('DE');
+                await accountPage
+                    .locator('#billingAddressLine1')
+                    .fill('Alexanderplatz 1');
+                await accountPage.locator('#billingPostalCode').fill('10115');
+                await accountPage.locator('#billingLocality').fill('Berlin');
+                await accountPage.locator('button[type="submit"]').click();
+            } else {
+                const form = accountPage.frameLocator(
+                    'iframe[src*="elements-inner-habanero"]'
+                );
+                await form
+                    .getByRole('button', { name: /^Card\b/ })
+                    .click({ timeout: 60000 });
+                await form
+                    .locator(
+                        'input[autocomplete="cc-number"], input[name="number"]'
+                    )
+                    .first()
+                    .fill('4242424242424242');
+                await form
+                    .locator(
+                        'input[autocomplete="cc-exp"], input[name="expiry"]'
+                    )
+                    .first()
+                    .fill('12 / 34');
+                await form
+                    .locator('input[autocomplete="cc-csc"], input[name="cvc"]')
+                    .first()
+                    .fill('123');
+                await form
+                    .locator('#billingAddress-nameInput')
+                    .fill('Plugin Buyer');
+                await form
+                    .locator('#billingAddress-countryInput')
+                    .selectOption('DE');
+                await form
+                    .locator('#billingAddress-addressLine1Input')
+                    .fill('Alexanderplatz 1');
+                await form
+                    .locator('#billingAddress-postalCodeInput')
+                    .fill('10115');
+                await form
+                    .locator('#billingAddress-localityInput')
+                    .fill('Berlin');
+                await form.getByTestId('payment-form-submit-button').click();
+            }
             await expect(accountPage.locator('#paymentInfo')).toContainText(
                 '4242',
                 {
