@@ -6649,12 +6649,11 @@ describe('GlyphCanvas sidebearing handle movement', () => {
         const fontModel = fontManager.currentFont.fontModel;
 
         expect(fontModel.masters[0].kerning_rtl['@AFirst:@VSecond']).toBe(-120);
-        // The format_specific key is preserved (not deleted) so that Rust
-        // can read it on round-trip. The kerning_rtl field is a JS-only
-        // convenience that stays in sync with format_specific.
+        // The flat map is the only truth: the Glyphs-style copy is gone for
+        // every master the font has.
         expect(
-            fontModel.format_specific['com.schriftgestalt.Glyphs.kerningRTL']
-        ).toBeDefined();
+            fontModel.format_specific?.['com.schriftgestalt.Glyphs.kerningRTL']
+        ).toBeUndefined();
     });
 
     test('detects hovered editable sidebearing handles', () => {
@@ -16758,7 +16757,7 @@ describe('Text-mode kerning property panel', () => {
         }
     });
 
-    test('committing an RTL kerning value records the canonical source and editor RTL data', async () => {
+    test('committing an RTL kerning value records only that pair, flat on the master', async () => {
         jest.useFakeTimers();
         const APP_SETTINGS = require('../js/settings').default;
         const recordChange = jest.fn();
@@ -16801,43 +16800,23 @@ describe('Text-mode kerning property panel', () => {
                 })
             );
             expect(window.patchSyncEngine.endTransaction).toHaveBeenCalled();
-            expect(recordChange).toHaveBeenCalledTimes(2);
-            const formatSpecificChange = recordChange.mock.calls.find(
-                ([path, property]) =>
-                    Array.isArray(path) &&
-                    path.length === 1 &&
-                    path[0] === 'format_specific' &&
-                    property === 'com.schriftgestalt.Glyphs.kerningRTL'
-            );
-            expect(formatSpecificChange).toBeDefined();
-            expect(
-                formatSpecificChange[3]['master-1']['@MMK_R_AFirst'][
-                    '@MMK_L_VSecond'
-                ]
-            ).toBe(-55);
+            // One pair, like LTR: not the whole RTL table, and no
+            // Glyphs-style copy in the font's format-specific data.
+            expect(recordChange).toHaveBeenCalledTimes(1);
             expect(recordChange).toHaveBeenCalledWith(
-                ['masters', 0],
-                'kerning_rtl',
-                {},
-                {
-                    '@AFirst:@VSecond': -55
-                }
+                ['masters', 0, 'kerning_rtl'],
+                '@AFirst:@VSecond',
+                undefined,
+                -55
             );
             expect(fontModel.masters[0].kerning_rtl['@AFirst:@VSecond']).toBe(
                 -55
             );
-            // The format_specific key is kept in sync (not deleted) so that
-            // Rust preserves RTL kerning on round-trip.
             expect(
-                fontModel.format_specific[
+                fontModel.format_specific?.[
                     'com.schriftgestalt.Glyphs.kerningRTL'
                 ]
-            ).toBeDefined();
-            expect(
-                fontModel.format_specific[
-                    'com.schriftgestalt.Glyphs.kerningRTL'
-                ]['master-1']['@MMK_R_AFirst']['@MMK_L_VSecond']
-            ).toBe(-55);
+            ).toBeUndefined();
             expect(canvas.pendingTextModeKerningCursorAnchor).toBe(true);
         } finally {
             jest.useRealTimers();

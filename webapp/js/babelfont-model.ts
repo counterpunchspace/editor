@@ -12715,21 +12715,9 @@ export class Master extends ArrayElementBase {
 
     set kerning_rtl(value: Record<string, number>) {
         assertModelMutationAllowed();
-        withBridgeTransaction(
-            'Set RTL kerning',
-            'keyboard-kerning-value',
-            'kerning-value',
-            () => {
-                assertModelMutationAllowed();
-                const old = this.data.kerning_rtl;
-                this.data.kerning_rtl = value;
-                const font = this.parent() as Font | null;
-                if (font && typeof font.toJSON === 'function') {
-                    syncKerningRtlToFormatSpecific(font, this.data.id, value);
-                }
-                recordAndMarkDirty(this, 'kerning_rtl', old, value);
-            }
-        );
+        const old = this.data.kerning_rtl;
+        this.data.kerning_rtl = flattenKerningMap(value);
+        recordAndMarkDirty(this, 'kerning_rtl', old, this.data.kerning_rtl);
     }
 
     /**
@@ -12981,75 +12969,12 @@ export class Instance extends ArrayElementBase {
 }
 
 /** Key under which Glyphs.app stores RTL kerning in Font.format_specific. */
+/**
+ * Where Glyphs files keep RTL kerning, font-wide. Fonts read by the current
+ * babelfont have it on each master's flat `kerning_rtl` instead; the key is
+ * only left for master ids the font has no master of.
+ */
 const KEY_KERNING_RTL = 'com.schriftgestalt.Glyphs.kerningRTL';
-
-/**
- * Convert a flat `kerning_rtl` map ("firstKey:secondKey" → value) back into
- * the nested Glyphs.app structure expected by `format_specific[KEY_KERNING_RTL]`:
- *
- *   { [masterId]: { [firstRestored]: { [secondRestored]: value } } }
- *
- * Group keys (starting with `@`) are restored to the `@MMK_R_`/`@MMK_L_`
- * prefix convention; plain glyph names are left as-is.
- */
-function flatKerningRtlToNested(
-    flat: Record<string, number>,
-    masterId: string
-): Record<string, Record<string, Record<string, number>>> {
-    const nested: Record<string, Record<string, Record<string, number>>> = {};
-
-    for (const [flatKey, value] of Object.entries(flat)) {
-        const colonIdx = flatKey.indexOf(':');
-        if (colonIdx === -1) continue;
-        const firstRaw = flatKey.slice(0, colonIdx);
-        const secondRaw = flatKey.slice(colonIdx + 1);
-
-        // Restore @MMK_R_ / @MMK_L_ prefixes for group keys
-        const firstRestored = firstRaw.startsWith('@')
-            ? '@MMK_R_' + firstRaw.slice(1)
-            : firstRaw;
-        const secondRestored = secondRaw.startsWith('@')
-            ? '@MMK_L_' + secondRaw.slice(1)
-            : secondRaw;
-
-        if (!nested[masterId]) nested[masterId] = {};
-        if (!nested[masterId][firstRestored])
-            nested[masterId][firstRestored] = {};
-        nested[masterId][firstRestored][secondRestored] = value;
-    }
-
-    return nested;
-}
-
-/**
- * Sync a master's flat `kerning_rtl` back into the parent font's
- * `format_specific[KEY_KERNING_RTL]` so that Rust sees the data on
- * round-trip. Called from the Master.kerning_rtl setter.
- */
-function syncKerningRtlToFormatSpecific(
-    font: Font,
-    masterId: string,
-    flatRtl: Record<string, number>
-): void {
-    const previousRoot =
-        (getModelFormatSpecific(font)?.[KEY_KERNING_RTL] as
-            Record<string, Unsafe> | undefined) || {};
-    const nextRoot: Record<string, Unsafe> = { ...previousRoot };
-
-    if (Object.keys(flatRtl).length === 0) {
-        delete nextRoot[masterId];
-        setFormatSpecificKey(
-            font,
-            KEY_KERNING_RTL,
-            Object.keys(nextRoot).length === 0 ? undefined : nextRoot
-        );
-        return;
-    }
-
-    const nested = flatKerningRtlToNested(flatRtl, masterId);
-    nextRoot[masterId] = (nested[masterId] || {}) as Unsafe;
-    setFormatSpecificKey(font, KEY_KERNING_RTL, nextRoot);
-}
 
 function remapFlatKerningPairKeys(
     kerning: Record<string, number>,
@@ -13072,10 +12997,6 @@ export function normalizeLegacyGlyphsRtlKerning(
     data: Babelfont.Font
 ): Babelfont.Font {
     const masters = Array.isArray(data.masters) ? data.masters : [];
-    const formatSpecific = data.format_specific as
-        Record<string, unknown> | undefined;
-    const rawRtl = formatSpecific?.['com.schriftgestalt.Glyphs.kerningRTL'] as
-        Record<string, Record<string, Record<string, number>>> | undefined;
 
     // Pair-key maps (`"left:right"`). Nested `{left: {right: n}}` is flattened.
     for (const master of masters) {
@@ -13083,28 +13004,29 @@ export function normalizeLegacyGlyphsRtlKerning(
         master.kerning_rtl = flattenKerningMap(master.kerning_rtl);
     }
 
-    if (!rawRtl) {
+    // Fonts saved before masters had `kerning_rtl` (and the editor's own
+    // older saves, which kept both) still carry the Glyphs-style copy. Move
+    // what a master lacks onto it, and drop the copy for every master the
+    // font has: the flat map is the only truth from now on. Kerning for a
+    // master id the font does not have stays, so nothing is lost.
+    const formatSpecific = data.format_specific as
+        Record<string, unknown> | undefined;
+    const rawRtl = formatSpecific?.[KEY_KERNING_RTL] as
+        Record<string, Record<string, Record<string, number>>> | undefined;
+    if (!formatSpecific || !rawRtl || typeof rawRtl !== 'object') {
         return data;
     }
-
-    // Unpack the nested Glyphs.app RTL kerning structure into a flat
-    // "firstKey:secondKey" → value map on each master.
-    //
-    // IMPORTANT: We do NOT delete the format_specific key. It is the
-    // canonical source that Rust reads/writes. The kerning_rtl field is
-    // a JS-only convenience; the setter on Master keeps format_specific
-    // in sync on every edit so that round-trips through Rust preserve
-    // the data.
+    const leftover: Record<string, Record<string, Record<string, number>>> = {
+        ...rawRtl
+    };
     for (const master of masters) {
-        const masterRawRtl = rawRtl[master.id || ''];
+        const masterId = master.id || '';
+        const masterRawRtl = rawRtl[masterId];
         if (!masterRawRtl) {
             continue;
         }
-
-        const nextKerningRtl = {
-            ...(master.kerning_rtl || {})
-        };
-
+        delete leftover[masterId];
+        const kerningRtl = (master.kerning_rtl ||= {});
         for (const [kern1, subtable] of Object.entries(masterRawRtl)) {
             const firstKey = kern1.startsWith('@MMK_R_')
                 ? '@' + kern1.slice(7)
@@ -13113,16 +13035,22 @@ export function normalizeLegacyGlyphsRtlKerning(
                 const secondKey = kern2.startsWith('@MMK_L_')
                     ? '@' + kern2.slice(7)
                     : kern2;
-                if (typeof value !== 'number') {
-                    continue;
+                const pair = `${firstKey}:${secondKey}`;
+                if (typeof value === 'number' && !(pair in kerningRtl)) {
+                    kerningRtl[pair] = value;
                 }
-                nextKerningRtl[`${firstKey}:${secondKey}`] = value;
             }
         }
-
-        master.kerning_rtl = nextKerningRtl;
     }
-
+    if (Object.keys(leftover).length) {
+        formatSpecific[KEY_KERNING_RTL] = leftover;
+    } else {
+        delete formatSpecific[KEY_KERNING_RTL];
+        if (Object.keys(formatSpecific).length === 0) {
+            // An empty map is not stored either; keep the two alike.
+            delete (data as { format_specific?: unknown }).format_specific;
+        }
+    }
     return data;
 }
 

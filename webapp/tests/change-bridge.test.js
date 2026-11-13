@@ -5036,7 +5036,10 @@ describe('Model setter change recording', () => {
             const candidateValue =
                 spec.className === 'Node' && spec.property === 'nodetype'
                     ? 'Curve'
-                    : mutateValue(target[spec.property]);
+                    : isMasterRtlKerning
+                      ? // Kerning maps keep only "left:right" pairs.
+                        { ...target.kerning_rtl, 'beh-ar:alef-ar': -20 }
+                      : mutateValue(target[spec.property]);
             const expectedProperty = isComponentAnchorAlias
                 ? 'com.schriftgestalt.Glyphs.componentAnchor'
                 : isComponentAutomaticAlignment
@@ -5070,33 +5073,12 @@ describe('Model setter change recording', () => {
                 const reconstructed = normalizeYDocValue(shapeYMap);
                 expect(reconstructed.nodes).toEqual(expectedValue);
             } else if (isMasterRtlKerning) {
-                expect(log.length).toBeGreaterThanOrEqual(2);
-                expect(
-                    log.some((entry) => entry.property === 'kerning_rtl')
-                ).toBe(true);
-                expect(
-                    log.some((entry) =>
-                        String(entry.path).includes(
-                            'com\\.schriftgestalt\\.Glyphs\\.kerningRTL'
-                        )
-                    )
-                ).toBe(true);
-                expect(
-                    new Set(log.map((entry) => entry.transactionId)).size
-                ).toBe(1);
-
-                const rtlEntry = log.find(
-                    (entry) => entry.property === 'kerning_rtl'
-                );
-                expect(rtlEntry.oldValue).toEqual(oldValue);
-                expect(rtlEntry.newValue).toEqual(expectedValue);
-                expect(
-                    log.some(
-                        (entry) =>
-                            entry.property === 'format_specific' &&
-                            entry.path === 'format_specific'
-                    )
-                ).toBe(false);
+                // RTL kerning is flat per master, like LTR: one entry, and
+                // no Glyphs-style copy in the font's format-specific data.
+                expect(log).toHaveLength(1);
+                expect(log[0].property).toBe('kerning_rtl');
+                expect(log[0].oldValue).toEqual(oldValue);
+                expect(log[0].newValue).toEqual(expectedValue);
                 expect(
                     normalizeYValue(bridge.getYValue(expectedYPath))
                 ).toEqual(expectedValue);
@@ -5108,10 +5090,9 @@ describe('Model setter change recording', () => {
                 expect(
                     bridge.getYValue([
                         'format_specific',
-                        'com.schriftgestalt.Glyphs.kerningRTL',
-                        font.masters[0].id
+                        'com.schriftgestalt.Glyphs.kerningRTL'
                     ])
-                ).toBeDefined();
+                ).toBeUndefined();
             } else if (isPathIsSubtraction) {
                 expect(log).toHaveLength(2);
                 expect(log[0].transactionId).toBe(log[1].transactionId);

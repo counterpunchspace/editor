@@ -68,14 +68,12 @@ declare module './babelfont' {
          */
         export interface Master {
             /**
-             * RTL kerning for this master, stored as a flat map of
-             * "firstKey:secondKey" → value.
-             *
-             * This is a JS-only convenience field. The canonical data lives in
-             * `Font.format_specific["com.schriftgestalt.Glyphs.kerningRTL"]`
-             * (nested per-master structure with @MMK_R_/@MMK_L_ prefixes).
-             * The getter/setter keep the two in sync so that edits survive
-             * round-trips through Rust, which only reads `format_specific`.
+             * RTL kerning for this master, a flat map of
+             * "firstKey:secondKey" → value, as `kerning` is. Groups are
+             * `@<group>`. Glyphs files keep it font-wide in
+             * `format_specific["com.schriftgestalt.Glyphs.kerningRTL"]`;
+             * babelfont moves it here when it reads one and back when it
+             * writes one.
              */
             kerning_rtl?: Record<string, number>;
         }
