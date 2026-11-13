@@ -73,7 +73,11 @@ import {
 } from './perf-timeline';
 
 const NO_OP_YJS_UPDATE = new Uint8Array([0, 0]);
-import { beginLoadingCursor, endLoadingCursor } from './loading-cursor';
+import {
+    beginLoadingCursor,
+    endLoadingCursor,
+    withLoadingCursor
+} from './loading-cursor';
 import {
     ensureStartupStateReady,
     isStartupStateReady,
@@ -845,7 +849,12 @@ class OpenedFont {
     /**
      * Save font using the source plugin's adapter
      */
-    async save(): Promise<void> {
+    /** Every save, from any backend, shows the busy cursor while it runs. */
+    save(): Promise<void> {
+        return withLoadingCursor(() => this.saveToSource());
+    }
+
+    private async saveToSource(): Promise<void> {
         const folderFormat = folderSourceFormatForPath(this.path);
         if (folderFormat) {
             await this.saveFolderSource(folderFormat);

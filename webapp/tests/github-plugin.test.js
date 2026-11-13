@@ -22,6 +22,11 @@ const REPOSITORY = {
     pullRequest: null
 };
 const CHANGE = { ...REPOSITORY, workingBranch: 'counterpunch-1' };
+const REPOSITORY_RECORD = {
+    full_name: 'o/r',
+    default_branch: 'main',
+    permissions: { push: true }
+};
 
 const TREE = {
     truncated: false,
@@ -294,6 +299,7 @@ describe('GitHub adapter', () => {
 
     test('creates the first free working branch from the base branch', async () => {
         const calls = routeGitHub({
+            [`GET ${API}`]: () => json(REPOSITORY_RECORD),
             [`GET ${API}/git/ref/heads/main`]: () =>
                 json({ object: { sha: 'head-1' } }),
             [`POST ${API}/git/refs`]: () => json({})
@@ -319,6 +325,9 @@ describe('GitHub adapter', () => {
                 url,
                 body: init.body ? JSON.parse(init.body) : null
             });
+            if (method === 'GET' && url === API) {
+                return json(REPOSITORY_RECORD);
+            }
             if (method === 'GET') return json({ object: { sha: 'head-1' } });
             attempt += 1;
             if (attempt === 1) {
@@ -338,6 +347,75 @@ describe('GitHub adapter', () => {
             'refs/heads/counterpunch-1',
             'refs/heads/counterpunch-2'
         ]);
+    });
+
+    test('refuses a repository the account can only read', async () => {
+        const calls = routeGitHub({
+            [`GET ${API}`]: () =>
+                json({ ...REPOSITORY_RECORD, permissions: { push: false } })
+        });
+        const github = adapter();
+
+        await expect(github.requireWriteAccess(REPOSITORY)).rejects.toThrow(
+            'tester can’t write to o/r'
+        );
+        expect(calls.filter((call) => call.method !== 'GET')).toEqual([]);
+    });
+
+    test('a private repository GitHub hides counts as no access', async () => {
+        routeGitHub({
+            [`GET ${API}`]: () => json({ message: 'Not Found' }, 404)
+        });
+        await expect(adapter().requireWriteAccess(REPOSITORY)).rejects.toThrow(
+            'tester can’t write to o/r'
+        );
+    });
+
+    test('lists only repositories the account can push to, over every page', async () => {
+        const page = (items, next) => ({
+            ok: true,
+            status: 200,
+            headers: {
+                get: (name) =>
+                    name.toLowerCase() === 'link' && next
+                        ? `<https://api.github.com${next}>; rel="next"`
+                        : null
+            },
+            json: async () => items
+        });
+        const record = (name, push) => ({
+            name,
+            owner: { login: 'o' },
+            default_branch: 'main',
+            private: false,
+            description: null,
+            permissions: { push }
+        });
+        const first =
+            '/user/repos?affiliation=owner,collaborator,organization_member&sort=pushed&per_page=100';
+        routeGitHub({
+            [`GET https://api.github.com${first}`]: () =>
+                page(
+                    [record('mine', true), record('read-only', false)],
+                    '/user/repos?page=2'
+                ),
+            ['GET https://api.github.com/user/repos?page=2']: () =>
+                page([record('theirs', true)], null)
+        });
+        const { GitHubClient } = require('../js/github/github-client');
+        const found = await new GitHubClient({
+            token: 't',
+            owner: '',
+            repo: ''
+        }).listWritableRepositories();
+        expect(found.map((entry) => entry.repo)).toEqual(['mine', 'theirs']);
+        expect(found[0]).toEqual({
+            owner: 'o',
+            repo: 'mine',
+            defaultBranch: 'main',
+            private: false,
+            description: ''
+        });
     });
 
     test('reuses an open pull request for the working branch', async () => {

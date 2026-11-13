@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>GitHub sign-in · Counterpunch</title>
+        <script>
+            // Apply the saved theme before the first paint (see theme-switcher.ts).
+            (function () {
+                var preference = 'auto';
+                try {
+                    preference =
+                        localStorage.getItem('preferredTheme') || 'auto';
+                } catch (error) {}
+                var light =
+                    preference === 'light' ||
+                    (preference === 'auto' &&
+                        window.matchMedia('(prefers-color-scheme: light)')
+                            .matches);
+                if (light) {
+                    document.documentElement.setAttribute(
+                        'data-theme',
+                        'light'
+                    );
+                }
+            })();
+        </script>
+        <link rel="stylesheet" href="css/launcher.css" />
+    </head>
+    <body class="github-login-page">
+        <p id="github-login-message">Finishing the GitHub sign-in…</p>
+    </body>
+</html>

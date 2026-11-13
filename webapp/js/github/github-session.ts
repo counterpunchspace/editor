@@ -1,22 +1,43 @@
 // The GitHub login and the repositories the GitHub plugin works with.
 //
-// One token serves the whole editor, like `gh auth login`. Each repository
-// added to the editor keeps its base branch and its open change: the working
-// branch every save commits to, and that branch's pull request. Everything is
-// in IndexedDB, so every window and every font from a repository share one
+// One token serves the whole editor, like `gh auth login`. Each account has
+// its own list of added repositories, kept when it signs out, and each
+// repository keeps its base branch and its open change: the working branch
+// every save commits to, and that branch's pull request. Everything is in
+// IndexedDB, so every window and every font from a repository share one
 // change. Nothing here talks to the network.
 
 import { del, get, set, update } from 'idb-keyval';
 
 const CREDENTIAL_KEY = 'github-plugin-credential';
-const REPOSITORIES_KEY = 'github-plugin-repositories';
+/** `{ [login]: GitHubRepository[] }`: each account keeps its own list. */
+const REPOSITORIES_KEY = 'github-plugin-account-repositories';
 
 export type GitHubCredential = {
-    /** Fine-grained personal access token with Contents and Pull requests write. */
+    /**
+     * An OAuth token from signing in through the website (scope `repo`), or
+     * a pasted fine-grained token with Contents and Pull requests write.
+     */
     token: string;
     /** The account the token belongs to. */
     login: string;
+    /** The account's picture, or '' when GitHub sent none. */
+    avatarUrl: string;
 };
+
+const SIGN_IN_CHANNEL = 'counterpunch-github-sign-in';
+
+/** Tell the other pages of this editor that the GitHub login changed. */
+export function announceGitHubSignIn(): void {
+    const channel = new BroadcastChannel(SIGN_IN_CHANNEL);
+    channel.postMessage('changed');
+    channel.close();
+}
+
+/** Run `listener` when another page signs in to GitHub or out. */
+export function onGitHubSignIn(listener: () => void): void {
+    new BroadcastChannel(SIGN_IN_CHANNEL).onmessage = () => listener();
+}
 
 export type GitHubRepositorySpec = { owner: string; repo: string };
 
@@ -46,7 +67,8 @@ function parseCredential(value: unknown): GitHubCredential | null {
     if (!isRecord(value)) return null;
     const token = readField(value, 'token');
     const login = readField(value, 'login');
-    return token && login ? { token, login } : null;
+    const avatarUrl = readField(value, 'avatarUrl') ?? '';
+    return token && login ? { token, login, avatarUrl } : null;
 }
 
 function parsePullRequest(value: unknown): GitHubPullRequestRef | null {
@@ -110,14 +132,28 @@ export async function saveGitHubCredential(
     await set(CREDENTIAL_KEY, credential);
 }
 
-/** Sign out. The repositories and their open changes stay. */
+/**
+ * Sign out. The account's repository list stays, and comes back when the
+ * same account signs in again.
+ */
 export async function clearGitHubCredential(): Promise<void> {
     await del(CREDENTIAL_KEY);
 }
 
-export async function loadGitHubRepositories(): Promise<GitHubRepository[]> {
+/** GitHub account names are case-insensitive. */
+const accountKey = (login: string) => login.toLowerCase();
+
+function readAccounts(value: unknown): Record<string, unknown> {
+    return isRecord(value) ? value : {};
+}
+
+/** The repositories an account added, in the order it added them. */
+export async function loadGitHubRepositories(
+    login: string
+): Promise<GitHubRepository[]> {
     try {
-        return parseRepositories(await get<unknown>(REPOSITORIES_KEY));
+        const accounts = readAccounts(await get<unknown>(REPOSITORIES_KEY));
+        return parseRepositories(accounts[accountKey(login)]);
     } catch {
         return [];
     }
@@ -130,32 +166,41 @@ export async function loadGitHubRepositories(): Promise<GitHubRepository[]> {
  * remove it. Resolves with what was stored.
  */
 async function changeRepository(
+    login: string,
     spec: GitHubRepositorySpec,
     change: (current: GitHubRepository | null) => GitHubRepository | null
 ): Promise<GitHubRepository | null> {
     let result: GitHubRepository | null = null;
     await update<unknown>(REPOSITORIES_KEY, (stored) => {
-        const repositories = parseRepositories(stored);
+        const accounts = readAccounts(stored);
+        const key = accountKey(login);
+        const repositories = parseRepositories(accounts[key]);
         const index = repositories.findIndex((entry) =>
             sameRepository(entry, spec)
         );
         result = change(index === -1 ? null : repositories[index]);
-        if (index === -1) {
-            return result ? [...repositories, result] : repositories;
-        }
-        return result
-            ? repositories.map((entry, at) => (at === index ? result : entry))
-            : repositories.filter((_, at) => at !== index);
+        const next =
+            index === -1
+                ? result
+                    ? [...repositories, result]
+                    : repositories
+                : result
+                  ? repositories.map((entry, at) =>
+                        at === index ? result : entry
+                    )
+                  : repositories.filter((_, at) => at !== index);
+        return { ...accounts, [key]: next };
     });
     return result;
 }
 
 /** Add a repository, or change its base branch. An open change stays. */
 export async function addGitHubRepository(
+    login: string,
     spec: GitHubRepositorySpec,
     baseBranch: string
 ): Promise<GitHubRepository | null> {
-    return changeRepository(spec, (current) =>
+    return changeRepository(login, spec, (current) =>
         current && current.baseBranch === baseBranch
             ? current
             : {
@@ -169,9 +214,10 @@ export async function addGitHubRepository(
 }
 
 export async function removeGitHubRepository(
+    login: string,
     spec: GitHubRepositorySpec
 ): Promise<void> {
-    await changeRepository(spec, () => null);
+    await changeRepository(login, spec, () => null);
 }
 
 /**
@@ -179,10 +225,11 @@ export async function removeGitHubRepository(
  * started a change first: then that change wins and is returned.
  */
 export async function claimGitHubWorkingBranch(
+    login: string,
     spec: GitHubRepositorySpec,
     branch: string
 ): Promise<GitHubRepository | null> {
-    return changeRepository(spec, (current) =>
+    return changeRepository(login, spec, (current) =>
         !current || current.workingBranch
             ? current
             : { ...current, workingBranch: branch, pullRequest: null }
@@ -191,11 +238,12 @@ export async function claimGitHubWorkingBranch(
 
 /** Remember the pull request of the repository's working branch. */
 export async function saveGitHubPullRequest(
+    login: string,
     spec: GitHubRepositorySpec,
     branch: string,
     pullRequest: GitHubPullRequestRef
 ): Promise<GitHubRepository | null> {
-    return changeRepository(spec, (current) =>
+    return changeRepository(login, spec, (current) =>
         current?.workingBranch === branch
             ? { ...current, pullRequest }
             : current
@@ -204,9 +252,10 @@ export async function saveGitHubPullRequest(
 
 /** Close the open change; the next save starts a new one. */
 export async function endGitHubChange(
+    login: string,
     spec: GitHubRepositorySpec
 ): Promise<GitHubRepository | null> {
-    return changeRepository(spec, (current) =>
+    return changeRepository(login, spec, (current) =>
         current ? { ...current, workingBranch: null, pullRequest: null } : null
     );
 }
@@ -233,6 +282,17 @@ export function parseRepositorySpec(
         return null;
     }
     return { owner, repo };
+}
+
+/**
+ * Why Counterpunch can't use a repository the account can only read: every
+ * save goes to a branch of the repository itself, with a pull request.
+ */
+export function writeAccessRefusal(
+    login: string,
+    spec: GitHubRepositorySpec
+): string {
+    return `${login} can’t write to ${repositoryLabel(spec)}. Counterpunch saves your edits on a branch of the repository and opens a pull request from it, so it needs write access. Ask the repository’s owner to add you as a collaborator.`;
 }
 
 /** `owner/repo`, for menus and dialogs. */

@@ -10,7 +10,7 @@ IndexedDB keys such as directory handles and export destinations are not include
 
 | Keys | Literal | Pattern |
 | ---: | ---: | ---: |
-| 37 | 34 | 3 |
+| 38 | 35 | 3 |
 
 | Key | Purpose | Operations | Files |
 | --- | --- | --- | --- |
@@ -30,6 +30,7 @@ IndexedDB keys such as directory handles and export destinations are not include
 | [`editorPairedLayerVisible`](#key-editorpairedlayervisible) | Preference: show master and layer guidelines on the canvas. | getItem, setItem | `webapp/js/glyph-canvas/outline-editor.ts` |
 | [`editorPathFillOpacity`](#key-editorpathfillopacity) | Preference: opacity of editable outline fills, placeholder fills, and subtraction cutter fills. | getItem, setItem | `webapp/js/path-fill-opacity-pref.ts` |
 | [`editorScreenUnitScale`](#key-editorscreenunitscale) | Persists editor screen unit scale. | getItem, setItem, removeItem | `webapp/js/glyph-canvas/point-size.ts` |
+| [`githubRepositorySearch`](#key-githubrepositorysearch) | The last search in the repository picker, offered again next time. | getItem, setItem, removeItem | `webapp/js/github/github-dialogs.ts` |
 | [`glyphCanvasTextBuffer`](#key-glyphcanvastextbuffer) | Persists glyph canvas text buffer. | getItem, setItem, removeItem | `webapp/js/font-manager.ts`, `webapp/js/glyph-canvas/textrun.ts` |
 | [`glyphFilterEditorMode`](#key-glyphfiltereditormode) | Persists glyph filter editor mode. | getItem, setItem | `webapp/js/glyph-filter-editor-modal.ts` |
 | [`lastFilesystemContext`](#key-lastfilesystemcontext) | Persists last filesystem context. | getItem, setItem | `webapp/js/file-browser.ts` |
@@ -83,8 +84,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Operations: `getItem`, `setItem`
 - Default when unset: `false`
 - Sites:
-  - webapp/js/ai-assistant.ts:819 `getItem` via constructor `constructor`
-  - webapp/js/ai-assistant.ts:1021 `setItem` via method `initUI`
+  - webapp/js/ai-assistant.ts:823 `getItem` via constructor `constructor`
+  - webapp/js/ai-assistant.ts:1034 `setItem` via method `initUI`
 
 <a id="key-canvasplugin-curvaturecombplugin-exponent"></a>
 
@@ -234,6 +235,18 @@ IndexedDB keys such as directory handles and export destinations are not include
   - webapp/js/glyph-canvas/point-size.ts:52 `removeItem` via function `setScreenUnitScale`
   - webapp/js/glyph-canvas/point-size.ts:54 `setItem` via function `setScreenUnitScale`
 
+<a id="key-githubrepositorysearch"></a>
+
+## `githubRepositorySearch`
+
+- Purpose: The last search in the repository picker, offered again next time.
+- Kind: literal
+- Operations: `getItem`, `setItem`, `removeItem`
+- Sites:
+  - webapp/js/github/github-dialogs.ts:38 `getItem` via function `readRepositorySearch`
+  - webapp/js/github/github-dialogs.ts:46 `setItem` via function `writeRepositorySearch`
+  - webapp/js/github/github-dialogs.ts:47 `removeItem` via function `writeRepositorySearch`
+
 <a id="key-glyphcanvastextbuffer"></a>
 
 ## `glyphCanvasTextBuffer`
@@ -243,8 +256,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Operations: `getItem`, `setItem`, `removeItem`
 - Default when unset: `Hamburgevons`
 - Sites:
-  - webapp/js/font-manager.ts:3154 `removeItem` via method `handleNewFont`
-  - webapp/js/font-manager.ts:3288 `getItem` via method `resolveEditingTextForCompile`
+  - webapp/js/font-manager.ts:3163 `removeItem` via method `handleNewFont`
+  - webapp/js/font-manager.ts:3297 `getItem` via method `resolveEditingTextForCompile`
   - webapp/js/glyph-canvas/textrun.ts:166 `getItem` via constructor `constructor`
   - webapp/js/glyph-canvas/textrun.ts:518 `setItem` via method `setTextBuffer`
   - webapp/js/glyph-canvas/textrun.ts:2488 `setItem` via method `loadTextBufferFromFont`
@@ -258,8 +271,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: literal
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/glyph-filter-editor-modal.ts:175 `getItem` via function `readStoredMode`
-  - webapp/js/glyph-filter-editor-modal.ts:185 `setItem` via function `storeMode`
+  - webapp/js/glyph-filter-editor-modal.ts:176 `getItem` via function `readStoredMode`
+  - webapp/js/glyph-filter-editor-modal.ts:186 `setItem` via function `storeMode`
 
 <a id="key-lastfilesystemcontext"></a>
 
@@ -269,8 +282,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: literal
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/file-browser.ts:2335 `setItem` via function `switchContext`
-  - webapp/js/file-browser.ts:3653 `getItem` via function `initFileBrowser`
+  - webapp/js/file-browser.ts:2343 `setItem` via function `switchContext`
+  - webapp/js/file-browser.ts:3661 `getItem` via function `initFileBrowser`
 
 <a id="key-launchercloudfonts"></a>
 
@@ -280,9 +293,9 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: literal
 - Operations: `getItem`, `setItem`, `removeItem`
 - Sites:
-  - webapp/js/launcher/launcher-page.ts:906 `getItem` via function `rememberedCloudFonts`
-  - webapp/js/launcher/launcher-page.ts:920 `setItem` via function `rememberCloudFonts`
-  - webapp/js/launcher/launcher-page.ts:939 `removeItem` via function `forgetCloudFonts`
+  - webapp/js/launcher/launcher-page.ts:938 `getItem` via function `rememberedCloudFonts`
+  - webapp/js/launcher/launcher-page.ts:952 `setItem` via function `rememberCloudFonts`
+  - webapp/js/launcher/launcher-page.ts:971 `removeItem` via function `forgetCloudFonts`
 
 <a id="key-preferredtheme"></a>
 
@@ -294,8 +307,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Default when unset: `auto`
 - Sites:
   - webapp/js/font-info.ts:2957 `getItem` via function `getInitialTheme`
-  - webapp/js/launcher/launcher-page.ts:221 `getItem` via function `themePreference`
-  - webapp/js/launcher/launcher-page.ts:283 `setItem` via module `top-level module code`
+  - webapp/js/launcher/launcher-page.ts:227 `getItem` via function `themePreference`
+  - webapp/js/launcher/launcher-page.ts:289 `setItem` via module `top-level module code`
   - webapp/js/script-editor.ts:352 `getItem` via function `getInitialTheme`
   - webapp/js/theme-switcher.ts:56 `getItem` via method `init`
   - webapp/js/theme-switcher.ts:58 `setItem` via method `init`
@@ -388,8 +401,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: literal
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/auth-manager.ts:603 `getItem` via method `rememberedSignInEmail`
-  - webapp/js/auth-manager.ts:611 `setItem` via method `rememberSignInEmail`
+  - webapp/js/auth-manager.ts:630 `getItem` via method `rememberedSignInEmail`
+  - webapp/js/auth-manager.ts:638 `setItem` via method `rememberSignInEmail`
 
 <a id="key-tabkeepalivetimestamp"></a>
 
@@ -469,10 +482,10 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: pattern
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/file-browser.ts:2386 `getItem` via function `switchContext`
-  - webapp/js/file-browser.ts:3237 `setItem` via function `navigateToPath`
-  - webapp/js/file-browser.ts:3722 `getItem` via function `initFileBrowser`
-  - webapp/js/file-browser.ts:4195 `setItem` via module `top-level module code`
+  - webapp/js/file-browser.ts:2394 `getItem` via function `switchContext`
+  - webapp/js/file-browser.ts:3245 `setItem` via function `navigateToPath`
+  - webapp/js/file-browser.ts:3730 `getItem` via function `initFileBrowser`
+  - webapp/js/file-browser.ts:4204 `setItem` via module `top-level module code`
 
 <a id="key-linkedwindowoccupancy-sessionid-"></a>
 

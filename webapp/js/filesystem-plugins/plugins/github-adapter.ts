@@ -17,6 +17,7 @@ import {
     readBranch,
     repositoryLabel,
     sameRepository,
+    writeAccessRefusal,
     type GitHubCredential,
     type GitHubRepository,
     type GitHubRepositorySpec
@@ -473,6 +474,33 @@ export class GitHubAdapter implements FileSystemAdapter {
      * Create a branch for a new change from the base branch: the first free
      * `counterpunch-1`, `counterpunch-2`, …
      */
+    /**
+     * Refuse a repository the signed-in account can't push to, with an
+     * explanation. GitHub would refuse the branch or commit with a bare 403
+     * or 404 instead.
+     */
+    async requireWriteAccess(repository: GitHubRepository): Promise<void> {
+        let canPush: boolean;
+        try {
+            canPush = (await this.client(repository).getRepository()).canPush;
+        } catch (error: unknown) {
+            // A private repository the account can't see at all is a 404.
+            if (isGitHubApiError(error) && error.status === 404) {
+                canPush = false;
+            } else {
+                throw error;
+            }
+        }
+        if (!canPush) {
+            throw new Error(
+                writeAccessRefusal(
+                    this.state.credential?.login ?? 'This account',
+                    repository
+                )
+            );
+        }
+    }
+
     async createWorkingBranch(repository: GitHubRepository): Promise<string> {
         const client = this.client(repository);
         const baseSha = await client.getBranchHead(repository.baseBranch);

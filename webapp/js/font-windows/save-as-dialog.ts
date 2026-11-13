@@ -47,6 +47,7 @@ import {
     type SaveDestination
 } from './save-destination';
 import { escapeHtml, icon, openDialog, reportError } from './dialogs';
+import { withLoadingCursor } from '../loading-cursor';
 import {
     glyphsFormatVersionOf,
     type GlyphsFormatVersion
@@ -365,7 +366,7 @@ async function saveToBrowser(
 async function saveToCloud(name: string): Promise<boolean> {
     const cloud = plugin<CloudPluginLike>('cloud');
     if (!cloud) throw new Error('The cloud is not available.');
-    const saved = await cloud.handleSaveAs(name);
+    const saved = await withLoadingCursor(() => cloud.handleSaveAs(name));
     if (saved) syncEditorFileStateFromCurrentFont();
     return saved;
 }

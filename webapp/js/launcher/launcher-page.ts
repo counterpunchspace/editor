@@ -57,8 +57,10 @@ import {
 } from '../font-windows/dialogs';
 import '../font-windows/pending-opens';
 import {
+    announceGitHubSignIn,
     clearGitHubCredential,
     loadGitHubCredential,
+    onGitHubSignIn,
     loadGitHubRepositories,
     saveGitHubCredential,
     type GitHubCredential,
@@ -67,9 +69,12 @@ import {
 } from '../github/github-session';
 import { gitHubFontKey } from '../github/github-fonts';
 import {
+    githubAvatarHtml,
     showAddGitHubRepository,
+    showGitHubAccount,
     showGitHubRepositories,
-    showGitHubSignIn
+    showGitHubTokenSignIn,
+    startGitHubSignIn
 } from '../github/github-dialogs';
 import {
     activateUpdate,
@@ -465,23 +470,37 @@ function hasOpenGitHubFont(spec: GitHubRepositorySpec): boolean {
     );
 }
 
-async function connectGitHub(): Promise<void> {
-    const result = await showGitHubSignIn(githubCredential);
-    if (result === 'signed-out') {
-        await clearGitHubCredential();
-    } else if (result) {
-        await saveGitHubCredential(result);
-        githubCredential = result;
-        if (!githubRepositories.length) {
-            await showAddGitHubRepository(result);
-        }
+/** After a sign-in, a first-time user goes straight to adding a repository. */
+async function afterGitHubSignIn(): Promise<void> {
+    await refresh();
+    if (githubCredential && !githubRepositories.length) {
+        await showAddGitHubRepository(githubCredential, githubRepositories);
+        await refresh();
     }
+}
+
+// github-login.html (the sign-in popup) stores the login and announces it.
+onGitHubSignIn(() => void afterGitHubSignIn());
+
+async function useGitHubToken(): Promise<void> {
+    const credential = await showGitHubTokenSignIn();
+    if (!credential) return;
+    await saveGitHubCredential(credential);
+    announceGitHubSignIn();
+    await afterGitHubSignIn();
+}
+
+async function manageGitHubAccount(): Promise<void> {
+    if (!githubCredential) return;
+    if (!(await showGitHubAccount(githubCredential))) return;
+    await clearGitHubCredential();
+    announceGitHubSignIn();
     await refresh();
 }
 
 function openFromGitHub(): void {
     if (!githubCredential) {
-        void connectGitHub();
+        startGitHubSignIn();
         return;
     }
     showGitHubRepositories({
@@ -531,9 +550,10 @@ function groupHtml(
     symbol: string,
     body: string,
     sub = '',
-    trailing = ''
+    trailing = '',
+    login = ''
 ): string {
-    return `<div class="launcher-group"><div class="launcher-group-title">${icon(symbol)}${title}${sub ? `<span class="sub">${escapeHtml(sub)}</span>` : ''}${trailing}</div>${body}</div>`;
+    return `<div class="launcher-group"><div class="launcher-group-title">${icon(symbol)}${title}${sub ? `<span class="sub">${escapeHtml(sub)}</span>` : ''}${trailing}${login}</div>${body}</div>`;
 }
 
 let rowsByKey = new Map<string, Row>();
@@ -555,9 +575,6 @@ function render(): void {
     $('launcher-open-count').textContent = open ? `${open} open` : '';
 
     const account = cloudAccount();
-    $('launcher-account').innerHTML = account.email
-        ? `${icon('account_circle')}${escapeHtml(account.email)}`
-        : '';
 
     let html = '';
     if (unsaved.length) {
@@ -606,13 +623,16 @@ function render(): void {
         'cloud',
         cloudBody,
         section.status,
-        cloudOptions
+        cloudOptions,
+        account.email
+            ? `<span class="launcher-login" title="Counterpunch account">${icon('account_circle')}<span>${escapeHtml(account.email)}</span></span>`
+            : ''
     );
     html += groupHtml(
         'GitHub',
         'code',
         !githubCredential
-            ? `<div class="launcher-callout"><span>Open fonts from GitHub repositories and save your edits as pull requests.</span><button type="button" class="dialog-button" data-github-connect>Connect GitHub…</button></div>`
+            ? `<div class="launcher-callout"><span>Open fonts from GitHub repositories and save your edits as pull requests.</span><span class="launcher-callout-actions"><button type="button" class="dialog-button" data-github-connect>Connect GitHub</button><button type="button" class="launcher-link" data-github-token>Use an access token instead</button></span></div>`
             : !githubRepositories.length
               ? `<div class="launcher-callout"><span>Add a repository to open its fonts.</span><button type="button" class="dialog-button" data-github-add>Add repository…</button></div>`
               : listHtml(
@@ -620,9 +640,12 @@ function render(): void {
                     github,
                     'Fonts you open from GitHub show up here.'
                 ),
-        githubCredential ? githubCredential.login : '',
+        '',
+        githubCredential && githubRepositories.length
+            ? '<button type="button" class="launcher-link" data-github-browse>Open…</button>'
+            : '',
         githubCredential
-            ? `<button type="button" class="launcher-link" data-github-browse>Open…</button><button type="button" class="launcher-link" data-github-connect>Account…</button>`
+            ? `<button type="button" class="launcher-login" data-github-account title="GitHub account">${githubAvatarHtml(githubCredential, 'launcher-login-avatar')}<span>${escapeHtml(githubCredential.login)}</span></button>`
             : ''
     );
     html += groupHtml(
@@ -636,11 +659,19 @@ function render(): void {
 $('launcher-recents').addEventListener('click', async (event) => {
     const target = event.target as HTMLElement;
     if (target.closest('[data-github-connect]')) {
-        await connectGitHub();
+        startGitHubSignIn();
+        return;
+    }
+    if (target.closest('[data-github-token]')) {
+        await useGitHubToken();
+        return;
+    }
+    if (target.closest('[data-github-account]')) {
+        await manageGitHubAccount();
         return;
     }
     if (target.closest('[data-github-add]') && githubCredential) {
-        await showAddGitHubRepository(githubCredential);
+        await showAddGitHubRepository(githubCredential, githubRepositories);
         await refresh();
         return;
     }
@@ -1025,17 +1056,17 @@ function openCloudFontNotListed(): string | null {
 }
 
 async function refresh(): Promise<void> {
-    const [docs, recent, browser, credential, repositories] = await Promise.all(
-        [
-            allDiskDocuments(),
-            allRecentFonts(),
-            readBrowserFonts(),
-            loadGitHubCredential(),
-            loadGitHubRepositories()
-        ]
-    );
+    const [docs, recent, browser, credential] = await Promise.all([
+        allDiskDocuments(),
+        allRecentFonts(),
+        readBrowserFonts(),
+        loadGitHubCredential()
+    ]);
     githubCredential = credential;
-    githubRepositories = repositories;
+    // Each GitHub account has its own list, kept across signing out.
+    githubRepositories = credential
+        ? await loadGitHubRepositories(credential.login)
+        : [];
     await Promise.all(
         docs.map(async (doc) =>
             chains.set(doc.id, await folderChain(doc).catch(() => []))

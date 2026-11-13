@@ -243,7 +243,8 @@ module.exports = {
         'find-glyph-dialog': './js/find-glyph-dialog.ts',
         'translations': './js/translations.ts',
         'overview-view': './js/overview-view.ts',
-        'launcher': './js/launcher/launcher-page.ts'
+        'launcher': './js/launcher/launcher-page.ts',
+        'github-login': './js/github/github-login-page.ts'
     },
     output: {
         path: path.resolve(__dirname, 'build'),
@@ -298,6 +299,13 @@ module.exports = {
             filename: 'launcher.html',
             inject: 'body',
             chunks: ['launcher']
+        }),
+        // Where the GitHub sign-in popup ends (github/github-login-page.ts).
+        new HtmlWebpackPlugin({
+            template: './github-login.html',
+            filename: 'github-login.html',
+            inject: 'body',
+            chunks: ['github-login']
         }),
         new webpack.DefinePlugin({
             'process.env.EDITOR_VERSION': JSON.stringify(EDITOR_VERSION),

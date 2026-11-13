@@ -13,7 +13,21 @@ const MAX_CONCURRENT_REQUESTS = 4;
 export type GitHubRepositoryInfo = {
     fullName: string;
     defaultBranch: string;
+    /** Whether the signed-in account may push branches to it. */
+    canPush: boolean;
 };
+
+/** A repository the signed-in account can push to, for the picker. */
+export type GitHubWritableRepository = {
+    owner: string;
+    repo: string;
+    defaultBranch: string;
+    private: boolean;
+    description: string;
+};
+
+/** Enough for accounts in big organisations, without paging forever. */
+const MAX_REPOSITORY_PAGES = 10;
 
 export type GitHubTreeEntry = {
     /** Path inside the repository, with no leading slash. */
@@ -87,6 +101,17 @@ async function withRequestSlot<T>(run: () => Promise<T>): Promise<T> {
         activeRequests -= 1;
         waitingRequests.shift()?.();
     }
+}
+
+/** The path of the next page from a `Link` header, or null on the last. */
+function nextPagePath(link: string | null): string | null {
+    const next = link
+        ?.split(',')
+        .find((part) => part.includes('rel="next"'))
+        ?.match(/<([^>]+)>/)?.[1];
+    if (!next) return null;
+    const url = new URL(next);
+    return url.origin === API_BASE ? `${url.pathname}${url.search}` : null;
 }
 
 /** Bytes as base64, in chunks so long files do not overflow the stack. */
@@ -215,12 +240,65 @@ export class GitHubClient {
     }
 
     /** The account the token belongs to. Needs no repository access. */
-    async getLogin(): Promise<string> {
+    async getAccount(): Promise<{ login: string; avatarUrl: string }> {
         const value = await this.json('GET', '/user', (body) => body);
         if (!isRecord(value)) {
             throw new Error('GitHub returned an unexpected account record.');
         }
-        return requireString(value, 'login', 'the account');
+        return {
+            login: requireString(value, 'login', 'the account'),
+            avatarUrl:
+                typeof value.avatar_url === 'string' ? value.avatar_url : ''
+        };
+    }
+
+    /**
+     * Every repository the account can push to: its own, ones it
+     * collaborates on, and its organisations' that allow this app. Most
+     * recently pushed first. Needs no repository on the client.
+     */
+    async listWritableRepositories(): Promise<GitHubWritableRepository[]> {
+        const found: GitHubWritableRepository[] = [];
+        let path: string | null =
+            '/user/repos?affiliation=owner,collaborator,organization_member&sort=pushed&per_page=100';
+        for (let page = 0; path && page < MAX_REPOSITORY_PAGES; page += 1) {
+            const response = await this.request('GET', path);
+            const value: unknown = await response.json();
+            if (!Array.isArray(value)) {
+                throw new Error('GitHub returned no repository list.');
+            }
+            for (const item of value) {
+                if (!isRecord(item) || !isRecord(item.owner)) continue;
+                if (
+                    !isRecord(item.permissions) ||
+                    item.permissions.push !== true
+                ) {
+                    continue;
+                }
+                const owner = item.owner.login;
+                const repo = item.name;
+                const defaultBranch = item.default_branch;
+                if (
+                    typeof owner !== 'string' ||
+                    typeof repo !== 'string' ||
+                    typeof defaultBranch !== 'string'
+                ) {
+                    continue;
+                }
+                found.push({
+                    owner,
+                    repo,
+                    defaultBranch,
+                    private: item.private === true,
+                    description:
+                        typeof item.description === 'string'
+                            ? item.description
+                            : ''
+                });
+            }
+            path = nextPagePath(response.headers.get('link'));
+        }
+        return found;
     }
 
     async getRepository(): Promise<GitHubRepositoryInfo> {
@@ -234,7 +312,9 @@ export class GitHubClient {
                 value,
                 'default_branch',
                 'the repository'
-            )
+            ),
+            canPush:
+                isRecord(value.permissions) && value.permissions.push === true
         };
     }
 

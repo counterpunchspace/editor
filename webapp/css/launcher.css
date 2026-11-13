@@ -67,8 +67,12 @@ body {
 body {
     display: flex;
     flex-direction: column;
-    font-family: var(--font-families-sans), -apple-system, BlinkMacSystemFont,
-        'Segoe UI', sans-serif;
+    font-family:
+        var(--font-families-sans),
+        -apple-system,
+        BlinkMacSystemFont,
+        'Segoe UI',
+        sans-serif;
     font-size: 13px;
     line-height: 1.4;
     letter-spacing: 0.02em;
@@ -415,8 +419,7 @@ body.dragging .launcher-drop-zone {
     margin-right: auto;
 }
 
-.launcher-open-count:empty,
-.launcher-account:empty {
+.launcher-open-count:empty {
     display: none;
 }
 
@@ -429,16 +432,39 @@ body.dragging .launcher-drop-zone {
     background-color: color-mix(in srgb, var(--view-editor) 20%, transparent);
 }
 
-.launcher-account {
+/* The account a group is signed in with, at the right of its title. */
+.launcher-login {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    font-size: 12px;
+    min-width: 0;
+    margin-left: auto;
+    border: 0;
+    background: none;
+    padding: 0;
+    font: inherit;
+    font-weight: 400;
     color: var(--text-muted);
 }
 
-.launcher-account .material-symbols-outlined {
-    font-size: 16px;
+.launcher-login > span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+button.launcher-login {
+    cursor: pointer;
+}
+
+button.launcher-login:hover {
+    color: var(--text-primary);
+}
+
+.launcher-login-avatar {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
 }
 
 .launcher-icon-button {
@@ -632,6 +658,29 @@ body.dragging .launcher-drop-zone {
     border-radius: 8px;
     font-size: 13px;
     color: var(--text-muted);
+}
+
+/* The main action, with a quieter alternative under it. */
+.launcher-callout-actions {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+/* github-login.html: where the GitHub sign-in popup ends. */
+.github-login-page {
+    display: grid;
+    place-items: center;
+    min-height: 100vh;
+    margin: 0;
+    padding: 24px;
+    box-sizing: border-box;
+    font-size: 14px;
+    text-align: center;
+    color: var(--text-primary);
+    background-color: var(--launcher-page);
 }
 
 .launcher-show-all {

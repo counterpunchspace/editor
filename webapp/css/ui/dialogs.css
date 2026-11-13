@@ -764,3 +764,49 @@
 .github-repository-head [data-remove] {
     margin-left: auto;
 }
+
+.github-account {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.github-account-avatar {
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+}
+
+.github-picker-dialog .font-window-list {
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+.github-picker-dialog .font-window-list-row .name small {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.github-picker-dialog .font-window-list-row:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+
+.github-picker-more {
+    margin: 12px 0 0;
+    font-size: 12px;
+}
+
+.github-picker-more summary {
+    cursor: pointer;
+    color: var(--text-secondary);
+}
+
+.github-picker-more .font-window-fields {
+    margin: 10px 0 8px;
+}

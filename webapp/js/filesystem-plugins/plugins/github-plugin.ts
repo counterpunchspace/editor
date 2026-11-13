@@ -8,6 +8,7 @@
 // pull request; every later save adds a commit to that branch.
 
 import { Logger } from '../../logger';
+import { GitHubApiError } from '../../github/github-client';
 import { commitMessage } from '../../github/github-commit-message';
 import { foldersIn } from '../../github/github-fonts';
 import {
@@ -132,10 +133,10 @@ export class GitHubPlugin extends FilesystemPlugin {
      * repository or started a change.
      */
     private async refresh(): Promise<void> {
-        const [credential, repositories] = await Promise.all([
-            loadGitHubCredential(),
-            loadGitHubRepositories()
-        ]);
+        const credential = await loadGitHubCredential();
+        const repositories = credential
+            ? await loadGitHubRepositories(credential.login)
+            : [];
         this.state.credential = credential;
         for (const repository of repositories) this.setRepository(repository);
         this.state.repositories = repositories;
@@ -197,27 +198,52 @@ export class GitHubPlugin extends FilesystemPlugin {
     async afterSave(summary: SaveSummary): Promise<void> {
         const specs = this.githubAdapter.pendingRepositories();
         if (!specs.length) return;
+        // Signing in or out, or as someone else, happens in the launcher.
         await this.refresh();
-        for (const spec of specs) await this.publish(spec, summary);
+        const credential = this.state.credential;
+        if (!credential) {
+            throw new Error(
+                'You’re signed out of GitHub. Sign in again in the launcher’s GitHub group, then save again; your edits stay in this window until then.'
+            );
+        }
+        try {
+            for (const spec of specs) {
+                await this.publish(credential.login, spec, summary);
+            }
+        } catch (error: unknown) {
+            if (error instanceof GitHubApiError && error.status === 401) {
+                throw new Error(
+                    'Your GitHub sign-in has expired or was revoked. Sign in again in the launcher’s GitHub group, then save again; your edits stay in this window until then.'
+                );
+            }
+            throw error;
+        }
     }
 
     private async publish(
+        login: string,
         spec: GitHubRepositorySpec,
         summary: SaveSummary
     ): Promise<void> {
         let repository = this.find(spec);
         if (!repository) {
             throw new Error(
-                `${repositoryLabel(spec)} is no longer added to Counterpunch.`
+                `${repositoryLabel(spec)} isn’t in the repositories of ${login}. Add it in the launcher’s GitHub group, then save again.`
             );
         }
+        // Every save: access may have been removed since the last one.
+        await this.githubAdapter.requireWriteAccess(repository);
         if (!repository.workingBranch) {
             const branch =
                 await this.githubAdapter.createWorkingBranch(repository);
-            const claimed = await claimGitHubWorkingBranch(repository, branch);
+            const claimed = await claimGitHubWorkingBranch(
+                login,
+                repository,
+                branch
+            );
             if (!claimed?.workingBranch) {
                 throw new Error(
-                    `${repositoryLabel(spec)} is no longer added to Counterpunch.`
+                    `${repositoryLabel(spec)} isn’t in the repositories of ${login}. Add it in the launcher’s GitHub group, then save again.`
                 );
             }
             if (claimed.workingBranch !== branch) {
@@ -242,6 +268,7 @@ export class GitHubPlugin extends FilesystemPlugin {
         );
         if (repository.pullRequest?.number !== pullRequest.number) {
             const stored = await saveGitHubPullRequest(
+                login,
                 repository,
                 result.branch,
                 { number: pullRequest.number, url: pullRequest.url }

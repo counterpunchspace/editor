@@ -3,9 +3,14 @@
  * Handles the save button state and save functionality
  */
 
-import { beginLoadingCursor, endLoadingCursor } from './loading-cursor';
+import {
+    beginLoadingCursor,
+    endLoadingCursor,
+    withLoadingCursor
+} from './loading-cursor';
 import { isTourKeyEventAllowed } from './tour-spotlight';
 import { savesInPlace } from './font-windows/font-formats';
+import { showNotice } from './font-windows/dialogs';
 
 declare const $: any;
 
@@ -123,7 +128,10 @@ class SaveButton {
         // the file, its folder layout and the access to it, so it saves.
         const main = this.reachableMainWindow();
         if (main?.saveButton) {
-            await main.saveButton.handleSave();
+            // The main window shows its own busy cursor; so does this one.
+            await withLoadingCursor(async () => {
+                await main.saveButton?.handleSave();
+            });
             const own = window.fontManager?.currentFont;
             if (own && !main.fontManager?.currentFont?.hasUnsavedChanges) {
                 own.hasUnsavedChanges = false;
@@ -215,6 +223,10 @@ class SaveButton {
                 this.isSaving = false;
                 this.showError();
             }
+            // Say why: the button alone only flashes.
+            showNotice(
+                `Couldn’t save: ${error instanceof Error ? error.message : String(error)}`
+            );
         } finally {
             endLoadingCursor();
         }

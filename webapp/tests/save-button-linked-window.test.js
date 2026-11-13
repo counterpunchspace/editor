@@ -102,6 +102,29 @@ describe('Save in a linked window', () => {
         expect(main.saveButton.handleSave).toHaveBeenCalledTimes(1);
     });
 
+    test('a failed save says why', async () => {
+        window.windowRole = { isLinkedWindow: () => false };
+        window.fontManager = {
+            currentFont: {
+                path: '/o/r/A.glyphs',
+                hasUnsavedChanges: true,
+                sourcePlugin: { getId: () => 'github', getIcon: () => '' },
+                syncJsonFromModel: () => {},
+                save: async () => {
+                    throw new Error('tester can’t write to o/r.');
+                }
+            },
+            hasUnsyncedChanges: () => true,
+            updateDirtyIndicator: async () => {}
+        };
+
+        await window.saveButton.handleSave();
+
+        expect(
+            document.querySelector('.font-window-notice').textContent
+        ).toContain('Couldn’t save: tester can’t write to o/r.');
+    });
+
     test('a main window showing another font is not used', async () => {
         const main = mainWindow({ savesCleanly: true });
         main.fontManager.currentFont.path = '/o/r/Other.glyphs';

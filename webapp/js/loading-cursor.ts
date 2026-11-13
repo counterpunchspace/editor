@@ -6,6 +6,7 @@ let lastPointerX: number | null = null;
 let lastPointerY: number | null = null;
 
 const SPINNER_OFFSET_PX = 18;
+const BUSY_CLASS = 'loading-cursor';
 const POINTER_STORAGE_KEY = 'loadingCursorLastPointer';
 const canUseLoadingCursorDom =
     typeof window !== 'undefined' && typeof document !== 'undefined';
@@ -163,10 +164,25 @@ function hideCursorSpinner(): void {
     }
 }
 
+/**
+ * The mouse pointer itself shows the system's busy cursor, everywhere,
+ * over elements that set their own cursor too (the canvas does, inline).
+ */
+function ensureBusyCursorStyle(): void {
+    if (document.getElementById('loading-cursor-style')) return;
+    const style = document.createElement('style');
+    style.id = 'loading-cursor-style';
+    style.textContent = `html.${BUSY_CLASS}, html.${BUSY_CLASS} * { cursor: progress !important; }`;
+    document.head.append(style);
+}
+
 function applyLoadingCursor(): void {
     if (!canUseLoadingCursorDom) {
         return;
     }
+
+    ensureBusyCursorStyle();
+    document.documentElement.classList.add(BUSY_CLASS);
 
     const body = document.body;
 
@@ -182,7 +198,18 @@ function clearLoadingCursor(): void {
         return;
     }
 
+    document.documentElement.classList.remove(BUSY_CLASS);
     hideCursorSpinner();
+}
+
+/** Show the busy cursor while `work` runs, however it ends. */
+export async function withLoadingCursor<T>(work: () => Promise<T>): Promise<T> {
+    beginLoadingCursor();
+    try {
+        return await work();
+    } finally {
+        endLoadingCursor();
+    }
 }
 
 export function beginLoadingCursor(): void {

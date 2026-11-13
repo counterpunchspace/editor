@@ -56,7 +56,11 @@ import {
     timelineSpanEnd,
     timelineSpanStart
 } from './perf-timeline';
-import { beginLoadingCursor, endLoadingCursor } from './loading-cursor';
+import {
+    beginLoadingCursor,
+    endLoadingCursor,
+    withLoadingCursor
+} from './loading-cursor';
 import { reloadLinkedEditorWindows } from './window-buttons';
 import { isLinkedPeerSnapshotSearch } from './window-sync';
 import { readUrlState, updateUrlState } from './url-state';
@@ -2031,7 +2035,10 @@ export async function saveCurrentFontAs(
         currentFont.glyphsSaveVersion = options.glyphsVersion;
     }
     try {
-        await saveCurrentFontAsIn(currentFont, plugin, path, options);
+        // After any location picker: Save As to every destination.
+        await withLoadingCursor(() =>
+            saveCurrentFontAsIn(currentFont, plugin, path, options)
+        );
     } catch (error) {
         currentFont.glyphsSaveVersion = previousGlyphsVersion;
         throw error;
