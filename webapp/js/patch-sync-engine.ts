@@ -281,6 +281,8 @@ export type CommittedChangeListener = (
         update: YjsUpdate;
         documentId?: string;
         uiBatch?: CommittedUiBatch;
+        /** A collaborator’s live packet, not a catch-up or a linked window’s own edit. */
+        fromCollaborator?: boolean;
     }
 ) => void;
 
@@ -6578,7 +6580,10 @@ export class PatchSyncEngine {
                 cb(effectiveRemoteEntries ?? [], {
                     origin: 'remote',
                     update,
-                    documentId: resolvedDocumentId
+                    documentId: resolvedDocumentId,
+                    ...(options?.fromCollaborator
+                        ? { fromCollaborator: true }
+                        : undefined)
                 });
             }
             this._noteBroadcastStateVector(resolvedDocumentId);

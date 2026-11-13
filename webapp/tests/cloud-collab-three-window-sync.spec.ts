@@ -2222,6 +2222,208 @@ test.describe('three-window sync scenarios', () => {
                 expect(await liveGlyphNames(page)).toEqual(['a']);
             }
 
+            // A collaborator’s cascade shows before its catch-up. With `aacute`
+            // aligned automatically, moving `a`’s top anchor in the owner’s
+            // window recomposes `aacute`. The invitee gets the `a` edit over
+            // its socket and recomposes `aacute` itself, as a preview: it
+            // shows the owner’s `aacute` while its catch-up of `aacute` is
+            // held back, and nothing extra goes over the wire.
+            await mainPage.evaluate(async (layerId) => {
+                const w = window as any;
+                const layer = w.currentFontModel
+                    .findGlyph('aacute')
+                    .findLayerById(layerId);
+                w.patchSyncEngine.beginTransaction(
+                    'Automatic alignment',
+                    null,
+                    {
+                        compileChangeSource: 'component-property',
+                        compileEditType: null
+                    }
+                );
+                try {
+                    for (const shape of layer.shapes) {
+                        const component = shape.asComponent?.();
+                        if (component) {
+                            component.automaticAlignment = true;
+                        }
+                    }
+                } finally {
+                    w.patchSyncEngine.endTransaction();
+                }
+                await w.patchSyncEngine.waitForPendingCloudCommits?.();
+            }, thinLayerId);
+            for (const page of allPages) {
+                await expect
+                    .poll(
+                        () =>
+                            page.evaluate(
+                                (layerId) =>
+                                    (window as any).currentFontModel
+                                        .findGlyph('aacute')
+                                        .findLayerById(layerId)
+                                        .isAutomaticAlignedLayer() === true,
+                                thinLayerId
+                            ),
+                        { timeout: 60000 }
+                    )
+                    .toBe(true);
+            }
+            await expectAllWindowsShow(
+                mainPage,
+                'owner automatic alignment aacute'
+            );
+            const aacuteGlyphId: string = (
+                await mainPage.evaluate(() =>
+                    (window as any).changeBridge.glyphDocumentIdForName(
+                        'aacute'
+                    )
+                )
+            ).slice('glyph:'.length);
+            // `á` joins the text, so its recomposition shows in the
+            // compiled run; `a` stays the open, live glyph.
+            for (const page of allPages) {
+                await setEditingText(page, 'aáipqe', 0);
+                await waitForEditingCompile(page);
+            }
+            for (const page of [mainPage, inviteePage]) {
+                await expect
+                    .poll(() => liveGlyphNames(page), { timeout: 30000 })
+                    .toEqual(['a']);
+            }
+            const aacuteBefore = await extractRawLayerShapes(
+                inviteePage,
+                'aacute',
+                thinLayerId!
+            );
+            let releaseAacuteCatchUp: () => void = () => {};
+            const aacuteCatchUpHeld = new Promise<void>((resolve) => {
+                releaseAacuteCatchUp = resolve;
+            });
+            let aacuteCatchUpRequested = false;
+            const isAacuteCatchUp = (url: URL) =>
+                decodeURIComponent(url.pathname).includes(aacuteGlyphId) &&
+                url.pathname.endsWith('/live');
+            await inviteeContext.route(isAacuteCatchUp, async (route) => {
+                if (route.request().method() === 'GET') {
+                    aacuteCatchUpRequested = true;
+                    await aacuteCatchUpHeld;
+                }
+                await route.continue();
+            });
+            let aacuteAfterOwnerEdit: unknown = null;
+            const ownerAnchorEdit = liveEditOfA(
+                mainPage,
+                'owner anchor a',
+                async () => {
+                    await mainPage.evaluate(async (layerId) => {
+                        const w = window as any;
+                        const fontModel = w.currentFontModel;
+                        const layer = fontModel
+                            .findGlyph('a')
+                            .findLayerById(layerId);
+                        const top = layer.anchors.find(
+                            (anchor: any) => anchor.name === 'top'
+                        );
+                        const affected = new Set(['a']);
+                        w.changeBridge.runWithoutRecording(() => {
+                            top.x += 50;
+                            top.y += 30;
+                            for (const name of fontModel.rebuildAutomaticCompositesForGlyphs(
+                                new Set(['a']),
+                                {
+                                    preferredLayerId: layerId,
+                                    preferredSourceGlyphName: 'a'
+                                }
+                            )) {
+                                affected.add(name);
+                            }
+                        });
+                        w.fontManager.currentFont.syncJsonFromModel();
+                        const targets = [...affected].map((glyphName) => ({
+                            glyphName,
+                            layerId
+                        }));
+                        w.changeBridge.syncLayersFromJson(
+                            targets,
+                            'Drag anchor',
+                            undefined,
+                            undefined,
+                            undefined,
+                            targets,
+                            'mouse-drag-anchor',
+                            'mouse-drag-anchor',
+                            null
+                        );
+                        await w.patchSyncEngine.waitForPendingCloudCommits?.();
+                    }, thinLayerId);
+                    aacuteAfterOwnerEdit = await extractRawLayerShapes(
+                        mainPage,
+                        'aacute',
+                        thinLayerId!
+                    );
+                }
+            );
+            try {
+                await expect
+                    .poll(() => aacuteAfterOwnerEdit, { timeout: 60000 })
+                    .not.toBeNull();
+                expect(aacuteAfterOwnerEdit).not.toEqual(aacuteBefore);
+                await expect
+                    .poll(
+                        () =>
+                            extractRawLayerShapes(
+                                inviteePage,
+                                'aacute',
+                                thinLayerId!
+                            ),
+                        {
+                            timeout: 30000,
+                            message:
+                                'invitee previews aacute before its catch-up'
+                        }
+                    )
+                    .toEqual(aacuteAfterOwnerEdit);
+                expect(
+                    await inviteePage.evaluate(
+                        (layerId) =>
+                            (
+                                window as any
+                            ).remoteCascadePreview.pendingTargets.some(
+                                (target: any) =>
+                                    target.glyphName === 'aacute' &&
+                                    target.layerId === layerId
+                            ),
+                        thinLayerId
+                    )
+                ).toBe(true);
+            } finally {
+                releaseAacuteCatchUp();
+            }
+            await ownerAnchorEdit;
+            await inviteeContext.unroute(isAacuteCatchUp);
+            // The catch-up did come, and the stored layer replaced the
+            // preview.
+            expect(aacuteCatchUpRequested).toBe(true);
+            await expect
+                .poll(
+                    () =>
+                        inviteePage.evaluate(
+                            () =>
+                                (window as any).remoteCascadePreview
+                                    .pendingTargets.length
+                        ),
+                    { timeout: 30000 }
+                )
+                .toBe(0);
+            expect(
+                await extractRawLayerShapes(inviteePage, 'aacute', thinLayerId!)
+            ).toEqual(aacuteAfterOwnerEdit);
+            for (const page of allPages) {
+                await setEditingText(page, 'aipqe', 0);
+                await waitForEditingCompile(page);
+            }
+
             const dataBeforeReload = await extractGlyphLayerData(
                 mainPage,
                 glyphNamesWithB

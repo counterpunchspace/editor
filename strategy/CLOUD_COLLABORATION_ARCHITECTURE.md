@@ -581,6 +581,22 @@ the same response. The three-window spec and the fuzz’s single steps assert
 this against each room’s own update counters (debug status, local stack;
 on staging, against what the sender sent).
 
+**Collaborator cascades ahead of catch-up.** A collaborator’s edit of a
+glyph a window holds live arrives at once, but the layers it recomposes in
+other glyphs (automatically aligned composites, metrics-key widths) only come
+by catch-up, after the sender has posted them and its core stamp has gone
+out. So the receiving window (main and linked alike) runs the same cascade
+itself on a collaborator’s live packet (`remote-cascade-preview.ts`): in its
+model with recording off, and in its worker as a preview overlay for the
+compile. Nothing reaches its documents, history or the rooms. The stored
+layers stay the authority: a catch-up or packet that brings a previewed
+layer replaces the preview, and the cascade is run again from the current
+base in case a newer edit is still ahead of it. A preview whose stored layer
+does not arrive within 10 seconds goes back to the documents. A window busy
+with its own drag or key burst skips the preview and keeps its state. The
+three-window spec holds the invitee’s catch-up of the recomposed glyph back
+and checks that the invitee already shows it, with the traffic unchanged.
+
 Every byte a window applies reaches its compile worker, in order. An update
 the window’s document already had, or holds pending until an earlier one
 arrives, still goes to the worker, held and merged in front of the next

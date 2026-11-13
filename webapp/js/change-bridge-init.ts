@@ -43,6 +43,12 @@ import {
     LinkedLivePreviewReceiver,
     type LinkedPreviewHost
 } from './linked-live-preview';
+import {
+    RemoteCascadePreview,
+    type CascadeLayerTarget,
+    type CascadeSource,
+    type RemoteCascadePreviewHost
+} from './remote-cascade-preview';
 import { fontCompilation, fullFontCompilation } from './font-compilation';
 import { timelineSpanEnd, timelineSpanStart } from './perf-timeline';
 import { Logger } from './logger';
@@ -1863,6 +1869,193 @@ async function refreshCanvasFromCommittedModelSync(
 }
 
 /**
+ * Compile with the worker’s preview overlay, for layers this window shows
+ * ahead of its documents (a linked window’s live preview, a collaborator’s
+ * cascade).
+ */
+function requestPreviewOverlayCompile(compile: {
+    changeSource: string;
+    editType: string | null;
+}): void {
+    if (
+        fontCompilation?.isInitialized &&
+        !fontCompilation.hasWorkerCacheDocument?.()
+    ) {
+        return;
+    }
+    const fm = window.fontManager;
+    const currentFont = fm?.currentFont;
+    if (!fm || !currentFont) {
+        return;
+    }
+    // The editing window patches advances live during a sidebearing drag and
+    // compiles outlines only. This window has no such patch, so it compiles
+    // the way anchor previews do: the font includes layout and the text
+    // reshapes to the new widths.
+    const editType = (
+        compile.editType === 'sidebearing' ? 'anchor' : compile.editType
+    ) as typeof fm.lastEditType;
+    fm.setEditingCompileContext(compile.changeSource, editType);
+    currentFont.requestRecompileWithoutDataChange({
+        compileContext: {
+            changeSource: compile.changeSource,
+            editType,
+            dataFreshnessMode: 'live-drag-worker-preview'
+        }
+    });
+    window.autoCompileManager?.checkAndSchedule?.();
+}
+
+function isBusyWithOwnEdit(): boolean {
+    const oe = window.glyphCanvas?.outlineEditor;
+    return (
+        oe?.draggingSomething === true ||
+        oe?.hasPendingKeyboardPreviewCommit?.() === true
+    );
+}
+
+function cascadeTargetKey(target: CascadeLayerTarget): string {
+    return `${target.glyphName}\u0000${target.layerId}`;
+}
+
+/**
+ * Recompose what a collaborator’s edit changes in other glyphs, the way the
+ * sender did, in this window’s model and without recording. Returns the
+ * resident layers whose data changed: those now run ahead of the documents.
+ */
+export function recomposeCollaboratorCascade(
+    bridge: PatchSyncEngine,
+    sources: CascadeSource[]
+): CascadeLayerTarget[] {
+    const fontModel = window.fontManager?.currentFont?.fontModel as any;
+    if (!fontModel || !sources.length) {
+        return [];
+    }
+    const sourceKeys = new Set(sources.map(cascadeTargetKey));
+    const sourceGlyphNames = new Set(sources.map((s) => s.glyphName));
+    const isResident = (glyphName: string): boolean => {
+        const documentId = bridge.glyphDocumentIdForName(glyphName);
+        return !!documentId && bridge.hasResidentGlyphDocument(documentId);
+    };
+    const fingerprint = (glyphName: string, layerId: string): string | null => {
+        const layer = fontModel
+            .findGlyph?.(glyphName)
+            ?.findLayerById?.(layerId);
+        if (!layer) {
+            return null;
+        }
+        try {
+            return JSON.stringify(
+                typeof layer.toJSON === 'function' ? layer.toJSON() : layer
+            );
+        } catch {
+            return null;
+        }
+    };
+
+    // What the cascade may change, as it is now.
+    const candidates = new Set<string>([
+        ...(fontModel.collectComponentDependentGlyphs?.(sourceGlyphNames) ??
+            []),
+        ...(fontModel.collectMetricsKeyDependentGlyphs?.(sourceGlyphNames) ??
+            [])
+    ]);
+    const before = new Map<string, string | null>();
+    for (const glyphName of candidates) {
+        if (sourceGlyphNames.has(glyphName) || !isResident(glyphName)) {
+            continue;
+        }
+        for (const layer of fontModel.findGlyph?.(glyphName)?.layers ?? []) {
+            const layerId = (layer as { id?: string })?.id;
+            if (layerId) {
+                before.set(
+                    cascadeTargetKey({ glyphName, layerId }),
+                    fingerprint(glyphName, layerId)
+                );
+            }
+        }
+    }
+
+    const recomposed = new Map<string, CascadeLayerTarget>();
+    for (const source of sources) {
+        const closure = computeLayerRecompositionClosure({
+            sourceTargets: [
+                { glyphName: source.glyphName, layerId: source.layerId }
+            ],
+            editKinds: source.editKinds,
+            scope: 'all',
+            fontModel,
+            activeLayerId: source.layerId,
+            sourceGlyphName: source.glyphName,
+            suppressor: bridge
+        });
+        for (const target of closure.recomposeTargets) {
+            const key = cascadeTargetKey(target);
+            if (
+                !sourceKeys.has(key) &&
+                !sourceGlyphNames.has(target.glyphName)
+            ) {
+                recomposed.set(key, {
+                    glyphName: target.glyphName,
+                    layerId: target.layerId
+                });
+            }
+        }
+    }
+
+    return [...recomposed.values()].filter((target) => {
+        if (!isResident(target.glyphName)) {
+            return false;
+        }
+        const key = cascadeTargetKey(target);
+        // A layer the snapshot missed is kept: better a preview that
+        // reverts to the documents than a change nobody tracks.
+        return (
+            !before.has(key) ||
+            before.get(key) !== fingerprint(target.glyphName, target.layerId)
+        );
+    });
+}
+
+/**
+ * What a window does to show a collaborator’s cascade ahead of its
+ * documents (see remote-cascade-preview.ts).
+ */
+export function createRemoteCascadePreviewHost(
+    bridge: PatchSyncEngine
+): RemoteCascadePreviewHost {
+    const notifyGlyphs = (glyphNames: string[]) => {
+        if (!glyphNames.length) {
+            return;
+        }
+        window.dispatchEvent(
+            new CustomEvent('glyphChanged', {
+                detail: { glyphName: glyphNames[0], glyphNames }
+            })
+        );
+    };
+    return {
+        isBusyLocally: isBusyWithOwnEdit,
+        recompose: (sources) => recomposeCollaboratorCascade(bridge, sources),
+        stageOverlay: (targets) =>
+            window.fontManager?.stageRemoteCascadePreview(targets) ??
+            Promise.resolve(false),
+        requestCompile: () =>
+            requestPreviewOverlayCompile({
+                changeSource: 'remote-cascade-preview',
+                editType: 'anchor'
+            }),
+        repaint: notifyGlyphs,
+        revert: (targets) => {
+            bridge.revertLivePreviewLayers(targets);
+            window.fontManager?.currentFont?.requestRecompileWithoutDataChange();
+            window.autoCompileManager?.checkAndSchedule?.();
+            notifyGlyphs([...new Set(targets.map((t) => t.glyphName))]);
+        }
+    };
+}
+
+/**
  * What a linked window does with the live previews another window posts
  * (see linked-live-preview.ts): the same steps the editing window takes for
  * its own live drag, minus recording or committing anything.
@@ -1871,47 +2064,13 @@ export function createLinkedPreviewHost(
     bridge: PatchSyncEngine
 ): LinkedPreviewHost {
     return {
-        isBusyLocally: () => {
-            const oe = window.glyphCanvas?.outlineEditor;
-            return (
-                oe?.draggingSomething === true ||
-                oe?.hasPendingKeyboardPreviewCommit?.() === true
-            );
-        },
+        isBusyLocally: isBusyWithOwnEdit,
         applyModelLayers: (records) => bridge.applyLivePreviewLayers(records),
         revertModelLayers: (targets) => bridge.revertLivePreviewLayers(targets),
         stageOverlay: (records) =>
             window.fontManager?.stageLinkedLivePreviewOverlay(records) ??
             Promise.resolve(false),
-        requestCompile: (compile) => {
-            if (
-                fontCompilation?.isInitialized &&
-                !fontCompilation.hasWorkerCacheDocument?.()
-            ) {
-                return;
-            }
-            const fm = window.fontManager;
-            const currentFont = fm?.currentFont;
-            if (!fm || !currentFont) {
-                return;
-            }
-            // The editing window patches advances live during a sidebearing
-            // drag and compiles outlines only. This window has no such
-            // patch, so it compiles the way anchor previews do: the font
-            // includes layout and the text reshapes to the new widths.
-            const editType = (
-                compile.editType === 'sidebearing' ? 'anchor' : compile.editType
-            ) as typeof fm.lastEditType;
-            fm.setEditingCompileContext(compile.changeSource, editType);
-            currentFont.requestRecompileWithoutDataChange({
-                compileContext: {
-                    changeSource: compile.changeSource,
-                    editType,
-                    dataFreshnessMode: 'live-drag-worker-preview'
-                }
-            });
-            window.autoCompileManager?.checkAndSchedule?.();
-        },
+        requestCompile: (compile) => requestPreviewOverlayCompile(compile),
         repaint: async (glyphNames) => {
             window.dispatchEvent(
                 new CustomEvent('glyphChanged', {
@@ -3593,9 +3752,21 @@ function initializeBridge(detail: {
         createLinkedPreviewHost(bridge)
     );
     sync.setLivePreviewReceiver(livePreviewReceiver);
+    const remoteCascadePreview = new RemoteCascadePreview(
+        createRemoteCascadePreviewHost(bridge)
+    );
+    (window as any).remoteCascadePreview = remoteCascadePreview;
     bridge.onCommittedChange((entries, context) => {
         if (context.origin !== 'remote') {
             return;
+        }
+        if (
+            context.fromCollaborator &&
+            context.documentId?.startsWith('glyph:')
+        ) {
+            remoteCascadePreview.noteCollaboratorEdit(entries);
+        } else {
+            remoteCascadePreview.noteStoredChange(entries);
         }
         const touchedLayerIds = new Set<string>();
         for (const entry of entries) {

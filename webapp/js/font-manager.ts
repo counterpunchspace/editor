@@ -7462,6 +7462,35 @@ class FontManager {
         });
     }
 
+    /**
+     * Stage a collaborator’s cascade, recomposed here ahead of its documents
+     * (see remote-cascade-preview.ts), as the worker’s preview overlay. It
+     * waits for document updates already on their way to the worker: each
+     * one drops the overlay.
+     */
+    async stageRemoteCascadePreview(
+        targets: WorkerReplayTarget[]
+    ): Promise<boolean> {
+        if (!this.currentFont || !fontCompilation?.isInitialized) {
+            return false;
+        }
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+            const pending = this.workerCacheUpdatePromise;
+            if (!pending) {
+                break;
+            }
+            await pending.catch(() => undefined);
+        }
+        const updates = this.collectChangedLayerUpdatesFromTargets(targets, {
+            skipFingerprintBaseline: true,
+            compileFacing: true
+        });
+        if (!updates?.length) {
+            return false;
+        }
+        return this.submitLayerUpdatesToWorkerPreview(updates);
+    }
+
     /** A linked window stages what the editing window posted. */
     stageLinkedLivePreviewOverlay(
         records: LivePreviewLayerRecord[]
