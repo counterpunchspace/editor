@@ -1,9 +1,15 @@
 // File → Save As: name, format and where to save. "This computer" asks for
-// the place with the system pickers; Cloud and Browser storage save by name.
+// the place with the system pickers; Cloud and Browser storage save by name;
+// GitHub saves into the repository and folder chosen here.
 
 import { Logger } from '../logger';
 import { pluginRegistry } from '../filesystem-plugins/registry';
 import type { DiskPlugin } from '../filesystem-plugins/plugins/disk-plugin';
+import type { GitHubPlugin } from '../filesystem-plugins/plugins/github-plugin';
+import {
+    repositoryLabel,
+    type GitHubRepository
+} from '../github/github-session';
 import type { FilesystemPlugin } from '../filesystem-plugins/filesystem-plugin';
 import {
     saveCurrentFontAs,
@@ -108,6 +114,41 @@ type CloudPluginLike = FilesystemPlugin & {
     getCurrentSaveAsWarningState?: () => Promise<CloudSaveWarning | null>;
 };
 
+/** The GitHub choice: whether a save can go there, its note, and where. */
+type GitHubState = {
+    available: boolean;
+    note: string;
+    repositories: GitHubRepository[];
+};
+
+async function githubState(): Promise<GitHubState> {
+    const github = plugin<GitHubPlugin>('github');
+    if (!github) {
+        return {
+            available: false,
+            note: 'Not available in this version',
+            repositories: []
+        };
+    }
+    const [availability, repositories] = await Promise.all([
+        github.saveAvailability(),
+        github.repositoriesForSave()
+    ]);
+    return { ...availability, repositories };
+}
+
+/** The current font's repository and folder, when it came from GitHub. */
+function currentGitHubPlace(): { label: string; folder: string } | null {
+    const font = window.fontManager?.currentFont;
+    if (font?.sourcePlugin?.getId?.() !== 'github') return null;
+    const [owner, repo, ...rest] = font.path.split('/').filter(Boolean);
+    if (!owner || !repo) return null;
+    return {
+        label: repositoryLabel({ owner, repo }),
+        folder: rest.slice(0, -1).join('/')
+    };
+}
+
 /**
  * Whether the cloud can take this font, the same rules as the editor's.
  * Every reason a cloud save would be refused is found here, so the Cloud
@@ -155,17 +196,22 @@ function currentDestination(): SaveDestination | null {
     const id = window.fontManager?.currentFont?.sourcePlugin?.getId?.();
     if (id === 'disk') return 'disk';
     if (id === 'cloud') return 'cloud';
+    if (id === 'github') return 'github';
     if (id === 'memory') return 'browser';
     return null;
 }
 
-function defaultDestination(cloud: CloudState): SaveDestination {
+function defaultDestination(
+    cloud: CloudState,
+    github: GitHubState
+): SaveDestination {
     return chooseSaveDestination(
         currentDestination(),
         readSetting(LAST_DESTINATION_KEY),
         {
             fileAccess: supportsFileAccess,
-            cloud: cloud.available
+            cloud: cloud.available,
+            github: github.available
         }
     );
 }
@@ -324,6 +370,34 @@ async function saveToCloud(name: string): Promise<boolean> {
     return saved;
 }
 
+/**
+ * Save into a folder of a repository. The plugin publishes the save as a
+ * commit on the repository's working branch and keeps its pull request up
+ * to date.
+ */
+async function saveToGitHub(
+    fileName: string,
+    glyphsVersion: GlyphsFormatVersion | undefined,
+    repository: GitHubRepository,
+    folder: string
+): Promise<void> {
+    const github = plugin<GitHubPlugin>('github');
+    if (!github) throw new Error('GitHub is not available.');
+    const inside = folder.replace(/^\/+|\/+$/g, '');
+    const path = `/${repository.owner}/${repository.repo}/${inside ? `${inside}/` : ''}${fileName}`;
+    ensureNotOpenElsewhere(`github://${path}`, fileName);
+    const exists = await github.getAdapter().fileExists(path);
+    if (
+        exists &&
+        !confirm(
+            `“${fileName}” already exists in ${repositoryLabel(repository)}. Replace it?`
+        )
+    ) {
+        throw new DOMException('Replace declined', 'AbortError');
+    }
+    await saveCurrentFontAs(github, path, { exists, glyphsVersion });
+}
+
 // --- The dialog ---------------------------------------------------------
 
 let open = false;
@@ -337,11 +411,17 @@ export async function showSaveAsDialog(
     open = true;
 
     const cloudPromise = cloudState();
+    const githubPromise = githubState();
     const initial = defaultNameAndFormat();
     const initialGlyphsVersion = defaultGlyphsVersion();
     let cloud: CloudState = { available: false, note: 'Checking…' };
+    let github: GitHubState = {
+        available: false,
+        note: 'Checking…',
+        repositories: []
+    };
     let dest: SaveDestination =
-        options.destination ?? defaultDestination(cloud);
+        options.destination ?? defaultDestination(cloud, github);
     const fileAccess = supportsFileAccess;
 
     const dialog = openDialog({
@@ -372,7 +452,15 @@ export async function showSaveAsDialog(
         <div class="font-window-destinations" role="radiogroup" aria-label="Where to save">
             <button type="button" class="font-window-destination" role="radio" data-dest="disk"${fileAccess ? '' : ' disabled'}>${icon('computer')}<span><b>This computer</b><small data-hint="disk"></small></span><span class="font-window-radio"></span></button>
             <button type="button" class="font-window-destination" role="radio" data-dest="cloud" disabled>${icon('cloud')}<span><b>Cloud</b><small data-hint="cloud">${escapeHtml(cloud.note)}</small></span><span class="font-window-radio"></span></button>
+            <button type="button" class="font-window-destination" role="radio" data-dest="github" disabled>${icon('code')}<span><b>GitHub</b><small data-hint="github">${escapeHtml(github.note)}</small></span><span class="font-window-radio"></span></button>
             <button type="button" class="font-window-destination" role="radio" data-dest="browser">${icon('web')}<span><b>Browser storage</b><small>Stays in this browser only</small></span><span class="font-window-radio"></span></button>
+        </div>
+        <div data-github-fields hidden>
+            <div class="font-window-fields"><div class="font-window-field-row">
+                <label>Repository<span class="font-window-control">${icon('code')}<select data-github-repository></select></span></label>
+                <label>Folder<span class="font-window-control">${icon('folder')}<input type="text" data-github-folder list="font-window-github-folders" placeholder="Top of the repository" spellcheck="false" autocomplete="off"></span></label>
+            </div></div>
+            <datalist id="font-window-github-folders"></datalist>
         </div>
         <div class="font-window-dialog-actions">
             <button type="button" class="dialog-button" data-close>Cancel</button>
@@ -391,6 +479,60 @@ export async function showSaveAsDialog(
     const cloudButton = body.querySelector(
         '[data-dest="cloud"]'
     ) as HTMLButtonElement;
+    const githubButton = body.querySelector(
+        '[data-dest="github"]'
+    ) as HTMLButtonElement;
+    const githubFields = body.querySelector(
+        '[data-github-fields]'
+    ) as HTMLElement;
+    const githubRepositorySelect = body.querySelector(
+        '[data-github-repository]'
+    ) as HTMLSelectElement;
+    const githubFolderInput = body.querySelector(
+        '[data-github-folder]'
+    ) as HTMLInputElement;
+    const githubFolderList = body.querySelector(
+        '#font-window-github-folders'
+    ) as HTMLDataListElement;
+    const githubRepository = (): GitHubRepository | null =>
+        github.repositories[Number(githubRepositorySelect.value)] ?? null;
+
+    /** Offer the repository's folders; keep a folder already typed. */
+    const loadGitHubFolders = async () => {
+        const repository = githubRepository();
+        const github = plugin<GitHubPlugin>('github');
+        githubFolderList.innerHTML = '';
+        if (!repository || !github) return;
+        try {
+            const folders = await github.foldersOf(repository);
+            if (githubRepository() !== repository) return;
+            githubFolderList.innerHTML = folders
+                .filter(Boolean)
+                .map((folder) => `<option value="${escapeHtml(folder)}">`)
+                .join('');
+        } catch (error) {
+            console.warn('Could not list the repository’s folders', error);
+        }
+    };
+    githubRepositorySelect.addEventListener('change', () => {
+        githubFolderInput.value = '';
+        void loadGitHubFolders();
+    });
+
+    /** Fill the repository choice, starting where the font lives. */
+    const fillGitHubFields = () => {
+        const place = currentGitHubPlace();
+        githubRepositorySelect.innerHTML = github.repositories
+            .map(
+                (repository, index) =>
+                    `<option value="${index}"${repositoryLabel(repository).toLowerCase() === place?.label.toLowerCase() ? ' selected' : ''}>${escapeHtml(repositoryLabel(repository))}</option>`
+            )
+            .join('');
+        if (place && githubRepository()) {
+            githubFolderInput.value = place.folder;
+        }
+        void loadGitHubFolders();
+    };
 
     const baseName = () => nameInput.value.trim() || 'Untitled';
     const format = () => formatSelect.value as FontFormatKey;
@@ -417,11 +559,16 @@ export async function showSaveAsDialog(
                     : `Pick a folder; ${fileName} and its UFOs are created inside it`;
         (body.querySelector('[data-hint="cloud"]') as HTMLElement).textContent =
             cloud.note;
+        (
+            body.querySelector('[data-hint="github"]') as HTMLElement
+        ).textContent = github.note;
         // The cloud saves by name alone, without an extension.
         (body.querySelector('[data-ext]') as HTMLElement).textContent =
             dest === 'cloud' ? '' : FONT_FORMATS[format()].ext;
         cloudButton.disabled = !cloud.available;
         cloudButton.title = cloud.blocked ?? '';
+        githubButton.disabled = !github.available;
+        githubFields.hidden = dest !== 'github' || !github.available;
         (body.querySelector('[data-format-field]') as HTMLElement).hidden =
             dest === 'cloud';
         (
@@ -434,9 +581,12 @@ export async function showSaveAsDialog(
                     : 'Choose folder…'
                 : dest === 'cloud'
                   ? 'Save to cloud'
-                  : 'Save';
+                  : dest === 'github'
+                    ? 'Save to GitHub'
+                    : 'Save';
         go.disabled =
             (dest === 'cloud' && !cloud.available) ||
+            (dest === 'github' && !github.available) ||
             (dest === 'disk' && !fileAccess);
     };
 
@@ -467,11 +617,29 @@ export async function showSaveAsDialog(
     update();
     nameInput.select();
 
-    void cloudPromise.then((state) => {
-        cloud = state;
-        if (!options.destination) dest = defaultDestination(cloud);
-        update();
-    });
+    void Promise.all([cloudPromise, githubPromise]).then(
+        ([cloudState, githubResult]) => {
+            cloud = cloudState;
+            github = githubResult;
+            if (!options.destination) dest = defaultDestination(cloud, github);
+            fillGitHubFields();
+            update();
+        }
+    );
+
+    const saveToGitHubFields = async (
+        fileName: string,
+        version: GlyphsFormatVersion | undefined
+    ) => {
+        const repository = githubRepository();
+        if (!repository) throw new Error('Choose a repository.');
+        await saveToGitHub(
+            fileName,
+            version,
+            repository,
+            githubFolderInput.value
+        );
+    };
 
     go.addEventListener('click', async () => {
         if (baseName().includes('/') || baseName().includes('\\')) {
@@ -486,7 +654,9 @@ export async function showSaveAsDialog(
                 ? saveToDisk(fileName, format(), version)
                 : dest === 'cloud'
                   ? saveToCloud(baseName())
-                  : saveToBrowser(fileName, version);
+                  : dest === 'github'
+                    ? saveToGitHubFields(fileName, version)
+                    : saveToBrowser(fileName, version);
         go.disabled = true;
         try {
             await saving;

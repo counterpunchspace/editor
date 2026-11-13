@@ -57,6 +57,21 @@ import {
 } from '../font-windows/dialogs';
 import '../font-windows/pending-opens';
 import {
+    clearGitHubCredential,
+    loadGitHubCredential,
+    loadGitHubRepositories,
+    saveGitHubCredential,
+    type GitHubCredential,
+    type GitHubRepository,
+    type GitHubRepositorySpec
+} from '../github/github-session';
+import { gitHubFontKey } from '../github/github-fonts';
+import {
+    showAddGitHubRepository,
+    showGitHubRepositories,
+    showGitHubSignIn
+} from '../github/github-dialogs';
+import {
     activateUpdate,
     onNewVersionActive,
     releaseNotesUrl,
@@ -436,6 +451,71 @@ function cloudRows(): Row[] {
         .sort((a, b) => (b.lastOpened ?? 0) - (a.lastOpened ?? 0));
 }
 
+// GitHub: one sign-in for the editor and the repositories added to it
+// (github/github-session.ts). The launcher is where both are set up.
+let githubCredential: GitHubCredential | null = null;
+let githubRepositories: GitHubRepository[] = [];
+
+/** Whether a window has a font from the repository open. */
+function hasOpenGitHubFont(spec: GitHubRepositorySpec): boolean {
+    const prefix = gitHubFontKey(spec, '').toLowerCase();
+    return [...recents.keys()].some(
+        (key) =>
+            key.toLowerCase().startsWith(prefix) && !!documentOpenState(key)
+    );
+}
+
+async function connectGitHub(): Promise<void> {
+    const result = await showGitHubSignIn(githubCredential);
+    if (result === 'signed-out') {
+        await clearGitHubCredential();
+    } else if (result) {
+        await saveGitHubCredential(result);
+        githubCredential = result;
+        if (!githubRepositories.length) {
+            await showAddGitHubRepository(result);
+        }
+    }
+    await refresh();
+}
+
+function openFromGitHub(): void {
+    if (!githubCredential) {
+        void connectGitHub();
+        return;
+    }
+    showGitHubRepositories({
+        credential: githubCredential,
+        repositories: githubRepositories,
+        openFont: (font) => openFontWindow(font),
+        hasOpenFont: hasOpenGitHubFont,
+        onChange: () => void refresh()
+    });
+}
+
+/** Fonts opened from GitHub, with the repository they came from. */
+function githubRows(): Row[] {
+    return [...recents.values()]
+        .filter((recent) => recent.source === 'github')
+        .map((recent) => {
+            const repository = recent.key
+                .replace(/^github:\/\/\//, '')
+                .split('/')
+                .slice(0, 2)
+                .join('/');
+            return {
+                key: recent.key,
+                name: recent.name,
+                format: fontFormatOf(recent.name),
+                icon: rowIcon(recent.name),
+                lastOpened: recent.lastOpened,
+                where: [repository],
+                action: 'forget' as const
+            };
+        })
+        .sort((a, b) => (b.lastOpened ?? 0) - (a.lastOpened ?? 0));
+}
+
 function listHtml(group: string, rows: Row[], empty: string): string {
     if (!rows.length) return `<div class="launcher-empty">${empty}</div>`;
     const limit = expanded.has(group) ? rows.length : ROWS_SHOWN;
@@ -463,8 +543,12 @@ function render(): void {
     const disk = diskRows();
     const browser = browserRows();
     const cloud = cloudRows();
+    const github = githubRows();
     rowsByKey = new Map(
-        [...unsaved, ...disk, ...browser, ...cloud].map((row) => [row.key, row])
+        [...unsaved, ...disk, ...browser, ...cloud, ...github].map((row) => [
+            row.key,
+            row
+        ])
     );
 
     const open = fontWindows().length;
@@ -525,6 +609,23 @@ function render(): void {
         cloudOptions
     );
     html += groupHtml(
+        'GitHub',
+        'code',
+        !githubCredential
+            ? `<div class="launcher-callout"><span>Open fonts from GitHub repositories and save your edits as pull requests.</span><button type="button" class="dialog-button" data-github-connect>Connect GitHub…</button></div>`
+            : !githubRepositories.length
+              ? `<div class="launcher-callout"><span>Add a repository to open its fonts.</span><button type="button" class="dialog-button" data-github-add>Add repository…</button></div>`
+              : listHtml(
+                    'github',
+                    github,
+                    'Fonts you open from GitHub show up here.'
+                ),
+        githubCredential ? githubCredential.login : '',
+        githubCredential
+            ? `<button type="button" class="launcher-link" data-github-browse>Open…</button><button type="button" class="launcher-link" data-github-connect>Account…</button>`
+            : ''
+    );
+    html += groupHtml(
         'Browser storage',
         'web',
         listHtml('browser', browser, 'No fonts in browser storage yet.')
@@ -534,6 +635,19 @@ function render(): void {
 
 $('launcher-recents').addEventListener('click', async (event) => {
     const target = event.target as HTMLElement;
+    if (target.closest('[data-github-connect]')) {
+        await connectGitHub();
+        return;
+    }
+    if (target.closest('[data-github-add]') && githubCredential) {
+        await showAddGitHubRepository(githubCredential);
+        await refresh();
+        return;
+    }
+    if (target.closest('[data-github-browse]')) {
+        openFromGitHub();
+        return;
+    }
     if (target.closest('[data-cloud-login]')) {
         await window.authManager?.signIn?.({
             reason: 'Log in to see your cloud fonts.'
@@ -911,11 +1025,17 @@ function openCloudFontNotListed(): string | null {
 }
 
 async function refresh(): Promise<void> {
-    const [docs, recent, browser] = await Promise.all([
-        allDiskDocuments(),
-        allRecentFonts(),
-        readBrowserFonts()
-    ]);
+    const [docs, recent, browser, credential, repositories] = await Promise.all(
+        [
+            allDiskDocuments(),
+            allRecentFonts(),
+            readBrowserFonts(),
+            loadGitHubCredential(),
+            loadGitHubRepositories()
+        ]
+    );
+    githubCredential = credential;
+    githubRepositories = repositories;
     await Promise.all(
         docs.map(async (doc) =>
             chains.set(doc.id, await folderChain(doc).catch(() => []))

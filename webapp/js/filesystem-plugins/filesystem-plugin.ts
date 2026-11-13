@@ -38,6 +38,15 @@ export interface PluginMessageOptions {
     spinning?: boolean;
 }
 
+/** What one save wrote, for backends that describe it (a commit message). */
+export interface SaveSummary {
+    fontName: string;
+    /** Glyphs the save changed; null when it wrote the whole font. */
+    glyphs: string[] | null;
+    /** Whether font-level data (info, masters, kerning, features) changed. */
+    fontLevel: boolean;
+}
+
 export interface CanAddGlyphsResult {
     allowed: boolean;
     remaining?: number | null;
@@ -267,6 +276,15 @@ export abstract class FilesystemPlugin {
      */
     async prepareToSave(): Promise<void> {
         // Default: nothing extra to prepare
+    }
+
+    /**
+     * Called once after a save has written every changed file.
+     * Backends that publish a save as one unit (a commit, a transaction)
+     * use this to send it; `writeFile` may buffer until then.
+     */
+    async afterSave(_summary: SaveSummary): Promise<void> {
+        // Default: writes are already durable
     }
 
     async prepareToSeed(): Promise<void> {

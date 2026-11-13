@@ -33,7 +33,7 @@ export type GrantedFolder = {
     addedAt: number;
 };
 
-export type RecentSource = 'disk' | 'memory' | 'cloud';
+export type RecentSource = 'disk' | 'memory' | 'cloud' | 'github';
 
 /** One recently opened font, keyed by its document key (file URI). */
 export type RecentFont = {

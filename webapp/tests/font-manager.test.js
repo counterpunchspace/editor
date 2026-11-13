@@ -3190,7 +3190,8 @@ describe('FontManager loadFont', () => {
             createWritable: jest.fn().mockResolvedValue(writable)
         };
         const diskPlugin = {
-            getId: () => 'disk'
+            getId: () => 'disk',
+            afterSave: jest.fn(async () => {})
         };
 
         await fontManager.loadFont(
@@ -3202,6 +3203,7 @@ describe('FontManager loadFont', () => {
 
         const currentFont = fontManager.currentFont;
         await currentFont.save();
+        expect(diskPlugin.afterSave).toHaveBeenCalledTimes(1);
 
         const glyphsSerializationInput = JSON.parse(
             save_font_as_glyphs.mock.calls[0][0]
@@ -6045,7 +6047,8 @@ describe('FontManager external source reload', () => {
             path: '/fonts/ManufacturedKink.babelfont',
             sourcePlugin: {
                 getId: () => 'external-test',
-                getAdapter: () => sourceAdapter
+                getAdapter: () => sourceAdapter,
+                afterSave: async () => {}
             },
             folderSaveTracker: new FolderSaveTracker()
         };

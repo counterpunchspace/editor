@@ -705,3 +705,62 @@
     display: flex;
     gap: 4px;
 }
+
+/* ── GitHub setup dialog ───────────────────────────────────────────────────── */
+
+.github-setup-dialog {
+    max-width: 460px;
+}
+
+.github-setup-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 0 0 12px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.github-setup-field .dialog-input {
+    width: 100%;
+}
+
+.github-setup-hint {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.github-setup-hint a {
+    color: var(--accent-blue);
+}
+
+.github-setup-error {
+    font-size: 12px;
+    color: var(--accent-red);
+}
+
+.github-repository + .github-repository {
+    margin-top: 16px;
+}
+
+.github-repository-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 6px;
+    font-size: 13px;
+}
+
+.github-repository-head .meta {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.github-repository-head .meta a {
+    color: var(--accent-blue);
+}
+
+.github-repository-head [data-remove] {
+    margin-left: auto;
+}

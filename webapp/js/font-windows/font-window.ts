@@ -75,7 +75,10 @@ export function initFontWindow(): void {
 
 function sourceOfKey(key: string): RecentSource | null {
     const scheme = key.split(':')[0];
-    return scheme === 'disk' || scheme === 'memory' || scheme === 'cloud'
+    return scheme === 'disk' ||
+        scheme === 'memory' ||
+        scheme === 'cloud' ||
+        scheme === 'github'
         ? scheme
         : null;
 }

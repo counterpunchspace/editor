@@ -195,7 +195,7 @@ declare global {
         // From font-windows/save-as-dialog.ts
         saveFontAs:
             | ((options?: {
-                  destination?: 'disk' | 'cloud' | 'browser';
+                  destination?: 'disk' | 'cloud' | 'browser' | 'github';
               }) => Promise<void>)
             | undefined;
         locatePathInFileDialog:

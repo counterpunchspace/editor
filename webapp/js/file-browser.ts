@@ -126,6 +126,7 @@ type MenuElement = HTMLElement & { _handlersSetup?: boolean };
 type TippyHostElement = HTMLElement & {
     _tippy?: TippyInstance;
     _hasMenu?: boolean;
+    _menuItems?: TitleBarMenuItem[];
 };
 
 function getErrorMessage(error: unknown): string {
@@ -1168,13 +1169,21 @@ function hasOpenFontInCurrentWindow(): boolean {
 }
 
 // Helper functions for plugin menu dropdowns
+function escapeMenuText(value: string): string {
+    return value
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
 function createPluginMenuHtml(menuItems: TitleBarMenuItem[]): string {
     const items = menuItems
         .map(
             (item) => `
-        <div class="plugin-menu-item" data-action="${item.label}">
+        <div class="plugin-menu-item" data-action="${escapeMenuText(item.label)}">
             ${item.icon ? `<span class="material-symbols-outlined">${item.icon}</span>` : ''}
-            <span>${item.label}</span>
+            <span>${escapeMenuText(item.label)}</span>
         </div>
     `
         )
@@ -2089,6 +2098,12 @@ async function saveCurrentFontAsIn(
         currentFont.sourceFileHash = hashBytes(
             new TextEncoder().encode(serializedFont)
         );
+        await plugin.afterSave({
+            fontName: currentFont.name,
+            glyphs: null,
+            fontLevel: true
+        });
+        currentFont.folderSaveTracker.reset();
     }
     currentFont.needsRecompile = false;
     currentFont.hasUnsavedChanges = false;
@@ -3551,6 +3566,7 @@ async function initFileBrowser() {
                     );
 
                     // Create tippy menu on the button itself
+                    const host = button as TippyHostElement;
                     const menuHtml = createPluginMenuHtml(menuItems);
                     const tippyInstance = tippy(button, {
                         content: menuHtml,
@@ -3563,8 +3579,20 @@ async function initFileBrowser() {
                         offset: [0, 0],
                         hideOnClick: false,
                         zIndex: 9999,
+                        // Plugin menus depend on state (a connected
+                        // repository, a live cloud font), so they are built
+                        // again every time they open.
+                        onShow: (instance) => {
+                            host._menuItems = plugin.getTitleBarMenuItems();
+                            instance.setContent(
+                                createPluginMenuHtml(host._menuItems)
+                            );
+                        },
                         onShown: (instance) => {
-                            setupMenuItemHandlers(instance, menuItems);
+                            setupMenuItemHandlers(
+                                instance,
+                                host._menuItems ?? menuItems
+                            );
                         }
                     });
 
@@ -3572,8 +3600,8 @@ async function initFileBrowser() {
                     addTippyBackdropSupport(tippyInstance, backdrop);
 
                     // Store tippy instance and menu items
-                    (button as any)._tippy = tippyInstance;
-                    (button as any)._hasMenu = true;
+                    host._tippy = tippyInstance;
+                    host._hasMenu = true;
 
                     // Handle clicks: show menu on dropdown icon, switch context on button area
                     button.addEventListener('click', async (e) => {
@@ -3875,6 +3903,31 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (pluginId === 'disk' && fontPath) {
                 await openDiskDocumentFromUrl(fontPath, openFont);
+                return;
+            }
+
+            // The launcher signs in and picks GitHub fonts; the window reads
+            // the font straight from the repository.
+            const githubPlugin =
+                pluginId === 'github' ? pluginRegistry.get('github') : null;
+            if (githubPlugin && fontPath) {
+                try {
+                    const ready = waitForUrlOpenFontReady(fontPath);
+                    await openFont(fontPath, undefined, {
+                        sourcePluginOverride: githubPlugin
+                    });
+                    await ready;
+                } catch (error: unknown) {
+                    console.error(
+                        '[FileBrowser]',
+                        'Failed to open GitHub font from URL params:',
+                        error
+                    );
+                    showFontUnavailable(
+                        'This font couldn’t be opened from GitHub',
+                        getErrorMessage(error)
+                    );
+                }
                 return;
             }
 

@@ -573,6 +573,21 @@ export class FolderSaveTracker {
         };
     }
 
+    /**
+     * What a save of the recorded changes covers, to describe it. Like
+     * `plan`, unsaved changes with nothing recorded count as everything.
+     */
+    summary(hasUnsavedChanges: boolean): {
+        glyphs: string[] | null;
+        fontLevel: boolean;
+    } {
+        const nothingRecorded = this.glyphs.size === 0 && !this.fontLevel;
+        if (this.full || (nothingRecorded && hasUnsavedChanges)) {
+            return { glyphs: null, fontLevel: true };
+        }
+        return { glyphs: [...this.glyphs].sort(), fontLevel: this.fontLevel };
+    }
+
     reset(): void {
         this.glyphs.clear();
         this.fontLevel = false;

@@ -52,6 +52,7 @@ export const FACILITY_REGISTRY: Record<string, boolean> = {
     FontManager: false,
     FontWindows: false,
     Launcher: false,
+    GitHubPlugins: false,
     GlyphCanvas: false,
     GlyphData: false,
     GlyphOverview: false,

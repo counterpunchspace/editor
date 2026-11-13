@@ -1,6 +1,7 @@
 import { Logger } from '../logger';
 import { pluginRegistry } from './registry';
 import { DiskPlugin } from './plugins/disk-plugin';
+import { GitHubPlugin } from './plugins/github-plugin';
 import { MemoryPlugin } from './plugins/memory-plugin';
 
 export {
@@ -15,11 +16,13 @@ export {
 export { pluginRegistry } from './registry';
 export { MemoryPlugin } from './plugins/memory-plugin';
 export { DiskPlugin } from './plugins/disk-plugin';
+export { GitHubPlugin } from './plugins/github-plugin';
 
 const console = new Logger('FilesystemPlugins');
 
 pluginRegistry.register(new MemoryPlugin());
 pluginRegistry.register(new DiskPlugin());
+pluginRegistry.register(new GitHubPlugin());
 pluginRegistry.setDefault('memory');
 
 console.log(
