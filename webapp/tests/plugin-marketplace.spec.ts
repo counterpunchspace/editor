@@ -758,9 +758,21 @@ test('register, buy, and install the free and commercial plugins', async ({
                 timeout: 60000
             });
             // The plugin payment method configuration offers more than cards.
+            // Stripe’s checkout markup changes over time: pick the card
+            // option by its old test id, its radio value or its label.
             await accountPage
-                .locator('[data-testid="card-accordion-item"]')
-                .click();
+                .locator(
+                    '[data-testid="card-accordion-item"], input[type="radio"][value="card"]'
+                )
+                .or(accountPage.getByRole('radio', { name: /^Card\b/ }))
+                .or(accountPage.getByRole('button', { name: /^Card\b/ }))
+                .or(accountPage.getByText('Card', { exact: true }))
+                .filter({ visible: true })
+                .first()
+                .click({ timeout: 60000 });
+            await expect(accountPage.locator('#cardNumber')).toBeVisible({
+                timeout: 60000
+            });
             await accountPage.locator('#cardNumber').fill('4242424242424242');
             await accountPage.locator('#cardExpiry').fill('12 / 34');
             await accountPage.locator('#cardCvc').fill('123');
