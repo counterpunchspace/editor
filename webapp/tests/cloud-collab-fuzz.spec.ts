@@ -779,6 +779,30 @@ test.describe('cloud collaboration fuzz', () => {
             const beginTrafficMeasure = async () => {
                 for (const fuzzWindow of windows) {
                     await waitForCloudLiveIdle(fuzzWindow.page).catch(() => {});
+                    // A glyph opened for this step connects its live socket,
+                    // and asks for the room’s status once connected. Neither
+                    // is the step’s traffic, so wait for the socket here.
+                    await expect
+                        .poll(
+                            () =>
+                                fuzzWindow.page.evaluate(() => {
+                                    const session = (window as any).cloudPlugin
+                                        ?._liveSession;
+                                    const ids: string[] =
+                                        session?.liveDocumentIds?.() ?? [];
+                                    return ids.every(
+                                        (id) =>
+                                            session.hasSyncedLiveDocument?.(
+                                                id
+                                            ) !== false
+                                    );
+                                }),
+                            {
+                                timeout: 30000,
+                                message: `${fuzzWindow.name}: live sockets connected`
+                            }
+                        )
+                        .toBe(true);
                 }
                 await mainPage.waitForTimeout(1500);
                 const names = await glyphNamesById();
