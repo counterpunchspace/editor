@@ -3608,10 +3608,6 @@ function initializeBridge(detail: {
         heldWorkerUpdates.delete(documentId);
         return Y.mergeUpdates([...held, update]);
     };
-    bridge.onGlyphRevisionSignal((update) => {
-        holdWorkerUpdate(FONT_CORE_DOCUMENT_ID, update);
-    });
-
     bridge.setWorkerDocumentReplaceCallback((documentId, state) => {
         heldWorkerUpdates.delete(documentId);
         // Read the document when the replace runs, not now: updates forwarded

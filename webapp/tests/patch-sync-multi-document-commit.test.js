@@ -152,9 +152,7 @@ describe('multi-document worker commits', () => {
         engine.onLocalUpdate((update, message, _entries, documentId) => {
             emitted.push({ kind: 'packet', update, message, documentId });
         });
-        engine.onGlyphRevisionSignal((update, entries) => {
-            emitted.push({ kind: 'revisions', update, entries });
-        });
+        const coreBefore = engine.encodeBridgeState();
 
         const { shards, operations, documentUpdates } = buildWidthCommit(
             engine,
@@ -169,21 +167,21 @@ describe('multi-document worker commits', () => {
             documentUpdates
         );
 
-        // The core revision signal comes after every glyph packet.
-        expect(emitted.map((item) => item.kind)).toEqual([
-            'packet',
-            'packet',
-            'packet',
-            'revisions'
-        ]);
+        // One packet per glyph, nothing for font-core: each glyph's envelope
+        // carries its revision, which the glyph room hands to font-core's feed.
+        expect(emitted.map((item) => item.documentId)).toEqual(
+            documentUpdates.map((p) => p.documentId)
+        );
+        expect(engine.encodeBridgeState()).toEqual(coreBefore);
         const tokens = new Map(
             engine
                 .listGlyphRevisionTokens()
                 .map((token) => [token.glyphId, token.revision])
         );
-        const glyphDocumentIds = documentUpdates.map((p) => p.documentId);
-        for (const documentId of glyphDocumentIds) {
-            expect(tokens.get(documentId.slice('glyph:'.length))).toBeTruthy();
+        for (const item of emitted) {
+            const glyphId = item.documentId.slice('glyph:'.length);
+            expect(tokens.get(glyphId)).toBeTruthy();
+            expect(item.message.glyphRevision).toBe(tokens.get(glyphId));
         }
 
         // A peer that applies only the glyph packets holds each stamped

@@ -310,12 +310,16 @@ export type CommittedChangeListener = (
     }
 ) => void;
 
-export type GlyphRevisionSignalListener = (
-    update: YjsUpdate,
-    entries: ChangeLogEntry[],
-    /** The envelope persisted to the WAL; senders must reuse it so the ACK matches the row. */
-    collaborationMessage?: CollaborationMessageEnvelope | null,
-    meta?: LocalUpdateMeta
+/**
+ * Glyph revisions from the room's revision feed. `initial` marks the first
+ * page after opening: a snapshot to compare against, not a list of changes.
+ */
+/** Own glyph revisions remembered to ignore their echo from the feed. */
+const MAX_OWN_GLYPH_REVISIONS = 20_000;
+
+export type GlyphRevisionFeedListener = (
+    glyphIds: string[],
+    options: { initial: boolean }
 ) => void;
 
 export class MetadataFreeRemoteUpdateError extends Error {
@@ -841,7 +845,6 @@ export class PatchSyncEngine {
     private _txBurst: EditBurst | null = null;
     /** Listeners that send to the room (see `LocalUpdateListenerOptions`). */
     private _cloudLocalListeners = new Set<LocalUpdateListener>();
-    private _cloudRevisionListeners = new Set<GlyphRevisionSignalListener>();
     /** Packets emitted in one synchronous task are one commit for the rate limit. */
     private _cloudCommitSerial = 0;
     private _cloudCommitOpen = false;
@@ -856,7 +859,11 @@ export class PatchSyncEngine {
         flushDeferredCatalogProjection?: () => void;
     }>();
     /** Collects glyph WAL clientTransactionIds for the next core revision row. */
-    private _revisionDependsOnSink: string[] | null = null;
+    /**
+     * Revision tokens of the glyph writes being emitted; each glyph's
+     * envelope carries its token to the room (see `_withGlyphRevisionCatchUp`).
+     */
+    private _pendingGlyphRevisions: Map<string, string> | null = null;
     private _lastCloudCommitDebug: Record<string, unknown> | null = null;
     /** Next logical history item counter */
     private _nextHistoryItemId = 1;
@@ -903,8 +910,15 @@ export class PatchSyncEngine {
     private _localUpdateListeners: Set<LocalUpdateListener> = new Set();
     /** Callbacks for committed local/remote changes after Yjs apply */
     private _committedChangeListeners: Set<CommittedChangeListener> = new Set();
-    private _glyphRevisionListeners: Set<GlyphRevisionSignalListener> =
-        new Set();
+    /** Latest revision token per glyph, from the font-core room's feed. */
+    private _glyphRevisionFeed = new Map<string, string>();
+    private _glyphRevisionFeedListeners = new Set<GlyphRevisionFeedListener>();
+    /**
+     * Revisions written by this window or relayed from its linked windows.
+     * The feed can echo an older one after a newer local edit; such an echo
+     * names content this window already has.
+     */
+    private _ownGlyphRevisions = new Set<string>();
     private _coreHydratedListeners: Set<() => void> = new Set();
     /** Sparse residency: in-memory only. Never written to font-deps. */
     private _sparseSession = false;
@@ -2861,6 +2875,11 @@ export class PatchSyncEngine {
         return entries;
     }
 
+    /** True when the catalog says the glyph was deleted. */
+    isDeletedGlyphDocument(documentId: string): boolean {
+        return this._isTombstonedGlyphDocument(documentId);
+    }
+
     /** A glyph shard whose catalog entry is a tombstone (the glyph was deleted). */
     private _isTombstonedGlyphDocument(documentId: string): boolean {
         if (!documentId.startsWith('glyph:') || !this._fontJson) {
@@ -2920,7 +2939,12 @@ export class PatchSyncEngine {
 
     /** Copy a resident shard into the font model under its catalog name. */
     materializeResidentCatalogGlyph(documentId: string): void {
-        if (!documentId.startsWith('glyph:')) {
+        // A catch-up can finish after the glyph's deletion arrived; the
+        // glyph room and font-core are not ordered with each other.
+        if (
+            !documentId.startsWith('glyph:') ||
+            this._isTombstonedGlyphDocument(documentId)
+        ) {
             return;
         }
         this._aliasResidentGlyphNamesFromCatalog();
@@ -2969,14 +2993,65 @@ export class PatchSyncEngine {
     }
 
     listGlyphRevisionTokens(): Array<{ glyphId: string; revision: string }> {
-        const revisions = this.yDoc.getMap(GLYPH_REVISIONS_KEY);
-        const tokens: Array<{ glyphId: string; revision: string }> = [];
-        revisions.forEach((value, glyphId) => {
-            if (typeof value === 'string' && value) {
-                tokens.push({ glyphId, revision: value });
+        return [...this._glyphRevisionFeed].map(([glyphId, revision]) => ({
+            glyphId,
+            revision
+        }));
+    }
+
+    /**
+     * Apply revision tokens from the room's feed (main window) or from the
+     * main window's relay (linked windows). Returns the glyphs whose token
+     * changed.
+     */
+    applyGlyphRevisionFeed(
+        revisions: Array<{ glyphId: string; revision: string }>,
+        options: { initial?: boolean } = {}
+    ): string[] {
+        const changed: string[] = [];
+        for (const entry of revisions) {
+            if (
+                !entry ||
+                typeof entry.glyphId !== 'string' ||
+                typeof entry.revision !== 'string' ||
+                !entry.glyphId ||
+                !entry.revision
+            ) {
+                continue;
             }
-        });
-        return tokens;
+            if (this._ownGlyphRevisions.has(entry.revision)) {
+                continue;
+            }
+            if (this._glyphRevisionFeed.get(entry.glyphId) !== entry.revision) {
+                this._glyphRevisionFeed.set(entry.glyphId, entry.revision);
+                changed.push(entry.glyphId);
+            }
+        }
+        const initial = options.initial === true;
+        if (changed.length || initial) {
+            for (const cb of [...this._glyphRevisionFeedListeners]) {
+                cb(changed, { initial });
+            }
+        }
+        return changed;
+    }
+
+    private _noteOwnGlyphRevision(revision: unknown): void {
+        if (typeof revision !== 'string' || !revision) {
+            return;
+        }
+        this._ownGlyphRevisions.add(revision);
+        if (this._ownGlyphRevisions.size > MAX_OWN_GLYPH_REVISIONS) {
+            const oldest = this._ownGlyphRevisions.values().next().value;
+            if (oldest !== undefined) {
+                this._ownGlyphRevisions.delete(oldest);
+            }
+        }
+    }
+
+    onGlyphRevisionFeed(cb: GlyphRevisionFeedListener): () => void {
+        this._glyphRevisionFeedListeners.add(cb);
+        return () => this._glyphRevisionFeedListeners.delete(cb);
     }
 
     onCoreHydrated(cb: () => void): void {
@@ -4048,14 +4123,14 @@ export class PatchSyncEngine {
                 )
             ]);
         }
-        if (
-            collaborationMessage &&
-            this._revisionDependsOnSink &&
-            documentId.startsWith('glyph:')
-        ) {
-            this._revisionDependsOnSink.push(
-                collaborationMessageKey(collaborationMessage)
-            );
+        const emittedGlyphId = glyphIdFromDocumentId(documentId);
+        const glyphRevision = emittedGlyphId
+            ? this._pendingGlyphRevisions?.get(emittedGlyphId)
+            : undefined;
+        if (collaborationMessage && glyphRevision) {
+            // The room passes it on to font-core's revision feed once the
+            // write is durable.
+            collaborationMessage = { ...collaborationMessage, glyphRevision };
         }
         const burstKey = this._currentBurstKey();
         const meta: LocalUpdateMeta = { burstKey };
@@ -4567,6 +4642,18 @@ export class PatchSyncEngine {
         burstKey: string | null | undefined,
         dependsOn?: string[]
     ): void {
+        const relayedRevision = collaborationMessage?.glyphRevision;
+        const relayedGlyphId = documentId
+            ? glyphIdFromDocumentId(documentId)
+            : null;
+        if (relayedGlyphId && typeof relayedRevision === 'string') {
+            // The linked window's edit is in this window's glyph now, with
+            // its stamp; record it as the glyph's current revision.
+            this.applyGlyphRevisionFeed([
+                { glyphId: relayedGlyphId, revision: relayedRevision }
+            ]);
+        }
+        this._noteOwnGlyphRevision(relayedRevision);
         const relay = (
             relayUpdate: Uint8Array,
             envelope: CollaborationMessageEnvelope | null | undefined,
@@ -4776,21 +4863,6 @@ export class PatchSyncEngine {
         this._committedChangeListeners.delete(cb);
     }
 
-    onGlyphRevisionSignal(
-        cb: GlyphRevisionSignalListener,
-        options?: LocalUpdateListenerOptions
-    ): void {
-        this._glyphRevisionListeners.add(cb);
-        if (options?.cloud) {
-            this._cloudRevisionListeners.add(cb);
-        }
-    }
-
-    offGlyphRevisionSignal(cb: GlyphRevisionSignalListener): void {
-        this._glyphRevisionListeners.delete(cb);
-        this._cloudRevisionListeners.delete(cb);
-    }
-
     /** Register a callback to mark the font as dirty. */
     onDirty(cb: () => void): void {
         this._onDirty = cb;
@@ -4882,7 +4954,6 @@ export class PatchSyncEngine {
             this._pageHideHandler = null;
         }
         this._cloudLocalListeners.clear();
-        this._cloudRevisionListeners.clear();
         this._liveBurstLayers.clear();
         for (const unsub of this._docUpdateUnsubscribers) {
             unsub();
@@ -4898,7 +4969,8 @@ export class PatchSyncEngine {
         this._onRemoteChange = null;
         this._localUpdateListeners.clear();
         this._committedChangeListeners.clear();
-        this._glyphRevisionListeners.clear();
+        this._glyphRevisionFeedListeners.clear();
+        this._glyphRevisionFeed.clear();
         this._coreHydratedListeners.clear();
         this._clearSparseWorkingSet();
         this._onDirty = null;
@@ -10771,18 +10843,15 @@ export class PatchSyncEngine {
     private _allocateGlyphRevisionTokens(glyphIds: string[]): Array<{
         glyphId: string;
         revision: string;
-        previous: unknown;
     }> {
         const uniqueIds = [...new Set(glyphIds.filter(Boolean))];
         if (!uniqueIds.length || this._isApplyingRemote) {
             return [];
         }
-        const revisions = this.yDoc.getMap(GLYPH_REVISIONS_KEY);
-        return uniqueIds.map((glyphId) => {
-            const previous = revisions.get(glyphId) ?? null;
-            const revision = `${this.windowId}:${++this._glyphRevisionClock}`;
-            return { glyphId, revision, previous };
-        });
+        return uniqueIds.map((glyphId) => ({
+            glyphId,
+            revision: `${this.windowId}:${++this._glyphRevisionClock}`
+        }));
     }
 
     private _stampGlyphCatchUpRevisions(
@@ -10807,124 +10876,6 @@ export class PatchSyncEngine {
         }
     }
 
-    private _publishGlyphRevisionCoreSignal(
-        tokens: Array<{
-            glyphId: string;
-            revision: string;
-            previous: unknown;
-        }>,
-        dependsOn: string[] = []
-    ): void {
-        if (!tokens.length || this._isApplyingRemote) {
-            return;
-        }
-        const historyItemId = `glyph-revision-${this.windowId}-${tokens[0].revision}`;
-        const baseline = Y.encodeStateVector(this.yDoc);
-        const entries: ChangeLogEntry[] = [];
-        this.yDoc.transact(() => {
-            const revisions = this.yDoc.getMap(GLYPH_REVISIONS_KEY);
-            for (const { glyphId, revision, previous } of tokens) {
-                revisions.set(glyphId, revision);
-                entries.push(
-                    createLogEntry({
-                        timestamp: Date.now(),
-                        windowId: this.windowId,
-                        windowRoleLabel: this._getWindowRoleLabel(),
-                        historyAction: 'change',
-                        transactionLabel: 'Glyph revision',
-                        transactionId: null,
-                        historyItemId,
-                        op: 'set',
-                        undoScope: 'font',
-                        path: joinPathWithGlyphSeparator([
-                            GLYPH_REVISIONS_KEY,
-                            glyphId
-                        ]),
-                        oldValue: previous,
-                        newValue: revision
-                    })
-                );
-            }
-        }, GLYPH_REVISION_ORIGIN);
-        const update = Y.encodeStateAsUpdate(this.yDoc, baseline);
-        if (!update.length || !entries.length) {
-            return;
-        }
-        this._noteBroadcastStateVector(FONT_CORE_DOCUMENT_ID);
-        // Persist as an ordinary WAL row with dependsOn, then notify the
-        // dedicated revision-signal hook (not onLocalUpdate — that would add a
-        // second packet beside the glyph edit and break single-emit contracts).
-        const collaborationMessage =
-            createCollaborationMessageEnvelopeFromChangeLogEntries(entries, {
-                localSequence: this._nextCollaborationMessageSequence++,
-                source: 'change-bridge.glyph-revision',
-                windowId: this.windowId
-            });
-        const plugin = window.cloudPlugin;
-        const burstKey = this._currentBurstKey();
-        const meta: LocalUpdateMeta = { burstKey, dependsOn: [...dependsOn] };
-        if (
-            collaborationMessage &&
-            typeof plugin?.persistOutgoingCloudUpdate === 'function' &&
-            // As for edits: main writes the durable row when it relays.
-            !window.windowRole?.isLinkedWindow?.() &&
-            window.fontManager?.currentFont?.isCloudBacked?.() === true
-        ) {
-            const holdDecision = this._cloudHold.submit(
-                {
-                    kind: 'local',
-                    burstKey,
-                    documentId: FONT_CORE_DOCUMENT_ID,
-                    update,
-                    envelope: collaborationMessage,
-                    entries
-                },
-                this._currentCloudCommitId()
-            );
-            if (holdDecision === 'held') {
-                for (const cb of this._glyphRevisionListeners) {
-                    if (!this._cloudRevisionListeners.has(cb)) {
-                        cb(update, entries, collaborationMessage, meta);
-                    }
-                }
-                return;
-            }
-            this._cloudEmitPersistsInFlight += 1;
-            this._cloudEmitPersistChain = this._cloudEmitPersistChain
-                .then(() =>
-                    Promise.resolve(
-                        plugin.persistOutgoingCloudUpdate(
-                            update,
-                            collaborationMessage,
-                            FONT_CORE_DOCUMENT_ID,
-                            [...dependsOn]
-                        )
-                    )
-                )
-                .then(
-                    (ok) => {
-                        if (ok === false) {
-                            this._reportCloudPersistFailure(
-                                FONT_CORE_DOCUMENT_ID,
-                                'rejected'
-                            );
-                        }
-                    },
-                    (error) =>
-                        this._reportCloudPersistFailure(
-                            FONT_CORE_DOCUMENT_ID,
-                            error instanceof Error ? error : String(error)
-                        )
-                )
-                .then(() => {
-                    this._cloudEmitPersistsInFlight -= 1;
-                });
-        }
-        for (const cb of this._glyphRevisionListeners) {
-            cb(update, entries, collaborationMessage, meta);
-        }
-    }
-
     private _withGlyphRevisionCatchUp(
         glyphIds: string[],
         emitLocalGlyphUpdates: () => void
@@ -10934,17 +10885,26 @@ export class PatchSyncEngine {
         // Revision stamps are applied in the same glyph transactions as outline
         // writes when possible; keep an explicit stamp for undo/redo paths.
         this._stampGlyphCatchUpRevisions(tokens);
-        const dependsOn: string[] = [];
-        const previousSink = this._revisionDependsOnSink;
-        this._revisionDependsOnSink = dependsOn;
+        // Each glyph's envelope carries its token. The glyph room tells
+        // font-core once the write is durable, and font-core pushes it to
+        // every window, so peers never fetch a glyph before its bytes land.
+        const previous = this._pendingGlyphRevisions;
+        this._pendingGlyphRevisions = new Map(
+            tokens.map((token) => [token.glyphId, token.revision])
+        );
         try {
             emitLocalGlyphUpdates();
         } finally {
-            this._revisionDependsOnSink = previousSink;
+            this._pendingGlyphRevisions = previous;
         }
-        // Core glyphRevisions is an ordinary WAL row with dependsOn pointing at
-        // the glyph rows emitted above. Never drop this signal.
-        this._publishGlyphRevisionCoreSignal(tokens, dependsOn);
+        // This window holds these revisions already; linked windows learn
+        // them from the feed listeners.
+        if (tokens.length) {
+            this.applyGlyphRevisionFeed(tokens);
+            for (const { revision } of tokens) {
+                this._noteOwnGlyphRevision(revision);
+            }
+        }
     }
 
     private _notifyCoreHydrated(): void {

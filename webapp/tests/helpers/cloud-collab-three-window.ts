@@ -991,22 +991,14 @@ export function expectMinimalRoomTraffic(options: {
             .filter(([, delta]) => (delta.updatesApplied ?? 0) > 0)
             .map(([room]) => room)
             .sort();
-        // font-core may take two: the edit’s own core data and the glyph
-        // revision stamp, which goes out once the glyph rows are in.
-        const allowed = (room: string) =>
-            room === 'font-core' &&
-            changed.some((other) => other.startsWith('glyph/')) &&
-            rooms[room].updatesApplied === 2
-                ? 2
-                : 1;
+        // Glyph revisions reach peers through font-core's feed (a text
+        // frame, not counted here), not as a font-core update.
         expect(
             Object.fromEntries(
                 changed.map((room) => [room, rooms[room].updatesApplied])
             ),
             `${label}: each changed room took exactly one update`
-        ).toEqual(
-            Object.fromEntries(changed.map((room) => [room, allowed(room)]))
-        );
+        ).toEqual(Object.fromEntries(changed.map((room) => [room, 1])));
     } else {
         // Without room counters (staging), what the uploader sent is the
         // changed set; the checks below still demand each once, nothing more.
@@ -1018,11 +1010,6 @@ export function expectMinimalRoomTraffic(options: {
                 .filter((key) => key.endsWith(' sent'))
                 .map((key) => key.slice(0, -' sent'.length))
         ].sort();
-    }
-    if (changed.some((room) => room.startsWith('glyph/'))) {
-        expect(changed, `${label}: a glyph edit stamps font-core`).toContain(
-            'font-core'
-        );
     }
     const split = (live: string[]) => {
         const held = new Set(live.map((name) => `glyph/${name}`));

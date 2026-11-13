@@ -113,6 +113,11 @@ export interface CollaborationMessageEnvelope {
     windowId: string | null;
     timestamp: number;
     part?: CloudEnvelopePart;
+    /**
+     * The writer's revision token for the glyph this write changes. The
+     * glyph room passes it to font-core's revision feed once it is durable.
+     */
+    glyphRevision?: string;
 }
 
 export type DerivedForwardChange = {

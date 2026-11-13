@@ -462,12 +462,11 @@ test.describe('three-window sync scenarios', () => {
                             paths: entries?.map((entry) => entry.path) ?? []
                         })
                 );
-                bridge.onGlyphRevisionSignal(
-                    (_update: Uint8Array, entries: any[]) =>
-                        (window as any).__cloudGlyphSyncTrace.push({
-                            kind: 'revision',
-                            paths: entries?.map((entry) => entry.path) ?? []
-                        })
+                bridge.onGlyphRevisionFeed((glyphIds: string[]) =>
+                    (window as any).__cloudGlyphSyncTrace.push({
+                        kind: 'revision',
+                        glyphIds
+                    })
                 );
             });
             const outlineEditResult = await mainPage.evaluate(

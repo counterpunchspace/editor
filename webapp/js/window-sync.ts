@@ -17,7 +17,6 @@ import {
 } from './linked-live-preview';
 import type { CollaborationLogItem } from './patch-sync-engine';
 import {
-    createCollaborationMessageEnvelopeFromChangeLogEntries,
     createLinkedWindowCatchUpEnvelope,
     isCollaborationMessageEnvelope,
     toWireReplayValues,
@@ -228,6 +227,14 @@ interface SparseResidencyMsg {
     sessionId: string;
 }
 
+/** Glyph revision tokens main received from the room's feed. */
+interface GlyphRevisionsMsg {
+    type: 'glyph-revisions';
+    revisions: Array<{ glyphId: string; revision: string }>;
+    windowId: string;
+    sessionId: string;
+}
+
 interface WindowClosingMsg {
     type: 'window-closing';
     windowId: string;
@@ -310,6 +317,7 @@ type SyncMessage =
     | HydrationRequestMsg
     | HydrationResultMsg
     | SparseResidencyMsg
+    | GlyphRevisionsMsg
     | WindowClosingMsg
     | MainWindowClosingMsg
     | CloudConnectionStatusMsg
@@ -354,6 +362,7 @@ const WINDOW_SYNC_MESSAGE_TYPES = new Set([
     'hydration-request',
     'hydration-result',
     'sparse-residency',
+    'glyph-revisions',
     'window-closing',
     'main-window-closing',
     'cloud-connection-status',
@@ -495,24 +504,9 @@ export class WindowSync {
                     );
                 }
             );
-            bridge.onGlyphRevisionSignal?.(
-                (update, entries, _message, meta) => {
-                    this._queueOutboundBroadcast(
-                        update,
-                        createCollaborationMessageEnvelopeFromChangeLogEntries(
-                            entries,
-                            {
-                                localSequence: 0,
-                                source: 'window-sync.glyph-revision',
-                                windowId: bridge.windowId
-                            }
-                        ),
-                        'font-core',
-                        meta?.burstKey,
-                        meta?.dependsOn
-                    );
-                }
-            );
+            bridge.onGlyphRevisionFeed?.((glyphIds) => {
+                this._sendGlyphRevisions(glyphIds);
+            });
             window.addEventListener?.(
                 'cloud-persist-failed',
                 this._onCloudPersistFailed
@@ -797,6 +791,24 @@ export class WindowSync {
         });
     }
 
+    /** Relay glyph revision tokens to linked windows (all when no ids given). */
+    private _sendGlyphRevisions(glyphIds?: string[]): void {
+        const tokens = this._bridge.listGlyphRevisionTokens?.() ?? [];
+        const wanted = glyphIds ? new Set(glyphIds) : null;
+        const revisions = wanted
+            ? tokens.filter((token) => wanted.has(token.glyphId))
+            : tokens;
+        if (!revisions.length) {
+            return;
+        }
+        this._send({
+            type: 'glyph-revisions',
+            revisions,
+            windowId: this._bridge.windowId,
+            sessionId: this._sessionId
+        });
+    }
+
     broadcastSparseResidency(residency: SparseResidencyRelay): void {
         this._send({
             type: 'sparse-residency',
@@ -937,6 +949,7 @@ export class WindowSync {
             }
             postedGlyphCount += documents.length;
         }
+        this._sendGlyphRevisions();
         const postedEnd = this._send({
             type: 'full-state-end',
             transferId,
@@ -1850,6 +1863,16 @@ export class WindowSync {
             case 'hydration-result':
                 if (msg.windowId === this._bridge.windowId) return;
                 this._settleHydrationRequest(msg);
+                break;
+
+            case 'glyph-revisions':
+                if (msg.windowId === this._bridge.windowId) return;
+                if (window.windowRole?.isMainWindow()) {
+                    return;
+                }
+                this._bridge.applyGlyphRevisionFeed?.(
+                    Array.isArray(msg.revisions) ? msg.revisions : []
+                );
                 break;
 
             case 'sparse-residency':

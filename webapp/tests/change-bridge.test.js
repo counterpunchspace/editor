@@ -12658,15 +12658,6 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
             emittedUpdates.push({ update, entries });
             receiverBridge.applyRemoteUpdate(update, entries);
         });
-        senderBridge.onGlyphRevisionSignal((update, entries) => {
-            emittedUpdates.push({ update, entries });
-            receiverBridge.applyRemoteUpdate(
-                update,
-                entries,
-                undefined,
-                'font-core'
-            );
-        });
 
         const layerMapBefore = senderBridge.getYValue([
             'glyphs',
@@ -12766,14 +12757,6 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         senderBridge.setTransactionFinalizer(transactionFinalizer);
         senderBridge.onLocalUpdate((update, _message, entries) => {
             receiverBridge.applyRemoteUpdate(update, entries);
-        });
-        senderBridge.onGlyphRevisionSignal((update, entries) => {
-            receiverBridge.applyRemoteUpdate(
-                update,
-                entries,
-                undefined,
-                'font-core'
-            );
         });
 
         const sourceSnapshot = cloneValue(senderBridge.getFontJsonSnapshot());
@@ -12899,15 +12882,6 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
                 entries,
                 undefined,
                 documentId
-            );
-        });
-        senderBridge.onGlyphRevisionSignal((update, entries) => {
-            emittedUpdates.push({ update, entries });
-            receiverBridge.applyRemoteUpdate(
-                update,
-                entries,
-                undefined,
-                'font-core'
             );
         });
 

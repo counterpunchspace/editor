@@ -3200,7 +3200,7 @@ describe('section 2 catalog packets and freshness', () => {
         bridge.destroy();
     });
 
-    it('commits glyph body, then deps, then core glyphRevisions', () => {
+    it('commits glyph body, then deps, and writes no revision to font-core', () => {
         const fontJson = twoGlyphFont();
         const bridge = new PatchSyncEngine('freshness-order');
         bridge.initFromJson(fontJson);
@@ -3227,10 +3227,7 @@ describe('section 2 catalog packets and freshness', () => {
                 order.push('deps');
             }
         });
-        const revisions = bridge.yDoc.getMap('glyphRevisions');
-        revisions.observe(() => {
-            order.push('revisions');
-        });
+        const coreBefore = bridge.encodeBridgeState();
         bridge.onCommittedChange((_entries, context) => {
             if (!context.documentId.startsWith('glyph:')) {
                 return;
@@ -3248,10 +3245,15 @@ describe('section 2 catalog packets and freshness', () => {
 
         const glyphIndex = order.indexOf('glyph');
         const depsIndex = order.indexOf('deps');
-        const revisionsIndex = order.indexOf('revisions');
         expect(glyphIndex).toBeGreaterThanOrEqual(0);
         expect(depsIndex).toBeGreaterThan(glyphIndex);
-        expect(revisionsIndex).toBeGreaterThan(depsIndex);
+        // The revision goes to font-core's feed through the glyph room.
+        expect(bridge.encodeBridgeState()).toEqual(coreBefore);
+        expect(
+            bridge
+                .listGlyphRevisionTokens()
+                .some((token) => token.glyphId === glyphId)
+        ).toBe(true);
         bridge.destroy();
     });
 

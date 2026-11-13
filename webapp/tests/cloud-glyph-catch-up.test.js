@@ -117,14 +117,6 @@ function capturePackets(bridge) {
             });
         }
     );
-    bridge.onGlyphRevisionSignal((update, entries) => {
-        packets.push({
-            update,
-            collaborationMessage: null,
-            changeLogEntries: entries,
-            documentId: FONT_CORE_DOCUMENT_ID
-        });
-    });
     return packets;
 }
 
@@ -286,7 +278,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         ).toEqual(['id-added', 'id-new']);
     });
 
-    test('local outline edits publish a font-core revision signal', () => {
+    test('local outline edits carry the glyph revision and write nothing to font-core', () => {
         const { bridge, font } = createEngine('writer');
         const packets = capturePackets(bridge);
         font.findGlyph('B').layers[0].width = 777;
@@ -298,14 +290,14 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
             (packet) => packet.documentId === glyphDocumentId('id-b')
         );
         expect(glyphPackets.length).toBeGreaterThan(0);
-        expect(corePackets.length).toBeGreaterThan(0);
-        expect(
-            glyphIdsFromRevisionEntries(corePackets[0].changeLogEntries)
-        ).toEqual(['id-b']);
+        expect(corePackets).toEqual([]);
+        expect(glyphPackets.at(-1).collaborationMessage.glyphRevision).toBe(
+            revisionFor(bridge, 'id-b')
+        );
         expect(glyphWidth(bridge, 'A')).toBe(500);
     });
 
-    test('receiver without the glyph room still converges via core signal plus catch-up', () => {
+    test('receiver without the glyph room converges via the revision feed plus catch-up', () => {
         const writer = createEngine('writer');
         const receiver = hydrateReceiverFromWriter(writer.bridge);
         const packets = capturePackets(writer.bridge);
@@ -313,32 +305,27 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         window.changeBridge = writer.bridge;
         writer.font.findGlyph('B').layers[0].width = 777;
 
-        const corePackets = packets.filter(
-            (packet) => packet.documentId === FONT_CORE_DOCUMENT_ID
-        );
         const glyphPackets = packets.filter(
             (packet) => packet.documentId === glyphDocumentId('id-b')
         );
-        expect(corePackets.length).toBeGreaterThan(0);
         expect(glyphPackets.length).toBeGreaterThan(0);
 
-        for (const packet of corePackets) {
-            receiver.applyRemoteUpdate(
-                packet.update,
-                packet.changeLogEntries,
-                packet.collaborationMessage
-                    ? [packet.collaborationMessage]
-                    : undefined,
-                packet.documentId
-            );
-        }
-
-        expect(glyphWidth(receiver, 'B')).toBe(400);
+        // font-core's feed names the glyph; the glyph itself comes by catch-up.
+        const feedEvents = [];
+        receiver.onGlyphRevisionFeed((glyphIds, options) =>
+            feedEvents.push({ glyphIds, ...options })
+        );
         expect(
-            glyphIdsFromRevisionEntries(
-                corePackets.flatMap((packet) => packet.changeLogEntries)
-            )
+            receiver.applyGlyphRevisionFeed([
+                {
+                    glyphId: 'id-b',
+                    revision:
+                        glyphPackets.at(-1).collaborationMessage.glyphRevision
+                }
+            ])
         ).toEqual(['id-b']);
+        expect(feedEvents).toEqual([{ glyphIds: ['id-b'], initial: false }]);
+        expect(glyphWidth(receiver, 'B')).toBe(400);
 
         const liveTail = writer.bridge.encodeDocumentState(
             glyphDocumentId('id-b')
@@ -411,7 +398,43 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         expect(glyphWidth(receiver, 'B')).toBe(777);
     });
 
-    test('glyph packets include the catch-up stamp before the core revision signal', () => {
+    test('the feed echo of an older own revision changes nothing', () => {
+        const { bridge, font } = createEngine('writer');
+        const packets = capturePackets(bridge);
+        font.findGlyph('B').layers[0].width = 600;
+        const first = revisionFor(bridge, 'id-b');
+        font.findGlyph('B').layers[0].width = 700;
+        const second = revisionFor(bridge, 'id-b');
+        expect(second).not.toBe(first);
+        expect(packets.length).toBeGreaterThan(0);
+
+        const events = [];
+        bridge.onGlyphRevisionFeed((glyphIds) => events.push(glyphIds));
+        // The room reports the first write after the second was made.
+        expect(
+            bridge.applyGlyphRevisionFeed([
+                { glyphId: 'id-b', revision: first }
+            ])
+        ).toEqual([]);
+        expect(revisionFor(bridge, 'id-b')).toBe(second);
+        expect(events).toEqual([]);
+        // A relayed linked-window edit becomes the glyph's revision, and its
+        // echo from the feed is this session's own.
+        bridge.relayPeerPacketToCloud(
+            new Uint8Array(),
+            { glyphRevision: 'linked:1' },
+            'glyph:id-b'
+        );
+        expect(revisionFor(bridge, 'id-b')).toBe('linked:1');
+        expect(
+            bridge.applyGlyphRevisionFeed([
+                { glyphId: 'id-b', revision: first }
+            ])
+        ).toEqual([]);
+        expect(revisionFor(bridge, 'id-b')).toBe('linked:1');
+    });
+
+    test('glyph packets include the catch-up stamp', () => {
         const { bridge, font } = createEngine('writer');
         const receiver = hydrateReceiverFromWriter(bridge);
         const packets = capturePackets(bridge);
@@ -420,15 +443,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         const glyphIndex = packets.findIndex(
             (packet) => packet.documentId === glyphDocumentId('id-b')
         );
-        const coreIndex = packets.findIndex(
-            (packet) =>
-                packet.documentId === FONT_CORE_DOCUMENT_ID &&
-                glyphIdsFromRevisionEntries(packet.changeLogEntries).includes(
-                    'id-b'
-                )
-        );
         expect(glyphIndex).toBeGreaterThanOrEqual(0);
-        expect(coreIndex).toBeGreaterThan(glyphIndex);
         expect(
             bridge.glyphHasCatchUpRevision(
                 glyphDocumentId('id-b'),
@@ -456,7 +471,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         ).toBe(true);
     });
 
-    test('a multi-glyph edit publishes one collab envelope with every dirty id', () => {
+    test('a multi-glyph edit gives each glyph packet its own revision', () => {
         const { bridge, font } = createEngine('writer');
         const packets = capturePackets(bridge);
         bridge.beginTransaction('edit', null, {
@@ -467,30 +482,23 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         font.findGlyph('B').layers[0].width = 222;
         bridge.endTransaction();
 
-        const corePackets = packets.filter(
-            (packet) =>
-                packet.documentId === FONT_CORE_DOCUMENT_ID &&
-                glyphIdsFromRevisionEntries(packet.changeLogEntries).length
-        );
-        expect(corePackets).toHaveLength(1);
-        expect(
-            glyphIdsFromRevisionEntries(corePackets[0].changeLogEntries).sort()
-        ).toEqual(['id-a', 'id-b']);
-        const envelopes =
-            createCollaborationMessageEnvelopesFromChangeLogEntries(
-                corePackets[0].changeLogEntries,
-                {
-                    startingLocalSequence: 1,
-                    source: 'test',
-                    windowId: bridge.windowId
-                }
+        for (const glyphId of ['id-a', 'id-b']) {
+            const glyphPackets = packets.filter(
+                (packet) => packet.documentId === glyphDocumentId(glyphId)
             );
-        expect(envelopes).toHaveLength(1);
+            expect(glyphPackets.length).toBeGreaterThan(0);
+            expect(glyphPackets.at(-1).collaborationMessage.glyphRevision).toBe(
+                revisionFor(bridge, glyphId)
+            );
+        }
+        expect(revisionFor(bridge, 'id-a')).not.toBe(
+            revisionFor(bridge, 'id-b')
+        );
         expect(
-            glyphIdsFromRevisionEntries(
-                envelopes[0].changes.map((change) => ({ path: change.path }))
-            ).sort()
-        ).toEqual(['id-a', 'id-b']);
+            packets.filter(
+                (packet) => packet.documentId === FONT_CORE_DOCUMENT_ID
+            )
+        ).toEqual([]);
     });
 
     test('catch-up applies a live checkpoint and does not replay mutation history', () => {
@@ -715,7 +723,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         global.fetch = originalFetch;
     });
 
-    test('core hydrate scans dirty revisions so a later opener still catches up', async () => {
+    test('a later opener learns edited glyphs from the feed snapshot and catches up', async () => {
         const writer = createEngine('writer');
         const seedJson = JSON.parse(
             JSON.stringify(writer.bridge.getFontJsonSnapshot())
@@ -732,6 +740,10 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
             hydrated += 1;
         });
         receiver.applyFullState(writer.bridge.encodeBridgeState());
+        receiver.applyGlyphRevisionFeed(
+            writer.bridge.listGlyphRevisionTokens(),
+            { initial: true }
+        );
 
         expect(hydrated).toBe(1);
         expect(glyphWidth(receiver, 'B')).toBe(400);

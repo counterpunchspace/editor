@@ -295,6 +295,7 @@ export class CloudPlugin extends FilesystemPlugin {
     /** Last write-closure hydration attempt per glyph, so canMutate does not refetch in a loop. */
     private _writeClosureAttemptAt = new Map<string, number>();
     private _coreHydratedListener: (() => void) | null = null;
+    private _glyphRevisionFeedUnsubscribe: (() => void) | null = null;
     private _seenGlyphRevisions = new Map<string, string>();
     private _glyphRevisionSnapshotReady = false;
     private _glyphCatchUpInFlight = new Set<string>();
@@ -1342,6 +1343,8 @@ export class CloudPlugin extends FilesystemPlugin {
                     this._coreHydratedListener
                 );
             }
+            this._glyphRevisionFeedUnsubscribe?.();
+            this._glyphRevisionFeedUnsubscribe = null;
             this._seenGlyphRevisions.clear();
             this._glyphRevisionSnapshotReady = false;
         }
@@ -1471,6 +1474,24 @@ export class CloudPlugin extends FilesystemPlugin {
             this._catchUpFromCoreRevisionMap();
         };
         bridge.onCoreHydrated?.(this._coreHydratedListener);
+        // Glyph revisions come from font-core's feed. The first page is a
+        // snapshot: only glyphs this window holds or edits and that are out
+        // of date are fetched. Later pages name glyphs that changed.
+        this._glyphRevisionFeedUnsubscribe =
+            bridge.onGlyphRevisionFeed?.((_glyphIds, { initial }) => {
+                if (initial) {
+                    this._seenGlyphRevisions = new Map(
+                        (bridge.listGlyphRevisionTokens?.() ?? []).map(
+                            (token) => [token.glyphId, token.revision]
+                        )
+                    );
+                    this._glyphRevisionSnapshotReady = true;
+                    if (bridge.hasSparseWorkingSet?.()) {
+                        return;
+                    }
+                }
+                this._catchUpFromCoreRevisionMap();
+            }) ?? null;
         this._catalogClosureListener = () => {
             this._residentClosureAttempt = 0;
             this._scheduleResidentClosureHydration();

@@ -859,13 +859,6 @@ describe('Python post-execution synthetic commit alignment', () => {
         sender.onLocalUpdate((update, _message, entries, documentId) => {
             emittedUpdates.push({ update, entries, documentId });
         });
-        sender.onGlyphRevisionSignal((update, entries) => {
-            emittedUpdates.push({
-                update,
-                entries,
-                documentId: 'font-core'
-            });
-        });
         const promptHistoryMetadata = {
             historyItemId: 'prompt-mixed-scope',
             promptGroupId: 'prompt-mixed-scope',

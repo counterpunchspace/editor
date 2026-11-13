@@ -211,6 +211,11 @@ export const cloudPluginCatchUpMethods = {
                 expectedRevision: entry.revision
             }))
             .filter((target) => {
+                // A deleted glyph's last write still reaches the revision
+                // feed; there is nothing to fetch.
+                if (bridge.isDeletedGlyphDocument?.(target.documentId)) {
+                    return false;
+                }
                 // The open glyph’s synced socket already receives every
                 // update; fetching it again over HTTP only adds work.
                 if (

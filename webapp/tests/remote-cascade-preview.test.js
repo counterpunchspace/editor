@@ -268,8 +268,16 @@ describe('recomposeCollaboratorCascade', () => {
         return { bridge, fontModel, layerO };
     }
 
+    /** Every document the bridge holds: font-core, font-deps and glyphs. */
     function documentsOf(bridge) {
-        return Buffer.from(bridge.encodeBridgeState()).toString('base64');
+        return ['font-core', 'font-deps', ...bridge.listLiveGlyphDocumentIds()]
+            .map(
+                (documentId) =>
+                    `${documentId}:${Buffer.from(
+                        bridge.encodeDocumentState(documentId)
+                    ).toString('base64')}`
+            )
+            .join('|');
     }
 
     it('records the same rebuild when recording is on (control)', () => {

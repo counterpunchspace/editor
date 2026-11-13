@@ -17,10 +17,7 @@
 
 import { isLayoutDocumentId } from './filesystem-plugins/cloud-room-layout';
 import { ROOM_LAYOUT_VERSION } from './filesystem-plugins/cloud-room-layout';
-import {
-    fitEnvelopeForWire,
-    mergeEnvelopesForWire
-} from './cloud-envelope-budget';
+import { fitEnvelopeForWire } from './cloud-envelope-budget';
 import * as Y from 'yjs';
 import {
     MetadataFreeRemoteUpdateError,
@@ -28,7 +25,6 @@ import {
 } from './patch-sync-engine';
 import { Logger } from './logger';
 import { isProduction } from './settings';
-import type { ChangeLogEntry } from './change-log';
 import type { FileInfo, FileSystemAdapter } from './file-system-adapter';
 import type { EncodedShard } from './filesystem-plugins/cloud-document-set';
 import {
@@ -60,7 +56,6 @@ import { COLLAB_PROTOCOL_VERSION as YDOC_SCHEMA_VERSION } from './generated/coll
 import { throwIfAborted, yieldToUi } from './yield-to-ui';
 import {
     collaborationMessageKey,
-    createCollaborationMessageEnvelopesFromChangeLogEntries,
     type CollaborationMessageEnvelope
 } from './collaboration-message';
 import {
@@ -351,6 +346,15 @@ export class CloudAdapter implements FileSystemAdapter {
     private _hasSynced = false;
     private _checkpointLogId: number | null = null;
     private _appliedLogId: number | null = null;
+    /** Last glyph revision feed sequence seen (font-core only). */
+    private _glyphRevisionSeq = 0;
+    private _glyphRevisionRequestInFlight = false;
+    private _glyphRevisionSnapshotApplied = false;
+    /** First feed pages, applied together once complete. */
+    private _glyphRevisionSnapshotPages: Array<{
+        glyphId: string;
+        revision: string;
+    }> = [];
     private _compactStatus = 'ok';
     private _tailFull = false;
     private _pendingOutboundPackets: CloudOutboundUpdatePacket[] = [];
@@ -1699,6 +1703,7 @@ export class CloudAdapter implements FileSystemAdapter {
                 this._clearAuthenticationTimeout();
                 this._stopLiveness();
                 this._clientId = null;
+                this._glyphRevisionRequestInFlight = false;
                 this._markVisibleRebaselineNeeded();
                 this._hasSynced = false;
                 // A dropped glyph socket must bootstrap checkpoint plus tail.
@@ -1862,6 +1867,77 @@ export class CloudAdapter implements FileSystemAdapter {
         }
     }
 
+    /**
+     * Ask font-core for the glyph revisions after the last one seen. Glyph
+     * rooms report each durable write there; see room-glyph-revisions.js.
+     */
+    private _requestGlyphRevisions(): void {
+        if (
+            this._documentId !== FONT_CORE_DOCUMENT_ID ||
+            this._glyphRevisionRequestInFlight ||
+            this._ws?.readyState !== WebSocket.OPEN
+        ) {
+            return;
+        }
+        this._glyphRevisionRequestInFlight = true;
+        this._ws.send(
+            JSON.stringify({
+                type: 'glyph-revisions-request',
+                afterSeq: this._glyphRevisionSeq
+            })
+        );
+    }
+
+    private _handleGlyphRevisions(msg: Record<string, unknown>): void {
+        if (this._documentId !== FONT_CORE_DOCUMENT_ID) {
+            return;
+        }
+        const afterSeq = Number(msg.afterSeq ?? 0);
+        const seq = Number(msg.seq ?? 0);
+        if (!Number.isFinite(afterSeq) || !Number.isFinite(seq)) {
+            return;
+        }
+        if (afterSeq > this._glyphRevisionSeq) {
+            // Revisions were pushed that this window has not seen the ones
+            // before. The answer to a request in flight covers them.
+            this._requestGlyphRevisions();
+            return;
+        }
+        if (msg.reply === true) {
+            this._glyphRevisionRequestInFlight = false;
+        }
+        const revisions = (
+            Array.isArray(msg.revisions) ? msg.revisions : []
+        ).filter(
+            (entry): entry is { glyphId: string; revision: string } =>
+                !!entry &&
+                typeof entry === 'object' &&
+                typeof (entry as { glyphId?: unknown }).glyphId === 'string' &&
+                typeof (entry as { revision?: unknown }).revision === 'string'
+        );
+        this._glyphRevisionSeq = Math.max(this._glyphRevisionSeq, seq);
+        if (msg.hasMore === true) {
+            if (!this._glyphRevisionSnapshotApplied) {
+                this._glyphRevisionSnapshotPages.push(...revisions);
+            } else {
+                this._bridge?.applyGlyphRevisionFeed(revisions);
+            }
+            this._requestGlyphRevisions();
+            return;
+        }
+        if (!this._glyphRevisionSnapshotApplied) {
+            const snapshot = [
+                ...this._glyphRevisionSnapshotPages,
+                ...revisions
+            ];
+            this._glyphRevisionSnapshotPages = [];
+            this._glyphRevisionSnapshotApplied = true;
+            this._bridge?.applyGlyphRevisionFeed(snapshot, { initial: true });
+            return;
+        }
+        this._bridge?.applyGlyphRevisionFeed(revisions);
+    }
+
     private _handleMessage(raw: string): void {
         let msg: Record<string, unknown>;
         try {
@@ -1873,6 +1949,10 @@ export class CloudAdapter implements FileSystemAdapter {
 
         switch (msg.type) {
             case 'pong':
+                break;
+
+            case 'glyph-revisions':
+                this._handleGlyphRevisions(msg);
                 break;
 
             case 'rebaseline-required': {
@@ -1928,6 +2008,7 @@ export class CloudAdapter implements FileSystemAdapter {
                 console.log(`CloudAdapter: authenticated as ${this._clientId}`);
                 this._setStatus('syncing');
                 this._startLiveness();
+                this._requestGlyphRevisions();
                 const authenticatedSocket = this._ws;
                 this._initialServerStateApplied = false;
                 this._initialSyncDurable = false;
@@ -2855,42 +2936,8 @@ export class CloudAdapter implements FileSystemAdapter {
 
         // Flagged as cloud-bound: the engine hands a burst over once, merged.
         this._bridge.onLocalUpdate(sendUpdate, { cloud: true });
-        const sendRevisionSignal = (
-            update: Uint8Array,
-            entries: ChangeLogEntry[],
-            persistedMessage?: CollaborationMessageEnvelope | null
-        ): void => {
-            if (this._documentId !== FONT_CORE_DOCUMENT_ID) {
-                return;
-            }
-            if (persistedMessage) {
-                this._enqueueOutboundPacket(update, persistedMessage);
-                return;
-            }
-            const collaborationMessages =
-                createCollaborationMessageEnvelopesFromChangeLogEntries(
-                    entries,
-                    {
-                        startingLocalSequence: this._seq + 1,
-                        source: 'cloud-adapter.glyph-revision',
-                        windowId: this._bridge?.windowId
-                    }
-                );
-            // One Yjs update can span several history items; send them as
-            // one merged envelope instead of dropping all but the first.
-            this._enqueueOutboundPacket(
-                update,
-                mergeEnvelopesForWire(collaborationMessages, {
-                    documentId: this._documentId
-                })
-            );
-        };
-        this._bridge.onGlyphRevisionSignal?.(sendRevisionSignal, {
-            cloud: true
-        });
         this._localUpdateUnsubscribe = () => {
             this._bridge?.offLocalUpdate(sendUpdate);
-            this._bridge?.offGlyphRevisionSignal?.(sendRevisionSignal);
         };
     }
 

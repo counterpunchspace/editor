@@ -3072,6 +3072,80 @@ describe('CloudPlugin glyph catch-up from core revision map', () => {
         }
     });
 
+    test('the first revision feed page is a snapshot; later pages fetch what changed', async () => {
+        const plugin = new CloudPlugin();
+        const catchUpDocuments = jest.fn().mockResolvedValue([]);
+        plugin._liveSession = { catchUpDocuments };
+        plugin._recomputeActiveAssetSize = () => {};
+        let tokens = [{ glyphId: 'unloaded-x', revision: 'rev-1' }];
+        let onFeed = null;
+        const bridge = {
+            onCommittedChange: () => {},
+            onCoreHydrated: () => {},
+            onGlyphRevisionFeed: (cb) => {
+                onFeed = cb;
+                return () => {};
+            },
+            hasSparseWorkingSet: () => false,
+            listSparseWorkingGlyphIds: () => [],
+            glyphDocumentIdForName: () => null,
+            listGlyphRevisionTokens: () => tokens,
+            glyphHasCatchUpRevision: () => false,
+            hasResidentGlyphDocument: () => false
+        };
+        const originalCanvas = window.glyphCanvas;
+        window.glyphCanvas = { textRunEditor: { glyphNameBuffer: [] } };
+        try {
+            plugin._startTrackingActiveAssetSize('asset-1', bridge);
+            onFeed(['unloaded-x'], { initial: true });
+            await Promise.resolve();
+            // A glyph this window never loaded is not fetched for the snapshot.
+            expect(catchUpDocuments).not.toHaveBeenCalled();
+
+            tokens = [{ glyphId: 'unloaded-x', revision: 'rev-2' }];
+            onFeed(['unloaded-x'], { initial: false });
+            await Promise.resolve();
+            expect(catchUpDocuments).toHaveBeenCalledWith(
+                [{ documentId: 'glyph:unloaded-x', expectedRevision: 'rev-2' }],
+                { includeLiveDocuments: true }
+            );
+        } finally {
+            plugin._stopTrackingActiveAssetSize();
+            window.glyphCanvas = originalCanvas;
+        }
+    });
+
+    test('does not fetch a deleted glyph the revision feed names', async () => {
+        const plugin = new CloudPlugin();
+        const catchUpDocuments = jest.fn().mockResolvedValue([]);
+        plugin._liveSession = { catchUpDocuments };
+        plugin._activeAssetSizeBridge = {
+            hasSparseWorkingSet: () => false,
+            listSparseWorkingGlyphIds: () => [],
+            glyphDocumentIdForName: () => null,
+            listGlyphRevisionTokens: () => [
+                { glyphId: 'gone', revision: 'rev-2' },
+                { glyphId: 'kept', revision: 'rev-3' }
+            ],
+            glyphHasCatchUpRevision: () => false,
+            isDeletedGlyphDocument: (documentId) => documentId === 'glyph:gone'
+        };
+        const originalCanvas = window.glyphCanvas;
+        window.glyphCanvas = { textRunEditor: { glyphNameBuffer: [] } };
+        try {
+            plugin._enqueueGlyphCatchUp(['gone', 'kept'], {
+                includeUnloaded: true
+            });
+            await Promise.resolve();
+            expect(catchUpDocuments).toHaveBeenCalledWith(
+                [{ documentId: 'glyph:kept', expectedRevision: 'rev-3' }],
+                { includeLiveDocuments: true }
+            );
+        } finally {
+            window.glyphCanvas = originalCanvas;
+        }
+    });
+
     test('skips the HTTP catch-up of a glyph whose live socket is synced', async () => {
         const plugin = new CloudPlugin();
         const catchUpDocuments = jest.fn().mockResolvedValue([]);

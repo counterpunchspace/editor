@@ -21,8 +21,8 @@ the plan’s 8 MB placeholder).
 
 **Landed in the client (this cut)**
 
-- `PatchSyncEngine` routes glyph paths to glyph docs; core holds catalog +
-  `glyphRevisions` (dirty `{glyphId, revision}`), not outlines.
+- `PatchSyncEngine` routes glyph paths to glyph docs; core holds the
+  catalog, not outlines.
 - Nested JSON is leaf-granular on get and set (symmetric-diff into Y.Maps;
   no whole-subtree `toYType` on dict assign). Outlines use atomic
   `geometryTopology` + packed `nodePositionsById` (see
@@ -33,10 +33,13 @@ the plan’s 8 MB placeholder).
   `Cache-Control: no-store`. Four concurrent reads; retry until the glyph
   `sync.revision` stamp matches (or 401/403).
 - Commit/undo/redo: stamp glyph `sync.revision` in the same outline
-  transaction, then emit one core revision envelope (`onGlyphRevisionSignal`,
-  shared `historyItemId`). Catch-up is a document checkpoint
-  (`applyDocumentCatchUp`), not history replay. After core hydrate, scan the
-  revision map and catch up every glyph whose live revision is newer.
+  transaction; the glyph write's envelope carries the same token
+  (`glyphRevision`). Once the write is durable, the glyph room tells the
+  `font-core` room, which keeps the newest token per glyph (its glyph
+  revision feed) and pushes it to every socket. Catch-up is a document
+  checkpoint (`applyDocumentCatchUp`), not history replay. The first feed
+  page after opening is a snapshot: the window catches up the glyphs it holds
+  or edits whose stamp differs.
 - Linked windows: document-scoped BroadcastChannel; main is the cloud hub;
   inbound MetadataFree glyph packets use catch-up; linked worker seed uses
   `seedWorkerDocumentSet` (`state`, not raw `bytes`).
@@ -613,17 +616,16 @@ published over HTTP. The three-window spec checks that edits to the open
 glyph leave and arrive as frames on its socket, with no HTTP request for it.
 
 **Minimal traffic per edit.** An edit costs one update in each room it
-changes (font-core takes two when the edit also writes core data, such as
-kerning groups, besides the glyph revision stamp). The stamp leaves the core
-socket only once the glyph rows it announces (`dependsOn`) are acked, also for
-a linked window’s edit relayed by its main window, so peers never fetch a
-glyph before its bytes are in the room (after 10 seconds it goes anyway). The sender’s main window posts each changed glyph it does not hold
+changes. A glyph edit writes nothing to font-core: the glyph room reports
+the revision to font-core only after the write is durable, and font-core
+pushes it to every window as a text frame, so peers never fetch a glyph
+before its bytes are in the room. The sender’s main window posts each changed glyph it does not hold
 live once (`POST …/live`) and sends a frame for font-core, font-deps and any
 changed glyph it holds live. Every other main window gets each changed glyph
 once: a frame if it holds the glyph live, otherwise one `GET …/live`. Linked
 windows touch no room; their main window relays everything to them, also
-updates it already had. Catch-up fetches a glyph only when its core revision
-stamp says it changed: a loaded glyph without a stamp has not changed since
+updates it already had. Catch-up fetches a glyph only when the revision feed
+says it changed: a loaded glyph the feed does not name has not changed since
 it was loaded. Each window remembers the room log id it holds per glyph and
 asks only for later entries. A glyph room compacts at most a minute after
 its first uncompacted write, so a burst of edits costs one compaction. When
@@ -833,9 +835,13 @@ Persistent WebSocket subscriptions stay tiny:
 
 When a remote edit commits:
 
-1. Writer persists the glyph shard (outline + `sync.revision` stamp) first.
-2. Core then publishes `glyphRevisions` (`{ glyphId, revision }[]`) in **one**
-   collab envelope.
+1. Writer persists the glyph shard (outline + `sync.revision` stamp); the
+   write's envelope carries the token as `glyphRevision`.
+2. Once the write is durable, the glyph room posts `{ glyphId, revision,
+   logId }` to the `font-core` room (retried from its alarm until taken).
+   Font-core keeps the newest token per glyph and pushes
+   `{ type: 'glyph-revisions', seq, revisions }` to every socket. A window
+   asks for `glyph-revisions-request { afterSeq }` on every connect.
 3. Every cloud-connected instance must catch up — not best-effort. Peers GET
    `/shards/glyph:<id>/live` (DO live state). Apply as a checkpoint; retry
    until the stamp is present. Cap 4 in flight. Broadcast the result to linked
@@ -886,9 +892,9 @@ to every glyph DO.
 
 Main window is the only cloud WebSocket client; it relays to linked windows
 over `BroadcastChannel` (`WindowSync`). Packets are document-scoped
-(`documentId`: `font-core` | `font-deps` | `glyph:<id>`). Core revision
-signals use `onGlyphRevisionSignal`, not `onLocalUpdate` (avoids Yjs client
-clock holes on the same core doc).
+(`documentId`: `font-core` | `font-deps` | `glyph:<id>`). Main relays the
+glyph revision feed to linked windows (`glyph-revisions`), and sends the
+whole list before `full-state-end`.
 
 Each window keeps core + deps always, plus the same glyph docs main has
 resident. Bootstrap is `full-state-request` answered by `full-state-begin`,
@@ -915,8 +921,7 @@ its inserts wait), so a layer briefly reads without a width or anchor
 position. HTTP publishes therefore carry the glyph's earlier
 unacknowledged WAL rows, merged; receivers keep the last good value of such
 a layer instead of throwing, so the socket stays up until the missing part
-arrives. Catch-up retries until the glyph has the stamped revision, since an
-HTTP publish can land after its core revision stamp.
+arrives. Catch-up retries until the glyph has the revision the feed named.
 
 Undo stays with the author of the edit. A main window and its linked
 windows share one history; packets between them are undoable in each.

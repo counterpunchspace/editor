@@ -2699,6 +2699,107 @@ describe('CloudAdapter durability failures', () => {
         }
     });
 
+    it('reads the glyph revision feed on font-core: snapshot first, then changes', async () => {
+        const originalWebSocket = global.WebSocket;
+        let socket;
+        class FakeWebSocket {
+            static OPEN = 1;
+            constructor(_url) {
+                this.readyState = 1;
+                this.send = jest.fn();
+                this.close = jest.fn();
+                socket = this;
+            }
+        }
+        global.WebSocket = FakeWebSocket;
+        const applyGlyphRevisionFeed = jest.fn();
+        const adapter = new CloudAdapter({
+            assetId: 'asset-feed',
+            websiteBaseUrl: 'https://counterpunch.space'
+        });
+        const requests = () =>
+            socket.send.mock.calls
+                .map(([raw]) => {
+                    try {
+                        return JSON.parse(raw);
+                    } catch {
+                        return null;
+                    }
+                })
+                .filter((msg) => msg?.type === 'glyph-revisions-request')
+                .map((msg) => msg.afterSeq);
+        const feed = (fields) =>
+            adapter._handleMessage(
+                JSON.stringify({ type: 'glyph-revisions', ...fields })
+            );
+        try {
+            await adapter.connectDirect(
+                {
+                    onLocalUpdate: jest.fn(),
+                    offLocalUpdate: jest.fn(),
+                    encodeBridgeStateVector: () => new Uint8Array(0),
+                    applyGlyphRevisionFeed
+                },
+                'room-token',
+                'wss://rooms.example.com/room/asset-feed',
+                { bootstrapMode: 'skip' }
+            );
+            socket.onopen();
+            adapter._handleMessage(
+                JSON.stringify({
+                    type: 'auth-ok',
+                    clientId: 'client-1',
+                    roomSchemaVersion: TEST_YDOC_SCHEMA_VERSION,
+                    capabilities: TEST_YDOC_SCHEMA_VERSION,
+                    seedRequired: false
+                })
+            );
+            expect(requests()).toEqual([0]);
+
+            // A push ahead of the answer waits for the answer.
+            feed({
+                seq: 9,
+                afterSeq: 8,
+                revisions: [{ glyphId: 'z', revision: 'w:9' }]
+            });
+            expect(requests()).toEqual([0]);
+
+            const a = { glyphId: 'a', revision: 'w:1' };
+            const b = { glyphId: 'b', revision: 'w:2' };
+            feed({
+                reply: true,
+                seq: 2,
+                afterSeq: 0,
+                hasMore: true,
+                revisions: [a]
+            });
+            expect(requests()).toEqual([0, 2]);
+            expect(applyGlyphRevisionFeed).not.toHaveBeenCalled();
+            feed({
+                reply: true,
+                seq: 9,
+                afterSeq: 2,
+                hasMore: false,
+                revisions: [b]
+            });
+            expect(applyGlyphRevisionFeed).toHaveBeenLastCalledWith([a, b], {
+                initial: true
+            });
+
+            const c = { glyphId: 'c', revision: 'w:3' };
+            feed({ seq: 10, afterSeq: 9, revisions: [c] });
+            expect(applyGlyphRevisionFeed).toHaveBeenLastCalledWith([c]);
+
+            // A gap asks for what was missed.
+            feed({ seq: 13, afterSeq: 12, revisions: [] });
+            expect(requests()).toEqual([0, 2, 10]);
+            expect(applyGlyphRevisionFeed).toHaveBeenCalledTimes(2);
+        } finally {
+            adapter.disconnect();
+            global.WebSocket = originalWebSocket;
+        }
+    });
+
     it('accepts auth-ok that arrives after the warning threshold but before the hard cap', async () => {
         jest.useFakeTimers();
 
