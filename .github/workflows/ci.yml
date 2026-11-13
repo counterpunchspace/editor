@@ -67,6 +67,13 @@ jobs:
         if: needs.tested-build.outputs.skip != 'true'
         runs-on: ubuntu-latest
         timeout-minutes: 30
+        permissions:
+            contents: read
+            actions: read
+            pull-requests: read
+        env:
+            # Fork PRs get no secrets, so they cannot read the private collab repo.
+            FROM_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
         steps:
             - name: Checkout repository
               uses: actions/checkout@v4
@@ -85,8 +92,22 @@ jobs:
             - name: Install dependencies in webapp
               run: npm install --prefix webapp
 
+            # A fork PR skips the bindings check, so it must not change them.
+            - name: Refuse protocol binding changes from forks
+              if: env.FROM_FORK == 'true'
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  changed=$(gh api --paginate "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --jq '.[].filename' | grep '^webapp/js/generated/collab-protocol-' || true)
+                  if [ -n "$changed" ]; then
+                    echo "::error::A pull request from a fork cannot change the collab protocol bindings, because CI cannot check them without the private collab repo. Ask a maintainer to regenerate them:"
+                    echo "$changed"
+                    exit 1
+                  fi
+
             # The protocol bindings check generates the expected files from collab.
             - name: Checkout collab for protocol bindings check
+              if: env.FROM_FORK != 'true'
               uses: actions/checkout@v4
               with:
                   repository: ${{ vars.COLLAB_REPOSITORY || format('{0}/collab', github.repository_owner) }}
@@ -106,6 +127,7 @@ jobs:
               run: npm run test:checks --prefix webapp
               env:
                   COLLAB_ROOT: ${{ github.workspace }}/_collab
+                  COLLAB_PROTOCOL_BINDINGS: ${{ env.FROM_FORK == 'true' && 'skip' || 'check' }}
 
             - name: Check code formatting with Prettier
               run: cd webapp && npx prettier -c .

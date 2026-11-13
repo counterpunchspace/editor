@@ -23,6 +23,13 @@ const checkBindings = path.join(
 );
 const editorOut = path.join(editorRoot, 'webapp/js/generated');
 
+// A pull request from a fork cannot check out the private collab repo. CI
+// refuses fork PRs that touch the bindings, so the rest of the checks can run.
+if (process.env.COLLAB_PROTOCOL_BINDINGS === 'skip') {
+    console.log('collab protocol bindings check skipped: collab not available');
+    process.exit(0);
+}
+
 const REQUIRED = [
     'collab-protocol-limits.ts',
     'collab-protocol-capabilities.ts',
