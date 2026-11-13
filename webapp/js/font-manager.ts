@@ -898,6 +898,7 @@ class OpenedFont {
             const adapter = this.sourcePlugin.getAdapter();
             await adapter.writeFile(this.path, serializedFont);
         }
+        await this.sourcePlugin.afterSave();
         this.sourceFileHash = hashBytes(
             new TextEncoder().encode(serializedFont)
         );
@@ -1006,6 +1007,7 @@ class OpenedFont {
         console.log(
             `Saved ${this.path}: ${changed.length} file(s) written, ${stale.length} removed`
         );
+        await this.sourcePlugin.afterSave();
 
         this.folderSaveTracker.reset();
         this.needsRecompile = false;

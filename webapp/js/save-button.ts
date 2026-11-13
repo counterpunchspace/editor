@@ -94,11 +94,14 @@ class SaveButton {
         }
 
         // A font with no file yet, or one whose format opens but doesn't
-        // save (.vfj, .sfd, .ttf), goes to Save As.
+        // save (.vfj, .sfd, .ttf), goes to Save As. Cloud and GitHub own the
+        // font's storage, so they save in place without a file handle.
         const currentFont = window.fontManager?.currentFont;
+        const pluginId = currentFont?.sourcePlugin.getId();
+        const ownsStorage = pluginId === 'cloud' || pluginId === 'github';
         if (
             currentFont &&
-            !currentFont.isCloudBacked() &&
+            !ownsStorage &&
             (!currentFont.fileHandle || !savesInPlace(currentFont.path))
         ) {
             if (!this.hasFontOpen()) return;

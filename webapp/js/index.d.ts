@@ -189,11 +189,13 @@ declare global {
               }) => Promise<void>)
             | undefined;
         closeFontFileDialog: (() => void) | undefined;
+        /** Clear the file dialog's plugin message (a backend's own prompt). */
+        hidePluginMessage: (() => void) | undefined;
 
         // From font-windows/save-as-dialog.ts
         saveFontAs:
             | ((options?: {
-                  destination?: 'disk' | 'cloud' | 'browser';
+                  destination?: 'disk' | 'cloud' | 'browser' | 'github';
               }) => Promise<void>)
             | undefined;
         locatePathInFileDialog:

@@ -99,6 +99,17 @@ describe('every font opens in its own window, found by its document key', () => 
         ).toContain('takeover=1');
     });
 
+    test('a window can start with the file dialog on a plugin tab', () => {
+        const key = openDocuments.newFontKey();
+        const url = openDocuments.fontWindowUrl(key, {
+            pluginDialog: 'github'
+        });
+        expect(url).toContain('pluginDialog=github');
+        expect(
+            fontWindow.documentKeyFromUrl(url.slice('index.html'.length))
+        ).toBe(key);
+    });
+
     test('a font that is not open anywhere has no open state', () => {
         expect(registry.documentOpenState('disk:///none/X.glyphs')).toBeNull();
     });
@@ -194,11 +205,12 @@ describe('Save As starts where the font lives', () => {
     const {
         chooseSaveDestination
     } = require('../../js/font-windows/save-destination');
-    const all = { fileAccess: true, cloud: true };
+    const all = { fileAccess: true, cloud: true, github: true };
 
     test('a saved font starts at its own place', () => {
         expect(chooseSaveDestination('cloud', 'disk', all)).toBe('cloud');
         expect(chooseSaveDestination('browser', 'disk', all)).toBe('browser');
+        expect(chooseSaveDestination('github', 'disk', all)).toBe('github');
     });
 
     test('a new font starts at the last destination, else this computer', () => {
@@ -211,21 +223,42 @@ describe('Save As starts where the font lives', () => {
         expect(
             chooseSaveDestination('cloud', null, {
                 fileAccess: true,
-                cloud: false
+                cloud: false,
+                github: true
             })
         ).toBe('disk');
         expect(
             chooseSaveDestination('cloud', null, {
                 fileAccess: false,
-                cloud: false
+                cloud: false,
+                github: true
             })
         ).toBe('browser');
         expect(
             chooseSaveDestination(null, 'disk', {
                 fileAccess: false,
-                cloud: true
+                cloud: true,
+                github: true
             })
         ).toBe('browser');
+    });
+
+    test('GitHub falls back when no repository is connected', () => {
+        expect(
+            chooseSaveDestination('github', null, {
+                fileAccess: true,
+                cloud: true,
+                github: false
+            })
+        ).toBe('disk');
+        expect(
+            chooseSaveDestination('github', null, {
+                fileAccess: false,
+                cloud: true,
+                github: false
+            })
+        ).toBe('browser');
+        expect(chooseSaveDestination(null, 'github', all)).toBe('github');
     });
 });
 

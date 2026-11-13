@@ -73,7 +73,11 @@ function memoryDisk(files) {
         }
     };
     return {
-        plugin: { getId: () => 'disk', getAdapter: () => adapter },
+        plugin: {
+            getId: () => 'disk',
+            getAdapter: () => adapter,
+            afterSave: jest.fn(async () => {})
+        },
         writes,
         deletions
     };
@@ -185,13 +189,15 @@ describe('saving folder sources file by file', () => {
     });
 
     test('an edited glyph saves to its own .glyph file', async () => {
-        const { font, files, writes, root } = await openFolderSource(
+        const { font, files, writes, root, plugin } = await openFolderSource(
             'YanoneKaffeesatz.glyphspackage',
             'glyphspackage'
         );
         const width = editWidth(font, 'A', 10);
         await font.save();
         expect(writes).toEqual([`${root}/glyphs/A_.glyph`]);
+        // A save publishes once, after every file of it is written.
+        expect(plugin.afterSave).toHaveBeenCalledTimes(1);
         expect(
             new TextDecoder().decode(files.get(`${root}/glyphs/A_.glyph`))
         ).toContain(`width = ${width};`);

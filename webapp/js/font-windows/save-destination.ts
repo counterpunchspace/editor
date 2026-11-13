@@ -1,6 +1,13 @@
 // Where File → Save As starts.
 
-export type SaveDestination = 'disk' | 'cloud' | 'browser';
+export type SaveDestination = 'disk' | 'cloud' | 'browser' | 'github';
+
+const DESTINATIONS: readonly SaveDestination[] = [
+    'disk',
+    'cloud',
+    'browser',
+    'github'
+];
 
 /**
  * Where Save As starts: where the font already lives; for a new font, the
@@ -10,12 +17,18 @@ export type SaveDestination = 'disk' | 'cloud' | 'browser';
 export function chooseSaveDestination(
     current: SaveDestination | null,
     last: string | null,
-    available: { fileAccess: boolean; cloud: boolean }
+    available: { fileAccess: boolean; cloud: boolean; github: boolean }
 ): SaveDestination {
-    const remembered =
-        last === 'disk' || last === 'cloud' || last === 'browser' ? last : null;
+    const remembered = DESTINATIONS.includes(last as SaveDestination)
+        ? (last as SaveDestination)
+        : null;
     let dest: SaveDestination = current ?? remembered ?? 'disk';
-    if (dest === 'cloud' && !available.cloud) dest = 'disk';
+    if (dest === 'cloud' && !available.cloud) {
+        dest = available.fileAccess ? 'disk' : 'browser';
+    }
+    if (dest === 'github' && !available.github) {
+        dest = available.fileAccess ? 'disk' : 'browser';
+    }
     if (dest === 'disk' && !available.fileAccess) dest = 'browser';
     return dest;
 }

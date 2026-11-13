@@ -40,6 +40,7 @@ import {
 import { cloudSection } from './cloud-section';
 import {
     askForFolder,
+    fontWindowUrl,
     newFontKey,
     openDiskDocumentWindow,
     openFontWindow,
@@ -435,6 +436,29 @@ function cloudRows(): Row[] {
         .sort((a, b) => (b.lastOpened ?? 0) - (a.lastOpened ?? 0));
 }
 
+/** Fonts opened from GitHub, with the repository they came from. */
+function githubRows(): Row[] {
+    return [...recents.values()]
+        .filter((recent) => recent.source === 'github')
+        .map((recent) => {
+            const repository = recent.key
+                .replace(/^github:\/\/\//, '')
+                .split('/')
+                .slice(0, 2)
+                .join('/');
+            return {
+                key: recent.key,
+                name: recent.name,
+                format: fontFormatOf(recent.name),
+                icon: rowIcon(recent.name),
+                lastOpened: recent.lastOpened,
+                where: [repository],
+                action: 'forget' as const
+            };
+        })
+        .sort((a, b) => (b.lastOpened ?? 0) - (a.lastOpened ?? 0));
+}
+
 function listHtml(group: string, rows: Row[], empty: string): string {
     if (!rows.length) return `<div class="launcher-empty">${empty}</div>`;
     const limit = expanded.has(group) ? rows.length : ROWS_SHOWN;
@@ -462,8 +486,12 @@ function render(): void {
     const disk = diskRows();
     const browser = browserRows();
     const cloud = cloudRows();
+    const github = githubRows();
     rowsByKey = new Map(
-        [...unsaved, ...disk, ...browser, ...cloud].map((row) => [row.key, row])
+        [...unsaved, ...disk, ...browser, ...cloud, ...github].map((row) => [
+            row.key,
+            row
+        ])
     );
 
     const open = fontWindows().length;
@@ -524,6 +552,17 @@ function render(): void {
         cloudOptions
     );
     html += groupHtml(
+        'GitHub',
+        'code',
+        github.length
+            ? listHtml('github', github, '')
+            : `<div class="launcher-callout"><span>Open a font from a GitHub repository and save your edits as a pull request.</span><button type="button" class="dialog-button" data-github-open>Connect GitHub…</button></div>`,
+        '',
+        github.length
+            ? '<button type="button" class="launcher-link" data-github-open>Connect…</button>'
+            : ''
+    );
+    html += groupHtml(
         'Browser storage',
         'web',
         listHtml('browser', browser, 'No fonts in browser storage yet.')
@@ -533,6 +572,15 @@ function render(): void {
 
 $('launcher-recents').addEventListener('click', async (event) => {
     const target = event.target as HTMLElement;
+    if (target.closest('[data-github-open]')) {
+        // The editor with its file dialog on the GitHub tab. It takes over
+        // this tab: the launcher has no plugin registry of its own, and File →
+        // Open… brings the launcher back.
+        location.assign(
+            fontWindowUrl(newFontKey(), { pluginDialog: 'github' })
+        );
+        return;
+    }
     if (target.closest('[data-cloud-login]')) {
         await window.authManager?.signIn?.({
             reason: 'Log in to see your cloud fonts.'

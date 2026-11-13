@@ -705,3 +705,36 @@
     display: flex;
     gap: 4px;
 }
+
+/* ── GitHub setup dialog ───────────────────────────────────────────────────── */
+
+.github-setup-dialog {
+    max-width: 460px;
+}
+
+.github-setup-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 0 0 12px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.github-setup-field .dialog-input {
+    width: 100%;
+}
+
+.github-setup-hint {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.github-setup-hint a {
+    color: var(--accent-blue);
+}
+
+.github-setup-error {
+    font-size: 12px;
+    color: var(--accent-red);
+}

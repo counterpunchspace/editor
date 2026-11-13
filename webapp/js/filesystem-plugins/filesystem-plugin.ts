@@ -269,6 +269,24 @@ export abstract class FilesystemPlugin {
         // Default: nothing extra to prepare
     }
 
+    /**
+     * Called once after a save has written every changed file.
+     * Backends that publish a save as one unit (a commit, a transaction)
+     * use this to send it; `writeFile` may buffer until then.
+     */
+    async afterSave(): Promise<void> {
+        // Default: writes are already durable
+    }
+
+    /**
+     * Whether `path` belongs to this backend's current root. Backends whose
+     * root moves between sessions (a connected repository) use this so a
+     * stored path from an earlier session is not restored blindly.
+     */
+    isPathInCurrentRoot(_path: string): boolean {
+        return true;
+    }
+
     async prepareToSeed(): Promise<void> {
         await this.prepareToSave();
     }

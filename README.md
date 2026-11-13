@@ -39,7 +39,14 @@ Fonts on this computer open with the system's file pickers (File System
 Access API, Chromium browsers) and save back to the picked file or folder.
 `.ufo`, `.glyphspackage` and `.designspace` may ask for the folder they are
 in once, so the browser can read the whole font. File → Save As chooses
-name, format and place: this computer, the cloud or browser storage.
+name, format and place: this computer, the cloud, GitHub or browser storage.
+
+**GitHub** is a filesystem plugin: connect one repository with a fine-grained
+personal access token, open a source from it, and save your edits as a pull
+request. Use **File → Open from GitHub…** or the launcher's **GitHub** group.
+Browsing and opening read a branch of the repository. The first save creates a
+working branch from the base branch and opens a pull request; every later save
+commits to the same pull request.
 
 **Cloud** is a filesystem plugin, not a file format. Open/Save talk to per-shard
 rooms (`font-core`, `font-deps`, `glyph:<id>`). Hydrate is HTTP + live tail;
