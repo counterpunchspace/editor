@@ -574,10 +574,13 @@ windows touch no room; their main window relays everything to them, also
 updates it already had. Catch-up fetches a glyph only when its core revision
 stamp says it changed: a loaded glyph without a stamp has not changed since
 it was loaded. Each window remembers the room log id it holds per glyph and
-asks only for later entries. Glyph shards written over HTTP are compacted
-right after each write, so that cursor is usually behind the checkpoint; the
-client sends `rebaseline=state` and the room answers with the folded state in
-the same response. The three-window spec and the fuzz’s single steps assert
+asks only for later entries. A glyph room compacts at most a minute after
+its first uncompacted write, so a burst of edits costs one compaction. When
+the cursor is behind the checkpoint, the client sends `rebaseline=state` and
+the room answers with the folded state in the same response. Pack hydrate
+counts its own subrequests (Durable Object calls, R2 reads) and returns the
+shards past its budget in a DEFERRED frame; the client asks for those again,
+so folding many uncompacted tails never exceeds the Worker subrequest limit. The three-window spec and the fuzz’s single steps assert
 this against each room’s own update counters (debug status, local stack;
 on staging, against what the sender sent).
 

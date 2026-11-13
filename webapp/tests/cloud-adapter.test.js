@@ -4602,6 +4602,61 @@ describe('HTTP seed (POST /state for new rooms)', () => {
         }
     });
 
+    it('asks again for the shards a pack hydrate deferred', async () => {
+        const {
+            encodePackShardFrame
+        } = require('../js/generated/collab-protocol-pack.ts');
+        // Built by hand, like encodeTestReceiptFrame: under Jest the
+        // generated encoder's payload bytes come from another realm.
+        const encodePackDeferredFrame = (shardIds) =>
+            encodePackFrame({
+                type: PACK_FRAME_TYPE.DEFERRED,
+                payload: Uint8Array.from(JSON.stringify({ shardIds }), (ch) =>
+                    ch.charCodeAt(0)
+                )
+            });
+        const originalFetch = global.fetch;
+        const adapter = new CloudAdapter({
+            assetId: 'asset-pack-deferred',
+            websiteBaseUrl: 'https://editor.example'
+        });
+        const requests = [];
+        global.fetch = jest.fn(async (input, init) => {
+            const url = String(input);
+            if (url.includes('/asset-pack-deferred/pack')) {
+                const ids = JSON.parse(init.body).ids;
+                requests.push(ids);
+                const [first, ...rest] = ids;
+                const frames = [
+                    encodePackShardFrame(first, new Uint8Array([ids.length]))
+                ];
+                if (rest.length) frames.push(encodePackDeferredFrame(rest));
+                frames.push(encodePackEndFrame(1));
+                return packBytesResponse(encodePackBody(frames));
+            }
+            return originalFetch(input, init);
+        });
+        try {
+            const result = await adapter.hydrateDocumentSet(
+                'token',
+                'wss://rooms.example/room/asset-pack-deferred',
+                ['glyph:id-a', 'glyph:id-b', 'glyph:id-c']
+            );
+            expect(requests).toEqual([
+                ['glyph:id-a', 'glyph:id-b', 'glyph:id-c'],
+                ['glyph:id-b', 'glyph:id-c'],
+                ['glyph:id-c']
+            ]);
+            expect([...result.keys()].sort()).toEqual([
+                'glyph:id-a',
+                'glyph:id-b',
+                'glyph:id-c'
+            ]);
+        } finally {
+            global.fetch = originalFetch;
+        }
+    });
+
     it('fails seed when pack is unsupported instead of falling back to per-shard', async () => {
         const originalFetch = global.fetch;
         const adapter = new CloudAdapter({

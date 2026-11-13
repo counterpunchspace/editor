@@ -907,6 +907,8 @@ export const cloudAdapterShardIoMethods = {
             );
         }
         const result = new Map<string, Uint8Array>();
+        // Shards the room left out to stay within its subrequest budget.
+        const deferred: string[] = [];
         let packError: string | null = null;
         const parser = createPackParser();
         const reader = response.body.getReader();
@@ -933,6 +935,15 @@ export const cloudAdapterShardIoMethods = {
                                 message: packError,
                                 debug: receipt.debug
                             });
+                        } else if (frame.type === PACK_FRAME_TYPE.DEFERRED) {
+                            const ids = frame.receipt?.shardIds;
+                            if (Array.isArray(ids)) {
+                                for (const id of ids) {
+                                    if (typeof id === 'string') {
+                                        deferred.push(id);
+                                    }
+                                }
+                            }
                         } else if (
                             frame.type === PACK_FRAME_TYPE.SHARD &&
                             !frame.missing
@@ -964,6 +975,21 @@ export const cloudAdapterShardIoMethods = {
             throw new Error(
                 packError || `shard pack hydrate failed: ${response.status}`
             );
+        }
+        if (deferred.length) {
+            if (deferred.length >= documentIds.length) {
+                throw new Error('shard pack hydrate made no progress');
+            }
+            const rest = await this._hydratePack(
+                token,
+                roomUrl,
+                deferred,
+                options,
+                cursor
+            );
+            for (const [documentId, bytes] of rest) {
+                result.set(documentId, bytes);
+            }
         }
         return result;
     },
