@@ -144,13 +144,13 @@ value = 0;
 name = "Axis Mappings";
 value = {
 wght = {
-200 = 30;
-300 = 55;
-400 = 75;
-500 = 85;
-600 = 100;
-700 = 115;
-800 = 135;
+"200" = 30;
+"300" = 55;
+"400" = 75;
+"500" = 85;
+"600" = 100;
+"700" = 115;
+"800" = 135;
 };
 };
 },
@@ -725,7 +725,7 @@ code = " sub alef-ar								by alef-ar.fina;
 tag = fina;
 },
 {
-code = "# Adobe’s pre-HarfBuzz composers don’t apply the center_marks lookup
+code = "# Adobeâs pre-HarfBuzz composers donât apply the center_marks lookup
 # in init and medi features, help it by applying it contextually here.
 lookup adobe_center_marks {
     sub [hah-ar.init hah-ar.medi]
@@ -1307,9 +1307,7 @@ tag = mark;
 );
 fontMaster = (
 {
-axesValues = (
-30,
-);
+axesValues = (30);
 customParameters = (
 {
 name = "Master Icon Glyph Name";
@@ -1383,9 +1381,7 @@ pos = -200;
 },
 );
 name = ExtraLight;
-numberValues = (
--87,
-);
+numberValues = (-87);
 userData = {
 GSCornerRadius = 70;
 GSOffsetHorizontal = 15;
@@ -1396,9 +1392,7 @@ GSOffsetVertical = 15;
 };
 },
 {
-axesValues = (
-75,
-);
+axesValues = (75);
 customParameters = (
 {
 name = "Master Icon Glyph Name";
@@ -1474,9 +1468,7 @@ pos = -200;
 },
 );
 name = Regular;
-numberValues = (
--76,
-);
+numberValues = (-76);
 userData = {
 GSCornerRadius = 80;
 GSOffsetHorizontal = 37.5;
@@ -1487,9 +1479,7 @@ GSOffsetVertical = 37.5;
 };
 },
 {
-axesValues = (
-135,
-);
+axesValues = (135);
 customParameters = (
 {
 name = "Master Icon Glyph Name";
@@ -1555,9 +1545,7 @@ pos = -200;
 },
 );
 name = ExtraBold;
-numberValues = (
--62,
-);
+numberValues = (-62);
 userData = {
 GSCornerRadius = 120;
 GSExtrudeAngle = 30;
@@ -11687,7 +11675,6 @@ pos = (311,346);
 },
 );
 layerId = "14EEE41F-D714-4243-A717-73445EE7DABA";
-name = Regular;
 shapes = (
 {
 closed = 1;
@@ -12816,7 +12803,6 @@ pos = (278,500);
 },
 );
 layerId = "14EEE41F-D714-4243-A717-73445EE7DABA";
-name = Regular;
 shapes = (
 {
 closed = 1;
@@ -17981,7 +17967,6 @@ pos = (263,500);
 },
 );
 layerId = "14EEE41F-D714-4243-A717-73445EE7DABA";
-name = Regular;
 shapes = (
 {
 closed = 1;
@@ -19397,40 +19382,43 @@ layers = (
 layerId = "3114FB65-9464-41A5-B67E-A8F9F43C0EF1";
 shapes = (
 {
+pos = (-5,0);
 ref = h;
 },
 {
-pos = (-42,236);
+pos = (-47,236);
 ref = stroke.shortcomb;
 },
 );
-width = 569;
+width = 564;
 },
 {
 layerId = "14EEE41F-D714-4243-A717-73445EE7DABA";
 shapes = (
 {
+pos = (-3,0);
 ref = h;
 },
 {
-pos = (-27,254);
+pos = (-30,254);
 ref = stroke.shortcomb;
 },
 );
-width = 576;
+width = 573;
 },
 {
 layerId = "090CB6A0-BE7C-4D17-A551-206C7456A8A3";
 shapes = (
 {
+pos = (8,0);
 ref = h;
 },
 {
-pos = (-17,255);
+pos = (-9,255);
 ref = stroke.shortcomb;
 },
 );
-width = 613;
+width = 621;
 },
 {
 associatedMasterId = "14EEE41F-D714-4243-A717-73445EE7DABA";
@@ -27872,7 +27860,6 @@ pos = (293,500);
 },
 );
 layerId = "14EEE41F-D714-4243-A717-73445EE7DABA";
-name = Regular;
 shapes = (
 {
 closed = 1;
@@ -98211,33 +98198,33 @@ layerId = "3114FB65-9464-41A5-B67E-A8F9F43C0EF1";
 shapes = (
 {
 angle = 180;
-pos = (548,700);
+pos = (563,700);
 ref = six.ss05;
 },
 );
-width = 548;
+width = 578;
 },
 {
 layerId = "14EEE41F-D714-4243-A717-73445EE7DABA";
 shapes = (
 {
 angle = 180;
-pos = (558,700);
+pos = (573,700);
 ref = six.ss05;
 },
 );
-width = 558;
+width = 588;
 },
 {
 layerId = "090CB6A0-BE7C-4D17-A551-206C7456A8A3";
 shapes = (
 {
 angle = 180;
-pos = (558,700);
+pos = (568,700);
 ref = six.ss05;
 },
 );
-width = 558;
+width = 578;
 },
 );
 metricLeft = "=|six";
@@ -111262,7 +111249,6 @@ scale = (-1,1);
 );
 };
 layerId = "090CB6A0-BE7C-4D17-A551-206C7456A8A3";
-name = ExtraBold;
 shapes = (
 {
 closed = 1;
@@ -125966,7 +125952,6 @@ pos = (85,708);
 },
 );
 layerId = "14EEE41F-D714-4243-A717-73445EE7DABA";
-name = Regular;
 shapes = (
 {
 closed = 1;
@@ -127352,7 +127337,6 @@ ref = comma;
 );
 };
 layerId = "14EEE41F-D714-4243-A717-73445EE7DABA";
-name = Regular;
 shapes = (
 {
 angle = 180;
@@ -127573,7 +127557,6 @@ pos = (86,-223);
 },
 );
 layerId = "14EEE41F-D714-4243-A717-73445EE7DABA";
-name = Regular;
 shapes = (
 {
 closed = 1;
@@ -127854,7 +127837,6 @@ pos = (104,-205);
 },
 );
 layerId = "14EEE41F-D714-4243-A717-73445EE7DABA";
-name = Regular;
 shapes = (
 {
 closed = 1;
@@ -128544,7 +128526,7 @@ nodes = (
 );
 },
 );
-width = 375.70968;
+width = 375.7097;
 },
 );
 script = "";
@@ -141104,25 +141086,14 @@ unicode = 2185;
 );
 instances = (
 {
-axesValues = (
-30,
-);
+axesValues = (30);
 customParameters = (
 {
 name = "Instance Preview";
-value = (
-"yeh-farsi",
-"dal-ar.fina",
-"hah-ar.medi",
-"behDotless-ar.init",
-"alef-ar",
-);
+value = ("yeh-farsi", "dal-ar.fina", "hah-ar.medi", "behDotless-ar.init", "alef-ar");
 },
 );
 id = "BF6DEC31-D20C-44AD-9820-674567D4CAB1";
-instanceInterpolations = {
-"3114FB65-9464-41A5-B67E-A8F9F43C0EF1" = 1;
-};
 properties = (
 {
 key = styleNames;
@@ -141137,19 +141108,11 @@ value = ExtraLight;
 weightClass = 200;
 },
 {
-axesValues = (
-55,
-);
+axesValues = (55);
 customParameters = (
 {
 name = "Instance Preview";
-value = (
-"yeh-farsi",
-"dal-ar.fina",
-"hah-ar.medi",
-"behDotless-ar.init",
-"alef-ar",
-);
+value = ("yeh-farsi", "dal-ar.fina", "hah-ar.medi", "behDotless-ar.init", "alef-ar");
 },
 );
 id = "2119C0C3-AF54-40D9-8B4D-75260E1849D3";
@@ -141171,25 +141134,14 @@ value = Light;
 weightClass = 300;
 },
 {
-axesValues = (
-75,
-);
+axesValues = (75);
 customParameters = (
 {
 name = "Instance Preview";
-value = (
-"yeh-farsi",
-"dal-ar.fina",
-"hah-ar.medi",
-"behDotless-ar.init",
-"alef-ar",
-);
+value = ("yeh-farsi", "dal-ar.fina", "hah-ar.medi", "behDotless-ar.init", "alef-ar");
 },
 );
 id = "56729C76-694D-4FDA-8AC5-0FE1291B6E62";
-instanceInterpolations = {
-"14EEE41F-D714-4243-A717-73445EE7DABA" = 1;
-};
 properties = (
 {
 key = styleNames;
@@ -141203,19 +141155,11 @@ value = Regular;
 );
 },
 {
-axesValues = (
-85,
-);
+axesValues = (85);
 customParameters = (
 {
 name = "Instance Preview";
-value = (
-"yeh-farsi",
-"dal-ar.fina",
-"hah-ar.medi",
-"behDotless-ar.init",
-"alef-ar",
-);
+value = ("yeh-farsi", "dal-ar.fina", "hah-ar.medi", "behDotless-ar.init", "alef-ar");
 },
 );
 id = "A8C55A79-7B4C-4CE9-95F3-3CD09B3FB3B6";
@@ -141237,19 +141181,11 @@ value = Medium;
 weightClass = 500;
 },
 {
-axesValues = (
-100,
-);
+axesValues = (100);
 customParameters = (
 {
 name = "Instance Preview";
-value = (
-"yeh-farsi",
-"dal-ar.fina",
-"hah-ar.medi",
-"behDotless-ar.init",
-"alef-ar",
-);
+value = ("yeh-farsi", "dal-ar.fina", "hah-ar.medi", "behDotless-ar.init", "alef-ar");
 },
 );
 id = "7F16A2B7-5092-454C-A3CD-079D16190E23";
@@ -141271,19 +141207,11 @@ value = SemiBold;
 weightClass = 600;
 },
 {
-axesValues = (
-115,
-);
+axesValues = (115);
 customParameters = (
 {
 name = "Instance Preview";
-value = (
-"yeh-farsi",
-"dal-ar.fina",
-"hah-ar.medi",
-"behDotless-ar.init",
-"alef-ar",
-);
+value = ("yeh-farsi", "dal-ar.fina", "hah-ar.medi", "behDotless-ar.init", "alef-ar");
 },
 );
 id = "EFB1E5DE-7924-4E97-A470-D52978CB1BB9";
@@ -141306,25 +141234,14 @@ value = Bold;
 weightClass = 700;
 },
 {
-axesValues = (
-135,
-);
+axesValues = (135);
 customParameters = (
 {
 name = "Instance Preview";
-value = (
-"yeh-farsi",
-"dal-ar.fina",
-"hah-ar.medi",
-"behDotless-ar.init",
-"alef-ar",
-);
+value = ("yeh-farsi", "dal-ar.fina", "hah-ar.medi", "behDotless-ar.init", "alef-ar");
 },
 );
 id = "1D6AB79B-9B74-4250-959A-B25E2F594278";
-instanceInterpolations = {
-"090CB6A0-BE7C-4D17-A551-206C7456A8A3" = 1;
-};
 linkStyle = Regular;
 properties = (
 {
@@ -141370,7 +141287,7 @@ type = variable;
 },
 );
 kerningLTR = {
-"3114FB65-9464-41A5-B67E-A8F9F43C0EF1" = {
+"090CB6A0-BE7C-4D17-A551-206C7456A8A3" = {
 "@MMK_L_A" = {
 "@MMK_R_J" = -20;
 "@MMK_R_O" = -30;
@@ -141826,21 +141743,18 @@ Germandbls = {
 };
 "eight-ar" = {
 "four-ar" = -20;
-"seven-ar" = -110;
-"six-ar" = -110;
-};
-"five-ar" = {
-"six-ar" = -70;
+"seven-ar" = -90;
+"six-ar" = -90;
 };
 "four-ar" = {
 "seven-ar" = -30;
-"six-ar" = -50;
-"three-ar" = -30;
+"six-ar" = -30;
+"three-ar" = -10;
 "two-ar" = -40;
 };
 "fourFarsi-ar.locl" = {
-"sevenFarsi-ar.locl" = -110;
-"zeroFarsi-ar.locl" = -80;
+"sevenFarsi-ar.locl" = -70;
+"zeroFarsi-ar.locl" = -70;
 };
 one.numr = {
 "@MMK_R_fraction" = -50;
@@ -141849,7 +141763,7 @@ quoteright = {
 "@MMK_R_o" = -60;
 };
 "seven-ar" = {
-"eight-ar" = -110;
+"eight-ar" = -90;
 };
 seven.numr = {
 "@MMK_R_fraction" = -90;
@@ -141858,11 +141772,11 @@ seven.numr = {
 "sevenFarsi-ar.locl" = -40;
 };
 "sevenFarsi-ar.locl" = {
-"fourFarsi-ar.locl" = -90;
-"zeroFarsi-ar.locl" = -50;
+"fourFarsi-ar.locl" = -70;
+"zeroFarsi-ar.locl" = -60;
 };
 "twoFarsi-ar" = {
-"zeroFarsi-ar.locl" = -70;
+"zeroFarsi-ar.locl" = -60;
 };
 };
 "14EEE41F-D714-4243-A717-73445EE7DABA" = {
@@ -142360,7 +142274,7 @@ seven.numr = {
 "zeroFarsi-ar.locl" = -50;
 };
 };
-"090CB6A0-BE7C-4D17-A551-206C7456A8A3" = {
+"3114FB65-9464-41A5-B67E-A8F9F43C0EF1" = {
 "@MMK_L_A" = {
 "@MMK_R_J" = -20;
 "@MMK_R_O" = -30;
@@ -142816,18 +142730,21 @@ Germandbls = {
 };
 "eight-ar" = {
 "four-ar" = -20;
-"seven-ar" = -90;
-"six-ar" = -90;
+"seven-ar" = -110;
+"six-ar" = -110;
+};
+"five-ar" = {
+"six-ar" = -70;
 };
 "four-ar" = {
 "seven-ar" = -30;
-"six-ar" = -30;
-"three-ar" = -10;
+"six-ar" = -50;
+"three-ar" = -30;
 "two-ar" = -40;
 };
 "fourFarsi-ar.locl" = {
-"sevenFarsi-ar.locl" = -70;
-"zeroFarsi-ar.locl" = -70;
+"sevenFarsi-ar.locl" = -110;
+"zeroFarsi-ar.locl" = -80;
 };
 one.numr = {
 "@MMK_R_fraction" = -50;
@@ -142836,7 +142753,7 @@ quoteright = {
 "@MMK_R_o" = -60;
 };
 "seven-ar" = {
-"eight-ar" = -90;
+"eight-ar" = -110;
 };
 seven.numr = {
 "@MMK_R_fraction" = -90;
@@ -142845,19 +142762,19 @@ seven.numr = {
 "sevenFarsi-ar.locl" = -40;
 };
 "sevenFarsi-ar.locl" = {
-"fourFarsi-ar.locl" = -70;
-"zeroFarsi-ar.locl" = -60;
+"fourFarsi-ar.locl" = -90;
+"zeroFarsi-ar.locl" = -50;
 };
 "twoFarsi-ar" = {
-"zeroFarsi-ar.locl" = -60;
+"zeroFarsi-ar.locl" = -70;
 };
 };
 };
 kerningRTL = {
-"3114FB65-9464-41A5-B67E-A8F9F43C0EF1" = {
+"090CB6A0-BE7C-4D17-A551-206C7456A8A3" = {
 "@MMK_R_hah-medi" = {
 "@MMK_L_hah-medi" = -130;
-"@MMK_L_sad-medi" = -110;
+"@MMK_L_sad-medi" = -60;
 };
 };
 "14EEE41F-D714-4243-A717-73445EE7DABA" = {
@@ -142866,10 +142783,10 @@ kerningRTL = {
 "@MMK_L_sad-medi" = -100;
 };
 };
-"090CB6A0-BE7C-4D17-A551-206C7456A8A3" = {
+"3114FB65-9464-41A5-B67E-A8F9F43C0EF1" = {
 "@MMK_R_hah-medi" = {
 "@MMK_L_hah-medi" = -130;
-"@MMK_L_sad-medi" = -60;
+"@MMK_L_sad-medi" = -110;
 };
 };
 };
