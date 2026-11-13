@@ -738,3 +738,29 @@
     font-size: 12px;
     color: var(--accent-red);
 }
+
+.github-repository + .github-repository {
+    margin-top: 16px;
+}
+
+.github-repository-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 6px;
+    font-size: 13px;
+}
+
+.github-repository-head .meta {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.github-repository-head .meta a {
+    color: var(--accent-blue);
+}
+
+.github-repository-head [data-remove] {
+    margin-left: auto;
+}

@@ -40,7 +40,6 @@ import {
 import { cloudSection } from './cloud-section';
 import {
     askForFolder,
-    fontWindowUrl,
     newFontKey,
     openDiskDocumentWindow,
     openFontWindow,
@@ -56,6 +55,21 @@ import {
     showNotice
 } from '../font-windows/dialogs';
 import '../font-windows/pending-opens';
+import {
+    clearGitHubCredential,
+    loadGitHubCredential,
+    loadGitHubRepositories,
+    saveGitHubCredential,
+    type GitHubCredential,
+    type GitHubRepository,
+    type GitHubRepositorySpec
+} from '../github/github-session';
+import { gitHubFontKey } from '../github/github-fonts';
+import {
+    showAddGitHubRepository,
+    showGitHubRepositories,
+    showGitHubSignIn
+} from '../github/github-dialogs';
 import {
     activateUpdate,
     onNewVersionActive,
@@ -436,6 +450,48 @@ function cloudRows(): Row[] {
         .sort((a, b) => (b.lastOpened ?? 0) - (a.lastOpened ?? 0));
 }
 
+// GitHub: one sign-in for the editor and the repositories added to it
+// (github/github-session.ts). The launcher is where both are set up.
+let githubCredential: GitHubCredential | null = null;
+let githubRepositories: GitHubRepository[] = [];
+
+/** Whether a window has a font from the repository open. */
+function hasOpenGitHubFont(spec: GitHubRepositorySpec): boolean {
+    const prefix = gitHubFontKey(spec, '').toLowerCase();
+    return [...recents.keys()].some(
+        (key) =>
+            key.toLowerCase().startsWith(prefix) && !!documentOpenState(key)
+    );
+}
+
+async function connectGitHub(): Promise<void> {
+    const result = await showGitHubSignIn(githubCredential);
+    if (result === 'signed-out') {
+        await clearGitHubCredential();
+    } else if (result) {
+        await saveGitHubCredential(result);
+        githubCredential = result;
+        if (!githubRepositories.length) {
+            await showAddGitHubRepository(result);
+        }
+    }
+    await refresh();
+}
+
+function openFromGitHub(): void {
+    if (!githubCredential) {
+        void connectGitHub();
+        return;
+    }
+    showGitHubRepositories({
+        credential: githubCredential,
+        repositories: githubRepositories,
+        openFont: (font) => openFontWindow(font),
+        hasOpenFont: hasOpenGitHubFont,
+        onChange: () => void refresh()
+    });
+}
+
 /** Fonts opened from GitHub, with the repository they came from. */
 function githubRows(): Row[] {
     return [...recents.values()]
@@ -554,12 +610,18 @@ function render(): void {
     html += groupHtml(
         'GitHub',
         'code',
-        github.length
-            ? listHtml('github', github, '')
-            : `<div class="launcher-callout"><span>Open a font from a GitHub repository and save your edits as a pull request.</span><button type="button" class="dialog-button" data-github-open>Connect GitHub…</button></div>`,
-        '',
-        github.length
-            ? '<button type="button" class="launcher-link" data-github-open>Connect…</button>'
+        !githubCredential
+            ? `<div class="launcher-callout"><span>Open fonts from GitHub repositories and save your edits as pull requests.</span><button type="button" class="dialog-button" data-github-connect>Connect GitHub…</button></div>`
+            : !githubRepositories.length
+              ? `<div class="launcher-callout"><span>Add a repository to open its fonts.</span><button type="button" class="dialog-button" data-github-add>Add repository…</button></div>`
+              : listHtml(
+                    'github',
+                    github,
+                    'Fonts you open from GitHub show up here.'
+                ),
+        githubCredential ? githubCredential.login : '',
+        githubCredential
+            ? `<button type="button" class="launcher-link" data-github-browse>Open…</button><button type="button" class="launcher-link" data-github-connect>Account…</button>`
             : ''
     );
     html += groupHtml(
@@ -572,13 +634,17 @@ function render(): void {
 
 $('launcher-recents').addEventListener('click', async (event) => {
     const target = event.target as HTMLElement;
-    if (target.closest('[data-github-open]')) {
-        // The editor with its file dialog on the GitHub tab. It takes over
-        // this tab: the launcher has no plugin registry of its own, and File →
-        // Open… brings the launcher back.
-        location.assign(
-            fontWindowUrl(newFontKey(), { pluginDialog: 'github' })
-        );
+    if (target.closest('[data-github-connect]')) {
+        await connectGitHub();
+        return;
+    }
+    if (target.closest('[data-github-add]') && githubCredential) {
+        await showAddGitHubRepository(githubCredential);
+        await refresh();
+        return;
+    }
+    if (target.closest('[data-github-browse]')) {
+        openFromGitHub();
         return;
     }
     if (target.closest('[data-cloud-login]')) {
@@ -958,11 +1024,17 @@ function openCloudFontNotListed(): string | null {
 }
 
 async function refresh(): Promise<void> {
-    const [docs, recent, browser] = await Promise.all([
-        allDiskDocuments(),
-        allRecentFonts(),
-        readBrowserFonts()
-    ]);
+    const [docs, recent, browser, credential, repositories] = await Promise.all(
+        [
+            allDiskDocuments(),
+            allRecentFonts(),
+            readBrowserFonts(),
+            loadGitHubCredential(),
+            loadGitHubRepositories()
+        ]
+    );
+    githubCredential = credential;
+    githubRepositories = repositories;
     await Promise.all(
         docs.map(async (doc) =>
             chains.set(doc.id, await folderChain(doc).catch(() => []))

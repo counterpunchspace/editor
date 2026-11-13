@@ -90,7 +90,6 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 [[package]]
 name = "babelfont"
 version = "0.2.5"
-source = "git+https://github.com/yanone/babelfont-rs?rev=dbd3e3a58c7b3a11b78076805e1bedbf854dcb57#dbd3e3a58c7b3a11b78076805e1bedbf854dcb57"
 dependencies = [
  "chrono",
  "csv",
@@ -853,7 +852,6 @@ dependencies = [
 [[package]]
 name = "glyphslib"
 version = "0.4.1"
-source = "git+https://github.com/yanone/glyphslib-rs?rev=d1a33fe21d5436409e4fb63c44521f7da8b71720#d1a33fe21d5436409e4fb63c44521f7da8b71720"
 dependencies = [
  "itertools",
  "openstep-plist",
@@ -1232,7 +1230,6 @@ dependencies = [
 [[package]]
 name = "norad"
 version = "0.19.2"
-source = "git+https://github.com/yanone/norad?rev=645b4cb69fe9443aeb2bc0607633dd2efb26651d#645b4cb69fe9443aeb2bc0607633dd2efb26651d"
 dependencies = [
  "base64 0.23.1",
  "close_already",
@@ -1308,7 +1305,6 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 [[package]]
 name = "openstep-plist"
 version = "1.1.0"
-source = "git+https://github.com/yanone/glyphslib-rs?rev=d1a33fe21d5436409e4fb63c44521f7da8b71720#d1a33fe21d5436409e4fb63c44521f7da8b71720"
 dependencies = [
  "itertools",
  "serde",
@@ -1903,7 +1899,6 @@ dependencies = [
 [[package]]
 name = "sr-aef"
 version = "0.1.2"
-source = "git+https://github.com/yanone/babelfont-rs?rev=dbd3e3a58c7b3a11b78076805e1bedbf854dcb57#dbd3e3a58c7b3a11b78076805e1bedbf854dcb57"
 dependencies = [
  "fea-rs-ast",
  "fontdrasil",

@@ -86,10 +86,51 @@ class SaveButton {
     }
 
     /**
+     * The main window of this linked window's font, while it can be reached.
+     * Linked windows are opened from it with window.open, so they share its
+     * objects and can call into it directly.
+     */
+    private reachableMainWindow(): Window | null {
+        if (!window.windowRole?.isLinkedWindow?.()) return null;
+        const path = window.fontManager?.currentFont?.path;
+        let candidate: Window | null = window.opener;
+        // A linked window may have been opened from another linked window.
+        for (let hops = 0; candidate && hops < 8; hops += 1) {
+            try {
+                if (
+                    candidate.windowRole?.isMainWindow?.() &&
+                    candidate.fontManager?.currentFont?.path === path
+                ) {
+                    return candidate;
+                }
+                candidate = candidate.opener;
+            } catch {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /**
      * Handle save action
      */
     async handleSave() {
         if (!this.saveEnabled) {
+            return;
+        }
+
+        // A linked window shows its main window's font. The main window holds
+        // the file, its folder layout and the access to it, so it saves.
+        const main = this.reachableMainWindow();
+        if (main?.saveButton) {
+            await main.saveButton.handleSave();
+            const own = window.fontManager?.currentFont;
+            if (own && !main.fontManager?.currentFont?.hasUnsavedChanges) {
+                own.hasUnsavedChanges = false;
+                own.folderSaveTracker.reset();
+                await window.fontManager?.updateDirtyIndicator();
+            }
+            this.updateButtonState();
             return;
         }
 

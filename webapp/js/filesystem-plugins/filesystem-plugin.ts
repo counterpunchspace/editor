@@ -38,6 +38,15 @@ export interface PluginMessageOptions {
     spinning?: boolean;
 }
 
+/** What one save wrote, for backends that describe it (a commit message). */
+export interface SaveSummary {
+    fontName: string;
+    /** Glyphs the save changed; null when it wrote the whole font. */
+    glyphs: string[] | null;
+    /** Whether font-level data (info, masters, kerning, features) changed. */
+    fontLevel: boolean;
+}
+
 export interface CanAddGlyphsResult {
     allowed: boolean;
     remaining?: number | null;
@@ -274,17 +283,8 @@ export abstract class FilesystemPlugin {
      * Backends that publish a save as one unit (a commit, a transaction)
      * use this to send it; `writeFile` may buffer until then.
      */
-    async afterSave(): Promise<void> {
+    async afterSave(_summary: SaveSummary): Promise<void> {
         // Default: writes are already durable
-    }
-
-    /**
-     * Whether `path` belongs to this backend's current root. Backends whose
-     * root moves between sessions (a connected repository) use this so a
-     * stored path from an earlier session is not restored blindly.
-     */
-    isPathInCurrentRoot(_path: string): boolean {
-        return true;
     }
 
     async prepareToSeed(): Promise<void> {

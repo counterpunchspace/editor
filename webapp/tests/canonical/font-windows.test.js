@@ -99,12 +99,9 @@ describe('every font opens in its own window, found by its document key', () => 
         ).toContain('takeover=1');
     });
 
-    test('a window can start with the file dialog on a plugin tab', () => {
-        const key = openDocuments.newFontKey();
-        const url = openDocuments.fontWindowUrl(key, {
-            pluginDialog: 'github'
-        });
-        expect(url).toContain('pluginDialog=github');
+    test('a GitHub font opens in a window found by its key', () => {
+        const key = 'github:///o/r/sources/Font.glyphs';
+        const url = openDocuments.fontWindowUrl(key);
         expect(
             fontWindow.documentKeyFromUrl(url.slice('index.html'.length))
         ).toBe(key);

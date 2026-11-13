@@ -1,19 +1,27 @@
 // The GitHub adapter turns repository paths into git tree and contents calls,
-// and buffers a save into one commit. These tests drive it with a stubbed
-// GitHub API and check the requests, not the UI.
+// and buffers a save into one commit per repository. These tests drive it
+// with a stubbed GitHub API and check the requests, not the UI.
 
 const {
     GitHubAdapter
 } = require('../js/filesystem-plugins/plugins/github-adapter');
+const { commitMessage } = require('../js/github/github-commit-message');
+const {
+    fontSourcesIn,
+    foldersIn,
+    gitHubFontKey
+} = require('../js/github/github-fonts');
 
 const API = 'https://api.github.com/repos/o/r';
-const SESSION = {
-    token: 'github_pat_test',
+const CREDENTIAL = { token: 'github_pat_test', login: 'tester' };
+const REPOSITORY = {
     owner: 'o',
     repo: 'r',
-    branch: 'main',
-    baseBranch: 'main'
+    baseBranch: 'main',
+    workingBranch: null,
+    pullRequest: null
 };
+const CHANGE = { ...REPOSITORY, workingBranch: 'counterpunch-1' };
 
 const TREE = {
     truncated: false,
@@ -82,8 +90,12 @@ function routeGitHub(routes) {
     return calls;
 }
 
-function adapter(session = SESSION) {
-    return new GitHubAdapter({ current: session });
+function adapter(repositories = [REPOSITORY]) {
+    return new GitHubAdapter({
+        credential: CREDENTIAL,
+        repositories,
+        load: async () => {}
+    });
 }
 
 describe('GitHub adapter', () => {
@@ -119,13 +131,21 @@ describe('GitHub adapter', () => {
         expect(Object.keys(ufo)).toEqual(['fontinfo.plist']);
     });
 
-    test('lists the connected owner and repository above the repository root', async () => {
+    test('lists the owners and repositories that are added', async () => {
         routeGitHub({});
-        const github = adapter();
+        const github = adapter([
+            REPOSITORY,
+            { ...REPOSITORY, repo: 'second' },
+            { ...REPOSITORY, owner: 'foundry', repo: 'family' }
+        ]);
 
-        expect(Object.keys(await github.scanDirectory('/'))).toEqual(['o']);
+        expect(Object.keys(await github.scanDirectory('/')).sort()).toEqual([
+            'foundry',
+            'o'
+        ]);
         expect(await github.scanDirectory('/o')).toEqual({
-            r: { path: '/o/r', is_dir: true, size: 0, mtime: '' }
+            r: { path: '/o/r', is_dir: true, size: 0, mtime: '' },
+            second: { path: '/o/second', is_dir: true, size: 0, mtime: '' }
         });
         expect(await github.scanDirectory('/elsewhere')).toEqual({});
         expect(await github.fileExists('/o')).toBe(true);
@@ -150,33 +170,46 @@ describe('GitHub adapter', () => {
         ).toBe(1);
     });
 
-    test('rejects paths that point at another repository', async () => {
+    test('reads the open change’s branch instead of the base branch', async () => {
+        const calls = routeGitHub({
+            [`GET ${API}/git/trees/counterpunch-1?recursive=1`]: () =>
+                json(TREE)
+        });
+        const github = adapter([CHANGE]);
+
+        await github.scanDirectory('/o/r/sources');
+        expect(calls.map((call) => call.url)).toEqual([
+            `${API}/git/trees/counterpunch-1?recursive=1`
+        ]);
+    });
+
+    test('rejects paths in a repository that is not added', async () => {
         const github = adapter();
         await expect(
             github.readFile('/other/repo/sources/Font.glyphs')
-        ).rejects.toThrow('not the connected repository');
+        ).rejects.toThrow('is not added to Counterpunch');
     });
 
     test('publishes one save as one commit with every file', async () => {
         const calls = routeGitHub({
-            [`GET ${API}/git/trees/main?recursive=1`]: () => json(TREE),
-            [`GET ${API}/git/ref/heads/main`]: () =>
+            [`GET ${API}/git/ref/heads/counterpunch-1`]: () =>
                 json({ object: { sha: 'head-1' } }),
             [`GET ${API}/git/commits/head-1`]: () =>
                 json({ tree: { sha: 'tree-1' } }),
             [`POST ${API}/git/blobs`]: () => json({ sha: 'new-blob' }),
             [`POST ${API}/git/trees`]: () => json({ sha: 'tree-2' }),
             [`POST ${API}/git/commits`]: () => json({ sha: 'commit-2' }),
-            [`PATCH ${API}/git/refs/heads/main`]: () => json({})
+            [`PATCH ${API}/git/refs/heads/counterpunch-1`]: () => json({})
         });
-        const github = adapter();
+        const github = adapter([CHANGE]);
 
         await github.writeFile('/o/r/sources/Font.glyphs', 'one');
         await github.writeFile('/o/r/sources/Other.ufo/fontinfo.plist', 'two');
-        const result = await github.commit('Update Font');
+        expect(github.pendingRepositories()).toEqual([CHANGE]);
+        const result = await github.commit(CHANGE, 'Update Font');
 
         expect(result).toMatchObject({
-            branch: 'main',
+            branch: 'counterpunch-1',
             commitSha: 'commit-2',
             files: 2,
             deleted: 0
@@ -184,7 +217,6 @@ describe('GitHub adapter', () => {
 
         const treeCall = calls.find((call) => call.url === `${API}/git/trees`);
         expect(treeCall.body.base_tree).toBe('tree-1');
-        expect(treeCall.body.tree).toHaveLength(2);
         expect(treeCall.body.tree.map((entry) => entry.path).sort()).toEqual([
             'sources/Font.glyphs',
             'sources/Other.ufo/fontinfo.plist'
@@ -193,27 +225,61 @@ describe('GitHub adapter', () => {
         const commitCall = calls.find(
             (call) => call.url === `${API}/git/commits`
         );
+        expect(commitCall.body.message).toBe('Update Font');
         expect(commitCall.body.parents).toEqual(['head-1']);
-        expect(commitCall.body.tree).toBe('tree-2');
 
         expect(github.hasPendingChanges()).toBe(false);
     });
 
+    test('never commits to the base branch', async () => {
+        const github = adapter();
+        await github.writeFile('/o/r/sources/Font.glyphs', 'one');
+        await expect(github.commit(REPOSITORY, 'Update Font')).rejects.toThrow(
+            'no working branch'
+        );
+    });
+
+    test('waits for the stored repositories before the first write', async () => {
+        // A linked window saves without having listed anything first.
+        const state = { credential: null, repositories: [] };
+        state.load = async () => {
+            state.credential = CREDENTIAL;
+            state.repositories = [CHANGE];
+        };
+        const github = new GitHubAdapter(state);
+        await github.writeFile('/o/r/sources/Font.glyphs', 'one');
+        expect(github.pendingRepositories()).toEqual([CHANGE]);
+    });
+
+    test('keeps the saves of two repositories apart', async () => {
+        const second = { ...CHANGE, repo: 'second' };
+        const github = adapter([CHANGE, second]);
+        await github.writeFile('/o/r/a.glyphs', 'one');
+        await github.writeFile('/o/second/b.glyphs', 'two');
+        expect(
+            github
+                .pendingRepositories()
+                .map((spec) => spec.repo)
+                .sort()
+        ).toEqual(['r', 'second']);
+    });
+
     test('removes deleted files with a null tree entry', async () => {
         const calls = routeGitHub({
-            [`GET ${API}/git/trees/main?recursive=1`]: () => json(TREE),
-            [`GET ${API}/git/ref/heads/main`]: () =>
+            [`GET ${API}/git/trees/counterpunch-1?recursive=1`]: () =>
+                json(TREE),
+            [`GET ${API}/git/ref/heads/counterpunch-1`]: () =>
                 json({ object: { sha: 'head-1' } }),
             [`GET ${API}/git/commits/head-1`]: () =>
                 json({ tree: { sha: 'tree-1' } }),
             [`POST ${API}/git/trees`]: () => json({ sha: 'tree-2' }),
             [`POST ${API}/git/commits`]: () => json({ sha: 'commit-2' }),
-            [`PATCH ${API}/git/refs/heads/main`]: () => json({})
+            [`PATCH ${API}/git/refs/heads/counterpunch-1`]: () => json({})
         });
-        const github = adapter();
+        const github = adapter([CHANGE]);
 
         await github.deleteItem('/o/r/sources/Other.ufo', true);
-        await github.commit('Remove UFO');
+        await github.commit(CHANGE, 'Remove UFO');
 
         const treeCall = calls.find((call) => call.url === `${API}/git/trees`);
         expect(treeCall.body.tree).toEqual([
@@ -234,7 +300,7 @@ describe('GitHub adapter', () => {
         });
         const github = adapter();
 
-        const branch = await github.createWorkingBranch();
+        const branch = await github.createWorkingBranch(REPOSITORY);
         expect(branch).toBe('counterpunch-1');
         const create = calls.find((call) => call.url === `${API}/git/refs`);
         expect(create.body).toEqual({
@@ -262,7 +328,7 @@ describe('GitHub adapter', () => {
         });
         const github = adapter();
 
-        await expect(github.createWorkingBranch()).resolves.toBe(
+        await expect(github.createWorkingBranch(REPOSITORY)).resolves.toBe(
             'counterpunch-2'
         );
         const created = calls
@@ -282,12 +348,10 @@ describe('GitHub adapter', () => {
                         { number: 7, html_url: 'https://github.com/o/r/pull/7' }
                     ])
         });
-        const github = adapter({
-            ...SESSION,
-            branch: 'counterpunch/edit'
-        });
+        const change = { ...REPOSITORY, workingBranch: 'counterpunch/edit' };
+        const github = adapter([change]);
 
-        const pullRequest = await github.ensurePullRequest({
+        const pullRequest = await github.ensurePullRequest(change, {
             title: 'Edits',
             body: 'Body'
         });
@@ -305,12 +369,10 @@ describe('GitHub adapter', () => {
             [`POST ${API}/pulls`]: () =>
                 json({ number: 8, html_url: 'https://github.com/o/r/pull/8' })
         });
-        const github = adapter({
-            ...SESSION,
-            branch: 'counterpunch/edit'
-        });
+        const change = { ...REPOSITORY, workingBranch: 'counterpunch/edit' };
+        const github = adapter([change]);
 
-        const pullRequest = await github.ensurePullRequest({
+        const pullRequest = await github.ensurePullRequest(change, {
             title: 'Edits',
             body: 'Body'
         });
@@ -322,10 +384,84 @@ describe('GitHub adapter', () => {
         });
     });
 
-    test('refuses a pull request from the base branch', async () => {
+    test('refuses a pull request without a working branch', async () => {
         const github = adapter();
         await expect(
-            github.ensurePullRequest({ title: 'Edits', body: 'Body' })
+            github.ensurePullRequest(REPOSITORY, {
+                title: 'Edits',
+                body: 'Body'
+            })
         ).rejects.toThrow('needs a working branch');
+    });
+});
+
+describe('GitHub fonts in a repository', () => {
+    const FILES = [
+        'README.md',
+        'sources/Family.glyphs',
+        'sources/Family.designspace',
+        'sources/Family-Regular.ufo/fontinfo.plist',
+        'sources/Family-Regular.ufo/glyphs/a.glif',
+        'sources/Package.glyphspackage/fontinfo.plist',
+        'fonts/ttf/Family-Regular.ttf'
+    ];
+
+    test('lists font files and font folders once', () => {
+        expect(fontSourcesIn(FILES)).toEqual([
+            { path: 'fonts/ttf/Family-Regular.ttf', format: 'ttf' },
+            { path: 'sources/Family-Regular.ufo', format: 'ufo' },
+            { path: 'sources/Family.designspace', format: 'designspace' },
+            { path: 'sources/Family.glyphs', format: 'glyphs' },
+            {
+                path: 'sources/Package.glyphspackage',
+                format: 'glyphspackage'
+            }
+        ]);
+    });
+
+    test('offers folders to save into, but not inside a font', () => {
+        expect(foldersIn(FILES)).toEqual(['', 'fonts', 'fonts/ttf', 'sources']);
+    });
+
+    test('a font’s key names its repository', () => {
+        expect(
+            gitHubFontKey({ owner: 'o', repo: 'r' }, 'sources/Family.glyphs')
+        ).toBe('github:///o/r/sources/Family.glyphs');
+    });
+});
+
+describe('GitHub commit messages', () => {
+    const font = { fontName: 'Fustat' };
+
+    test('name a few glyphs', () => {
+        expect(
+            commitMessage({
+                ...font,
+                glyphs: ['A', 'B', 'aacute'],
+                fontLevel: false
+            })
+        ).toBe('Edit A, B and aacute in Fustat');
+        expect(
+            commitMessage({ ...font, glyphs: ['A'], fontLevel: false })
+        ).toBe('Edit A in Fustat');
+    });
+
+    test('count many glyphs, and mention font data', () => {
+        expect(
+            commitMessage({
+                ...font,
+                glyphs: ['a', 'b', 'c', 'd', 'e', 'f'],
+                fontLevel: true
+            })
+        ).toBe('Edit 6 glyphs and font data in Fustat');
+        expect(commitMessage({ ...font, glyphs: [], fontLevel: true })).toBe(
+            'Edit font data in Fustat'
+        );
+    });
+
+    test('a whole-font save updates the font', () => {
+        expect(commitMessage({ ...font, glyphs: null, fontLevel: true })).toBe(
+            'Update Fustat'
+        );
     });
 });

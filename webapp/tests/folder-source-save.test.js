@@ -196,8 +196,12 @@ describe('saving folder sources file by file', () => {
         const width = editWidth(font, 'A', 10);
         await font.save();
         expect(writes).toEqual([`${root}/glyphs/A_.glyph`]);
-        // A save publishes once, after every file of it is written.
+        // A save publishes once, after every file of it is written, and
+        // says what it changed (GitHub writes the commit message from it).
         expect(plugin.afterSave).toHaveBeenCalledTimes(1);
+        expect(plugin.afterSave).toHaveBeenCalledWith(
+            expect.objectContaining({ glyphs: ['A'], fontLevel: false })
+        );
         expect(
             new TextDecoder().decode(files.get(`${root}/glyphs/A_.glyph`))
         ).toContain(`width = ${width};`);

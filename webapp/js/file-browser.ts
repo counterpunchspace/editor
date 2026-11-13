@@ -36,7 +36,6 @@ import {
     pluginRegistry,
     FilesystemPlugin,
     DiskPlugin,
-    GitHubPlugin,
     TitleBarMenuItem,
     type FileContextAction,
     type FileContextTarget,
@@ -1504,12 +1503,6 @@ function getPluginTabDescription(plugin: FilesystemPlugin): string {
         return user ? 'Cloud storage' : 'Log in to access';
     }
 
-    if (pluginId === 'github') {
-        return plugin instanceof GitHubPlugin
-            ? plugin.getRepositoryLabel()
-            : 'Connect a repository';
-    }
-
     return 'Filesystem plugin';
 }
 
@@ -1679,27 +1672,6 @@ async function openMemoryUrlFont(fontPath: string): Promise<void> {
             error
         );
     });
-}
-
-/**
- * A window the launcher opened for a backend (`?pluginDialog=github`) starts
- * with the file dialog on that backend's tab, so connecting and browsing do
- * not depend on the user finding Save As first.
- */
-async function openPluginDialogFromUrl(
-    urlParams: URLSearchParams
-): Promise<void> {
-    const pluginId = urlParams.get('pluginDialog');
-    if (!pluginId) return;
-    urlParams.delete('pluginDialog');
-    const query = urlParams.toString();
-    history.replaceState(
-        history.state,
-        '',
-        `${location.pathname}${query ? `?${query}` : ''}`
-    );
-    await waitForFileBrowserReady();
-    await showFontFileDialog({ mode: 'open', pluginId });
 }
 
 function waitForUrlOpenFontReady(fontPath: string): Promise<void> {
@@ -2125,7 +2097,12 @@ async function saveCurrentFontAsIn(
         currentFont.sourceFileHash = hashBytes(
             new TextEncoder().encode(serializedFont)
         );
-        await plugin.afterSave();
+        await plugin.afterSave({
+            fontName: currentFont.name,
+            glyphs: null,
+            fontLevel: true
+        });
+        currentFont.folderSaveTracker.reset();
     }
     currentFont.needsRecompile = false;
     currentFont.hasUnsavedChanges = false;
@@ -2409,7 +2386,7 @@ async function switchContext(pluginId: string) {
                     const savedPath = localStorage.getItem(
                         getPathStorageKey(pluginId)
                     );
-                    if (savedPath && plugin.isPathInCurrentRoot(savedPath)) {
+                    if (savedPath) {
                         targetPath = savedPath;
                         console.log(
                             '[FileBrowser]',
@@ -3745,7 +3722,7 @@ async function initFileBrowser() {
                 const savedPath = localStorage.getItem(
                     getPathStorageKey(pluginId)
                 );
-                if (savedPath && defaultPlugin.isPathInCurrentRoot(savedPath)) {
+                if (savedPath) {
                     startPath = savedPath;
                     console.log(
                         '[FileBrowser]',
@@ -3928,6 +3905,31 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
+            // The launcher signs in and picks GitHub fonts; the window reads
+            // the font straight from the repository.
+            const githubPlugin =
+                pluginId === 'github' ? pluginRegistry.get('github') : null;
+            if (githubPlugin && fontPath) {
+                try {
+                    const ready = waitForUrlOpenFontReady(fontPath);
+                    await openFont(fontPath, undefined, {
+                        sourcePluginOverride: githubPlugin
+                    });
+                    await ready;
+                } catch (error: unknown) {
+                    console.error(
+                        '[FileBrowser]',
+                        'Failed to open GitHub font from URL params:',
+                        error
+                    );
+                    showFontUnavailable(
+                        'This font couldn’t be opened from GitHub',
+                        getErrorMessage(error)
+                    );
+                }
+                return;
+            }
+
             if (pluginId && fontPath) {
                 let openedFromUrl = false;
 
@@ -4089,7 +4091,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 window.isTestMode?.()
             ) {
                 await openDefaultStartupFont('Starting a new font');
-                await openPluginDialogFromUrl(urlParams);
                 return;
             }
 
@@ -4295,7 +4296,6 @@ window.handleFileUpload = handleFileUpload;
 window.openFont = openFont;
 window.showFontFileDialog = showFontFileDialog;
 window.closeFontFileDialog = closeFontFileDialog;
-window.hidePluginMessage = hidePluginMessage;
 window.locatePathInFileDialog = locatePathInFileDialog;
 (window as any).openFontWithHandle = openFontWithHandle;
 (window as any).switchContext = switchContext;

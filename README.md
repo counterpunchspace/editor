@@ -41,12 +41,12 @@ Access API, Chromium browsers) and save back to the picked file or folder.
 in once, so the browser can read the whole font. File → Save As chooses
 name, format and place: this computer, the cloud, GitHub or browser storage.
 
-**GitHub** is a filesystem plugin: connect one repository with a fine-grained
-personal access token, open a source from it, and save your edits as a pull
-request. Use **File → Open from GitHub…** or the launcher's **GitHub** group.
-Browsing and opening read a branch of the repository. The first save creates a
-working branch from the base branch and opens a pull request; every later save
-commits to the same pull request.
+**GitHub** is a filesystem plugin: sign in once with a fine-grained personal
+access token, add the repositories you work on, open a source from any of them,
+and save your edits as a pull request, all from the launcher's **GitHub**
+group. The first save to a repository creates a working
+branch from its base branch and opens a pull request; every later save to that
+repository, from any font or window, commits to the same pull request.
 
 **Cloud** is a filesystem plugin, not a file format. Open/Save talk to per-shard
 rooms (`font-core`, `font-deps`, `glyph:<id>`). Hydrate is HTTP + live tail;
@@ -54,16 +54,16 @@ rebaseline is required when compaction moves the checkpoint past the client’s
 `appliedLogId`. See [Filesystem plugins](developer-docs/FILESYSTEM_PLUGINS.md)
 and [Cloud collaboration architecture](strategy/CLOUD_COLLABORATION_ARCHITECTURE.md).
 
-| Format | Open | Save | Notes |
-| --- | --- | --- | --- |
-| `.babelfont` | Yes | Yes | Native JSON source format. |
-| `.glyphs` | Yes | Yes | Glyphs 3 and 4 source text, serialized by `babelfont-rs`/`glyphslib`. Saves in the version it was read in; Save As can choose Glyphs 3 or 4. |
-| `.glyphspackage` | Yes | Yes | Glyphs 3 and 4 packages, saved file by file. The Glyphs 4 layout (`kerning.plist`, `note.md`, `features/*.fea`) matches what Glyphs 4 writes. Save As can choose Glyphs 3 or 4. |
-| `.ufo` | Yes | Yes | Single-master, saved file by file with the UFO's own file names. `data/` and `images/` are left untouched; `include()`d feature files are kept until the features are edited, then the flattened code is written. |
-| `.designspace` | Yes | Yes | The document and the UFOs it references, saved file by file. Rules, axis mappings, STAT labels and each UFO's own info, lib, features and extra layers are kept; a source with a `layer` is saved into that layer. |
-| `.vfj` | Yes | No | FontLab source import. |
-| `.sfd` | Yes | No | FontForge source import. |
-| `.ttf` | Yes | No | TrueType binary fonts (not CFF-based OpenType) open as editable sources; Save leads to Save As. Binary export writes `.ttf`. |
+| Format           | Open | Save | Notes                                                                                                                                                                                                              |
+| ---------------- | ---- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `.babelfont`     | Yes  | Yes  | Native JSON source format.                                                                                                                                                                                         |
+| `.glyphs`        | Yes  | Yes  | Glyphs 3 and 4 source text, serialized by `babelfont-rs`/`glyphslib`. Saves in the version it was read in; Save As can choose Glyphs 3 or 4.                                                                       |
+| `.glyphspackage` | Yes  | Yes  | Glyphs 3 and 4 packages, saved file by file. The Glyphs 4 layout (`kerning.plist`, `note.md`, `features/*.fea`) matches what Glyphs 4 writes. Save As can choose Glyphs 3 or 4.                                    |
+| `.ufo`           | Yes  | Yes  | Single-master, saved file by file with the UFO's own file names. `data/` and `images/` are left untouched; `include()`d feature files are kept until the features are edited, then the flattened code is written.  |
+| `.designspace`   | Yes  | Yes  | The document and the UFOs it references, saved file by file. Rules, axis mappings, STAT labels and each UFO's own info, lib, features and extra layers are kept; a source with a `layer` is saved into that layer. |
+| `.vfj`           | Yes  | No   | FontLab source import.                                                                                                                                                                                             |
+| `.sfd`           | Yes  | No   | FontForge source import.                                                                                                                                                                                           |
+| `.ttf`           | Yes  | No   | TrueType binary fonts (not CFF-based OpenType) open as editable sources; Save leads to Save As. Binary export writes `.ttf`.                                                                                       |
 
 ## Development
 
@@ -75,29 +75,29 @@ Remember that we’re in **Beta** stage. "Should work" means you could still enc
 
 Coverage: 🟢 Should work · 🟡 Partial · 🔴 Missing
 
-| Feature | Coverage | Comments |
-| --- | --- | --- |
-| Live font compilation + Harfbuzz shaping | 🟢 | 🔥 |
-| Bi-directional text support | 🟢 | 🔥 |
-| In-place component editing | 🟢 | 🔥 |
-| Outline drawing and editing | 🟢 | Basic drawing tools, no italic canvas yet |
-| Variable fonts | 🟢 | No `avar2` support yet |
-| Components | 🟢 | No variable components yet |
-| Sidebearings | 🟢 | |
-| Kerning | 🟢 | |
-| Font Info | 🟢 | Needs designing |
-| Python scripting | 🟢 | API and docs need some work |
-| AI assistant | 🟢 | |
-| Undo and history | 🟢 | |
-| Multiple windows | 🟢 | |
-| Binary font export | 🟢 | Only VF, no static instances yet, no automatic ccmp expansion |
-| Language database | 🟢 | Ships with Hyperglot temporarily as a demo, later as user-installable plugins |
-| Glyph composition | 🟢 | |
-| Commercial plugin marketplace | 🟢 | |
-| Language Packs | 🟡 | Infrastructure and basic Arabic demo exists |
-| Documentation | 🟡 | Incomplete, bad screenshots |
-| Glyph overview and filters | 🟡 | Glyph categorization missing |
-| Source file I/O | 🟢 | |
-| Plugin system | 🟡 | Most plugin types not yet implemented, no auto-update yet |
-| OpenType feature code generator | 🟡 | Infrastructure and basic demos exist |
-| Live online collaboration | 🟡 | Basic implementation works, chat/tasks/live pointers/follow me still missing |
+| Feature                                  | Coverage | Comments                                                                      |
+| ---------------------------------------- | -------- | ----------------------------------------------------------------------------- |
+| Live font compilation + Harfbuzz shaping | 🟢       | 🔥                                                                            |
+| Bi-directional text support              | 🟢       | 🔥                                                                            |
+| In-place component editing               | 🟢       | 🔥                                                                            |
+| Outline drawing and editing              | 🟢       | Basic drawing tools, no italic canvas yet                                     |
+| Variable fonts                           | 🟢       | No `avar2` support yet                                                        |
+| Components                               | 🟢       | No variable components yet                                                    |
+| Sidebearings                             | 🟢       |                                                                               |
+| Kerning                                  | 🟢       |                                                                               |
+| Font Info                                | 🟢       | Needs designing                                                               |
+| Python scripting                         | 🟢       | API and docs need some work                                                   |
+| AI assistant                             | 🟢       |                                                                               |
+| Undo and history                         | 🟢       |                                                                               |
+| Multiple windows                         | 🟢       |                                                                               |
+| Binary font export                       | 🟢       | Only VF, no static instances yet, no automatic ccmp expansion                 |
+| Language database                        | 🟢       | Ships with Hyperglot temporarily as a demo, later as user-installable plugins |
+| Glyph composition                        | 🟢       |                                                                               |
+| Commercial plugin marketplace            | 🟢       |                                                                               |
+| Language Packs                           | 🟡       | Infrastructure and basic Arabic demo exists                                   |
+| Documentation                            | 🟡       | Incomplete, bad screenshots                                                   |
+| Glyph overview and filters               | 🟡       | Glyph categorization missing                                                  |
+| Source file I/O                          | 🟢       |                                                                               |
+| Plugin system                            | 🟡       | Most plugin types not yet implemented, no auto-update yet                     |
+| OpenType feature code generator          | 🟡       | Infrastructure and basic demos exist                                          |
+| Live online collaboration                | 🟡       | Basic implementation works, chat/tasks/live pointers/follow me still missing  |

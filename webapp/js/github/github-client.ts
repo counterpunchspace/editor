@@ -214,6 +214,15 @@ export class GitHubClient {
         return parse(await response.json());
     }
 
+    /** The account the token belongs to. Needs no repository access. */
+    async getLogin(): Promise<string> {
+        const value = await this.json('GET', '/user', (body) => body);
+        if (!isRecord(value)) {
+            throw new Error('GitHub returned an unexpected account record.');
+        }
+        return requireString(value, 'login', 'the account');
+    }
+
     async getRepository(): Promise<GitHubRepositoryInfo> {
         const value = await this.json('GET', this.repoPath(''), (body) => body);
         if (!isRecord(value)) {

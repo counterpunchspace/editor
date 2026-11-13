@@ -139,16 +139,6 @@ function getFileMenuItems(): ToolbarMenuItem[] {
             }
         },
         {
-            label: 'Open from GitHub…',
-            icon: 'code',
-            action: async () => {
-                await window.showFontFileDialog?.({
-                    mode: 'open',
-                    pluginId: 'github'
-                });
-            }
-        },
-        {
             label: 'Save',
             icon: 'save',
             shortcut: '⌘S',

@@ -243,8 +243,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Operations: `getItem`, `setItem`, `removeItem`
 - Default when unset: `Hamburgevons`
 - Sites:
-  - webapp/js/font-manager.ts:3144 `removeItem` via method `handleNewFont`
-  - webapp/js/font-manager.ts:3278 `getItem` via method `resolveEditingTextForCompile`
+  - webapp/js/font-manager.ts:3154 `removeItem` via method `handleNewFont`
+  - webapp/js/font-manager.ts:3288 `getItem` via method `resolveEditingTextForCompile`
   - webapp/js/glyph-canvas/textrun.ts:166 `getItem` via constructor `constructor`
   - webapp/js/glyph-canvas/textrun.ts:518 `setItem` via method `setTextBuffer`
   - webapp/js/glyph-canvas/textrun.ts:2488 `setItem` via method `loadTextBufferFromFont`
@@ -269,8 +269,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: literal
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/file-browser.ts:2320 `setItem` via function `switchContext`
-  - webapp/js/file-browser.ts:3625 `getItem` via function `initFileBrowser`
+  - webapp/js/file-browser.ts:2335 `setItem` via function `switchContext`
+  - webapp/js/file-browser.ts:3653 `getItem` via function `initFileBrowser`
 
 <a id="key-launchercloudfonts"></a>
 
@@ -280,9 +280,9 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: literal
 - Operations: `getItem`, `setItem`, `removeItem`
 - Sites:
-  - webapp/js/launcher/launcher-page.ts:792 `getItem` via function `rememberedCloudFonts`
-  - webapp/js/launcher/launcher-page.ts:806 `setItem` via function `rememberCloudFonts`
-  - webapp/js/launcher/launcher-page.ts:825 `removeItem` via function `forgetCloudFonts`
+  - webapp/js/launcher/launcher-page.ts:906 `getItem` via function `rememberedCloudFonts`
+  - webapp/js/launcher/launcher-page.ts:920 `setItem` via function `rememberCloudFonts`
+  - webapp/js/launcher/launcher-page.ts:939 `removeItem` via function `forgetCloudFonts`
 
 <a id="key-preferredtheme"></a>
 
@@ -294,8 +294,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Default when unset: `auto`
 - Sites:
   - webapp/js/font-info.ts:2957 `getItem` via function `getInitialTheme`
-  - webapp/js/launcher/launcher-page.ts:206 `getItem` via function `themePreference`
-  - webapp/js/launcher/launcher-page.ts:268 `setItem` via module `top-level module code`
+  - webapp/js/launcher/launcher-page.ts:221 `getItem` via function `themePreference`
+  - webapp/js/launcher/launcher-page.ts:283 `setItem` via module `top-level module code`
   - webapp/js/script-editor.ts:352 `getItem` via function `getInitialTheme`
   - webapp/js/theme-switcher.ts:56 `getItem` via method `init`
   - webapp/js/theme-switcher.ts:58 `setItem` via method `init`
@@ -388,8 +388,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: literal
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/auth-manager.ts:600 `getItem` via method `rememberedSignInEmail`
-  - webapp/js/auth-manager.ts:608 `setItem` via method `rememberSignInEmail`
+  - webapp/js/auth-manager.ts:603 `getItem` via method `rememberedSignInEmail`
+  - webapp/js/auth-manager.ts:611 `setItem` via method `rememberSignInEmail`
 
 <a id="key-tabkeepalivetimestamp"></a>
 
@@ -410,8 +410,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Operations: `getItem`, `setItem`
 - Default when unset: `false`
 - Sites:
-  - webapp/js/tour.ts:107 `getItem` via function `hasCompletedTour`
-  - webapp/js/tour.ts:355 `setItem` via function `completeTour`
+  - webapp/js/tour.ts:139 `getItem` via function `hasCompletedTour`
+  - webapp/js/tour.ts:289 `setItem` via function `completeTour`
 
 <a id="key-tourlaunchbuttondismissed"></a>
 
@@ -422,9 +422,9 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Operations: `getItem`, `setItem`
 - Default when unset: `false`
 - Sites:
-  - webapp/js/tour.ts:98 `getItem` via function `hasDismissedTourLaunchButton`
-  - webapp/js/tour.ts:134 `setItem` via function `dismissTourLaunchButton`
-  - webapp/js/tour.ts:356 `setItem` via function `completeTour`
+  - webapp/js/tour.ts:130 `getItem` via function `hasDismissedTourLaunchButton`
+  - webapp/js/tour.ts:166 `setItem` via function `dismissTourLaunchButton`
+  - webapp/js/tour.ts:290 `setItem` via function `completeTour`
 
 <a id="key-tourskipped"></a>
 
@@ -435,8 +435,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Operations: `getItem`, `setItem`
 - Default when unset: `false`
 - Sites:
-  - webapp/js/tour.ts:81 `getItem` via function `hasSkippedTour`
-  - webapp/js/tour.ts:125 `setItem` via function `skipTour`
+  - webapp/js/tour.ts:113 `getItem` via function `hasSkippedTour`
+  - webapp/js/tour.ts:157 `setItem` via function `skipTour`
 
 <a id="key-tourstarted"></a>
 
@@ -447,8 +447,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Operations: `getItem`, `setItem`
 - Default when unset: `false`
 - Sites:
-  - webapp/js/tour.ts:89 `getItem` via function `hasStartedTour`
-  - webapp/js/tour.ts:346 `setItem` via function `markTourStarted`
+  - webapp/js/tour.ts:121 `getItem` via function `hasStartedTour`
+  - webapp/js/tour.ts:270 `setItem` via function `markTourStarted`
 
 <a id="key-welcomedismissedversion"></a>
 
@@ -469,10 +469,10 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: pattern
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/file-browser.ts:2371 `getItem` via function `switchContext`
-  - webapp/js/file-browser.ts:3222 `setItem` via function `navigateToPath`
-  - webapp/js/file-browser.ts:3694 `getItem` via function `initFileBrowser`
-  - webapp/js/file-browser.ts:4142 `setItem` via module `top-level module code`
+  - webapp/js/file-browser.ts:2386 `getItem` via function `switchContext`
+  - webapp/js/file-browser.ts:3237 `setItem` via function `navigateToPath`
+  - webapp/js/file-browser.ts:3722 `getItem` via function `initFileBrowser`
+  - webapp/js/file-browser.ts:4195 `setItem` via module `top-level module code`
 
 <a id="key-linkedwindowoccupancy-sessionid-"></a>
 

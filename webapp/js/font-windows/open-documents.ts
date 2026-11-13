@@ -51,12 +51,7 @@ export type OpenableFont = {
 /** The font window URL for a document key. */
 export function fontWindowUrl(
     key: string,
-    options: {
-        takeOver?: boolean;
-        sparse?: boolean;
-        /** Opens the file dialog on this plugin's tab once the window starts. */
-        pluginDialog?: string;
-    } = {}
+    options: { takeOver?: boolean; sparse?: boolean } = {}
 ): string {
     const params = new URLSearchParams();
     if (isNewFontKey(key)) {
@@ -69,9 +64,6 @@ export function fontWindowUrl(
     if (options.sparse && key.startsWith('cloud://')) {
         params.set('sparse', 'true');
     }
-    if (options.pluginDialog) {
-        params.set('pluginDialog', options.pluginDialog);
-    }
     return `index.html?${params.toString()}`;
 }
 
@@ -82,7 +74,7 @@ export function fontWindowUrl(
  */
 export function openFontWindow(
     font: OpenableFont,
-    options: { sparse?: boolean; pluginDialog?: string } = {}
+    options: { sparse?: boolean } = {}
 ): boolean {
     const name = fontWindowName(font.key);
     const state = documentOpenState(font.key);
@@ -96,8 +88,7 @@ export function openFontWindow(
     const win = window.open(
         fontWindowUrl(font.key, {
             takeOver: state === 'unlinked',
-            sparse: options.sparse,
-            pluginDialog: options.pluginDialog
+            sparse: options.sparse
         }),
         name
     );

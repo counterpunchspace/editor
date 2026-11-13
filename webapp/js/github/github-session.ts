@@ -1,45 +1,33 @@
-// The repository, token and working branch the GitHub plugin uses.
+// The GitHub login and the repositories the GitHub plugin works with.
 //
-// The token and the repository are durable, in IndexedDB. The working branch
-// and its pull request belong to one browser session, in sessionStorage: a
-// new session starts a new branch on its first save, and a reload keeps the
-// branch it is already using. Nothing here talks to the network.
+// One token serves the whole editor, like `gh auth login`. Each repository
+// added to the editor keeps its base branch and its open change: the working
+// branch every save commits to, and that branch's pull request. Everything is
+// in IndexedDB, so every window and every font from a repository share one
+// change. Nothing here talks to the network.
 
-import { del, get, set } from 'idb-keyval';
+import { del, get, set, update } from 'idb-keyval';
 
-const CONFIG_KEY = 'github-plugin-session';
-const WORKING_KEY = 'github-plugin-working';
+const CREDENTIAL_KEY = 'github-plugin-credential';
+const REPOSITORIES_KEY = 'github-plugin-repositories';
 
-export type GitHubSession = {
+export type GitHubCredential = {
     /** Fine-grained personal access token with Contents and Pull requests write. */
     token: string;
-    owner: string;
-    repo: string;
-    /**
-     * Branch that reads and commits use. Equal to `baseBranch` until the first
-     * save of the browser session creates the working branch.
-     */
-    branch: string;
-    /** Branch the pull request merges into. */
-    baseBranch: string;
+    /** The account the token belongs to. */
+    login: string;
 };
 
 export type GitHubRepositorySpec = { owner: string; repo: string };
 
 export type GitHubPullRequestRef = { number: number; url: string };
 
-export type GitHubWorkingState = {
-    owner: string;
-    repo: string;
-    branch: string;
-    pullRequest: GitHubPullRequestRef | null;
-};
-
-type StoredConfig = {
-    token: string;
-    owner: string;
-    repo: string;
+export type GitHubRepository = GitHubRepositorySpec & {
+    /** Branch the pull request merges into. */
     baseBranch: string;
+    /** Branch of the open change, or null until a save starts one. */
+    workingBranch: string | null;
+    pullRequest: GitHubPullRequestRef | null;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -54,14 +42,11 @@ function readField(
     return typeof value === 'string' && value ? value : null;
 }
 
-function parseConfig(value: unknown): StoredConfig | null {
+function parseCredential(value: unknown): GitHubCredential | null {
     if (!isRecord(value)) return null;
     const token = readField(value, 'token');
-    const owner = readField(value, 'owner');
-    const repo = readField(value, 'repo');
-    const baseBranch = readField(value, 'baseBranch');
-    if (!token || !owner || !repo || !baseBranch) return null;
-    return { token, owner, repo, baseBranch };
+    const login = readField(value, 'login');
+    return token && login ? { token, login } : null;
 }
 
 function parsePullRequest(value: unknown): GitHubPullRequestRef | null {
@@ -72,114 +57,158 @@ function parsePullRequest(value: unknown): GitHubPullRequestRef | null {
     return { number, url };
 }
 
-/** The working state of this browser session, if it has one. */
-export function loadGitHubWorkingState(): GitHubWorkingState | null {
-    try {
-        const raw = window.sessionStorage.getItem(WORKING_KEY);
-        if (!raw) return null;
-        const value: unknown = JSON.parse(raw);
-        if (!isRecord(value)) return null;
-        const owner = readField(value, 'owner');
-        const repo = readField(value, 'repo');
-        const branch = readField(value, 'branch');
-        if (!owner || !repo || !branch) return null;
-        return {
-            owner,
-            repo,
-            branch,
-            pullRequest: parsePullRequest(value.pullRequest)
-        };
-    } catch {
-        return null;
-    }
+function parseRepository(value: unknown): GitHubRepository | null {
+    if (!isRecord(value)) return null;
+    const owner = readField(value, 'owner');
+    const repo = readField(value, 'repo');
+    const baseBranch = readField(value, 'baseBranch');
+    if (!owner || !repo || !baseBranch) return null;
+    const workingBranch = readField(value, 'workingBranch');
+    return {
+        owner,
+        repo,
+        baseBranch,
+        workingBranch,
+        pullRequest: workingBranch ? parsePullRequest(value.pullRequest) : null
+    };
 }
 
-function writeWorkingState(state: GitHubWorkingState): void {
-    try {
-        window.sessionStorage.setItem(WORKING_KEY, JSON.stringify(state));
-    } catch {
-        // Storage may be unavailable; the session still works in memory.
-    }
+function parseRepositories(value: unknown): GitHubRepository[] {
+    if (!Array.isArray(value)) return [];
+    return value
+        .map(parseRepository)
+        .filter((repository): repository is GitHubRepository => !!repository);
 }
 
-/** End the working branch; the next save starts a new one. */
-export function clearGitHubWorkingState(): void {
-    try {
-        window.sessionStorage.removeItem(WORKING_KEY);
-    } catch {
-        // Storage may be unavailable.
-    }
-}
-
-function sameRepository(
-    working: GitHubWorkingState,
-    session: { owner: string; repo: string }
+/** GitHub names are case-insensitive. */
+export function sameRepository(
+    a: GitHubRepositorySpec,
+    b: GitHubRepositorySpec
 ): boolean {
     return (
-        working.owner.toLowerCase() === session.owner.toLowerCase() &&
-        working.repo.toLowerCase() === session.repo.toLowerCase()
+        a.owner.toLowerCase() === b.owner.toLowerCase() &&
+        a.repo.toLowerCase() === b.repo.toLowerCase()
     );
 }
 
-/** The pull request of this session's working branch, if one is open. */
-export function loadGitHubPullRequest(): GitHubPullRequestRef | null {
-    return loadGitHubWorkingState()?.pullRequest ?? null;
+/** The branch reads use: the open change's, else the base branch. */
+export function readBranch(repository: GitHubRepository): string {
+    return repository.workingBranch ?? repository.baseBranch;
 }
 
-/** Remember the pull request the working branch was published as. */
-export function saveGitHubPullRequest(
-    pullRequest: GitHubPullRequestRef | null
-): void {
-    const working = loadGitHubWorkingState();
-    if (!working) return;
-    writeWorkingState({ ...working, pullRequest });
-}
-
-/**
- * The stored session, or null when GitHub has not been connected. A working
- * branch from an earlier browser session is not reused.
- */
-export async function loadGitHubSession(): Promise<GitHubSession | null> {
-    let config: StoredConfig | null = null;
+export async function loadGitHubCredential(): Promise<GitHubCredential | null> {
     try {
-        config = parseConfig(await get<unknown>(CONFIG_KEY));
+        return parseCredential(await get<unknown>(CREDENTIAL_KEY));
     } catch {
         return null;
     }
-    if (!config) return null;
-    const working = loadGitHubWorkingState();
-    const branch =
-        working && sameRepository(working, config)
-            ? working.branch
-            : config.baseBranch;
-    return { ...config, branch };
 }
 
-/** Store the connection, and the working branch this session is using. */
-export async function saveGitHubSession(session: GitHubSession): Promise<void> {
-    await set(CONFIG_KEY, {
-        token: session.token,
-        owner: session.owner,
-        repo: session.repo,
-        baseBranch: session.baseBranch
-    });
-    const working = loadGitHubWorkingState();
-    const keepPullRequest =
-        !!working &&
-        sameRepository(working, session) &&
-        working.branch === session.branch;
-    writeWorkingState({
-        owner: session.owner,
-        repo: session.repo,
-        branch: session.branch,
-        pullRequest: keepPullRequest ? working.pullRequest : null
-    });
+export async function saveGitHubCredential(
+    credential: GitHubCredential
+): Promise<void> {
+    await set(CREDENTIAL_KEY, credential);
 }
 
-/** Forget the token, the repository and this session's working branch. */
-export async function clearGitHubSession(): Promise<void> {
-    clearGitHubWorkingState();
-    await del(CONFIG_KEY);
+/** Sign out. The repositories and their open changes stay. */
+export async function clearGitHubCredential(): Promise<void> {
+    await del(CREDENTIAL_KEY);
+}
+
+export async function loadGitHubRepositories(): Promise<GitHubRepository[]> {
+    try {
+        return parseRepositories(await get<unknown>(REPOSITORIES_KEY));
+    } catch {
+        return [];
+    }
+}
+
+/**
+ * Change one repository in one IndexedDB transaction, so two windows saving
+ * at once do not overwrite each other. `change` gets the stored entry (null
+ * when the repository is not added) and returns the new one, or null to
+ * remove it. Resolves with what was stored.
+ */
+async function changeRepository(
+    spec: GitHubRepositorySpec,
+    change: (current: GitHubRepository | null) => GitHubRepository | null
+): Promise<GitHubRepository | null> {
+    let result: GitHubRepository | null = null;
+    await update<unknown>(REPOSITORIES_KEY, (stored) => {
+        const repositories = parseRepositories(stored);
+        const index = repositories.findIndex((entry) =>
+            sameRepository(entry, spec)
+        );
+        result = change(index === -1 ? null : repositories[index]);
+        if (index === -1) {
+            return result ? [...repositories, result] : repositories;
+        }
+        return result
+            ? repositories.map((entry, at) => (at === index ? result : entry))
+            : repositories.filter((_, at) => at !== index);
+    });
+    return result;
+}
+
+/** Add a repository, or change its base branch. An open change stays. */
+export async function addGitHubRepository(
+    spec: GitHubRepositorySpec,
+    baseBranch: string
+): Promise<GitHubRepository | null> {
+    return changeRepository(spec, (current) =>
+        current && current.baseBranch === baseBranch
+            ? current
+            : {
+                  owner: spec.owner,
+                  repo: spec.repo,
+                  baseBranch,
+                  workingBranch: null,
+                  pullRequest: null
+              }
+    );
+}
+
+export async function removeGitHubRepository(
+    spec: GitHubRepositorySpec
+): Promise<void> {
+    await changeRepository(spec, () => null);
+}
+
+/**
+ * Make `branch` the repository's working branch, unless another window
+ * started a change first: then that change wins and is returned.
+ */
+export async function claimGitHubWorkingBranch(
+    spec: GitHubRepositorySpec,
+    branch: string
+): Promise<GitHubRepository | null> {
+    return changeRepository(spec, (current) =>
+        !current || current.workingBranch
+            ? current
+            : { ...current, workingBranch: branch, pullRequest: null }
+    );
+}
+
+/** Remember the pull request of the repository's working branch. */
+export async function saveGitHubPullRequest(
+    spec: GitHubRepositorySpec,
+    branch: string,
+    pullRequest: GitHubPullRequestRef
+): Promise<GitHubRepository | null> {
+    return changeRepository(spec, (current) =>
+        current?.workingBranch === branch
+            ? { ...current, pullRequest }
+            : current
+    );
+}
+
+/** Close the open change; the next save starts a new one. */
+export async function endGitHubChange(
+    spec: GitHubRepositorySpec
+): Promise<GitHubRepository | null> {
+    return changeRepository(spec, (current) =>
+        current ? { ...current, workingBranch: null, pullRequest: null } : null
+    );
 }
 
 /**
@@ -206,7 +235,7 @@ export function parseRepositorySpec(
     return { owner, repo };
 }
 
-/** `owner/repo`, for menus and the file dialog tab. */
-export function repositoryLabel(session: GitHubSession): string {
-    return `${session.owner}/${session.repo}`;
+/** `owner/repo`, for menus and dialogs. */
+export function repositoryLabel(spec: GitHubRepositorySpec): string {
+    return `${spec.owner}/${spec.repo}`;
 }

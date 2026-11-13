@@ -1,51 +1,58 @@
-// GitHub: open fonts from a repository and save edits as a pull request.
+// GitHub: read fonts from repositories and save edits as pull requests.
 //
-// The user connects one repository with a fine-grained personal access token.
-// Reads come from the branch the user is working on; the first save creates a
-// working branch from the base branch, commits there, and opens a pull
-// request. Every later save commits to the same branch and pull request.
+// The launcher signs the editor in (one token, like `gh auth login`) and
+// adds repositories (github/github-dialogs.ts); a font window gets its font
+// by URL and never shows a file dialog. Each repository has at most one open
+// change, shared by every font and window that uses it: the first save
+// creates a working branch from the base branch, commits there and opens a
+// pull request; every later save adds a commit to that branch.
 
 import { Logger } from '../../logger';
-import { GitHubClient } from '../../github/github-client';
+import { commitMessage } from '../../github/github-commit-message';
+import { foldersIn } from '../../github/github-fonts';
 import {
-    clearGitHubSession,
-    clearGitHubWorkingState,
-    loadGitHubPullRequest,
-    loadGitHubSession,
-    parseRepositorySpec,
+    claimGitHubWorkingBranch,
+    loadGitHubCredential,
+    loadGitHubRepositories,
+    readBranch,
     repositoryLabel,
+    sameRepository,
     saveGitHubPullRequest,
-    saveGitHubSession,
     type GitHubPullRequestRef,
-    type GitHubSession
+    type GitHubRepository,
+    type GitHubRepositorySpec
 } from '../../github/github-session';
 import {
     FilesystemPlugin,
     type FileContextAction,
     type FileContextTarget,
-    type FilesystemPluginUICallbacks,
-    type TitleBarMenuItem
+    type SaveSummary
 } from '../filesystem-plugin';
-import { GitHubAdapter, type GitHubSessionHolder } from './github-adapter';
-import {
-    bindModalEscape,
-    type ModalEscapeBinding
-} from '../../ui/modal-escape';
+import { GitHubAdapter, type GitHubAdapterState } from './github-adapter';
+import { escapeHtml, openDialog } from '../../font-windows/dialogs';
 
 const console = new Logger('GitHubPlugins');
 
-const TOKEN_PAGE_URL = 'https://github.com/settings/personal-access-tokens/new';
+const PULL_REQUEST_BODY = [
+    'This pull request was opened from Counterpunch. Every save adds a commit to it.',
+    '',
+    'Review the change, then merge it.'
+].join('\n');
 
 export class GitHubPlugin extends FilesystemPlugin {
-    private readonly sessionHolder: GitHubSessionHolder;
+    private readonly state: GitHubAdapterState;
     private readonly githubAdapter: GitHubAdapter;
-    private loading: Promise<GitHubSession | null> | null = null;
-    private pullRequest: { number: number; url: string } | null = null;
+    private loading: Promise<void> | null = null;
 
     constructor() {
-        const holder: GitHubSessionHolder = { current: null };
-        super(new GitHubAdapter(holder));
-        this.sessionHolder = holder;
+        const state: GitHubAdapterState = {
+            credential: null,
+            repositories: [],
+            load: () => Promise.resolve()
+        };
+        super(new GitHubAdapter(state));
+        state.load = () => this.load();
+        this.state = state;
         this.githubAdapter = this.adapter as GitHubAdapter;
     }
 
@@ -61,15 +68,9 @@ export class GitHubPlugin extends FilesystemPlugin {
         return '<span class="material-symbols-outlined">code</span>';
     }
 
-    /** `owner/repo`, or what the tab says before a repository is connected. */
-    getRepositoryLabel(): string {
-        const session = this.sessionHolder.current;
-        return session ? repositoryLabel(session) : 'Connect a repository';
-    }
-
-    getDefaultPath(): string {
-        const session = this.sessionHolder.current;
-        return session ? GitHubAdapter.repoPrefix(session) : '/';
+    /** No file dialog tab: the launcher opens GitHub fonts, Save As saves them. */
+    isVisibleInUI(): boolean {
+        return false;
     }
 
     requiresPermission(): boolean {
@@ -104,458 +105,177 @@ export class GitHubPlugin extends FilesystemPlugin {
         return super.supportsFileContextAction(action, target);
     }
 
-    /** The stored folder belongs to the connected repository, if any. */
-    isPathInCurrentRoot(path: string): boolean {
-        const session = this.sessionHolder.current;
-        if (!session) return path === '/';
+    private find(spec: GitHubRepositorySpec): GitHubRepository | null {
         return (
-            path === '/' || path.startsWith(GitHubAdapter.repoPrefix(session))
+            this.state.repositories.find((entry) =>
+                sameRepository(entry, spec)
+            ) ?? null
         );
     }
 
-    private async session(): Promise<GitHubSession | null> {
-        if (this.sessionHolder.current) return this.sessionHolder.current;
-        this.loading ??= loadGitHubSession().then((session) => {
-            if (session) {
-                this.sessionHolder.current = session;
-                this.pullRequest = loadGitHubPullRequest();
-            }
-            return session;
-        });
+    /** Take a stored repository; drop what was read from an old branch. */
+    private setRepository(repository: GitHubRepository): void {
+        const before = this.find(repository);
+        if (!before || readBranch(before) !== readBranch(repository)) {
+            this.githubAdapter.forget(repository);
+        }
+        this.state.repositories = before
+            ? this.state.repositories.map((entry) =>
+                  entry === before ? repository : entry
+              )
+            : [...this.state.repositories, repository];
+    }
+
+    /**
+     * Read the login and repositories again. Every window keeps its own copy,
+     * and the launcher or another window may have signed in, added a
+     * repository or started a change.
+     */
+    private async refresh(): Promise<void> {
+        const [credential, repositories] = await Promise.all([
+            loadGitHubCredential(),
+            loadGitHubRepositories()
+        ]);
+        this.state.credential = credential;
+        for (const repository of repositories) this.setRepository(repository);
+        this.state.repositories = repositories;
+    }
+
+    private load(): Promise<void> {
+        this.loading ??= this.refresh();
         return this.loading;
     }
 
     async isReady(): Promise<boolean> {
-        return (await this.session()) !== null;
+        await this.load();
+        return this.state.credential !== null;
     }
 
     async onActivate(): Promise<boolean> {
-        return (await this.session()) !== null;
+        this.loading = this.refresh();
+        await this.loading;
+        return this.state.credential !== null;
     }
 
-    async showSetupUI(): Promise<boolean> {
-        const current = await this.session();
-        const next = await showGitHubSetupDialog(current, () => this.close());
-        if (!next) return false;
-        await this.applySession(next);
-        return true;
+    /** The repositories Save As can write to, read fresh. */
+    async repositoriesForSave(): Promise<GitHubRepository[]> {
+        this.loading = this.refresh();
+        await this.loading;
+        return this.state.credential ? [...this.state.repositories] : [];
     }
 
-    private async applySession(session: GitHubSession): Promise<void> {
-        const previous = this.sessionHolder.current;
-        const sameRepository =
-            previous?.owner === session.owner &&
-            previous.repo === session.repo &&
-            previous.branch === session.branch;
-        this.sessionHolder.current = session;
-        this.loading = Promise.resolve(session);
-        if (!sameRepository) {
-            this.githubAdapter.applySession();
+    /** Whether a save to GitHub can work now, and why not. */
+    async saveAvailability(): Promise<{ available: boolean; note: string }> {
+        const repositories = await this.repositoriesForSave();
+        if (!this.state.credential) {
+            return {
+                available: false,
+                note: 'Connect GitHub in the launcher first'
+            };
         }
-        if (session.branch === session.baseBranch) {
-            clearGitHubWorkingState();
-            this.pullRequest = null;
+        if (!repositories.length) {
+            return {
+                available: false,
+                note: 'Add a repository in the launcher first'
+            };
         }
-        await saveGitHubSession(session);
-        this.pullRequest = loadGitHubPullRequest();
-        this.redrawTitleBarButtons();
+        return {
+            available: true,
+            note: 'Saves to a branch and opens a pull request'
+        };
     }
 
-    async updateUI(uiCallbacks: FilesystemPluginUICallbacks): Promise<void> {
-        uiCallbacks.hideUnsupportedBrowserUI();
-        if (await this.session()) {
-            uiCallbacks.hidePluginMessage();
-            return;
-        }
-        uiCallbacks.showPluginMessage({
-            icon: 'code',
-            title: 'Connect GitHub',
-            message:
-                'Open a font from a GitHub repository and save your edits as a pull request.',
-            tone: 'info',
-            actionLabel: 'Connect GitHub…',
-            onAction: () => {
-                void this.connectAndReload();
-            }
-        });
+    /** Folders of a repository, for choosing where Save As writes. */
+    async foldersOf(spec: GitHubRepositorySpec): Promise<string[]> {
+        return foldersIn(await this.githubAdapter.filePaths(spec));
     }
 
-    /** After connecting, list the repository in the open file dialog. */
-    async connectAndReload(): Promise<void> {
-        const connected = await this.showSetupUI();
-        if (!connected) return;
-        const session = this.sessionHolder.current;
-        if (!session) return;
-        const current = window.fileBrowser?.getCurrentPlugin?.() as {
-            getId?: () => string;
-        } | null;
-        if (current?.getId?.() === this.getId()) {
-            try {
-                await window.navigateToPath(GitHubAdapter.repoPrefix(session));
-                window.hidePluginMessage?.();
-            } catch (error: unknown) {
-                console.error(
-                    'Could not list the repository in the file dialog:',
-                    error
+    /**
+     * Publish the save: one commit per repository it wrote to, on that
+     * repository's working branch, and the pull request that carries it.
+     */
+    async afterSave(summary: SaveSummary): Promise<void> {
+        const specs = this.githubAdapter.pendingRepositories();
+        if (!specs.length) return;
+        await this.refresh();
+        for (const spec of specs) await this.publish(spec, summary);
+    }
+
+    private async publish(
+        spec: GitHubRepositorySpec,
+        summary: SaveSummary
+    ): Promise<void> {
+        let repository = this.find(spec);
+        if (!repository) {
+            throw new Error(
+                `${repositoryLabel(spec)} is no longer added to Counterpunch.`
+            );
+        }
+        if (!repository.workingBranch) {
+            const branch =
+                await this.githubAdapter.createWorkingBranch(repository);
+            const claimed = await claimGitHubWorkingBranch(repository, branch);
+            if (!claimed?.workingBranch) {
+                throw new Error(
+                    `${repositoryLabel(spec)} is no longer added to Counterpunch.`
                 );
             }
-        }
-    }
-
-    getTitleBarMenuItems(): TitleBarMenuItem[] {
-        const session = this.sessionHolder.current;
-        const items: TitleBarMenuItem[] = [
-            {
-                label: session
-                    ? `Repository: ${repositoryLabel(session)}`
-                    : 'Connect a repository…',
-                icon: 'code',
-                action: () => this.connectAndReload()
+            if (claimed.workingBranch !== branch) {
+                console.log(
+                    `Another window started ${claimed.workingBranch} first; ${branch} stays unused.`
+                );
             }
-        ];
-        if (!session) return items;
-
-        if (session.branch !== session.baseBranch) {
-            items.push({
-                label: `Working branch: ${session.branch}`,
-                icon: 'fork_right',
-                action: async () => this.openPullRequestOrExplain()
-            });
-            items.push({
-                label: 'Start a new change',
-                icon: 'restart_alt',
-                action: () => this.startNewChange()
-            });
-        }
-        return items;
-    }
-
-    private openPullRequestOrExplain(): void {
-        if (this.pullRequest) {
-            window.open(this.pullRequest.url, '_blank', 'noopener,noreferrer');
-            return;
-        }
-        const session = this.sessionHolder.current;
-        if (!session) return;
-        const url = `https://github.com/${session.owner}/${session.repo}/pulls`;
-        window.open(url, '_blank', 'noopener,noreferrer');
-    }
-
-    /**
-     * Show a new pull request. A tab opened after the save's network work may
-     * be blocked, so the fallback is a dialog with a link.
-     */
-    private revealPullRequest(pullRequest: GitHubPullRequestRef): void {
-        const tab = window.open(pullRequest.url, '_blank');
-        if (tab) {
-            try {
-                tab.opener = null;
-            } catch {
-                // The tab is cross-origin; leaving its opener is harmless.
-            }
-            return;
-        }
-        showPullRequestDialog(pullRequest, this.pullRequestBranch());
-    }
-
-    private pullRequestBranch(): string {
-        return this.sessionHolder.current?.branch ?? '';
-    }
-
-    /** Forget the working branch; the next save starts a new pull request. */
-    private async startNewChange(): Promise<void> {
-        const session = this.sessionHolder.current;
-        if (!session) return;
-        if (window.fontManager?.currentFont?.hasUnsavedChanges) {
-            window.alert(
-                'Save your changes before you start a new change. The next save updates the pull request you have open.'
-            );
-            return;
-        }
-        const next: GitHubSession = {
-            ...session,
-            branch: session.baseBranch
-        };
-        clearGitHubWorkingState();
-        await this.applySession(next);
-        window.location.reload();
-    }
-
-    canClose(): boolean {
-        return true;
-    }
-
-    /** Disconnect: forget the token and the repository. */
-    async close(): Promise<void> {
-        await clearGitHubSession();
-        this.sessionHolder.current = null;
-        this.loading = Promise.resolve(null);
-        this.pullRequest = null;
-        this.githubAdapter.applySession();
-        this.redrawTitleBarButtons();
-    }
-
-    /**
-     * Publish the save: one commit on the working branch, and the pull
-     * request that carries it.
-     */
-    async afterSave(): Promise<void> {
-        if (!this.githubAdapter.hasPendingChanges()) return;
-        let session = this.sessionHolder.current;
-        if (!session) return;
-
-        if (session.branch === session.baseBranch) {
-            const branch = await this.githubAdapter.createWorkingBranch();
-            session = { ...session, branch };
-            this.sessionHolder.current = session;
-            await saveGitHubSession(session);
+            repository = claimed;
+            this.setRepository(repository);
         }
 
-        const font = window.fontManager?.currentFont;
-        const fontName = font?.name || 'font';
-        const fontPath = font?.path || '';
-        const result = await this.githubAdapter.commit(
-            `Update ${fontName} from Counterpunch`
-        );
+        const message = commitMessage(summary);
+        const result = await this.githubAdapter.commit(repository, message);
         if (!result) return;
         console.log(
             `Committed ${result.commitSha} to ${result.branch} (${result.files} file(s), ${result.deleted} removed)`
         );
-        try {
-            const pullRequest = await this.githubAdapter.ensurePullRequest({
-                title: `Counterpunch edits: ${fontName}`,
-                body: [
-                    'This pull request was opened from Counterpunch.',
-                    '',
-                    `- Font: \`${fontPath}\``,
-                    `- Files changed: ${result.files}`,
-                    `- Files removed: ${result.deleted}`,
-                    '',
-                    'Review the change, then merge it.'
-                ].join('\n')
-            });
-            this.pullRequest = {
-                number: pullRequest.number,
-                url: pullRequest.url
-            };
-            saveGitHubPullRequest(this.pullRequest);
-            if (pullRequest.created) this.revealPullRequest(this.pullRequest);
-        } finally {
-            this.redrawTitleBarButtons();
+
+        const pullRequest = await this.githubAdapter.ensurePullRequest(
+            repository,
+            { title: message, body: PULL_REQUEST_BODY }
+        );
+        if (repository.pullRequest?.number !== pullRequest.number) {
+            const stored = await saveGitHubPullRequest(
+                repository,
+                result.branch,
+                { number: pullRequest.number, url: pullRequest.url }
+            );
+            if (stored) this.setRepository(stored);
+        }
+        if (pullRequest.created) {
+            revealPullRequest(pullRequest, result.branch);
         }
     }
 }
 
-// --- Pull request dialog ----------------------------------------------------
-
-function escapeHtml(value: string): string {
-    return value
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
-}
-
 /**
- * Fallback when the browser refuses a new tab for a pull request the save
- * just opened: show where the work is, with a link that always works.
+ * Show a new pull request. A tab opened after the save's network work may
+ * be blocked, so the fallback is a dialog with a link.
  */
-function showPullRequestDialog(
+function revealPullRequest(
     pullRequest: GitHubPullRequestRef,
     branch: string
 ): void {
-    const overlay = document.createElement('div');
-    overlay.className = 'info-popup-overlay';
-    overlay.style.display = 'flex';
-    overlay.style.zIndex = '12000';
-    overlay.innerHTML = `
-        <div class="info-popup confirm-dialog github-setup-dialog">
-            <div class="info-popup-header">
-                <h3>Pull request opened</h3>
-                <button type="button" class="info-popup-close" aria-label="Close">
-                    <span class="material-symbols-outlined">close</span>
-                </button>
-            </div>
-            <div class="info-popup-content">
-                <p>Your edits are on <strong>${escapeHtml(branch)}</strong>, in pull request #${pullRequest.number}. The browser did not open a tab for it.</p>
-                <div class="confirm-dialog-actions">
-                    <button type="button" class="dialog-button" data-close>Close</button>
-                    <a class="dialog-button dialog-button-primary" style="text-decoration: none" href="${escapeHtml(pullRequest.url)}" target="_blank" rel="noopener noreferrer">Open pull request</a>
-                </div>
-            </div>
+    const tab = window.open(pullRequest.url, '_blank');
+    if (tab) {
+        try {
+            tab.opener = null;
+        } catch {
+            // The tab is cross-origin; leaving its opener is harmless.
+        }
+        return;
+    }
+    const dialog = openDialog({ title: 'Pull request opened' });
+    dialog.body.innerHTML = `
+        <p>Your edits are on <strong>${escapeHtml(branch)}</strong>, in pull request #${pullRequest.number}. The browser did not open a tab for it.</p>
+        <div class="font-window-dialog-actions">
+            <button type="button" class="dialog-button" data-close>Close</button>
+            <a class="dialog-button dialog-button-primary" style="text-decoration: none" href="${escapeHtml(pullRequest.url)}" target="_blank" rel="noopener noreferrer" data-close>Open pull request</a>
         </div>`;
-    document.body.appendChild(overlay);
-
-    let escapeBinding: ModalEscapeBinding | null = null;
-    const close = () => {
-        escapeBinding?.release();
-        escapeBinding = null;
-        overlay.remove();
-    };
-    escapeBinding = bindModalEscape(close, {
-        isOpen: () => overlay.isConnected
-    });
-    overlay.addEventListener('click', (event) => {
-        if (event.target === overlay) close();
-    });
-    overlay.querySelector('[data-close]')?.addEventListener('click', close);
-    overlay
-        .querySelector('.info-popup-close')
-        ?.addEventListener('click', close);
-}
-
-// --- Setup dialog -----------------------------------------------------------
-
-/**
- * Ask for the repository, the base branch and the token. Resolves with the
- * new session, or null when the user cancels. A token is only kept once
- * GitHub accepts it.
- */
-export function showGitHubSetupDialog(
-    current: GitHubSession | null,
-    onDisconnect: () => Promise<void>
-): Promise<GitHubSession | null> {
-    return new Promise((resolve) => {
-        const overlay = document.createElement('div');
-        overlay.className = 'info-popup-overlay';
-        overlay.style.display = 'flex';
-        // Above Open/Save (`.file-dialog-overlay` is 11000): the file dialog
-        // is where an unconnected user is asked to connect.
-        overlay.style.zIndex = '12000';
-        overlay.innerHTML = `
-            <div class="info-popup confirm-dialog github-setup-dialog">
-                <div class="info-popup-header">
-                    <h3>Connect GitHub</h3>
-                    <button type="button" class="info-popup-close" aria-label="Cancel">
-                        <span class="material-symbols-outlined">close</span>
-                    </button>
-                </div>
-                <div class="info-popup-content">
-                    <p>Counterpunch reads fonts from a repository and saves your edits to a new branch. Each save updates the same pull request.</p>
-                    <label class="github-setup-field">Repository
-                        <input class="dialog-input" data-field="repository" type="text"
-                            placeholder="owner/repository" autocomplete="off">
-                    </label>
-                    <label class="github-setup-field">Base branch
-                        <input class="dialog-input" data-field="branch" type="text"
-                            placeholder="main" autocomplete="off">
-                    </label>
-                    <label class="github-setup-field">Access token
-                        <input class="dialog-input" data-field="token" type="password"
-                            autocomplete="off" spellcheck="false">
-                    </label>
-                    <p class="github-setup-hint">Make a fine-grained token for this repository with <strong>Contents</strong> and <strong>Pull requests</strong> set to <em>Read and write</em>. It stays in this browser.
-                        <a href="${TOKEN_PAGE_URL}" target="_blank" rel="noopener noreferrer">Create a token</a></p>
-                    <p class="github-setup-error" data-error hidden></p>
-                    <div class="confirm-dialog-actions">
-                        ${current ? '<button type="button" class="dialog-button dialog-button-danger" data-action="disconnect">Disconnect</button>' : ''}
-                        <button type="button" class="dialog-button" data-action="cancel">Cancel</button>
-                        <button type="button" class="dialog-button dialog-button-primary" data-action="connect">Connect</button>
-                    </div>
-                </div>
-            </div>
-        `;
-        document.body.appendChild(overlay);
-
-        let escapeBinding: ModalEscapeBinding | null = null;
-        const field = (name: string) =>
-            overlay.querySelector<HTMLInputElement>(`[data-field="${name}"]`);
-        // Fill the fields from the session in JavaScript: the token never
-        // becomes part of an HTML string.
-        const repositoryField = field('repository');
-        const branchField = field('branch');
-        const tokenField = field('token');
-        if (repositoryField && current) {
-            repositoryField.value = repositoryLabel(current);
-        }
-        if (branchField && current) {
-            branchField.value = current.baseBranch;
-        }
-        if (tokenField && current) {
-            tokenField.value = current.token;
-        }
-        const errorLine = overlay.querySelector<HTMLElement>('[data-error]');
-        const connectButton = overlay.querySelector<HTMLButtonElement>(
-            '[data-action="connect"]'
-        );
-
-        function finish(session: GitHubSession | null) {
-            escapeBinding?.release();
-            escapeBinding = null;
-            overlay.remove();
-            resolve(session);
-        }
-
-        function showError(message: string) {
-            if (!errorLine) return;
-            errorLine.textContent = message;
-            errorLine.hidden = false;
-        }
-
-        escapeBinding = bindModalEscape(() => finish(null), {
-            isOpen: () => overlay.isConnected
-        });
-
-        overlay.addEventListener('click', (event) => {
-            if (event.target === overlay) finish(null);
-        });
-        overlay
-            .querySelector('[data-action="cancel"]')
-            ?.addEventListener('click', () => finish(null));
-        overlay
-            .querySelector('[data-action="disconnect"]')
-            ?.addEventListener('click', () => {
-                void onDisconnect().finally(() => finish(null));
-            });
-
-        connectButton?.addEventListener('click', async () => {
-            const repositoryText = field('repository')?.value ?? '';
-            const token = (field('token')?.value ?? '').trim();
-            const branchText = (field('branch')?.value ?? '').trim();
-            const spec = parseRepositorySpec(repositoryText);
-            if (!spec) {
-                showError('Enter the repository as owner/name.');
-                return;
-            }
-            if (!token) {
-                showError('Paste an access token for this repository.');
-                return;
-            }
-            connectButton.disabled = true;
-            connectButton.textContent = 'Connecting…';
-            if (errorLine) errorLine.hidden = true;
-            try {
-                const client = new GitHubClient({ token, ...spec });
-                const repository = await client.getRepository();
-                const baseBranch = branchText || repository.defaultBranch;
-                if (!(await client.branchExists(baseBranch))) {
-                    throw new Error(
-                        `${repository.fullName} has no branch ${baseBranch}.`
-                    );
-                }
-                const keepWorkingBranch =
-                    current &&
-                    current.owner.toLowerCase() === spec.owner.toLowerCase() &&
-                    current.repo.toLowerCase() === spec.repo.toLowerCase() &&
-                    current.branch !== current.baseBranch;
-                finish({
-                    token,
-                    owner: spec.owner,
-                    repo: spec.repo,
-                    branch: keepWorkingBranch ? current.branch : baseBranch,
-                    baseBranch
-                });
-            } catch (error: unknown) {
-                showError(
-                    error instanceof Error
-                        ? error.message
-                        : 'Could not connect to GitHub.'
-                );
-                connectButton.disabled = false;
-                connectButton.textContent = 'Connect';
-            }
-        });
-
-        field('repository')?.focus();
-    });
 }
