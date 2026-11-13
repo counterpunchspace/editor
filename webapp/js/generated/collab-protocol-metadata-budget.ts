@@ -265,6 +265,10 @@ export function mergeCollaborationMessages(messages) {
       targets.set(`${target.glyphName}\u0000${target.layerId}`, target);
     }
   }
+  // The newest glyph revision describes the merged write (room-glyph-revisions.js).
+  const glyphRevision = list.findLast(
+    (message) => typeof message.glyphRevision === "string",
+  )?.glyphRevision;
   return {
     ...first,
     changes,
@@ -275,5 +279,6 @@ export function mergeCollaborationMessages(messages) {
       workerReplayTargets: [...targets.values()],
     },
     summary: `${changes.length} changes`,
+    ...(glyphRevision ? { glyphRevision } : {}),
   };
 }
