@@ -9819,9 +9819,17 @@ class FontInfoManager {
         const fontManager = window.fontManager;
         const currentFont = fontManager?.currentFont;
 
-        codeData.code = newCode;
-        if (previousAutomatic) {
-            codeData.automatic = nextAutomatic;
+        // With the bridge, the code is set inside the commit's transaction:
+        // the model write and the change set below then make one update and
+        // one history step, not two.
+        const applyCode = () => {
+            codeData.code = newCode;
+            if (previousAutomatic) {
+                codeData.automatic = nextAutomatic;
+            }
+        };
+        if (!bridge || !path) {
+            applyCode();
         }
         this.featureCodeDirty = false;
 
@@ -9885,6 +9893,7 @@ class FontInfoManager {
             compileEditType: 'feature'
         });
         try {
+            applyCode();
             bridge.applySyntheticChangeSet('Edit feature code', operations, {
                 compileChangeSource: 'feature-code',
                 compileEditType: 'feature'

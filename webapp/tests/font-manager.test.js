@@ -5000,6 +5000,30 @@ describe('FontManager boundary-crossing budget', () => {
         }
     });
 
+    test('a catalog room update the worker skips does not quarantine its cache', async () => {
+        // Room layout 2: catalog rooms carry names and codepoints the worker
+        // never compiles from. A quarantine here blocked every later compile
+        // until another edit happened to reseed the worker (a Unicode undo
+        // or redo then timed out waiting for its compile).
+        sendMessageSpy.mockResolvedValueOnce({
+            success: true,
+            skipped: 'catalog_document'
+        });
+        await expect(
+            fontManager.forwardWorkerYjsUpdate(new Uint8Array([1, 2, 3]), [], {
+                documentId: 'catalog:1',
+                nonGlyphChangeHints: ['glyphCatalog']
+            })
+        ).resolves.toBe(true);
+        expect(sendMessageSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'applyYjsUpdate',
+                documentId: 'catalog:1'
+            })
+        );
+        expect(fontManager.workerMirrorQuarantined).toBe(false);
+    });
+
     test('forwardWorkerYjsUpdate quarantines on unseeded worker doc and does not resend the failed update', async () => {
         const originalPatchSyncEngine = window.patchSyncEngine;
         const layerId = '1FA54028-AD2E-4209-AA7B-72DF2DF16264';

@@ -803,6 +803,22 @@ function stableCloudOwnedJson(value: unknown): string {
  * Central patch processor that keeps Yjs Y.Doc in sync with the
  * babelfont JSON object model.
  */
+/**
+ * A room's encoded size as the cloud stores and compacts it: deleted content
+ * collected. Local documents keep it (gc off), so content deleted in this
+ * session, such as a large value replaced by a small one, would otherwise
+ * count against the room limit until the window reloads.
+ */
+function collectedEncodedByteLength(doc: Y.Doc): number {
+    const collected = new Y.Doc({ gc: true });
+    try {
+        Y.applyUpdate(collected, Y.encodeStateAsUpdate(doc));
+        return Y.encodeStateAsUpdate(collected).byteLength;
+    } finally {
+        collected.destroy();
+    }
+}
+
 export class PatchSyncEngine {
     /** Font-core Yjs document (non-glyph fields + glyphOrder). */
     readonly yDoc: Y.Doc;
@@ -4425,11 +4441,33 @@ export class PatchSyncEngine {
                 documentIds.add(FONT_CORE_DOCUMENT_ID);
                 continue;
             }
-            documentIds.add(
-                this._documentIdForHistoryEntry(entry, itemRenames)
-            );
+            for (const documentId of this._documentIdsForHistoryEntry(
+                entry,
+                itemRenames
+            )) {
+                documentIds.add(documentId);
+            }
         }
         return [...documentIds];
+    }
+
+    /**
+     * Every room one history entry writes: its own, plus the buckets a whole
+     * kerning map or catalog spreads over (see _extraLayoutDocumentIds), so
+     * an undo reaches the same rooms as the edit did.
+     */
+    private _documentIdsForHistoryEntry(
+        entry: ChangeLogEntry,
+        renames: GlyphRename[] = []
+    ): string[] {
+        const primary = this._documentIdForHistoryEntry(entry, renames);
+        if (!entry.path || entry.path === 'font') {
+            return [primary];
+        }
+        const extra = this._extraLayoutDocumentIds(
+            this._toYDocPath(this._parseEntryPath(entry.path))
+        );
+        return extra.length ? [...new Set([primary, ...extra])] : [primary];
     }
 
     private _captureDocumentBaselines(
@@ -4466,10 +4504,10 @@ export class PatchSyncEngine {
                 if (!entry.path || entry.path === 'font') {
                     return documentId === FONT_CORE_DOCUMENT_ID;
                 }
-                return (
-                    this._documentIdForHistoryEntry(entry, historyRenames) ===
-                    documentId
-                );
+                return this._documentIdsForHistoryEntry(
+                    entry,
+                    historyRenames
+                ).includes(documentId);
             });
             if (
                 incrementalUpdate.length === 0 ||
@@ -10278,7 +10316,7 @@ export class PatchSyncEngine {
                     lastEncodedBytes:
                         this._lastEncodedShardBytes.get(documentId) || 0,
                     packetBytes: exactCommitUpdate.byteLength,
-                    encodeFullShard: () => Y.encodeStateAsUpdate(doc).byteLength
+                    encodeFullShard: () => collectedEncodedByteLength(doc)
                 });
                 const docEntries = changeLogEntries.filter((_entry, index) => {
                     const operation = routedOperations[index];
@@ -10353,7 +10391,7 @@ export class PatchSyncEngine {
                                           ) || 0,
                                       packetBytes: stampedUpdate.byteLength,
                                       encodeFullShard: () =>
-                                          Y.encodeStateAsUpdate(doc).byteLength
+                                          collectedEncodedByteLength(doc)
                                   })
                                 : { shardBytes: packet.shardBytes };
                             this._noteBroadcastStateVector(packet.documentId);

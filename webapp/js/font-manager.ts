@@ -6072,6 +6072,13 @@ class FontManager {
                     );
                 }
 
+                if (response?.skipped === 'catalog_document') {
+                    // The worker compiles nothing from the catalog rooms
+                    // (glyph names come from glyph documents), so skipping
+                    // one leaves its cache as coherent as it was.
+                    return true;
+                }
+
                 const workerCacheStatus = response?.workerCacheStatus;
                 if (
                     !workerCacheStatus ||

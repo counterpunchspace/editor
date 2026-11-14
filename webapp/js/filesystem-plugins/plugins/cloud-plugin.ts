@@ -11,6 +11,7 @@ import {
 } from '../cloud-room-fit';
 import {
     chooseRoomLayout,
+    layoutDocumentKind,
     rebasedRoomLayout,
     roomLayoutCounts
 } from '../cloud-room-layout';
@@ -670,11 +671,23 @@ export class CloudPlugin extends FilesystemPlugin {
         const estimated = seed.bridge.getEstimatedLiveEncodedBytes?.() ?? 0;
         const byteLength = estimated > 0 ? estimated : seed.byteLength;
         const policy = await this._ensureCloudSizePolicy();
+        // A font not yet in room layout 2 is measured with font-core still
+        // holding its features, catalog and kerning. The upload moves those
+        // to rooms of their own, and prepareToSeed checks every room it will
+        // use, naming the part that does not fit. Core's size before that
+        // move would refuse fonts that fit (a large kerning, say).
+        const inLayout2 = !!seed.bridge?.roomLayout;
         const pieceGate = evaluateShardSizes(
-            seed.shards.map((shard) => ({
-                documentId: shard.documentId,
-                byteLength: shard.bytes.byteLength
-            }))
+            seed.shards
+                .filter(
+                    (shard) =>
+                        inLayout2 ||
+                        layoutDocumentKind(shard.documentId) !== 'core'
+                )
+                .map((shard) => ({
+                    documentId: shard.documentId,
+                    byteLength: shard.bytes.byteLength
+                }))
         );
         const worstPiece = worstCloudPieceSizeReport(pieceGate);
         const piece = worstPiece

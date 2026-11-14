@@ -213,6 +213,40 @@ describe('room layout 2 in the engine', () => {
         );
     });
 
+    test('undo and redo of a kerning edit reach the pair’s own bucket', () => {
+        const { engine } = adopted();
+        // A pair outside bucket 0: a whole-map write is filed under the
+        // first bucket, but its pairs live in theirs.
+        const pair = ['@round:o', 'A:V'].find(
+            (candidate) => kerningBucketFor(candidate, 3) !== 0
+        );
+        expect(pair).toBeTruthy();
+        const before = snapshotOf(engine).masters[0].kerning;
+        engine.beginTransaction('Edit kerning pair', null, {
+            compileChangeSource: 'keyboard-kerning-value',
+            compileEditType: 'kerning-value'
+        });
+        engine.recordChange(['masters', 0], 'kerning', before, {
+            ...before,
+            [pair]: -333
+        });
+        engine.endTransaction();
+        const packets = [];
+        engine.onLocalUpdate((_update, _message, _entries, documentId) => {
+            packets.push(documentId);
+        });
+        const bucket = kerningDocumentId(kerningBucketFor(pair, 3));
+
+        expect(engine.undo(undefined, null, null, 'font')).not.toBeNull();
+        expect(snapshotOf(engine).masters[0].kerning[pair]).toBe(before[pair]);
+        expect(packets).toContain(bucket);
+
+        packets.length = 0;
+        expect(engine.redo(undefined, null, null, 'font')).not.toBeNull();
+        expect(snapshotOf(engine).masters[0].kerning[pair]).toBe(-333);
+        expect(packets).toContain(bucket);
+    });
+
     test('a peer hears that the layout changed when an upgraded core arrives', () => {
         const owner = new PatchSyncEngine('layout-owner-2');
         owner.initFromJson(makeFont());

@@ -1022,6 +1022,53 @@ describe('CloudPlugin.openAsset', () => {
         expect(encodeDocumentSet).toHaveBeenCalledTimes(2);
     });
 
+    test('save-as judges font-core by its room layout 2 size, not layout 1', async () => {
+        const largeCore = [
+            {
+                documentId: 'font-core',
+                bytes: new Uint8Array(6 * 1024 * 1024)
+            }
+        ];
+        const bridge = {
+            encodeDocumentSet: jest.fn(() => largeCore),
+            getFontJsonSnapshot: jest.fn(() => defaultCloudFontJson),
+            roomLayout: null
+        };
+        window.patchSyncEngine = bridge;
+        window.glyphCanvas = { initialFontLoaded: false };
+        window.fontManager = {
+            currentFont: {
+                babelfontJson: JSON.stringify({ glyphs: [] }),
+                babelfontData: { glyphs: [] },
+                syncJsonFromModel: jest.fn()
+            },
+            editingFont: null
+        };
+        plugin._eligibility = {
+            cloudHostingEnabled: true,
+            maxFontsOwned: null,
+            snapshotRetentionDays: null,
+            fontsOwnedCount: 0,
+            maxCloudAssetBytes: 64 * 1024 * 1024,
+            warningCloudAssetBytes: 48 * 1024 * 1024
+        };
+
+        // Layout 1: the upload moves features, catalog and kerning out of
+        // core, and prepareToSeed checks the rooms it will really use.
+        await expect(plugin.getCurrentSaveAsWarningState()).resolves.toBeNull();
+
+        // Layout 2: core is what it is.
+        bridge.roomLayout = {
+            version: 2,
+            catalogBuckets: 1,
+            kerningBuckets: 1
+        };
+        const state = await plugin.getCurrentSaveAsWarningState();
+        expect(state).toEqual(
+            expect.objectContaining({ tone: 'error', canSave: false })
+        );
+    });
+
     test('title-bar warns when any stored piece approaches 5 MiB', () => {
         const warningBytes = Math.floor(5 * 1024 * 1024 * 0.75);
         plugin._activeAssetId = 'asset-near';

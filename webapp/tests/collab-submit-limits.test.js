@@ -180,6 +180,31 @@ describe('commit-time hard rejection', () => {
         }
     });
 
+    test('content deleted in this session does not count against the room limit', () => {
+        // A room that held a value over the limit and now holds a small one
+        // is small in the cloud, which collects deleted content. A save that
+        // was refused for that value and then fixed leaves exactly this.
+        const plugin = createCloudSubmitPlugin();
+        const restore = installPlugin(plugin);
+        const bridge = new PatchSyncEngine('submit-collected');
+        bridge.initFromJson(makeFont('x'.repeat(MAX_SHARD_BYTES + 1024)));
+        window.patchSyncEngine = bridge;
+        try {
+            bridge.recordChange(
+                [],
+                'note',
+                'x'.repeat(MAX_SHARD_BYTES + 1024),
+                'small'
+            );
+            bridge.recordChange([], 'note', 'small', 'smaller');
+            expect(plugin.rejections).toEqual([]);
+            expect(bridge.getFontJsonSnapshot().note).toBe('smaller');
+        } finally {
+            restore();
+            bridge.destroy();
+        }
+    });
+
     test('rolls back an oversize Yjs packet without emitting', () => {
         const plugin = createCloudSubmitPlugin();
         const restore = installPlugin(plugin);
