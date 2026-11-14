@@ -5191,7 +5191,15 @@ describe('large updates sent as several room transactions', () => {
         const bodies = [];
         let refusedOnce = false;
         global.fetch = jest.fn(async (url, opts) => {
+            // Only this edit's live posts: a timer left by another test can
+            // fetch too while the mock is in place.
+            if (!String(url).includes('/live') || !opts?.body) {
+                return { ok: true, status: 200, json: async () => ({}) };
+            }
             const body = JSON.parse(opts.body);
+            if (body.clientTransactionId == null && !body.update) {
+                return { ok: true, status: 200, json: async () => ({}) };
+            }
             if (bodies.length === 1 && !refusedOnce) {
                 refusedOnce = true;
                 return {
