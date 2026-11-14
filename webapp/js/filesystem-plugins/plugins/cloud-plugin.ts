@@ -3541,8 +3541,9 @@ export class CloudPlugin extends FilesystemPlugin {
     /**
      * A font saved before room layout 2 keeps features, the catalog and
      * kerning in font-core. Its owner moves them to their own rooms when the
-     * font opens: adopt the layout here, open the new rooms' sockets, send
-     * their contents, then the core change that points peers at them.
+     * font opens: adopt the layout here, open the new rooms' sockets (each
+     * empty room is seeded from this window's document), and once they are
+     * synced send the core change that points peers at them.
      */
     private async _upgradeRoomLayoutOnOpen(
         bridge: PatchSyncEngine,
@@ -3568,13 +3569,11 @@ export class CloudPlugin extends FilesystemPlugin {
         if (!bridge.adoptRoomLayout(layout)) {
             return;
         }
-        try {
-            await session.syncLiveDocumentIds(
-                liveGlyphDocumentIdsFromSubset(bridge, activeEditorGlyphNames())
-            );
-        } finally {
-            bridge.publishRoomLayoutDocuments();
-        }
+        await session.syncLiveDocumentIds(
+            liveGlyphDocumentIdsFromSubset(bridge, activeEditorGlyphNames())
+        );
+        await session.waitForLiveRoomsSynced(60_000);
+        bridge.publishAdoptedRoomLayout();
     }
 
     private _liveGlyphNamesForSync(): string[] {

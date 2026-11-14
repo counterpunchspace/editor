@@ -1844,6 +1844,14 @@ export class CloudLiveSession {
         }
     }
 
+    /**
+     * Wait until core, deps and the room layout 2 rooms are connected and
+     * synced (an empty room is seeded from this window's state first).
+     */
+    async waitForLiveRoomsSynced(timeoutMs = 30_000): Promise<void> {
+        await this._waitForLiveTransportSynced(timeoutMs);
+    }
+
     private async _waitForLiveTransportSynced(
         timeoutMs = 30_000
     ): Promise<void> {

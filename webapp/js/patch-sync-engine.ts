@@ -1915,55 +1915,6 @@ export class PatchSyncEngine {
     }
 
     /**
-     * Send every layout room's whole state as one described packet each
-     * (the room's socket splits it into transactions that fit), then the
-     * core half. For an asset upgraded on open, whose rooms are empty.
-     */
-    publishRoomLayoutDocuments(): boolean {
-        if (!this.roomLayout || !this._adoptedLayoutCoreBaseline) {
-            return false;
-        }
-        const historyItemId = this._createHistoryItemId();
-        for (const documentId of this.layoutDocumentIds()) {
-            const doc = this._ensureLayoutDoc(documentId);
-            const update = Y.encodeStateAsUpdate(doc);
-            if (isEmptyYjsUpdate(update)) {
-                continue;
-            }
-            const kind = layoutDocumentKind(documentId);
-            const path =
-                kind === 'features'
-                    ? 'features'
-                    : kind === 'catalog'
-                      ? CORE_GLYPH_CATALOG_KEY
-                      : 'masters';
-            const entry = createLogEntry({
-                timestamp: Date.now(),
-                windowId: this.windowId,
-                windowRoleLabel: this._getWindowRoleLabel(),
-                historyItemId,
-                historyAction: 'change',
-                transactionLabel: 'Room layout',
-                transactionId: null,
-                op: 'set',
-                path,
-                oldValue: undefined,
-                newValue: undefined,
-                replayOldValue: undefined,
-                replayNewValue: undefined,
-                compileChangeSource: 'cloud-room-layout',
-                compileEditType: null
-            });
-            this._emitLocalUpdate(update, [], documentId, {
-                skipCollaborationLog: true,
-                envelopeEntries: [entry]
-            });
-            this._noteBroadcastStateVector(documentId);
-        }
-        return this.publishAdoptedRoomLayout();
-    }
-
-    /**
      * Send the core half of adoptRoomLayout once the layout rooms are seeded:
      * peers read the layout and stop reading features, the catalog and
      * kerning from core.
