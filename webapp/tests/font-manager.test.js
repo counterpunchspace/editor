@@ -1451,6 +1451,9 @@ describe('FontManager editing subset inclusion', () => {
         };
         const fakeCurrentFont = {
             babelfontJson: JSON.stringify(fontData),
+            get builtBabelfontJson() {
+                return this.babelfontJson;
+            },
             babelfontData: fontData,
             fontModel: Font.fromData(fontData),
             name: 'Sukoon',
@@ -3145,6 +3148,33 @@ describe('FontManager loadFont', () => {
         fontManager.openedFonts = originalOpenedFonts;
         fontManager.currentFontId = originalCurrentFontId;
         window.currentFontModel = originalCurrentFontModel;
+    });
+
+    test('opens a font without serializing it, then serializes it on first read', async () => {
+        // A large font's whole JSON goes over the engine's string limit.
+        const toJSONString = jest
+            .spyOn(Font.prototype, 'toJSONString')
+            .mockImplementation(() => {
+                throw new RangeError('Invalid string length');
+            });
+        try {
+            await fontManager.loadFont(
+                JSON.stringify(cloneJson(intermediateLayerData)),
+                '/user/intermediate_layer_on_a.glyphs',
+                {}
+            );
+            expect(toJSONString).not.toHaveBeenCalled();
+        } finally {
+            toJSONString.mockRestore();
+        }
+
+        const currentFont = fontManager.currentFont;
+        expect(currentFont.builtBabelfontJson).toBe('');
+        const json = currentFont.babelfontJson;
+        expect(json).toBe(
+            currentFont.fontModel.toJSONString({ compileFacing: false })
+        );
+        expect(currentFont.builtBabelfontJson).toBe(json);
     });
 
     test('preserves stored keyed sidebearing fallback when opening a font without marking it dirty', async () => {

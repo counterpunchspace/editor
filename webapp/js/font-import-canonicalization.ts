@@ -8,10 +8,14 @@ import { timelineSpanEnd, timelineSpanStart } from './perf-timeline';
 
 type JsonRecord = Record<string, unknown>;
 
+/**
+ * No serialized copy: one JSON string of a whole large font (17,000 CJK
+ * glyphs) goes over the engine's string length limit. Serialize the model on
+ * demand instead.
+ */
 export type CanonicalImportedFont = {
     fontData: Babelfont.Font;
     fontModel: Font;
-    babelfontJson: string;
 };
 
 /** Return a JSON record only for values that can safely receive source normalization. */
@@ -120,8 +124,8 @@ function normalizeImportedLayerMasters(fontData: Babelfont.Font): void {
 }
 
 /**
- * Build the single canonical runtime and serialized representation for external
- * source data. Both initial open and hot reload must enter through this function.
+ * Build the single canonical runtime representation for external source data.
+ * Both initial open and hot reload must enter through this function.
  */
 export function canonicalizeImportedFontData(
     sourceFontData: Babelfont.Font,
@@ -162,15 +166,7 @@ export function canonicalizeImportedFontData(
     });
     timelineSpanEnd(metricsSpan);
 
-    const jsonSpan = timelineSpanStart('font.canonicalize.toJSONString');
-    const babelfontJson = fontModel.toJSONString({ compileFacing: false });
-    timelineSpanEnd(jsonSpan);
-
-    return {
-        fontData,
-        fontModel,
-        babelfontJson
-    };
+    return { fontData, fontModel };
 }
 
 /**

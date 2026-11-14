@@ -617,7 +617,8 @@ function applySourceSnapshot(font: OpenedFont, snapshot: SourceSnapshot): void {
 }
 
 class OpenedFont {
-    babelfontJson: string;
+    /** Serialized model; null until first read after import. */
+    private _babelfontJson: string | null = null;
     babelfontData: any;
     fontModel: Font; // Object model facade
     name: string;
@@ -649,7 +650,6 @@ class OpenedFont {
         directoryHandle?: FileSystemDirectoryHandle
     ) {
         const canonicalImport = canonicalizeImportedFontJson(babelfontJson);
-        this.babelfontJson = canonicalImport.babelfontJson;
         this.babelfontData = canonicalImport.fontData;
         this.sourcePlugin = sourcePlugin;
         this.fileHandle = fileHandle;
@@ -669,6 +669,29 @@ class OpenedFont {
         this.changeVersion = 0;
         this.compileRequestVersion = 0;
         this.folderSaveTracker = new FolderSaveTracker();
+    }
+
+    /**
+     * The font as `.babelfont` JSON. Import does not build it: for a large
+     * font (17,000 CJK glyphs) the string goes over the engine's string length
+     * limit. The first read serializes the model.
+     */
+    get babelfontJson(): string {
+        if (this._babelfontJson === null) {
+            this._babelfontJson = this.fontModel.toJSONString({
+                compileFacing: false
+            });
+        }
+        return this._babelfontJson;
+    }
+
+    set babelfontJson(json: string) {
+        this._babelfontJson = json;
+    }
+
+    /** The serialized font if built, without serializing it. */
+    get builtBabelfontJson(): string {
+        return this._babelfontJson ?? '';
     }
 
     /** Install a font object already built from a linked-window snapshot. */
@@ -2785,7 +2808,9 @@ class FontManager {
             } else {
                 const storeResult = await fontCompilation.sendMessage({
                     type: 'storeFontJson',
-                    babelfontJson: canonicalImport.babelfontJson
+                    babelfontJson: canonicalImport.fontModel.toJSONString({
+                        compileFacing: false
+                    })
                 });
                 if (storeResult?.error) {
                     throw new Error(
@@ -4287,15 +4312,15 @@ class FontManager {
                 // local babelfont JSON string. Request-scoped worker freshness
                 // means compileEditingCached will compile from the worker Y.Doc
                 // instead, including feature-code commits once the worker cache
-                // is proven fresh for this request.
-                const jsonToSend = this.currentFont.babelfontJson;
+                // is proven fresh for this request. Skipped validation does not
+                // read `babelfontJson`, so it is not serialized for nothing.
                 const validatedJson =
                     hasExplicitWorkerFreshnessAtRequest() ||
                     canSkipCanonicalJsonSyncForStartupCompile ||
                     canSkipCanonicalJsonSyncForTextInput
-                        ? jsonToSend
+                        ? this.currentFont.builtBabelfontJson
                         : this.validateBabelfontJsonForRust(
-                              jsonToSend,
+                              this.currentFont.babelfontJson,
                               wasJsonStale ||
                                   this.pendingBabelfontJsonSyncAfterDrag
                           );
@@ -6840,7 +6865,7 @@ class FontManager {
             ([id, font]) => ({
                 id,
                 name: font.name,
-                babelfontJson: font.babelfontJson,
+                babelfontJson: font.builtBabelfontJson,
                 babelfontData: font.babelfontData
             })
         );
