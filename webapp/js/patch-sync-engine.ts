@@ -1555,19 +1555,31 @@ export class PatchSyncEngine {
                     this._deleteMasterKerning(masterId);
                 }
             }
+            const existing = new Set(this._masterIds());
             this._replaceYMapEntry(
                 this.fontMap,
                 'masters',
                 next.map((master) => this._withoutKerning(master))
             );
+            // Kerning edits arrive on kerning paths. A whole master list only
+            // brings the kerning of masters that are new here: a copy read
+            // before the kerning rooms loaded would otherwise wipe them.
             for (const master of next) {
-                this._writeMasterKerningFromValue(master);
+                const id = (master as { id?: unknown } | null)?.id;
+                if (typeof id === 'string' && !existing.has(id)) {
+                    this._writeMasterKerningFromValue(master);
+                }
             }
             return true;
         }
         if (path.length === 2) {
+            const id = (value as { id?: unknown } | null)?.id;
+            const isNew =
+                typeof id === 'string' && !this._masterIds().includes(id);
             setYPath(this.fontMap, path, this._withoutKerning(value));
-            this._writeMasterKerningFromValue(value);
+            if (isNew) {
+                this._writeMasterKerningFromValue(value);
+            }
             return true;
         }
         const direction = kerningFieldDirection(String(path[2]));

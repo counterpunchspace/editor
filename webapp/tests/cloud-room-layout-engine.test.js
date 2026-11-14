@@ -222,4 +222,28 @@ describe('room layout 2 in the engine', () => {
         }
         expect(snapshotOf(peer)).toEqual(snapshotOf(owner));
     });
+
+    test('a whole master write keeps existing kerning and brings a new master’s', () => {
+        const { engine } = adopted();
+        const before = snapshotOf(engine).masters;
+        const masters = JSON.parse(JSON.stringify(engine.getFontJsonSnapshot().masters));
+        // A stale copy without kerning must not wipe the rooms.
+        masters[0].kerning = {};
+        masters[0].name = { dflt: 'Light' };
+        masters.push({ id: 'm3', name: { dflt: 'Black' }, location: {}, kerning: { 'A:V': -120 } });
+        engine.recordChange([], 'masters', undefined, masters);
+        const after = snapshotOf(engine).masters;
+        expect(after[0].name).toEqual({ dflt: 'Light' });
+        expect(after[0].kerning).toEqual(before[0].kerning);
+        expect(after[2]).toMatchObject({ id: 'm3', kerning: { 'A:V': -120 } });
+        // Removing a master removes its pairs.
+        engine.recordChange([], 'masters', undefined, masters.filter((m) => m.id !== 'm2'));
+        const shards = engine.encodeDocumentSet().filter((s) => s.documentId.startsWith('kerning:'));
+        const keys = shards.flatMap((s) => {
+            const doc = new Y.Doc();
+            Y.applyUpdate(doc, s.bytes);
+            return [...doc.getMap('kerning').keys()];
+        });
+        expect(keys.some((key) => key.startsWith('m2|'))).toBe(false);
+    });
 });
