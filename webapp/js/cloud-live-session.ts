@@ -5,6 +5,7 @@
  * the active editor glyph. Dependent glyph shards publish over HTTP POST
  * and peers pull them with GET `/live` after font-core revision signals.
  */
+import { isLayoutDocumentId } from './filesystem-plugins/cloud-room-layout';
 import { normalizeCloudShardHttpUrl } from './cloud-adapter-bootstrap';
 import * as Y from 'yjs';
 import { fitEnvelopeForWire } from './cloud-envelope-budget';
@@ -978,6 +979,7 @@ export class CloudLiveSession {
             await this._connectDocument(FONT_CORE_DOCUMENT_ID);
         }
         const pending: Promise<void>[] = [];
+        const joinedLayoutRooms: string[] = [];
         for (const documentId of desired) {
             if (
                 documentId === FONT_CORE_DOCUMENT_ID ||
@@ -985,12 +987,28 @@ export class CloudLiveSession {
             ) {
                 continue;
             }
+            if (isLayoutDocumentId(documentId)) {
+                joinedLayoutRooms.push(documentId);
+            }
             pending.push(this._connectDocument(documentId));
         }
         await Promise.all(pending);
         this._options.onSocketsReady?.();
         if (infrastructureAlreadyLive) {
             this._clearNonCoreRebaselineFlags();
+            // A layout room joined mid-session (a peer upgraded the font)
+            // syncs its socket from font-core's checkpoint position; load
+            // its state over HTTP.
+            if (joinedLayoutRooms.length) {
+                void this._catchUpDocumentsOverHttp(joinedLayoutRooms).catch(
+                    (error) => {
+                        console.warn(
+                            'CloudLiveSession: catching up joined layout rooms failed:',
+                            error
+                        );
+                    }
+                );
+            }
             return;
         }
         this._options.onConnectionStatus?.(
@@ -1851,8 +1869,15 @@ export class CloudLiveSession {
      * position, which is font-core's, so it needs its own catch-up.
      */
     async catchUpLayoutRooms(): Promise<void> {
-        for (const documentId of this._options.bridge.layoutDocumentIds?.() ??
-            []) {
+        await this._catchUpDocumentsOverHttp(
+            this._options.bridge.layoutDocumentIds?.() ?? []
+        );
+    }
+
+    private async _catchUpDocumentsOverHttp(
+        documentIds: string[]
+    ): Promise<void> {
+        for (const documentId of documentIds) {
             await catchUpCloudDocument({
                 bridge: this._options.bridge,
                 token: this._token,
