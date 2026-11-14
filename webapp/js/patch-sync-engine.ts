@@ -1722,7 +1722,10 @@ export class PatchSyncEngine {
         if (this.roomLayout) {
             if (key === 'features') {
                 const features = this._featuresRoot().get('features');
-                return features === undefined ? undefined : fromYType(features);
+                // Empty until the features room loads; its catch-up re-reads.
+                return features === undefined
+                    ? { classes: {}, prefixes: {}, features: [] }
+                    : fromYType(features);
             }
             if (key === CORE_GLYPH_CATALOG_KEY) {
                 return this._readCatalogJson();

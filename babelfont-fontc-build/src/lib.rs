@@ -3984,7 +3984,10 @@ fn merge_layout_kerning_into_masters(
     }
 }
 
-/// Put the layout 2 documents back where babelfont expects them.
+/// Put the layout 2 documents back where babelfont expects them. A layout 2
+/// core whose rooms have not loaded yet has neither features nor master
+/// kerning; babelfont needs both fields, so they start empty until the rooms
+/// arrive (their updates refresh the caches).
 fn merge_layout_documents_into_font_json(json: &mut serde_json::Value) {
     let Some(object) = json.as_object_mut() else {
         return;
@@ -3995,6 +3998,18 @@ fn merge_layout_documents_into_font_json(json: &mut serde_json::Value) {
     if let Some(kerning) = layout_kerning_by_master() {
         if let Some(masters) = object.get_mut("masters") {
             merge_layout_kerning_into_masters(masters, &kerning);
+        }
+    }
+    object.entry("features".to_string()).or_insert_with(|| {
+        serde_json::json!({ "classes": {}, "prefixes": {}, "features": [] })
+    });
+    if let Some(masters) = object.get_mut("masters").and_then(|m| m.as_array_mut()) {
+        for master in masters {
+            if let Some(master) = master.as_object_mut() {
+                master
+                    .entry("kerning".to_string())
+                    .or_insert_with(|| serde_json::json!({}));
+            }
         }
     }
 }
