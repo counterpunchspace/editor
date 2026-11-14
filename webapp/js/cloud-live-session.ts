@@ -1845,6 +1845,25 @@ export class CloudLiveSession {
     }
 
     /**
+     * Load the room layout 2 rooms over HTTP. A room joined mid-session (a
+     * peer upgraded the font) syncs its socket from the session's checkpoint
+     * position, which is font-core's, so it needs its own catch-up.
+     */
+    async catchUpLayoutRooms(): Promise<void> {
+        for (const documentId of this._options.bridge.layoutDocumentIds?.() ??
+            []) {
+            await catchUpCloudDocument({
+                bridge: this._options.bridge,
+                token: this._token,
+                roomUrl: this._roomUrl,
+                websiteBaseUrl: this._options.websiteBaseUrl,
+                assetId: this._options.assetId,
+                documentId
+            });
+        }
+    }
+
+    /**
      * Wait until core, deps and the room layout 2 rooms are connected and
      * synced (an empty room is seeded from this window's state first).
      */

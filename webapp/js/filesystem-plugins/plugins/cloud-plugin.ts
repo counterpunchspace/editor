@@ -3524,6 +3524,7 @@ export class CloudPlugin extends FilesystemPlugin {
                             activeEditorGlyphNames()
                         )
                     )
+                    .then(() => session.catchUpLayoutRooms())
                     .catch((error) => {
                         console.warn(
                             'Cloud: joining the room layout 2 rooms failed:',
