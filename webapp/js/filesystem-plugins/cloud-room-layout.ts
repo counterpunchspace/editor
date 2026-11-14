@@ -37,6 +37,13 @@ export type RoomLayout = {
     version: number;
     catalogBuckets: number;
     kerningBuckets: number;
+    /**
+     * First bucket index of each kind. A rebase with more buckets moves to
+     * fresh room ids (base past the old ones), so old and new rooms never
+     * share an id. 0 when omitted.
+     */
+    catalogBase?: number;
+    kerningBase?: number;
 };
 
 export type LayoutDocumentKind =
@@ -138,28 +145,121 @@ export function parseRoomLayout(value: unknown): RoomLayout | null {
     const version = Number(raw.version);
     const catalogBuckets = Number(raw.catalogBuckets);
     const kerningBuckets = Number(raw.kerningBuckets);
+    const catalogBase = Number(raw.catalogBase ?? 0);
+    const kerningBase = Number(raw.kerningBase ?? 0);
     const valid = (n: number) =>
         Number.isInteger(n) && n >= 1 && n <= MAX_LAYOUT_BUCKETS;
+    const validBase = (base: number, count: number) =>
+        Number.isInteger(base) && base >= 0 && base + count <= MAX_LAYOUT_BUCKETS;
     if (
         version !== ROOM_LAYOUT_VERSION ||
         !valid(catalogBuckets) ||
-        !valid(kerningBuckets)
+        !valid(kerningBuckets) ||
+        !validBase(catalogBase, catalogBuckets) ||
+        !validBase(kerningBase, kerningBuckets)
     ) {
         return null;
     }
-    return { version, catalogBuckets, kerningBuckets };
+    const layout: RoomLayout = { version, catalogBuckets, kerningBuckets };
+    if (catalogBase) layout.catalogBase = catalogBase;
+    if (kerningBase) layout.kerningBase = kerningBase;
+    return layout;
+}
+
+export function catalogRoomIds(layout: RoomLayout): string[] {
+    const base = layout.catalogBase ?? 0;
+    return Array.from({ length: layout.catalogBuckets }, (_, i) =>
+        catalogDocumentId(base + i)
+    );
+}
+
+export function kerningRoomIds(layout: RoomLayout): string[] {
+    const base = layout.kerningBase ?? 0;
+    return Array.from({ length: layout.kerningBuckets }, (_, i) =>
+        kerningDocumentId(base + i)
+    );
+}
+
+export function catalogRoomFor(layout: RoomLayout, glyphId: string): string {
+    return catalogDocumentId(
+        (layout.catalogBase ?? 0) + bucketFor(glyphId, layout.catalogBuckets)
+    );
+}
+
+export function kerningRoomFor(layout: RoomLayout, pair: string): string {
+    return kerningDocumentId(
+        (layout.kerningBase ?? 0) +
+            bucketFor(kerningPairFirstSide(pair), layout.kerningBuckets)
+    );
 }
 
 export function layoutDocumentIds(layout: RoomLayout): string[] {
     return [
         FONT_FEATURES_DOCUMENT_ID,
-        ...Array.from({ length: layout.catalogBuckets }, (_, i) =>
-            catalogDocumentId(i)
-        ),
-        ...Array.from({ length: layout.kerningBuckets }, (_, i) =>
-            kerningDocumentId(i)
-        )
+        ...catalogRoomIds(layout),
+        ...kerningRoomIds(layout)
     ];
+}
+
+/** Glyphs per catalog bucket and pairs per kerning bucket before a rebase. */
+export const CATALOG_GLYPHS_BUCKET_BUDGET = CATALOG_GLYPHS_PER_BUCKET * 2;
+export const KERNING_PAIRS_BUCKET_BUDGET = KERNING_PAIRS_PER_BUCKET * 2;
+
+/**
+ * The layout a rebase moves to when a bucket outgrew its budget, or null
+ * when the current layout still fits. New rooms take ids that do not
+ * overlap the current ones; null too when no such ids are left.
+ */
+export function rebasedRoomLayout(
+    current: RoomLayout,
+    fill: { largestCatalogBucket: number; largestKerningBucket: number; glyphs: number; kerningPairs: number }
+): RoomLayout | null {
+    const catalogFull = fill.largestCatalogBucket > CATALOG_GLYPHS_BUCKET_BUDGET;
+    const kerningFull = fill.largestKerningBucket > KERNING_PAIRS_BUCKET_BUDGET;
+    if (!catalogFull && !kerningFull) {
+        return null;
+    }
+    const chosen = chooseRoomLayout({
+        glyphs: fill.glyphs,
+        kerningPairs: fill.kerningPairs
+    });
+    const moved = (
+        base: number,
+        count: number,
+        nextCount: number
+    ): number | null => {
+        if (nextCount <= base) return 0;
+        const after = base + count;
+        return after + nextCount <= MAX_LAYOUT_BUCKETS ? after : null;
+    };
+    const next: RoomLayout = { ...current };
+    if (catalogFull) {
+        const base = moved(
+            current.catalogBase ?? 0,
+            current.catalogBuckets,
+            Math.max(chosen.catalogBuckets, current.catalogBuckets * 2)
+        );
+        if (base === null) return null;
+        next.catalogBuckets = Math.max(
+            chosen.catalogBuckets,
+            current.catalogBuckets * 2
+        );
+        next.catalogBase = base;
+    }
+    if (kerningFull) {
+        const base = moved(
+            current.kerningBase ?? 0,
+            current.kerningBuckets,
+            Math.max(chosen.kerningBuckets, current.kerningBuckets * 2)
+        );
+        if (base === null) return null;
+        next.kerningBuckets = Math.max(
+            chosen.kerningBuckets,
+            current.kerningBuckets * 2
+        );
+        next.kerningBase = base;
+    }
+    return parseRoomLayout(next);
 }
 
 export type KerningDirection = 'l' | 'r';

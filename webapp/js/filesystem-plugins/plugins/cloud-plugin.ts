@@ -11,6 +11,7 @@ import {
 } from '../cloud-room-fit';
 import {
     chooseRoomLayout,
+    rebasedRoomLayout,
     roomLayoutCounts
 } from '../cloud-room-layout';
 import { ROOM_LAYOUT_VERSION } from '../cloud-room-layout';
@@ -3568,24 +3569,35 @@ export class CloudPlugin extends FilesystemPlugin {
         session: CloudLiveSession
     ): Promise<void> {
         if (
-            bridge.roomLayout ||
             this.getCurrentAssetRole() !== 'owner' ||
             !this._sessionAllowsMutation()
         ) {
             return;
         }
-        const fontJson = this._currentFontJson();
-        if (!fontJson) {
-            return;
-        }
-        const catalog = catalogFromCoreJson(fontJson)?.glyphCatalog;
-        const counts = roomLayoutCounts(fontJson);
-        const layout = chooseRoomLayout({
-            glyphs: catalog ? Object.keys(catalog).length : counts.glyphs,
-            kerningPairs: counts.kerningPairs
-        });
-        if (!bridge.adoptRoomLayout(layout)) {
-            return;
+        if (bridge.roomLayout) {
+            // A bucket that outgrew its budget moves the catalog or kerning
+            // to more buckets (a rebase), the same way an upgrade does.
+            const fill = bridge.roomLayoutFill?.();
+            const next = fill
+                ? rebasedRoomLayout(bridge.roomLayout, fill)
+                : null;
+            if (!next || !bridge.rebaseRoomLayout(next)) {
+                return;
+            }
+        } else {
+            const fontJson = this._currentFontJson();
+            if (!fontJson) {
+                return;
+            }
+            const catalog = catalogFromCoreJson(fontJson)?.glyphCatalog;
+            const counts = roomLayoutCounts(fontJson);
+            const layout = chooseRoomLayout({
+                glyphs: catalog ? Object.keys(catalog).length : counts.glyphs,
+                kerningPairs: counts.kerningPairs
+            });
+            if (!bridge.adoptRoomLayout(layout)) {
+                return;
+            }
         }
         await session.syncLiveDocumentIds(
             liveGlyphDocumentIdsFromSubset(bridge, activeEditorGlyphNames())

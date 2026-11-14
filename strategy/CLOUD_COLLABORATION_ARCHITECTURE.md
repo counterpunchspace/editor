@@ -235,8 +235,22 @@ compacted. Room layout 2 moves those out:
 
 Bucket counts are fixed per asset when it is seeded or upgraded, at about
 2,000 glyphs and 20,000 pairs per bucket, so a font can double before a
-bucket reaches its 4,000 / 40,000 budget; re-bucketing is part of a room
-rebase. Measured on 1,801 gfsources fonts, every layout 2 room stays under
+bucket reaches its 4,000 / 40,000 budget. When the owner opens a font with a
+bucket past its budget, the font is rebased: the catalog or kerning moves to
+twice as many buckets under fresh room ids (`catalogBase` / `kerningBase` in
+the layout, so old and new rooms never share an id), seeded by the owner
+before font-core's layout points peers at them. Old bucket rooms are no
+longer read; they are removed with the asset.
+
+Live writes may be up to 1 MiB (`MAX_YJS_PACKET_BYTES`): every layout 2 room
+compacts with a 1 MiB write in at most 24 MB of local heap and in the
+staging compactor's 128 MB isolate.
+
+Before a font is uploaded, every room is checked against what the cloud can
+store and compact (5 MiB, 280,000 Yjs structs, `cloud-room-fit.ts`); a font
+with a part that does not fit is refused with a message naming the part. The
+upload encodes each document through a garbage-collected copy, so content
+deleted locally (the keys layout 2 moved out of core) is not uploaded. Measured on 1,801 gfsources fonts, every layout 2 room stays under
 2 MiB except two features rooms (Harmattan 3.4 MB, Sekuya 2.5 MB), and every
 room compacts with a 1 MiB write in 16–24 MB of heap
 (`webapp/tests/gfsources-room-budget.test.js`,

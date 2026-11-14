@@ -246,4 +246,50 @@ describe('room layout 2 in the engine', () => {
         });
         expect(keys.some((key) => key.startsWith('m2|'))).toBe(false);
     });
+
+    test('a rebase moves full buckets to fresh rooms and a peer follows', () => {
+        const { rebasedRoomLayout } = require('../js/filesystem-plugins/cloud-room-layout');
+        const owner = new PatchSyncEngine('rebase-owner');
+        const font = makeFont();
+        font.masters[0].kerning = Object.fromEntries(
+            Array.from({ length: 50 }, (_, i) => [`g${i}:V`, -i])
+        );
+        owner.initFromJson(font);
+        owner.adoptRoomLayout({ version: 2, catalogBuckets: 1, kerningBuckets: 1 }, { seedsWholeAsset: true });
+        const peer = new PatchSyncEngine('rebase-peer');
+        peer.initFromJson({});
+        peer.applyDocumentSetState(owner.encodeDocumentSet());
+        const before = snapshotOf(owner);
+
+        const fill = owner.roomLayoutFill();
+        expect(fill.largestKerningBucket).toBe(52);
+        // With a tiny budget the kerning bucket counts as full.
+        const next = rebasedRoomLayout(owner.roomLayout, {
+            ...fill,
+            largestKerningBucket: 1e9
+        });
+        expect(next).toMatchObject({ kerningBuckets: 2, kerningBase: 1, catalogBuckets: 1 });
+        expect(owner.rebaseRoomLayout(next)).toBe(true);
+        expect(owner.layoutDocumentIds()).toEqual(['features', 'catalog:0', 'kerning:1', 'kerning:2']);
+        expect(snapshotOf(owner)).toEqual(before);
+
+        const packets = [];
+        owner.onLocalUpdate((update, message, _entries, documentId) =>
+            packets.push({ update, message, documentId })
+        );
+        expect(owner.publishAdoptedRoomLayout()).toBe(true);
+        const heard = [];
+        peer.onRoomLayoutChange((layout) => heard.push(layout));
+        for (const packet of packets) {
+            peer.applyRemoteUpdate(packet.update, undefined, [packet.message], packet.documentId);
+        }
+        expect(heard).toEqual([next]);
+        for (const shard of owner.encodeDocumentSet()) {
+            if (shard.documentId.startsWith('kerning:')) {
+                peer.applyDocumentCatchUp(shard.documentId, shard.bytes);
+            }
+        }
+        expect(snapshotOf(peer)).toEqual(before);
+        expect([...peer._layoutDocs.keys()].sort()).toEqual(['catalog:0', 'features', 'kerning:1', 'kerning:2']);
+    });
 });

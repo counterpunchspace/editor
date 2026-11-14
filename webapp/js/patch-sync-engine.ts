@@ -144,12 +144,12 @@ import {
     FONT_FEATURES_DOCUMENT_ID,
     KERNING_ROOT_KEY,
     LAYOUT_MAP_KEY,
-    catalogBucketFor,
-    catalogDocumentId,
+    catalogRoomFor,
+    catalogRoomIds,
     codepointIndexFromCatalog,
     isLayoutDocumentId,
-    kerningBucketFor,
-    kerningDocumentId,
+    kerningRoomFor,
+    kerningRoomIds,
     kerningFieldDirection,
     kerningFieldForDirection,
     kerningKey,
@@ -1162,6 +1162,9 @@ export class PatchSyncEngine {
         this.yDoc.getMap(LAYOUT_MAP_KEY).observe(() => {
             this._roomLayoutCache = undefined;
             const after = this.roomLayout;
+            if (after) {
+                this._dropLayoutDocsOutside(after);
+            }
             // Compare with what listeners last heard, not with the cache:
             // code running in the same remote apply may already have read
             // the new layout.
@@ -1247,18 +1250,14 @@ export class PatchSyncEngine {
             return [];
         }
         if (path[0] === CORE_GLYPH_CATALOG_KEY && path.length === 1) {
-            return Array.from({ length: layout.catalogBuckets }, (_, i) =>
-                catalogDocumentId(i)
-            );
+            return catalogRoomIds(layout);
         }
         if (
             path[0] === 'masters' &&
             (path.length <= 2 ||
                 (path.length === 3 && kerningFieldDirection(String(path[2]))))
         ) {
-            return Array.from({ length: layout.kerningBuckets }, (_, i) =>
-                kerningDocumentId(i)
-            );
+            return kerningRoomIds(layout);
         }
         return [];
     }
@@ -1277,6 +1276,133 @@ export class PatchSyncEngine {
     layoutDocumentIds(): string[] {
         const layout = this.roomLayout;
         return layout ? layoutDocumentIds(layout) : [];
+    }
+
+    /** After a rebase, rooms the layout no longer names are not read. */
+    private _dropLayoutDocsOutside(layout: RoomLayout): void {
+        const keep = new Set(layoutDocumentIds(layout));
+        for (const [documentId, doc] of [...this._layoutDocs]) {
+            if (keep.has(documentId)) continue;
+            this._docUpdateUnsubById.get(documentId)?.();
+            this._docUpdateUnsubById.delete(documentId);
+            this._lastBroadcastStateVectorByDoc.delete(documentId);
+            this._layoutDocs.delete(documentId);
+            doc.destroy();
+        }
+    }
+
+    /** How full the current layout's buckets are, for rebasedRoomLayout. */
+    roomLayoutFill(): {
+        largestCatalogBucket: number;
+        largestKerningBucket: number;
+        glyphs: number;
+        kerningPairs: number;
+    } | null {
+        if (!this.roomLayout) {
+            return null;
+        }
+        const catalogSizes = this._catalogBucketMaps().map((map) => map.size);
+        const kerningSizes = this._kerningBucketMaps().map((map) => map.size);
+        return {
+            largestCatalogBucket: Math.max(0, ...catalogSizes),
+            largestKerningBucket: Math.max(0, ...kerningSizes),
+            glyphs: catalogSizes.reduce((a, b) => a + b, 0),
+            kerningPairs: kerningSizes.reduce((a, b) => a + b, 0)
+        };
+    }
+
+    /**
+     * Move to a layout with more buckets (fresh room ids): write the catalog
+     * and kerning into the new rooms and point font-core's layout at them.
+     * Nothing is sent; like adoptRoomLayout, the owner's adapters seed the
+     * new rooms and publishAdoptedRoomLayout sends the core change.
+     */
+    rebaseRoomLayout(next: RoomLayout): boolean {
+        const current = this.roomLayout;
+        if (!current || this._adoptedLayoutCoreBaseline) {
+            return false;
+        }
+        const catalogMoves =
+            next.catalogBuckets !== current.catalogBuckets ||
+            (next.catalogBase ?? 0) !== (current.catalogBase ?? 0);
+        const kerningMoves =
+            next.kerningBuckets !== current.kerningBuckets ||
+            (next.kerningBase ?? 0) !== (current.kerningBase ?? 0);
+        if (!catalogMoves && !kerningMoves) {
+            return false;
+        }
+        const catalog = catalogMoves ? (this._readCatalogJson() ?? {}) : {};
+        const masters = kerningMoves
+            ? (this._readTopLevelJsonFromY('masters') as unknown[]) ?? []
+            : [];
+        this._adoptedLayoutCoreBaseline =
+            this._lastBroadcastStateVectorByDoc.get(FONT_CORE_DOCUMENT_ID) ??
+            Y.encodeStateVector(this.yDoc);
+        this._pushApplyKind(ApplyKind.ManualEmit);
+        try {
+            this.yDoc.transact(() => {
+                const map = this.yDoc.getMap(LAYOUT_MAP_KEY);
+                map.set('catalogBuckets', next.catalogBuckets);
+                map.set('kerningBuckets', next.kerningBuckets);
+                map.set('catalogBase', next.catalogBase ?? 0);
+                map.set('kerningBase', next.kerningBase ?? 0);
+            }, FONT_EDIT_ORIGIN);
+            this._roomLayoutCache = next;
+            this._notifiedRoomLayoutKey = JSON.stringify(this.roomLayout);
+            const byRoom = new Map<string, Array<[string, unknown]>>();
+            const add = (documentId: string, key: string, value: unknown) => {
+                if (!byRoom.has(documentId)) byRoom.set(documentId, []);
+                byRoom.get(documentId)!.push([key, value]);
+            };
+            for (const [glyphId, entry] of Object.entries(catalog)) {
+                add(catalogRoomFor(next, glyphId), glyphId, toYType(entry));
+            }
+            for (const master of Array.isArray(masters) ? masters : []) {
+                const record = (master ?? {}) as Record<string, unknown>;
+                const masterId = typeof record.id === 'string' ? record.id : '';
+                if (!masterId) continue;
+                for (const direction of ['l', 'r'] as const) {
+                    for (const [pair, value] of Object.entries(
+                        flattenKerningMap(record[kerningFieldForDirection(direction)])
+                    )) {
+                        add(
+                            kerningRoomFor(next, pair),
+                            kerningKey(masterId, direction, pair),
+                            value
+                        );
+                    }
+                }
+            }
+            for (const [documentId, entries] of byRoom) {
+                const doc = this._ensureLayoutDoc(documentId);
+                const root = layoutDocumentKind(documentId) === 'catalog'
+                    ? CATALOG_ROOT_KEY
+                    : KERNING_ROOT_KEY;
+                doc.transact(() => {
+                    const map = doc.getMap(root);
+                    for (const [key, value] of entries) {
+                        map.set(key, value);
+                    }
+                }, FONT_EDIT_ORIGIN);
+            }
+        } finally {
+            this._popApplyKind();
+        }
+        this._dropLayoutDocsOutside(next);
+        for (const documentId of layoutDocumentIds(next)) {
+            this._ensureLayoutDoc(documentId);
+            this._noteBroadcastStateVector(documentId);
+        }
+        for (const documentId of [FONT_CORE_DOCUMENT_ID, ...kerningRoomIds(next)]) {
+            const doc = this._docForId(documentId);
+            if (doc) {
+                this._workerDocumentReplaceCallback?.(
+                    documentId,
+                    Y.encodeStateAsUpdate(doc)
+                );
+            }
+        }
+        return true;
     }
 
     private _destroyLayoutDocs(): void {
@@ -1319,9 +1445,9 @@ export class PatchSyncEngine {
 
     private _catalogBucketMap(glyphId: string): Y.Map<unknown> {
         const layout = this.roomLayout as RoomLayout;
-        return this._ensureLayoutDoc(
-            catalogDocumentId(catalogBucketFor(glyphId, layout.catalogBuckets))
-        ).getMap(CATALOG_ROOT_KEY);
+        return this._ensureLayoutDoc(catalogRoomFor(layout, glyphId)).getMap(
+            CATALOG_ROOT_KEY
+        );
     }
 
     private _catalogBucketMaps(): Array<Y.Map<unknown>> {
@@ -1329,10 +1455,8 @@ export class PatchSyncEngine {
         if (!layout) {
             return [];
         }
-        return Array.from({ length: layout.catalogBuckets }, (_, index) =>
-            this._ensureLayoutDoc(catalogDocumentId(index)).getMap(
-                CATALOG_ROOT_KEY
-            )
+        return catalogRoomIds(layout).map((documentId) =>
+            this._ensureLayoutDoc(documentId).getMap(CATALOG_ROOT_KEY)
         );
     }
 
@@ -1341,18 +1465,16 @@ export class PatchSyncEngine {
         if (!layout) {
             return [];
         }
-        return Array.from({ length: layout.kerningBuckets }, (_, index) =>
-            this._ensureLayoutDoc(kerningDocumentId(index)).getMap(
-                KERNING_ROOT_KEY
-            )
+        return kerningRoomIds(layout).map((documentId) =>
+            this._ensureLayoutDoc(documentId).getMap(KERNING_ROOT_KEY)
         );
     }
 
     private _kerningBucketMap(pair: string): Y.Map<unknown> {
         const layout = this.roomLayout as RoomLayout;
-        return this._ensureLayoutDoc(
-            kerningDocumentId(kerningBucketFor(pair, layout.kerningBuckets))
-        ).getMap(KERNING_ROOT_KEY);
+        return this._ensureLayoutDoc(kerningRoomFor(layout, pair)).getMap(
+            KERNING_ROOT_KEY
+        );
     }
 
     /** Catalog entry from whichever store this asset uses. */
@@ -1861,9 +1983,7 @@ export class PatchSyncEngine {
             for (const [glyphId, entry] of Object.entries(
                 (catalog as Record<string, unknown> | undefined) ?? {}
             )) {
-                const documentId = catalogDocumentId(
-                    catalogBucketFor(glyphId, layout.catalogBuckets)
-                );
+                const documentId = catalogRoomFor(layout, glyphId);
                 if (!byCatalogBucket.has(documentId)) {
                     byCatalogBucket.set(documentId, []);
                 }
@@ -1888,9 +2008,7 @@ export class PatchSyncEngine {
                         record[kerningFieldForDirection(direction)]
                     );
                     for (const [pair, value] of Object.entries(pairs)) {
-                        const documentId = kerningDocumentId(
-                            kerningBucketFor(pair, layout.kerningBuckets)
-                        );
+                        const documentId = kerningRoomFor(layout, pair);
                         if (!byKerningBucket.has(documentId)) {
                             byKerningBucket.set(documentId, []);
                         }
@@ -1927,9 +2045,7 @@ export class PatchSyncEngine {
         for (const documentId of [
             FONT_CORE_DOCUMENT_ID,
             FONT_FEATURES_DOCUMENT_ID,
-            ...Array.from({ length: layout.kerningBuckets }, (_, i) =>
-                kerningDocumentId(i)
-            )
+            ...kerningRoomIds(layout)
         ]) {
             const doc = this._docForId(documentId);
             if (doc) {
@@ -1993,9 +2109,7 @@ export class PatchSyncEngine {
                 return FONT_FEATURES_DOCUMENT_ID;
             }
             if (path[0] === CORE_GLYPH_CATALOG_KEY && path.length >= 2) {
-                return catalogDocumentId(
-                    catalogBucketFor(String(path[1]), layout.catalogBuckets)
-                );
+                return catalogRoomFor(layout, String(path[1]));
             }
             if (
                 path[0] === 'masters' &&
@@ -2004,11 +2118,9 @@ export class PatchSyncEngine {
             ) {
                 // A whole kerning map spreads over every bucket (see
                 // _extraLayoutDocumentIds); it does not touch core.
-                return kerningDocumentId(
-                    path.length === 3
-                        ? 0
-                        : kerningBucketFor(String(path[3]), layout.kerningBuckets)
-                );
+                return path.length === 3
+                    ? kerningRoomIds(layout)[0]
+                    : kerningRoomFor(layout, String(path[3]));
             }
         }
         if (path[0] === 'glyphs' && path.length >= 2) {

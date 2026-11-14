@@ -3635,7 +3635,7 @@ fn ydoc_to_babelfont_json_with_txn<T: ReadTxn>(txn: &T) -> serde_json::Value {
 
     reconstruct_kern_group_dicts(&mut result);
     let mut json = serde_json::Value::Object(result);
-    merge_layout_documents_into_font_json(&mut json);
+    merge_layout_documents_into_font_json(&mut json, layout_kerning_range(txn));
     json
 }
 
@@ -3724,7 +3724,7 @@ fn ydoc_get_top_level_json_with_txn<T: ReadTxn>(key: &str, txn: &T) -> Option<se
     let value = font_map.get(txn, key)?;
     let mut json = yrs_value_to_json(value, txn);
     if key == "masters" {
-        if let Some(kerning) = layout_kerning_by_master() {
+        if let Some(kerning) = layout_kerning_by_master(layout_kerning_range(txn)) {
             merge_layout_kerning_into_masters(&mut json, &kerning);
         }
     }
@@ -3923,15 +3923,38 @@ type MasterKerning = (
     serde_json::Map<String, serde_json::Value>,
 );
 
+/// The kerning bucket ids font-core's layout names, `base..base + count`.
+/// After a rebase the worker can still hold the old buckets; only these count.
+fn layout_kerning_range<T: ReadTxn>(txn: &T) -> Option<std::ops::Range<u32>> {
+    let layout = txn.get_map("layout")?;
+    let number = |key: &str| -> Option<u32> {
+        match layout.get(txn, key)? {
+            yrs::types::Value::Any(yrs::Any::Number(n)) => Some(n as u32),
+            yrs::types::Value::Any(yrs::Any::BigInt(n)) => Some(n as u32),
+            _ => None,
+        }
+    };
+    let count = number("kerningBuckets")?;
+    let base = number("kerningBase").unwrap_or(0);
+    Some(base..base + count)
+}
+
 /// Kerning per master id from the kerning documents, `(ltr, rtl)` flat pair
 /// maps. None when the asset keeps kerning inside its masters (layout 1).
-fn layout_kerning_by_master() -> Option<HashMap<String, MasterKerning>> {
+fn layout_kerning_by_master(
+    range: Option<std::ops::Range<u32>>,
+) -> Option<HashMap<String, MasterKerning>> {
     let docs = KERNING_DOCS.lock().unwrap();
     if docs.is_empty() {
         return None;
     }
     let mut by_master: HashMap<String, MasterKerning> = HashMap::new();
-    for doc in docs.values() {
+    for (bucket, doc) in docs.iter() {
+        if let Some(range) = &range {
+            if !range.contains(bucket) {
+                continue;
+            }
+        }
         let txn = doc.transact();
         let Some(map) = txn.get_map("kerning") else {
             continue;
@@ -3988,14 +4011,17 @@ fn merge_layout_kerning_into_masters(
 /// core whose rooms have not loaded yet has neither features nor master
 /// kerning; babelfont needs both fields, so they start empty until the rooms
 /// arrive (their updates refresh the caches).
-fn merge_layout_documents_into_font_json(json: &mut serde_json::Value) {
+fn merge_layout_documents_into_font_json(
+    json: &mut serde_json::Value,
+    kerning_range: Option<std::ops::Range<u32>>,
+) {
     let Some(object) = json.as_object_mut() else {
         return;
     };
     if let Some(features) = layout_features_json() {
         object.insert("features".to_string(), features);
     }
-    if let Some(kerning) = layout_kerning_by_master() {
+    if let Some(kerning) = layout_kerning_by_master(kerning_range) {
         if let Some(masters) = object.get_mut("masters") {
             merge_layout_kerning_into_masters(masters, &kerning);
         }
@@ -7611,6 +7637,29 @@ mod tests {
     }
 
     #[test]
+    fn layout_kerning_reads_only_the_current_buckets() {
+        reset_ydoc_set();
+        let bucket = |pair: &str, value: f64| {
+            let doc = Doc::new();
+            {
+                let map = doc.get_or_insert_map("kerning");
+                let mut txn = doc.transact_mut();
+                map.insert(&mut txn, format!("m|l|{}", pair), Any::Number(value));
+            }
+            let bytes = doc.transact().encode_state_as_update_v1(&StateVector::default());
+            bytes
+        };
+        // Bucket 0 is from before a rebase; the layout now names bucket 4.
+        seed_ydoc_document("kerning:0", &bucket("A:V", -10.0)).unwrap();
+        seed_ydoc_document("kerning:4", &bucket("A:V", -50.0)).unwrap();
+        let current = layout_kerning_by_master(Some(4..5)).unwrap();
+        assert_eq!(current["m"].0["A:V"], json!(-50));
+        let both = layout_kerning_by_master(None).unwrap();
+        assert_eq!(both["m"].0.len(), 1);
+        reset_ydoc_set();
+    }
+
+    #[test]
     fn layout_documents_put_features_and_kerning_back_into_the_font() {
         reset_ydoc_set();
 
@@ -7643,7 +7692,7 @@ mod tests {
         let mut font: serde_json::Value = serde_json::from_str(TEST_FONT_JSON).unwrap();
         font["masters"][0].as_object_mut().unwrap().remove("kerning");
         font.as_object_mut().unwrap().remove("features");
-        merge_layout_documents_into_font_json(&mut font);
+        merge_layout_documents_into_font_json(&mut font, None);
 
         assert_eq!(font["features"]["classes"]["upper"]["code"], json!("A B"));
         assert_eq!(font["masters"][0]["kerning"], json!({ "A:V": -50 }));
@@ -7652,7 +7701,7 @@ mod tests {
         reset_ydoc_set();
         let mut layout_one: serde_json::Value = serde_json::from_str(TEST_FONT_JSON).unwrap();
         let before = layout_one.clone();
-        merge_layout_documents_into_font_json(&mut layout_one);
+        merge_layout_documents_into_font_json(&mut layout_one, None);
         assert_eq!(layout_one, before, "layout 1 fonts are left alone");
     }
 
