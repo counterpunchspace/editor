@@ -4811,12 +4811,27 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
 
             // -- 2. Parse JS-supplied update metadata -----------------------------
             let (
-                changed_glyphs,
+                mut changed_glyphs,
                 non_glyph_change_hints,
                 layer_targets,
-                glyph_renames,
+                mut glyph_renames,
                 invalidate_layout_closure,
             ) = parse_apply_yjs_update_metadata(update_metadata_json);
+            // A rename can reach the worker after the glyph was deleted (a
+            // catch-up snapshot or a later delta already removed it). The Y.Doc
+            // is the truth: treat both names as changed glyphs, and the missing
+            // snapshots then remove them from the native caches.
+            glyph_renames.retain(|rename| {
+                if ydoc_get_glyph_json_with_txn(&rename.new_name, &txn).is_some() {
+                    return true;
+                }
+                for name in [&rename.old_name, &rename.new_name] {
+                    if !changed_glyphs.contains(name) {
+                        changed_glyphs.push(name.clone());
+                    }
+                }
+                false
+            });
             let refresh_feature_caches = non_glyph_change_hints
                 .iter()
                 .any(|hint| hint == "feature-code");
@@ -8931,6 +8946,78 @@ mod tests {
             "A.alt"
         );
         assert_eq!(get_or_rebuild_font_cache().unwrap().glyphs[0].name, "A.alt");
+
+        clear_font_cache();
+    }
+
+    #[test]
+    fn apply_yjs_update_rename_of_deleted_glyph_removes_both_names() {
+        clear_font_cache();
+
+        let font_json: serde_json::Value = serde_json::from_str(TEST_FONT_JSON).unwrap();
+        store_font_from_value(font_json).unwrap();
+
+        let author_doc = Doc::new();
+        let font_map = author_doc.get_or_insert_map("font");
+        let glyphs: yrs::MapRef;
+        {
+            let mut txn = author_doc.transact_mut();
+            glyphs = font_map.insert(&mut txn, "glyphs", MapPrelim::<Any>::new());
+            let glyph: yrs::MapRef = glyphs.insert(&mut txn, "A", MapPrelim::<Any>::new());
+            glyph.insert(&mut txn, "category", "Base");
+            glyph.insert(&mut txn, "exported", true);
+            glyph.insert(&mut txn, "format_specific", MapPrelim::<Any>::new());
+            let layers: yrs::MapRef = glyph.insert(&mut txn, "layers", MapPrelim::<Any>::new());
+            let layer: yrs::MapRef = layers.insert(&mut txn, "layer-1", MapPrelim::<Any>::new());
+            layer.insert(&mut txn, "id", "layer-1");
+            let master: yrs::MapRef = layer.insert(&mut txn, "master", MapPrelim::<Any>::new());
+            master.insert(&mut txn, "type", "DefaultForMaster");
+            master.insert(&mut txn, "master", "master-regular");
+            layer.insert(&mut txn, "width", Any::Number(600.0));
+            layer.insert(&mut txn, "shapes", ArrayPrelim::from(Vec::<Any>::new()));
+            layer.insert(&mut txn, "anchors", ArrayPrelim::from(Vec::<Any>::new()));
+            layer.insert(&mut txn, "guides", ArrayPrelim::from(Vec::<Any>::new()));
+            layer.insert(&mut txn, "format_specific", MapPrelim::<Any>::new());
+        }
+        let initial_update = author_doc
+            .transact()
+            .encode_state_as_update_v1(&StateVector::default());
+        let base_state_vector = author_doc.transact().state_vector();
+        // The peer renamed A to A.alt and then deleted it. This worker gets
+        // the rename metadata with a document that no longer has either name.
+        {
+            let mut txn = author_doc.transact_mut();
+            glyphs.remove(&mut txn, "A");
+        }
+        let delete_update = author_doc.transact().encode_diff_v1(&base_state_vector);
+
+        let worker_doc = Doc::new();
+        {
+            let update = yrs::Update::decode_v1(initial_update.as_slice()).unwrap();
+            let mut txn = worker_doc.transact_mut();
+            txn.apply_update(update);
+        }
+        *Y_DOC.lock().unwrap() = Some(worker_doc);
+
+        apply_yjs_update(
+            delete_update.as_slice(),
+            r#"{
+                "glyphRenames": [{ "oldName": "A", "newName": "A.alt" }],
+                "invalidateLayoutClosure": true
+            }"#,
+        )
+        .unwrap();
+
+        let canonical = CANONICAL_JSON_CACHE.lock().unwrap();
+        let names: Vec<String> = canonical.as_ref().unwrap()["glyphs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|glyph| glyph["name"].as_str().map(str::to_string))
+            .collect();
+        assert!(!names.contains(&"A".to_string()), "{names:?}");
+        assert!(!names.contains(&"A.alt".to_string()), "{names:?}");
+        drop(canonical);
 
         clear_font_cache();
     }
