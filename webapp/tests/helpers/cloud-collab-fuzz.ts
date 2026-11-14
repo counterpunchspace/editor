@@ -35,7 +35,8 @@ export const FUZZ_GLYPHS = [
 ];
 
 /** Text that shapes to every fuzz glyph, so the compiled check sees all. */
-export const FUZZ_TEXT = 'lnmıaoäáöiï̈́̇';
+// U+E001 maps to adieresis.ss01 only while a Unicode edit has added it.
+export const FUZZ_TEXT = 'lnmıaoäáöiï̈́̇';
 
 export const FUZZ_BASES_WITH_TOP = ['a', 'o', 'idotless'];
 export const FUZZ_MARKS = ['dieresiscomb', 'acutecomb', 'dotaccentcomb'];
@@ -56,7 +57,38 @@ export const FUZZ_COMPOSITES = [
     'i',
     'idieresis'
 ];
-export const FUZZ_KERN_PAIRS = ['a:o', 'o:a', 'l:n', 'n:o', 'i:l'];
+export const FUZZ_KERN_PAIRS = [
+    'a:o',
+    'o:a',
+    'l:n',
+    'n:o',
+    'i:l',
+    // Group pairs: `@L` is the first-side group of `l`, `@A` the second-side
+    // group of `a` (see FUZZ_KERN_GROUPS).
+    '@L:a',
+    'o:@A'
+];
+
+/** Kerning groups of the fixture: first side (MMK_R) and second side (MMK_L). */
+export const FUZZ_KERN_GROUPS = {
+    first: { L: ['l'] } as Record<string, string[]>,
+    second: { A: ['a'] } as Record<string, string[]>
+};
+/** Glyphs a kerning-group edit adds to or removes from the group `L`. */
+export const FUZZ_GROUP_GLYPHS = ['n', 'm'];
+/** The feature the fuzz edits, and its code before any edit. */
+export const FUZZ_FEATURE_TAG = 'ss01';
+export const FUZZ_FEATURE_CODE = 'sub adieresis by adieresis.ss01;';
+/** Glyph whose catalog entry a Unicode edit changes (not in the text run). */
+export const FUZZ_UNICODE_GLYPH = 'adieresis.ss01';
+/** The extra codepoint a Unicode edit adds or removes. */
+export const FUZZ_EXTRA_CODEPOINT = 0xe001;
+/**
+ * Room layout the fuzz font is saved with: several catalog and kerning
+ * rooms, so edits cross rooms. Real fonts get this many only with
+ * thousands of glyphs or tens of thousands of pairs.
+ */
+export const FUZZ_ROOM_LAYOUT = { catalogBuckets: 3, kerningBuckets: 3 };
 
 /** Metrics keys the fixture sets, as [glyph, side, source, offset]. */
 export const FUZZ_METRICS_KEYS: Array<
@@ -366,9 +398,13 @@ export function makeFuzzFontJson(familyName: string): string {
         glyphs,
         date: new Date().toISOString(),
         names: { family_name: { dflt: familyName } },
-        features: { classes: {}, prefixes: {}, features: [] },
-        first_kern_groups: {},
-        second_kern_groups: {},
+        features: {
+            classes: {},
+            prefixes: {},
+            features: [[FUZZ_FEATURE_TAG, { code: FUZZ_FEATURE_CODE }]]
+        },
+        first_kern_groups: FUZZ_KERN_GROUPS.first,
+        second_kern_groups: FUZZ_KERN_GROUPS.second,
         format_specific: {}
     });
 }
@@ -433,12 +469,18 @@ export async function waitForAutomaticComposites(page: Page) {
 export type FuzzSnapshot = {
     glyphs: Record<string, unknown>;
     kerning: Record<string, Record<string, number>>;
+    /** Code of the fuzz feature (features room). */
+    features: string | null;
+    /** Kerning groups, first and second side, members sorted. */
+    groups: Record<string, Record<string, string[]>>;
+    /** Codepoints of every fuzz glyph (catalog rooms). */
+    catalog: Record<string, number[]>;
 };
 
 /** This window’s font model, normalised: rounded, anchors sorted. */
 export async function readFuzzSnapshot(page: Page): Promise<FuzzSnapshot> {
     return page.evaluate(
-        ({ names }) => {
+        ({ names, featureTag }) => {
             const w = window as any;
             const round = (value: unknown) =>
                 typeof value === 'number'
@@ -480,10 +522,31 @@ export async function readFuzzSnapshot(page: Page): Promise<FuzzSnapshot> {
             });
             const glyphs: Record<string, unknown> = {};
             const kerning: Record<string, Record<string, number>> = {};
+            const catalog: Record<string, number[]> = {};
+            const font = w.currentFontModel;
+            const feature = (font?.features?.features ?? []).find(
+                (entry: any) => entry?.[0] === featureTag
+            );
+            const features: string | null = feature?.[1]?.code ?? null;
+            const sortedGroups = (
+                groups: Record<string, string[]> | undefined
+            ) =>
+                Object.fromEntries(
+                    Object.entries(groups ?? {})
+                        .filter(([, members]) => members?.length)
+                        .sort(([left], [right]) => left.localeCompare(right))
+                        .map(([name, members]) => [name, [...members].sort()])
+                );
+            const groups = {
+                first: sortedGroups(font?.first_kern_groups),
+                second: sortedGroups(font?.second_kern_groups)
+            };
             {
-                const font = w.currentFontModel;
                 for (const name of names) {
                     const glyph = font?.findGlyph?.(name);
+                    catalog[name] = [...(glyph?.codepoints ?? [])].sort(
+                        (left: number, right: number) => left - right
+                    );
                     glyphs[name] = glyph
                         ? Object.fromEntries(
                               (glyph.layers ?? []).map((item: any) => [
@@ -505,9 +568,9 @@ export async function readFuzzSnapshot(page: Page): Promise<FuzzSnapshot> {
                         .map(([pair, value]) => [pair, round(value) as number])
                 );
             }
-            return { glyphs, kerning };
+            return { glyphs, kerning, features, groups, catalog };
         },
-        { names: FUZZ_GLYPHS }
+        { names: FUZZ_GLYPHS, featureTag: FUZZ_FEATURE_TAG }
     );
 }
 
@@ -590,6 +653,16 @@ export type FuzzEdit =
           automatic: boolean;
       }
     | { kind: 'kern'; master: FuzzMasterId; pair: string; value: number }
+    | { kind: 'kern-delete'; master: FuzzMasterId; pair: string }
+    | {
+          kind: 'kern-group';
+          master: FuzzMasterId;
+          glyph: string;
+          group: string;
+          include: boolean;
+      }
+    | { kind: 'feature'; master: FuzzMasterId; value: number }
+    | { kind: 'unicode'; master: FuzzMasterId; glyph: string; add: boolean }
     | { kind: 'undo' | 'redo'; glyph: string; master: FuzzMasterId };
 
 export function describeFuzzEdit(edit: FuzzEdit): string {
@@ -604,6 +677,14 @@ export function describeFuzzEdit(edit: FuzzEdit): string {
             return `automatic alignment ${edit.automatic ? 'on' : 'off'} ${edit.glyph}/${edit.master}`;
         case 'kern':
             return `kern ${edit.pair}/${edit.master} = ${edit.value}`;
+        case 'kern-delete':
+            return `delete kern ${edit.pair}/${edit.master}`;
+        case 'kern-group':
+            return `${edit.include ? 'add' : 'remove'} ${edit.glyph} ${edit.include ? 'to' : 'from'} kerning group @${edit.group}`;
+        case 'feature':
+            return `feature ${FUZZ_FEATURE_TAG} code, mark ${edit.value}`;
+        case 'unicode':
+            return `${edit.add ? 'add' : 'remove'} U+${FUZZ_EXTRA_CODEPOINT.toString(16).toUpperCase()} ${edit.add ? 'to' : 'from'} ${edit.glyph}`;
         default:
             return `${edit.kind} ${edit.glyph}/${edit.master}`;
     }
@@ -620,8 +701,7 @@ export async function applyFuzzEdit(
     edit: FuzzEdit,
     options: { awaitCloud?: boolean } = {}
 ) {
-    const openGlyph = edit.kind === 'kern' ? 'a' : edit.glyph;
-    await openFuzzGlyph(page, openGlyph, edit.master);
+    await openFuzzGlyph(page, fuzzEditOpenGlyph(edit), edit.master);
     await page.evaluate(
         async (step) => {
             const w = window as any;
@@ -644,13 +724,130 @@ export async function applyFuzzEdit(
                 }
             };
             if (step.kind === 'undo' || step.kind === 'redo') {
-                await w.runBridgeUndoRedo(
-                    step.kind,
-                    step.glyph,
-                    step.glyph,
-                    step.master,
-                    null
+                const compiled: string[] = [];
+                const onCompiled = (event: Event) => {
+                    const detail = (event as CustomEvent).detail ?? {};
+                    compiled.push(
+                        `${detail.fontRevisionKey}${detail.error ? ` error ${String(detail.error).slice(0, 120)}` : ''}`
+                    );
+                };
+                window.addEventListener('editingFontCompiled', onCompiled);
+                try {
+                    await w.runBridgeUndoRedo(
+                        step.kind,
+                        step.glyph,
+                        step.glyph,
+                        step.master,
+                        null
+                    );
+                } catch (error) {
+                    await new Promise((resolve) => setTimeout(resolve, 15000));
+                    throw new Error(
+                        `${error instanceof Error ? error.message : String(error)}; requested ${w.fontManager?.currentFont?.compileRequestVersion}; compiles seen: ${compiled.join(', ') || 'none'}; worker quarantined ${w.fontManager?.workerMirrorQuarantined}, compile in flight ${!!w.fontManager?.editingCompileInFlight}`
+                    );
+                } finally {
+                    window.removeEventListener(
+                        'editingFontCompiled',
+                        onCompiled
+                    );
+                }
+            } else if (step.kind === 'kern-delete') {
+                const master = font.masters.find(
+                    (item: any) => item.id === step.master
                 );
+                transact(
+                    'Delete kerning pair',
+                    'keyboard-kerning-value',
+                    'kerning-value',
+                    () => {
+                        const next = { ...master.kerning };
+                        delete next[step.pair];
+                        master.kerning = next;
+                    }
+                );
+            } else if (step.kind === 'kern-group') {
+                // The overview's kerning-group membership commit.
+                transact(
+                    step.include
+                        ? 'Add kern group membership'
+                        : 'Remove kern group membership',
+                    'keyboard-kerning-groups',
+                    'kerning-groups',
+                    () => {
+                        const groups: Record<string, string[]> = {};
+                        for (const [name, members] of Object.entries(
+                            font.first_kern_groups ?? {}
+                        )) {
+                            groups[name] = [...(members as string[])];
+                        }
+                        const members = (groups[step.group] ?? []).filter(
+                            (name) => name !== step.glyph
+                        );
+                        groups[step.group] = step.include
+                            ? [...members, step.glyph]
+                            : members;
+                        font.first_kern_groups = groups;
+                    }
+                );
+            } else if (step.kind === 'feature') {
+                // Font Info's feature-code commit: a synthetic change set on
+                // the feature's history target.
+                const features = font.features.features;
+                const index = features.findIndex(
+                    (entry: any) => entry[0] === step.tag
+                );
+                const codeData = features[index][1];
+                const previous = codeData.code || '';
+                const next = `${step.base}\n# fuzz mark ${step.value}`;
+                const options = {
+                    compileChangeSource: 'feature-code',
+                    compileEditType: 'feature'
+                };
+                bridge.beginTransaction(
+                    'Edit feature code',
+                    {
+                        type: 'feature',
+                        key: `feature:${step.tag}:1`,
+                        label: step.tag
+                    },
+                    options
+                );
+                try {
+                    codeData.code = next;
+                    bridge.applySyntheticChangeSet(
+                        'Edit feature code',
+                        [
+                            {
+                                op: 'set',
+                                path: [
+                                    'features',
+                                    'features',
+                                    index,
+                                    1,
+                                    'code'
+                                ],
+                                oldValue: previous,
+                                newValue: next
+                            }
+                        ],
+                        options
+                    );
+                } finally {
+                    bridge.endTransaction();
+                }
+            } else if (step.kind === 'unicode') {
+                // The overview's Unicode field commit.
+                const glyph = font.findGlyph(step.glyph);
+                const current: number[] = [...(glyph.codepoints ?? [])];
+                const rest = current.filter(
+                    (value) => value !== step.extraCodepoint
+                );
+                transact('Set glyph Unicode', 'font-info', null, () => {
+                    const next = step.add
+                        ? [...rest, step.extraCodepoint]
+                        : rest;
+                    glyph.codepoints = next.length ? next : undefined;
+                });
             } else if (step.kind === 'kern') {
                 const master = font.masters.find(
                     (item: any) => item.id === step.master
@@ -740,8 +937,30 @@ export async function applyFuzzEdit(
                 await bridge.waitForPendingCloudCommits?.();
             }
         },
-        { ...edit, awaitCloud: options.awaitCloud !== false }
+        {
+            ...edit,
+            awaitCloud: options.awaitCloud !== false,
+            tag: FUZZ_FEATURE_TAG,
+            base: FUZZ_FEATURE_CODE,
+            extraCodepoint: FUZZ_EXTRA_CODEPOINT
+        }
     );
+}
+
+/** Edits of font-wide data, made with `a` open in the editor. */
+export function isFontWideFuzzEdit(edit: FuzzEdit): boolean {
+    return (
+        edit.kind === 'kern' ||
+        edit.kind === 'kern-delete' ||
+        edit.kind === 'kern-group' ||
+        edit.kind === 'feature' ||
+        edit.kind === 'unicode'
+    );
+}
+
+/** The glyph a window opens before it makes this edit. */
+export function fuzzEditOpenGlyph(edit: FuzzEdit): string {
+    return isFontWideFuzzEdit(edit) ? 'a' : (edit as { glyph: string }).glyph;
 }
 
 /**

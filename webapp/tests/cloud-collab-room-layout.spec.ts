@@ -45,11 +45,13 @@ async function openAsOwner(
     browser: any,
     request: any,
     email: string,
-    assetId: string
+    assetId: string,
+    beforeOpen?: (context: BrowserContext) => Promise<unknown>
 ): Promise<{ context: BrowserContext; page: Page }> {
     const session = await bootstrapCloudCollabSession(request, email, 'owner');
     const context = await browser.newContext();
     await attachCloudCollabCookies(context, session);
+    await beforeOpen?.(context);
     const page = await context.newPage();
     await collectPageErrors(page);
     await gotoEditorPage(
@@ -194,27 +196,689 @@ test('a font saved before room layout 2 moves to its rooms when the owner opens 
     }
 });
 
-test('a new cloud font is saved in room layout 2', async ({
+/** The cloud's live packet limit (MAX_YJS_PACKET_BYTES). */
+const MAX_LIVE_PACKET_BYTES = 1024 * 1024;
+
+/** The forced layout: several catalog and kerning rooms in a small font. */
+const FORCED_LAYOUT = { catalogBuckets: 3, kerningBuckets: 3 };
+
+/** FNV-1a, as cloud-room-layout.ts `layoutHash`: which room a key lives in. */
+function layoutBucket(key: string, buckets: number): number {
+    let hash = 0x811c9dc5;
+    for (const byte of new TextEncoder().encode(key)) {
+        hash ^= byte;
+        hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    return (hash >>> 0) % buckets;
+}
+
+const firstSide = (pair: string) => pair.slice(0, pair.indexOf(':'));
+
+/**
+ * Everything the layout 2 rooms hold, as one window sees it: features,
+ * kerning, kerning groups, the catalog (names, order, codepoints) and font
+ * info. Long feature code is reduced to its length and a hash.
+ */
+async function layoutState(page: Page) {
+    return page.evaluate(() => {
+        const engine = (window as any).patchSyncEngine;
+        const json = engine.getFontJsonSnapshot();
+        const digest = (text: string) => {
+            let hash = 0x811c9dc5;
+            for (let i = 0; i < text.length; i++) {
+                hash ^= text.charCodeAt(i);
+                hash = Math.imul(hash, 0x01000193) >>> 0;
+            }
+            return `${text.length}:${hash}`;
+        };
+        const features = (json.features?.features ?? []).map(
+            ([tag, code]: [string, any]) => [
+                tag,
+                (code?.code ?? '').length > 10000
+                    ? digest(code.code)
+                    : (code?.code ?? '')
+            ]
+        );
+        const sortedGroups = (groups: Record<string, string[]> | undefined) =>
+            Object.fromEntries(
+                Object.entries(groups ?? {})
+                    .sort(([a], [b]) => a.localeCompare(b))
+                    .map(([name, members]) => [name, [...members].sort()])
+            );
+        return {
+            layout: engine.roomLayout,
+            features,
+            classes: digest(JSON.stringify(json.features?.classes ?? {})),
+            kerning: (json.masters ?? []).map((master: any) =>
+                Object.fromEntries(
+                    Object.entries(master.kerning ?? {}).sort(([a], [b]) =>
+                        a.localeCompare(b)
+                    )
+                )
+            ),
+            groups: {
+                first: sortedGroups(json.first_kern_groups),
+                second: sortedGroups(json.second_kern_groups)
+            },
+            // From the catalog rooms, not the JSON: a sparse window holds
+            // only the glyphs it has opened.
+            glyphs: Object.values(
+                (engine._readCatalogJson?.() ?? {}) as Record<string, any>
+            )
+                .filter((entry) => entry && !entry.deleted)
+                .map((entry): [string, number[]] => [
+                    String(entry.name),
+                    (Array.isArray(entry.codepoints)
+                        ? [...entry.codepoints]
+                        : entry.codepoints &&
+                            typeof entry.codepoints === 'object'
+                          ? Object.keys(entry.codepoints).map(Number)
+                          : entry.codepoints != null
+                            ? [Number(entry.codepoints)]
+                            : []
+                    ).sort((a: number, b: number) => a - b)
+                ])
+                .sort(([a], [b]) => a.localeCompare(b)),
+            glyphOrder:
+                engine.yDoc?.getMap('font')?.get('glyphOrder')?.toJSON?.() ??
+                null,
+            version: json.version ?? null
+        };
+    });
+}
+
+type LayoutState = Awaited<ReturnType<typeof layoutState>>;
+
+async function expectSameLayoutState(
+    pages: Page[],
+    label: string,
+    timeout = 90000
+): Promise<LayoutState> {
+    const [reference, ...others] = pages;
+    let expected = await layoutState(reference);
+    await expect
+        .poll(
+            async () => {
+                expected = await layoutState(reference);
+                for (const page of others) {
+                    const actual = await layoutState(page);
+                    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+                        return false;
+                    }
+                }
+                return true;
+            },
+            { timeout, intervals: [500, 1000, 2000], message: label }
+        )
+        .toBe(true)
+        .catch(async (error) => {
+            const rooms = await Promise.all(
+                pages.map((page) =>
+                    page.evaluate(() => {
+                        const w = window as any;
+                        const engine = w.patchSyncEngine;
+                        const session = w.cloudPlugin?._liveSession;
+                        return {
+                            catalog: engine
+                                ._catalogBucketMaps?.()
+                                .map((map: any) => map.size),
+                            jsonGlyphs:
+                                engine.getFontJsonSnapshot().glyphs?.length,
+                            modelGlyphs: w.currentFontModel?.glyphs?.length,
+                            glyphOrder: engine.yDoc
+                                ?.getMap('font')
+                                ?.get('glyphOrder')?.length,
+                            sparse: engine.hasSparseWorkingSet?.(),
+                            missing: (() => {
+                                const inJson = new Set(
+                                    (
+                                        engine.getFontJsonSnapshot().glyphs ??
+                                        []
+                                    ).map((glyph: any) => glyph.name)
+                                );
+                                const out: string[] = [];
+                                for (const map of engine._catalogBucketMaps?.() ??
+                                    []) {
+                                    for (const [id, entry] of map.entries()) {
+                                        const name =
+                                            entry?.get?.('name') ?? entry?.name;
+                                        if (inJson.has(name)) continue;
+                                        const doc = engine._glyphDocs?.get(id);
+                                        out.push(
+                                            `${name}:doc=${!!doc}:size=${doc?.getMap('glyph')?.size}:byName=${engine._glyphIdByName?.get(name) === id}`
+                                        );
+                                    }
+                                }
+                                return out.slice(0, 8);
+                            })(),
+                            layoutRooms: (
+                                engine.layoutDocumentIds?.() ?? []
+                            ).map(
+                                (id: string) =>
+                                    `${id}:${session?.hasSyncedLiveDocument?.(id)}`
+                            )
+                        };
+                    })
+                )
+            );
+            const states = await Promise.all(pages.map(layoutState));
+            const names = states.map((state) =>
+                state.glyphs.map(([name]: [string, number[]]) => name)
+            );
+            const glyphDiff = names.map((list, index) => ({
+                window: index,
+                only: list.filter(
+                    (name: string) =>
+                        !names.every((other) => other.includes(name))
+                ),
+                firstOrderDifference: list.findIndex(
+                    (name: string, at: number) => name !== names[0][at]
+                )
+            }));
+            const keys = Object.keys(states[0]) as Array<keyof LayoutState>;
+            const differing = keys.filter(
+                (key) =>
+                    new Set(states.map((state) => JSON.stringify(state[key])))
+                        .size > 1
+            );
+            throw new Error(
+                `${error instanceof Error ? error.message : String(error)}\nrooms: ${JSON.stringify(rooms)}\nglyphs: ${JSON.stringify(glyphDiff)}\ndiffering: ${differing
+                    .map(
+                        (key) =>
+                            `${key}: ${states
+                                .map((state) =>
+                                    JSON.stringify(state[key]).slice(0, 600)
+                                )
+                                .join(' | ')}`
+                    )
+                    .join('\n')}`
+            );
+        });
+    return expected;
+}
+
+/** A model edit in one transaction, the way the editor's own commands make it. */
+async function transact(
+    page: Page,
+    label: string,
+    source: string,
+    editType: string | null,
+    mutate: string,
+    arg: unknown = null
+) {
+    await page.evaluate(
+        async ({ label, source, editType, mutate, arg }) => {
+            const w = window as any;
+            const engine = w.patchSyncEngine;
+            const font = w.currentFontModel;
+            // eslint-disable-next-line no-new-func
+            const run = new Function('font', 'arg', mutate);
+            engine.beginTransaction(label, null, {
+                compileChangeSource: source,
+                compileEditType: editType
+            });
+            try {
+                run(font, arg);
+            } finally {
+                engine.endTransaction();
+            }
+            await engine.waitForPendingCloudCommits?.();
+        },
+        { label, source, editType, mutate, arg }
+    );
+}
+
+/** Font Info's feature-code commit: a synthetic change on the feature's history. */
+async function editFeatureCode(page: Page, tag: string, code: string) {
+    await page.evaluate(
+        async ({ tag, code }) => {
+            const w = window as any;
+            const engine = w.patchSyncEngine;
+            const features = w.currentFontModel.features.features;
+            const index = features.findIndex((entry: any) => entry[0] === tag);
+            const codeData = features[index][1];
+            const previous = codeData.code || '';
+            const options = {
+                compileChangeSource: 'feature-code',
+                compileEditType: 'feature'
+            };
+            engine.beginTransaction(
+                'Edit feature code',
+                { type: 'feature', key: `feature:${tag}:1`, label: tag },
+                options
+            );
+            try {
+                codeData.code = code;
+                engine.applySyntheticChangeSet(
+                    'Edit feature code',
+                    [
+                        {
+                            op: 'set',
+                            path: ['features', 'features', index, 1, 'code'],
+                            oldValue: previous,
+                            newValue: code
+                        }
+                    ],
+                    options
+                );
+            } finally {
+                engine.endTransaction();
+            }
+            await engine.waitForPendingCloudCommits?.();
+        },
+        { tag, code }
+    );
+}
+
+const FEATURES = (ss02: string) => ({
+    classes: {},
+    prefixes: {},
+    features: [
+        ['ss01', { code: '# ss01' }],
+        ['ss02', { code: ss02 }]
+    ]
+});
+
+test('collaborators converge on every layout 2 room, across rooms and through a rebase', async ({
     browser,
     request
 }) => {
-    test.setTimeout(300000);
-    const runId = `layout-new-${Date.now().toString(36)}`;
+    test.setTimeout(720000);
+    const runId = `layout-rooms-${Date.now().toString(36)}`;
     const { emails, ownerContext, ownerPage, assetId } =
         await prepareOwnerCloudFont(
             browser,
             request,
             runId,
-            `Fustat-layout-new-${runId}`
+            `Fustat-layout-rooms-${runId}`,
+            {
+                beforeSave: async (page) => {
+                    // Several catalog and kerning rooms, as large fonts get.
+                    // The refused save below already moves this window to
+                    // the layout; the later save keeps it.
+                    await page.evaluate((layout) => {
+                        const engine = (window as any).patchSyncEngine;
+                        const adopt = engine.adoptRoomLayout.bind(engine);
+                        engine.adoptRoomLayout = (chosen: any, options: any) =>
+                            adopt({ ...chosen, ...layout }, options);
+                    }, FORCED_LAYOUT);
+                    // A part over the cloud's 5 MiB room limit: the upload
+                    // is refused before it starts, with a message that says
+                    // which part, shown by the Save As dialog.
+                    await transact(
+                        page,
+                        'Edit features',
+                        'feature-code',
+                        'feature',
+                        'font.features = arg;',
+                        FEATURES(`# ${'x'.repeat(6 * 1024 * 1024)}`)
+                    );
+                    await page.evaluate(() =>
+                        (window as any).saveFontAs({ destination: 'cloud' })
+                    );
+                    const dialog = page.locator('.font-window-save-as');
+                    const cloud = dialog.locator('[data-dest="cloud"]');
+                    await expect(cloud).toBeEnabled({ timeout: 30000 });
+                    await cloud.click();
+                    await dialog
+                        .locator('[data-name]')
+                        .fill(`Fustat-too-large-${runId}`);
+                    await dialog.locator('[data-go]').click();
+                    const notice = page.locator('.font-window-notice').last();
+                    await expect(notice).toContainText(
+                        'This font can’t be saved to the cloud.',
+                        { timeout: 60000 }
+                    );
+                    await expect(notice).toContainText(
+                        'Its OpenType feature code is too large for the cloud'
+                    );
+                    await dialog
+                        .getByRole('button', { name: 'Cancel' })
+                        .click();
+                    // The same window then saves the font once it fits.
+                    await transact(
+                        page,
+                        'Edit features',
+                        'feature-code',
+                        'feature',
+                        'font.features = arg;',
+                        FEATURES('# ss02')
+                    );
+                }
+            }
         );
     const contexts: BrowserContext[] = [ownerContext];
     try {
-        const saved = await fontParts(ownerPage);
-        expect(saved.layout).toMatchObject({ version: 2 });
+        const saved = await layoutState(ownerPage);
+        expect(saved.layout).toMatchObject({ version: 2, ...FORCED_LAYOUT });
+
+        const invitee = await openInviteeOnAsset(
+            browser,
+            request,
+            ownerPage,
+            emails,
+            assetId
+        );
+        contexts.push(invitee.inviteeContext);
+        const { inviteePage } = invitee;
+        await expectSameLayoutState([ownerPage, inviteePage], 'invitee opens');
+
+        // Pairs in two different kerning rooms, one pair both write, and one
+        // the invitee deletes.
+        const masterKerning = saved.kerning[0] as Record<string, number>;
+        const pairs = Object.keys(masterKerning);
+        const bucketOf = (pair: string) =>
+            layoutBucket(firstSide(pair), FORCED_LAYOUT.kerningBuckets);
+        const ownerPair = pairs[0];
+        const inviteePair = pairs.find(
+            (pair) => bucketOf(pair) !== bucketOf(ownerPair)
+        )!;
+        expect(inviteePair, 'pairs in two kerning rooms').toBeTruthy();
+        const rest = pairs.filter(
+            (pair) => pair !== ownerPair && pair !== inviteePair
+        );
+        const sharedPair = rest[0];
+        const deletedPair = rest[1];
+        // A glyph that joins a first-side kerning group.
+        const groupName = Object.keys(saved.groups.first)[0];
+        const grouped = new Set(Object.values(saved.groups.first).flat());
+        const joiner = saved.glyphs
+            .map(([name]: [string, number[]]) => name)
+            .find(
+                (name: string) => !grouped.has(name) && /^[a-z]+$/.test(name)
+            )!;
+        expect(groupName && joiner, 'a group and a glyph to add').toBeTruthy();
+        const masterId = await ownerPage.evaluate(
+            () => (window as any).currentFontModel.masters[0].id
+        );
+        const setPair = `
+            const master = font.masters.find((m) => m.id === arg.master);
+            master.kerning = { ...master.kerning, [arg.pair]: arg.value };`;
+
+        // ── Both collaborators edit every kind of room at once ──────────
+        await Promise.all([
+            (async () => {
+                await transact(
+                    ownerPage,
+                    'Edit kerning pair',
+                    'keyboard-kerning-value',
+                    'kerning-value',
+                    setPair,
+                    { master: masterId, pair: ownerPair, value: -111 }
+                );
+                await transact(
+                    ownerPage,
+                    'Edit kerning pair',
+                    'keyboard-kerning-value',
+                    'kerning-value',
+                    setPair,
+                    { master: masterId, pair: sharedPair, value: 11 }
+                );
+                await editFeatureCode(ownerPage, 'ss01', '# owner');
+                // The overview's Add Glyphs command: one transaction.
+                await ownerPage.evaluate(() => {
+                    (window as any).currentFontModel.addGlyphs([
+                        {
+                            name: 'layout.test',
+                            codepoints: [0xe100],
+                            category: 'Base'
+                        }
+                    ]);
+                });
+                // The add is committed asynchronously; rename once it is.
+                await ownerPage.waitForFunction(
+                    () =>
+                        (window as any).patchSyncEngine.hasGlyphInYDoc(
+                            'layout.test'
+                        ),
+                    undefined,
+                    { timeout: 30000 }
+                );
+                await ownerPage.evaluate(() => {
+                    (window as any).currentFontModel.renameGlyphs(
+                        new Map([['layout.test', 'layout.renamed']])
+                    );
+                });
+            })(),
+            (async () => {
+                await transact(
+                    inviteePage,
+                    'Edit kerning pair',
+                    'keyboard-kerning-value',
+                    'kerning-value',
+                    setPair,
+                    { master: masterId, pair: inviteePair, value: -222 }
+                );
+                await transact(
+                    inviteePage,
+                    'Edit kerning pair',
+                    'keyboard-kerning-value',
+                    'kerning-value',
+                    setPair,
+                    { master: masterId, pair: sharedPair, value: 22 }
+                );
+                await transact(
+                    inviteePage,
+                    'Delete kerning pair',
+                    'keyboard-kerning-value',
+                    'kerning-value',
+                    `const master = font.masters.find((m) => m.id === arg.master);
+                     const next = { ...master.kerning };
+                     delete next[arg.pair];
+                     master.kerning = next;`,
+                    { master: masterId, pair: deletedPair }
+                );
+                await transact(
+                    inviteePage,
+                    'Add kern group membership',
+                    'keyboard-kerning-groups',
+                    'kerning-groups',
+                    `const groups = {};
+                     for (const [name, members] of Object.entries(font.first_kern_groups ?? {})) {
+                         groups[name] = [...members];
+                     }
+                     groups[arg.group] = [...(groups[arg.group] ?? []), arg.glyph];
+                     font.first_kern_groups = groups;`,
+                    { group: groupName, glyph: joiner }
+                );
+                await transact(
+                    inviteePage,
+                    'Set glyph Unicode',
+                    'font-info',
+                    null,
+                    `const glyph = font.findGlyph('a');
+                     glyph.codepoints = [...(glyph.codepoints ?? []), 0xe200];`
+                );
+                await transact(
+                    inviteePage,
+                    'Edit font info',
+                    'font-info',
+                    null,
+                    'font.version = [7, 42];'
+                );
+            })()
+        ]);
+        await waitForCloudLiveIdle(ownerPage);
+        await waitForCloudLiveIdle(inviteePage);
+        const together = await expectSameLayoutState(
+            [ownerPage, inviteePage],
+            'edits at once'
+        );
+        const kerning = together.kerning[0] as Record<string, number>;
+        expect(kerning[ownerPair]).toBe(-111);
+        expect(kerning[inviteePair]).toBe(-222);
+        expect([11, 22]).toContain(kerning[sharedPair]);
+        expect(kerning[deletedPair]).toBeUndefined();
+        expect(together.groups.first[groupName]).toContain(joiner);
+        expect(together.features[0]).toEqual(['ss01', '# owner']);
+        const names = together.glyphs.map(([name]: [string, number[]]) => name);
+        expect(names).toContain('layout.renamed');
+        expect(names).not.toContain('layout.test');
+        expect(
+            together.glyphs.find(
+                ([name]: [string, number[]]) => name === 'a'
+            )![1]
+        ).toContain(0xe200);
+        expect(together.version).toEqual([7, 42]);
+
+        // ── Undo: each author undoes a font-wide edit of their own ──────
+        await transact(
+            ownerPage,
+            'Edit kerning pair',
+            'keyboard-kerning-value',
+            'kerning-value',
+            setPair,
+            { master: masterId, pair: ownerPair, value: -150 }
+        );
+        await expectSameLayoutState([ownerPage, inviteePage], 'kerning edit');
+        await ownerPage.evaluate(async (layerId) => {
+            await (window as any).runBridgeUndoRedo(
+                'undo',
+                'a',
+                'a',
+                layerId,
+                null
+            );
+            await (
+                window as any
+            ).patchSyncEngine.waitForPendingCloudCommits?.();
+        }, masterId);
+        const kerningUndone = await expectSameLayoutState(
+            [ownerPage, inviteePage],
+            'kerning undo'
+        );
+        expect(
+            (kerningUndone.kerning[0] as Record<string, number>)[ownerPair]
+        ).toBe(-111);
+
+        await editFeatureCode(inviteePage, 'ss01', '# invitee');
+        await expectSameLayoutState([ownerPage, inviteePage], 'feature edit');
+        await inviteePage.evaluate(async () => {
+            await (window as any).runBridgeUndoRedo(
+                'undo',
+                undefined,
+                'a',
+                null,
+                'feature:ss01:1',
+                'feature'
+            );
+            await (
+                window as any
+            ).patchSyncEngine.waitForPendingCloudCommits?.();
+        });
+        const featureUndone = await expectSameLayoutState(
+            [ownerPage, inviteePage],
+            'feature undo'
+        );
+        expect(featureUndone.features[0]).toEqual(['ss01', '# owner']);
+
+        // ── One edit larger than a live packet (1 MiB) ──────────────────
+        // Many values in one transaction travel as several room writes.
+        await transact(
+            inviteePage,
+            'Edit feature classes',
+            'feature-code',
+            'feature',
+            `const classes = {};
+             for (let i = 0; i < 10000; i++) {
+                 classes['c' + i] = { code: 'a b c d e f g h i j k l m n o p q r s t u v w x y z '.repeat(3) + i };
+             }
+             font.features = { ...font.features, classes };`
+        );
+        const large = await expectSameLayoutState(
+            [ownerPage, inviteePage],
+            'edit over 1 MiB',
+            180000
+        );
+        expect(Number(String(large.classes).split(':')[0])).toBeGreaterThan(
+            MAX_LIVE_PACKET_BYTES
+        );
+
+        // ── A rebase moves the kerning to more rooms ────────────────────
+        // The owner reopens the font with its kerning room reported over
+        // budget; the invitee, still connected, follows to the new rooms.
+        await ownerContext.close();
+        const rebased = await openAsOwner(
+            browser,
+            request,
+            emails.owner,
+            assetId,
+            (context) =>
+                context.addInitScript(() => {
+                    let engine: any;
+                    let reported = false;
+                    Object.defineProperty(window, 'patchSyncEngine', {
+                        configurable: true,
+                        get: () => engine,
+                        set: (value) => {
+                            engine = value;
+                            if (!value?.roomLayoutFill || value.__fillHooked) {
+                                return;
+                            }
+                            value.__fillHooked = true;
+                            const fill = value.roomLayoutFill.bind(value);
+                            value.roomLayoutFill = () => {
+                                const real = fill();
+                                if (!real || reported) return real;
+                                reported = true;
+                                return {
+                                    ...real,
+                                    largestKerningBucket: 40001,
+                                    kerningPairs: Math.max(
+                                        real.kerningPairs,
+                                        40001
+                                    )
+                                };
+                            };
+                        }
+                    });
+                })
+        );
+        contexts.push(rebased.context);
+        const ownerAgain = rebased.page;
+        await ownerAgain.waitForFunction(
+            () =>
+                (window as any).patchSyncEngine?.roomLayout?.kerningBuckets ===
+                6,
+            undefined,
+            { timeout: 120000 }
+        );
+        await waitForCloudLiveIdle(ownerAgain);
+        await inviteePage.waitForFunction(
+            () =>
+                (window as any).patchSyncEngine?.roomLayout?.kerningBuckets ===
+                6,
+            undefined,
+            { timeout: 120000 }
+        );
+        const afterRebase = await expectSameLayoutState(
+            [ownerAgain, inviteePage],
+            'after the rebase'
+        );
+        expect(afterRebase.kerning).toEqual(kerningUndone.kerning);
+        await transact(
+            inviteePage,
+            'Edit kerning pair',
+            'keyboard-kerning-value',
+            'kerning-value',
+            setPair,
+            { master: masterId, pair: sharedPair, value: 33 }
+        );
+        const edited = await expectSameLayoutState(
+            [ownerAgain, inviteePage],
+            'kerning edit in the new rooms'
+        );
+        expect((edited.kerning[0] as Record<string, number>)[sharedPair]).toBe(
+            33
+        );
+
+        // ── A window that opens now loads it all from the cloud ─────────
         const late = await openAsOwner(browser, request, emails.owner, assetId);
         contexts.push(late.context);
-        const reopened = await fontParts(late.page);
-        expect(reopened).toEqual(saved);
+        await expectSameLayoutState(
+            [ownerAgain, inviteePage, late.page],
+            'a window opened afterwards'
+        );
     } finally {
         for (const context of contexts) {
             await context.close().catch(() => undefined);
