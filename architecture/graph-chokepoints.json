@@ -85,7 +85,7 @@
             "path": "webapp/js",
             "identifier": "toCompileJSON",
             "allowedSites": [
-                "webapp/js/babelfont-model.ts::Font.toJSONString",
+                "webapp/js/babelfont-model.ts::Font.jsonSerialization",
                 "webapp/js/font-manager.ts::FontManager.collectChangedLayerUpdatesFromModel",
                 "webapp/js/font-manager.ts::FontManager.collectChangedLayerUpdatesFromTargets",
                 "webapp/js/glyph-canvas/outline-editor.ts::OutlineEditor.buildExactLayerDataFromModel",
