@@ -194,4 +194,32 @@ describe('room layout 2 in the engine', () => {
             new Set([kerningDocumentId(kerningBucketFor('@round:o', 3))])
         );
     });
+
+    test('a peer hears that the layout changed when an upgraded core arrives', () => {
+        const owner = new PatchSyncEngine('layout-owner-2');
+        owner.initFromJson(makeFont());
+        const peer = new PatchSyncEngine('layout-peer-2');
+        peer.initFromJson({});
+        peer.applyDocumentSetState(owner.encodeDocumentSet());
+        const heard = [];
+        peer.onRoomLayoutChange((layout) => heard.push(layout));
+        owner.adoptRoomLayout({ version: 2, catalogBuckets: 1, kerningBuckets: 2 });
+        const packets = [];
+        owner.onLocalUpdate((update, message, _entries, documentId) =>
+            packets.push({ update, message, documentId })
+        );
+        expect(owner.publishAdoptedRoomLayout()).toBe(true);
+        for (const packet of packets) {
+            peer.applyRemoteUpdate(packet.update, undefined, [packet.message], packet.documentId);
+        }
+        expect(heard).toEqual([{ version: 2, catalogBuckets: 1, kerningBuckets: 2 }]);
+        // The rooms catch up after the core change; kerning comes back.
+        expect(snapshotOf(peer).masters[0].kerning).toEqual({});
+        for (const shard of owner.encodeDocumentSet()) {
+            if (shard.documentId.startsWith('kerning:') || shard.documentId === 'features') {
+                peer.applyDocumentCatchUp(shard.documentId, shard.bytes);
+            }
+        }
+        expect(snapshotOf(peer)).toEqual(snapshotOf(owner));
+    });
 });

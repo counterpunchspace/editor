@@ -1160,10 +1160,14 @@ export class PatchSyncEngine {
         this._bindDocUpdates(this.yDoc, FONT_CORE_DOCUMENT_ID);
         this._bindDocUpdates(this.depsDoc, FONT_DEPS_DOCUMENT_ID);
         this.yDoc.getMap(LAYOUT_MAP_KEY).observe(() => {
-            const before = this._roomLayoutCache;
             this._roomLayoutCache = undefined;
             const after = this.roomLayout;
-            if (JSON.stringify(before ?? null) !== JSON.stringify(after)) {
+            // Compare with what listeners last heard, not with the cache:
+            // code running in the same remote apply may already have read
+            // the new layout.
+            const key = JSON.stringify(after);
+            if (key !== this._notifiedRoomLayoutKey) {
+                this._notifiedRoomLayoutKey = key;
                 for (const listener of [...this._roomLayoutListeners]) {
                     listener(after);
                 }
@@ -1221,6 +1225,7 @@ export class PatchSyncEngine {
 
     private _roomLayoutCache: RoomLayout | null | undefined = undefined;
     private _roomLayoutListeners = new Set<(layout: RoomLayout | null) => void>();
+    private _notifiedRoomLayoutKey = 'null';
 
     /** Called when font-core's layout changes (a peer upgraded the font). */
     onRoomLayoutChange(listener: (layout: RoomLayout | null) => void): () => void {
