@@ -15,6 +15,7 @@
  * sync-chunk, update-chunk, or state-vector exchange.
  */
 
+import { isLayoutDocumentId } from './filesystem-plugins/cloud-room-layout';
 import { ROOM_LAYOUT_VERSION } from './filesystem-plugins/cloud-room-layout';
 import {
     fitEnvelopeForWire,
@@ -1930,7 +1931,27 @@ export class CloudAdapter implements FileSystemAdapter {
                 const authenticatedSocket = this._ws;
                 this._initialServerStateApplied = false;
                 this._initialSyncDurable = false;
-                if (msg.seedRequired === true) {
+                const localSeedState =
+                    msg.seedRequired === true &&
+                    isLayoutDocumentId(this._documentId)
+                        ? this._encodeLocalState()
+                        : null;
+                if (
+                    localSeedState !== null &&
+                    (!localSeedState ||
+                        localSeedState.length <= 2)
+                ) {
+                    // An empty room layout 2 room that this window has
+                    // nothing for: a peer that follows an upgrade. The owner
+                    // fills the room; seeding it empty would race them.
+                    console.log(
+                        'CloudAdapter: layout room is empty here; waiting for its owner seed'
+                    );
+                    this._ws?.close(
+                        CLIENT_RECONNECT_CLOSE_CODE,
+                        'awaiting-layout-room-seed'
+                    );
+                } else if (msg.seedRequired === true) {
                     console.log(
                         'CloudAdapter: room reseed required; seeding via HTTP'
                     );
