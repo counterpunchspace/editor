@@ -1931,19 +1931,15 @@ export class CloudAdapter implements FileSystemAdapter {
                 const authenticatedSocket = this._ws;
                 this._initialServerStateApplied = false;
                 this._initialSyncDurable = false;
-                const localSeedState =
-                    msg.seedRequired === true &&
-                    isLayoutDocumentId(this._documentId)
-                        ? this._encodeLocalState()
-                        : null;
                 if (
-                    localSeedState !== null &&
-                    (!localSeedState ||
-                        localSeedState.length <= 2)
+                    msg.seedRequired === true &&
+                    isLayoutDocumentId(this._documentId) &&
+                    this._bridge?.isAdoptingRoomLayout?.() !== true
                 ) {
-                    // An empty room layout 2 room that this window has
-                    // nothing for: a peer that follows an upgrade. The owner
-                    // fills the room; seeding it empty would race them.
+                    // Only the window moving the asset to room layout 2
+                    // seeds its rooms. Any other window's copy may predate
+                    // the room's content; seeding from it would race the
+                    // owner's seed or replace it.
                     console.log(
                         'CloudAdapter: layout room is empty here; waiting for its owner seed'
                     );

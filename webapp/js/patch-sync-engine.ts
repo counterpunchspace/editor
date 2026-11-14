@@ -1813,6 +1813,14 @@ export class PatchSyncEngine {
     private _adoptedLayoutCoreBaseline: Uint8Array | null = null;
 
     /**
+     * True between adoptRoomLayout and publishAdoptedRoomLayout: this window
+     * is the one moving the asset to layout 2 and may seed its empty rooms.
+     */
+    isAdoptingRoomLayout(): boolean {
+        return this._adoptedLayoutCoreBaseline !== null;
+    }
+
+    /**
      * Move a layout 1 asset to room layout 2 in this window: core gets the
      * layout and loses its features, catalog and master kerning; the rooms
      * get them. Nothing is sent. A new asset then seeds the whole document
