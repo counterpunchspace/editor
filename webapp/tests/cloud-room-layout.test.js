@@ -9,6 +9,7 @@ const {
     layoutDocumentIds,
     layoutDocumentKind,
     layoutHash,
+    codepointIndexFromCatalog,
     parseKerningKey,
     parseRoomLayout
 } = require('../js/filesystem-plugins/cloud-room-layout');
@@ -78,5 +79,15 @@ describe('room layout 2', () => {
         expect(parseRoomLayout(null)).toBeNull();
         expect(layoutDocumentIds({ ...layout, catalogBuckets: 2, kerningBuckets: 1 }))
             .toEqual(['features', catalogDocumentId(0), catalogDocumentId(1), kerningDocumentId(0)]);
+    });
+
+    test('the codepoint index is derived from catalog entries in either shape', () => {
+        expect(
+            codepointIndexFromCatalog({
+                a: { codepoints: [65] },
+                b: { codepoints: { 66: true, 65: true } },
+                gone: { codepoints: [67], deleted: true }
+            })
+        ).toEqual({ 65: ['a', 'b'], 66: ['b'] });
     });
 });

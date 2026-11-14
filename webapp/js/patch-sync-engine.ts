@@ -1295,13 +1295,20 @@ export class PatchSyncEngine {
         return doc;
     }
 
+    /**
+     * The features room stores `features` exactly as font-core did: root map
+     * `font`, key `features`, so paths and the indexed feature list match.
+     */
+    private _featuresRoot(): Y.Map<unknown> {
+        return this._ensureLayoutDoc(FONT_FEATURES_DOCUMENT_ID).getMap(
+            FEATURES_ROOT_KEY
+        );
+    }
+
     private _featuresYMap(): Y.Map<unknown> | null {
-        if (this.roomLayout) {
-            return this._ensureLayoutDoc(FONT_FEATURES_DOCUMENT_ID).getMap(
-                FEATURES_ROOT_KEY
-            );
-        }
-        const value = this.fontMap.get('features');
+        const value = this.roomLayout
+            ? this._featuresRoot().get('features')
+            : this.fontMap.get('features');
         return value instanceof Y.Map ? value : null;
     }
 
@@ -1482,21 +1489,6 @@ export class PatchSyncEngine {
         }
     }
 
-    private _replaceRootMap(map: Y.Map<unknown>, value: unknown): void {
-        const next =
-            value && typeof value === 'object' && !Array.isArray(value)
-                ? (value as Record<string, unknown>)
-                : {};
-        for (const key of [...map.keys()]) {
-            if (!(key in next)) {
-                map.delete(key);
-            }
-        }
-        for (const [key, child] of Object.entries(next)) {
-            this._replaceYMapEntry(map, key, child);
-        }
-    }
-
     /**
      * Layout 2 writes that no single Y path can express. Returns true when
      * the write was handled here.
@@ -1515,7 +1507,7 @@ export class PatchSyncEngine {
         }
         const root = path[0];
         if (root === 'features' && path.length === 1) {
-            this._replaceRootMap(this._featuresYMap() as Y.Map<unknown>, value);
+            setYPath(this._featuresRoot(), ['features'], value);
             return true;
         }
         if (root === CORE_CODEPOINT_INDEX_KEY) {
@@ -1607,7 +1599,7 @@ export class PatchSyncEngine {
         }
         const root = path[0];
         if (root === 'features' && path.length === 1) {
-            this._replaceRootMap(this._featuresYMap() as Y.Map<unknown>, {});
+            this._featuresRoot().delete('features');
             return true;
         }
         if (root === CORE_CODEPOINT_INDEX_KEY) {
@@ -1712,7 +1704,8 @@ export class PatchSyncEngine {
     private _readTopLevelJsonFromY(key: string): unknown {
         if (this.roomLayout) {
             if (key === 'features') {
-                return fromYType(this._featuresYMap());
+                const features = this._featuresRoot().get('features');
+                return features === undefined ? undefined : fromYType(features);
             }
             if (key === CORE_GLYPH_CATALOG_KEY) {
                 return this._readCatalogJson();
@@ -1832,10 +1825,7 @@ export class PatchSyncEngine {
             if (features !== undefined) {
                 this._ensureLayoutDoc(FONT_FEATURES_DOCUMENT_ID).transact(
                     () =>
-                        this._replaceRootMap(
-                            this._featuresYMap() as Y.Map<unknown>,
-                            features
-                        ),
+                        setYPath(this._featuresRoot(), ['features'], features),
                     FONT_EDIT_ORIGIN
                 );
             }
@@ -3476,7 +3466,7 @@ export class PatchSyncEngine {
             const doc = this._ensureLayoutDoc(documentId);
             return {
                 map: doc.getMap(FEATURES_ROOT_KEY),
-                path: path.slice(1),
+                path,
                 doc,
                 documentId
             };

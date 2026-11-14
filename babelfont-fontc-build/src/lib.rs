@@ -3912,8 +3912,10 @@ fn layout_features_json() -> Option<serde_json::Value> {
     let guard = FEATURES_DOC.lock().unwrap();
     let doc = guard.as_ref()?;
     let txn = doc.transact();
-    let map = txn.get_map("features")?;
-    Some(yrs_value_to_json(yrs::types::Value::YMap(map), &txn))
+    // Stored as in font-core: root map `font`, key `features`.
+    let font = txn.get_map("font")?;
+    let value = font.get(&txn, "features")?;
+    Some(yrs_value_to_json(value, &txn))
 }
 
 type MasterKerning = (
@@ -7599,8 +7601,9 @@ mod tests {
 
         let features_doc = Doc::new();
         {
-            let map = features_doc.get_or_insert_map("features");
+            let font = features_doc.get_or_insert_map("font");
             let mut txn = features_doc.transact_mut();
+            let map: yrs::MapRef = font.insert(&mut txn, "features", MapPrelim::<Any>::new());
             let classes: yrs::MapRef = map.insert(&mut txn, "classes", MapPrelim::<Any>::new());
             classes.insert(&mut txn, "upper", "A B");
             map.insert(&mut txn, "prefixes", MapPrelim::<Any>::new());

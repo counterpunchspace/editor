@@ -1,7 +1,8 @@
 /**
  * Room layout 2: bulk font-wide data leaves font-core.
  *
- *   features      `font.features`, same structure, root map `features`
+ *   features      `font.features`, stored as in font-core (root map `font`,
+ *                 key `features`)
  *   catalog:<n>   the glyph catalog, glyphId → entry, root map `catalog`
  *   kerning:<n>   kerning pairs of every master, root map `kerning`,
  *                 key `<masterId>|<l|r>|<first>:<second>` → value
@@ -23,7 +24,8 @@ export const KERNING_DOCUMENT_PREFIX = 'kerning:';
 export const MAX_LAYOUT_BUCKETS = 1024;
 export const LAYOUT_MAP_KEY = 'layout';
 export const ROOM_LAYOUT_VERSION = 2;
-export const FEATURES_ROOT_KEY = 'features';
+/** The features room keeps font-core's shape: root map `font`, key `features`. */
+export const FEATURES_ROOT_KEY = 'font';
 export const CATALOG_ROOT_KEY = 'catalog';
 export const KERNING_ROOT_KEY = 'kerning';
 
@@ -224,7 +226,10 @@ export function mergeLayoutDocumentsIntoFontJson(
 ): Record<string, unknown> {
     const features = layoutDocs.get(FONT_FEATURES_DOCUMENT_ID);
     if (features) {
-        fontJson.features = fromYType(features.getMap(FEATURES_ROOT_KEY));
+        const value = features.getMap(FEATURES_ROOT_KEY).get('features');
+        if (value !== undefined) {
+            fontJson.features = fromYType(value);
+        }
     }
     const catalog: Record<string, unknown> = {};
     let hasCatalog = false;
@@ -291,10 +296,17 @@ export function codepointIndexFromCatalog(
     const index: Record<string, string[]> = {};
     for (const [glyphId, raw] of Object.entries(catalog ?? {})) {
         const entry = (raw ?? {}) as { codepoints?: unknown; deleted?: unknown };
-        if (entry.deleted === true || !Array.isArray(entry.codepoints)) {
+        if (entry.deleted === true) {
             continue;
         }
-        for (const codepoint of entry.codepoints) {
+        // Stored catalogs keep codepoints as a membership map
+        // (`{ "65": true }`); in memory they are an array.
+        const codepoints = Array.isArray(entry.codepoints)
+            ? entry.codepoints
+            : entry.codepoints && typeof entry.codepoints === 'object'
+              ? Object.keys(entry.codepoints as object)
+              : [];
+        for (const codepoint of codepoints) {
             const key = String(codepoint);
             (index[key] ??= []).includes(glyphId) || index[key].push(glyphId);
         }
