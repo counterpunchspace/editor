@@ -28,7 +28,7 @@ __pycache__/
 *~
 
 # Node.js
-node_modules/
+node_modules
 
 # Compilation test outputs
 webapp/compilation-test/output/
