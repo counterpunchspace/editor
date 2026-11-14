@@ -3,9 +3,12 @@ const path = require('path');
 const Y = require('yjs');
 
 const fontManager = require('../js/font-manager').default;
-const { setStartupEditingCompileGateForTests } = require('../js/font-manager');
+const {
+    setMaxJsStringLengthForTests,
+    setStartupEditingCompileGateForTests
+} = require('../js/font-manager');
 const { PatchSyncEngine: ChangeBridge } = require('../js/patch-sync-engine');
-const { FolderSaveTracker } = require('../js/folder-source');
+const { FolderSaveTracker, hashBytes } = require('../js/folder-source');
 const { fontCompilation } = require('../js/font-compilation');
 const { Font, withSuppressedModelRecording } = require('../js/babelfont-model');
 const {
@@ -1451,8 +1454,9 @@ describe('FontManager editing subset inclusion', () => {
         };
         const fakeCurrentFont = {
             babelfontJson: JSON.stringify(fontData),
-            get builtBabelfontJson() {
-                return this.babelfontJson;
+            serializationEpoch: 0,
+            serializedFontData() {
+                return JSON.parse(this.babelfontJson);
             },
             babelfontData: fontData,
             fontModel: Font.fromData(fontData),
@@ -1462,6 +1466,7 @@ describe('FontManager editing subset inclusion', () => {
             markDirty: jest.fn(),
             syncJsonFromModel: jest.fn(function () {
                 this.babelfontJson = this.fontModel.toJSONString();
+                this.serializationEpoch += 1;
             })
         };
 
@@ -1523,7 +1528,7 @@ describe('FontManager editing subset inclusion', () => {
         );
     }
 
-    test('validateBabelfontJsonForRust preserves DefaultForMaster layer ids instead of rewriting them', () => {
+    test('validateBabelfontDataForRust preserves DefaultForMaster layer ids instead of rewriting them', () => {
         const fontData = cloneJson(fontManager.currentFont.babelfontData);
         fontData.glyphs[0].name = 'a';
         fontData.glyphs[0].layers[0].id = 'temp-layer-id';
@@ -1533,59 +1538,50 @@ describe('FontManager editing subset inclusion', () => {
             master: masterId
         };
 
-        const validatedJson = fontManager['validateBabelfontJsonForRust'](
-            JSON.stringify(fontData),
-            true
-        );
-        const validatedData = JSON.parse(validatedJson);
+        const validatedData = cloneJson(fontData);
+        // Validation reads a parsed copy; it never repairs the font.
+        expect(() =>
+            fontManager['validateBabelfontDataForRust'](validatedData, true)
+        ).not.toThrow();
 
-        expect(validatedData.glyphs[0].layers[0].id).toBe('temp-layer-id');
-        expect(validatedData.glyphs[0].layers[0].master).toEqual({
+        expect(fontData.glyphs[0].layers[0].id).toBe('temp-layer-id');
+        expect(fontData.glyphs[0].layers[0].master).toEqual({
             type: 'DefaultForMaster',
             master: masterId
         });
     });
 
-    test('validateBabelfontJsonForRust rejects missing layer widths instead of synthesizing zero', () => {
+    test('validateBabelfontDataForRust rejects missing layer widths instead of synthesizing zero', () => {
         const fontData = cloneJson(fontManager.currentFont.babelfontData);
         delete fontData.glyphs[0].layers[0].width;
 
         expect(() =>
-            fontManager['validateBabelfontJsonForRust'](
-                JSON.stringify(fontData),
-                true
-            )
+            fontManager['validateBabelfontDataForRust'](fontData, true)
         ).toThrow(/invalid width/);
     });
 
-    test('validateBabelfontJsonForRust rejects legacy string path nodes', () => {
+    test('validateBabelfontDataForRust rejects legacy string path nodes', () => {
         const fontData = cloneJson(fontManager.currentFont.babelfontData);
         fontData.glyphs[0].layers[0].shapes = [
             { nodes: '12345 67890 m', closed: false }
         ];
 
         expect(() =>
-            fontManager['validateBabelfontJsonForRust'](
-                JSON.stringify(fontData),
-                true
-            )
+            fontManager['validateBabelfontDataForRust'](fontData, true)
         ).toThrow(
             /Path shape nodes must be an array before compile validation/
         );
     });
 
-    test('validateBabelfontJsonForRust accepts object-shaped master kerning', () => {
+    test('validateBabelfontDataForRust accepts object-shaped master kerning', () => {
         const fontData = cloneJson(fontManager.currentFont.babelfontData);
         fontData.masters[0].kerning = {
             'A:V': -80,
             'A:@RightGroup': -60
         };
 
-        const validatedJson = fontManager['validateBabelfontJsonForRust'](
-            JSON.stringify(fontData),
-            true
-        );
-        const validatedData = JSON.parse(validatedJson);
+        const validatedData = cloneJson(fontData);
+        fontManager['validateBabelfontDataForRust'](validatedData, true);
 
         expect(validatedData.masters[0].kerning).toEqual({
             'A:V': -80,
@@ -1593,7 +1589,7 @@ describe('FontManager editing subset inclusion', () => {
         });
     });
 
-    test('validateBabelfontJsonForRust accepts cloud catalog codepoint sets', () => {
+    test('validateBabelfontDataForRust accepts cloud catalog codepoint sets', () => {
         const fontData = cloneJson(fontManager.currentFont.babelfontData);
         fontData.glyphCatalog = {
             'glyph-a': {
@@ -1607,30 +1603,22 @@ describe('FontManager editing subset inclusion', () => {
             }
         };
 
-        const validatedJson = fontManager['validateBabelfontJsonForRust'](
-            JSON.stringify(fontData),
-            true
-        );
+        const validatedData = cloneJson(fontData);
+        fontManager['validateBabelfontDataForRust'](validatedData, true);
 
-        expect(
-            JSON.parse(validatedJson).glyphCatalog['glyph-a'].codepoints
-        ).toEqual({
+        expect(validatedData.glyphCatalog['glyph-a'].codepoints).toEqual({
             65: true
         });
     });
 
-    test('validateBabelfontJsonForRust returns the input string when needsValidation is false', () => {
-        const input = fontManager.currentFont.babelfontJson;
-        const parseSpy = jest.spyOn(JSON, 'parse');
+    test('validateFontDataForRust does not read the font when needsValidation is false', () => {
+        const font = fontManager.currentFont;
+        const serializedFontData = jest.spyOn(font, 'serializedFontData');
 
-        const output = fontManager['validateBabelfontJsonForRust'](
-            input,
-            false
-        );
+        fontManager['validateFontDataForRust'](font, false);
 
-        expect(output).toBe(input);
-        expect(parseSpy).not.toHaveBeenCalled();
-        parseSpy.mockRestore();
+        expect(serializedFontData).not.toHaveBeenCalled();
+        serializedFontData.mockRestore();
     });
 
     test('startup compile does not call toJSONString when the worker document is ready', async () => {
@@ -1658,8 +1646,8 @@ describe('FontManager editing subset inclusion', () => {
         await fontManager.compileEditingFont('a', [], ['a']);
 
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
-        expect(compileEditingSpy.mock.calls[0][2]).toEqual(['a', 'n']);
-        expect(compileEditingSpy.mock.calls[0][3]).toMatchObject({
+        expect(compileEditingSpy.mock.calls[0][1]).toEqual(['a', 'n']);
+        expect(compileEditingSpy.mock.calls[0][2]).toMatchObject({
             compileSource: 'keyboard-outline'
         });
     });
@@ -1671,12 +1659,12 @@ describe('FontManager editing subset inclusion', () => {
         await fontManager.compileEditingFont('a', [], ['a']);
 
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
-        expect(compileEditingSpy.mock.calls[0][2]).toEqual(['a', 'n']);
-        expect(compileEditingSpy.mock.calls[0][3]).toMatchObject({
+        expect(compileEditingSpy.mock.calls[0][1]).toEqual(['a', 'n']);
+        expect(compileEditingSpy.mock.calls[0][2]).toMatchObject({
             compileSource: 'keyboard-outline'
         });
         expect(
-            compileEditingSpy.mock.calls[0][3].optionOverrides
+            compileEditingSpy.mock.calls[0][2].optionOverrides
         ).toBeUndefined();
         expect(fontManager.forceFullEditingCacheRefresh).toBe(false);
     });
@@ -1692,7 +1680,7 @@ describe('FontManager editing subset inclusion', () => {
         await fontManager.compileEditingFont('a', [], ['a']);
 
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
-        expect(compileEditingSpy.mock.calls[0][3]).toMatchObject({
+        expect(compileEditingSpy.mock.calls[0][2]).toMatchObject({
             compileSource: 'mouse-drag-outline',
             dragActive: true,
             optionOverrides: {
@@ -1724,7 +1712,7 @@ describe('FontManager editing subset inclusion', () => {
         await fontManager.compileEditingFont('a', [], ['a']);
 
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
-        expect(compileEditingSpy.mock.calls[0][3]).toMatchObject({
+        expect(compileEditingSpy.mock.calls[0][2]).toMatchObject({
             compileSource: 'mouse-drag-outline',
             dragActive: true,
             optionOverrides: {
@@ -1752,7 +1740,7 @@ describe('FontManager editing subset inclusion', () => {
         ).not.toHaveBeenCalled();
         expect(fontManager.pendingBabelfontJsonSyncAfterDrag).toBe(true);
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
-        expect(compileEditingSpy.mock.calls[0][3]).toMatchObject({
+        expect(compileEditingSpy.mock.calls[0][2]).toMatchObject({
             compileSource: 'mouse-drag-outline',
             usePatchedWorkerCache: true,
             usePreviewLayerOverlay: true
@@ -1770,11 +1758,11 @@ describe('FontManager editing subset inclusion', () => {
         );
         expect(fontManager.pendingBabelfontJsonSyncAfterDrag).toBe(false);
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
-        expect(compileEditingSpy.mock.calls[0][3]).toMatchObject({
+        expect(compileEditingSpy.mock.calls[0][2]).toMatchObject({
             compileSource: 'keyboard-outline'
         });
         expect(
-            compileEditingSpy.mock.calls[0][3].optionOverrides
+            compileEditingSpy.mock.calls[0][2].optionOverrides
         ).toBeUndefined();
     });
 
@@ -1793,11 +1781,11 @@ describe('FontManager editing subset inclusion', () => {
         ).not.toHaveBeenCalled();
         expect(fontManager.pendingBabelfontJsonSyncAfterDrag).toBe(true);
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
-        expect(compileEditingSpy.mock.calls[0][3]).toMatchObject({
+        expect(compileEditingSpy.mock.calls[0][2]).toMatchObject({
             compileSource: 'keyboard-outline'
         });
         expect(
-            compileEditingSpy.mock.calls[0][3].optionOverrides
+            compileEditingSpy.mock.calls[0][2].optionOverrides
         ).toBeUndefined();
     });
 
@@ -1812,7 +1800,7 @@ describe('FontManager editing subset inclusion', () => {
         );
         expect(fontManager.pendingBabelfontJsonSyncAfterDrag).toBe(false);
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
-        expect(compileEditingSpy.mock.calls[0][3]).toMatchObject({
+        expect(compileEditingSpy.mock.calls[0][2]).toMatchObject({
             compileSource: 'remote-outline',
             optionOverrides: {
                 skip_features: true,
@@ -1837,7 +1825,7 @@ describe('FontManager editing subset inclusion', () => {
         ).not.toHaveBeenCalled();
         expect(fontManager.pendingBabelfontJsonSyncAfterDrag).toBe(true);
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
-        expect(compileEditingSpy.mock.calls[0][3]).toMatchObject({
+        expect(compileEditingSpy.mock.calls[0][2]).toMatchObject({
             compileSource: 'remote-outline',
             optionOverrides: {
                 skip_features: true,
@@ -1862,11 +1850,11 @@ describe('FontManager editing subset inclusion', () => {
         ).not.toHaveBeenCalled();
         expect(fontManager.pendingBabelfontJsonSyncAfterDrag).toBe(true);
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
-        expect(compileEditingSpy.mock.calls[0][3]).toMatchObject({
+        expect(compileEditingSpy.mock.calls[0][2]).toMatchObject({
             compileSource: 'keyboard-outline'
         });
         expect(
-            compileEditingSpy.mock.calls[0][3].optionOverrides
+            compileEditingSpy.mock.calls[0][2].optionOverrides
         ).toBeUndefined();
     });
 
@@ -1880,7 +1868,7 @@ describe('FontManager editing subset inclusion', () => {
         await fontManager.compileEditingFont('a', [], ['a']);
 
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
-        expect(compileEditingSpy.mock.calls[0][3]).toMatchObject({
+        expect(compileEditingSpy.mock.calls[0][2]).toMatchObject({
             compileSource: 'keyboard-sidebearing',
             optionOverrides: {
                 skip_features: true,
@@ -1899,11 +1887,11 @@ describe('FontManager editing subset inclusion', () => {
             fontManager.currentFont.syncJsonFromModel
         ).not.toHaveBeenCalled();
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
-        expect(compileEditingSpy.mock.calls[0][3]).toMatchObject({
+        expect(compileEditingSpy.mock.calls[0][2]).toMatchObject({
             compileSource: 'master-reinterpolate-batch'
         });
         expect(
-            compileEditingSpy.mock.calls[0][3].optionOverrides
+            compileEditingSpy.mock.calls[0][2].optionOverrides
         ).toBeUndefined();
     });
 
@@ -1915,11 +1903,11 @@ describe('FontManager editing subset inclusion', () => {
         await fontManager.recompileEditingFont();
 
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
-        expect(compileEditingSpy.mock.calls[0][3]).not.toMatchObject({
+        expect(compileEditingSpy.mock.calls[0][2]).not.toMatchObject({
             compileSource: 'keyboard-outline'
         });
         expect(
-            compileEditingSpy.mock.calls[0][3]?.optionOverrides
+            compileEditingSpy.mock.calls[0][2]?.optionOverrides
         ).toBeUndefined();
     });
 
@@ -1934,7 +1922,7 @@ describe('FontManager editing subset inclusion', () => {
         await fontManager.compileEditingFont('a', [], ['a']);
 
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
-        expect(compileEditingSpy.mock.calls[0][3]).toMatchObject({
+        expect(compileEditingSpy.mock.calls[0][2]).toMatchObject({
             compileSource: 'mouse-drag-anchor',
             dragActive: true,
             optionOverrides: {
@@ -1942,10 +1930,10 @@ describe('FontManager editing subset inclusion', () => {
             }
         });
         expect(
-            compileEditingSpy.mock.calls[0][3].optionOverrides
+            compileEditingSpy.mock.calls[0][2].optionOverrides
         ).not.toHaveProperty('skip_kerning');
         expect(
-            compileEditingSpy.mock.calls[0][3].optionOverrides
+            compileEditingSpy.mock.calls[0][2].optionOverrides
         ).not.toHaveProperty('skip_features');
     });
 
@@ -1955,11 +1943,11 @@ describe('FontManager editing subset inclusion', () => {
         await fontManager.compileEditingFont('a', [], ['a']);
 
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
-        expect(compileEditingSpy.mock.calls[0][3]).toMatchObject({
+        expect(compileEditingSpy.mock.calls[0][2]).toMatchObject({
             compileSource: 'keyboard-anchor'
         });
         expect(
-            compileEditingSpy.mock.calls[0][3].optionOverrides
+            compileEditingSpy.mock.calls[0][2].optionOverrides
         ).toBeUndefined();
     });
 
@@ -2026,10 +2014,10 @@ describe('FontManager editing subset inclusion', () => {
 
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
         expect(
-            compileEditingSpy.mock.calls[0][3].optionOverrides
+            compileEditingSpy.mock.calls[0][2].optionOverrides
         ).not.toHaveProperty('skip_features');
         expect(
-            compileEditingSpy.mock.calls[0][3].optionOverrides
+            compileEditingSpy.mock.calls[0][2].optionOverrides
         ).not.toHaveProperty('skip_kerning');
     });
 
@@ -2039,17 +2027,17 @@ describe('FontManager editing subset inclusion', () => {
         await fontManager.compileEditingFont('a', [], ['a']);
 
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
-        expect(compileEditingSpy.mock.calls[0][3]).toMatchObject({
+        expect(compileEditingSpy.mock.calls[0][2]).toMatchObject({
             compileSource: 'remote-anchor',
             optionOverrides: {
                 produce_varc_table: false
             }
         });
         expect(
-            compileEditingSpy.mock.calls[0][3].optionOverrides
+            compileEditingSpy.mock.calls[0][2].optionOverrides
         ).not.toHaveProperty('skip_kerning');
         expect(
-            compileEditingSpy.mock.calls[0][3].optionOverrides
+            compileEditingSpy.mock.calls[0][2].optionOverrides
         ).not.toHaveProperty('skip_features');
     });
 
@@ -2059,11 +2047,11 @@ describe('FontManager editing subset inclusion', () => {
         await fontManager.compileEditingFont('a', [], ['a']);
 
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
-        expect(compileEditingSpy.mock.calls[0][3]).toMatchObject({
+        expect(compileEditingSpy.mock.calls[0][2]).toMatchObject({
             compileSource: 'keyboard-anchor'
         });
         expect(
-            compileEditingSpy.mock.calls[0][3].optionOverrides
+            compileEditingSpy.mock.calls[0][2].optionOverrides
         ).toBeUndefined();
     });
 
@@ -2073,20 +2061,20 @@ describe('FontManager editing subset inclusion', () => {
         await fontManager.compileEditingFont('a', [], ['a']);
 
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
-        expect(compileEditingSpy.mock.calls[0][3]).toMatchObject({
+        expect(compileEditingSpy.mock.calls[0][2]).toMatchObject({
             compileSource: 'keyboard-kerning-value',
             optionOverrides: {
                 produce_varc_table: false
             }
         });
         expect(
-            compileEditingSpy.mock.calls[0][3].optionOverrides
+            compileEditingSpy.mock.calls[0][2].optionOverrides
         ).not.toHaveProperty('skip_outlines');
         expect(
-            compileEditingSpy.mock.calls[0][3].optionOverrides
+            compileEditingSpy.mock.calls[0][2].optionOverrides
         ).not.toHaveProperty('skip_kerning');
         expect(
-            compileEditingSpy.mock.calls[0][3].optionOverrides
+            compileEditingSpy.mock.calls[0][2].optionOverrides
         ).not.toHaveProperty('skip_features');
     });
 
@@ -2096,20 +2084,20 @@ describe('FontManager editing subset inclusion', () => {
         await fontManager.compileEditingFont('a', [], ['a']);
 
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
-        expect(compileEditingSpy.mock.calls[0][3]).toMatchObject({
+        expect(compileEditingSpy.mock.calls[0][2]).toMatchObject({
             compileSource: 'remote-kerning-groups',
             optionOverrides: {
                 produce_varc_table: false
             }
         });
         expect(
-            compileEditingSpy.mock.calls[0][3].optionOverrides
+            compileEditingSpy.mock.calls[0][2].optionOverrides
         ).not.toHaveProperty('skip_outlines');
         expect(
-            compileEditingSpy.mock.calls[0][3].optionOverrides
+            compileEditingSpy.mock.calls[0][2].optionOverrides
         ).not.toHaveProperty('skip_kerning');
         expect(
-            compileEditingSpy.mock.calls[0][3].optionOverrides
+            compileEditingSpy.mock.calls[0][2].optionOverrides
         ).not.toHaveProperty('skip_features');
     });
 
@@ -2122,11 +2110,11 @@ describe('FontManager editing subset inclusion', () => {
         await fontManager.compileEditingFont('a', [], ['a']);
 
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
-        expect(compileEditingSpy.mock.calls[0][3]).toMatchObject({
+        expect(compileEditingSpy.mock.calls[0][2]).toMatchObject({
             compileSource: 'debounced-post-interaction-full-compile'
         });
         expect(
-            compileEditingSpy.mock.calls[0][3].optionOverrides
+            compileEditingSpy.mock.calls[0][2].optionOverrides
         ).toBeUndefined();
     });
 
@@ -2147,7 +2135,7 @@ describe('FontManager editing subset inclusion', () => {
             await fontManager.compileEditingFont('a', [], ['a']);
 
             expect(compileEditingSpy).toHaveBeenCalledTimes(1);
-            expect(compileEditingSpy.mock.calls[0][3]).toMatchObject({
+            expect(compileEditingSpy.mock.calls[0][2]).toMatchObject({
                 compileSource: changeSource
             });
             expect(fontManager.lastCompilationMode).toBe(expectedMode);
@@ -2293,7 +2281,6 @@ describe('FontManager editing subset inclusion', () => {
 
             expect(compileFromJsonSpy).not.toHaveBeenCalled();
             expect(compileEditingSpy).toHaveBeenCalledWith(
-                expect.any(String),
                 expect.any(String),
                 ['a', 'n'],
                 expect.objectContaining({
@@ -2495,7 +2482,7 @@ describe('FontManager editing subset inclusion', () => {
 
             expect(deriveSpy).toHaveBeenCalledWith('aä');
             expect(compileEditingSpy).toHaveBeenCalledTimes(1);
-            expect(compileEditingSpy.mock.calls[0][2]).toEqual(
+            expect(compileEditingSpy.mock.calls[0][1]).toEqual(
                 expect.arrayContaining(['a', 'adieresis'])
             );
             expect(fontManager.getEditingSubsetSnapshot()).toEqual(
@@ -2533,7 +2520,7 @@ describe('FontManager editing subset inclusion', () => {
 
             expect(deriveSpy).toHaveBeenCalledWith('Hämburger');
             expect(compileEditingSpy).toHaveBeenCalledTimes(1);
-            expect(compileEditingSpy.mock.calls[0][2]).toEqual(
+            expect(compileEditingSpy.mock.calls[0][1]).toEqual(
                 expect.arrayContaining(['adieresis'])
             );
             expect(fontManager.currentText).toBe('Hämburger');
@@ -2567,7 +2554,7 @@ describe('FontManager editing subset inclusion', () => {
             await fontManager.compileEditingFont();
 
             expect(fontManager.selectedFeatures).toEqual(['dlig']);
-            expect(compileEditingSpy.mock.calls[0][3]).toMatchObject({
+            expect(compileEditingSpy.mock.calls[0][2]).toMatchObject({
                 selectedFeatures: ['dlig']
             });
         } finally {
@@ -2599,7 +2586,7 @@ describe('FontManager editing subset inclusion', () => {
                 ['H', 'adieresis', 'm']
             );
             expect(compileEditingSpy).toHaveBeenCalledTimes(2);
-            expect(compileEditingSpy.mock.calls[1][2]).toEqual(
+            expect(compileEditingSpy.mock.calls[1][1]).toEqual(
                 expect.arrayContaining(['adieresis'])
             );
 
@@ -3148,6 +3135,137 @@ describe('FontManager loadFont', () => {
         fontManager.openedFonts = originalOpenedFonts;
         fontManager.currentFontId = originalCurrentFontId;
         window.currentFontModel = originalCurrentFontModel;
+    });
+
+    /** Make a whole-font JSON string fail, as for a very large font. */
+    function throwOnWholeFontJson() {
+        return jest
+            .spyOn(Font.prototype, 'toJSONString')
+            .mockImplementation(() => {
+                throw new RangeError('Invalid string length');
+            });
+    }
+
+    function diskSaveTarget() {
+        const writable = {
+            write: jest.fn().mockResolvedValue(),
+            close: jest.fn().mockResolvedValue()
+        };
+        const fileHandle = {
+            queryPermission: jest.fn().mockResolvedValue('granted'),
+            requestPermission: jest.fn(),
+            createWritable: jest.fn().mockResolvedValue(writable)
+        };
+        const diskPlugin = {
+            getId: () => 'disk',
+            afterSave: jest.fn(async () => {})
+        };
+        return { writable, fileHandle, diskPlugin };
+    }
+
+    test('saves a .babelfont source byte for byte without a whole-font string', async () => {
+        const { writable, fileHandle, diskPlugin } = diskSaveTarget();
+        await fontManager.loadFont(
+            JSON.stringify(cloneJson(intermediateLayerData)),
+            '/user/intermediate_layer_on_a.babelfont',
+            diskPlugin,
+            fileHandle
+        );
+        const currentFont = fontManager.currentFont;
+        const expected = currentFont.fontModel.toJSONString({
+            compileFacing: false
+        });
+
+        const toJSONString = throwOnWholeFontJson();
+        try {
+            await currentFont.save();
+        } finally {
+            toJSONString.mockRestore();
+        }
+
+        expect(writable.write).toHaveBeenCalledWith(expected);
+        expect(currentFont.sourceFileHash).toBe(
+            hashBytes(new TextEncoder().encode(expected))
+        );
+    });
+
+    test('saves a .babelfont source too long for one string as its UTF-8 bytes', async () => {
+        const { writable, fileHandle, diskPlugin } = diskSaveTarget();
+        await fontManager.loadFont(
+            JSON.stringify(cloneJson(intermediateLayerData)),
+            '/user/intermediate_layer_on_a.babelfont',
+            diskPlugin,
+            fileHandle
+        );
+        const currentFont = fontManager.currentFont;
+        const expected = new TextEncoder().encode(
+            currentFont.fontModel.toJSONString({ compileFacing: false })
+        );
+
+        setMaxJsStringLengthForTests(1000);
+        const toJSONString = throwOnWholeFontJson();
+        try {
+            await currentFont.save();
+        } finally {
+            toJSONString.mockRestore();
+            setMaxJsStringLengthForTests(null);
+        }
+
+        const written = writable.write.mock.calls[0][0];
+        expect(written).toBeInstanceOf(Uint8Array);
+        expect(Buffer.from(written).equals(Buffer.from(expected))).toBe(true);
+        expect(currentFont.sourceFileHash).toBe(hashBytes(expected));
+    });
+
+    test('saves a .glyphs source from the same data without a whole-font string', async () => {
+        const { fileHandle, diskPlugin } = diskSaveTarget();
+        await fontManager.loadFont(
+            JSON.stringify(cloneJson(intermediateLayerData)),
+            '/user/intermediate_layer_on_a.glyphs',
+            diskPlugin,
+            fileHandle
+        );
+        const currentFont = fontManager.currentFont;
+        save_font_as_glyphs.mockClear();
+        await currentFont.save();
+        const expected = save_font_as_glyphs.mock.calls[0][0];
+
+        save_font_as_glyphs.mockClear();
+        setMaxJsStringLengthForTests(1000);
+        const toJSONString = throwOnWholeFontJson();
+        try {
+            await currentFont.save();
+        } finally {
+            toJSONString.mockRestore();
+            setMaxJsStringLengthForTests(null);
+        }
+
+        expect(save_font_as_glyphs.mock.calls[0][0]).toBe(expected);
+    });
+
+    test('syncs and validates the model for a compile without a whole-font string', async () => {
+        await fontManager.loadFont(
+            JSON.stringify(cloneJson(intermediateLayerData)),
+            '/user/intermediate_layer_on_a.glyphs',
+            {}
+        );
+        const currentFont = fontManager.currentFont;
+        const serializedFontData = jest.spyOn(
+            currentFont,
+            'serializedFontData'
+        );
+        const toJSONString = throwOnWholeFontJson();
+        try {
+            expect(fontManager['syncBabelfontJsonFromCurrentModel']()).toBe(
+                true
+            );
+            fontManager['validateFontDataForRust'](currentFont, true);
+            expect(serializedFontData).toHaveBeenCalledTimes(1);
+            expect(toJSONString).not.toHaveBeenCalled();
+        } finally {
+            toJSONString.mockRestore();
+            serializedFontData.mockRestore();
+        }
     });
 
     test('opens a font without serializing it, then serializes it on first read', async () => {
@@ -5654,11 +5772,7 @@ describe('FontCompilation worker cache readiness', () => {
     test('compileEditingFromJsonCached uses incremental sentinel when worker cache is ready from binary sync', async () => {
         fontCompilation.setWorkerCacheDocumentReady(true);
 
-        await fontCompilation.compileEditingFromJsonCached(
-            '{"glyphs":[]}',
-            '1',
-            ['a']
-        );
+        await fontCompilation.compileEditingFromJsonCached('1', ['a']);
 
         expect(sendMessageSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -5672,7 +5786,6 @@ describe('FontCompilation worker cache readiness', () => {
         fontCompilation.setWorkerCacheDocumentReady(true);
 
         await fontCompilation.compileEditingFromJsonCached(
-            '{"glyphs":[]}',
             '1',
             ['beh', 'alef'],
             {
@@ -5693,7 +5806,6 @@ describe('FontCompilation worker cache readiness', () => {
         fontCompilation.setWorkerCacheDocumentReady(true);
 
         await fontCompilation.compileEditingFromJsonCached(
-            '{"glyphs":[]}',
             '12',
             ['o', 'odieresis'],
             {
@@ -5716,7 +5828,6 @@ describe('FontCompilation worker cache readiness', () => {
         fontCompilation.setWorkerCacheDocumentReady(true);
 
         await fontCompilation.compileEditingFromJsonCached(
-            '{"glyphs":[]}',
             '1',
             ['o', 'odieresis'],
             {
@@ -5736,9 +5847,7 @@ describe('FontCompilation worker cache readiness', () => {
 
     test('compileEditingFromJsonCached rejects when the worker cache is cold', async () => {
         await expect(
-            fontCompilation.compileEditingFromJsonCached('{"glyphs":[]}', '1', [
-                'a'
-            ])
+            fontCompilation.compileEditingFromJsonCached('1', ['a'])
         ).rejects.toThrow(/worker Yjs document/);
 
         expect(sendMessageSpy).not.toHaveBeenCalled();

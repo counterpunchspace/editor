@@ -28,7 +28,10 @@ import {
     GLYPHS_ATTR_KEY,
     pathHasSubtractionFlag,
     withSuppressedModelRecording,
-    type AxisMasterCopyPlan
+    jsonPartsToChunks,
+    jsonPartsToData,
+    type AxisMasterCopyPlan,
+    type BabelfontJsonParts
 } from './babelfont-model';
 import {
     canonicalizeImportedFontJson,
@@ -227,22 +230,103 @@ function withGlyphsSaveVersion(
     return data;
 }
 
+/** V8's string length limit; other engines allow longer strings. */
+const MAX_JS_STRING_LENGTH = 2 ** 29 - 24;
+let maxJsStringLength = MAX_JS_STRING_LENGTH;
+
+/** Lower the string length limit so tests can save a "too large" font. */
+export function setMaxJsStringLengthForTests(length: number | null): void {
+    maxJsStringLength = length ?? MAX_JS_STRING_LENGTH;
+}
+
+/**
+ * A font's `.babelfont` JSON: one string, or split at its glyphs
+ * (`Font.toJSONParts`) when one string could go over the string length limit.
+ */
+export type BabelfontJsonSource = string | BabelfontJsonParts;
+
+/** The parsed value of `source`. */
+function babelfontSourceData(source: BabelfontJsonSource): unknown {
+    return typeof source === 'string'
+        ? JSON.parse(source)
+        : jsonPartsToData(source);
+}
+
+/** The text of `source` as one string, or null when it is too long for one. */
+function joinedBabelfontSource(source: BabelfontJsonSource): string | null {
+    if (typeof source === 'string') {
+        return source;
+    }
+    const chunks = jsonPartsToChunks(source);
+    let length = 0;
+    for (const chunk of chunks) {
+        length += chunk.length;
+    }
+    return length <= maxJsStringLength ? chunks.join('') : null;
+}
+
+/**
+ * The `.babelfont` file text of `source`: one string when it fits, else its
+ * UTF-8 bytes. The chunks split between JSON tokens, so each encodes alone.
+ */
+function babelfontFileContents(
+    source: BabelfontJsonSource
+): string | Uint8Array<ArrayBuffer> {
+    const joined = joinedBabelfontSource(source);
+    if (joined !== null) {
+        return joined;
+    }
+    const encoder = new TextEncoder();
+    const encoded = jsonPartsToChunks(source as BabelfontJsonParts).map(
+        (chunk) => encoder.encode(chunk)
+    );
+    let length = 0;
+    for (const bytes of encoded) {
+        length += bytes.length;
+    }
+    const contents = new Uint8Array(length);
+    let offset = 0;
+    for (const bytes of encoded) {
+        contents.set(bytes, offset);
+        offset += bytes.length;
+    }
+    return contents;
+}
+
+/**
+ * `source` for a Rust serializer, which reads JSON whatever its whitespace:
+ * the indented text when it fits in one string, else compact JSON.
+ */
+function rustBabelfontInput(source: BabelfontJsonSource): string {
+    return (
+        joinedBabelfontSource(source) ??
+        JSON.stringify(babelfontSourceData(source))
+    );
+}
+
+/** The UTF-8 bytes of saved file contents. */
+export function fileContentsBytes(contents: string | Uint8Array): Uint8Array {
+    return typeof contents === 'string'
+        ? new TextEncoder().encode(contents)
+        : contents;
+}
+
 export async function serializeFontForSourceSave(
     path: string,
-    babelfontJson: string,
+    source: BabelfontJsonSource,
     glyphsVersion: GlyphsFormatVersion | null = null
-): Promise<string> {
+): Promise<string | Uint8Array<ArrayBuffer>> {
     const extension = path.split('.').pop()?.toLowerCase();
 
     if (extension === 'babelfont') {
-        return babelfontJson;
+        return babelfontFileContents(source);
     }
 
     if (extension === 'glyphs') {
         await ensureWasmInitialized();
         const glyphsSerializationInput = JSON.stringify(
             withGlyphsSaveVersion(
-                stampPathBooleanFlagsForGlyphsSave(JSON.parse(babelfontJson)),
+                stampPathBooleanFlagsForGlyphsSave(babelfontSourceData(source)),
                 glyphsVersion
             )
         );
@@ -261,7 +345,7 @@ export async function serializeFontForSourceSave(
  */
 export async function serializeFolderSourceEntries(
     format: FolderSourceFormat,
-    babelfontJson: string,
+    source: BabelfontJsonSource,
     request: {
         glyphs: string[] | null;
         fontLevel: boolean;
@@ -277,12 +361,12 @@ export async function serializeFolderSourceEntries(
             ? JSON.stringify(
                   withGlyphsSaveVersion(
                       stampPathBooleanFlagsForGlyphsSave(
-                          JSON.parse(babelfontJson)
+                          babelfontSourceData(source)
                       ),
                       glyphsVersion
                   )
               )
-            : babelfontJson;
+            : rustBabelfontInput(source);
     const result = JSON.parse(
         save_font_source_entries(format, input, JSON.stringify(request))
     ) as FolderSourceEntries | { needsFullSave: string };
@@ -617,8 +701,10 @@ function applySourceSnapshot(font: OpenedFont, snapshot: SourceSnapshot): void {
 }
 
 class OpenedFont {
-    /** Serialized model; null until first read after import. */
+    /** Serialized model; null until read after import or a sync. */
     private _babelfontJson: string | null = null;
+    /** Goes up whenever the serialization may have changed. */
+    serializationEpoch = 0;
     babelfontData: any;
     fontModel: Font; // Object model facade
     name: string;
@@ -672,9 +758,10 @@ class OpenedFont {
     }
 
     /**
-     * The font as `.babelfont` JSON. Import does not build it: for a large
-     * font (17,000 CJK glyphs) the string goes over the engine's string length
-     * limit. The first read serializes the model.
+     * The font as `.babelfont` JSON. Import and sync do not build it: for a
+     * large font (17,000 CJK glyphs) the string goes over the engine's
+     * string length limit. A read serializes the model. Code that must work
+     * for any font uses `babelfontJsonSource` or `serializedFontData`.
      */
     get babelfontJson(): string {
         if (this._babelfontJson === null) {
@@ -687,11 +774,28 @@ class OpenedFont {
 
     set babelfontJson(json: string) {
         this._babelfontJson = json;
+        this.serializationEpoch++;
     }
 
     /** The serialized font if built, without serializing it. */
     get builtBabelfontJson(): string {
         return this._babelfontJson ?? '';
+    }
+
+    /** The `.babelfont` JSON as one string if built, otherwise glyph by glyph. */
+    babelfontJsonSource(): string | BabelfontJsonParts {
+        return (
+            this._babelfontJson ??
+            this.fontModel.toJSONParts({ compileFacing: false })
+        );
+    }
+
+    /** The parsed `.babelfont` JSON, built without one whole-font string. */
+    serializedFontData(): Record<string, unknown> {
+        const source = this.babelfontJsonSource();
+        return typeof source === 'string'
+            ? (JSON.parse(source) as Record<string, unknown>)
+            : jsonPartsToData(source);
     }
 
     /** Install a font object already built from a linked-window snapshot. */
@@ -706,7 +810,8 @@ class OpenedFont {
         const opened = Object.create(OpenedFont.prototype) as OpenedFont;
         opened.babelfontData = fontData;
         opened.fontModel = fontModel;
-        opened.babelfontJson = '';
+        opened._babelfontJson = null;
+        opened.serializationEpoch = 0;
         opened.sourcePlugin = sourcePlugin;
         opened.fileHandle = fileHandle;
         opened.directoryHandle = directoryHandle;
@@ -818,9 +923,10 @@ class OpenedFont {
     }
 
     /**
-     * Sync the JSON string from the object model data
+     * Sync the serialized font from the object model data.
      * Call this after making changes through the object model.
      * Path nodes are arrays in both runtime and serialized storage JSON.
+     * The next read of `babelfontJson` serializes the model again.
      */
     syncJsonFromModel(): void {
         assertBabelfontLayerWidths(this.babelfontData, 'syncJsonFromModel');
@@ -829,9 +935,8 @@ class OpenedFont {
         // `babelfontJson` backs bridge/worker seeding and must retain logical
         // automatic component placement. Rust owns physicalization at
         // compile-read; only explicit export asks for compile-facing JSON.
-        this.babelfontJson = this.fontModel.toJSONString({
-            compileFacing: false
-        });
+        this._babelfontJson = null;
+        this.serializationEpoch++;
     }
 
     /** Prepare the glyphs' components for the Rust serializers. */
@@ -887,7 +992,7 @@ class OpenedFont {
         const pluginId = this.sourcePlugin.getId();
         const serializedFont = await serializeFontForSourceSave(
             this.path,
-            this.babelfontJson,
+            this.babelfontJsonSource(),
             this.glyphsSaveVersion
         );
 
@@ -935,9 +1040,7 @@ class OpenedFont {
             ...this.folderSaveTracker.summary(this.hasUnsavedChanges)
         });
         this.folderSaveTracker.reset();
-        this.sourceFileHash = hashBytes(
-            new TextEncoder().encode(serializedFont)
-        );
+        this.sourceFileHash = hashBytes(fileContentsBytes(serializedFont));
 
         // Clear unsaved/sync flags after successful save
         this.needsRecompile = false;
@@ -1055,13 +1158,15 @@ class OpenedFont {
     }
 
     /** The font as JSON for a folder save, with outlines only for `glyphs`. */
-    private folderSourceJson(glyphs: ReadonlySet<string> | null): string {
+    private folderSourceJson(
+        glyphs: ReadonlySet<string> | null
+    ): BabelfontJsonParts {
         assertBabelfontLayerWidths(this.babelfontData, 'folderSourceJson');
         const allGlyphs: Babelfont.Glyph[] = this.babelfontData.glyphs || [];
         this.normalizeComponentTransformsForRust(
             glyphs ? allGlyphs.filter((g) => glyphs.has(g.name)) : allGlyphs
         );
-        return this.fontModel.toJSONString({
+        return this.fontModel.toJSONParts({
             compileFacing: false,
             glyphBodies: glyphs ?? undefined
         });
@@ -1157,18 +1262,14 @@ class FontManager {
     private cloudStatusTippy: TippyInstance | null;
 
     /**
-     * Memoizes the result of validateBabelfontJsonForRust.
-     * The validator parses, walks, and re-serializes the entire babelfontJson.
-     * Only runs when `pendingBabelfontJsonSyncAfterDrag` is set (after
-     * undo/redo/remote-sync) or when forceValidation is explicitly requested.
-     * Caching by input identity eliminates repeated overhead when the same
-     * string is passed multiple times. Cache is invalidated implicitly: any
-     * new input string (a different object reference or different content)
-     * misses and re-runs the validator.
+     * The font serialization `validateFontDataForRust` last saw. The
+     * validator walks the whole serialized font, so it skips a font whose
+     * serialization has not changed since (same font, same
+     * `serializationEpoch`).
      */
-    private _validatedBabelfontJsonCache: {
-        input: string;
-        output: string;
+    private _validatedFontSerialization: {
+        font: OpenedFont;
+        epoch: number;
     } | null = null;
 
     /**
@@ -2808,9 +2909,11 @@ class FontManager {
             } else {
                 const storeResult = await fontCompilation.sendMessage({
                     type: 'storeFontJson',
-                    babelfontJson: canonicalImport.fontModel.toJSONString({
-                        compileFacing: false
-                    })
+                    babelfontJson: rustBabelfontInput(
+                        canonicalImport.fontModel.toJSONParts({
+                            compileFacing: false
+                        })
+                    )
                 });
                 if (storeResult?.error) {
                     throw new Error(
@@ -4090,7 +4193,7 @@ class FontManager {
         })();
 
         // Capture whether JSON was stale before sync clears the flag,
-        // so validateBabelfontJsonForRust knows to run.
+        // so validateFontDataForRust knows to run.
         const wasJsonStale = this.pendingBabelfontJsonSyncAfterDrag;
 
         // Always sync when the JSON is stale (e.g. after undo/redo/remote sync),
@@ -4312,18 +4415,17 @@ class FontManager {
                 // local babelfont JSON string. Request-scoped worker freshness
                 // means compileEditingCached will compile from the worker Y.Doc
                 // instead, including feature-code commits once the worker cache
-                // is proven fresh for this request. Skipped validation does not
-                // read `babelfontJson`, so it is not serialized for nothing.
-                const validatedJson =
-                    hasExplicitWorkerFreshnessAtRequest() ||
-                    canSkipCanonicalJsonSyncForStartupCompile ||
-                    canSkipCanonicalJsonSyncForTextInput
-                        ? this.currentFont.builtBabelfontJson
-                        : this.validateBabelfontJsonForRust(
-                              this.currentFont.babelfontJson,
-                              wasJsonStale ||
-                                  this.pendingBabelfontJsonSyncAfterDrag
-                          );
+                // is proven fresh for this request.
+                if (
+                    !hasExplicitWorkerFreshnessAtRequest() &&
+                    !canSkipCanonicalJsonSyncForStartupCompile &&
+                    !canSkipCanonicalJsonSyncForTextInput
+                ) {
+                    this.validateFontDataForRust(
+                        this.currentFont,
+                        wasJsonStale || this.pendingBabelfontJsonSyncAfterDrag
+                    );
+                }
 
                 const compileFilters = optionOverrides?.skip_features
                     ? {
@@ -4355,7 +4457,6 @@ class FontManager {
                 }
 
                 result = await fontCompilation.compileEditingFromJsonCached(
-                    validatedJson,
                     requestedRevisionKey,
                     subsetForCompile ?? [],
                     {
@@ -4552,7 +4653,7 @@ class FontManager {
                 if (lineMatch && colMatch) {
                     const lineNum = parseInt(lineMatch[1]);
                     const colNum = parseInt(colMatch[1]);
-                    const jsonStr = this.currentFont?.babelfontJson || '';
+                    const jsonStr = this.currentFont?.builtBabelfontJson || '';
                     const lines = jsonStr.split('\n');
                     if (lineNum > 0 && lineNum <= lines.length) {
                         const problemLine = lines[lineNum - 1];
@@ -4902,48 +5003,56 @@ class FontManager {
     }
 
     /**
-     * Validate canonical babelfont JSON before Rust compilation.
-     * Rejects wrapped shapes, invalid path node values, and object-for-array drift.
-     * Canonical path nodes are arrays and pass through unchanged.
-     * Returns the validated JSON string unchanged.
+     * Validate the font's canonical serialization before Rust compilation.
+     * It is read glyph by glyph (`OpenedFont.serializedFontData`), so no
+     * string holds the whole font.
      */
-    private validateBabelfontJsonForRust(
-        babelfontJson: string,
+    private validateFontDataForRust(
+        font: OpenedFont,
         forceValidation: boolean = false
-    ): string {
+    ): void {
         // Only run full validation when needed.
         // `pendingBabelfontJsonSyncAfterDrag` is set after undo/redo/remote-sync
         // to catch Y.Doc roundtrip corruption that toJSONString's replacer misses.
         const needsValidation =
             forceValidation || this.pendingBabelfontJsonSyncAfterDrag;
 
-        // Memoize: validation is a pure function of the input string.
-        // During a stream of interactive edits, `currentFont.babelfontJson`
-        // is not re-synced from the model (sync is deferred to the
-        // debounced full compile), so the same string is otherwise
-        // re-validated on every keystroke at ~50 ms a pop. Reference
-        // equality is sufficient: a new string means new content; an
-        // identical string means identical (already-validated) content.
-        const cached = this._validatedBabelfontJsonCache;
-        if (cached && cached.input === babelfontJson) {
-            return cached.output;
+        // During a stream of interactive edits the serialization is not
+        // re-synced from the model (sync is deferred to the debounced full
+        // compile), so the same serialization would otherwise be validated
+        // again on every keystroke.
+        const cached = this._validatedFontSerialization;
+        if (
+            cached &&
+            cached.font === font &&
+            cached.epoch === font.serializationEpoch
+        ) {
+            return;
         }
-
-        const cacheAndReturn = (output: string): string => {
-            this._validatedBabelfontJsonCache = {
-                input: babelfontJson,
-                output
-            };
-            return output;
+        this._validatedFontSerialization = {
+            font,
+            epoch: font.serializationEpoch
         };
 
         if (!needsValidation) {
-            return cacheAndReturn(babelfontJson);
+            return;
         }
+        this.validateBabelfontDataForRust(
+            font.serializedFontData(),
+            forceValidation
+        );
+    }
 
-        // Parse, fix, re-serialize
+    /**
+     * Validate canonical babelfont data, as parsed from its JSON.
+     * Rejects wrapped shapes, invalid path node values, and object-for-array drift.
+     */
+    private validateBabelfontDataForRust(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: any,
+        forceValidation: boolean
+    ): void {
         try {
-            const data = JSON.parse(babelfontJson);
             let fixCount = 0;
             const knownMasterIds = new Set(
                 Array.isArray(data?.masters)
@@ -5162,7 +5271,7 @@ class FontManager {
                 });
             }
 
-            assertBabelfontLayerWidths(data, 'validateBabelfontJsonForRust');
+            assertBabelfontLayerWidths(data, 'validateBabelfontDataForRust');
 
             const fixValue = (val: any, path: string = ''): void => {
                 if (!val || typeof val !== 'object') return;
@@ -5236,7 +5345,7 @@ class FontManager {
                 fixValue(data);
                 assertBabelfontLayerWidths(
                     data,
-                    'validateBabelfontJsonForRust'
+                    'validateBabelfontDataForRust'
                 );
 
                 // Post-fix scan: detect shapes that still don't match
@@ -5321,7 +5430,7 @@ class FontManager {
 
             if (fixCount > 0) {
                 throw new Error(
-                    '[FontManager] validateBabelfontJsonForRust must not repair node or shape structure.'
+                    '[FontManager] validateBabelfontDataForRust must not repair node or shape structure.'
                 );
             } else if (forceValidation) {
                 console.log(
@@ -5337,8 +5446,6 @@ class FontManager {
                 throw e;
             }
         }
-
-        return cacheAndReturn(babelfontJson);
     }
 
     private syncBabelfontJsonFromCurrentModel(): boolean {
@@ -6854,8 +6961,6 @@ class FontManager {
             babelfontJson: string;
             babelfontData: unknown;
         }>;
-        validatedCacheInput: string | null;
-        validatedCacheOutput: string | null;
         editingFontBytes: number;
         closureCache: FontManager['closureCache'];
         glyphOrderCache: string[] | null;
@@ -6871,10 +6976,6 @@ class FontManager {
         );
         return {
             fonts,
-            validatedCacheInput:
-                this._validatedBabelfontJsonCache?.input ?? null,
-            validatedCacheOutput:
-                this._validatedBabelfontJsonCache?.output ?? null,
             editingFontBytes: this.editingFont?.byteLength ?? 0,
             closureCache: this.closureCache,
             glyphOrderCache: this.glyphOrderCache,

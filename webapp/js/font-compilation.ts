@@ -1934,7 +1934,6 @@ export class FontCompilation {
     }
 
     async compileEditingFromJsonCached(
-        _babelfontJson: string,
         fontRevisionKey: string,
         subsetGlyphs: Array<string>,
         requestMeta?: {

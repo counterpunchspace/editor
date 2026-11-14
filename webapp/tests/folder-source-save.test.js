@@ -248,6 +248,67 @@ describe('saving folder sources file by file', () => {
     });
 });
 
+describe('folder sources too long for one string', () => {
+    const {
+        serializeFolderSourceEntries,
+        setMaxJsStringLengthForTests
+    } = require('../js/font-manager');
+    const { Font } = require('../js/babelfont-model');
+    let originalOpenedFonts;
+    let originalCurrentFontId;
+
+    beforeEach(() => {
+        originalOpenedFonts = fontManager.openedFonts;
+        originalCurrentFontId = fontManager.currentFontId;
+        fontManager.openedFonts = new Map();
+        fontManager.currentFontId = null;
+    });
+
+    afterEach(() => {
+        fontManager.openedFonts = originalOpenedFonts;
+        fontManager.currentFontId = originalCurrentFontId;
+        setMaxJsStringLengthForTests(null);
+    });
+
+    test.each([
+        ['YanoneKaffeesatz-Bold.ufo', 'ufo'],
+        ['YanoneKaffeesatz.glyphspackage', 'glyphspackage']
+    ])(
+        'a whole %s save writes the same files without a whole-font string',
+        async (name, format) => {
+            const { font } = await openFolderSource(name, format);
+            const request = {
+                glyphs: null,
+                fontLevel: true,
+                layoutEntries: font.folderSource.layoutEntries()
+            };
+            const expected = await serializeFolderSourceEntries(
+                format,
+                font.fontModel.toJSONString({ compileFacing: false }),
+                request
+            );
+
+            setMaxJsStringLengthForTests(1000);
+            const toJSONString = jest
+                .spyOn(Font.prototype, 'toJSONString')
+                .mockImplementation(() => {
+                    throw new RangeError('Invalid string length');
+                });
+            let entries;
+            try {
+                entries = await serializeFolderSourceEntries(
+                    format,
+                    font['folderSourceJson'](null),
+                    request
+                );
+            } finally {
+                toJSONString.mockRestore();
+            }
+            expect(entries).toEqual(expected);
+        }
+    );
+});
+
 describe('following external changes to folder sources', () => {
     let originalOpenedFonts;
     let originalCurrentFontId;

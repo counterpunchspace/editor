@@ -67,7 +67,9 @@ import { readUrlState, updateUrlState } from './url-state';
 import { TOUR_FUSTAT_PATH, TOUR_SAMPLE_TEXT } from './tour-slides';
 import { shouldHandleOpenPathBeforeEditorReady } from './open-font-readiness';
 import {
+    fileContentsBytes,
     serializeFontForSourceSave,
+    type BabelfontJsonSource,
     type GlyphsFormatVersion,
     type SourceSnapshot
 } from './font-manager';
@@ -2065,15 +2067,17 @@ async function saveCurrentFontAsIn(
     } else {
         currentFont.syncJsonFromModel();
         const sourcePlugin = currentFont.sourcePlugin;
-        let babelfontJson = currentFont.babelfontJson;
+        let babelfontJson: BabelfontJsonSource =
+            currentFont.babelfontJsonSource();
         if (
             sourcePlugin &&
             sourcePlugin.getId() !== pluginId &&
             typeof sourcePlugin.stripOwnedFontData === 'function'
         ) {
-            const parsed = JSON.parse(babelfontJson) as Record<string, unknown>;
             babelfontJson = JSON.stringify(
-                sourcePlugin.stripOwnedFontData(parsed)
+                sourcePlugin.stripOwnedFontData(
+                    currentFont.serializedFontData()
+                )
             );
         }
         const serializedFont = await serializeFontForSourceSave(
@@ -2103,7 +2107,7 @@ async function saveCurrentFontAsIn(
         currentFont.directoryHandle = diskDirectoryHandleOf(plugin);
         currentFont.folderSource = undefined;
         currentFont.sourceFileHash = hashBytes(
-            new TextEncoder().encode(serializedFont)
+            fileContentsBytes(serializedFont)
         );
         await plugin.afterSave({
             fontName: currentFont.name,
