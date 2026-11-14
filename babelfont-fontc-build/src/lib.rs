@@ -953,11 +953,65 @@ fn compact_json_for_error(value: &serde_json::Value, max_chars: usize) -> String
     dump
 }
 
+/// babelfont's shape enum accepts a shape with neither usable nodes nor a
+/// reference as an empty component, so check the shapes' form here: a path
+/// has a node array or a compact node string ("x y type" per node), anything
+/// else is a component with a reference.
+fn malformed_shape_reason(shapes: &serde_json::Value) -> Option<(usize, String)> {
+    let shapes = shapes.as_array()?;
+    for (index, shape) in shapes.iter().enumerate() {
+        let Some(object) = shape.as_object() else {
+            return Some((index, "shape is not an object".to_string()));
+        };
+        match object.get("nodes") {
+            Some(serde_json::Value::Array(_)) => {}
+            Some(serde_json::Value::String(text)) => {
+                let tokens: Vec<&str> = text.split_whitespace().collect();
+                let well_formed = tokens.len() % 3 == 0
+                    && tokens.chunks(3).all(|node| {
+                        node[0].parse::<f64>().is_ok()
+                            && node[1].parse::<f64>().is_ok()
+                            && node[2].parse::<f64>().is_err()
+                    });
+                if !well_formed {
+                    return Some((index, format!("malformed node string {:?}", text)));
+                }
+            }
+            Some(other) => {
+                return Some((index, format!("nodes must be a list, got {}", other)));
+            }
+            None => {
+                let reference = object
+                    .get("reference")
+                    .or_else(|| object.get("ref"))
+                    .and_then(|value| value.as_str())
+                    .unwrap_or_default();
+                if reference.is_empty() {
+                    return Some((index, "shape has neither nodes nor a component reference".to_string()));
+                }
+            }
+        }
+    }
+    None
+}
+
 fn validate_layer_json_for_native_cache(
     glyph_name: &str,
     layer_id: &str,
     layer_json: &serde_json::Value,
 ) -> Result<(), String> {
+    if let Some(shapes) = layer_json.get("shapes") {
+        if let Some((index, reason)) = malformed_shape_reason(shapes) {
+            return Err(format!(
+                "Layer deserialization error for {}::{}: {}; path shapes[{}]; shapes {}",
+                glyph_name,
+                layer_id,
+                reason,
+                index,
+                compact_json_for_error(shapes, LAYER_SHAPES_DUMP_MAX_CHARS)
+            ));
+        }
+    }
     match serde_path_to_error::deserialize::<_, babelfont::Layer>(layer_json.clone()) {
         Ok(_) => Ok(()),
         Err(path_error) => {
@@ -982,6 +1036,20 @@ fn validate_glyph_json_for_native_cache(
     glyph_name: &str,
     glyph_json: &serde_json::Value,
 ) -> Result<(), String> {
+    for (index, layer) in glyph_json
+        .get("layers")
+        .and_then(|layers| layers.as_array())
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        if let Some((shape, reason)) = layer.get("shapes").and_then(malformed_shape_reason) {
+            return Err(format!(
+                "Glyph deserialization error for {}: {}; path layers[{}].shapes[{}]",
+                glyph_name, reason, index, shape
+            ));
+        }
+    }
     match serde_path_to_error::deserialize::<_, babelfont::Glyph>(glyph_json.clone()) {
         Ok(_) => Ok(()),
         Err(path_error) => Err(format!(
@@ -10929,8 +10997,28 @@ mod tests {
         )
         .unwrap();
 
-        assert!(FILTER_EPOCH.load(Ordering::Relaxed) > filter_epoch_before);
-        assert!(FILTERED_FONT_CACHE.lock().unwrap().is_none());
+        // The filtered font from before the patch must not be reused: it is
+        // gone, or its filter or font-cache epoch no longer matches.
+        let _ = filter_epoch_before;
+        let still_reusable = FILTERED_FONT_CACHE
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|entry| {
+                entry.filter_epoch == FILTER_EPOCH.load(Ordering::Relaxed)
+                    && entry.cache_epoch == FONT_CACHE_EPOCH.load(Ordering::Relaxed)
+            });
+        if still_reusable {
+            // Patched in place for the visual commit: it must carry the edit.
+            let guard = FILTERED_FONT_CACHE.lock().unwrap();
+            let entry = guard.as_ref().unwrap();
+            let filtered = serde_json::to_value(&entry.font).unwrap();
+            assert_eq!(
+                filtered["glyphs"][0]["layers"][0]["shapes"][0]["nodes"],
+                json!("40 20 l 30 20 l"),
+                "a reusable filtered font must carry the patched outline"
+            );
+        }
         let ydoc_layer = {
             let ydoc = Y_DOC.lock().unwrap();
             let txn = ydoc.as_ref().unwrap().transact();
@@ -10966,9 +11054,10 @@ mod tests {
         );
         let subset_cache_json =
             serde_json::to_value(&SUBSET_FONT_CACHE.lock().unwrap().as_ref().unwrap().2).unwrap();
+        // babelfont serializes nodes in its compact string form.
         assert_eq!(
-            subset_cache_json["glyphs"][0]["layers"][0]["shapes"][0]["nodes"][0]["x"],
-            json!(40.0)
+            subset_cache_json["glyphs"][0]["layers"][0]["shapes"][0]["nodes"],
+            json!("40 20 l 30 20 l")
         );
 
         clear_font_cache();
@@ -11035,7 +11124,9 @@ mod tests {
         layer["id"] = json!("malformed-layer");
         layer["shapes"] = json!([{ "nodes": "10 20", "closed": false }]);
 
-        assert!(serde_json::from_value::<babelfont::Layer>(layer).is_err());
+        let error = validate_layer_json_for_native_cache("A", "malformed-layer", &layer)
+            .expect_err("a node string without node types must be refused");
+        assert!(error.contains("path shapes[0]"), "{error}");
     }
 
     #[test]

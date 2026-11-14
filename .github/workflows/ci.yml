@@ -192,6 +192,9 @@ jobs:
             - name: Generate Rust WASM test fixture
               run: node webapp/compilation-test/compile-test.mjs webapp/examples/Fustat.glyphs
 
+            - name: Run Rust unit tests
+              run: cd babelfont-fontc-build && cargo test --lib -- --test-threads=1
+
             - name: Run Rust WASM cache tests
               run: cd babelfont-fontc-build && rustup run nightly wasm-pack test --node
 

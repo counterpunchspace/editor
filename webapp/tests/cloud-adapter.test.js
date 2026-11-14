@@ -4987,7 +4987,7 @@ describe('large updates sent as several room transactions', () => {
         const base = Ylib.encodeStateAsUpdate(doc);
         const before = Ylib.encodeStateVector(doc);
         let text = '';
-        for (let i = 0; i < 360_000; i += 1) {
+        for (let i = 0; i < MAX_YJS_PACKET_BYTES + 100_000; i += 1) {
             text += String.fromCharCode(97 + ((i * 7919) % 26));
         }
         doc.getText('features').insert(5, text);
