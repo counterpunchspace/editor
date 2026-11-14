@@ -139,6 +139,28 @@ import {
     type EncodedShard
 } from './filesystem-plugins/cloud-document-set';
 import {
+    CATALOG_ROOT_KEY,
+    FEATURES_ROOT_KEY,
+    FONT_FEATURES_DOCUMENT_ID,
+    KERNING_ROOT_KEY,
+    LAYOUT_MAP_KEY,
+    catalogBucketFor,
+    catalogDocumentId,
+    isLayoutDocumentId,
+    kerningBucketFor,
+    kerningDocumentId,
+    kerningFieldDirection,
+    kerningFieldForDirection,
+    kerningKey,
+    layoutDocumentIds,
+    layoutDocumentKind,
+    parseKerningKey,
+    parseRoomLayout,
+    type KerningDirection,
+    type RoomLayout
+} from './filesystem-plugins/cloud-room-layout';
+import { flattenKerningMap } from './delete-glyphs-preflight';
+import {
     measureShardBytesForSubmit,
     evaluateCollabSubmit,
     type CollabSubmitDecision,
@@ -392,6 +414,11 @@ export const FONT_DEPS_ENTRY_PATH = 'fontDeps';
 const SYSTEM_REMOTE_ORIGIN = 'system-remote';
 const HISTORY_REPLAY_ORIGIN = 'history-replay';
 const FONT_EDIT_ORIGIN = 'font-edit';
+
+/** A Yjs v1 update with no structs and no deletions. */
+function isEmptyYjsUpdate(update: Uint8Array): boolean {
+    return update.length === 0 || (update.length === 2 && !update[0] && !update[1]);
+}
 const GLYPH_EDIT_ORIGIN = 'glyph-edit';
 /** Remote cloud applies; never treated as a local edit origin. */
 export const CLOUD_REMOTE_ORIGIN = 'cloud-remote';
@@ -1130,6 +1157,9 @@ export class PatchSyncEngine {
         };
         this._bindDocUpdates(this.yDoc, FONT_CORE_DOCUMENT_ID);
         this._bindDocUpdates(this.depsDoc, FONT_DEPS_DOCUMENT_ID);
+        this.yDoc.getMap(LAYOUT_MAP_KEY).observe(() => {
+            this._roomLayoutCache = undefined;
+        });
         this._unbindBurstFinalize = this._editBursts.onFinalize((burst) => {
             this._liveBurstLayers.delete(burst.key);
             this._cloudHold.flushBurst(burst.key);
@@ -1178,7 +1208,775 @@ export class PatchSyncEngine {
         }
     }
 
+    // ── Room layout 2 (cloud-room-layout.ts) ─────────────────────
+
+    private _roomLayoutCache: RoomLayout | null | undefined = undefined;
+    private _layoutDocs = new Map<string, Y.Doc>();
+    private _routingLayout(): RoomLayout | null {
+        return this.roomLayout;
+    }
+
+    /**
+     * Rooms besides its own that one write reaches: a whole catalog, master
+     * list, master or kerning map spreads over the buckets.
+     */
+    private _extraLayoutDocumentIds(path: Array<string | number>): string[] {
+        const layout = this._routingLayout();
+        if (!layout) {
+            return [];
+        }
+        if (path[0] === CORE_GLYPH_CATALOG_KEY && path.length === 1) {
+            return Array.from({ length: layout.catalogBuckets }, (_, i) =>
+                catalogDocumentId(i)
+            );
+        }
+        if (
+            path[0] === 'masters' &&
+            (path.length <= 2 ||
+                (path.length === 3 && kerningFieldDirection(String(path[2]))))
+        ) {
+            return Array.from({ length: layout.kerningBuckets }, (_, i) =>
+                kerningDocumentId(i)
+            );
+        }
+        return [];
+    }
+
+    /** The asset's room layout, or null while it keeps everything in core. */
+    get roomLayout(): RoomLayout | null {
+        if (this._roomLayoutCache === undefined) {
+            this._roomLayoutCache = parseRoomLayout(
+                this.yDoc.getMap(LAYOUT_MAP_KEY).toJSON()
+            );
+        }
+        return this._roomLayoutCache;
+    }
+
+    /** Document ids of the features, catalog and kerning rooms. */
+    layoutDocumentIds(): string[] {
+        const layout = this.roomLayout;
+        return layout ? layoutDocumentIds(layout) : [];
+    }
+
+    private _destroyLayoutDocs(): void {
+        for (const [documentId, doc] of this._layoutDocs) {
+            this._docUpdateUnsubById.get(documentId)?.();
+            this._docUpdateUnsubById.delete(documentId);
+            this._lastBroadcastStateVectorByDoc.delete(documentId);
+            doc.destroy();
+        }
+        this._layoutDocs.clear();
+        this._adoptedLayoutCoreBaseline = null;
+    }
+
+    private _ensureLayoutDoc(documentId: string): Y.Doc {
+        let doc = this._layoutDocs.get(documentId);
+        if (!doc) {
+            doc = new Y.Doc({ gc: false });
+            this._layoutDocs.set(documentId, doc);
+            this._bindDocUpdates(doc, documentId);
+        }
+        return doc;
+    }
+
+    private _featuresYMap(): Y.Map<unknown> | null {
+        if (this.roomLayout) {
+            return this._ensureLayoutDoc(FONT_FEATURES_DOCUMENT_ID).getMap(
+                FEATURES_ROOT_KEY
+            );
+        }
+        const value = this.fontMap.get('features');
+        return value instanceof Y.Map ? value : null;
+    }
+
+    private _catalogBucketMap(glyphId: string): Y.Map<unknown> {
+        const layout = this.roomLayout as RoomLayout;
+        return this._ensureLayoutDoc(
+            catalogDocumentId(catalogBucketFor(glyphId, layout.catalogBuckets))
+        ).getMap(CATALOG_ROOT_KEY);
+    }
+
+    private _catalogBucketMaps(): Array<Y.Map<unknown>> {
+        const layout = this.roomLayout;
+        if (!layout) {
+            return [];
+        }
+        return Array.from({ length: layout.catalogBuckets }, (_, index) =>
+            this._ensureLayoutDoc(catalogDocumentId(index)).getMap(
+                CATALOG_ROOT_KEY
+            )
+        );
+    }
+
+    private _kerningBucketMaps(): Array<Y.Map<unknown>> {
+        const layout = this.roomLayout;
+        if (!layout) {
+            return [];
+        }
+        return Array.from({ length: layout.kerningBuckets }, (_, index) =>
+            this._ensureLayoutDoc(kerningDocumentId(index)).getMap(
+                KERNING_ROOT_KEY
+            )
+        );
+    }
+
+    private _kerningBucketMap(pair: string): Y.Map<unknown> {
+        const layout = this.roomLayout as RoomLayout;
+        return this._ensureLayoutDoc(
+            kerningDocumentId(kerningBucketFor(pair, layout.kerningBuckets))
+        ).getMap(KERNING_ROOT_KEY);
+    }
+
+    /** Catalog entry from whichever store this asset uses. */
+    private _catalogYEntry(glyphId: string): unknown {
+        if (this.roomLayout) {
+            return this._catalogBucketMap(glyphId).get(glyphId);
+        }
+        const yCatalog = this.fontMap.get(CORE_GLYPH_CATALOG_KEY);
+        return yCatalog instanceof Y.Map ? yCatalog.get(glyphId) : undefined;
+    }
+
+    /** Every catalog entry, as JSON, from whichever store this asset uses. */
+    private _readCatalogJson(): Record<string, unknown> | undefined {
+        if (!this.roomLayout) {
+            const yCatalog = this.fontMap.get(CORE_GLYPH_CATALOG_KEY);
+            return yCatalog instanceof Y.Map
+                ? (fromYType(yCatalog) as Record<string, unknown>)
+                : undefined;
+        }
+        const catalog: Record<string, unknown> = {};
+        for (const map of this._catalogBucketMaps()) {
+            Object.assign(catalog, fromYType(map) as Record<string, unknown>);
+        }
+        return catalog;
+    }
+
+    private _masterIdAt(index: number): string | null {
+        const masters = this.fontMap.get('masters');
+        if (!(masters instanceof Y.Array)) {
+            return null;
+        }
+        const master = masters.get(index);
+        const id =
+            master instanceof Y.Map
+                ? master.get('id')
+                : (master as { id?: unknown } | undefined)?.id;
+        return typeof id === 'string' && id ? id : null;
+    }
+
+    private _masterIds(): string[] {
+        const masters = this.fontMap.get('masters');
+        if (!(masters instanceof Y.Array)) {
+            return [];
+        }
+        return masters
+            .toArray()
+            .map((master) =>
+                master instanceof Y.Map
+                    ? master.get('id')
+                    : (master as { id?: unknown } | undefined)?.id
+            )
+            .filter((id): id is string => typeof id === 'string' && !!id);
+    }
+
+    /** Flat pairs of one master and direction from the kerning rooms. */
+    private _readKerningPairs(
+        masterId: string,
+        direction: KerningDirection
+    ): Record<string, unknown> {
+        const pairs: Record<string, unknown> = {};
+        for (const map of this._kerningBucketMaps()) {
+            map.forEach((value, key) => {
+                const parsed = parseKerningKey(key);
+                if (
+                    parsed &&
+                    parsed.masterId === masterId &&
+                    parsed.direction === direction
+                ) {
+                    pairs[parsed.pair] = value;
+                }
+            });
+        }
+        return pairs;
+    }
+
+    /** Make one master's pairs in one direction equal `next`. */
+    private _writeKerningPairs(
+        masterId: string,
+        direction: KerningDirection,
+        next: Record<string, number> | null
+    ): void {
+        const wanted = next ?? {};
+        const current = this._readKerningPairs(masterId, direction);
+        for (const pair of Object.keys(current)) {
+            if (!(pair in wanted)) {
+                this._kerningBucketMap(pair).delete(
+                    kerningKey(masterId, direction, pair)
+                );
+            }
+        }
+        for (const [pair, value] of Object.entries(wanted)) {
+            if (current[pair] !== value) {
+                this._kerningBucketMap(pair).set(
+                    kerningKey(masterId, direction, pair),
+                    value
+                );
+            }
+        }
+    }
+
+    private _deleteMasterKerning(masterId: string): void {
+        this._writeKerningPairs(masterId, 'l', null);
+        this._writeKerningPairs(masterId, 'r', null);
+    }
+
+    /** A master as stored in core under layout 2: without its kerning. */
+    private _withoutKerning(master: unknown): unknown {
+        if (!master || typeof master !== 'object' || Array.isArray(master)) {
+            return master;
+        }
+        const { kerning, kerning_rtl, ...rest } = master as Record<
+            string,
+            unknown
+        >;
+        void kerning;
+        void kerning_rtl;
+        return rest;
+    }
+
+    /** Move a master value's kerning fields into the kerning rooms. */
+    private _writeMasterKerningFromValue(master: unknown): void {
+        if (!master || typeof master !== 'object' || Array.isArray(master)) {
+            return;
+        }
+        const record = master as Record<string, unknown>;
+        const masterId = typeof record.id === 'string' ? record.id : null;
+        if (!masterId) {
+            return;
+        }
+        for (const direction of ['l', 'r'] as const) {
+            const field = kerningFieldForDirection(direction);
+            if (field in record) {
+                this._writeKerningPairs(
+                    masterId,
+                    direction,
+                    flattenKerningMap(record[field])
+                );
+            }
+        }
+    }
+
+    private _replaceRootMap(map: Y.Map<unknown>, value: unknown): void {
+        const next =
+            value && typeof value === 'object' && !Array.isArray(value)
+                ? (value as Record<string, unknown>)
+                : {};
+        for (const key of [...map.keys()]) {
+            if (!(key in next)) {
+                map.delete(key);
+            }
+        }
+        for (const [key, child] of Object.entries(next)) {
+            this._replaceYMapEntry(map, key, child);
+        }
+    }
+
+    /**
+     * Layout 2 writes that no single Y path can express. Returns true when
+     * the write was handled here.
+     */
+    private _layoutSetPath(
+        path: Array<string | number>,
+        value: unknown
+    ): boolean {
+        if (path[0] === LAYOUT_MAP_KEY) {
+            // Only adoptRoomLayout (and a later rebase) writes the layout.
+            return true;
+        }
+        const layout = this.roomLayout;
+        if (!layout) {
+            return false;
+        }
+        const root = path[0];
+        if (root === 'features' && path.length === 1) {
+            this._replaceRootMap(this._featuresYMap() as Y.Map<unknown>, value);
+            return true;
+        }
+        if (root === CORE_CODEPOINT_INDEX_KEY) {
+            // Derived from the catalog in memory; never stored in layout 2.
+            return true;
+        }
+        if (root === CORE_GLYPH_CATALOG_KEY && path.length === 1) {
+            const next =
+                value && typeof value === 'object' && !Array.isArray(value)
+                    ? (value as Record<string, unknown>)
+                    : {};
+            for (const map of this._catalogBucketMaps()) {
+                for (const glyphId of [...map.keys()]) {
+                    if (!(glyphId in next)) {
+                        map.delete(glyphId);
+                    }
+                }
+            }
+            for (const [glyphId, entry] of Object.entries(next)) {
+                this._replaceYMapEntry(
+                    this._catalogBucketMap(glyphId),
+                    glyphId,
+                    entry
+                );
+            }
+            return true;
+        }
+        if (root !== 'masters') {
+            return false;
+        }
+        if (path.length === 1) {
+            const next = Array.isArray(value) ? value : [];
+            const keep = new Set(
+                next
+                    .map((master) => (master as { id?: unknown })?.id)
+                    .filter((id): id is string => typeof id === 'string')
+            );
+            for (const masterId of this._masterIds()) {
+                if (!keep.has(masterId)) {
+                    this._deleteMasterKerning(masterId);
+                }
+            }
+            this._replaceYMapEntry(
+                this.fontMap,
+                'masters',
+                next.map((master) => this._withoutKerning(master))
+            );
+            for (const master of next) {
+                this._writeMasterKerningFromValue(master);
+            }
+            return true;
+        }
+        if (path.length === 2) {
+            setYPath(this.fontMap, path, this._withoutKerning(value));
+            this._writeMasterKerningFromValue(value);
+            return true;
+        }
+        const direction = kerningFieldDirection(String(path[2]));
+        if (!direction) {
+            return false;
+        }
+        const masterId = this._masterIdAt(Number(path[1]));
+        if (!masterId) {
+            return true;
+        }
+        if (path.length === 3) {
+            this._writeKerningPairs(masterId, direction, flattenKerningMap(value));
+            return true;
+        }
+        const pair = String(path[3]);
+        const bucket = this._kerningBucketMap(pair);
+        const key = kerningKey(masterId, direction, pair);
+        if (value === undefined || value === null) {
+            bucket.delete(key);
+        } else {
+            bucket.set(key, value);
+        }
+        return true;
+    }
+
+    private _layoutDeletePath(path: Array<string | number>): boolean {
+        if (path[0] === LAYOUT_MAP_KEY) {
+            // A layout is never taken back; a rebase replaces it.
+            return true;
+        }
+        const layout = this.roomLayout;
+        if (!layout) {
+            return false;
+        }
+        const root = path[0];
+        if (root === 'features' && path.length === 1) {
+            this._replaceRootMap(this._featuresYMap() as Y.Map<unknown>, {});
+            return true;
+        }
+        if (root === CORE_CODEPOINT_INDEX_KEY) {
+            return true;
+        }
+        if (root === CORE_GLYPH_CATALOG_KEY && path.length === 1) {
+            for (const map of this._catalogBucketMaps()) {
+                for (const glyphId of [...map.keys()]) {
+                    map.delete(glyphId);
+                }
+            }
+            return true;
+        }
+        if (root !== 'masters') {
+            return false;
+        }
+        if (path.length === 1) {
+            for (const masterId of this._masterIds()) {
+                this._deleteMasterKerning(masterId);
+            }
+            this.fontMap.delete('masters');
+            return true;
+        }
+        if (path.length === 2) {
+            const masterId = this._masterIdAt(Number(path[1]));
+            if (masterId) {
+                this._deleteMasterKerning(masterId);
+            }
+            deleteYPath(this.fontMap, path);
+            return true;
+        }
+        const direction = kerningFieldDirection(String(path[2]));
+        if (!direction) {
+            return false;
+        }
+        const masterId = this._masterIdAt(Number(path[1]));
+        if (!masterId) {
+            return true;
+        }
+        if (path.length === 3) {
+            this._writeKerningPairs(masterId, direction, null);
+            return true;
+        }
+        const pair = String(path[3]);
+        this._kerningBucketMap(pair).delete(kerningKey(masterId, direction, pair));
+        return true;
+    }
+
+    /** Layout 2 reads that no single Y path can express; undefined if not. */
+    private _layoutGetPath(
+        path: Array<string | number>
+    ): { handled: boolean; value?: unknown } {
+        if (path[0] === LAYOUT_MAP_KEY) {
+            return {
+                handled: true,
+                value:
+                    path.length === 1
+                        ? this.yDoc.getMap(LAYOUT_MAP_KEY)
+                        : getYPath(this.yDoc.getMap(LAYOUT_MAP_KEY), path.slice(1))
+            };
+        }
+        if (!this.roomLayout) {
+            return { handled: false };
+        }
+        const root = path[0];
+        if (root === CORE_CODEPOINT_INDEX_KEY) {
+            return { handled: true, value: undefined };
+        }
+        if (root === CORE_GLYPH_CATALOG_KEY && path.length === 1) {
+            return { handled: true, value: this._readCatalogJson() };
+        }
+        if (root === 'masters' && path.length >= 3) {
+            const direction = kerningFieldDirection(String(path[2]));
+            if (!direction) {
+                return { handled: false };
+            }
+            const masterId = this._masterIdAt(Number(path[1]));
+            if (!masterId) {
+                return { handled: true, value: undefined };
+            }
+            if (path.length === 3) {
+                return {
+                    handled: true,
+                    value: this._readKerningPairs(masterId, direction)
+                };
+            }
+            const pair = String(path[3]);
+            return {
+                handled: true,
+                value: this._kerningBucketMap(pair).get(
+                    kerningKey(masterId, direction, pair)
+                )
+            };
+        }
+        return { handled: false };
+    }
+
+    /**
+     * Logical top-level font value as JSON: layout 2 assembles features,
+     * the catalog and master kerning from their rooms.
+     */
+    private _readTopLevelJsonFromY(key: string): unknown {
+        if (this.roomLayout) {
+            if (key === 'features') {
+                return fromYType(this._featuresYMap());
+            }
+            if (key === CORE_GLYPH_CATALOG_KEY) {
+                return this._readCatalogJson();
+            }
+            if (key === CORE_CODEPOINT_INDEX_KEY) {
+                return undefined;
+            }
+            if (key === 'masters') {
+                const masters = this.fontMap.get('masters');
+                if (masters === undefined) {
+                    return undefined;
+                }
+                const json = fromYType(masters);
+                if (Array.isArray(json)) {
+                    for (const master of json) {
+                        if (!master || typeof master !== 'object') continue;
+                        const record = master as Record<string, unknown>;
+                        const id = typeof record.id === 'string' ? record.id : '';
+                        record.kerning = this._readKerningPairs(id, 'l');
+                        record.kerning_rtl = this._readKerningPairs(id, 'r');
+                    }
+                }
+                return json;
+            }
+        }
+        const value = this.fontMap.get(key);
+        return value === undefined ? undefined : fromYType(value);
+    }
+
+    /** Top-level keys of the logical font, across core and layout rooms. */
+    private _logicalTopLevelKeys(): Set<string> {
+        const keys = new Set<string>();
+        this.fontMap.forEach((_value: unknown, key: string) => {
+            keys.add(key);
+        });
+        if (this.roomLayout) {
+            keys.add('features');
+            keys.add(CORE_GLYPH_CATALOG_KEY);
+            keys.delete(CORE_CODEPOINT_INDEX_KEY);
+        }
+        return keys;
+    }
+
+    /**
+     * Writing the layout map. The first layout moves this asset's features,
+     * catalog and master kerning out of core in the same core transaction;
+     * the caller writes their values to the rooms right after (see
+     * adoptRoomLayout).
+     */
+    private _setRoomLayoutValue(value: unknown): void {
+        const layout = parseRoomLayout(value);
+        if (!layout) {
+            return;
+        }
+        const previous = this.roomLayout;
+        if (
+            previous &&
+            (previous.catalogBuckets !== layout.catalogBuckets ||
+                previous.kerningBuckets !== layout.kerningBuckets)
+        ) {
+            throw new Error(
+                'A room layout cannot change bucket counts in place; rebase the asset.'
+            );
+        }
+        const map = this.yDoc.getMap(LAYOUT_MAP_KEY);
+        map.set('version', layout.version);
+        map.set('catalogBuckets', layout.catalogBuckets);
+        map.set('kerningBuckets', layout.kerningBuckets);
+        this._roomLayoutCache = layout;
+        if (previous) {
+            return;
+        }
+        this.fontMap.delete('features');
+        this.fontMap.delete(CORE_GLYPH_CATALOG_KEY);
+        this.fontMap.delete(CORE_CODEPOINT_INDEX_KEY);
+        const masters = this.fontMap.get('masters');
+        if (masters instanceof Y.Array) {
+            for (const master of masters.toArray()) {
+                if (master instanceof Y.Map) {
+                    master.delete('kerning');
+                    master.delete('kerning_rtl');
+                }
+            }
+        }
+    }
+
+    /** Core state before adoptRoomLayout, until its core change is sent. */
+    private _adoptedLayoutCoreBaseline: Uint8Array | null = null;
+
+    /**
+     * Move a layout 1 asset to room layout 2 in this window: core gets the
+     * layout and loses its features, catalog and master kerning; the rooms
+     * get them. Nothing is sent. A new asset then seeds the whole document
+     * set. An asset that already has rooms seeds the layout rooms (they can
+     * be far larger than one live write) and then calls
+     * publishAdoptedRoomLayout, which sends the core change to peers.
+     */
+    adoptRoomLayout(
+        layout: RoomLayout,
+        options: { seedsWholeAsset?: boolean } = {}
+    ): boolean {
+        if (this.roomLayout) {
+            return false;
+        }
+        const features = this._readTopLevelJsonFromY('features');
+        const catalog = this._readTopLevelJsonFromY(CORE_GLYPH_CATALOG_KEY);
+        const masters = this._readTopLevelJsonFromY('masters');
+        this._adoptedLayoutCoreBaseline =
+            this._lastBroadcastStateVectorByDoc.get(FONT_CORE_DOCUMENT_ID) ??
+            Y.encodeStateVector(this.yDoc);
+        this._pushApplyKind(ApplyKind.ManualEmit);
+        try {
+            this.yDoc.transact(
+                () => this._setRoomLayoutValue(layout),
+                FONT_EDIT_ORIGIN
+            );
+            if (features !== undefined) {
+                this._ensureLayoutDoc(FONT_FEATURES_DOCUMENT_ID).transact(
+                    () =>
+                        this._replaceRootMap(
+                            this._featuresYMap() as Y.Map<unknown>,
+                            features
+                        ),
+                    FONT_EDIT_ORIGIN
+                );
+            }
+            const byCatalogBucket = new Map<string, Array<[string, unknown]>>();
+            for (const [glyphId, entry] of Object.entries(
+                (catalog as Record<string, unknown> | undefined) ?? {}
+            )) {
+                const documentId = catalogDocumentId(
+                    catalogBucketFor(glyphId, layout.catalogBuckets)
+                );
+                if (!byCatalogBucket.has(documentId)) {
+                    byCatalogBucket.set(documentId, []);
+                }
+                byCatalogBucket.get(documentId)!.push([glyphId, entry]);
+            }
+            for (const [documentId, entries] of byCatalogBucket) {
+                const doc = this._ensureLayoutDoc(documentId);
+                doc.transact(() => {
+                    const map = doc.getMap(CATALOG_ROOT_KEY);
+                    for (const [glyphId, entry] of entries) {
+                        map.set(glyphId, toYType(entry));
+                    }
+                }, FONT_EDIT_ORIGIN);
+            }
+            const byKerningBucket = new Map<string, Array<[string, unknown]>>();
+            for (const master of Array.isArray(masters) ? masters : []) {
+                const record = (master ?? {}) as Record<string, unknown>;
+                const masterId = typeof record.id === 'string' ? record.id : '';
+                if (!masterId) continue;
+                for (const direction of ['l', 'r'] as const) {
+                    const pairs = flattenKerningMap(
+                        record[kerningFieldForDirection(direction)]
+                    );
+                    for (const [pair, value] of Object.entries(pairs)) {
+                        const documentId = kerningDocumentId(
+                            kerningBucketFor(pair, layout.kerningBuckets)
+                        );
+                        if (!byKerningBucket.has(documentId)) {
+                            byKerningBucket.set(documentId, []);
+                        }
+                        byKerningBucket
+                            .get(documentId)!
+                            .push([kerningKey(masterId, direction, pair), value]);
+                    }
+                }
+            }
+            for (const [documentId, entries] of byKerningBucket) {
+                const doc = this._ensureLayoutDoc(documentId);
+                doc.transact(() => {
+                    const map = doc.getMap(KERNING_ROOT_KEY);
+                    for (const [key, value] of entries) {
+                        map.set(key, value);
+                    }
+                }, FONT_EDIT_ORIGIN);
+            }
+            for (const documentId of layoutDocumentIds(layout)) {
+                this._ensureLayoutDoc(documentId);
+            }
+        } finally {
+            this._popApplyKind();
+        }
+        // The rooms are seeded from these states; nothing of them is a
+        // pending live delta. A new asset seeds core too.
+        for (const documentId of layoutDocumentIds(layout)) {
+            this._noteBroadcastStateVector(documentId);
+        }
+        if (options.seedsWholeAsset) {
+            this._noteBroadcastStateVector(FONT_CORE_DOCUMENT_ID);
+            this._adoptedLayoutCoreBaseline = null;
+        }
+        for (const documentId of [
+            FONT_CORE_DOCUMENT_ID,
+            FONT_FEATURES_DOCUMENT_ID,
+            ...Array.from({ length: layout.kerningBuckets }, (_, i) =>
+                kerningDocumentId(i)
+            )
+        ]) {
+            const doc = this._docForId(documentId);
+            if (doc) {
+                this._workerDocumentReplaceCallback?.(
+                    documentId,
+                    Y.encodeStateAsUpdate(doc)
+                );
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Send the core half of adoptRoomLayout once the layout rooms are seeded:
+     * peers read the layout and stop reading features, the catalog and
+     * kerning from core.
+     */
+    publishAdoptedRoomLayout(): boolean {
+        const baseline = this._adoptedLayoutCoreBaseline;
+        if (!baseline || !this.roomLayout) {
+            return false;
+        }
+        this._adoptedLayoutCoreBaseline = null;
+        const update = Y.encodeStateAsUpdate(this.yDoc, baseline);
+        if (!update.length) {
+            return false;
+        }
+        const historyItemId = this._createHistoryItemId();
+        const entries = [LAYOUT_MAP_KEY, 'features', CORE_GLYPH_CATALOG_KEY, 'masters'].map(
+            (path) =>
+                createLogEntry({
+                    timestamp: Date.now(),
+                    windowId: this.windowId,
+                    windowRoleLabel: this._getWindowRoleLabel(),
+                    historyItemId,
+                    historyAction: 'change',
+                    transactionLabel: 'Room layout',
+                    transactionId: null,
+                    op: 'set',
+                    path,
+                    oldValue: undefined,
+                    newValue: undefined,
+                    replayOldValue: undefined,
+                    replayNewValue: undefined,
+                    compileChangeSource: 'cloud-room-layout',
+                    compileEditType: null
+                })
+        );
+        this._emitLocalUpdate(update, [], FONT_CORE_DOCUMENT_ID, {
+            skipCollaborationLog: true,
+            envelopeEntries: entries
+        });
+        this._noteBroadcastStateVector(FONT_CORE_DOCUMENT_ID);
+        return true;
+    }
+
     documentIdForPath(path: Array<string | number>): string {
+        const layout = this._routingLayout();
+        if (layout) {
+            if (path[0] === 'features') {
+                return FONT_FEATURES_DOCUMENT_ID;
+            }
+            if (path[0] === CORE_GLYPH_CATALOG_KEY && path.length >= 2) {
+                return catalogDocumentId(
+                    catalogBucketFor(String(path[1]), layout.catalogBuckets)
+                );
+            }
+            if (
+                path[0] === 'masters' &&
+                path.length >= 3 &&
+                kerningFieldDirection(String(path[2]))
+            ) {
+                // A whole kerning map spreads over every bucket (see
+                // _extraLayoutDocumentIds); it does not touch core.
+                return kerningDocumentId(
+                    path.length === 3
+                        ? 0
+                        : kerningBucketFor(String(path[3]), layout.kerningBuckets)
+                );
+            }
+        }
         if (path[0] === 'glyphs' && path.length >= 2) {
             const key = String(path[1]);
             const glyphId =
@@ -1253,6 +2051,9 @@ export class PatchSyncEngine {
         }
         if (documentId === FONT_DEPS_DOCUMENT_ID) {
             return this.depsDoc;
+        }
+        if (isLayoutDocumentId(documentId)) {
+            return this._layoutDocs.get(documentId) || null;
         }
         if (documentId.startsWith('glyph:')) {
             return (
@@ -1949,8 +2750,7 @@ export class PatchSyncEngine {
         if (known) {
             return known;
         }
-        const yCatalog = this.fontMap.get(CORE_GLYPH_CATALOG_KEY);
-        const entry = yCatalog instanceof Y.Map ? yCatalog.get(glyphId) : null;
+        const entry = this._catalogYEntry(glyphId) ?? null;
         const name =
             entry instanceof Y.Map
                 ? entry.get('name')
@@ -1960,20 +2760,23 @@ export class PatchSyncEngine {
 
     /** Non-deleted catalog glyph ids, read from font-core without building font JSON. */
     listLiveCatalogGlyphIds(): string[] {
-        const yCatalog = this.fontMap.get(CORE_GLYPH_CATALOG_KEY);
-        if (!(yCatalog instanceof Y.Map)) {
-            return [];
-        }
+        const maps = this.roomLayout
+            ? this._catalogBucketMaps()
+            : [this.fontMap.get(CORE_GLYPH_CATALOG_KEY)].filter(
+                  (map): map is Y.Map<unknown> => map instanceof Y.Map
+              );
         const ids: string[] = [];
-        yCatalog.forEach((entry, glyphId) => {
-            const deleted =
-                entry instanceof Y.Map
-                    ? entry.get('deleted')
-                    : (entry as { deleted?: unknown } | null)?.deleted;
-            if (glyphId && deleted !== true) {
-                ids.push(glyphId);
-            }
-        });
+        for (const yCatalog of maps) {
+            yCatalog.forEach((entry, glyphId) => {
+                const deleted =
+                    entry instanceof Y.Map
+                        ? entry.get('deleted')
+                        : (entry as { deleted?: unknown } | null)?.deleted;
+                if (glyphId && deleted !== true) {
+                    ids.push(glyphId);
+                }
+            });
+        }
         return ids;
     }
 
@@ -2002,6 +2805,10 @@ export class PatchSyncEngine {
      * refreshed, so seed lookup would miss a glyph the catalog already names.
      */
     refreshOwnedCatalogFromYDoc(): void {
+        if (this.roomLayout) {
+            this._syncTopLevelFontKeyFromYDoc(CORE_GLYPH_CATALOG_KEY);
+            return;
+        }
         if (this.fontMap.get(CORE_GLYPH_CATALOG_KEY) === undefined) {
             return;
         }
@@ -2026,12 +2833,12 @@ export class PatchSyncEngine {
             compileChangeSource: 'cloud-catalog',
             compileEditType: null
         } as const;
-        const yCatalog = this.fontMap.get(CORE_GLYPH_CATALOG_KEY);
-        const yIndex = this.fontMap.get(CORE_CODEPOINT_INDEX_KEY);
-        const previousCatalog =
-            yCatalog instanceof Y.Map
-                ? (fromYType(yCatalog) as CloudOwnedFontData['glyphCatalog'])
-                : {};
+        const layoutActive = !!this.roomLayout;
+        const yIndex = layoutActive
+            ? undefined
+            : this.fontMap.get(CORE_CODEPOINT_INDEX_KEY);
+        const previousCatalog = (this._readCatalogJson() ??
+            {}) as CloudOwnedFontData['glyphCatalog'];
         const previousIndex =
             yIndex instanceof Y.Map
                 ? (fromYType(yIndex) as CloudOwnedFontData['codepointIndex'])
@@ -2064,7 +2871,7 @@ export class PatchSyncEngine {
             });
         }
         for (const [codepoint, glyphIds] of Object.entries(
-            owned.codepointIndex
+            layoutActive ? {} : owned.codepointIndex
         )) {
             if (!catalogChanged(previousIndex[codepoint], glyphIds)) {
                 continue;
@@ -2078,7 +2885,7 @@ export class PatchSyncEngine {
             });
         }
         for (const codepoint of Object.keys(previousIndex)) {
-            if (owned.codepointIndex[codepoint]) {
+            if (owned.codepointIndex[codepoint] && !layoutActive) {
                 continue;
             }
             operations.push({
@@ -2237,6 +3044,12 @@ export class PatchSyncEngine {
                 bytes: Y.encodeStateAsUpdate(this.depsDoc)
             }
         ];
+        for (const documentId of this.layoutDocumentIds()) {
+            shards.push({
+                documentId,
+                bytes: Y.encodeStateAsUpdate(this._ensureLayoutDoc(documentId))
+            });
+        }
         for (const [glyphId, doc] of this._glyphDocs) {
             shards.push({
                 documentId: glyphDocumentId(glyphId),
@@ -2396,12 +3209,7 @@ export class PatchSyncEngine {
         try {
             if (!this._fontJson) this._fontJson = {};
             for (const shard of shards) {
-                const doc =
-                    shard.documentId === FONT_CORE_DOCUMENT_ID
-                        ? this.yDoc
-                        : shard.documentId === FONT_DEPS_DOCUMENT_ID
-                          ? this.depsDoc
-                          : this._ensureGlyphDocFromShard(shard);
+                const doc = this._docForShard(shard);
                 Y.applyUpdate(doc, shard.bytes, SYSTEM_REMOTE_ORIGIN);
                 this._noteBroadcastStateVector(shard.documentId);
                 this._lastEncodedShardBytes.set(
@@ -2435,12 +3243,7 @@ export class PatchSyncEngine {
                 this._fontJson = {};
             }
             for (const shard of shards) {
-                const doc =
-                    shard.documentId === FONT_CORE_DOCUMENT_ID
-                        ? this.yDoc
-                        : shard.documentId === FONT_DEPS_DOCUMENT_ID
-                          ? this.depsDoc
-                          : this._ensureGlyphDocFromShard(shard);
+                const doc = this._docForShard(shard);
                 Y.applyUpdate(doc, shard.bytes, SYSTEM_REMOTE_ORIGIN);
                 this._noteBroadcastStateVector(shard.documentId);
                 this._lastEncodedShardBytes.set(
@@ -2465,6 +3268,19 @@ export class PatchSyncEngine {
         this._canonicalizeFullStateRawFontJson();
         this._emitAfterSync();
         return this._fontJson;
+    }
+
+    private _docForShard(shard: EncodedShard): Y.Doc {
+        if (shard.documentId === FONT_CORE_DOCUMENT_ID) {
+            return this.yDoc;
+        }
+        if (shard.documentId === FONT_DEPS_DOCUMENT_ID) {
+            return this.depsDoc;
+        }
+        if (isLayoutDocumentId(shard.documentId)) {
+            return this._ensureLayoutDoc(shard.documentId);
+        }
+        return this._ensureGlyphDocFromShard(shard);
     }
 
     private _ensureGlyphDocFromShard(shard: EncodedShard): Y.Doc {
@@ -2579,6 +3395,24 @@ export class PatchSyncEngine {
                 documentId
             };
         }
+        if (this.roomLayout && documentId === FONT_FEATURES_DOCUMENT_ID) {
+            const doc = this._ensureLayoutDoc(documentId);
+            return {
+                map: doc.getMap(FEATURES_ROOT_KEY),
+                path: path.slice(1),
+                doc,
+                documentId
+            };
+        }
+        if (this.roomLayout && layoutDocumentKind(documentId) === 'catalog') {
+            const doc = this._ensureLayoutDoc(documentId);
+            return {
+                map: doc.getMap(CATALOG_ROOT_KEY),
+                path: path.slice(1),
+                doc,
+                documentId
+            };
+        }
         if (path[0] === GLYPH_REVISIONS_KEY) {
             return {
                 map: this.yDoc.getMap(GLYPH_REVISIONS_KEY),
@@ -2612,6 +3446,9 @@ export class PatchSyncEngine {
             this._removeGlyphDoc(String(path[1]));
             return;
         }
+        if (this._layoutSetPath(path, value)) {
+            return;
+        }
         const routed = this._routedYPath(path, { createIfMissing: true });
         setYPath(routed.map, routed.path, value);
     }
@@ -2621,6 +3458,9 @@ export class PatchSyncEngine {
             this._removeGlyphDoc(String(path[1]));
             return;
         }
+        if (this._layoutDeletePath(path)) {
+            return;
+        }
         const routed = this._routedYPath(path);
         deleteYPath(routed.map, routed.path);
     }
@@ -2628,6 +3468,10 @@ export class PatchSyncEngine {
     private _getRoutedYPath(path: Array<string | number>): unknown {
         if (path[0] === 'glyphs' && path.length === 2) {
             return this._glyphMapForName(String(path[1])) || undefined;
+        }
+        const layoutRead = this._layoutGetPath(path);
+        if (layoutRead.handled) {
+            return layoutRead.value;
         }
         const routed = this._routedYPath(path);
         if (path[0] === 'glyphs' && path.length >= 2 && routed.path === path) {
@@ -3321,14 +4165,20 @@ export class PatchSyncEngine {
             applyCloudOwnedData(fontJson);
         }
         this._destroyGlyphDocs();
+        this._destroyLayoutDocs();
         this._pushApplyKind(ApplyKind.ManualEmit);
         try {
             this.yDoc.transact(() => {
                 this.fontMap.forEach((_v: unknown, k: string) => {
                     this.fontMap.delete(k);
                 });
+                const layoutMap = this.yDoc.getMap(LAYOUT_MAP_KEY);
+                for (const key of [...layoutMap.keys()]) {
+                    layoutMap.delete(key);
+                }
                 jsonToCoreFontMap(fontJson, this.fontMap);
             }, USER_EDIT_ORIGIN);
+            this._roomLayoutCache = undefined;
             for (const glyph of listGlyphRecords(fontJson)) {
                 const glyphId = ensureImmutableGlyphId(glyph);
                 const name = String(glyph.name || glyphId);
@@ -6454,6 +7304,9 @@ export class PatchSyncEngine {
                       )
                     : FONT_CORE_DOCUMENT_ID);
             let targetDoc = this._docForId(resolvedDocumentId);
+            if (!targetDoc && isLayoutDocumentId(resolvedDocumentId)) {
+                targetDoc = this._ensureLayoutDoc(resolvedDocumentId);
+            }
             if (!targetDoc && resolvedDocumentId.startsWith('glyph:')) {
                 const glyphId = resolvedDocumentId.slice('glyph:'.length);
                 const catalog = catalogFromCoreJson(
@@ -6892,10 +7745,7 @@ export class PatchSyncEngine {
         }
 
         const fontRecord = this._fontJson as Record<string, unknown>;
-        const nextTopLevelKeys = new Set<string>();
-        this.fontMap.forEach((_value: unknown, key: string) => {
-            nextTopLevelKeys.add(key);
-        });
+        const nextTopLevelKeys = this._logicalTopLevelKeys();
 
         this._syncAllGlyphsFromYDoc(options?.mergeExistingGlyphs === true);
 
@@ -6908,6 +7758,9 @@ export class PatchSyncEngine {
 
         for (const key of Object.keys(fontRecord)) {
             if (key === 'glyphs' || key === 'glyphOrder') {
+                continue;
+            }
+            if (key === CORE_CODEPOINT_INDEX_KEY && this.roomLayout) {
                 continue;
             }
             if (!nextTopLevelKeys.has(key)) {
@@ -7269,15 +8122,17 @@ export class PatchSyncEngine {
         }
 
         const fontRecord = this._fontJson as Record<string, unknown>;
-        const value = this.fontMap.get(key);
+        const value = this._readTopLevelJsonFromY(key);
         if (value === undefined) {
+            if (key === CORE_CODEPOINT_INDEX_KEY && this.roomLayout) {
+                // Derived in memory from the catalog under layout 2.
+                return;
+            }
             delete fontRecord[key];
             return;
         }
 
-        fontRecord[key] = this._cloneRuntimeValue(
-            cloneHistoryValue(fromYType(value))
-        );
+        fontRecord[key] = this._cloneRuntimeValue(cloneHistoryValue(value));
         if (key === CORE_GLYPH_CATALOG_KEY) {
             this._aliasResidentGlyphNamesFromCatalog();
             // Checkpoint and live font-core applies both land here. The
@@ -8899,6 +9754,13 @@ export class PatchSyncEngine {
                 operation.applyPath ?? operation.path
             );
             docsTouched.add(this.documentIdForPath(applyPath));
+            for (const documentId of this._extraLayoutDocumentIds(applyPath)) {
+                this._ensureLayoutDoc(documentId);
+                docsTouched.add(documentId);
+            }
+            if (isLayoutDocumentId(this.documentIdForPath(applyPath))) {
+                this._ensureLayoutDoc(this.documentIdForPath(applyPath));
+            }
             if (operation.op === 'remove' && this._isGlyphRootPath(applyPath)) {
                 docsTouched.add(FONT_CORE_DOCUMENT_ID);
             }
@@ -8988,7 +9850,8 @@ export class PatchSyncEngine {
                     localUpdateBaselineByDoc.get(documentId) ||
                     Y.encodeStateVector(doc);
                 const exactCommitUpdate = Y.encodeStateAsUpdate(doc, baseline);
-                if (exactCommitUpdate.length === 0) {
+                if (isEmptyYjsUpdate(exactCommitUpdate)) {
+                    // A room a whole-value write could reach but did not.
                     continue;
                 }
                 const measured = measureShardBytesForSubmit({
@@ -10102,7 +10965,7 @@ export class PatchSyncEngine {
         if (typeof path[2] === 'number') {
             featureIndex = path[2];
         } else if (typeof path[2] === 'string') {
-            const featuresMap = this.fontMap.get('features');
+            const featuresMap = this._featuresYMap();
             if (featuresMap instanceof Y.Map) {
                 const order = featuresMap.get('featureOrder');
                 if (order instanceof Y.Array) {
@@ -11111,6 +11974,9 @@ export class PatchSyncEngine {
             if (key === 'glyphs' || key === 'glyphOrder') {
                 continue;
             }
+            if (this._layoutSetPath([key], value)) {
+                continue;
+            }
             this._replaceYMapEntry(this.fontMap, key, value);
         }
         this.fontMap.forEach((_value: unknown, key: string) => {
@@ -11122,6 +11988,9 @@ export class PatchSyncEngine {
                 this.fontMap.delete(key);
             }
         });
+        if (this.roomLayout && !nextKeys.has('features')) {
+            this._layoutDeletePath(['features']);
+        }
     }
 
     private _normalizeFontSnapshot(

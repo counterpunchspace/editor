@@ -14,7 +14,7 @@ use fea_rs::{
 use fea_rs_ast::FeatureFile;
 use serde::de::DeserializeOwned;
 use smol_str::SmolStr;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fmt::Write as _;
 use std::fs;
 use std::hash::{Hash, Hasher};
@@ -122,6 +122,15 @@ static GLYPH_ID_BY_NAME: LazyLock<Mutex<HashMap<String, String>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 const FONT_CORE_DOCUMENT_ID: &str = "font-core";
 const FONT_DEPS_DOCUMENT_ID: &str = "font-deps";
+// Room layout 2 (see cloud-room-layout.ts): feature code and kerning pairs live
+// in their own documents. The catalog buckets are not needed here: glyph names
+// come from glyphOrder and the glyph documents.
+const FONT_FEATURES_DOCUMENT_ID: &str = "features";
+const CATALOG_DOCUMENT_PREFIX: &str = "catalog:";
+const KERNING_DOCUMENT_PREFIX: &str = "kerning:";
+static FEATURES_DOC: Mutex<Option<yrs::Doc>> = Mutex::new(None);
+static KERNING_DOCS: LazyLock<Mutex<BTreeMap<u32, yrs::Doc>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
 static PREVIEW_OVERLAY: Mutex<Option<PreviewOverlay>> = Mutex::new(None);
 static COMPILE_FEATURE_OVERLAY: Mutex<String> = Mutex::new(String::new());
@@ -3625,7 +3634,9 @@ fn ydoc_to_babelfont_json_with_txn<T: ReadTxn>(txn: &T) -> serde_json::Value {
     }
 
     reconstruct_kern_group_dicts(&mut result);
-    serde_json::Value::Object(result)
+    let mut json = serde_json::Value::Object(result);
+    merge_layout_documents_into_font_json(&mut json);
+    json
 }
 
 /// Extract and return the JSON for a single named glyph from the Rust Y.Doc.
@@ -3704,9 +3715,19 @@ fn cached_layer_json_from_font_json(
 }
 
 fn ydoc_get_top_level_json_with_txn<T: ReadTxn>(key: &str, txn: &T) -> Option<serde_json::Value> {
+    if key == "features" {
+        if let Some(features) = layout_features_json() {
+            return Some(features);
+        }
+    }
     let font_map = txn.get_map("font")?;
     let value = font_map.get(txn, key)?;
-    let json = yrs_value_to_json(value, txn);
+    let mut json = yrs_value_to_json(value, txn);
+    if key == "masters" {
+        if let Some(kerning) = layout_kerning_by_master() {
+            merge_layout_kerning_into_masters(&mut json, &kerning);
+        }
+    }
     // Incremental kern-group refreshes read this helper directly. Membership is
     // stored as `{ glyph: true }` maps; babelfont deserializes `Vec<SmolStr>`.
     if key == "first_kern_groups" || key == "second_kern_groups" {
@@ -3866,7 +3887,114 @@ fn remember_glyph_name(glyph_id: &str, doc: &yrs::Doc) {
 pub fn reset_ydoc_set() {
     GLYPH_DOCS.lock().unwrap().clear();
     GLYPH_ID_BY_NAME.lock().unwrap().clear();
+    *FEATURES_DOC.lock().unwrap() = None;
+    KERNING_DOCS.lock().unwrap().clear();
     *Y_DOC.lock().unwrap() = None;
+}
+
+fn layout_bucket(document_id: &str, prefix: &str) -> Option<u32> {
+    let rest = document_id.strip_prefix(prefix)?;
+    if rest.is_empty() || rest.len() > 4 || (rest.len() > 1 && rest.starts_with('0')) {
+        return None;
+    }
+    if !rest.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    rest.parse::<u32>().ok().filter(|index| *index < 1024)
+}
+
+fn is_catalog_document_id(document_id: &str) -> bool {
+    layout_bucket(document_id, CATALOG_DOCUMENT_PREFIX).is_some()
+}
+
+/// `font.features` from the features document, when the asset has one.
+fn layout_features_json() -> Option<serde_json::Value> {
+    let guard = FEATURES_DOC.lock().unwrap();
+    let doc = guard.as_ref()?;
+    let txn = doc.transact();
+    let map = txn.get_map("features")?;
+    Some(yrs_value_to_json(yrs::types::Value::YMap(map), &txn))
+}
+
+type MasterKerning = (
+    serde_json::Map<String, serde_json::Value>,
+    serde_json::Map<String, serde_json::Value>,
+);
+
+/// Kerning per master id from the kerning documents, `(ltr, rtl)` flat pair
+/// maps. None when the asset keeps kerning inside its masters (layout 1).
+fn layout_kerning_by_master() -> Option<HashMap<String, MasterKerning>> {
+    let docs = KERNING_DOCS.lock().unwrap();
+    if docs.is_empty() {
+        return None;
+    }
+    let mut by_master: HashMap<String, MasterKerning> = HashMap::new();
+    for doc in docs.values() {
+        let txn = doc.transact();
+        let Some(map) = txn.get_map("kerning") else {
+            continue;
+        };
+        for (key, value) in map.iter(&txn) {
+            let mut parts = key.splitn(3, '|');
+            let (Some(master_id), Some(direction), Some(pair)) =
+                (parts.next(), parts.next(), parts.next())
+            else {
+                continue;
+            };
+            if master_id.is_empty() || pair.is_empty() {
+                continue;
+            }
+            let entry = by_master.entry(master_id.to_string()).or_default();
+            let value = yrs_value_to_json(value, &txn);
+            match direction {
+                "l" => {
+                    entry.0.insert(pair.to_string(), value);
+                }
+                "r" => {
+                    entry.1.insert(pair.to_string(), value);
+                }
+                _ => {}
+            }
+        }
+    }
+    Some(by_master)
+}
+
+fn merge_layout_kerning_into_masters(
+    masters: &mut serde_json::Value,
+    kerning: &HashMap<String, MasterKerning>,
+) {
+    let Some(items) = masters.as_array_mut() else {
+        return;
+    };
+    for master in items {
+        let Some(object) = master.as_object_mut() else {
+            continue;
+        };
+        let id = object
+            .get("id")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let (ltr, rtl) = kerning.get(&id).cloned().unwrap_or_default();
+        object.insert("kerning".to_string(), serde_json::Value::Object(ltr));
+        object.insert("kerning_rtl".to_string(), serde_json::Value::Object(rtl));
+    }
+}
+
+/// Put the layout 2 documents back where babelfont expects them.
+fn merge_layout_documents_into_font_json(json: &mut serde_json::Value) {
+    let Some(object) = json.as_object_mut() else {
+        return;
+    };
+    if let Some(features) = layout_features_json() {
+        object.insert("features".to_string(), features);
+    }
+    if let Some(kerning) = layout_kerning_by_master() {
+        if let Some(masters) = object.get_mut("masters") {
+            merge_layout_kerning_into_masters(masters, &kerning);
+        }
+    }
 }
 
 #[wasm_bindgen]
@@ -3884,8 +4012,22 @@ pub fn seed_ydoc_document(document_id: &str, state_update: &[u8]) -> Result<(), 
         GLYPH_DOCS.lock().unwrap().insert(glyph_id.to_string(), doc);
         return Ok(());
     }
-    if document_id == FONT_DEPS_DOCUMENT_ID {
+    if document_id == FONT_DEPS_DOCUMENT_ID || is_catalog_document_id(document_id) {
         return Ok(());
+    }
+    if document_id == FONT_FEATURES_DOCUMENT_ID {
+        *FEATURES_DOC.lock().unwrap() = Some(doc);
+        return Ok(());
+    }
+    if let Some(bucket) = layout_bucket(document_id, KERNING_DOCUMENT_PREFIX) {
+        KERNING_DOCS.lock().unwrap().insert(bucket, doc);
+        return Ok(());
+    }
+    if document_id != FONT_CORE_DOCUMENT_ID {
+        return Err(JsValue::from_str(&format!(
+            "seed_ydoc_document: unknown document {}",
+            document_id
+        )));
     }
     *Y_DOC.lock().unwrap() = Some(doc);
     Ok(())
@@ -4775,6 +4917,27 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
         }
     } else if document_id == FONT_DEPS_DOCUMENT_ID {
         pending_core_update.take();
+    } else if is_catalog_document_id(&document_id) {
+        // Nothing here reads the catalog; glyph names come from glyph documents.
+        let result = serde_json::json!({
+            "changedGlyphs": [],
+            "changedLayerIds": [],
+            "skipped": "catalog_document"
+        });
+        return serde_json::to_string(&result)
+            .map_err(|e| JsValue::from_str(&format!("apply_yjs_update: result serialize: {}", e)));
+    } else if document_id == FONT_FEATURES_DOCUMENT_ID {
+        if let Some(update) = pending_core_update.take() {
+            let mut guard = FEATURES_DOC.lock().unwrap();
+            let doc = guard.get_or_insert_with(yrs::Doc::new);
+            doc.transact_mut().apply_update(update);
+        }
+    } else if let Some(bucket) = layout_bucket(&document_id, KERNING_DOCUMENT_PREFIX) {
+        if let Some(update) = pending_core_update.take() {
+            let mut docs = KERNING_DOCS.lock().unwrap();
+            let doc = docs.entry(bucket).or_insert_with(yrs::Doc::new);
+            doc.transact_mut().apply_update(update);
+        }
     }
 
     // Keep the worker doc installed in Y_DOC while mutating it. In wasm, a trap
@@ -7417,6 +7580,63 @@ mod tests {
             }
         ]
     }"#;
+
+    #[test]
+    fn layout_bucket_ids_match_collab() {
+        assert_eq!(layout_bucket("kerning:0", KERNING_DOCUMENT_PREFIX), Some(0));
+        assert_eq!(layout_bucket("kerning:1023", KERNING_DOCUMENT_PREFIX), Some(1023));
+        assert_eq!(layout_bucket("kerning:1024", KERNING_DOCUMENT_PREFIX), None);
+        assert_eq!(layout_bucket("kerning:01", KERNING_DOCUMENT_PREFIX), None);
+        assert_eq!(layout_bucket("kerning:", KERNING_DOCUMENT_PREFIX), None);
+        assert_eq!(layout_bucket("kerning:x", KERNING_DOCUMENT_PREFIX), None);
+        assert!(is_catalog_document_id("catalog:3"));
+        assert!(!is_catalog_document_id("features"));
+    }
+
+    #[test]
+    fn layout_documents_put_features_and_kerning_back_into_the_font() {
+        reset_ydoc_set();
+
+        let features_doc = Doc::new();
+        {
+            let map = features_doc.get_or_insert_map("features");
+            let mut txn = features_doc.transact_mut();
+            let classes: yrs::MapRef = map.insert(&mut txn, "classes", MapPrelim::<Any>::new());
+            classes.insert(&mut txn, "upper", "A B");
+            map.insert(&mut txn, "prefixes", MapPrelim::<Any>::new());
+        }
+        let kerning_doc = Doc::new();
+        {
+            let map = kerning_doc.get_or_insert_map("kerning");
+            let mut txn = kerning_doc.transact_mut();
+            map.insert(&mut txn, "master-regular|l|A:V", Any::Number(-50.0));
+            map.insert(&mut txn, "master-regular|r|@alef:beh", Any::Number(20.0));
+            map.insert(&mut txn, "gone-master|l|A:W", Any::Number(-10.0));
+            map.insert(&mut txn, "malformed", Any::Number(1.0));
+        }
+        let encode = |doc: &Doc| {
+            doc.transact()
+                .encode_state_as_update_v1(&StateVector::default())
+        };
+        seed_ydoc_document("features", &encode(&features_doc)).unwrap();
+        seed_ydoc_document("kerning:4", &encode(&kerning_doc)).unwrap();
+        seed_ydoc_document("catalog:0", &encode(&Doc::new())).unwrap();
+
+        let mut font: serde_json::Value = serde_json::from_str(TEST_FONT_JSON).unwrap();
+        font["masters"][0].as_object_mut().unwrap().remove("kerning");
+        font.as_object_mut().unwrap().remove("features");
+        merge_layout_documents_into_font_json(&mut font);
+
+        assert_eq!(font["features"]["classes"]["upper"]["code"], json!("A B"));
+        assert_eq!(font["masters"][0]["kerning"], json!({ "A:V": -50 }));
+        assert_eq!(font["masters"][0]["kerning_rtl"], json!({ "@alef:beh": 20 }));
+
+        reset_ydoc_set();
+        let mut layout_one: serde_json::Value = serde_json::from_str(TEST_FONT_JSON).unwrap();
+        let before = layout_one.clone();
+        merge_layout_documents_into_font_json(&mut layout_one);
+        assert_eq!(layout_one, before, "layout 1 fonts are left alone");
+    }
 
     #[test]
     fn layout_closure_cache_key_includes_font_revision() {
