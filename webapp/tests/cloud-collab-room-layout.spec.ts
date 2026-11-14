@@ -161,10 +161,24 @@ test('a font saved before room layout 2 moves to its rooms when the owner opens 
 
         const late = await openAsOwner(browser, request, emails.owner, assetId);
         contexts.push(late.context);
-        const reopenedParts = await fontParts(late.page);
-        expect(reopenedParts.layout).toEqual(upgraded.layout);
-        expect(reopenedParts.features).toEqual(saved.features);
-        expect(reopenedParts.kerning[masterIndex]).toEqual(edited);
+        // A window that opens now follows font-core to the rooms too.
+        await expect
+            .poll(
+                async () => {
+                    const parts = await fontParts(late.page);
+                    return {
+                        layout: parts.layout,
+                        features: parts.features,
+                        kerning: parts.kerning[masterIndex]
+                    };
+                },
+                { timeout: 60000 }
+            )
+            .toEqual({
+                layout: upgraded.layout,
+                features: saved.features,
+                kerning: edited
+            });
     } finally {
         for (const context of contexts) {
             await context.close().catch(() => undefined);
