@@ -269,12 +269,9 @@ describe('FontCompilation worker document readiness', () => {
             });
 
         await expect(
-            fontCompilation.compileEditingFromJsonCached(
-                '{"glyphs":[{"name":"a"}]}',
-                '7',
-                ['a'],
-                { compileSource: 'keyboard-outline' }
-            )
+            fontCompilation.compileEditingFromJsonCached('7', ['a'], {
+                compileSource: 'keyboard-outline'
+            })
         ).resolves.toEqual(expect.objectContaining({ fontRevisionKey: '7' }));
 
         expect(sendMessageSpy).toHaveBeenCalledWith(
@@ -300,15 +297,10 @@ describe('FontCompilation worker document readiness', () => {
                 fontRevisionKey: '8'
             });
 
-        await fontCompilation.compileEditingFromJsonCached(
-            '{"glyphs":[{"name":"a"}]}',
-            '8',
-            ['a'],
-            {
-                compileSource: 'mouse-drag-outline',
-                usePreviewLayerOverlay: true
-            }
-        );
+        await fontCompilation.compileEditingFromJsonCached('8', ['a'], {
+            compileSource: 'mouse-drag-outline',
+            usePreviewLayerOverlay: true
+        });
 
         expect(sendMessageSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -331,12 +323,9 @@ describe('FontCompilation worker document readiness', () => {
             });
 
         await expect(
-            fontCompilation.compileEditingFromJsonCached(
-                '{"glyphs":[]}',
-                '9',
-                ['a'],
-                { compileSource: 'feature-code' }
-            )
+            fontCompilation.compileEditingFromJsonCached('9', ['a'], {
+                compileSource: 'feature-code'
+            })
         ).resolves.toEqual(expect.objectContaining({ fontRevisionKey: '9' }));
 
         expect(sendMessageSpy).toHaveBeenCalledWith(
@@ -440,7 +429,6 @@ describe('FontCompilation worker document readiness', () => {
 
         await expect(
             fontCompilation.compileEditingFromJsonCached(
-                '{"glyphs":[]}',
                 '7',
                 ['a', 'adieresis'],
                 { compileSource: 'text-input' }

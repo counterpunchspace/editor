@@ -6388,7 +6388,6 @@ describe('WindowSync', () => {
         sync2.requestFullState();
         const earlyCompilePromise =
             window.fontCompilation.compileEditingFromJsonCached(
-                '__incremental_layer__',
                 'revision-before-bootstrap',
                 ['A']
             );
@@ -6620,7 +6619,6 @@ describe('WindowSync', () => {
         sync2.requestFullState();
         const earlyCompilePromise =
             window.fontCompilation.compileEditingFromJsonCached(
-                '__incremental_layer__',
                 'revision-before-bootstrap',
                 ['A']
             );

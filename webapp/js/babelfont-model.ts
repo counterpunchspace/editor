@@ -209,6 +209,53 @@ import { translateLayerContentsX } from './x-translation-utils';
 const console = new Logger('BabelfontModel');
 
 type Unsafe = ReturnType<typeof JSON.parse>;
+
+/** Options for `Font.toJSONString` and `Font.toJSONParts`. */
+export type FontJSONOptions = {
+    compileFacing?: boolean;
+    glyphBodies?: ReadonlySet<string>;
+};
+
+/**
+ * A font's `.babelfont` JSON split at its glyphs: `before`, then each glyph
+ * at its place in the `glyphs` array, then `after`. `jsonPartsToChunks`
+ * gives the exact text of `toJSONString`, `jsonPartsToData` its parsed value.
+ */
+export type BabelfontJsonParts = {
+    before: string;
+    glyphs: string[];
+    after: string;
+};
+
+const GLYPHS_PLACEHOLDER = '\u0000babelfont-glyphs\u0000';
+
+/** The text of `parts` in order, so that joining the chunks gives the whole JSON. */
+export function jsonPartsToChunks(parts: BabelfontJsonParts): string[] {
+    if (!parts.glyphs.length) {
+        return [parts.before, '[]', parts.after];
+    }
+    // `glyphs` is a top-level key: its items sit two levels deep.
+    const indent = (json: string) => json.replace(/\n/g, '\n    ');
+    return [
+        parts.before,
+        ...parts.glyphs.map(
+            (glyph, index) => (index ? ',\n    ' : '[\n    ') + indent(glyph)
+        ),
+        '\n  ]',
+        parts.after
+    ];
+}
+
+/** The parsed value of `parts`, the same as parsing the whole JSON. */
+export function jsonPartsToData(
+    parts: BabelfontJsonParts
+): Record<string, unknown> {
+    const data = JSON.parse(
+        `${parts.before}${JSON.stringify(GLYPHS_PLACEHOLDER)}${parts.after}`
+    ) as Record<string, unknown>;
+    data.glyphs = parts.glyphs.map((glyph) => JSON.parse(glyph) as unknown);
+    return data;
+}
 type PathData = {
     id?: string;
     nodes: Babelfont.Node[];
@@ -16332,18 +16379,65 @@ export class Font extends ModelBase {
     }
 
     /**
-     * Serialize the font back to JSON string
-     */
-    /**
+     * Serialize the font back to a `.babelfont` JSON string, indented by two
+     * spaces for readable diffs.
+     *
      * With `glyphBodies`, only those glyphs keep their outlines, anchors,
      * guides and layer libs; every other glyph keeps its layer metadata
      * (ids, masters, widths) as a cheap stub. Serializers that write some
      * glyphs' files still see the whole glyph set and every master's layers.
+     *
+     * A large font's string can go over the engine's string length limit;
+     * `toJSONParts` serializes glyph by glyph instead.
      */
     toJSONString(options?: {
         compileFacing?: boolean;
         glyphBodies?: ReadonlySet<string>;
     }): string {
+        const { data, replacer } = this.jsonSerialization(options);
+        return JSON.stringify(data, replacer, 2);
+    }
+
+    /**
+     * The same JSON as `toJSONString`, one string per glyph: see
+     * `BabelfontJsonParts`. No string holds the whole font.
+     */
+    toJSONParts(options?: {
+        compileFacing?: boolean;
+        glyphBodies?: ReadonlySet<string>;
+    }): BabelfontJsonParts {
+        const { data, replacer } = this.jsonSerialization(options);
+        const glyphs: unknown[] = Array.isArray(data?.glyphs)
+            ? data.glyphs
+            : [];
+        const head = JSON.stringify(
+            { ...data, glyphs: GLYPHS_PLACEHOLDER },
+            replacer,
+            2
+        );
+        const marker = JSON.stringify(GLYPHS_PLACEHOLDER);
+        const at = head.indexOf(marker);
+        if (
+            !Array.isArray(data?.glyphs) ||
+            at < 0 ||
+            head.indexOf(marker, at + 1) >= 0
+        ) {
+            throw new Error('Cannot split the font JSON at its glyphs.');
+        }
+        return {
+            before: head.slice(0, at),
+            // JSON.stringify writes an array item it cannot represent as null.
+            glyphs: glyphs.map(
+                (glyph) => JSON.stringify(glyph, replacer, 2) ?? 'null'
+            ),
+            after: head.slice(at + marker.length)
+        };
+    }
+
+    private jsonSerialization(options?: FontJSONOptions): {
+        data: Unsafe;
+        replacer: (key: string, value: Unsafe) => Unsafe;
+    } {
         // Worker/Yjs/resting state is always logical. Only explicit export or
         // compile-facing callers request the physical automatic =+/- view.
         const compileFacing = options?.compileFacing === true;
@@ -16396,125 +16490,113 @@ export class Font extends ModelBase {
             }
         }
 
-        return JSON.stringify(
-            data,
-            (key, value) => {
-                // Substitute offset-applied layer data for automatic layers with sidebearing keys
-                if (
-                    value &&
-                    typeof value === 'object' &&
-                    !Array.isArray(value) &&
-                    layerDataOverrides.has(value)
-                ) {
-                    return layerDataOverrides.get(value);
-                }
+        // Ignores `key`: `toJSONParts` serializes each glyph on its own.
+        const replacer = (_key: string, value: Unsafe): Unsafe => {
+            // Substitute offset-applied layer data for automatic layers with sidebearing keys
+            if (
+                value &&
+                typeof value === 'object' &&
+                !Array.isArray(value) &&
+                layerDataOverrides.has(value)
+            ) {
+                return layerDataOverrides.get(value);
+            }
 
-                // When serializing shape objects, normalize normalizer wrappers
-                // back to plain (untagged) babelfont Shape objects.
-                //
-                // Input wrappers can look like:
-                //   { Path: {...}, nodes: [...], isInterpolated?: bool }
-                //   { Component: {...}, isInterpolated?: bool }
-                //
-                // Output must be plain shapes for Rust serde untagged enums:
-                //   { nodes: ..., closed: ... }  OR  { reference: ..., transform: ... }
-                if (
-                    value &&
-                    typeof value === 'object' &&
-                    !Array.isArray(value)
-                ) {
-                    const hasPathWrapper =
-                        'Path' in value &&
-                        value.Path &&
-                        typeof value.Path === 'object';
-                    const hasComponentWrapper =
-                        'Component' in value &&
-                        value.Component &&
-                        typeof value.Component === 'object';
-                    const hasFlatPathFields = 'nodes' in value;
-                    const hasFlatComponentFields = 'reference' in value;
+            // When serializing shape objects, normalize normalizer wrappers
+            // back to plain (untagged) babelfont Shape objects.
+            //
+            // Input wrappers can look like:
+            //   { Path: {...}, nodes: [...], isInterpolated?: bool }
+            //   { Component: {...}, isInterpolated?: bool }
+            //
+            // Output must be plain shapes for Rust serde untagged enums:
+            //   { nodes: ..., closed: ... }  OR  { reference: ..., transform: ... }
+            if (value && typeof value === 'object' && !Array.isArray(value)) {
+                const hasPathWrapper =
+                    'Path' in value &&
+                    value.Path &&
+                    typeof value.Path === 'object';
+                const hasComponentWrapper =
+                    'Component' in value &&
+                    value.Component &&
+                    typeof value.Component === 'object';
+                const hasFlatPathFields = 'nodes' in value;
+                const hasFlatComponentFields = 'reference' in value;
 
-                    // Normalize wrapped Path shape to unwrapped Path payload
-                    if (hasPathWrapper) {
-                        const pathPayload =
-                            value.Path && typeof value.Path === 'object'
-                                ? value.Path
-                                : null;
-                        if (pathPayload) {
-                            const { id: _id, ...result } = pathPayload;
-                            if (!Array.isArray(result.nodes)) {
-                                throw new TypeError(
-                                    'Path shape nodes must be arrays.'
-                                );
-                            }
-                            result.nodes = stripNodeIds(result.nodes);
-                            // Ensure `closed` field
-                            if (!('closed' in result)) {
-                                result.closed = false;
-                            }
-                            return result;
-                        }
-                    }
-
-                    // Normalize wrapped Component shape to unwrapped Component payload
-                    if (hasComponentWrapper && !hasPathWrapper) {
-                        const componentPayload =
-                            value.Component &&
-                            typeof value.Component === 'object'
-                                ? value.Component
-                                : null;
-                        if (componentPayload) {
-                            const { id: _id, ...result } = componentPayload;
-                            // Convert array-format transforms to DecomposedAffine objects
-                            // Rust expects {translation, scale, rotation, skew, order}, not [a,b,c,d,tx,ty]
-                            if (Array.isArray(result.transform)) {
-                                result.transform =
-                                    DecomposedAffineTransform.fromAffine(
-                                        result.transform
-                                    );
-                            }
-                            return result;
-                        }
-                    }
-
-                    // Normalize flat Component shapes with array transforms
-                    if (
-                        hasFlatComponentFields &&
-                        Array.isArray(value.transform)
-                    ) {
-                        const { id: _id, ...result } = value;
-                        return {
-                            ...result,
-                            transform: DecomposedAffineTransform.fromAffine(
-                                value.transform
-                            )
-                        };
-                    }
-
-                    if (hasFlatComponentFields && 'id' in value) {
-                        const { id: _id, ...result } = value;
-                        return result;
-                    }
-
-                    // Ensure `closed` field for flat Path shapes (Y.Doc roundtrip can lose it)
-                    if (hasFlatPathFields) {
-                        if (!Array.isArray(value.nodes)) {
+                // Normalize wrapped Path shape to unwrapped Path payload
+                if (hasPathWrapper) {
+                    const pathPayload =
+                        value.Path && typeof value.Path === 'object'
+                            ? value.Path
+                            : null;
+                    if (pathPayload) {
+                        const { id: _id, ...result } = pathPayload;
+                        if (!Array.isArray(result.nodes)) {
                             throw new TypeError(
                                 'Path shape nodes must be arrays.'
                             );
                         }
-                        const { id: _id, ...result } = value;
-                        return {
-                            ...result,
-                            nodes: stripNodeIds(value.nodes),
-                            closed: 'closed' in value ? value.closed : false
-                        };
+                        result.nodes = stripNodeIds(result.nodes);
+                        // Ensure `closed` field
+                        if (!('closed' in result)) {
+                            result.closed = false;
+                        }
+                        return result;
                     }
                 }
-                return value;
-            },
-            2
-        ); // Format with 2-space indentation for readable git diffs
+
+                // Normalize wrapped Component shape to unwrapped Component payload
+                if (hasComponentWrapper && !hasPathWrapper) {
+                    const componentPayload =
+                        value.Component && typeof value.Component === 'object'
+                            ? value.Component
+                            : null;
+                    if (componentPayload) {
+                        const { id: _id, ...result } = componentPayload;
+                        // Convert array-format transforms to DecomposedAffine objects
+                        // Rust expects {translation, scale, rotation, skew, order}, not [a,b,c,d,tx,ty]
+                        if (Array.isArray(result.transform)) {
+                            result.transform =
+                                DecomposedAffineTransform.fromAffine(
+                                    result.transform
+                                );
+                        }
+                        return result;
+                    }
+                }
+
+                // Normalize flat Component shapes with array transforms
+                if (hasFlatComponentFields && Array.isArray(value.transform)) {
+                    const { id: _id, ...result } = value;
+                    return {
+                        ...result,
+                        transform: DecomposedAffineTransform.fromAffine(
+                            value.transform
+                        )
+                    };
+                }
+
+                if (hasFlatComponentFields && 'id' in value) {
+                    const { id: _id, ...result } = value;
+                    return result;
+                }
+
+                // Ensure `closed` field for flat Path shapes (Y.Doc roundtrip can lose it)
+                if (hasFlatPathFields) {
+                    if (!Array.isArray(value.nodes)) {
+                        throw new TypeError('Path shape nodes must be arrays.');
+                    }
+                    const { id: _id, ...result } = value;
+                    return {
+                        ...result,
+                        nodes: stripNodeIds(value.nodes),
+                        closed: 'closed' in value ? value.closed : false
+                    };
+                }
+            }
+            return value;
+        };
+        return { data, replacer };
     }
 
     /**

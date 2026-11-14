@@ -300,17 +300,6 @@ function collectMainJsDomain(): MemoryDomain {
             });
         }
 
-        const validatedBytes =
-            jsStringHeapBytes(fontSnapshot.validatedCacheInput) +
-            jsStringHeapBytes(fontSnapshot.validatedCacheOutput);
-        rows.push({
-            id: 'validated-json-cache',
-            label: 'Validated JSON cache',
-            bytes: validatedBytes,
-            method: 'exact',
-            inSum: true,
-            note: validatedBytes === 0 ? 'empty' : 'input + output strings'
-        });
         rows.push({
             id: 'editing-font',
             label: 'Compiled editing TTF',

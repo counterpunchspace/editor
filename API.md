@@ -374,10 +374,20 @@ font.removeGlyph("oldGlyph")
 ```
 
 #### `toJSONString(options: { compileFacing?: boolean; glyphBodies?: ReadonlySet<string>; } | None = None) -> str`
+Serialize the font back to a `.babelfont` JSON string, indented by two
+spaces for readable diffs.
+
 With `glyphBodies`, only those glyphs keep their outlines, anchors,
 guides and layer libs; every other glyph keeps its layer metadata
 (ids, masters, widths) as a cheap stub. Serializers that write some
 glyphs' files still see the whole glyph set and every master's layers.
+
+A large font's string can go over the engine's string length limit;
+`toJSONParts` serializes glyph by glyph instead.
+
+#### `toJSONParts(options: { compileFacing?: boolean; glyphBodies?: ReadonlySet<string>; } | None = None) -> BabelfontJsonParts`
+The same JSON as `toJSONString`, one string per glyph: see
+`BabelfontJsonParts`. No string holds the whole font.
 
 #### `fromJSONString(json: str) -> [Font](#font)`
 Create a Font instance from JSON string
