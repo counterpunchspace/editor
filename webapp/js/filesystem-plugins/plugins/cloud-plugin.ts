@@ -3517,6 +3517,15 @@ export class CloudPlugin extends FilesystemPlugin {
                 if (this._liveSession !== session) {
                     return;
                 }
+                const warn = (error: unknown) => {
+                    console.warn(
+                        'Cloud: joining the room layout 2 rooms failed:',
+                        error
+                    );
+                };
+                // Load the rooms over HTTP right away: the socket sync may
+                // queue behind the apply that brought the new layout.
+                void session.catchUpLayoutRooms().catch(warn);
                 void session
                     .syncLiveDocumentIds(
                         liveGlyphDocumentIdsFromSubset(
@@ -3524,13 +3533,7 @@ export class CloudPlugin extends FilesystemPlugin {
                             activeEditorGlyphNames()
                         )
                     )
-                    .then(() => session.catchUpLayoutRooms())
-                    .catch((error) => {
-                        console.warn(
-                            'Cloud: joining the room layout 2 rooms failed:',
-                            error
-                        );
-                    });
+                    .catch(warn);
             }) ?? null;
         // Do not HTTP-catch-up the core revision map on attach. After save or
         // R2 hydrate the in-memory glyph docs are already the published
