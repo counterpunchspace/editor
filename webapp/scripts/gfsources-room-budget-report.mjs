@@ -134,6 +134,18 @@ if (largestGlyph) {
     );
 }
 
+const refused = ok.filter((row) => row.refused?.length);
+section(
+    'Fonts the upload check refuses',
+    refused,
+    (row) => `${row.file}: ${row.refused.join(' ')}`,
+    60
+);
+console.log(
+    `\nAccepted for upload: ${ok.length - refused.length} of ${ok.length} ` +
+        `(${(((ok.length - refused.length) / Math.max(1, ok.length)) * 100).toFixed(1)}%)`
+);
+
 section(
     'Fonts that failed to measure',
     failed,
@@ -141,6 +153,7 @@ section(
 );
 if (missing.length) section('Fonts not measured', missing, (file) => file);
 
-process.exit(
-    failed.length || proposedFailures.length || missing.length ? 1 : 0
-);
+// Some sources do not fit the design (flat kerning between thousands of
+// single glyphs, say); the upload check refuses those with a reason. The run
+// fails only when a font could not be measured at all.
+process.exit(failed.length || missing.length ? 1 : 0);

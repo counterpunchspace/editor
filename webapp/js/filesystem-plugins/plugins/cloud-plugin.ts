@@ -6,6 +6,10 @@
  */
 
 import {
+    findRoomsThatDoNotFit,
+    roomFitRefusalMessage
+} from '../cloud-room-fit';
+import {
     chooseRoomLayout,
     roomLayoutCounts
 } from '../cloud-room-layout';
@@ -1796,6 +1800,16 @@ export class CloudPlugin extends FilesystemPlugin {
             chooseRoomLayout(roomLayoutCounts(fontJson)),
             { seedsWholeAsset: true }
         );
+        // Every part must fit what the cloud can store and compact.
+        const shards =
+            window.patchSyncEngine?.encodeDocumentSetForSeed?.() ?? [];
+        const problems = findRoomsThatDoNotFit(shards, {
+            glyphName: (documentId) =>
+                glyphNameForCloudDocument(fontJson, documentId)
+        });
+        if (problems.length) {
+            throw new Error(roomFitRefusalMessage(problems));
+        }
     }
 
     async canAddGlyphs(

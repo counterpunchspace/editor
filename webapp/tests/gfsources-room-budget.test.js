@@ -1,11 +1,11 @@
 /**
  * Room budget check against the Google Fonts sources (local only).
  *
- * Seeds every `.babelfont` under GFSOURCES_DIR into the editor's real cloud
- * documents, then measures two layouts:
- *   - today's rooms (font-core, font-deps, one room per glyph);
- *   - the proposed layout: a small font-core, the glyph catalog in buckets,
- *     kerning in buckets per master, features in their own room.
+ * Loads every `.babelfont` under GFSOURCES_DIR into the editor's engine the
+ * way a cloud upload does, then measures:
+ *   - layout 1's font-core (catalog, kerning and features inside it);
+ *   - the room layout 2 rooms the upload would really use, and whether the
+ *     upload check (cloud-room-fit.ts) would refuse the font, with why.
  * One JSON line per font goes to GF_OUT. `scripts/gfsources-room-budget.sh`
  * runs this in batches; `scripts/gfsources-room-budget-report.mjs` checks the
  * lines against the budgets below.
@@ -18,16 +18,23 @@
  */
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 const Y = require('yjs');
 const { open_font_file } = require('../wasm-dist/babelfont_fontc_web');
 const {
     canonicalizeImportedFontData
 } = require('../js/font-import-canonicalization');
+const { PatchSyncEngine } = require('../js/patch-sync-engine');
 const {
-    CloudDocumentSet
-} = require('../js/filesystem-plugins/cloud-document-set');
-const { toYType } = require('../js/change-bridge-ydoc');
+    applyCloudOwnedData
+} = require('../js/filesystem-plugins/cloud-glyph-catalog');
+const {
+    chooseRoomLayout,
+    layoutDocumentKind,
+    roomLayoutCounts
+} = require('../js/filesystem-plugins/cloud-room-layout');
+const {
+    findRoomsThatDoNotFit
+} = require('../js/filesystem-plugins/cloud-room-fit');
 // Read, not required: Jest's transform pattern also matches `.json`.
 const LAYOUT = JSON.parse(
     fs.readFileSync(
@@ -136,183 +143,8 @@ function expandFont(font) {
     }
 }
 
-function roomStats(doc) {
-    const bytes = Y.encodeStateAsUpdate(doc);
-    return {
-        bytes: bytes.byteLength,
-        structs: Y.decodeUpdate(bytes).structs.length,
-        update: bytes
-    };
-}
-
-function seededDoc(rootName, fill) {
-    const doc = new Y.Doc({ gc: true });
-    doc.transact(() => fill(doc.getMap(rootName)));
-    return doc;
-}
-
-function bucketOf(key, buckets) {
-    if (buckets <= 1) return 0;
-    const digest = crypto.createHash('sha1').update(String(key)).digest();
-    return digest.readUInt32BE(0) % buckets;
-}
-
 /** Plain text values become shared text, as the layout stores features. */
-function toSharedText(value) {
-    if (typeof value === 'string') return new Y.Text(value);
-    if (Array.isArray(value)) {
-        const array = new Y.Array();
-        array.push(value.map(toSharedText));
-        return array;
-    }
-    if (value && typeof value === 'object') {
-        const map = new Y.Map();
-        for (const [key, child] of Object.entries(value)) {
-            map.set(key, toSharedText(child));
-        }
-        return map;
-    }
-    return value;
-}
-
-function largest(rooms) {
-    return rooms.reduce(
-        (best, room) => (room.bytes > best.bytes ? room : best),
-        {
-            bytes: 0,
-            structs: 0
-        }
-    );
-}
-
 /** The proposed layout, built from today's font-core and font-deps. */
-function projectLayout(coreJson, depsJson) {
-    const rooms = {};
-    const {
-        glyphCatalog = {},
-        codepointIndex,
-        glyphOrder = [],
-        features,
-        masters = [],
-        ...rest
-    } = coreJson;
-    void codepointIndex;
-
-    // font-core keeps the font-wide data, with kerning moved out.
-    const slimMasters = masters.map((master) => {
-        const { kerning, kerning_rtl, ...keep } = master || {};
-        void kerning;
-        void kerning_rtl;
-        return keep;
-    });
-    const core = seededDoc('font', (font) => {
-        for (const [key, value] of Object.entries(rest)) {
-            font.set(key, toYType(value));
-        }
-        font.set('masters', toYType(slimMasters));
-    });
-    rooms.core = [{ name: 'font-core', doc: core }];
-
-    // Catalog: one atomic value per glyph, with its sort key and edges.
-    const order = new Map(glyphOrder.map((name, index) => [name, index]));
-    const edges = depsJson.edges || {};
-    const entries = Object.values(glyphCatalog);
-    const catalogBuckets = Math.max(
-        1,
-        Math.ceil(entries.length / LAYOUT.catalogBucketGlyphs)
-    );
-    const catalogDocs = Array.from(
-        { length: catalogBuckets },
-        () => new Y.Doc({ gc: true })
-    );
-    for (const doc of catalogDocs) doc.transact(() => {});
-    const byBucket = new Map();
-    for (const entry of entries) {
-        const index = bucketOf(entry.glyphId, catalogBuckets);
-        if (!byBucket.has(index)) byBucket.set(index, []);
-        byBucket.get(index).push(entry);
-    }
-    for (const [index, list] of byBucket) {
-        const doc = catalogDocs[index];
-        doc.transact(() => {
-            const map = doc.getMap('catalog');
-            for (const entry of list) {
-                const { latestGlyphRevision, generation, ...value } = entry;
-                void latestGlyphRevision;
-                void generation;
-                const position = order.get(entry.name);
-                value.sortKey = (position ?? order.size).toString(36);
-                if (edges[entry.glyphId]) value.edges = edges[entry.glyphId];
-                map.set(entry.glyphId, value);
-            }
-        });
-    }
-    rooms.catalog = catalogDocs.map((doc, index) => ({
-        name: `catalog:${index}`,
-        doc
-    }));
-
-    // Kerning: one key per pair, bucketed per master by the first side.
-    rooms.kerning = [];
-    for (const master of masters) {
-        const pairs = [
-            ...Object.entries(master?.kerning || {}).map(([pair, value]) => [
-                `l|${pair}`,
-                value
-            ]),
-            ...Object.entries(master?.kerning_rtl || {}).map(
-                ([pair, value]) => [`r|${pair}`, value]
-            )
-        ];
-        if (!pairs.length) continue;
-        const buckets = Math.max(
-            1,
-            Math.ceil(pairs.length / LAYOUT.kerningBucketPairs)
-        );
-        const grouped = Array.from({ length: buckets }, () => []);
-        for (const [key, value] of pairs) {
-            const first = key.slice(2).split(':')[0];
-            grouped[bucketOf(first, buckets)].push([key, value]);
-        }
-        grouped.forEach((list, index) => {
-            rooms.kerning.push({
-                name: `kerning:${master.id}:${index}`,
-                doc: seededDoc('kerning', (map) => {
-                    for (const [key, value] of list) map.set(key, value);
-                })
-            });
-        });
-    }
-
-    // Features: shared text per feature, class and prefix.
-    rooms.features = features
-        ? [
-              {
-                  name: 'features',
-                  doc: seededDoc('features', (map) => {
-                      for (const [key, value] of Object.entries(features)) {
-                          map.set(key, toSharedText(value));
-                      }
-                  })
-              }
-          ]
-        : [];
-
-    const measured = {};
-    for (const [kind, list] of Object.entries(rooms)) {
-        measured[kind] = list.map((room) => {
-            const stats = roomStats(room.doc);
-            room.doc.destroy();
-            return { name: room.name, ...stats };
-        });
-    }
-    measured.counts = {
-        catalogBuckets,
-        kerningRooms: rooms.kerning.length
-    };
-    return measured;
-}
-
 function slug(file) {
     return file.replace(/\.babelfont$/, '').replace(/[^A-Za-z0-9]+/g, '_');
 }
@@ -340,6 +172,15 @@ function summary(room) {
         : null;
 }
 
+function statsOfBytes(name, bytes) {
+    return {
+        name,
+        bytes: bytes.byteLength,
+        structs: Y.decodeUpdate(bytes).structs.length,
+        update: bytes
+    };
+}
+
 function measureFont(file) {
     const relative = path.relative(ROOT, file.path);
     const started = Date.now();
@@ -352,44 +193,59 @@ function measureFont(file) {
     expandFont(data);
     data = canonicalizeImportedFontData(data, { clone: false }).fontData;
     const glyphCount = (data.glyphs || []).length;
+    const counts = roomLayoutCounts(data);
 
-    const set = new CloudDocumentSet();
-    set.initFromFontJson(data);
-    const core = { name: 'font-core', ...roomStats(set.coreDoc) };
-    const deps = { name: 'font-deps', ...roomStats(set.depsDoc) };
-    let glyph = { bytes: 0, structs: 0 };
-    let glyphStructs = { bytes: 0, structs: 0 };
+    // What a cloud upload does: catalog projection, then layout 2.
+    const engine = new PatchSyncEngine(`gf-${glyphCount}`);
+    engine.initFromJson(data);
+    engine.syncCloudOwnedProjection(
+        applyCloudOwnedData(engine.getFontJsonSnapshot())
+    );
+    const layoutOneCore = engine
+        .encodeDocumentSetForSeed()
+        .find((shard) => shard.documentId === 'font-core');
+    const layoutOneCoreStats = statsOfBytes('font-core', layoutOneCore.bytes);
+    const layout = chooseRoomLayout(counts);
+    engine.adoptRoomLayout(layout, { seedsWholeAsset: true });
+    const shards = engine.encodeDocumentSetForSeed();
+
+    const byKind = {};
     let glyphsOverBudget = 0;
-    for (const [id, doc] of set.glyphDocs) {
-        const stats = roomStats(doc);
-        const name = doc.getMap('glyph').get('name') || id;
-        const room = { name: `glyph:${name}`, ...stats };
-        if (
-            stats.bytes > LAYOUT.glyphRoomBytes ||
-            stats.structs > LAYOUT.glyphRoomStructs
-        ) {
-            glyphsOverBudget += 1;
+    const glyphNames = new Map();
+    for (const shard of shards) {
+        const kind = layoutDocumentKind(shard.documentId) || 'other';
+        const room = statsOfBytes(shard.documentId, shard.bytes);
+        if (kind === 'glyph') {
+            const doc = new Y.Doc();
+            Y.applyUpdate(doc, shard.bytes);
+            const name = doc.getMap('glyph').get('name') || shard.documentId;
+            glyphNames.set(shard.documentId, name);
+            room.name = `glyph:${name}`;
+            doc.destroy();
+            if (
+                room.bytes > LAYOUT.glyphRoomBytes ||
+                room.structs > LAYOUT.glyphRoomStructs
+            ) {
+                glyphsOverBudget += 1;
+            }
         }
-        if (stats.bytes > glyph.bytes) glyph = room;
-        if (stats.structs > glyphStructs.structs) glyphStructs = room;
+        const list = (byKind[kind] ??= []);
+        list.push(room);
     }
-    const coreJson = set.coreDoc.getMap('font').toJSON();
-    const depsJson = set.depsDoc.getMap('deps').toJSON();
-    set.destroy();
+    const problems = findRoomsThatDoNotFit(shards, {
+        glyphName: (documentId) => glyphNames.get(documentId) || null
+    });
+    const largestOf = (kind, by = 'bytes') =>
+        (byKind[kind] || []).reduce(
+            (best, room) => (room[by] > (best?.[by] ?? -1) ? room : best),
+            null
+        ) || { name: kind, bytes: 0, structs: 0 };
 
-    const proposed = projectLayout(coreJson, depsJson);
-    const proposedLargest = {
-        core: largest(proposed.core),
-        catalog: largest(proposed.catalog),
-        kerning: largest(proposed.kerning),
-        features: largest(proposed.features)
-    };
-
-    dump(relative, 'current-font-core', core);
-    dump(relative, 'current-font-deps', deps);
-    dump(relative, 'glyph', glyph);
-    for (const [kind, room] of Object.entries(proposedLargest)) {
-        dump(relative, `proposed-${kind}`, room);
+    dump(relative, 'current-font-core', layoutOneCoreStats);
+    dump(relative, 'current-font-deps', largestOf('deps'));
+    dump(relative, 'glyph', largestOf('glyph'));
+    for (const kind of ['core', 'catalog', 'kerning', 'features']) {
+        dump(relative, `proposed-${kind}`, largestOf(kind));
     }
 
     return {
@@ -397,20 +253,25 @@ function measureFont(file) {
         fileBytes: file.size,
         glyphs: glyphCount,
         masters: (data.masters || []).length,
+        kerningPairs: counts.kerningPairs,
         current: {
-            core: summary(core),
-            deps: summary(deps),
-            glyph: summary(glyph),
-            glyphStructs: summary(glyphStructs),
+            core: summary(layoutOneCoreStats),
+            deps: summary(largestOf('deps')),
+            glyph: summary(largestOf('glyph')),
+            glyphStructs: summary(largestOf('glyph', 'structs')),
             glyphsOverBudget
         },
         proposed: {
-            core: summary(proposedLargest.core),
-            catalog: summary(proposedLargest.catalog),
-            kerning: summary(proposedLargest.kerning),
-            features: summary(proposedLargest.features),
-            counts: proposed.counts
+            core: summary(largestOf('core')),
+            catalog: summary(largestOf('catalog')),
+            kerning: summary(largestOf('kerning')),
+            features: summary(largestOf('features')),
+            counts: {
+                catalogBuckets: layout.catalogBuckets,
+                kerningRooms: layout.kerningBuckets
+            }
         },
+        refused: problems.map((problem) => problem.message),
         ms: Date.now() - started
     };
 }

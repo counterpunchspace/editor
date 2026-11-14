@@ -3111,6 +3111,27 @@ export class PatchSyncEngine {
         return shards;
     }
 
+    /**
+     * The document set as a new cloud asset stores it: each document passed
+     * through a garbage-collected copy, so content this window deleted (the
+     * catalog, features and kerning adoptRoomLayout moved out of core, earlier
+     * edits) is not uploaded. State vectors stay the same.
+     */
+    encodeDocumentSetForSeed(): EncodedShard[] {
+        return this.encodeDocumentSet().map((shard) => {
+            const doc = new Y.Doc({ gc: true });
+            try {
+                Y.applyUpdate(doc, shard.bytes);
+                return {
+                    documentId: shard.documentId,
+                    bytes: Y.encodeStateAsUpdate(doc)
+                };
+            } finally {
+                doc.destroy();
+            }
+        });
+    }
+
     getEstimatedLiveEncodedBytes(): number {
         let total = 0;
         for (const byteLength of this._lastEncodedShardBytes.values()) {
