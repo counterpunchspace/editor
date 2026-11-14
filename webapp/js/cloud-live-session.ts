@@ -6,7 +6,10 @@
  * and peers pull them with GET `/live` after font-core revision signals.
  */
 import { isLayoutDocumentId } from './filesystem-plugins/cloud-room-layout';
-import { normalizeCloudShardHttpUrl } from './cloud-adapter-bootstrap';
+import {
+    fetchCloudDocumentState,
+    normalizeCloudShardHttpUrl
+} from './cloud-adapter-bootstrap';
 import * as Y from 'yjs';
 import { fitEnvelopeForWire } from './cloud-envelope-budget';
 import {
@@ -1882,29 +1885,16 @@ export class CloudLiveSession {
     private async _catchUpDocumentsOverHttp(
         documentIds: string[]
     ): Promise<void> {
-        const bridge = this._options.bridge;
         for (const documentId of documentIds) {
-            const url = normalizeCloudShardHttpUrl(
-                this._roomUrl,
-                this._options.websiteBaseUrl,
-                this._options.assetId,
+            const bytes = await fetchCloudDocumentState({
+                token: this._token,
+                roomUrl: this._roomUrl,
+                websiteBaseUrl: this._options.websiteBaseUrl,
+                assetId: this._options.assetId,
                 documentId
-            );
-            const response = await fetch(url, {
-                cache: 'no-store',
-                headers: {
-                    Authorization: `Bearer ${this._token}`,
-                    Accept: 'application/octet-stream'
-                }
             });
-            if (!response.ok) {
-                throw new Error(
-                    `loading ${documentId} failed: ${response.status}`
-                );
-            }
-            const bytes = new Uint8Array(await response.arrayBuffer());
-            if (bytes.length > 2) {
-                bridge.applyDocumentCatchUp?.(documentId, bytes);
+            if (bytes) {
+                this._options.bridge.applyDocumentCatchUp?.(documentId, bytes);
             }
         }
     }

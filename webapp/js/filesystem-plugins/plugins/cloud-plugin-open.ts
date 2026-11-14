@@ -1,5 +1,6 @@
 // @ts-nocheck
 /** CloudPlugin openAsset / hydrate pipeline. */
+import { fetchCloudDocumentState } from '../../cloud-adapter-bootstrap';
 import { beginLoadingCursor, endLoadingCursor } from '../../loading-cursor';
 import { readUrlState } from '../../url-state';
 import { CloudAdapter } from '../../cloud-adapter';
@@ -259,6 +260,24 @@ export const cloudPluginOpenMethods = {
                                 progressTotal: session.total
                             })
                         );
+                        for (const documentId of layoutDocumentIds) {
+                            if (layoutBytes.get(documentId)?.byteLength) {
+                                continue;
+                            }
+                            const state = await fetchCloudDocumentState({
+                                token,
+                                roomUrl,
+                                websiteBaseUrl: this._websiteBaseUrl,
+                                assetId,
+                                documentId
+                            });
+                            if (state) {
+                                console.warn(
+                                    `Cloud: the pack left out layout room ${documentId}; loaded it from its state`
+                                );
+                                layoutBytes.set(documentId, state);
+                            }
+                        }
                         for (const [documentId, bytes] of layoutBytes) {
                             documentSet.applyRemoteUpdate(documentId, bytes);
                         }

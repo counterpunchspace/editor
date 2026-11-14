@@ -126,3 +126,39 @@ export function normalizeCloudShardWebSocketUrl(
     url.pathname = `/room/${encodeURIComponent(assetId)}/shards/${shardPath}`;
     return url.toString();
 }
+
+/**
+ * One room's whole state (checkpoint folded with its live tail) over HTTP,
+ * or null when the room has none.
+ */
+export async function fetchCloudDocumentState(options: {
+    token: string;
+    roomUrl: string;
+    websiteBaseUrl: string;
+    assetId: string;
+    documentId: string;
+}): Promise<Uint8Array | null> {
+    const url = normalizeCloudShardHttpUrl(
+        options.roomUrl,
+        options.websiteBaseUrl,
+        options.assetId,
+        options.documentId
+    );
+    const response = await fetch(url, {
+        cache: 'no-store',
+        headers: {
+            Authorization: `Bearer ${options.token}`,
+            Accept: 'application/octet-stream'
+        }
+    });
+    if (response.status === 404) {
+        return null;
+    }
+    if (!response.ok) {
+        throw new Error(
+            `loading ${options.documentId} failed: ${response.status}`
+        );
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    return bytes.length > 2 ? bytes : null;
+}
