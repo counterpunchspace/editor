@@ -310,13 +310,44 @@ export type CommittedChangeListener = (
     }
 ) => void;
 
+/** Own glyph revisions remembered to ignore their echo from the feed. */
+const MAX_OWN_GLYPH_REVISIONS = 20_000;
+
+/**
+ * How long a feed revision waits for the rest of its commit. Each glyph room
+ * reports its own write, so a composite's revision can arrive before its
+ * base glyph's; it matches the longest time a remote cascade preview waits.
+ */
+export const GLYPH_REVISION_COMMIT_HOLD_MS = 10_000;
+
+/**
+ * The commit a revision token belongs to. A commit that writes several
+ * glyphs gives them consecutive clocks and names the range in each token:
+ * `<windowId>:<clock>/<first>-<last>`. Null for a single-glyph commit.
+ */
+function glyphRevisionCommit(
+    revision: string
+): { key: string; size: number } | null {
+    const match = /^(.+):(\d+)\/(\d+)-(\d+)$/.exec(revision);
+    if (!match) {
+        return null;
+    }
+    const first = Number(match[3]);
+    const last = Number(match[4]);
+    const size = last - first + 1;
+    if (!(size > 1) || size > 100_000) {
+        return null;
+    }
+    return { key: `${match[1]}:${first}-${last}`, size };
+}
+
+/** A feed revision and when it arrived, for ordering late releases. */
+type HeldGlyphRevision = { glyphId: string; revision: string; arrival: number };
+
 /**
  * Glyph revisions from the room's revision feed. `initial` marks the first
  * page after opening: a snapshot to compare against, not a list of changes.
  */
-/** Own glyph revisions remembered to ignore their echo from the feed. */
-const MAX_OWN_GLYPH_REVISIONS = 20_000;
-
 export type GlyphRevisionFeedListener = (
     glyphIds: string[],
     options: { initial: boolean }
@@ -919,6 +950,23 @@ export class PatchSyncEngine {
      * names content this window already has.
      */
     private _ownGlyphRevisions = new Set<string>();
+    /**
+     * Feed revisions waiting for the rest of their commit, by commit. A
+     * composite fetched before its base would be recomposed here from the
+     * old base, and the next edit would write that back over the sender's.
+     */
+    private _heldGlyphRevisions = new Map<
+        string,
+        {
+            size: number;
+            arrived: Set<string>;
+            entries: Map<string, HeldGlyphRevision>;
+            timer: ReturnType<typeof setTimeout>;
+        }
+    >();
+    /** Feed revisions counted as they arrive, and the count of each glyph's. */
+    private _glyphRevisionArrivals = 0;
+    private _glyphRevisionFeedArrival = new Map<string, number>();
     private _coreHydratedListeners: Set<() => void> = new Set();
     /** Sparse residency: in-memory only. Never written to font-deps. */
     private _sparseSession = false;
@@ -3002,13 +3050,17 @@ export class PatchSyncEngine {
     /**
      * Apply revision tokens from the room's feed (main window) or from the
      * main window's relay (linked windows). Returns the glyphs whose token
-     * changed.
+     * changed. A revision from a commit that wrote several glyphs waits until
+     * the feed has named all of them (see `GLYPH_REVISION_COMMIT_HOLD_MS`),
+     * unless `hold` is false: the initial snapshot, this window's own
+     * revisions, and what the main window relays, which it held already.
      */
     applyGlyphRevisionFeed(
         revisions: Array<{ glyphId: string; revision: string }>,
-        options: { initial?: boolean } = {}
+        options: { initial?: boolean; hold?: boolean } = {}
     ): string[] {
-        const changed: string[] = [];
+        const hold = options.hold !== false && options.initial !== true;
+        const ready: HeldGlyphRevision[] = [];
         for (const entry of revisions) {
             if (
                 !entry ||
@@ -3022,18 +3074,96 @@ export class PatchSyncEngine {
             if (this._ownGlyphRevisions.has(entry.revision)) {
                 continue;
             }
-            if (this._glyphRevisionFeed.get(entry.glyphId) !== entry.revision) {
-                this._glyphRevisionFeed.set(entry.glyphId, entry.revision);
-                changed.push(entry.glyphId);
+            const arrived = {
+                glyphId: entry.glyphId,
+                revision: entry.revision,
+                arrival: ++this._glyphRevisionArrivals
+            };
+            ready.push(
+                ...(hold ? this._takeGlyphRevisionCommit(arrived) : [arrived])
+            );
+        }
+        return this._applyReadyGlyphRevisions(ready, options.initial === true);
+    }
+
+    private _applyReadyGlyphRevisions(
+        ready: HeldGlyphRevision[],
+        initial: boolean
+    ): string[] {
+        const changed: string[] = [];
+        for (const item of ready) {
+            // The feed names a glyph's revisions oldest first. One released
+            // late must not replace a revision that arrived after it.
+            if (
+                (this._glyphRevisionFeedArrival.get(item.glyphId) ?? 0) >
+                item.arrival
+            ) {
+                continue;
+            }
+            this._glyphRevisionFeedArrival.set(item.glyphId, item.arrival);
+            if (this._glyphRevisionFeed.get(item.glyphId) !== item.revision) {
+                this._glyphRevisionFeed.set(item.glyphId, item.revision);
+                changed.push(item.glyphId);
             }
         }
-        const initial = options.initial === true;
         if (changed.length || initial) {
             for (const cb of [...this._glyphRevisionFeedListeners]) {
                 cb(changed, { initial });
             }
         }
         return changed;
+    }
+
+    /**
+     * The revisions to apply now for this one: none while its commit is
+     * incomplete, all of the commit's once the last arrives.
+     */
+    private _takeGlyphRevisionCommit(
+        entry: HeldGlyphRevision
+    ): HeldGlyphRevision[] {
+        const commit = glyphRevisionCommit(entry.revision);
+        if (!commit) {
+            return [entry];
+        }
+        let held = this._heldGlyphRevisions.get(commit.key);
+        if (!held) {
+            const key = commit.key;
+            held = {
+                size: commit.size,
+                arrived: new Set(),
+                entries: new Map(),
+                // A sibling may never come: a newer write replaced it first.
+                timer: setTimeout(() => {
+                    this._applyReadyGlyphRevisions(
+                        this._takeHeldGlyphRevisions(key),
+                        false
+                    );
+                }, GLYPH_REVISION_COMMIT_HOLD_MS)
+            };
+            this._heldGlyphRevisions.set(commit.key, held);
+        }
+        held.arrived.add(entry.revision);
+        held.entries.set(entry.glyphId, entry);
+        return held.arrived.size < held.size
+            ? []
+            : this._takeHeldGlyphRevisions(commit.key);
+    }
+
+    private _takeHeldGlyphRevisions(key: string): HeldGlyphRevision[] {
+        const held = this._heldGlyphRevisions.get(key);
+        if (!held) {
+            return [];
+        }
+        clearTimeout(held.timer);
+        this._heldGlyphRevisions.delete(key);
+        return [...held.entries.values()];
+    }
+
+    private _clearHeldGlyphRevisions(): void {
+        for (const held of this._heldGlyphRevisions.values()) {
+            clearTimeout(held.timer);
+        }
+        this._heldGlyphRevisions.clear();
     }
 
     private _noteOwnGlyphRevision(revision: unknown): void {
@@ -4649,9 +4779,10 @@ export class PatchSyncEngine {
         if (relayedGlyphId && typeof relayedRevision === 'string') {
             // The linked window's edit is in this window's glyph now, with
             // its stamp; record it as the glyph's current revision.
-            this.applyGlyphRevisionFeed([
-                { glyphId: relayedGlyphId, revision: relayedRevision }
-            ]);
+            this.applyGlyphRevisionFeed(
+                [{ glyphId: relayedGlyphId, revision: relayedRevision }],
+                { hold: false }
+            );
         }
         this._noteOwnGlyphRevision(relayedRevision);
         const relay = (
@@ -4971,6 +5102,8 @@ export class PatchSyncEngine {
         this._committedChangeListeners.clear();
         this._glyphRevisionFeedListeners.clear();
         this._glyphRevisionFeed.clear();
+        this._glyphRevisionFeedArrival.clear();
+        this._clearHeldGlyphRevisions();
         this._coreHydratedListeners.clear();
         this._clearSparseWorkingSet();
         this._onDirty = null;
@@ -10186,8 +10319,15 @@ export class PatchSyncEngine {
                     changeLogEntries,
                     pendingPackets
                 );
+                // Only glyphs that send a packet: a token that never reaches
+                // the feed would hold its commit's others back at peers.
+                const sentDocumentIds = new Set(
+                    pendingPackets.map((packet) => packet.documentId)
+                );
                 this._withGlyphRevisionCatchUp(
-                    this._glyphIdsTouchedByOperations(routedOperations),
+                    this._glyphIdsTouchedByOperations(routedOperations).filter(
+                        (glyphId) => sentDocumentIds.has(`glyph:${glyphId}`)
+                    ),
                     () => {
                         const uiPackets: Array<{
                             update: YjsUpdate;
@@ -10848,9 +10988,14 @@ export class PatchSyncEngine {
         if (!uniqueIds.length || this._isApplyingRemote) {
             return [];
         }
+        // One commit's tokens name its clock range, so peers can wait until
+        // the feed has brought all of its glyphs.
+        const first = this._glyphRevisionClock + 1;
+        const last = this._glyphRevisionClock + uniqueIds.length;
+        const range = uniqueIds.length > 1 ? `/${first}-${last}` : '';
         return uniqueIds.map((glyphId) => ({
             glyphId,
-            revision: `${this.windowId}:${++this._glyphRevisionClock}`
+            revision: `${this.windowId}:${++this._glyphRevisionClock}${range}`
         }));
     }
 
@@ -10900,7 +11045,7 @@ export class PatchSyncEngine {
         // This window holds these revisions already; linked windows learn
         // them from the feed listeners.
         if (tokens.length) {
-            this.applyGlyphRevisionFeed(tokens);
+            this.applyGlyphRevisionFeed(tokens, { hold: false });
             for (const { revision } of tokens) {
                 this._noteOwnGlyphRevision(revision);
             }

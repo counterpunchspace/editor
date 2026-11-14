@@ -13,7 +13,10 @@ global.TextEncoder = TextEncoder;
  * both peers share a seeded Yjs history, the writer publishes a core-room
  * revision signal, and the receiver applies a one-shot live glyph catch-up.
  */
-const { PatchSyncEngine } = require('../js/patch-sync-engine');
+const {
+    GLYPH_REVISION_COMMIT_HOLD_MS,
+    PatchSyncEngine
+} = require('../js/patch-sync-engine');
 const { Font } = require('../js/babelfont-model');
 const { resetGlyphLogCursors } = require('../js/cloud-adapter-support');
 const {
@@ -499,6 +502,97 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
                 (packet) => packet.documentId === FONT_CORE_DOCUMENT_ID
             )
         ).toEqual([]);
+    });
+
+    test('a multi-glyph edit’s revisions reach a receiver together', () => {
+        const { bridge, font } = createEngine('writer');
+        bridge.beginTransaction('edit', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
+        font.findGlyph('A').layers[0].width = 111;
+        font.findGlyph('B').layers[0].width = 222;
+        bridge.endTransaction();
+        const revisionA = revisionFor(bridge, 'id-a');
+        const revisionB = revisionFor(bridge, 'id-b');
+
+        const { bridge: receiver } = createEngine('receiver');
+        const events = [];
+        receiver.onGlyphRevisionFeed((glyphIds) => events.push(glyphIds));
+        // Each glyph room reports its own write; B’s can come first.
+        expect(
+            receiver.applyGlyphRevisionFeed([
+                { glyphId: 'id-b', revision: revisionB }
+            ])
+        ).toEqual([]);
+        expect(revisionFor(receiver, 'id-b')).toBeUndefined();
+        expect(events).toEqual([]);
+        expect(
+            receiver.applyGlyphRevisionFeed([
+                { glyphId: 'id-a', revision: revisionA }
+            ])
+        ).toEqual(['id-b', 'id-a']);
+        expect(revisionFor(receiver, 'id-a')).toBe(revisionA);
+        expect(revisionFor(receiver, 'id-b')).toBe(revisionB);
+        expect(events).toEqual([['id-b', 'id-a']]);
+    });
+
+    test('a held revision whose commit never completes is released after the hold', () => {
+        jest.useFakeTimers();
+        try {
+            const { bridge: receiver } = createEngine('receiver');
+            const events = [];
+            receiver.onGlyphRevisionFeed((glyphIds) => events.push(glyphIds));
+            receiver.applyGlyphRevisionFeed([
+                { glyphId: 'id-b', revision: 'writer:8/7-8' }
+            ]);
+            expect(events).toEqual([]);
+            jest.advanceTimersByTime(GLYPH_REVISION_COMMIT_HOLD_MS);
+            expect(revisionFor(receiver, 'id-b')).toBe('writer:8/7-8');
+            expect(events).toEqual([['id-b']]);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    test('two commits whose revisions arrive interleaved both apply in order', () => {
+        const { bridge: receiver } = createEngine('receiver');
+        // Two edits of A and B in a row; the second commit’s A arrives
+        // before the first commit is complete.
+        receiver.applyGlyphRevisionFeed([
+            { glyphId: 'id-a', revision: 'writer:1/1-2' }
+        ]);
+        receiver.applyGlyphRevisionFeed([
+            { glyphId: 'id-a', revision: 'writer:3/3-4' }
+        ]);
+        receiver.applyGlyphRevisionFeed([
+            { glyphId: 'id-b', revision: 'writer:2/1-2' }
+        ]);
+        expect(revisionFor(receiver, 'id-a')).toBe('writer:1/1-2');
+        expect(revisionFor(receiver, 'id-b')).toBe('writer:2/1-2');
+        receiver.applyGlyphRevisionFeed([
+            { glyphId: 'id-b', revision: 'writer:4/3-4' }
+        ]);
+        expect(revisionFor(receiver, 'id-a')).toBe('writer:3/3-4');
+        expect(revisionFor(receiver, 'id-b')).toBe('writer:4/3-4');
+    });
+
+    test('a newer revision is not replaced by an older held one', () => {
+        jest.useFakeTimers();
+        try {
+            const { bridge: receiver } = createEngine('receiver');
+            receiver.applyGlyphRevisionFeed([
+                { glyphId: 'id-b', revision: 'writer:8/7-8' }
+            ]);
+            receiver.applyGlyphRevisionFeed([
+                { glyphId: 'id-b', revision: 'other:3' }
+            ]);
+            expect(revisionFor(receiver, 'id-b')).toBe('other:3');
+            jest.advanceTimersByTime(GLYPH_REVISION_COMMIT_HOLD_MS);
+            expect(revisionFor(receiver, 'id-b')).toBe('other:3');
+        } finally {
+            jest.useRealTimers();
+        }
     });
 
     test('catch-up applies a live checkpoint and does not replay mutation history', () => {

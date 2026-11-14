@@ -1870,8 +1870,10 @@ export class WindowSync {
                 if (window.windowRole?.isMainWindow()) {
                     return;
                 }
+                // Main held each commit's revisions until all had come.
                 this._bridge.applyGlyphRevisionFeed?.(
-                    Array.isArray(msg.revisions) ? msg.revisions : []
+                    Array.isArray(msg.revisions) ? msg.revisions : [],
+                    { hold: false }
                 );
                 break;
 

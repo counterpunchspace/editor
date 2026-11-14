@@ -40,6 +40,14 @@ the plan’s 8 MB placeholder).
   checkpoint (`applyDocumentCatchUp`), not history replay. The first feed
   page after opening is a snapshot: the window catches up the glyphs it holds
   or edits whose stamp differs.
+- One commit's tokens are consecutive and name the commit's clock range
+  (`<windowId>:<clock>/<first>-<last>`; a single-glyph commit has no range).
+  Each glyph room reports on its own, so a composite's token can reach a
+  window before its base glyph's. The window holds a token until the feed has
+  brought every token of its commit, or for 10 s
+  (`GLYPH_REVISION_COMMIT_HOLD_MS`). Otherwise it would fetch the composite,
+  recompose it from the old base, and its next edit would write that old
+  width back over the sender's.
 - Linked windows: document-scoped BroadcastChannel; main is the cloud hub;
   inbound MetadataFree glyph packets use catch-up; linked worker seed uses
   `seedWorkerDocumentSet` (`state`, not raw `bytes`).
