@@ -77,6 +77,7 @@ import {
     liveGlyphNames,
     markCloudRoomTraffic,
     summarizeRoomTraffic,
+    fontRoomDocumentIds,
     readRoomCounters,
     diffRoomCounters,
     expectMinimalRoomTraffic,
@@ -1882,11 +1883,9 @@ test.describe('three-window sync scenarios', () => {
                     ])
                 );
                 // Every room of the font, so a write to any glyph shows up.
-                const roomDocs = [
-                    'font-core',
-                    'font-deps',
-                    ...[...glyphNameById.keys()].map((id) => `glyph:${id}`)
-                ];
+                const roomDocs = await fontRoomDocumentIds(mainPage, [
+                    ...glyphNameById.keys()
+                ]);
                 const named = (id: string) =>
                     id.startsWith('glyph:')
                         ? `glyph/${glyphNameById.get(id.slice(6)) ?? id}`

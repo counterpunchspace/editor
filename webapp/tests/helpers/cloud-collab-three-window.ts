@@ -198,7 +198,7 @@ export async function postRoomToken(
                 credentials: 'include',
                 cache: 'no-store',
                 headers: { 'Content-Type': 'application/json' },
-                body: '{}'
+                body: JSON.stringify({ roomLayout: 2 })
             }
         );
         const text = await resp.text();
@@ -753,13 +753,14 @@ export async function expectGlyphEditOverWebSocket(
 function roomRoute(url: string, glyphNameById: Map<string, string>): string {
     const path = new URL(url).pathname;
     const shard = path.match(
-        /\/shards\/(glyph\/[^/]+|font-core|font-deps)(\/.*)?$/
+        /\/shards\/(glyph\/[^/]+|font-core|font-deps|features|catalog\/\d+|kerning\/\d+)(\/.*)?$/
     );
     if (shard) {
         const [, doc, rest = ''] = shard;
+        // Layout 2 rooms are named like their document ids (`kerning:0`).
         const name = doc.startsWith('glyph/')
             ? `glyph/${glyphNameById.get(doc.slice('glyph/'.length)) ?? doc.slice('glyph/'.length)}`
-            : doc;
+            : doc.replace('/', ':');
         return `${name}${rest}`;
     }
     return path.replace(/^\/room\/[^/]+/, '') || '/';
@@ -845,6 +846,25 @@ export interface RoomCounters {
     auths: number;
     lastLogId: number;
     lastCheckpointLogId: number;
+}
+
+/**
+ * Every room of the open font: core, deps, the room layout 2 rooms and one
+ * per glyph id given.
+ */
+export async function fontRoomDocumentIds(
+    page: Page,
+    glyphIds: Iterable<string>
+): Promise<string[]> {
+    const layoutIds: string[] = await page.evaluate(
+        () => (window as any).patchSyncEngine?.layoutDocumentIds?.() ?? []
+    );
+    return [
+        'font-core',
+        'font-deps',
+        ...layoutIds,
+        ...[...glyphIds].map((id) => `glyph:${id}`)
+    ];
 }
 
 /** Local stack only (ensure-cloud-collab-stack.mjs). */

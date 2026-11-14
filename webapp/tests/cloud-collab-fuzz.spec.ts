@@ -60,6 +60,7 @@ import {
     recordCloudRoomTraffic,
     markCloudRoomTraffic,
     summarizeRoomTraffic,
+    fontRoomDocumentIds,
     readRoomCounters,
     diffRoomCounters,
     expectMinimalRoomTraffic,
@@ -806,11 +807,9 @@ test.describe('cloud collaboration fuzz', () => {
                 }
                 await mainPage.waitForTimeout(1500);
                 const names = await glyphNamesById();
-                const roomDocs = [
-                    'font-core',
-                    'font-deps',
-                    ...[...names.keys()].map((id) => `glyph:${id}`)
-                ];
+                const roomDocs = await fontRoomDocumentIds(mainPage, [
+                    ...names.keys()
+                ]);
                 const live: Record<string, string[]> = {};
                 for (const name of ['M', 'O2', 'I']) {
                     live[name] = await liveGlyphNames(

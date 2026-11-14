@@ -146,6 +146,7 @@ import {
     LAYOUT_MAP_KEY,
     catalogBucketFor,
     catalogDocumentId,
+    codepointIndexFromCatalog,
     isLayoutDocumentId,
     kerningBucketFor,
     kerningDocumentId,
@@ -154,6 +155,7 @@ import {
     kerningKey,
     layoutDocumentIds,
     layoutDocumentKind,
+    layoutTopLevelKey,
     parseKerningKey,
     parseRoomLayout,
     type KerningDirection,
@@ -1716,7 +1718,7 @@ export class PatchSyncEngine {
                 return this._readCatalogJson();
             }
             if (key === CORE_CODEPOINT_INDEX_KEY) {
-                return undefined;
+                return codepointIndexFromCatalog(this._readCatalogJson());
             }
             if (key === 'masters') {
                 const masters = this.fontMap.get('masters');
@@ -1749,7 +1751,7 @@ export class PatchSyncEngine {
         if (this.roomLayout) {
             keys.add('features');
             keys.add(CORE_GLYPH_CATALOG_KEY);
-            keys.delete(CORE_CODEPOINT_INDEX_KEY);
+            keys.add(CORE_CODEPOINT_INDEX_KEY);
         }
         return keys;
     }
@@ -2472,6 +2474,9 @@ export class PatchSyncEngine {
         try {
             if (!this._fontJson) this._fontJson = {};
             let doc = this._docForId(documentId);
+            if (!doc && isLayoutDocumentId(documentId)) {
+                doc = this._ensureLayoutDoc(documentId);
+            }
             if (!doc && documentId.startsWith('glyph:')) {
                 doc = this._ensureGlyphDocFromShard({
                     documentId,
@@ -2485,6 +2490,10 @@ export class PatchSyncEngine {
             this._noteBroadcastStateVector(documentId);
             if (documentId === FONT_CORE_DOCUMENT_ID) {
                 this._rehydrateEntireFontJsonFromYDoc();
+            } else if (isLayoutDocumentId(documentId)) {
+                this._syncTopLevelFontKeyFromYDoc(
+                    layoutTopLevelKey(documentId)
+                );
             } else if (documentId.startsWith('glyph:')) {
                 this._rebuildGlyphNameIndexFromDocs();
                 const glyphName = this._glyphNameById.get(
@@ -2617,7 +2626,12 @@ export class PatchSyncEngine {
     private _readCatchUpDescription(
         documentId: string
     ): CatchUpDescription | null {
-        if (documentId === FONT_CORE_DOCUMENT_ID) {
+        if (
+            documentId === FONT_CORE_DOCUMENT_ID ||
+            isLayoutDocumentId(documentId)
+        ) {
+            // Layout 2 rooms hold parts of the core keys (features, the
+            // catalog, master kerning); describe them the same way.
             const snapshot = this._readCoreCatchUpSnapshot();
             return snapshot ? { kind: 'core', snapshot } : null;
         }
@@ -8196,6 +8210,12 @@ export class PatchSyncEngine {
         }
 
         fontRecord[key] = this._cloneRuntimeValue(cloneHistoryValue(value));
+        if (key === CORE_GLYPH_CATALOG_KEY && this.roomLayout) {
+            // The index is derived from the catalog under layout 2.
+            fontRecord[CORE_CODEPOINT_INDEX_KEY] = codepointIndexFromCatalog(
+                value as Record<string, unknown>
+            );
+        }
         if (key === CORE_GLYPH_CATALOG_KEY) {
             this._aliasResidentGlyphNamesFromCatalog();
             // Checkpoint and live font-core applies both land here. The

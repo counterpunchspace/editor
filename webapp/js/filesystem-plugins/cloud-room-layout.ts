@@ -252,6 +252,7 @@ export function mergeLayoutDocumentsIntoFontJson(
     }
     if (hasCatalog) {
         fontJson.glyphCatalog = catalog;
+        fontJson.codepointIndex = codepointIndexFromCatalog(catalog);
     }
     if (hasKerning && Array.isArray(fontJson.masters)) {
         for (const master of fontJson.masters as Array<Record<string, unknown>>) {
@@ -278,4 +279,34 @@ export function roomLayoutCounts(fontJson: Record<string, unknown>): {
         }
     }
     return { glyphs, kerningPairs };
+}
+
+/**
+ * Codepoint → glyph ids, derived from catalog entries. Room layout 2 does
+ * not store this index; every window builds it from the catalog.
+ */
+export function codepointIndexFromCatalog(
+    catalog: Record<string, unknown> | null | undefined
+): Record<string, string[]> {
+    const index: Record<string, string[]> = {};
+    for (const [glyphId, raw] of Object.entries(catalog ?? {})) {
+        const entry = (raw ?? {}) as { codepoints?: unknown; deleted?: unknown };
+        if (entry.deleted === true || !Array.isArray(entry.codepoints)) {
+            continue;
+        }
+        for (const codepoint of entry.codepoints) {
+            const key = String(codepoint);
+            (index[key] ??= []).includes(glyphId) || index[key].push(glyphId);
+        }
+    }
+    return index;
+}
+
+/** The font's top-level key a layout room holds part of. */
+export function layoutTopLevelKey(documentId: string): string {
+    const kind = layoutDocumentKind(documentId);
+    if (kind === 'features') return 'features';
+    if (kind === 'catalog') return 'glyphCatalog';
+    if (kind === 'kerning') return 'masters';
+    return '';
 }
