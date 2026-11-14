@@ -1874,18 +1874,38 @@ export class CloudLiveSession {
         );
     }
 
+    /**
+     * Load whole rooms from their state (checkpoint folded with the live
+     * tail). A room seeded over HTTP has its checkpoint at log id 0, so a
+     * live catch-up from 0 would bring only the tail.
+     */
     private async _catchUpDocumentsOverHttp(
         documentIds: string[]
     ): Promise<void> {
+        const bridge = this._options.bridge;
         for (const documentId of documentIds) {
-            await catchUpCloudDocument({
-                bridge: this._options.bridge,
-                token: this._token,
-                roomUrl: this._roomUrl,
-                websiteBaseUrl: this._options.websiteBaseUrl,
-                assetId: this._options.assetId,
+            const url = normalizeCloudShardHttpUrl(
+                this._roomUrl,
+                this._options.websiteBaseUrl,
+                this._options.assetId,
                 documentId
+            );
+            const response = await fetch(url, {
+                cache: 'no-store',
+                headers: {
+                    Authorization: `Bearer ${this._token}`,
+                    Accept: 'application/octet-stream'
+                }
             });
+            if (!response.ok) {
+                throw new Error(
+                    `loading ${documentId} failed: ${response.status}`
+                );
+            }
+            const bytes = new Uint8Array(await response.arrayBuffer());
+            if (bytes.length > 2) {
+                bridge.applyDocumentCatchUp?.(documentId, bytes);
+            }
         }
     }
 
@@ -2034,19 +2054,17 @@ export class CloudLiveSession {
                     matchCoreRevision: false
                 });
             }
-            for (const documentId of [
-                FONT_DEPS_DOCUMENT_ID,
-                ...(this._options.bridge.layoutDocumentIds?.() ?? [])
-            ]) {
-                await catchUpCloudDocument({
-                    bridge: this._options.bridge,
-                    token: this._token,
-                    roomUrl: this._roomUrl,
-                    websiteBaseUrl: this._options.websiteBaseUrl,
-                    assetId: this._options.assetId,
-                    documentId
-                });
-            }
+            await catchUpCloudDocument({
+                bridge: this._options.bridge,
+                token: this._token,
+                roomUrl: this._roomUrl,
+                websiteBaseUrl: this._options.websiteBaseUrl,
+                assetId: this._options.assetId,
+                documentId: FONT_DEPS_DOCUMENT_ID
+            });
+            await this._catchUpDocumentsOverHttp(
+                this._options.bridge.layoutDocumentIds?.() ?? []
+            );
         } catch (error) {
             console.warn('CloudLiveSession: reconnect catch-up failed:', error);
             throw error;
