@@ -241,6 +241,28 @@ export const cloudPluginOpenMethods = {
                             depsBytes
                         );
                     }
+                    // Room layout 2 keeps features, the catalog and kerning
+                    // in their own rooms; the font is not whole without them.
+                    const layoutDocumentIds = documentSet.layoutDocumentIds();
+                    let layoutBytes = new Map<string, Uint8Array>();
+                    if (layoutDocumentIds.length) {
+                        session.update({
+                            total: 2 + layoutDocumentIds.length,
+                            message: 'Loading font…'
+                        });
+                        layoutBytes = await hydrator.hydrateDocumentSet(
+                            token,
+                            roomUrl,
+                            layoutDocumentIds,
+                            shardIoOptionsFromSession(session, {
+                                progressOffset: session.completed,
+                                progressTotal: session.total
+                            })
+                        );
+                        for (const [documentId, bytes] of layoutBytes) {
+                            documentSet.applyRemoteUpdate(documentId, bytes);
+                        }
+                    }
                     const coreJson = documentSet.assembleFontJson();
                     const catalogIds = glyphIdsFromCoreJson(coreJson);
                     const urlText = readUrlState().text || '';
@@ -324,6 +346,12 @@ export const cloudPluginOpenMethods = {
                                   }
                               ]
                             : []),
+                        ...[...layoutBytes.entries()]
+                            .filter(([, bytes]) => bytes?.byteLength)
+                            .map(([documentId, bytes]) => ({
+                                documentId,
+                                bytes
+                            })),
                         ...[...glyphBytes.entries()].map(
                             ([documentId, bytes]) => ({
                                 documentId,

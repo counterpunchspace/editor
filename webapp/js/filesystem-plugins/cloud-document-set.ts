@@ -26,6 +26,13 @@ import {
     jsonToCoreFontMap,
     yDocToJson
 } from '../change-bridge-ydoc';
+import {
+    isLayoutDocumentId,
+    mergeLayoutDocumentsIntoFontJson,
+    readRoomLayoutFromCoreDoc,
+    layoutDocumentIds,
+    type RoomLayout
+} from './cloud-room-layout';
 
 export const FONT_CORE_DOCUMENT_ID = 'font-core';
 export const FONT_DEPS_DOCUMENT_ID = 'font-deps';
@@ -384,6 +391,8 @@ export class CloudDocumentSet {
     readonly coreDoc: Y.Doc;
     readonly depsDoc: Y.Doc;
     readonly glyphDocs = new Map<string, Y.Doc>();
+    /** Features, catalog and kerning rooms (room layout 2). */
+    readonly layoutDocs = new Map<string, Y.Doc>();
     private lastEncoded = new Map<string, number>();
     private pendingUpdateBytes = new Map<string, number>();
 
@@ -461,11 +470,26 @@ export class CloudDocumentSet {
                 documentId: FONT_DEPS_DOCUMENT_ID,
                 bytes: this.encodeDocument(FONT_DEPS_DOCUMENT_ID)
             },
+            ...[...this.layoutDocs.keys()].map((documentId) => ({
+                documentId,
+                bytes: this.encodeDocument(documentId)
+            })),
             ...[...this.glyphDocs.keys()].map((glyphId) => ({
                 documentId: glyphDocumentId(glyphId),
                 bytes: this.encodeDocument(glyphDocumentId(glyphId))
             }))
         ];
+    }
+
+    /** The layout in font-core, or null while the asset is layout 1. */
+    roomLayout(): RoomLayout | null {
+        return readRoomLayoutFromCoreDoc(this.coreDoc);
+    }
+
+    /** Layout room ids this asset has, from font-core's layout. */
+    layoutDocumentIds(): string[] {
+        const layout = this.roomLayout();
+        return layout ? layoutDocumentIds(layout) : [];
     }
 
     notePendingUpdate(documentId: string, byteLength: number): void {
@@ -511,7 +535,7 @@ export class CloudDocumentSet {
         // `glyphs` from a pre-shard font-core Y.Map — that would assemble
         // the whole catalog on a sparse open.
         core.glyphs = glyphs;
-        return core;
+        return mergeLayoutDocumentsIntoFontJson(core, this.layoutDocs);
     }
 
     applyRemoteUpdate(documentId: string, update: Uint8Array): void {
@@ -525,6 +549,10 @@ export class CloudDocumentSet {
     destroy(): void {
         this.coreDoc.destroy();
         this.depsDoc.destroy();
+        for (const doc of this.layoutDocs.values()) {
+            doc.destroy();
+        }
+        this.layoutDocs.clear();
         for (const doc of this.glyphDocs.values()) {
             doc.destroy();
         }
@@ -537,6 +565,14 @@ export class CloudDocumentSet {
         }
         if (documentId === FONT_DEPS_DOCUMENT_ID) {
             return this.depsDoc;
+        }
+        if (isLayoutDocumentId(documentId)) {
+            let doc = this.layoutDocs.get(documentId);
+            if (!doc) {
+                doc = new Y.Doc({ gc: false });
+                this.layoutDocs.set(documentId, doc);
+            }
+            return doc;
         }
         if (documentId.startsWith('glyph:')) {
             const glyphId = documentId.slice('glyph:'.length);

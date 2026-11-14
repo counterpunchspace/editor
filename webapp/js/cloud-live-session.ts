@@ -931,6 +931,9 @@ export class CloudLiveSession {
         const desired = new Set<string>([
             FONT_CORE_DOCUMENT_ID,
             FONT_DEPS_DOCUMENT_ID,
+            // Room layout 2: features, catalog and kerning rooms stay live
+            // like core and deps.
+            ...(this._options.bridge.layoutDocumentIds?.() ?? []),
             ...requestedLiveGlyphDocumentIds(
                 documentIds,
                 this._keepRequestedGlyphSockets
@@ -1848,7 +1851,8 @@ export class CloudLiveSession {
         while (Date.now() < deadline) {
             const pending = [
                 FONT_CORE_DOCUMENT_ID,
-                FONT_DEPS_DOCUMENT_ID
+                FONT_DEPS_DOCUMENT_ID,
+                ...(this._options.bridge.layoutDocumentIds?.() ?? [])
             ].filter((documentId) => {
                 if (!this._desiredDocumentIds.has(documentId)) {
                     return false;
@@ -1935,14 +1939,19 @@ export class CloudLiveSession {
                     matchCoreRevision: false
                 });
             }
-            await catchUpCloudDocument({
-                bridge: this._options.bridge,
-                token: this._token,
-                roomUrl: this._roomUrl,
-                websiteBaseUrl: this._options.websiteBaseUrl,
-                assetId: this._options.assetId,
-                documentId: FONT_DEPS_DOCUMENT_ID
-            });
+            for (const documentId of [
+                FONT_DEPS_DOCUMENT_ID,
+                ...(this._options.bridge.layoutDocumentIds?.() ?? [])
+            ]) {
+                await catchUpCloudDocument({
+                    bridge: this._options.bridge,
+                    token: this._token,
+                    roomUrl: this._roomUrl,
+                    websiteBaseUrl: this._options.websiteBaseUrl,
+                    assetId: this._options.assetId,
+                    documentId
+                });
+            }
         } catch (error) {
             console.warn('CloudLiveSession: reconnect catch-up failed:', error);
             throw error;

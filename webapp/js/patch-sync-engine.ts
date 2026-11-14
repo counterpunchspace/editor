@@ -1158,7 +1158,14 @@ export class PatchSyncEngine {
         this._bindDocUpdates(this.yDoc, FONT_CORE_DOCUMENT_ID);
         this._bindDocUpdates(this.depsDoc, FONT_DEPS_DOCUMENT_ID);
         this.yDoc.getMap(LAYOUT_MAP_KEY).observe(() => {
+            const before = this._roomLayoutCache;
             this._roomLayoutCache = undefined;
+            const after = this.roomLayout;
+            if (JSON.stringify(before ?? null) !== JSON.stringify(after)) {
+                for (const listener of [...this._roomLayoutListeners]) {
+                    listener(after);
+                }
+            }
         });
         this._unbindBurstFinalize = this._editBursts.onFinalize((burst) => {
             this._liveBurstLayers.delete(burst.key);
@@ -1211,6 +1218,13 @@ export class PatchSyncEngine {
     // ── Room layout 2 (cloud-room-layout.ts) ─────────────────────
 
     private _roomLayoutCache: RoomLayout | null | undefined = undefined;
+    private _roomLayoutListeners = new Set<(layout: RoomLayout | null) => void>();
+
+    /** Called when font-core's layout changes (a peer upgraded the font). */
+    onRoomLayoutChange(listener: (layout: RoomLayout | null) => void): () => void {
+        this._roomLayoutListeners.add(listener);
+        return () => this._roomLayoutListeners.delete(listener);
+    }
     private _layoutDocs = new Map<string, Y.Doc>();
     private _routingLayout(): RoomLayout | null {
         return this.roomLayout;
@@ -1906,6 +1920,55 @@ export class PatchSyncEngine {
             }
         }
         return true;
+    }
+
+    /**
+     * Send every layout room's whole state as one described packet each
+     * (the room's socket splits it into transactions that fit), then the
+     * core half. For an asset upgraded on open, whose rooms are empty.
+     */
+    publishRoomLayoutDocuments(): boolean {
+        if (!this.roomLayout || !this._adoptedLayoutCoreBaseline) {
+            return false;
+        }
+        const historyItemId = this._createHistoryItemId();
+        for (const documentId of this.layoutDocumentIds()) {
+            const doc = this._ensureLayoutDoc(documentId);
+            const update = Y.encodeStateAsUpdate(doc);
+            if (isEmptyYjsUpdate(update)) {
+                continue;
+            }
+            const kind = layoutDocumentKind(documentId);
+            const path =
+                kind === 'features'
+                    ? 'features'
+                    : kind === 'catalog'
+                      ? CORE_GLYPH_CATALOG_KEY
+                      : 'masters';
+            const entry = createLogEntry({
+                timestamp: Date.now(),
+                windowId: this.windowId,
+                windowRoleLabel: this._getWindowRoleLabel(),
+                historyItemId,
+                historyAction: 'change',
+                transactionLabel: 'Room layout',
+                transactionId: null,
+                op: 'set',
+                path,
+                oldValue: undefined,
+                newValue: undefined,
+                replayOldValue: undefined,
+                replayNewValue: undefined,
+                compileChangeSource: 'cloud-room-layout',
+                compileEditType: null
+            });
+            this._emitLocalUpdate(update, [], documentId, {
+                skipCollaborationLog: true,
+                envelopeEntries: [entry]
+            });
+            this._noteBroadcastStateVector(documentId);
+        }
+        return this.publishAdoptedRoomLayout();
     }
 
     /**

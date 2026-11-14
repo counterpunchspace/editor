@@ -15,6 +15,7 @@
  * sync-chunk, update-chunk, or state-vector exchange.
  */
 
+import { ROOM_LAYOUT_VERSION } from './filesystem-plugins/cloud-room-layout';
 import {
     fitEnvelopeForWire,
     mergeEnvelopesForWire
@@ -3341,7 +3342,10 @@ export class CloudAdapter implements FileSystemAdapter {
             credentials: 'include',
             headers: getCloudRequestHeaders({
                 'Content-Type': 'application/json'
-            })
+            }),
+            // This editor reads room layout 2 (features, catalog and kerning
+            // rooms); the website refuses older editors for such fonts.
+            body: JSON.stringify({ roomLayout: ROOM_LAYOUT_VERSION })
         });
 
         if (!resp.ok) {

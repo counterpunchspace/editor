@@ -5,6 +5,11 @@
  * Exposed as window.cloudPlugin; window.cloudDebug kept for dev testing.
  */
 
+import {
+    chooseRoomLayout,
+    roomLayoutCounts
+} from '../cloud-room-layout';
+import { ROOM_LAYOUT_VERSION } from '../cloud-room-layout';
 import { showNotice } from '../../font-windows/dialogs';
 import {
     FilesystemPlugin,
@@ -237,6 +242,7 @@ const GLYPH_ORPHAN_SYNC_ATTEMPTS = 4;
 export class CloudPlugin extends FilesystemPlugin {
     private _cloudAdapter: CloudAdapter | null = null;
     private _liveSession: CloudLiveSession | null = null;
+    private _roomLayoutUnsubscribe: (() => void) | null = null;
     private _attachingSession: CloudLiveSession | null = null;
     private _editingSubsetListener: (() => void) | null = null;
     private _isSyncingCatalog = false;
@@ -1784,6 +1790,12 @@ export class CloudPlugin extends FilesystemPlugin {
                 gate.reason || 'Cloud seed blocked: glyph quota exceeded.'
             );
         }
+        // New cloud fonts use room layout 2: features, the catalog and
+        // kerning in their own rooms, so font-core stays small.
+        window.patchSyncEngine?.adoptRoomLayout?.(
+            chooseRoomLayout(roomLayoutCounts(fontJson)),
+            { seedsWholeAsset: true }
+        );
     }
 
     async canAddGlyphs(
@@ -3496,11 +3508,73 @@ export class CloudPlugin extends FilesystemPlugin {
                 await this.ensureSparseHydration({ text });
             }
         }
+        await this._upgradeRoomLayoutOnOpen(options.bridge, session);
+        // A peer that upgrades the font to room layout 2 points core at the
+        // new rooms; join them.
+        this._roomLayoutUnsubscribe?.();
+        this._roomLayoutUnsubscribe =
+            options.bridge.onRoomLayoutChange?.(() => {
+                if (this._liveSession !== session) {
+                    return;
+                }
+                void session
+                    .syncLiveDocumentIds(
+                        liveGlyphDocumentIdsFromSubset(
+                            options.bridge,
+                            activeEditorGlyphNames()
+                        )
+                    )
+                    .catch((error) => {
+                        console.warn(
+                            'Cloud: joining the room layout 2 rooms failed:',
+                            error
+                        );
+                    });
+            }) ?? null;
         // Do not HTTP-catch-up the core revision map on attach. After save or
         // R2 hydrate the in-memory glyph docs are already the published
         // snapshots; a dirty revision map would fan GET /live across the
         // catalog. Later remote core commits still enqueue via
         // `_coreHydratedListener`.
+    }
+
+    /**
+     * A font saved before room layout 2 keeps features, the catalog and
+     * kerning in font-core. Its owner moves them to their own rooms when the
+     * font opens: adopt the layout here, open the new rooms' sockets, send
+     * their contents, then the core change that points peers at them.
+     */
+    private async _upgradeRoomLayoutOnOpen(
+        bridge: PatchSyncEngine,
+        session: CloudLiveSession
+    ): Promise<void> {
+        if (
+            bridge.roomLayout ||
+            this.getCurrentAssetRole() !== 'owner' ||
+            !this._sessionAllowsMutation()
+        ) {
+            return;
+        }
+        const fontJson = this._currentFontJson();
+        if (!fontJson) {
+            return;
+        }
+        const catalog = catalogFromCoreJson(fontJson)?.glyphCatalog;
+        const counts = roomLayoutCounts(fontJson);
+        const layout = chooseRoomLayout({
+            glyphs: catalog ? Object.keys(catalog).length : counts.glyphs,
+            kerningPairs: counts.kerningPairs
+        });
+        if (!bridge.adoptRoomLayout(layout)) {
+            return;
+        }
+        try {
+            await session.syncLiveDocumentIds(
+                liveGlyphDocumentIdsFromSubset(bridge, activeEditorGlyphNames())
+            );
+        } finally {
+            bridge.publishRoomLayoutDocuments();
+        }
     }
 
     private _liveGlyphNamesForSync(): string[] {
@@ -3716,7 +3790,10 @@ export class CloudPlugin extends FilesystemPlugin {
             credentials: 'include',
             headers: getCloudRequestHeaders({
                 'Content-Type': 'application/json'
-            })
+            }),
+            // This editor reads room layout 2 (features, catalog and kerning
+            // rooms); the website refuses older editors for such fonts.
+            body: JSON.stringify({ roomLayout: ROOM_LAYOUT_VERSION })
         });
         const body = await resp.text().catch(() => '');
         let data: {

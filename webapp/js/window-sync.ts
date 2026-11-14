@@ -877,7 +877,9 @@ export class WindowSync {
             type: 'full-state-begin',
             documents: this._encodeDocuments([
                 FONT_CORE_DOCUMENT_ID,
-                FONT_DEPS_DOCUMENT_ID
+                FONT_DEPS_DOCUMENT_ID,
+                // Room layout 2: the font is not whole without these.
+                ...(this._bridge.layoutDocumentIds?.() ?? [])
             ]),
             changeLog: linkedWindowChangeLogSlice(
                 this._bridge.getChangeLog(),

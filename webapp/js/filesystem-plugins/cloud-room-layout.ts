@@ -12,6 +12,10 @@
  * a room rebase. See strategy/CLOUD_COLLABORATION_ARCHITECTURE.md.
  */
 
+import * as Y from 'yjs';
+import { fromYType } from '../change-bridge-ydoc';
+import { flattenKerningMap } from '../delete-glyphs-preflight';
+
 export const FONT_FEATURES_DOCUMENT_ID = 'features';
 export const CATALOG_DOCUMENT_PREFIX = 'catalog:';
 export const KERNING_DOCUMENT_PREFIX = 'kerning:';
@@ -202,4 +206,76 @@ export function kerningBucketFor(pair: string, buckets: number): number {
 
 export function catalogBucketFor(glyphId: string, buckets: number): number {
     return bucketFor(glyphId, buckets);
+}
+
+/** The layout stored in a font-core document, or null for layout 1. */
+export function readRoomLayoutFromCoreDoc(coreDoc: Y.Doc): RoomLayout | null {
+    return parseRoomLayout(coreDoc.getMap(LAYOUT_MAP_KEY).toJSON());
+}
+
+/**
+ * Put features, the catalog and master kerning from the layout rooms back
+ * into a font JSON assembled from font-core. Rooms that were not loaded
+ * leave their part as it is.
+ */
+export function mergeLayoutDocumentsIntoFontJson(
+    fontJson: Record<string, unknown>,
+    layoutDocs: Map<string, Y.Doc>
+): Record<string, unknown> {
+    const features = layoutDocs.get(FONT_FEATURES_DOCUMENT_ID);
+    if (features) {
+        fontJson.features = fromYType(features.getMap(FEATURES_ROOT_KEY));
+    }
+    const catalog: Record<string, unknown> = {};
+    let hasCatalog = false;
+    const kerning = new Map<string, Record<KerningDirection, Record<string, unknown>>>();
+    let hasKerning = false;
+    for (const [documentId, doc] of layoutDocs) {
+        const kind = layoutDocumentKind(documentId);
+        if (kind === 'catalog') {
+            hasCatalog = true;
+            Object.assign(
+                catalog,
+                fromYType(doc.getMap(CATALOG_ROOT_KEY)) as Record<string, unknown>
+            );
+        } else if (kind === 'kerning') {
+            hasKerning = true;
+            doc.getMap(KERNING_ROOT_KEY).forEach((value, key) => {
+                const parsed = parseKerningKey(key);
+                if (!parsed) return;
+                if (!kerning.has(parsed.masterId)) {
+                    kerning.set(parsed.masterId, { l: {}, r: {} });
+                }
+                kerning.get(parsed.masterId)![parsed.direction][parsed.pair] = value;
+            });
+        }
+    }
+    if (hasCatalog) {
+        fontJson.glyphCatalog = catalog;
+    }
+    if (hasKerning && Array.isArray(fontJson.masters)) {
+        for (const master of fontJson.masters as Array<Record<string, unknown>>) {
+            if (!master || typeof master !== 'object') continue;
+            const pairs = kerning.get(String(master.id ?? ''));
+            master.kerning = pairs?.l ?? {};
+            master.kerning_rtl = pairs?.r ?? {};
+        }
+    }
+    return fontJson;
+}
+
+/** Glyph and kerning pair counts that choose a new asset's layout. */
+export function roomLayoutCounts(fontJson: Record<string, unknown>): {
+    glyphs: number;
+    kerningPairs: number;
+} {
+    const glyphs = Array.isArray(fontJson.glyphs) ? fontJson.glyphs.length : 0;
+    let kerningPairs = 0;
+    for (const master of Array.isArray(fontJson.masters) ? fontJson.masters : []) {
+        const record = (master ?? {}) as Record<string, unknown>;
+        for (const field of ['kerning', 'kerning_rtl']) {
+            kerningPairs += Object.keys(flattenKerningMap(record[field])).length;
+        }
+    }
+    return { glyphs, kerningPairs };
 }
