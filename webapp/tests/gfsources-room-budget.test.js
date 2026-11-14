@@ -282,9 +282,19 @@ maybe(
     'gfsources fonts fit the room budgets',
     () => {
         if (DUMP_DIR) fs.mkdirSync(DUMP_DIR, { recursive: true });
+        // Fonts any shard already measured, so a rerun may use another
+        // shard count.
         const done = new Set();
-        if (fs.existsSync(OUT)) {
-            for (const line of fs.readFileSync(OUT, 'utf-8').split('\n')) {
+        const outDir = path.dirname(OUT);
+        const outFiles = fs.existsSync(outDir)
+            ? fs
+                  .readdirSync(outDir)
+                  .filter((name) => /^rooms-\d+\.jsonl$/.test(name))
+                  .map((name) => path.join(outDir, name))
+            : [];
+        if (!outFiles.includes(OUT) && fs.existsSync(OUT)) outFiles.push(OUT);
+        for (const outFile of outFiles) {
+            for (const line of fs.readFileSync(outFile, 'utf-8').split('\n')) {
                 if (!line.trim()) continue;
                 try {
                     done.add(JSON.parse(line).file);

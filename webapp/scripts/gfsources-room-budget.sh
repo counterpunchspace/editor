@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Measures every gfsources font against the room budgets, then reports.
 # Usage: scripts/gfsources-room-budget.sh <gfsources/babelfont dir> <out dir> [--dump]
+# GF_SHARDS (3) parallel Jest processes, GF_HEAP_MB (12288) heap for each.
 # Resumable: fonts already in <out dir>/rooms-*.jsonl are skipped. Each Jest
 # run measures a batch, because one process cannot hold the whole library.
 set -euo pipefail
@@ -20,7 +21,7 @@ run_shard() {
     [[ -f "$file" ]] && before=$(wc -l <"$file")
     GFSOURCES_DIR="$FONTS" GF_OUT="$file" GF_DUMP_DIR="$DUMP" \
       GF_SHARD="$shard" GF_SHARDS="$SHARDS" GF_MAX="$BATCH" \
-      NODE_OPTIONS="--max-old-space-size=12288" \
+      NODE_OPTIONS="--max-old-space-size=${GF_HEAP_MB:-12288}" \
       npx jest tests/gfsources-room-budget.test.js >"$OUT/shard-$shard.log" 2>&1 || true
     local after=0
     [[ -f "$file" ]] && after=$(wc -l <"$file")
