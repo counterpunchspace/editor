@@ -2857,7 +2857,7 @@ describe('CloudPlugin glyph add quota', () => {
         expect(plugin.getCachedCanAddGlyphs(2).allowed).toBe(false);
     });
 
-    test('rejects oversize packets at the 256KiB settings cap and shards at 5MiB', () => {
+    test('rejects oversize packets at the 1MiB settings cap and shards at 5MiB', () => {
         const {
             MAX_SHARD_BYTES,
             MAX_YJS_PACKET_BYTES

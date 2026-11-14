@@ -64,7 +64,7 @@ describe('splitYjsUpdate', () => {
         const before = Y.encodeStateVector(doc);
         doc.transact(() => {
             // A long feature file: one big string insert.
-            doc.getText('features').insert(5, randomText(400_000, 7));
+            doc.getText('features').insert(5, randomText(1_400_000, 7));
             // Many shapes, each a nested map.
             const shapes = doc.getArray('shapes');
             for (let i = 0; i < 2_000; i += 1) {
@@ -102,7 +102,7 @@ describe('splitYjsUpdate', () => {
         const doc = baseDoc();
         const base = applyAll(doc, []);
         const before = Y.encodeStateVector(doc);
-        const text = '𝔄'.repeat(200_000);
+        const text = '𝔄'.repeat(400_000);
         doc.getText('features').insert(0, text);
         const update = Y.encodeStateAsUpdate(doc, before);
         const parts = splitYjsUpdate(update);

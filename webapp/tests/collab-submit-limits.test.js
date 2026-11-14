@@ -74,14 +74,14 @@ function installPlugin(plugin) {
 }
 
 describe('collab submit size helpers', () => {
-    test('hard caps are 5MiB per shard and 256KiB per packet', () => {
+    test('hard caps are 5MiB per shard and 1MiB per packet', () => {
         const settings = require('../js/settings').default;
         expect(MAX_SHARD_BYTES).toBe(settings.CLOUD_COLLAB.MAX_SHARD_BYTES);
         expect(MAX_YJS_PACKET_BYTES).toBe(
             settings.CLOUD_COLLAB.MAX_YJS_PACKET_BYTES
         );
         expect(MAX_SHARD_BYTES).toBe(5 * 1024 * 1024);
-        expect(MAX_YJS_PACKET_BYTES).toBe(256 * 1024);
+        expect(MAX_YJS_PACKET_BYTES).toBe(1024 * 1024);
         expect(MAX_YJS_PACKET_BYTES).toBeLessThan(MAX_SHARD_BYTES);
         expect(collabSubmitHardLimits()).toEqual({
             maxShardBytes: MAX_SHARD_BYTES,

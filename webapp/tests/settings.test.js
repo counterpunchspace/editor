@@ -78,7 +78,7 @@ describe('settings bootstrap', () => {
     test('cloud collab envelope is the isolate-safe packet/tail/shard split', () => {
         const collab = require('../js/settings').default.CLOUD_COLLAB;
         expect(collab.MAX_SHARD_BYTES).toBe(5 * 1024 * 1024);
-        expect(collab.MAX_YJS_PACKET_BYTES).toBe(256 * 1024);
+        expect(collab.MAX_YJS_PACKET_BYTES).toBe(1024 * 1024);
         expect(collab.MAX_YJS_PACKET_BYTES).toBeLessThan(
             collab.MAX_SHARD_BYTES
         );
@@ -86,8 +86,9 @@ describe('settings bootstrap', () => {
             collab.MAX_YJS_PACKET_BYTES
         );
         expect(collab.CHECKPOINT_DELTA_ROWS_THRESHOLD).toBe(64);
-        expect(collab.MAX_DIRTY_HARD_BYTES).toBe(262893);
-        expect(collab.MAX_DIRTY_HARD_BYTES).toBeGreaterThan(
+        // Never below one packet, so a full write always fits the tail.
+        expect(collab.MAX_DIRTY_HARD_BYTES).toBe(1048576);
+        expect(collab.MAX_DIRTY_HARD_BYTES).toBeGreaterThanOrEqual(
             collab.MAX_YJS_PACKET_BYTES
         );
         expect(collab.MAX_DIRTY_HARD_BYTES).toBeLessThanOrEqual(
