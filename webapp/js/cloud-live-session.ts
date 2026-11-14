@@ -5,6 +5,7 @@
  * the active editor glyph. Dependent glyph shards publish over HTTP POST
  * and peers pull them with GET `/live` after font-core revision signals.
  */
+import { normalizeCloudShardHttpUrl } from './cloud-adapter-bootstrap';
 import * as Y from 'yjs';
 import { fitEnvelopeForWire } from './cloud-envelope-budget';
 import {
@@ -1860,6 +1861,48 @@ export class CloudLiveSession {
                 assetId: this._options.assetId,
                 documentId
             });
+        }
+    }
+
+    /**
+     * Wait until every layout room this window has content for is stored in
+     * the cloud (its seed landed). An upgrade sends the core change that
+     * points peers at the rooms only then, or peers load them empty.
+     */
+    async waitForLayoutRoomsStored(timeoutMs = 60_000): Promise<void> {
+        const bridge = this._options.bridge;
+        const deadline = Date.now() + timeoutMs;
+        for (const documentId of bridge.layoutDocumentIds?.() ?? []) {
+            const local = bridge.encodeDocumentState?.(documentId);
+            if (!local || local.length <= 2) {
+                continue;
+            }
+            for (;;) {
+                const url = normalizeCloudShardHttpUrl(
+                    this._roomUrl,
+                    this._options.websiteBaseUrl,
+                    this._options.assetId,
+                    documentId
+                );
+                const response = await fetch(url, {
+                    cache: 'no-store',
+                    headers: { Authorization: `Bearer ${this._token}` }
+                }).catch(() => null);
+                if (response?.ok) {
+                    const bytes = new Uint8Array(await response.arrayBuffer());
+                    if (bytes.length > 2) {
+                        break;
+                    }
+                }
+                if (Date.now() > deadline) {
+                    throw new Error(
+                        `layout room ${documentId} was not stored in time`
+                    );
+                }
+                await new Promise<void>((resolve) => {
+                    this._scheduleTimer(() => resolve(), 500);
+                });
+            }
         }
     }
 

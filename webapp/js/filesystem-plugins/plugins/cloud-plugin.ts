@@ -3574,6 +3574,7 @@ export class CloudPlugin extends FilesystemPlugin {
             liveGlyphDocumentIdsFromSubset(bridge, activeEditorGlyphNames())
         );
         await session.waitForLiveRoomsSynced(60_000);
+        await session.waitForLayoutRoomsStored(60_000);
         bridge.publishAdoptedRoomLayout();
     }
 
