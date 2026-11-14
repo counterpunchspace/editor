@@ -167,7 +167,8 @@ const GROUPS = {
         'sparse-closure': ['tests/cloud-collab-sparse-closure.spec.ts'],
         'master-topology': ['tests/cloud-collab-master-topology.spec.ts'],
         'three-window-sync': ['tests/cloud-collab-three-window-sync.spec.ts'],
-        'three-window-relay': ['tests/cloud-collab-three-window-relay.spec.ts']
+        'three-window-relay': ['tests/cloud-collab-three-window-relay.spec.ts'],
+        'room-layout': ['tests/cloud-collab-room-layout.spec.ts']
     }
 };
 

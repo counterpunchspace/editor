@@ -45,7 +45,11 @@ export async function prepareOwnerCloudFont(
     request: Parameters<typeof bootstrapCloudCollabSession>[0],
     runId: string,
     assetName: string,
-    options?: { serviceWorkers?: 'allow' | 'block' }
+    options?: {
+        serviceWorkers?: 'allow' | 'block';
+        /** Runs on the owner page right before the font is saved to the cloud. */
+        beforeSave?: (page: Page) => Promise<void>;
+    }
 ): Promise<{
     emails: ReturnType<typeof makeCloudCollabEmails>;
     ownerSession: Awaited<ReturnType<typeof bootstrapCloudCollabSession>>;
@@ -104,6 +108,7 @@ export async function prepareOwnerCloudFont(
     await installJsonCanonicalizer(ownerPage);
     await installFontModelSyncTracker(ownerPage);
     await installEditingFontCompileTracker(ownerPage);
+    await options?.beforeSave?.(ownerPage);
     const assetId = await saveCurrentFontToCloud(ownerPage, assetName);
     await waitForOpenSessionReady(ownerPage, assetId);
     await waitForEditingCompile(ownerPage);

@@ -209,13 +209,50 @@ always + the subsetted glyphs. Other glyphs one-shot HTTP live catch-up
 ## Shard model
 
 ```text
-asset:<assetId>:font-core          non-glyph font data + lean glyph catalog
+asset:<assetId>:font-core          font-wide data, glyphOrder, the room layout
 asset:<assetId>:font-deps          compact dependency graph (see below)
+asset:<assetId>:features           feature code (room layout 2)
+asset:<assetId>:catalog:<n>        glyph catalog bucket (room layout 2)
+asset:<assetId>:kerning:<n>        kerning pair bucket (room layout 2)
 asset:<assetId>:glyph:<glyphId>    one glyph's editable CRDT state
 ```
 
-Optional later shards (only if core still grows too large): kerning and/or
-feature sources.
+### Room layout 2
+
+The compactor decodes a whole room in a 128 MB isolate, and its memory grows
+with the room's Yjs struct count (about 265 bytes each), not its byte size.
+A font-core that held the catalog, every master's kerning and the feature
+code reached 17–77 MB on large Google Fonts sources and could not be
+compacted. Room layout 2 moves those out:
+
+- `features`: root map `features`, the same structure `font.features` had.
+- `catalog:<n>`: root map `catalog`, glyphId → catalog entry. The
+  codepoint → glyph index is derived in memory and no longer stored.
+- `kerning:<n>`: root map `kerning`, key `<masterId>|<l|r>|<first>:<second>`
+  → value, every master together, bucketed by FNV-1a of the first side.
+- font-core keeps the rest and a root map `layout` =
+  `{ version: 2, catalogBuckets, kerningBuckets }`.
+
+Bucket counts are fixed per asset when it is seeded or upgraded, at about
+2,000 glyphs and 20,000 pairs per bucket, so a font can double before a
+bucket reaches its 4,000 / 40,000 budget; re-bucketing is part of a room
+rebase. Measured on 1,801 gfsources fonts, every layout 2 room stays under
+2 MiB except two features rooms (Harmattan 3.4 MB, Sekuya 2.5 MB), and every
+room compacts with a 1 MiB write in 16–24 MB of heap
+(`webapp/tests/gfsources-room-budget.test.js`,
+`collab/scripts/real-room-bench.mjs`).
+
+The engine keeps the font JSON it always had: writes route by path
+(`features…`, `glyphCatalog.<id>…`, `masters.<i>.kerning(_rtl).<pair>`) to
+the rooms, and reads assemble them back (`cloud-room-layout.ts`). The worker
+merges the features and kerning documents into the font it compiles; it does
+not need the catalog.
+
+New cloud fonts are seeded in layout 2. An owner who opens a font saved
+before layout 2 upgrades it: the rooms get their contents first, then
+font-core gets the layout and drops the moved keys, and open peers join the
+new rooms. The website refuses a room token for a layout 2 font (it has a
+`features` attestation) to an editor that does not send `roomLayout: 2`.
 
 ### Glyph identity
 

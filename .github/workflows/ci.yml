@@ -491,6 +491,7 @@ jobs:
                     - master-topology
                     - three-window-sync
                     - three-window-relay
+                    - room-layout
         steps:
             - name: Checkout editor
               uses: actions/checkout@v4
