@@ -77,8 +77,18 @@ describe('room layout 2', () => {
         expect(parseRoomLayout({ ...layout, version: 1 })).toBeNull();
         expect(parseRoomLayout({ ...layout, catalogBuckets: 0 })).toBeNull();
         expect(parseRoomLayout(null)).toBeNull();
-        expect(layoutDocumentIds({ ...layout, catalogBuckets: 2, kerningBuckets: 1 }))
-            .toEqual(['features', catalogDocumentId(0), catalogDocumentId(1), kerningDocumentId(0)]);
+        expect(
+            layoutDocumentIds({
+                ...layout,
+                catalogBuckets: 2,
+                kerningBuckets: 1
+            })
+        ).toEqual([
+            'features',
+            catalogDocumentId(0),
+            catalogDocumentId(1),
+            kerningDocumentId(0)
+        ]);
     });
 
     test('the codepoint index is derived from catalog entries in either shape', () => {

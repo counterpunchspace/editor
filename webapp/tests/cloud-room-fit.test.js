@@ -16,7 +16,9 @@ describe('cloud room fit', () => {
     test('rooms within the limits pass', () => {
         const bytes = docBytes((doc) => doc.getMap('font').set('upm', 1000));
         expect(
-            findRoomsThatDoNotFit([{ documentId: 'font-core', bytes }], { limits })
+            findRoomsThatDoNotFit([{ documentId: 'font-core', bytes }], {
+                limits
+            })
         ).toEqual([]);
     });
 
@@ -30,24 +32,42 @@ describe('cloud room fit', () => {
         });
         const problems = [
             ...findRoomsThatDoNotFit(
-                [{ documentId: 'glyph:1a11e112-3388-4bbc-8378-89c34347bb71', bytes: bigGlyph }],
+                [
+                    {
+                        documentId:
+                            'glyph:1a11e112-3388-4bbc-8378-89c34347bb71',
+                        bytes: bigGlyph
+                    }
+                ],
                 {
                     limits,
-                    glyphName: (id) => (id.startsWith('glyph:') ? 'Aring' : null)
+                    glyphName: (id) =>
+                        id.startsWith('glyph:') ? 'Aring' : null
                 }
             ),
-            ...findRoomsThatDoNotFit([{ documentId: 'kerning:3', bytes: busyKerning }], {
-                limits: { maxBytes: 1_000_000, maxStructs: 300 }
-            })
+            ...findRoomsThatDoNotFit(
+                [{ documentId: 'kerning:3', bytes: busyKerning }],
+                {
+                    limits: { maxBytes: 1_000_000, maxStructs: 300 }
+                }
+            )
         ];
         expect(problems.map((problem) => problem.documentId)).toEqual([
             'glyph:1a11e112-3388-4bbc-8378-89c34347bb71',
             'kerning:3'
         ]);
-        expect(problems[0].message).toMatch(/^The glyph “Aring” is too large for the cloud \(5 KB, the limit is 4 KB\)\. Simplify/);
-        expect(problems[1].message).toMatch(/^Its kerning is too large for the cloud \(400 stored items, the limit is 300\)\. Kerning groups/);
+        expect(problems[0].message).toMatch(
+            /^The glyph “Aring” is too large for the cloud \(5 KB, the limit is 4 KB\)\. Simplify/
+        );
+        expect(problems[1].message).toMatch(
+            /^Its kerning is too large for the cloud \(400 stored items, the limit is 300\)\. Kerning groups/
+        );
         const message = roomFitRefusalMessage(problems);
-        expect(message.startsWith('This font can’t be saved to the cloud. The glyph “Aring”')).toBe(true);
+        expect(
+            message.startsWith(
+                'This font can’t be saved to the cloud. The glyph “Aring”'
+            )
+        ).toBe(true);
     });
 
     test('a long refusal lists five parts and counts the rest', () => {

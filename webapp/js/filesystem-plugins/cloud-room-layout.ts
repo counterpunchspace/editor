@@ -47,12 +47,7 @@ export type RoomLayout = {
 };
 
 export type LayoutDocumentKind =
-    | 'core'
-    | 'deps'
-    | 'features'
-    | 'catalog'
-    | 'kerning'
-    | 'glyph';
+    'core' | 'deps' | 'features' | 'catalog' | 'kerning' | 'glyph';
 
 const BUCKET_RE = /^(0|[1-9][0-9]{0,3})$/;
 
@@ -150,7 +145,9 @@ export function parseRoomLayout(value: unknown): RoomLayout | null {
     const valid = (n: number) =>
         Number.isInteger(n) && n >= 1 && n <= MAX_LAYOUT_BUCKETS;
     const validBase = (base: number, count: number) =>
-        Number.isInteger(base) && base >= 0 && base + count <= MAX_LAYOUT_BUCKETS;
+        Number.isInteger(base) &&
+        base >= 0 &&
+        base + count <= MAX_LAYOUT_BUCKETS;
     if (
         version !== ROOM_LAYOUT_VERSION ||
         !valid(catalogBuckets) ||
@@ -212,9 +209,15 @@ export const KERNING_PAIRS_BUCKET_BUDGET = KERNING_PAIRS_PER_BUCKET * 2;
  */
 export function rebasedRoomLayout(
     current: RoomLayout,
-    fill: { largestCatalogBucket: number; largestKerningBucket: number; glyphs: number; kerningPairs: number }
+    fill: {
+        largestCatalogBucket: number;
+        largestKerningBucket: number;
+        glyphs: number;
+        kerningPairs: number;
+    }
 ): RoomLayout | null {
-    const catalogFull = fill.largestCatalogBucket > CATALOG_GLYPHS_BUCKET_BUDGET;
+    const catalogFull =
+        fill.largestCatalogBucket > CATALOG_GLYPHS_BUCKET_BUDGET;
     const kerningFull = fill.largestKerningBucket > KERNING_PAIRS_BUCKET_BUDGET;
     if (!catalogFull && !kerningFull) {
         return null;
@@ -333,7 +336,10 @@ export function mergeLayoutDocumentsIntoFontJson(
     }
     const catalog: Record<string, unknown> = {};
     let hasCatalog = false;
-    const kerning = new Map<string, Record<KerningDirection, Record<string, unknown>>>();
+    const kerning = new Map<
+        string,
+        Record<KerningDirection, Record<string, unknown>>
+    >();
     let hasKerning = false;
     for (const [documentId, doc] of layoutDocs) {
         const kind = layoutDocumentKind(documentId);
@@ -341,7 +347,10 @@ export function mergeLayoutDocumentsIntoFontJson(
             hasCatalog = true;
             Object.assign(
                 catalog,
-                fromYType(doc.getMap(CATALOG_ROOT_KEY)) as Record<string, unknown>
+                fromYType(doc.getMap(CATALOG_ROOT_KEY)) as Record<
+                    string,
+                    unknown
+                >
             );
         } else if (kind === 'kerning') {
             hasKerning = true;
@@ -351,7 +360,8 @@ export function mergeLayoutDocumentsIntoFontJson(
                 if (!kerning.has(parsed.masterId)) {
                     kerning.set(parsed.masterId, { l: {}, r: {} });
                 }
-                kerning.get(parsed.masterId)![parsed.direction][parsed.pair] = value;
+                kerning.get(parsed.masterId)![parsed.direction][parsed.pair] =
+                    value;
             });
         }
     }
@@ -360,7 +370,9 @@ export function mergeLayoutDocumentsIntoFontJson(
         fontJson.codepointIndex = codepointIndexFromCatalog(catalog);
     }
     if (hasKerning && Array.isArray(fontJson.masters)) {
-        for (const master of fontJson.masters as Array<Record<string, unknown>>) {
+        for (const master of fontJson.masters as Array<
+            Record<string, unknown>
+        >) {
             if (!master || typeof master !== 'object') continue;
             const pairs = kerning.get(String(master.id ?? ''));
             master.kerning = pairs?.l ?? {};
@@ -377,10 +389,14 @@ export function roomLayoutCounts(fontJson: Record<string, unknown>): {
 } {
     const glyphs = Array.isArray(fontJson.glyphs) ? fontJson.glyphs.length : 0;
     let kerningPairs = 0;
-    for (const master of Array.isArray(fontJson.masters) ? fontJson.masters : []) {
+    for (const master of Array.isArray(fontJson.masters)
+        ? fontJson.masters
+        : []) {
         const record = (master ?? {}) as Record<string, unknown>;
         for (const field of ['kerning', 'kerning_rtl']) {
-            kerningPairs += Object.keys(flattenKerningMap(record[field])).length;
+            kerningPairs += Object.keys(
+                flattenKerningMap(record[field])
+            ).length;
         }
     }
     return { glyphs, kerningPairs };
@@ -395,7 +411,10 @@ export function codepointIndexFromCatalog(
 ): Record<string, string[]> {
     const index: Record<string, string[]> = {};
     for (const [glyphId, raw] of Object.entries(catalog ?? {})) {
-        const entry = (raw ?? {}) as { codepoints?: unknown; deleted?: unknown };
+        const entry = (raw ?? {}) as {
+            codepoints?: unknown;
+            deleted?: unknown;
+        };
         if (entry.deleted === true) {
             continue;
         }

@@ -54,7 +54,9 @@ async function openAsOwner(
     await collectPageErrors(page);
     await gotoEditorPage(
         page,
-        editorHrefWithTestMode(`${LOCAL_EDITOR_ORIGIN}/?file=cloud:///${assetId}`)
+        editorHrefWithTestMode(
+            `${LOCAL_EDITOR_ORIGIN}/?file=cloud:///${assetId}`
+        )
     );
     await waitForCanvasReady(page);
     await waitForFontLoaded(page);
@@ -103,7 +105,12 @@ test('a font saved before room layout 2 moves to its rooms when the owner opens 
         expect((await fontParts(inviteePage)).layout).toBeNull();
 
         await ownerContext.close();
-        const reopened = await openAsOwner(browser, request, emails.owner, assetId);
+        const reopened = await openAsOwner(
+            browser,
+            request,
+            emails.owner,
+            assetId
+        );
         contexts.push(reopened.context);
         const ownerAgain = reopened.page;
         await ownerAgain.waitForFunction(
@@ -187,7 +194,10 @@ test('a font saved before room layout 2 moves to its rooms when the owner opens 
     }
 });
 
-test('a new cloud font is saved in room layout 2', async ({ browser, request }) => {
+test('a new cloud font is saved in room layout 2', async ({
+    browser,
+    request
+}) => {
     test.setTimeout(300000);
     const runId = `layout-new-${Date.now().toString(36)}`;
     const { emails, ownerContext, ownerPage, assetId } =

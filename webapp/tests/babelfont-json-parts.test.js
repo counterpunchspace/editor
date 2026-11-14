@@ -1,10 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { open_font_file } = require('../wasm-dist/babelfont_fontc_web');
-const {
-    jsonPartsToChunks,
-    jsonPartsToData
-} = require('../js/babelfont-model');
+const { jsonPartsToChunks, jsonPartsToData } = require('../js/babelfont-model');
 const {
     canonicalizeImportedFontJson
 } = require('../js/font-import-canonicalization');

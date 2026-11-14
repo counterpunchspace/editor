@@ -728,7 +728,9 @@ export async function captureCloudSaveSeedState(
     );
     validateCloudExportForFontOpen(fontJson, 'save');
     const shards = cloneEncodedShards(
-        bridge.encodeDocumentSetForSeed?.() ?? bridge.encodeDocumentSet?.() ?? []
+        bridge.encodeDocumentSetForSeed?.() ??
+            bridge.encodeDocumentSet?.() ??
+            []
     );
     if (!shards.length) {
         throw new Error('No live document set to seed to cloud');

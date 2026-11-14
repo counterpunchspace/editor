@@ -419,7 +419,9 @@ const FONT_EDIT_ORIGIN = 'font-edit';
 
 /** A Yjs v1 update with no structs and no deletions. */
 function isEmptyYjsUpdate(update: Uint8Array): boolean {
-    return update.length === 0 || (update.length === 2 && !update[0] && !update[1]);
+    return (
+        update.length === 0 || (update.length === 2 && !update[0] && !update[1])
+    );
 }
 const GLYPH_EDIT_ORIGIN = 'glyph-edit';
 /** Remote cloud applies; never treated as a local edit origin. */
@@ -1227,11 +1229,15 @@ export class PatchSyncEngine {
     // ── Room layout 2 (cloud-room-layout.ts) ─────────────────────
 
     private _roomLayoutCache: RoomLayout | null | undefined = undefined;
-    private _roomLayoutListeners = new Set<(layout: RoomLayout | null) => void>();
+    private _roomLayoutListeners = new Set<
+        (layout: RoomLayout | null) => void
+    >();
     private _notifiedRoomLayoutKey = 'null';
 
     /** Called when font-core's layout changes (a peer upgraded the font). */
-    onRoomLayoutChange(listener: (layout: RoomLayout | null) => void): () => void {
+    onRoomLayoutChange(
+        listener: (layout: RoomLayout | null) => void
+    ): () => void {
         this._roomLayoutListeners.add(listener);
         return () => this._roomLayoutListeners.delete(listener);
     }
@@ -1333,7 +1339,7 @@ export class PatchSyncEngine {
         }
         const catalog = catalogMoves ? (this._readCatalogJson() ?? {}) : {};
         const masters = kerningMoves
-            ? (this._readTopLevelJsonFromY('masters') as unknown[]) ?? []
+            ? ((this._readTopLevelJsonFromY('masters') as unknown[]) ?? [])
             : [];
         this._adoptedLayoutCoreBaseline =
             this._lastBroadcastStateVectorByDoc.get(FONT_CORE_DOCUMENT_ID) ??
@@ -1363,7 +1369,9 @@ export class PatchSyncEngine {
                 if (!masterId) continue;
                 for (const direction of ['l', 'r'] as const) {
                     for (const [pair, value] of Object.entries(
-                        flattenKerningMap(record[kerningFieldForDirection(direction)])
+                        flattenKerningMap(
+                            record[kerningFieldForDirection(direction)]
+                        )
                     )) {
                         add(
                             kerningRoomFor(next, pair),
@@ -1375,9 +1383,10 @@ export class PatchSyncEngine {
             }
             for (const [documentId, entries] of byRoom) {
                 const doc = this._ensureLayoutDoc(documentId);
-                const root = layoutDocumentKind(documentId) === 'catalog'
-                    ? CATALOG_ROOT_KEY
-                    : KERNING_ROOT_KEY;
+                const root =
+                    layoutDocumentKind(documentId) === 'catalog'
+                        ? CATALOG_ROOT_KEY
+                        : KERNING_ROOT_KEY;
                 doc.transact(() => {
                     const map = doc.getMap(root);
                     for (const [key, value] of entries) {
@@ -1393,7 +1402,10 @@ export class PatchSyncEngine {
             this._ensureLayoutDoc(documentId);
             this._noteBroadcastStateVector(documentId);
         }
-        for (const documentId of [FONT_CORE_DOCUMENT_ID, ...kerningRoomIds(next)]) {
+        for (const documentId of [
+            FONT_CORE_DOCUMENT_ID,
+            ...kerningRoomIds(next)
+        ]) {
             const doc = this._docForId(documentId);
             if (doc) {
                 this._workerDocumentReplaceCallback?.(
@@ -1713,7 +1725,11 @@ export class PatchSyncEngine {
             return true;
         }
         if (path.length === 3) {
-            this._writeKerningPairs(masterId, direction, flattenKerningMap(value));
+            this._writeKerningPairs(
+                masterId,
+                direction,
+                flattenKerningMap(value)
+            );
             return true;
         }
         const pair = String(path[3]);
@@ -1783,21 +1799,27 @@ export class PatchSyncEngine {
             return true;
         }
         const pair = String(path[3]);
-        this._kerningBucketMap(pair).delete(kerningKey(masterId, direction, pair));
+        this._kerningBucketMap(pair).delete(
+            kerningKey(masterId, direction, pair)
+        );
         return true;
     }
 
     /** Layout 2 reads that no single Y path can express; undefined if not. */
-    private _layoutGetPath(
-        path: Array<string | number>
-    ): { handled: boolean; value?: unknown } {
+    private _layoutGetPath(path: Array<string | number>): {
+        handled: boolean;
+        value?: unknown;
+    } {
         if (path[0] === LAYOUT_MAP_KEY) {
             return {
                 handled: true,
                 value:
                     path.length === 1
                         ? this.yDoc.getMap(LAYOUT_MAP_KEY)
-                        : getYPath(this.yDoc.getMap(LAYOUT_MAP_KEY), path.slice(1))
+                        : getYPath(
+                              this.yDoc.getMap(LAYOUT_MAP_KEY),
+                              path.slice(1)
+                          )
             };
         }
         if (!this.roomLayout) {
@@ -1865,7 +1887,8 @@ export class PatchSyncEngine {
                     for (const master of json) {
                         if (!master || typeof master !== 'object') continue;
                         const record = master as Record<string, unknown>;
-                        const id = typeof record.id === 'string' ? record.id : '';
+                        const id =
+                            typeof record.id === 'string' ? record.id : '';
                         record.kerning = this._readKerningPairs(id, 'l');
                         record.kerning_rtl = this._readKerningPairs(id, 'r');
                     }
@@ -2014,7 +2037,10 @@ export class PatchSyncEngine {
                         }
                         byKerningBucket
                             .get(documentId)!
-                            .push([kerningKey(masterId, direction, pair), value]);
+                            .push([
+                                kerningKey(masterId, direction, pair),
+                                value
+                            ]);
                     }
                 }
             }
@@ -2074,25 +2100,29 @@ export class PatchSyncEngine {
             return false;
         }
         const historyItemId = this._createHistoryItemId();
-        const entries = [LAYOUT_MAP_KEY, 'features', CORE_GLYPH_CATALOG_KEY, 'masters'].map(
-            (path) =>
-                createLogEntry({
-                    timestamp: Date.now(),
-                    windowId: this.windowId,
-                    windowRoleLabel: this._getWindowRoleLabel(),
-                    historyItemId,
-                    historyAction: 'change',
-                    transactionLabel: 'Room layout',
-                    transactionId: null,
-                    op: 'set',
-                    path,
-                    oldValue: undefined,
-                    newValue: undefined,
-                    replayOldValue: undefined,
-                    replayNewValue: undefined,
-                    compileChangeSource: 'cloud-room-layout',
-                    compileEditType: null
-                })
+        const entries = [
+            LAYOUT_MAP_KEY,
+            'features',
+            CORE_GLYPH_CATALOG_KEY,
+            'masters'
+        ].map((path) =>
+            createLogEntry({
+                timestamp: Date.now(),
+                windowId: this.windowId,
+                windowRoleLabel: this._getWindowRoleLabel(),
+                historyItemId,
+                historyAction: 'change',
+                transactionLabel: 'Room layout',
+                transactionId: null,
+                op: 'set',
+                path,
+                oldValue: undefined,
+                newValue: undefined,
+                replayOldValue: undefined,
+                replayNewValue: undefined,
+                compileChangeSource: 'cloud-room-layout',
+                compileEditType: null
+            })
         );
         this._emitLocalUpdate(update, [], FONT_CORE_DOCUMENT_ID, {
             skipCollaborationLog: true,

@@ -70,11 +70,15 @@ function snapshotOf(engine) {
     };
 }
 
-function adopted(layout = { version: 2, catalogBuckets: 2, kerningBuckets: 3 }) {
+function adopted(
+    layout = { version: 2, catalogBuckets: 2, kerningBuckets: 3 }
+) {
     const engine = new PatchSyncEngine('layout-owner');
     engine.initFromJson(makeFont());
     const before = snapshotOf(engine);
-    expect(engine.adoptRoomLayout(layout, { seedsWholeAsset: true })).toBe(true);
+    expect(engine.adoptRoomLayout(layout, { seedsWholeAsset: true })).toBe(
+        true
+    );
     return { engine, before, layout };
 }
 
@@ -104,7 +108,10 @@ describe('room layout 2 in the engine', () => {
         );
 
         const core = new Y.Doc();
-        Y.applyUpdate(core, shards.find((s) => s.documentId === 'font-core').bytes);
+        Y.applyUpdate(
+            core,
+            shards.find((s) => s.documentId === 'font-core').bytes
+        );
         const font = core.getMap('font');
         expect(font.has('features')).toBe(false);
         expect(font.has('glyphCatalog')).toBe(false);
@@ -136,9 +143,15 @@ describe('room layout 2 in the engine', () => {
         ]);
         for (const [documentId, key] of kerningKeys) {
             const pair = key.split('|')[2];
-            expect(documentId).toBe(kerningDocumentId(kerningBucketFor(pair, 3)));
+            expect(documentId).toBe(
+                kerningDocumentId(kerningBucketFor(pair, 3))
+            );
         }
-        expect(engine.adoptRoomLayout(chooseRoomLayout({ glyphs: 3, kerningPairs: 4 }))).toBe(false);
+        expect(
+            engine.adoptRoomLayout(
+                chooseRoomLayout({ glyphs: 3, kerningPairs: 4 })
+            )
+        ).toBe(false);
     });
 
     test('a kerning edit goes to its bucket and a peer sees the same font', () => {
@@ -186,9 +199,14 @@ describe('room layout 2 in the engine', () => {
         engine.onLocalUpdate((_update, _message, _entries, documentId) => {
             packets.push(documentId);
         });
-        engine.recordChange(['masters', 0], 'kerning', { 'A:V': -80, '@round:o': -10 }, {
-            'A:V': -80
-        });
+        engine.recordChange(
+            ['masters', 0],
+            'kerning',
+            { 'A:V': -80, '@round:o': -10 },
+            {
+                'A:V': -80
+            }
+        );
         expect(snapshotOf(engine).masters[0].kerning).toEqual({ 'A:V': -80 });
         expect(new Set(packets)).toEqual(
             new Set([kerningDocumentId(kerningBucketFor('@round:o', 3))])
@@ -203,20 +221,34 @@ describe('room layout 2 in the engine', () => {
         peer.applyDocumentSetState(owner.encodeDocumentSet());
         const heard = [];
         peer.onRoomLayoutChange((layout) => heard.push(layout));
-        owner.adoptRoomLayout({ version: 2, catalogBuckets: 1, kerningBuckets: 2 });
+        owner.adoptRoomLayout({
+            version: 2,
+            catalogBuckets: 1,
+            kerningBuckets: 2
+        });
         const packets = [];
         owner.onLocalUpdate((update, message, _entries, documentId) =>
             packets.push({ update, message, documentId })
         );
         expect(owner.publishAdoptedRoomLayout()).toBe(true);
         for (const packet of packets) {
-            peer.applyRemoteUpdate(packet.update, undefined, [packet.message], packet.documentId);
+            peer.applyRemoteUpdate(
+                packet.update,
+                undefined,
+                [packet.message],
+                packet.documentId
+            );
         }
-        expect(heard).toEqual([{ version: 2, catalogBuckets: 1, kerningBuckets: 2 }]);
+        expect(heard).toEqual([
+            { version: 2, catalogBuckets: 1, kerningBuckets: 2 }
+        ]);
         // The rooms catch up after the core change; kerning comes back.
         expect(snapshotOf(peer).masters[0].kerning).toEqual({});
         for (const shard of owner.encodeDocumentSet()) {
-            if (shard.documentId.startsWith('kerning:') || shard.documentId === 'features') {
+            if (
+                shard.documentId.startsWith('kerning:') ||
+                shard.documentId === 'features'
+            ) {
                 peer.applyDocumentCatchUp(shard.documentId, shard.bytes);
             }
         }
@@ -226,19 +258,33 @@ describe('room layout 2 in the engine', () => {
     test('a whole master write keeps existing kerning and brings a new master’s', () => {
         const { engine } = adopted();
         const before = snapshotOf(engine).masters;
-        const masters = JSON.parse(JSON.stringify(engine.getFontJsonSnapshot().masters));
+        const masters = JSON.parse(
+            JSON.stringify(engine.getFontJsonSnapshot().masters)
+        );
         // A stale copy without kerning must not wipe the rooms.
         masters[0].kerning = {};
         masters[0].name = { dflt: 'Light' };
-        masters.push({ id: 'm3', name: { dflt: 'Black' }, location: {}, kerning: { 'A:V': -120 } });
+        masters.push({
+            id: 'm3',
+            name: { dflt: 'Black' },
+            location: {},
+            kerning: { 'A:V': -120 }
+        });
         engine.recordChange([], 'masters', undefined, masters);
         const after = snapshotOf(engine).masters;
         expect(after[0].name).toEqual({ dflt: 'Light' });
         expect(after[0].kerning).toEqual(before[0].kerning);
         expect(after[2]).toMatchObject({ id: 'm3', kerning: { 'A:V': -120 } });
         // Removing a master removes its pairs.
-        engine.recordChange([], 'masters', undefined, masters.filter((m) => m.id !== 'm2'));
-        const shards = engine.encodeDocumentSet().filter((s) => s.documentId.startsWith('kerning:'));
+        engine.recordChange(
+            [],
+            'masters',
+            undefined,
+            masters.filter((m) => m.id !== 'm2')
+        );
+        const shards = engine
+            .encodeDocumentSet()
+            .filter((s) => s.documentId.startsWith('kerning:'));
         const keys = shards.flatMap((s) => {
             const doc = new Y.Doc();
             Y.applyUpdate(doc, s.bytes);
@@ -248,14 +294,19 @@ describe('room layout 2 in the engine', () => {
     });
 
     test('a rebase moves full buckets to fresh rooms and a peer follows', () => {
-        const { rebasedRoomLayout } = require('../js/filesystem-plugins/cloud-room-layout');
+        const {
+            rebasedRoomLayout
+        } = require('../js/filesystem-plugins/cloud-room-layout');
         const owner = new PatchSyncEngine('rebase-owner');
         const font = makeFont();
         font.masters[0].kerning = Object.fromEntries(
             Array.from({ length: 50 }, (_, i) => [`g${i}:V`, -i])
         );
         owner.initFromJson(font);
-        owner.adoptRoomLayout({ version: 2, catalogBuckets: 1, kerningBuckets: 1 }, { seedsWholeAsset: true });
+        owner.adoptRoomLayout(
+            { version: 2, catalogBuckets: 1, kerningBuckets: 1 },
+            { seedsWholeAsset: true }
+        );
         const peer = new PatchSyncEngine('rebase-peer');
         peer.initFromJson({});
         peer.applyDocumentSetState(owner.encodeDocumentSet());
@@ -268,9 +319,18 @@ describe('room layout 2 in the engine', () => {
             ...fill,
             largestKerningBucket: 1e9
         });
-        expect(next).toMatchObject({ kerningBuckets: 2, kerningBase: 1, catalogBuckets: 1 });
+        expect(next).toMatchObject({
+            kerningBuckets: 2,
+            kerningBase: 1,
+            catalogBuckets: 1
+        });
         expect(owner.rebaseRoomLayout(next)).toBe(true);
-        expect(owner.layoutDocumentIds()).toEqual(['features', 'catalog:0', 'kerning:1', 'kerning:2']);
+        expect(owner.layoutDocumentIds()).toEqual([
+            'features',
+            'catalog:0',
+            'kerning:1',
+            'kerning:2'
+        ]);
         expect(snapshotOf(owner)).toEqual(before);
 
         const packets = [];
@@ -281,7 +341,12 @@ describe('room layout 2 in the engine', () => {
         const heard = [];
         peer.onRoomLayoutChange((layout) => heard.push(layout));
         for (const packet of packets) {
-            peer.applyRemoteUpdate(packet.update, undefined, [packet.message], packet.documentId);
+            peer.applyRemoteUpdate(
+                packet.update,
+                undefined,
+                [packet.message],
+                packet.documentId
+            );
         }
         expect(heard).toEqual([next]);
         for (const shard of owner.encodeDocumentSet()) {
@@ -290,6 +355,11 @@ describe('room layout 2 in the engine', () => {
             }
         }
         expect(snapshotOf(peer)).toEqual(before);
-        expect([...peer._layoutDocs.keys()].sort()).toEqual(['catalog:0', 'features', 'kerning:1', 'kerning:2']);
+        expect([...peer._layoutDocs.keys()].sort()).toEqual([
+            'catalog:0',
+            'features',
+            'kerning:1',
+            'kerning:2'
+        ]);
     });
 });
