@@ -4857,7 +4857,27 @@ class GlyphCanvas {
                 max: HTMLInputElement;
             }> = [];
             const fontModel = fontManager.currentFont?.fontModel;
-            for (const [axisIndex, axis] of (fontModel?.axes || []).entries()) {
+            const axes = fontModel?.axes || [];
+            // Placeholders show the axis extremes in designspace coordinates,
+            // so an empty (unbounded) field reads as the full axis range.
+            const designspaceBound = (
+                axis: (typeof axes)[number],
+                value: unknown
+            ): string => {
+                if (typeof value !== 'number' || !Number.isFinite(value)) {
+                    return '';
+                }
+                const mapped = Number(
+                    userspaceToDesignspace(
+                        { [axis.tag]: value } as UserspaceLocation,
+                        axes
+                    )[axis.tag] ?? value
+                );
+                return Number.isFinite(mapped)
+                    ? String(Math.round(mapped * 1000) / 1000)
+                    : '';
+            };
+            for (const [axisIndex, axis] of axes.entries()) {
                 const existingRule = existingAxisRules[axisIndex];
                 const rule =
                     existingRule &&
@@ -4880,7 +4900,7 @@ class GlyphCanvas {
                 min.step = 'any';
                 min.className =
                     'localized-string-input localized-string-modal-input feature-variation-settings-input';
-                min.placeholder = 'Min';
+                min.placeholder = designspaceBound(axis, axis.min) || 'Min';
                 min.value =
                     typeof rule.min === 'number' ? String(rule.min) : '';
                 const max = document.createElement('input');
@@ -4888,7 +4908,7 @@ class GlyphCanvas {
                 max.step = 'any';
                 max.className =
                     'localized-string-input localized-string-modal-input feature-variation-settings-input';
-                max.placeholder = 'Max';
+                max.placeholder = designspaceBound(axis, axis.max) || 'Max';
                 max.value =
                     typeof rule.max === 'number' ? String(rule.max) : '';
                 const minField = document.createElement('label');
