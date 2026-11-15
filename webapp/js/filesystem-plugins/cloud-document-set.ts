@@ -381,6 +381,12 @@ export async function hydrateSparseGlyphsToFixedPoint(options: {
 export type EncodedShard = {
     documentId: string;
     bytes: Uint8Array;
+    /**
+     * The sha256 of `bytes` when they are the room's checkpoint as stored
+     * (a font opened from the pack). A socket then tells the room it holds
+     * that checkpoint and is not sent it again.
+     */
+    checkpointSha256?: string;
 };
 
 function cloneJson<T>(value: T): T {

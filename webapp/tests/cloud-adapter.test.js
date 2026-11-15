@@ -948,6 +948,97 @@ describe('CloudAdapter outbound updates', () => {
         expect(adapter._checkpointLogId).toBe(40);
     });
 
+    it('a synced socket that drops (or whose token expires) resumes from its cursor without a checkpoint download', async () => {
+        const originalWebSocket = global.WebSocket;
+        const sockets = [];
+        class FakeWebSocket {
+            constructor(_url) {
+                this.readyState = 1;
+                this.send = jest.fn();
+                this.close = jest.fn((code, reason) => {
+                    this.readyState = 3;
+                    this.onclose?.({ code, reason });
+                });
+                sockets.push(this);
+            }
+        }
+        global.WebSocket = FakeWebSocket;
+        const adapter = new CloudAdapter({
+            assetId: 'asset-123',
+            websiteBaseUrl: 'https://counterpunch.space',
+            documentId: 'kerning:0'
+        });
+        jest.spyOn(adapter, '_scheduleReconnect').mockImplementation(() => {});
+        const bootstrap = jest
+            .spyOn(adapter, '_bootstrapFromR2')
+            .mockResolvedValue(undefined);
+        try {
+            await adapter.connectDirect(
+                { onLocalUpdate: jest.fn(), offLocalUpdate: jest.fn() },
+                'room-token',
+                'wss://rooms.example.com/room/asset-123',
+                { bootstrapMode: 'skip' }
+            );
+            // It synced through log id 44, then the room closed it.
+            adapter._canSkipBootstrapOnReconnect = true;
+            adapter._appliedLogId = 44;
+            sockets[0].onclose?.({ code: 4008, reason: 'token-expired' });
+            expect(adapter._canSkipBootstrapOnReconnect).toBe(true);
+            expect(adapter._appliedLogId).toBe(44);
+
+            await adapter._reconnectDirectConnection();
+            expect(bootstrap).not.toHaveBeenCalled();
+            sockets[1].onopen?.();
+            adapter._hasSynced = false;
+            adapter._sendInitialSyncRequest(sockets[1]);
+            const syncRequest = sockets[1].send.mock.calls
+                .map(([frame]) => JSON.parse(frame))
+                .find((frame) => frame.type === 'sync-request');
+            expect(syncRequest.appliedLogId).toBe(44);
+        } finally {
+            adapter.disconnect();
+            global.WebSocket = originalWebSocket;
+        }
+    });
+
+    it('a socket that never synced still downloads the checkpoint when it reconnects', async () => {
+        const originalWebSocket = global.WebSocket;
+        const sockets = [];
+        class FakeWebSocket {
+            constructor(_url) {
+                this.readyState = 1;
+                this.send = jest.fn();
+                this.close = jest.fn();
+                sockets.push(this);
+            }
+        }
+        global.WebSocket = FakeWebSocket;
+        const adapter = new CloudAdapter({
+            assetId: 'asset-123',
+            websiteBaseUrl: 'https://counterpunch.space',
+            documentId: 'kerning:0'
+        });
+        jest.spyOn(adapter, '_scheduleReconnect').mockImplementation(() => {});
+        const bootstrap = jest
+            .spyOn(adapter, '_bootstrapFromR2')
+            .mockResolvedValue(undefined);
+        try {
+            await adapter.connectDirect(
+                { onLocalUpdate: jest.fn(), offLocalUpdate: jest.fn() },
+                'room-token',
+                'wss://rooms.example.com/room/asset-123',
+                { bootstrapMode: 'skip' }
+            );
+            sockets[0].onclose?.({ code: 1006, reason: '' });
+            expect(adapter._canSkipBootstrapOnReconnect).toBe(false);
+            await adapter._reconnectDirectConnection();
+            expect(bootstrap).toHaveBeenCalled();
+        } finally {
+            adapter.disconnect();
+            global.WebSocket = originalWebSocket;
+        }
+    });
+
     it('forces a checkpoint bootstrap after rebaseline is required', () => {
         const adapter = new CloudAdapter({ assetId: 'asset-123' });
         adapter._canSkipBootstrapOnReconnect = true;

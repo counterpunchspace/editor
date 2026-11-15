@@ -2065,10 +2065,20 @@ export class CloudLiveSession {
                 assetId: this._options.assetId,
                 documentId: FONT_DEPS_DOCUMENT_ID
             });
-            await this._catchUpDocumentsOverHttp([
-                ...(this._options.bridge.layoutDocumentIds?.() ?? []),
-                ...(this._options.bridge.retiredLayoutDocumentIds?.() ?? [])
-            ]);
+            // A layout room's /state is its checkpoint alone, which a synced
+            // socket already has (bootstrap or replay from its cursor);
+            // only a room without a synced socket is loaded over HTTP.
+            await this._catchUpDocumentsOverHttp(
+                [
+                    ...(this._options.bridge.layoutDocumentIds?.() ?? []),
+                    ...(this._options.bridge.retiredLayoutDocumentIds?.() ?? [])
+                ].filter(
+                    (documentId) =>
+                        this._adapters
+                            .get(documentId)
+                            ?.isTransportSynced?.() !== true
+                )
+            );
         } catch (error) {
             console.warn('CloudLiveSession: reconnect catch-up failed:', error);
             throw error;

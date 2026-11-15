@@ -1402,6 +1402,15 @@ export class CloudAdapter implements FileSystemAdapter {
             checkpointLogId: this._checkpointLogId ?? 0,
             appliedLogId: this._appliedLogId ?? this._checkpointLogId ?? 0
         };
+        // A document loaded from the room's checkpoint (the pack) says so:
+        // the room then replays only the tail after it instead of asking
+        // for a rebaseline, which costs a reconnect and the checkpoint again.
+        const checkpointSha256 = this._bridge?.documentCheckpointSha256?.(
+            this._documentId
+        );
+        if (checkpointSha256) {
+            syncRequest.checkpointSha256 = checkpointSha256;
+        }
         ws.send(JSON.stringify(syncRequest));
         this._noteTransferActivity('sending');
     }
@@ -1706,10 +1715,17 @@ export class CloudAdapter implements FileSystemAdapter {
                 this._glyphRevisionRequestInFlight = false;
                 this._markVisibleRebaselineNeeded();
                 this._hasSynced = false;
-                // A dropped glyph socket must bootstrap checkpoint plus tail.
-                // Skipping bootstrap replays from a cursor that never saw the
-                // edits made while the socket was closed.
-                this._canSkipBootstrapOnReconnect = false;
+                // A socket that had synced resumes from its cursor: the room
+                // replays every log entry after it, and answers
+                // rebaseline-required (a full bootstrap) once it compacted
+                // past it. Nothing moves the cursor while the socket is
+                // closed. Without a cursor the checkpoint is downloaded.
+                // Every socket closes when its room token expires (15 min),
+                // so a forced bootstrap cost a checkpoint per room each time.
+                this._canSkipBootstrapOnReconnect =
+                    this._canSkipBootstrapOnReconnect &&
+                    typeof this._appliedLogId === 'number' &&
+                    this._appliedLogId > 0;
                 this._lastInboundMessageAt = 0;
                 this._pendingTailFrames = null;
                 this._pendingSyncPageMeta = null;

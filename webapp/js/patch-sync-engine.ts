@@ -4041,6 +4041,26 @@ export class PatchSyncEngine {
         return unloaded;
     }
 
+    /**
+     * Room checkpoints a document was loaded from, by sha256. Kept on the
+     * document object itself, so a document that is dropped and made again
+     * never claims a checkpoint it does not hold.
+     */
+    private _documentCheckpoints = new WeakMap<Y.Doc, string>();
+
+    private _noteShardCheckpoint(doc: Y.Doc, shard: EncodedShard): void {
+        const sha256 = String(shard.checkpointSha256 || '').toLowerCase();
+        if (/^[0-9a-f]{64}$/.test(sha256)) {
+            this._documentCheckpoints.set(doc, sha256);
+        }
+    }
+
+    /** The checkpoint (sha256) this document was loaded from, if known. */
+    documentCheckpointSha256(documentId: string): string | null {
+        const doc = this._docForId(documentId);
+        return doc ? (this._documentCheckpoints.get(doc) ?? null) : null;
+    }
+
     applyDocumentSetState(shards: EncodedShard[]): void {
         this._pushApplyKind(ApplyKind.Remote);
         try {
@@ -4048,6 +4068,7 @@ export class PatchSyncEngine {
             for (const shard of shards) {
                 const doc = this._docForShard(shard);
                 Y.applyUpdate(doc, shard.bytes, SYSTEM_REMOTE_ORIGIN);
+                this._noteShardCheckpoint(doc, shard);
                 this._noteBroadcastStateVector(shard.documentId);
                 this._lastEncodedShardBytes.set(
                     shard.documentId,
@@ -4082,6 +4103,7 @@ export class PatchSyncEngine {
             for (const shard of shards) {
                 const doc = this._docForShard(shard);
                 Y.applyUpdate(doc, shard.bytes, SYSTEM_REMOTE_ORIGIN);
+                this._noteShardCheckpoint(doc, shard);
                 this._noteBroadcastStateVector(shard.documentId);
                 this._lastEncodedShardBytes.set(
                     shard.documentId,
@@ -5017,6 +5039,8 @@ export class PatchSyncEngine {
      */
     initFromJson(fontJson: Record<string, Unsafe>): void {
         this._clearSparseWorkingSet();
+        // font-core and deps keep their document objects with new content.
+        this._documentCheckpoints = new WeakMap();
         this._fontJson = fontJson;
         this._isSyncing = true;
         stampImmutableGlyphIds(fontJson);

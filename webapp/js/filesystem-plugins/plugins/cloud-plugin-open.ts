@@ -1,5 +1,6 @@
 // @ts-nocheck
 /** CloudPlugin openAsset / hydrate pipeline. */
+import { sha256Hex } from '../../cloud-adapter-support';
 import { fetchCloudDocumentState } from '../../cloud-adapter-bootstrap';
 import { beginLoadingCursor, endLoadingCursor } from '../../loading-cursor';
 import { readUrlState } from '../../url-state';
@@ -390,6 +391,20 @@ export const cloudPluginOpenMethods = {
         // Fail closed: HTTP hydrate either produced shards or threw. Never
         // fall back to an unbounded full-room WebSocket bootstrap.
         const openedShards = (hydratedShards || []) as EncodedShard[];
+        // The sha256 of each room that stays connected (core, deps, the
+        // layout rooms; not the many glyphs): when it is the room's
+        // checkpoint as stored, its socket tells the room so and is not sent
+        // the checkpoint again.
+        await Promise.all(
+            openedShards.map(async (shard) => {
+                if (
+                    shard.bytes?.byteLength &&
+                    !shard.documentId.startsWith('glyph:')
+                ) {
+                    shard.checkpointSha256 = await sha256Hex(shard.bytes);
+                }
+            })
+        );
         if (openedShards.length > 0 && hydratedFontJson) {
             try {
                 validateCloudExportForFontOpen(hydratedFontJson);
