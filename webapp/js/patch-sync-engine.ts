@@ -9098,9 +9098,7 @@ export class PatchSyncEngine {
             fontRecord.glyphs = glyphs;
         }
 
-        const glyphIndex = glyphs.findIndex(
-            (glyph) => glyph?.name === glyphName
-        );
+        let glyphIndex = glyphs.findIndex((glyph) => glyph?.name === glyphName);
         const glyphSnapshot = this._readNormalizedGlyphSnapshotFromYDoc(
             glyphName,
             { ignoreExisting: true }
@@ -9111,6 +9109,29 @@ export class PatchSyncEngine {
                 glyphs.splice(glyphIndex, 1);
             }
             return true;
+        }
+
+        // One entry per glyph: a glyph's room can name it by a name core has
+        // already renamed (a catch-up older than the rename). Find the entry
+        // by its immutable id too, and drop any second entry with that id,
+        // or the window shows the glyph twice, under both names.
+        const glyphId =
+            this._glyphIdByName.get(glyphName) ||
+            (typeof (glyphSnapshot as { id?: unknown }).id === 'string'
+                ? ((glyphSnapshot as { id?: string }).id as string)
+                : null);
+        if (glyphIndex < 0 && glyphId) {
+            glyphIndex = glyphs.findIndex((glyph) => glyph?.id === glyphId);
+        }
+        if (glyphId) {
+            for (let index = glyphs.length - 1; index >= 0; index -= 1) {
+                if (index !== glyphIndex && glyphs[index]?.id === glyphId) {
+                    glyphs.splice(index, 1);
+                    if (index < glyphIndex) {
+                        glyphIndex -= 1;
+                    }
+                }
+            }
         }
 
         if (glyphIndex >= 0) {
