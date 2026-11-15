@@ -68,23 +68,23 @@ function makeFont(glyphCount) {
 
 /**
  * Builds a worker-style commit: one Yjs packet per glyph shard that sets the
- * glyph's layer width, plus the matching layer-snapshot operations.
+ * glyph's layer width, plus the matching drawing-snapshot operations.
  */
 function buildWidthCommit(engine, fontJson, width) {
     const shards = engine.encodeDocumentSet();
     const operations = [];
     const documentUpdates = [];
     for (const glyph of fontJson.glyphs) {
-        const layer = glyph.layers[0];
+        const drawing = glyph.layers[0];
         const documentId = engine.documentIdForPath(['glyphs', glyph.name]);
         const shard = shards.find((s) => s.documentId === documentId);
         const doc = new Y.Doc({ gc: false });
         Y.applyUpdate(doc, shard.bytes);
         const baseline = Y.encodeStateVector(doc);
-        const oldLayer = JSON.parse(JSON.stringify(layer));
-        const newLayer = { ...oldLayer, width };
+        const oldDrawing = JSON.parse(JSON.stringify(drawing));
+        const newDrawing = { ...oldDrawing, width };
         doc.transact(() => {
-            setYPath(doc.getMap('glyph'), ['layers', layer.id], newLayer);
+            setYPath(doc.getMap('glyph'), ['layers', drawing.id], newDrawing);
         });
         documentUpdates.push({
             documentId,
@@ -92,11 +92,13 @@ function buildWidthCommit(engine, fontJson, width) {
         });
         operations.push({
             op: 'set',
-            path: ['glyphs', glyph.name, 'layers', layer.id],
-            oldValue: oldLayer,
-            newValue: newLayer,
-            applyMode: 'layer-snapshot',
-            workerReplayTargets: [{ glyphName: glyph.name, layerId: layer.id }]
+            path: ['glyphs', glyph.name, 'layers', drawing.id],
+            oldValue: oldDrawing,
+            newValue: newDrawing,
+            applyMode: 'drawing-snapshot',
+            workerReplayTargets: [
+                { glyphName: glyph.name, layerId: drawing.id }
+            ]
         });
     }
     return { shards, operations, documentUpdates };

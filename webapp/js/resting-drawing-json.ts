@@ -1,7 +1,7 @@
 /**
- * Resting-layer JSON codec.
+ * Resting-drawing JSON codec.
  *
- * Only Layer.toJSON()-shaped data may enter Y.Doc, history replay, or model
+ * Only Drawing.toJSON()-shaped data may enter Y.Doc, history replay, or model
  * writeback. Compile-facing (toCompileJSON) and interpolator/canvas payloads
  * must be converted here or refused.
  */
@@ -10,11 +10,11 @@ import type { Babelfont } from './babelfont';
 import { affineToDecomposedAffine } from './glyph-path-geometry';
 import { Logger } from './logger';
 
-const console = new Logger('RestingLayerJson');
+const console = new Logger('RestingDrawingJson');
 
 type PlainObject = Record<string, unknown>;
 
-export const RESTING_LAYER_RUNTIME_KEYS = [
+export const RESTING_DRAWING_RUNTIME_KEYS = [
     '_interpolationRequestId',
     '__preferExactComponentTransforms',
     '_interpolationLocation',
@@ -25,7 +25,7 @@ export const RESTING_LAYER_RUNTIME_KEYS = [
     '_geometryPreviewStale'
 ] as const;
 
-export const RESTING_LAYER_IDENTITY_KEYS = ['id', 'width', 'master'] as const;
+export const RESTING_DRAWING_IDENTITY_KEYS = ['id', 'width', 'master'] as const;
 
 const SHAPE_RUNTIME_KEYS = ['isInterpolated', 'layerData'] as const;
 
@@ -33,12 +33,14 @@ function isPlainObject(value: unknown): value is PlainObject {
     return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
-export function omitRestingLayerRuntimeKeys(record: PlainObject): PlainObject {
-    if (!RESTING_LAYER_RUNTIME_KEYS.some((key) => key in record)) {
+export function omitRestingDrawingRuntimeKeys(
+    record: PlainObject
+): PlainObject {
+    if (!RESTING_DRAWING_RUNTIME_KEYS.some((key) => key in record)) {
         return record;
     }
     const next = { ...record };
-    for (const key of RESTING_LAYER_RUNTIME_KEYS) {
+    for (const key of RESTING_DRAWING_RUNTIME_KEYS) {
         delete next[key];
     }
     return next;
@@ -53,7 +55,7 @@ export function stripInterpolatorRequestId(value: unknown): void {
 }
 
 function omitShapeRuntimeKeys(record: PlainObject): PlainObject {
-    const next = omitRestingLayerRuntimeKeys(record);
+    const next = omitRestingDrawingRuntimeKeys(record);
     if (!SHAPE_RUNTIME_KEYS.some((key) => key in next)) {
         return next;
     }
@@ -264,15 +266,15 @@ function sanitizeShapes(
  * without replacing the editor shape objects. Nested `layerData` and
  * interpolator flags stay on the canvas copy.
  */
-export function applyRestingShapeGeometryToEditorLayer(
-    editorLayer: unknown,
-    restingLayer: unknown
+export function applyRestingShapeGeometryToEditorDrawing(
+    editorDrawing: unknown,
+    restingDrawing: unknown
 ): void {
-    if (!isPlainObject(editorLayer) || !isPlainObject(restingLayer)) {
+    if (!isPlainObject(editorDrawing) || !isPlainObject(restingDrawing)) {
         return;
     }
-    const editorShapes = editorLayer.shapes;
-    const restingShapes = restingLayer.shapes;
+    const editorShapes = editorDrawing.shapes;
+    const restingShapes = restingDrawing.shapes;
     if (!Array.isArray(editorShapes) || !Array.isArray(restingShapes)) {
         return;
     }
@@ -313,7 +315,7 @@ export function applyRestingShapeGeometryToEditorLayer(
     }
 }
 
-export type RestingLayerWriteOptions = {
+export type RestingDrawingWriteOptions = {
     existing?: unknown;
     mode?: 'delta' | 'replace';
     allowWrapped?: boolean;
@@ -321,16 +323,16 @@ export type RestingLayerWriteOptions = {
     strict?: boolean;
 };
 
-export function toRestingLayerJson(
-    layerData: unknown,
-    options: RestingLayerWriteOptions = {}
+export function toRestingDrawingJson(
+    drawingData: unknown,
+    options: RestingDrawingWriteOptions = {}
 ): PlainObject {
-    if (!isPlainObject(layerData)) {
-        throw new TypeError('Resting layer JSON must be a plain object.');
+    if (!isPlainObject(drawingData)) {
+        throw new TypeError('Resting drawing JSON must be a plain object.');
     }
 
     const existing = isPlainObject(options.existing) ? options.existing : null;
-    const incoming = omitRestingLayerRuntimeKeys(layerData);
+    const incoming = omitRestingDrawingRuntimeKeys(drawingData);
     const context = options.context ?? 'Y.Doc write';
     const shapeOptions: RestingShapeOptions = {
         allowWrapped: options.allowWrapped,
@@ -353,7 +355,7 @@ export function toRestingLayerJson(
     }
 
     if (options.mode === 'replace' && existing) {
-        for (const key of RESTING_LAYER_IDENTITY_KEYS) {
+        for (const key of RESTING_DRAWING_IDENTITY_KEYS) {
             if (!(key in incoming) && key in existing) {
                 next[key] = existing[key];
             }
@@ -370,27 +372,27 @@ export function toRestingLayerJson(
     return next;
 }
 
-export function describeRestingLayerViolation(
-    layerData: unknown
+export function describeRestingDrawingViolation(
+    drawingData: unknown
 ): string | null {
-    if (!isPlainObject(layerData)) {
-        return 'layer is not a plain object';
+    if (!isPlainObject(drawingData)) {
+        return 'drawing is not a plain object';
     }
-    if (RESTING_LAYER_RUNTIME_KEYS.some((key) => key in layerData)) {
-        return 'layer contains interpolator/runtime keys';
+    if (RESTING_DRAWING_RUNTIME_KEYS.some((key) => key in drawingData)) {
+        return 'drawing contains interpolator/runtime keys';
     }
     if (
-        'width' in layerData &&
-        (typeof layerData.width !== 'number' ||
-            !Number.isFinite(layerData.width))
+        'width' in drawingData &&
+        (typeof drawingData.width !== 'number' ||
+            !Number.isFinite(drawingData.width))
     ) {
-        return 'layer width is not a finite number';
+        return 'drawing width is not a finite number';
     }
-    if (!Array.isArray(layerData.shapes)) {
+    if (!Array.isArray(drawingData.shapes)) {
         return null;
     }
-    for (let index = 0; index < layerData.shapes.length; index++) {
-        const shape = layerData.shapes[index];
+    for (let index = 0; index < drawingData.shapes.length; index++) {
+        const shape = drawingData.shapes[index];
         if (!isPlainObject(shape)) {
             return `shapes[${index}] is not an object`;
         }

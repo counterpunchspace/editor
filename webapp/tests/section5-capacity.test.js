@@ -1,6 +1,6 @@
 import * as Y from 'yjs';
 import { jsonToCoreFontMap, toYType } from '../js/change-bridge-ydoc';
-import { writeLayerGeometry } from '../js/layer-geometry-ydoc';
+import { writeDrawingGeometry } from '../js/drawing-geometry-ydoc';
 import { writeFontDepsYMap } from '../js/filesystem-plugins/cloud-font-deps';
 import { fillGlyphYMap } from '../js/change-bridge-ydoc';
 
@@ -92,11 +92,11 @@ describe('section 5 production toYType capacity samples', () => {
             },
             glyphMap
         );
-        const layerMap = glyphMap.get('layers').get('layer-1');
-        const undo = new Y.UndoManager(layerMap);
+        const drawingMap = glyphMap.get('layers').get('layer-1');
+        const undo = new Y.UndoManager(drawingMap);
         for (let i = 0; i < 200; i++) {
-            writeLayerGeometry(
-                layerMap,
+            writeDrawingGeometry(
+                drawingMap,
                 [
                     {
                         id: 's1',

@@ -1,6 +1,6 @@
 import type { CollaborationLogItem } from './patch-sync-engine';
 import {
-    deriveOriginatingLayerFromPaths,
+    deriveOriginatingDrawingFromPaths,
     formatHistoryOriginLabel,
     getUndoReachabilityForContext
 } from './change-log';
@@ -56,7 +56,7 @@ class HistoryViewController {
     private listEl: HTMLElement | null = null;
     private showUnreachableToggle: HTMLButtonElement | null = null;
     private currentGlyphName: string | null = null;
-    private currentLayerId: string | null = null;
+    private currentDrawingId: string | null = null;
     private currentFeatureContext: FeatureHistoryContext | null = null;
     private unsubscribeBridge: (() => void) | null = null;
     private attachedTextRunEditor: TextRunSelectionEmitter | null = null;
@@ -416,7 +416,7 @@ class HistoryViewController {
     private syncEditingContext(): void {
         this.currentFeatureContext = this.resolveFeatureHistoryContext();
         this.currentGlyphName = this.resolveCurrentGlyphName();
-        this.currentLayerId = this.resolveCurrentLayerId();
+        this.currentDrawingId = this.resolveCurrentDrawingId();
         this.scheduleRender();
     }
 
@@ -453,12 +453,12 @@ class HistoryViewController {
         return null;
     }
 
-    private resolveCurrentLayerId(): string | null {
+    private resolveCurrentDrawingId(): string | null {
         const outlineEditor = window.glyphCanvas?.outlineEditor;
         if (!outlineEditor?.active) {
             return null;
         }
-        return outlineEditor.selectedLayerId ?? null;
+        return outlineEditor.selectedDrawingId ?? null;
     }
 
     private render(): void {
@@ -529,7 +529,7 @@ class HistoryViewController {
             changeLog,
             {
                 glyphName: undoContext.undoGlyphName,
-                layerId: undoContext.undoLayerId,
+                layerId: undoContext.undoDrawingId,
                 historyTargetKey: undoContext.historyTargetKey,
                 surface: undoContext.surface
             }
@@ -695,7 +695,7 @@ class HistoryViewController {
                         ${this.burstIndicatorHtml(item)}
                         ${
                             cascadeCount > 0
-                                ? `<span class="history-cascade-icon material-symbols-outlined" title="Also updated ${cascadeCount} dependent layer${cascadeCount === 1 ? '' : 's'}" aria-label="Also updated ${cascadeCount} dependent layers">account_tree</span>`
+                                ? `<span class="history-cascade-icon material-symbols-outlined" title="Also updated ${cascadeCount} dependent drawing${cascadeCount === 1 ? '' : 's'}" aria-label="Also updated ${cascadeCount} dependent drawings">account_tree</span>`
                                 : ''
                         }
                         <button
@@ -749,38 +749,41 @@ class HistoryViewController {
             originatingGlyphName: item.originatingGlyphName,
             originatingLayerId: item.originatingLayerId,
             changePaths: item.changes.map((change) => change.path),
-            resolveLayerMasterDisplayName: (glyphName, layerOrMasterId) =>
-                this.resolveLayerMasterDisplayName(glyphName, layerOrMasterId)
+            resolveDrawingStationDisplayName: (glyphName, drawingOrStationId) =>
+                this.resolveDrawingStationDisplayName(
+                    glyphName,
+                    drawingOrStationId
+                )
         });
     }
 
     /**
-     * Prefer the Master display name for a layer id (or master id).
-     * Falls back to the layer's own name, then the raw id.
+     * Prefer the station display name for a drawing id (or station id).
+     * Falls back to the drawing's own name, then the raw id.
      */
-    private resolveLayerMasterDisplayName(
+    private resolveDrawingStationDisplayName(
         glyphName: string,
-        layerOrMasterId: string
+        drawingOrStationId: string
     ): string {
         const fontModel =
             window.currentFontModel ??
             window.fontManager?.currentFont?.fontModel ??
             null;
         if (!fontModel) {
-            return layerOrMasterId;
+            return drawingOrStationId;
         }
 
-        const masters = Array.isArray(fontModel.masters)
-            ? fontModel.masters
+        const stations = Array.isArray(fontModel.stations)
+            ? fontModel.stations
             : [];
-        const masterById = (id: string) =>
-            (typeof fontModel.findMaster === 'function'
-                ? fontModel.findMaster(id)
+        const stationById = (id: string) =>
+            (typeof fontModel.findStation === 'function'
+                ? fontModel.findStation(id)
                 : null) ??
-            masters.find((master: { id?: string }) => master?.id === id) ??
+            stations.find((station: { id?: string }) => station?.id === id) ??
             null;
 
-        const formatMasterName = (name: unknown): string | null => {
+        const formatStationName = (name: unknown): string | null => {
             if (typeof name === 'string' && name.trim()) {
                 return name.trim();
             }
@@ -794,9 +797,9 @@ class HistoryViewController {
             return null;
         };
 
-        const directMaster = masterById(layerOrMasterId);
-        if (directMaster) {
-            return formatMasterName(directMaster.name) || layerOrMasterId;
+        const directStation = stationById(drawingOrStationId);
+        if (directStation) {
+            return formatStationName(directStation.name) || drawingOrStationId;
         }
 
         const glyph =
@@ -806,55 +809,57 @@ class HistoryViewController {
                       (candidate: { name?: string }) =>
                           candidate?.name === glyphName
                   );
-        const layer = glyph?.layers?.find?.(
-            (candidate: { id?: string }) => candidate?.id === layerOrMasterId
+        const drawing = glyph?.drawings?.find?.(
+            (candidate: { id?: string }) => candidate?.id === drawingOrStationId
         );
-        if (!layer) {
-            return layerOrMasterId;
+        if (!drawing) {
+            return drawingOrStationId;
         }
 
-        const masterRef =
-            layer.master && typeof layer.master === 'object'
-                ? (layer.master as { master?: string; type?: string })
+        const stationRef =
+            drawing.station && typeof drawing.station === 'object'
+                ? (drawing.station as { master?: string; type?: string })
                 : null;
-        const masterId =
-            typeof masterRef?.master === 'string' ? masterRef.master : null;
-        if (masterId) {
-            const master = masterById(masterId);
-            const masterName = master ? formatMasterName(master.name) : null;
-            if (masterName) {
-                return masterName;
+        const stationId =
+            typeof stationRef?.master === 'string' ? stationRef.master : null;
+        if (stationId) {
+            const station = stationById(stationId);
+            const stationName = station
+                ? formatStationName(station.name)
+                : null;
+            if (stationName) {
+                return stationName;
             }
         }
 
-        if (typeof layer.name === 'string' && layer.name.trim()) {
-            return layer.name.trim();
+        if (typeof drawing.name === 'string' && drawing.name.trim()) {
+            return drawing.name.trim();
         }
 
-        return layerOrMasterId;
+        return drawingOrStationId;
     }
 
     private countDownstreamRecompositions(item: HistoryDisplayItem): number {
-        // Cascade markers are for layer-origin edits that also refreshed
+        // Cascade markers are for drawing-origin edits that also refreshed
         // dependents. Font/glyph structural packets often list every touched
-        // layer as a replay target without being a cascade from one origin.
+        // drawing as a replay target without being a cascade from one origin.
         if (item.undoScope !== 'layer') {
             return 0;
         }
 
         const originGlyph =
             item.originatingGlyphName ??
-            deriveOriginatingLayerFromPaths(
+            deriveOriginatingDrawingFromPaths(
                 item.changes.map((change) => change.path)
             ).glyphName;
-        const originLayer =
+        const originDrawing =
             item.originatingLayerId ??
-            deriveOriginatingLayerFromPaths(
+            deriveOriginatingDrawingFromPaths(
                 item.changes.map((change) => change.path)
             ).layerId;
 
         const targets = item.workerReplayTargets ?? [];
-        if (!originGlyph || !originLayer) {
+        if (!originGlyph || !originDrawing) {
             return targets.length > 1 ? targets.length - 1 : 0;
         }
 
@@ -862,7 +867,7 @@ class HistoryViewController {
             (target) =>
                 !(
                     target.glyphName === originGlyph &&
-                    target.layerId === originLayer
+                    target.layerId === originDrawing
                 )
         ).length;
     }
@@ -914,7 +919,7 @@ class HistoryViewController {
                 return {
                     scope: 'layer',
                     glyphName: context.undoGlyphName ?? null,
-                    layerId: context.undoLayerId,
+                    layerId: context.undoDrawingId,
                     historyTargetKey: null
                 };
         }
@@ -956,8 +961,8 @@ class HistoryViewController {
         button: HTMLButtonElement,
         item: CollaborationLogItem
     ): void {
-        // Built on first open: an add-master commit logs one item per glyph,
-        // each listing every changed layer, and building all tooltips up
+        // Built on first open: an add-station commit logs one item per glyph,
+        // each listing every changed drawing, and building all tooltips up
         // front blocked the UI for many seconds.
         let contentBuilt = false;
         const tooltip = tippy(button, {
@@ -1002,7 +1007,7 @@ class HistoryViewController {
                 item.undoSurfaceAffinity
             ),
             this.buildMetadataRow(
-                'Originating layer',
+                'Originating drawing',
                 item.originatingGlyphName && item.originatingLayerId
                     ? `${item.originatingGlyphName} / ${item.originatingLayerId}`
                     : null
@@ -1020,7 +1025,7 @@ class HistoryViewController {
                 this.formatList(item.changedGlyphNames)
             ),
             this.buildMetadataRow(
-                'Changed layers',
+                'Changed drawings',
                 this.formatList(item.changedLayerIds)
             ),
             this.buildMetadataRow(

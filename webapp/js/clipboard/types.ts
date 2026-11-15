@@ -55,7 +55,7 @@ export type PasteGuide = {
     x: number;
     y: number;
     angle: number;
-    /** True when source marks a master/global guide. */
+    /** True when source marks a station/global guide. */
     global?: boolean;
     format_specific?: ClipboardFormatSpecific;
 };
@@ -68,7 +68,7 @@ export type PasteFragment = {
     guides: PasteGuide[];
     /**
      * When true, keep source coordinates.
-     * When false, center the paste bbox in the target layer.
+     * When false, center the paste bbox in the target drawing.
      */
     keepAbsoluteCoords: boolean;
 };

@@ -141,7 +141,7 @@ export async function restoreStateFromUrl(
                     roundedLocation[tag] = Math.round(Number(value));
                 }
                 const file = urlState.file || window.stateManager.editor_file;
-                // First-master seed used to persist ExtraLight as wght:200.
+                // First-station seed used to persist ExtraLight as wght:200.
                 if (
                     typeof file === 'string' &&
                     file.includes('Fustat.glyphs') &&
@@ -258,7 +258,7 @@ async function applyStateToManagers(glyphCanvas: GlyphCanvas): Promise<void> {
             glyphCanvas.axesManager.setAxisValue(tag, Number(value));
         }
 
-        // Update UI and trigger layer selection if in editing mode
+        // Update UI and trigger drawing selection if in editing mode
         glyphCanvas.axesManager.updateAxisSliders();
 
         window.dispatchEvent(
@@ -267,14 +267,14 @@ async function applyStateToManagers(glyphCanvas: GlyphCanvas): Promise<void> {
             })
         );
 
-        // If we're going to be in editing mode, select matching layer
+        // If we're going to be in editing mode, select matching drawing
         const mode = window.stateManager.editor_mode;
         if (mode === 'edit' && glyphCanvas.outlineEditor) {
             try {
-                await glyphCanvas.outlineEditor.autoSelectMatchingLayer();
+                await glyphCanvas.outlineEditor.autoSelectMatchingDrawing();
             } catch (error) {
                 console.warn(
-                    'autoSelectMatchingLayer failed during restore; continuing:',
+                    'autoSelectMatchingDrawing failed during restore; continuing:',
                     error
                 );
             }
@@ -314,11 +314,11 @@ async function applyStateToManagers(glyphCanvas: GlyphCanvas): Promise<void> {
         pendingUrlCursorRestore = null;
     } else if (!glyphCanvas.outlineEditor.active) {
         try {
-            await glyphCanvas.autoSelectMatchingMaster();
-            glyphCanvas.alignTextModeEscapeStateWithCurrentMaster();
+            await glyphCanvas.autoSelectMatchingStation();
+            glyphCanvas.alignTextModeEscapeStateWithCurrentStation();
         } catch (error) {
             console.warn(
-                'autoSelectMatchingMaster failed during default text-mode restore; continuing:',
+                'autoSelectMatchingStation failed during default text-mode restore; continuing:',
                 error
             );
         }
@@ -417,12 +417,12 @@ async function applyUrlCursorToEditor(
             window.stateManager.editor_cursor_position =
                 textRunEditor.selectedGlyphIndex;
 
-            if (glyphCanvas.outlineEditor.selectedLayerId !== null) {
+            if (glyphCanvas.outlineEditor.selectedDrawingId !== null) {
                 try {
-                    await glyphCanvas.outlineEditor.fetchLayerData(true);
+                    await glyphCanvas.outlineEditor.fetchDrawingData(true);
                 } catch (error) {
                     console.warn(
-                        'fetchLayerData failed during restore; continuing:',
+                        'fetchDrawingData failed during restore; continuing:',
                         error
                     );
                 }
@@ -463,11 +463,11 @@ async function applyUrlCursorToEditor(
     if (mode === 'text' || !mode) {
         glyphCanvas.outlineEditor.active = false;
         try {
-            await glyphCanvas.autoSelectMatchingMaster();
-            glyphCanvas.alignTextModeEscapeStateWithCurrentMaster();
+            await glyphCanvas.autoSelectMatchingStation();
+            glyphCanvas.alignTextModeEscapeStateWithCurrentStation();
         } catch (error) {
             console.warn(
-                'autoSelectMatchingMaster failed during text-mode restore; continuing:',
+                'autoSelectMatchingStation failed during text-mode restore; continuing:',
                 error
             );
         }

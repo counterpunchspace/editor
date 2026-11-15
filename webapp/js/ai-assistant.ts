@@ -2415,7 +2415,7 @@ __counterpunch_assistant_validate_syntax(${sourceKey})`
             case 'glyph_filter_event_types':
                 return `${JSON.stringify(getGlyphFilterEventAssistantView(), null, 2)}
 
-Write only the simple filter contract. Subscribe EVENT_TYPES only to glyph-content events that can change the classification. Do not subscribe to glyph.created, glyph.deleted, glyph.renamed, or font.masters.changed: the app handles those itself. A filter that only reads glyph names uses EVENT_TYPES = [].
+Write only the simple filter contract. Subscribe EVENT_TYPES only to glyph-content events that can change the classification. Do not subscribe to glyph.created, glyph.deleted, glyph.renamed, or font.stations.changed: the app handles those itself. A filter that only reads glyph names uses EVENT_TYPES = [].
 
 Example single-file filter:
 

@@ -27,7 +27,7 @@ IndexedDB keys such as directory handles and export destinations are not include
 | [`convertToCounterpunchOptions`](#key-converttocounterpunchoptions) | Persists convert to counterpunch options. | getItem, setItem | `webapp/js/convert-to-counterpunch-dialog.ts` |
 | [`counterpunch.plugin-updates.dismissed`](#key-counterpunch-plugin-updates-dismissed) | Persists counterpunch plugin updates dismissed. | getItem, setItem | `webapp/js/installed-plugin-manager.ts` |
 | [`editorNodeSnapping`](#key-editornodesnapping) | Preference: snap outline points while dragging or drawing. | getItem, setItem | `webapp/js/node-snapping-pref.ts` |
-| [`editorPairedLayerVisible`](#key-editorpairedlayervisible) | Preference: show master and layer guidelines on the canvas. | getItem, setItem | `webapp/js/glyph-canvas/outline-editor.ts` |
+| [`editorPairedLayerVisible`](#key-editorpairedlayervisible) | Preference: show station and drawing guidelines on the canvas. | getItem, setItem | `webapp/js/glyph-canvas/outline-editor.ts` |
 | [`editorPathFillOpacity`](#key-editorpathfillopacity) | Preference: opacity of editable outline fills, placeholder fills, and subtraction cutter fills. | getItem, setItem | `webapp/js/path-fill-opacity-pref.ts` |
 | [`editorScreenUnitScale`](#key-editorscreenunitscale) | Persists editor screen unit scale. | getItem, setItem, removeItem | `webapp/js/glyph-canvas/point-size.ts` |
 | [`githubRepositorySearch`](#key-githubrepositorysearch) | The last search in the repository picker, offered again next time. | getItem, setItem, removeItem | `webapp/js/github/github-dialogs.ts` |
@@ -204,13 +204,13 @@ IndexedDB keys such as directory handles and export destinations are not include
 
 ## `editorPairedLayerVisible`
 
-- Purpose: Preference: show master and layer guidelines on the canvas.
+- Purpose: Preference: show station and drawing guidelines on the canvas.
 - Kind: literal
 - Operations: `getItem`, `setItem`
 - Default when unset: `false`
 - Sites:
-  - webapp/js/glyph-canvas/outline-editor.ts:1938 `getItem` via method `loadPairedLayerVisible`
-  - webapp/js/glyph-canvas/outline-editor.ts:2365 `setItem` via method `setPairedLayerVisible`
+  - webapp/js/glyph-canvas/outline-editor.ts:1964 `getItem` via method `loadPairedDrawingVisible`
+  - webapp/js/glyph-canvas/outline-editor.ts:2397 `setItem` via method `setPairedDrawingVisible`
 
 <a id="key-editorpathfillopacity"></a>
 
@@ -256,8 +256,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Operations: `getItem`, `setItem`, `removeItem`
 - Default when unset: `Hamburgevons`
 - Sites:
-  - webapp/js/font-manager.ts:3163 `removeItem` via method `handleNewFont`
-  - webapp/js/font-manager.ts:3297 `getItem` via method `resolveEditingTextForCompile`
+  - webapp/js/font-manager.ts:3293 `removeItem` via method `handleNewFont`
+  - webapp/js/font-manager.ts:3427 `getItem` via method `resolveEditingTextForCompile`
   - webapp/js/glyph-canvas/textrun.ts:166 `getItem` via constructor `constructor`
   - webapp/js/glyph-canvas/textrun.ts:518 `setItem` via method `setTextBuffer`
   - webapp/js/glyph-canvas/textrun.ts:2488 `setItem` via method `loadTextBufferFromFont`
@@ -282,8 +282,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: literal
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/file-browser.ts:2343 `setItem` via function `switchContext`
-  - webapp/js/file-browser.ts:3661 `getItem` via function `initFileBrowser`
+  - webapp/js/file-browser.ts:2354 `setItem` via function `switchContext`
+  - webapp/js/file-browser.ts:3672 `getItem` via function `initFileBrowser`
 
 <a id="key-launchercloudfonts"></a>
 
@@ -293,9 +293,9 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: literal
 - Operations: `getItem`, `setItem`, `removeItem`
 - Sites:
-  - webapp/js/launcher/launcher-page.ts:938 `getItem` via function `rememberedCloudFonts`
-  - webapp/js/launcher/launcher-page.ts:952 `setItem` via function `rememberCloudFonts`
-  - webapp/js/launcher/launcher-page.ts:971 `removeItem` via function `forgetCloudFonts`
+  - webapp/js/launcher/launcher-page.ts:924 `getItem` via function `rememberedCloudFonts`
+  - webapp/js/launcher/launcher-page.ts:938 `setItem` via function `rememberCloudFonts`
+  - webapp/js/launcher/launcher-page.ts:957 `removeItem` via function `forgetCloudFonts`
 
 <a id="key-preferredtheme"></a>
 
@@ -306,9 +306,9 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Operations: `getItem`, `setItem`
 - Default when unset: `auto`
 - Sites:
-  - webapp/js/font-info.ts:2957 `getItem` via function `getInitialTheme`
-  - webapp/js/launcher/launcher-page.ts:227 `getItem` via function `themePreference`
-  - webapp/js/launcher/launcher-page.ts:289 `setItem` via module `top-level module code`
+  - webapp/js/font-info.ts:3035 `getItem` via function `getInitialTheme`
+  - webapp/js/launcher/launcher-page.ts:225 `getItem` via function `themePreference`
+  - webapp/js/launcher/launcher-page.ts:287 `setItem` via module `top-level module code`
   - webapp/js/script-editor.ts:352 `getItem` via function `getInitialTheme`
   - webapp/js/theme-switcher.ts:56 `getItem` via method `init`
   - webapp/js/theme-switcher.ts:58 `setItem` via method `init`
@@ -482,10 +482,10 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: pattern
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/file-browser.ts:2394 `getItem` via function `switchContext`
-  - webapp/js/file-browser.ts:3245 `setItem` via function `navigateToPath`
-  - webapp/js/file-browser.ts:3730 `getItem` via function `initFileBrowser`
-  - webapp/js/file-browser.ts:4204 `setItem` via module `top-level module code`
+  - webapp/js/file-browser.ts:2405 `getItem` via function `switchContext`
+  - webapp/js/file-browser.ts:3256 `setItem` via function `navigateToPath`
+  - webapp/js/file-browser.ts:3741 `getItem` via function `initFileBrowser`
+  - webapp/js/file-browser.ts:4215 `setItem` via module `top-level module code`
 
 <a id="key-linkedwindowoccupancy-sessionid-"></a>
 

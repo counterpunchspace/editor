@@ -1,4 +1,8 @@
-import { editorSupportsContract } from './plugin-contracts.generated';
+import {
+    PLUGIN_CONTRACTS,
+    contractToken,
+    editorSupportsContract
+} from './plugin-contracts.generated';
 import { resolveWebsiteURL } from './website-url';
 
 export type CatalogPriceState =
@@ -104,15 +108,13 @@ export function pluginAction(input: {
 }
 
 export function contractHeader(): string {
-    return [
-        'canvas:v1',
-        'glyphfilter:v1',
-        'character_set:v1',
-        'compilefilter:v1',
-        'composition:v1',
-        'feature:v1',
-        'font_destination:v1'
-    ].join(',');
+    return PLUGIN_CONTRACTS.types
+        .flatMap((spec) =>
+            spec.editorSupports.map((version) =>
+                contractToken(spec.type, version)
+            )
+        )
+        .join(',');
 }
 
 export async function fetchPluginCatalog(): Promise<CatalogResponse> {

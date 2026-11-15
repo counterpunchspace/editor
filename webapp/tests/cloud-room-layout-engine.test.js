@@ -61,11 +61,11 @@ function snapshotOf(engine) {
     const json = JSON.parse(JSON.stringify(engine.getFontJsonSnapshot()));
     return {
         features: json.features,
-        masters: json.masters.map((master) => ({
-            id: master.id,
-            name: master.name,
-            kerning: master.kerning,
-            kerning_rtl: master.kerning_rtl ?? {}
+        masters: json.masters.map((station) => ({
+            id: station.id,
+            name: station.name,
+            kerning: station.kerning,
+            kerning_rtl: station.kerning_rtl ?? {}
         }))
     };
 }
@@ -115,9 +115,9 @@ describe('room layout 2 in the engine', () => {
         const font = core.getMap('font');
         expect(font.has('features')).toBe(false);
         expect(font.has('glyphCatalog')).toBe(false);
-        for (const master of font.get('masters').toArray()) {
-            expect(master.has('kerning')).toBe(false);
-            expect(master.has('kerning_rtl')).toBe(false);
+        for (const station of font.get('masters').toArray()) {
+            expect(station.has('kerning')).toBe(false);
+            expect(station.has('kerning_rtl')).toBe(false);
         }
         expect(core.getMap('layout').toJSON()).toEqual({
             version: 2,
@@ -292,19 +292,19 @@ describe('room layout 2 in the engine', () => {
     test('a whole master write keeps existing kerning and brings a new master’s', () => {
         const { engine } = adopted();
         const before = snapshotOf(engine).masters;
-        const masters = JSON.parse(
+        const stations = JSON.parse(
             JSON.stringify(engine.getFontJsonSnapshot().masters)
         );
         // A stale copy without kerning must not wipe the rooms.
-        masters[0].kerning = {};
-        masters[0].name = { dflt: 'Light' };
-        masters.push({
+        stations[0].kerning = {};
+        stations[0].name = { dflt: 'Light' };
+        stations.push({
             id: 'm3',
             name: { dflt: 'Black' },
             location: {},
             kerning: { 'A:V': -120 }
         });
-        engine.recordChange([], 'masters', undefined, masters);
+        engine.recordChange([], 'masters', undefined, stations);
         const after = snapshotOf(engine).masters;
         expect(after[0].name).toEqual({ dflt: 'Light' });
         expect(after[0].kerning).toEqual(before[0].kerning);
@@ -314,7 +314,7 @@ describe('room layout 2 in the engine', () => {
             [],
             'masters',
             undefined,
-            masters.filter((m) => m.id !== 'm2')
+            stations.filter((m) => m.id !== 'm2')
         );
         const shards = engine
             .encodeDocumentSet()

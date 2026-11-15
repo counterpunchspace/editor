@@ -22,8 +22,8 @@ const {
     setJsonPath,
     deleteJsonPath,
     getJsonPath,
-    applyLayerDelta,
-    ensureGlyphLayersMap
+    applyDrawingDelta,
+    ensureGlyphDrawingsMap
 } = require('../js/change-bridge-ydoc');
 const {
     buildHistoryStackItems,
@@ -32,7 +32,7 @@ const {
     resetLogCounter,
     deriveGlyphName,
     deriveGlyphNameFromPath,
-    deriveLayerIdFromPath,
+    deriveDrawingIdFromPath,
     deriveObjectInfo,
     deriveObjectInfoFromPath,
     joinPathWithGlyphSeparator,
@@ -265,7 +265,7 @@ function makeMinimalFont() {
     };
 }
 
-function makeThreeMasterThreeLayerFont() {
+function makeThreeStationThreeDrawingFont() {
     const font = makeMinimalFont();
     font.masters = [
         {
@@ -343,17 +343,17 @@ function createTestBridge(windowId) {
 }
 
 test('array-backed model wrappers serialize the current replaced layer data', () => {
-    const fontJson = makeThreeMasterThreeLayerFont();
+    const fontJson = makeThreeStationThreeDrawingFont();
     const font = Font.fromData(fontJson);
-    const layer = font.findGlyph('A').findLayerById('master-extrathin');
+    const drawing = font.findGlyph('A').findDrawingById('master-extrathin');
 
     fontJson.glyphs[0].layers[0] = {
         ...fontJson.glyphs[0].layers[0],
         anchors: [{ name: 'top', x: 123, y: 456 }]
     };
 
-    expect(layer.toJSON().anchors[0].x).toBe(123);
-    expect(layer.toJSON().anchors[0].y).toBe(456);
+    expect(drawing.toJSON().anchors[0].x).toBe(123);
+    expect(drawing.toJSON().anchors[0].y).toBe(456);
 });
 
 function flushTimers() {
@@ -420,9 +420,22 @@ const GENERIC_ACCESSOR_TEST_EXCLUSIONS = new Set([
     'linked', // UI/editor layer linkage state
     'selection', // UI/editor selection snapshot on Layer
     'axes', // Font structural collection — managed via applySyntheticChangeSet, not recordChange
-    'masters', // Font structural collection — managed via applySyntheticChangeSet, not recordChange
+    'stations', // Font structural collection — managed via applySyntheticChangeSet, not recordChange
     'instances' // Font structural collection — managed via applySyntheticChangeSet, not recordChange
 ]);
+// Model properties whose Babelfont JSON key keeps the old name.
+const MODEL_PROPERTY_DATA_KEYS = {
+    Drawing: {
+        station: 'master',
+        drawing_index: 'layer_index',
+        background_drawing_id: 'background_layer_id'
+    }
+};
+
+function dataKeyForModelProperty(className, property) {
+    return MODEL_PROPERTY_DATA_KEYS[className]?.[property] ?? property;
+}
+
 const GENERIC_MUTABLE_GETTER_EXCLUSIONS = new Set([
     'anchors',
     'axes',
@@ -431,16 +444,16 @@ const GENERIC_MUTABLE_GETTER_EXCLUSIONS = new Set([
     'featureVariations', // synthetic read-only family view; use Glyph add/remove APIs
     'glyphs',
     'guides',
+    'drawings',
     'instances',
-    'layers',
     'lsb',
-    'masters',
     'nodes',
     'paths',
     'qa', // computed Auto QA snapshot; does not write the font
     'rsb',
     'shapes',
-    'backgroundLayer', // lazy transient wrapper, materialized only after a path or component edit
+    'stations',
+    'backgroundDrawing', // lazy transient wrapper, materialized only after a path or component edit
     'selection' // UI/editor selection snapshot on Layer
 ]);
 
@@ -468,11 +481,11 @@ function cloneValue(value) {
 
 function makeAAdieresisFont() {
     const font = makeMinimalFont();
-    const baseLayer = cloneValue(font.glyphs[0].layers[0]);
-    baseLayer.id = 'master-regular';
-    baseLayer.width = 600;
-    baseLayer.anchors = [{ name: 'top', x: 300, y: 720 }];
-    baseLayer.shapes = [
+    const baseDrawing = cloneValue(font.glyphs[0].layers[0]);
+    baseDrawing.id = 'master-regular';
+    baseDrawing.width = 600;
+    baseDrawing.anchors = [{ name: 'top', x: 300, y: 720 }];
+    baseDrawing.shapes = [
         {
             nodes: [
                 { x: 100, y: 0, nodetype: 'line', smooth: false },
@@ -483,11 +496,11 @@ function makeAAdieresisFont() {
         }
     ];
 
-    const markLayer = cloneValue(font.glyphs[1].layers[0]);
-    markLayer.id = 'master-regular';
-    markLayer.width = 300;
-    markLayer.anchors = [{ name: '_top', x: 150, y: 0 }];
-    markLayer.shapes = [
+    const markDrawing = cloneValue(font.glyphs[1].layers[0]);
+    markDrawing.id = 'master-regular';
+    markDrawing.width = 300;
+    markDrawing.anchors = [{ name: '_top', x: 150, y: 0 }];
+    markDrawing.shapes = [
         {
             nodes: [
                 { x: 80, y: 0, nodetype: 'line', smooth: false },
@@ -498,10 +511,10 @@ function makeAAdieresisFont() {
         }
     ];
 
-    const compositeLayer = cloneValue(baseLayer);
-    compositeLayer.width = 600;
-    compositeLayer.anchors = [];
-    compositeLayer.shapes = [
+    const compositeDrawing = cloneValue(baseDrawing);
+    compositeDrawing.width = 600;
+    compositeDrawing.anchors = [];
+    compositeDrawing.shapes = [
         {
             reference: 'a',
             transform: {
@@ -530,21 +543,21 @@ function makeAAdieresisFont() {
             name: 'a',
             production_name: 'a',
             codepoints: [97],
-            layers: [baseLayer]
+            layers: [baseDrawing]
         },
         {
             ...font.glyphs[1],
             name: 'dieresiscomb',
             production_name: 'dieresiscomb',
             codepoints: [776],
-            layers: [markLayer]
+            layers: [markDrawing]
         },
         {
             ...font.glyphs[0],
             name: 'adieresis',
             production_name: 'adieresis',
             codepoints: [228],
-            layers: [compositeLayer]
+            layers: [compositeDrawing]
         }
     ];
     return font;
@@ -558,9 +571,9 @@ function makeSeededRandom(seed) {
     };
 }
 
-function findGlyphLayer(fontJson, glyphName, layerId = 'master-regular') {
+function findGlyphDrawing(fontJson, glyphName, drawingId = 'master-regular') {
     const glyph = fontJson.glyphs.find((entry) => entry.name === glyphName);
-    return glyph?.layers.find((layer) => layer.id === layerId);
+    return glyph?.layers.find((drawing) => drawing.id === drawingId);
 }
 
 function isModelObject(value) {
@@ -593,7 +606,7 @@ function collectReachableModelObjects(root) {
                     continue;
                 }
 
-                if (name === 'backgroundLayer') {
+                if (name === 'backgroundDrawing') {
                     continue;
                 }
 
@@ -740,13 +753,15 @@ function resolveModelObject(font, spec) {
                 current = current.glyphs.find((glyph) => glyph.name === value);
                 break;
             case 'layers':
-                current = current.layers.find((layer) => layer.id === value);
+                current = current.drawings.find(
+                    (drawing) => drawing.id === value
+                );
                 break;
             case 'axes':
                 current = current.axes[value];
                 break;
             case 'masters':
-                current = current.masters[value];
+                current = current.stations[value];
                 break;
             case 'instances':
                 current = current.instances[value];
@@ -868,10 +883,10 @@ const COLLECTION_MUTATOR_TESTS = {
         expectedPathFragment: () => 'glyphs.A.alt',
         expectedLogLength: 2
     },
-    'Glyph.addLayer': {
+    'Glyph.addDrawing': {
         isApplicable: (glyph) => glyph.name === 'A',
         invoke: (glyph) =>
-            glyph.addLayer(700, {
+            glyph.addDrawing(700, {
                 type: 'AssociatedWithMaster',
                 master: 'master-regular'
             }),
@@ -879,78 +894,79 @@ const COLLECTION_MUTATOR_TESTS = {
         expectedPathFragment: (glyph, logEntry) =>
             `${glyph.getPath()[0]}.${glyph.getPath()[1]}:layers.${logEntry.newValue.id}`
     },
-    'Glyph.removeLayer': {
-        isApplicable: (glyph) => glyph.name === 'A' && glyph.layers?.length > 0,
-        invoke: (glyph) => glyph.removeLayer(0),
+    'Glyph.removeDrawing': {
+        isApplicable: (glyph) =>
+            glyph.name === 'A' && glyph.drawings?.length > 0,
+        invoke: (glyph) => glyph.removeDrawing(0),
         expectedOp: 'remove',
         expectedPathFragment: (glyph, logEntry) =>
             `${glyph.getPath()[0]}.${glyph.getPath()[1]}:layers.${logEntry.oldValue.id}`
     },
-    'Layer.addPath': {
-        isApplicable: (layer) => layer.id === 'layer-1',
-        invoke: (layer) => layer.addPath(false),
+    'Drawing.addPath': {
+        isApplicable: (drawing) => drawing.id === 'layer-1',
+        invoke: (drawing) => drawing.addPath(false),
         expectedOp: 'add',
-        expectedPathFragment: (layer, logEntry) =>
-            `${joinPathWithGlyphSeparator(layer.getPath())}shapes.${layer.data.shapes.length - 1}`
+        expectedPathFragment: (drawing, logEntry) =>
+            `${joinPathWithGlyphSeparator(drawing.getPath())}shapes.${drawing.data.shapes.length - 1}`
     },
-    'Layer.addComponent': {
-        isApplicable: (layer) => layer.id === 'layer-1',
-        invoke: (layer) => layer.addComponent('B'),
+    'Drawing.addComponent': {
+        isApplicable: (drawing) => drawing.id === 'layer-1',
+        invoke: (drawing) => drawing.addComponent('B'),
         expectedOp: 'add',
-        expectedPathFragment: (layer, logEntry) =>
-            `${joinPathWithGlyphSeparator(layer.getPath())}shapes.${layer.data.shapes.length - 1}`
+        expectedPathFragment: (drawing, logEntry) =>
+            `${joinPathWithGlyphSeparator(drawing.getPath())}shapes.${drawing.data.shapes.length - 1}`
     },
-    'Layer.removeShape': {
-        isApplicable: (layer) =>
-            layer.id === 'layer-1' && layer.shapes?.length > 0,
-        invoke: (layer) => layer.removeShape(0),
+    'Drawing.removeShape': {
+        isApplicable: (drawing) =>
+            drawing.id === 'layer-1' && drawing.shapes?.length > 0,
+        invoke: (drawing) => drawing.removeShape(0),
         expectedOp: 'remove',
-        expectedPathFragment: (layer) =>
-            `${joinPathWithGlyphSeparator(layer.getPath())}shapes.0`
+        expectedPathFragment: (drawing) =>
+            `${joinPathWithGlyphSeparator(drawing.getPath())}shapes.0`
     },
-    'Layer.addAnchor': {
-        isApplicable: (layer) => layer.id === 'layer-1',
-        invoke: (layer) => layer.addAnchor(250, 100, 'bottom'),
+    'Drawing.addAnchor': {
+        isApplicable: (drawing) => drawing.id === 'layer-1',
+        invoke: (drawing) => drawing.addAnchor(250, 100, 'bottom'),
         expectedOp: 'add',
-        expectedPathFragment: (layer, logEntry) =>
-            `${joinPathWithGlyphSeparator(layer.getPath())}anchors.${findCollectionEntryIndex(layer.data.anchors, logEntry.newValue)}`
+        expectedPathFragment: (drawing, logEntry) =>
+            `${joinPathWithGlyphSeparator(drawing.getPath())}anchors.${findCollectionEntryIndex(drawing.data.anchors, logEntry.newValue)}`
     },
-    'Layer.addGuide': {
-        isApplicable: (layer) => layer.id === 'layer-1',
-        invoke: (layer) => layer.addGuide(450, 'waist', '#00AAFF'),
+    'Drawing.addGuide': {
+        isApplicable: (drawing) => drawing.id === 'layer-1',
+        invoke: (drawing) => drawing.addGuide(450, 'waist', '#00AAFF'),
         expectedOp: 'add',
-        expectedPathFragment: (layer, logEntry) =>
-            `${joinPathWithGlyphSeparator(layer.getPath())}guides.${findCollectionEntryIndex(layer.data.guides, logEntry.newValue)}`
+        expectedPathFragment: (drawing, logEntry) =>
+            `${joinPathWithGlyphSeparator(drawing.getPath())}guides.${findCollectionEntryIndex(drawing.data.guides, logEntry.newValue)}`
     },
-    'Layer.removeAnchor': {
-        isApplicable: (layer) =>
-            layer.id === 'layer-1' && layer.anchors?.length > 0,
-        invoke: (layer) => layer.removeAnchor(0),
+    'Drawing.removeAnchor': {
+        isApplicable: (drawing) =>
+            drawing.id === 'layer-1' && drawing.anchors?.length > 0,
+        invoke: (drawing) => drawing.removeAnchor(0),
         expectedOp: 'remove',
-        expectedPathFragment: (layer) =>
-            `${joinPathWithGlyphSeparator(layer.getPath())}anchors.0`
+        expectedPathFragment: (drawing) =>
+            `${joinPathWithGlyphSeparator(drawing.getPath())}anchors.0`
     },
-    'Layer.removeGuide': {
-        isApplicable: (layer) =>
-            layer.id === 'layer-1' && layer.guides?.length > 0,
-        invoke: (layer) => layer.removeGuide(0),
+    'Drawing.removeGuide': {
+        isApplicable: (drawing) =>
+            drawing.id === 'layer-1' && drawing.guides?.length > 0,
+        invoke: (drawing) => drawing.removeGuide(0),
         expectedOp: 'remove',
-        expectedPathFragment: (layer) =>
-            `${joinPathWithGlyphSeparator(layer.getPath())}guides.0`
+        expectedPathFragment: (drawing) =>
+            `${joinPathWithGlyphSeparator(drawing.getPath())}guides.0`
     },
-    'Master.addGuide': {
-        isApplicable: (master) => master.id === 'master-regular',
-        invoke: (master) => master.addGuide(425, 'mid', '#AA00FF'),
+    'Station.addGuide': {
+        isApplicable: (station) => station.id === 'master-regular',
+        invoke: (station) => station.addGuide(425, 'mid', '#AA00FF'),
         expectedOp: 'add',
-        expectedPathFragment: (master, logEntry) =>
-            `${master.getPath().join('.')}.guides.${findCollectionEntryIndex(master.data.guides, logEntry.newValue)}`
+        expectedPathFragment: (station, logEntry) =>
+            `${station.getPath().join('.')}.guides.${findCollectionEntryIndex(station.data.guides, logEntry.newValue)}`
     },
-    'Master.removeGuide': {
-        isApplicable: (master) => master.guides?.length > 0,
-        invoke: (master) => master.removeGuide(0),
+    'Station.removeGuide': {
+        isApplicable: (station) => station.guides?.length > 0,
+        invoke: (station) => station.removeGuide(0),
         expectedOp: 'remove',
-        expectedPathFragment: (master) =>
-            `${master.getPath().join('.')}.guides.0`
+        expectedPathFragment: (station) =>
+            `${station.getPath().join('.')}.guides.0`
     },
     'Path.insertNode': {
         isApplicable: (path) => path.nodes?.length > 1,
@@ -1100,20 +1116,20 @@ function normalizeYDocValue(value) {
     return cloneValue(fromYType(value));
 }
 
-function getYDocLayerNodeValue(
+function getYDocDrawingNodeValue(
     bridge,
     glyphName,
-    layerId,
+    drawingId,
     shapeIndex,
     nodeIndex,
     property
 ) {
-    const layer = normalizeYDocValue(
+    const drawing = normalizeYDocValue(
         typeof bridge.getYValue === 'function'
-            ? bridge.getYValue(['glyphs', glyphName, 'layers', layerId])
-            : getYPath(bridge, ['glyphs', glyphName, 'layers', layerId])
+            ? bridge.getYValue(['glyphs', glyphName, 'layers', drawingId])
+            : getYPath(bridge, ['glyphs', glyphName, 'layers', drawingId])
     );
-    return layer?.shapes?.[shapeIndex]?.nodes?.[nodeIndex]?.[property];
+    return drawing?.shapes?.[shapeIndex]?.nodes?.[nodeIndex]?.[property];
 }
 
 function deleteBridgeYPath(bridge, path) {
@@ -1253,9 +1269,9 @@ describe('change-bridge-ydoc', () => {
         doc.transact(() => jsonToYDoc(json, fontMap));
 
         const glyphA = fontMap.get('glyphs').get('A');
-        const layersMap = glyphA.get('layers');
-        expect(layersMap).toBeInstanceOf(Y.Map);
-        expect(layersMap.get('layer-1')).toBeInstanceOf(Y.Map);
+        const drawingsMap = glyphA.get('layers');
+        expect(drawingsMap).toBeInstanceOf(Y.Map);
+        expect(drawingsMap.get('layer-1')).toBeInstanceOf(Y.Map);
     });
 
     test('deep format_specific fields round-trip', () => {
@@ -1272,12 +1288,12 @@ describe('change-bridge-ydoc', () => {
             }
         };
         json.masters[0].format_specific = {
-            masterMeta: {
+            stationMeta: {
                 stems: { h: 80, v: 90 }
             }
         };
         json.glyphs[0].layers[0].format_specific = {
-            layerMeta: {
+            drawingMeta: {
                 nested: {
                     foo: 'bar',
                     arr: [{ k: 1 }, { k: 2 }]
@@ -1308,7 +1324,7 @@ describe('change-bridge-ydoc', () => {
     test('jsonToYDoc + yDocToJson round-trips an associated intermediate layer with canonicalized shapes', () => {
         const doc = new Y.Doc();
         const fontMap = doc.getMap('font');
-        const json = makeThreeMasterThreeLayerFont();
+        const json = makeThreeStationThreeDrawingFont();
 
         json.glyphs[0].layers.splice(2, 0, {
             ...cloneValue(json.glyphs[0].layers[1]),
@@ -1382,11 +1398,11 @@ describe('change-bridge-ydoc', () => {
         doc.transact(() => jsonToYDoc(json, fontMap));
 
         const result = yDocToJson(fontMap);
-        const braceLayer = result.glyphs[0].layers.find(
-            (layer) => layer.id === 'layer-brace-550'
+        const freeDrawing = result.glyphs[0].layers.find(
+            (drawing) => drawing.id === 'layer-brace-550'
         );
 
-        expect(result.glyphs[0].layers.map((layer) => layer.id)).toEqual(
+        expect(result.glyphs[0].layers.map((drawing) => drawing.id)).toEqual(
             expect.arrayContaining([
                 'master-extrathin',
                 'master-regular',
@@ -1394,7 +1410,7 @@ describe('change-bridge-ydoc', () => {
                 'master-bold'
             ])
         );
-        expect(braceLayer).toMatchObject({
+        expect(freeDrawing).toMatchObject({
             id: 'layer-brace-550',
             name: 'Intermediate Layer',
             master: {
@@ -1423,11 +1439,11 @@ describe('change-bridge-ydoc', () => {
                 nested: { source: 'brace-layer' }
             }
         });
-        expect(braceLayer.shapes[0]).toMatchObject({
+        expect(freeDrawing.shapes[0]).toMatchObject({
             closed: true,
             format_specific: { seed: true, source: 'brace-layer' }
         });
-        expect(braceLayer.shapes[1]).toMatchObject({
+        expect(freeDrawing.shapes[1]).toMatchObject({
             reference: 'B',
             transform: {
                 translation: [15, 25],
@@ -1491,20 +1507,20 @@ describe('change-bridge-ydoc', () => {
             123
         );
 
-        const layerMap = getYPath(fontMap, [
+        const drawingMap = getYPath(fontMap, [
             'glyphs',
             'A',
             'layers',
             'layer-1'
         ]);
-        expect(layerMap).toBeInstanceOf(Y.Map);
-        expect(layerMap.get('shapes')).toBeUndefined();
-        expect(layerMap.get('geometryTopology')).toEqual(expect.any(String));
-        expect(layerMap.get('nodePositionsById')).toBeInstanceOf(Y.Map);
+        expect(drawingMap).toBeInstanceOf(Y.Map);
+        expect(drawingMap.get('shapes')).toBeUndefined();
+        expect(drawingMap.get('geometryTopology')).toEqual(expect.any(String));
+        expect(drawingMap.get('nodePositionsById')).toBeInstanceOf(Y.Map);
 
-        const layerJson = fromYType(layerMap);
-        expect(layerJson.shapes[0].nodes[0].x).toBe(123);
-        expect(layerJson.shapes[0].nodes[0].y).toBe(0);
+        const drawingJson = fromYType(drawingMap);
+        expect(drawingJson.shapes[0].nodes[0].x).toBe(123);
+        expect(drawingJson.shapes[0].nodes[0].y).toBe(0);
     });
 
     test('jsonToYDoc rejects wrapped shapes at ingress', () => {
@@ -1983,17 +1999,17 @@ describe('change-log', () => {
             newValue: 610
         });
 
-        const layerItems = buildHistoryStackItems([fontScopedEntry], {
+        const drawingItems = buildHistoryStackItems([fontScopedEntry], {
             glyphName: 'A',
             layerId: 'layer-1'
         });
-        expect(layerItems).toHaveLength(1);
-        expect(layerItems[0].undoScope).toBe('font');
+        expect(drawingItems).toHaveLength(1);
+        expect(drawingItems[0].undoScope).toBe('font');
     });
 
     test('add/remove master history stays font-context despite layer paths', () => {
         resetLogCounter();
-        const addMasterEntries = [
+        const addStationEntries = [
             createLogEntry({
                 timestamp: 1,
                 windowId: 'w',
@@ -2023,7 +2039,7 @@ describe('change-log', () => {
                 newValue: { id: 'master-2', width: 500 }
             })
         ];
-        const removeMasterEntries = [
+        const removeStationEntries = [
             createLogEntry({
                 timestamp: 2,
                 windowId: 'w',
@@ -2054,7 +2070,7 @@ describe('change-log', () => {
             })
         ];
 
-        for (const entries of [addMasterEntries, removeMasterEntries]) {
+        for (const entries of [addStationEntries, removeStationEntries]) {
             const fontItems = buildHistoryStackItems(entries, {
                 surface: 'font'
             });
@@ -2129,7 +2145,7 @@ describe('change-log', () => {
     test('automation surface reaches Python and Assistant history items across scopes', () => {
         resetLogCounter();
         const { isAutomationSourcedHistoryItem } = require('../js/change-log');
-        const pythonLayer = createLogEntry({
+        const pythonDrawing = createLogEntry({
             timestamp: 1,
             windowId: 'w',
             windowRoleLabel: 'Main',
@@ -2160,7 +2176,7 @@ describe('change-log', () => {
             oldValue: 1000,
             newValue: 1024
         });
-        const manualLayer = createLogEntry({
+        const manualDrawing = createLogEntry({
             timestamp: 3,
             windowId: 'w',
             windowRoleLabel: 'Main',
@@ -2177,7 +2193,7 @@ describe('change-log', () => {
         });
 
         const automation = getUndoReachabilityForContext(
-            [pythonLayer, assistantFont, manualLayer],
+            [pythonDrawing, assistantFont, manualDrawing],
             { surface: 'automation' }
         );
         expect([...automation.reachableHistoryItemIds].sort()).toEqual([
@@ -2189,13 +2205,13 @@ describe('change-log', () => {
         expect(
             isAutomationSourcedHistoryItem({
                 transactionLabel: 'Python script',
-                entries: [pythonLayer]
+                entries: [pythonDrawing]
             })
         ).toBe(true);
         expect(
             isAutomationSourcedHistoryItem({
                 transactionLabel: 'Drag node',
-                entries: [manualLayer]
+                entries: [manualDrawing]
             })
         ).toBe(false);
     });
@@ -2207,7 +2223,7 @@ describe('change-log', () => {
             glyphs: [
                 {
                     name: 'behDotless-ar.medi',
-                    layers: [{ id: 'layer.regular.v1' }]
+                    drawings: [{ id: 'layer.regular.v1' }]
                 }
             ]
         };
@@ -2231,7 +2247,7 @@ describe('change-log', () => {
             });
 
             expect(deriveGlyphNameFromPath(path)).toBe('behDotless-ar.medi');
-            expect(deriveLayerIdFromPath(path)).toBe('layer.regular.v1');
+            expect(deriveDrawingIdFromPath(path)).toBe('layer.regular.v1');
             expect(deriveObjectInfoFromPath(path)).toEqual({
                 objectType: 'anchor',
                 objectId: 'behDotless-ar.medi/layer.regular.v1/anchor0'
@@ -2253,7 +2269,7 @@ describe('change-log', () => {
         resetLogCounter();
         const previousFontModel = window.currentFontModel;
         window.currentFontModel = {
-            glyphs: [{ name: 'a.ss04', layers: [{ id: 'master-regular' }] }]
+            glyphs: [{ name: 'a.ss04', drawings: [{ id: 'master-regular' }] }]
         };
 
         try {
@@ -2711,42 +2727,42 @@ describe('ChangeBridge', () => {
         });
 
         const glyph = font.addGlyph('fi-lat');
-        const regularLayer = glyph.findLayerById('master-regular');
-        expect(regularLayer).toBeDefined();
+        const regularDrawing = glyph.findDrawingById('master-regular');
+        expect(regularDrawing).toBeDefined();
 
-        const layersMap = bridge.getYValue(['glyphs', 'fi-lat', 'layers']);
-        expect(layersMap).toBeInstanceOf(Y.Map);
-        expect([...layersMap.keys()].sort()).toEqual([
+        const drawingsMap = bridge.getYValue(['glyphs', 'fi-lat', 'layers']);
+        expect(drawingsMap).toBeInstanceOf(Y.Map);
+        expect([...drawingsMap.keys()].sort()).toEqual([
             'master-bold',
             'master-regular'
         ]);
-        expect(fromYType(layersMap.get('master-regular')).master).toEqual({
+        expect(fromYType(drawingsMap.get('master-regular')).master).toEqual({
             type: 'DefaultForMaster',
             master: 'master-regular'
         });
-        expect(fromYType(layersMap.get('master-bold')).master).toEqual({
+        expect(fromYType(drawingsMap.get('master-bold')).master).toEqual({
             type: 'DefaultForMaster',
             master: 'master-bold'
         });
 
-        regularLayer.addComponent('A');
+        regularDrawing.addComponent('A');
 
-        expect([...layersMap.keys()].sort()).toEqual([
+        expect([...drawingsMap.keys()].sort()).toEqual([
             'master-bold',
             'master-regular'
         ]);
-        expect(fromYType(layersMap.get('master-regular')).master).toEqual({
+        expect(fromYType(drawingsMap.get('master-regular')).master).toEqual({
             type: 'DefaultForMaster',
             master: 'master-regular'
         });
-        expect(fromYType(layersMap.get('master-bold')).master).toEqual({
+        expect(fromYType(drawingsMap.get('master-bold')).master).toEqual({
             type: 'DefaultForMaster',
             master: 'master-bold'
         });
-        expect(fromYType(layersMap.get('master-regular')).shapes).toHaveLength(
-            1
-        );
-        expect(fromYType(layersMap.get('master-bold')).shapes || []).toEqual(
+        expect(
+            fromYType(drawingsMap.get('master-regular')).shapes
+        ).toHaveLength(1);
+        expect(fromYType(drawingsMap.get('master-bold')).shapes || []).toEqual(
             []
         );
     });
@@ -2754,8 +2770,8 @@ describe('ChangeBridge', () => {
     test('applyLayerDelta preserves sibling master layers when layers were stored as a Y.Array', () => {
         const { bridge } = createTestBridge('array-layers-migrate');
         const glyphMap = bridge.getYValue(['glyphs', 'A']);
-        const arrayLayers = new Y.Array();
-        arrayLayers.push([
+        const arrayDrawings = new Y.Array();
+        arrayDrawings.push([
             toYType({
                 id: 'master-regular',
                 width: 500,
@@ -2775,10 +2791,10 @@ describe('ChangeBridge', () => {
                 }
             })
         ]);
-        glyphMap.set('layers', arrayLayers);
+        glyphMap.set('layers', arrayDrawings);
         expect(glyphMap.get('layers')).toBeInstanceOf(Y.Array);
 
-        applyLayerDelta(glyphMap, 'A', 'master-regular', {
+        applyDrawingDelta(glyphMap, 'A', 'master-regular', {
             id: 'master-regular',
             width: 500,
             shapes: [{ reference: 'B' }],
@@ -2788,9 +2804,9 @@ describe('ChangeBridge', () => {
             }
         });
 
-        const layersMap = ensureGlyphLayersMap(glyphMap);
-        expect(layersMap).toBeInstanceOf(Y.Map);
-        expect([...layersMap.keys()].sort()).toEqual([
+        const drawingsMap = ensureGlyphDrawingsMap(glyphMap);
+        expect(drawingsMap).toBeInstanceOf(Y.Map);
+        expect([...drawingsMap.keys()].sort()).toEqual([
             'master-bold',
             'master-regular'
         ]);
@@ -2883,19 +2899,19 @@ describe('ChangeBridge', () => {
         );
         bridge.endTransaction();
 
-        const layer1Items = buildHistoryStackItems(bridge.getChangeLog(), {
+        const drawing1Items = buildHistoryStackItems(bridge.getChangeLog(), {
             glyphName: 'A',
             layerId: 'layer-1'
         });
-        const layer1bItems = buildHistoryStackItems(bridge.getChangeLog(), {
+        const drawing1bItems = buildHistoryStackItems(bridge.getChangeLog(), {
             glyphName: 'A',
             layerId: 'layer-1b'
         });
 
-        expect(layer1Items).toHaveLength(1);
-        expect(layer1bItems).toHaveLength(1);
-        expect(layer1bItems[0].id).toBe(layer1Items[0].id);
-        expect(layer1Items[0].undoScope).toBe('glyph');
+        expect(drawing1Items).toHaveLength(1);
+        expect(drawing1bItems).toHaveLength(1);
+        expect(drawing1bItems[0].id).toBe(drawing1Items[0].id);
+        expect(drawing1Items[0].undoScope).toBe('glyph');
 
         expect(bridge.undo('A', 'layer-1b')).not.toBeNull();
         expect(
@@ -3072,7 +3088,7 @@ describe('ChangeBridge', () => {
 
     test('document-set replace does not keep packed glyph JSON over live Y.Doc', () => {
         const { bridge: sender, font } = createTestBridge('live-owner');
-        font.findGlyph('A').layers[0].anchors[0].x = 265;
+        font.findGlyph('A').drawings[0].anchors[0].x = 265;
 
         const packed = makeMinimalFont();
         packed.glyphs[0].layers[0].anchors[0].x = 255;
@@ -3087,7 +3103,7 @@ describe('ChangeBridge', () => {
 
     test('glyph checkpoint replace does not keep packed JSON over live Y.Doc', () => {
         const { bridge: sender, font } = createTestBridge('live-owner-cp');
-        font.findGlyph('A').layers[0].anchors[0].x = 255;
+        font.findGlyph('A').drawings[0].anchors[0].x = 255;
         const documentId = sender.glyphDocumentIdForName('A');
         expect(documentId).toBeTruthy();
         const packedBytes = sender.encodeDocumentState(documentId);
@@ -3098,7 +3114,7 @@ describe('ChangeBridge', () => {
         receiver.setFontJson(receiverJson);
         receiver.applyDocumentCheckpoint(documentId, packedBytes);
 
-        font.findGlyph('A').layers[0].anchors[0].x = 265;
+        font.findGlyph('A').drawings[0].anchors[0].x = 265;
         receiver.applyDocumentCheckpoint(
             documentId,
             sender.encodeDocumentState(documentId)
@@ -3114,11 +3130,11 @@ describe('ChangeBridge', () => {
         const documentId = sender.glyphDocumentIdForName('A');
         expect(documentId).toBeTruthy();
         const glyphMap = sender._glyphMapForName('A');
-        const badLayers = new Y.Array();
-        const badLayer = new Y.Map();
-        badLayer.set('width', 1);
-        badLayers.push([badLayer]);
-        glyphMap.set('layers', badLayers);
+        const badDrawings = new Y.Array();
+        const badDrawing = new Y.Map();
+        badDrawing.set('width', 1);
+        badDrawings.push([badDrawing]);
+        glyphMap.set('layers', badDrawings);
 
         const packed = makeMinimalFont();
         packed.glyphs[0].layers[0].anchors[0].x = 255;
@@ -3129,7 +3145,7 @@ describe('ChangeBridge', () => {
                 documentId,
                 sender.encodeDocumentState(documentId)
             )
-        ).toThrow('malformed glyph snapshot: layer missing id');
+        ).toThrow('malformed glyph snapshot: drawing missing id');
         expect(packed.glyphs[0].layers[0].anchors[0].x).toBe(255);
         sender.destroy();
         receiver.destroy();
@@ -3137,23 +3153,23 @@ describe('ChangeBridge', () => {
 
     test('a converged document set repairs geometry orphans', () => {
         const { bridge: sender } = createTestBridge('geometry-repair-source');
-        const senderLayer = sender
+        const senderDrawing = sender
             ._glyphMapForName('A')
             .get('layers')
             .get('layer-1');
-        senderLayer.get('nodePositionsById').set('orphan-node', '3 4');
-        senderLayer.get('shapeDataById').set('orphan-shape', new Y.Map());
+        senderDrawing.get('nodePositionsById').set('orphan-node', '3 4');
+        senderDrawing.get('shapeDataById').set('orphan-shape', new Y.Map());
 
         const receiver = new ChangeBridge('geometry-repair-receiver');
         receiver.applyDocumentSetState(sender.encodeDocumentSet());
-        const receiverLayer = receiver
+        const receiverDrawing = receiver
             ._glyphMapForName('A')
             .get('layers')
             .get('layer-1');
-        expect(receiverLayer.get('nodePositionsById').has('orphan-node')).toBe(
-            false
-        );
-        expect(receiverLayer.get('shapeDataById').has('orphan-shape')).toBe(
+        expect(
+            receiverDrawing.get('nodePositionsById').has('orphan-node')
+        ).toBe(false);
+        expect(receiverDrawing.get('shapeDataById').has('orphan-shape')).toBe(
             false
         );
         sender.destroy();
@@ -3167,23 +3183,23 @@ describe('ChangeBridge', () => {
         const receiver = new ChangeBridge('geometry-checkpoint-receiver');
         receiver.applyDocumentSetState(sender.encodeDocumentSet());
         const documentId = sender.listLiveGlyphDocumentIds()[0];
-        const senderLayer = sender
+        const senderDrawing = sender
             ._glyphMapForName('A')
             .get('layers')
             .get('layer-1');
-        senderLayer.get('nodePositionsById').set('orphan-node', '3 4');
+        senderDrawing.get('nodePositionsById').set('orphan-node', '3 4');
 
         receiver.applyDocumentCheckpoint(
             documentId,
             sender.encodeDocumentState(documentId)
         );
-        const receiverLayer = receiver
+        const receiverDrawing = receiver
             ._glyphMapForName('A')
             .get('layers')
             .get('layer-1');
-        expect(receiverLayer.get('nodePositionsById').has('orphan-node')).toBe(
-            false
-        );
+        expect(
+            receiverDrawing.get('nodePositionsById').has('orphan-node')
+        ).toBe(false);
         sender.destroy();
         receiver.destroy();
     });
@@ -3204,11 +3220,11 @@ describe('ChangeBridge', () => {
 describe('Transactions', () => {
     test('layer sync point edit records granular node coordinates without layer snapshots', () => {
         const { bridge, fontJson } = createTestBridge('granular-layer-sync');
-        const layer = fontJson.glyphs[0].layers[0];
-        layer.shapes[0].nodes[0].x = 125;
-        layer.shapes[0].nodes[0].y = 15;
+        const drawing = fontJson.glyphs[0].layers[0];
+        drawing.shapes[0].nodes[0].x = 125;
+        drawing.shapes[0].nodes[0].y = 15;
 
-        bridge.syncLayersFromJson(
+        bridge.syncDrawingsFromJson(
             [{ glyphName: 'A', layerId: 'layer-1' }],
             'Drag point',
             undefined,
@@ -3248,7 +3264,7 @@ describe('Transactions', () => {
         ).toBe(false);
         expect(typeof log[0].replayOldValue).toBe('number');
         expect(typeof log[0].replayNewValue).toBe('number');
-        expect(getYDocLayerNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
+        expect(getYDocDrawingNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
             125
         );
     });
@@ -3313,20 +3329,20 @@ describe('Transactions', () => {
         const { bridge, fontJson } = createTestBridge(
             'layer-snapshot-contour-delete'
         );
-        const layer = fontJson.glyphs[0].layers[0];
-        const originalShapeCount = layer.shapes.length;
+        const drawing = fontJson.glyphs[0].layers[0];
+        const originalShapeCount = drawing.shapes.length;
         const rehydrateSpy = jest.spyOn(
             bridge,
             '_rehydrateEntireFontJsonFromYDoc'
         );
 
-        layer.shapes.pop();
-        bridge.syncLayerSnapshotsFromJson(
+        drawing.shapes.pop();
+        bridge.syncDrawingSnapshotsFromJson(
             [
                 {
                     glyphName: 'A',
                     layerId: 'layer-1',
-                    layerJson: layer
+                    drawingJson: drawing
                 }
             ],
             'Delete contour',
@@ -3349,7 +3365,7 @@ describe('Transactions', () => {
                 })
             ])
         );
-        expect(layer.shapes).toHaveLength(originalShapeCount - 1);
+        expect(drawing.shapes).toHaveLength(originalShapeCount - 1);
 
         bridge.undo('A', 'layer-1');
         expect(fontJson.glyphs[0].layers[0].shapes).toHaveLength(
@@ -3369,10 +3385,10 @@ describe('Transactions', () => {
         const { bridge, fontJson } = createTestBridge(
             'layer-snapshot-contour-replace'
         );
-        const layer = fontJson.glyphs[0].layers[0];
-        const originalShapes = cloneValue(layer.shapes);
+        const drawing = fontJson.glyphs[0].layers[0];
+        const originalShapes = cloneValue(drawing.shapes);
 
-        layer.shapes.splice(0, 1, {
+        drawing.shapes.splice(0, 1, {
             nodes: [
                 { x: 50, y: 0, nodetype: 'Line' },
                 { x: 150, y: 250, nodetype: 'Line' },
@@ -3381,12 +3397,12 @@ describe('Transactions', () => {
             ],
             closed: true
         });
-        bridge.syncLayerSnapshotsFromJson(
+        bridge.syncDrawingSnapshotsFromJson(
             [
                 {
                     glyphName: 'A',
                     layerId: 'layer-1',
-                    layerJson: layer
+                    drawingJson: drawing
                 }
             ],
             'Replace contour',
@@ -3422,12 +3438,12 @@ describe('Transactions', () => {
         const nextAnchors = cloneValue(original.anchors);
         nextAnchors[0].y = original.anchors[0].y + 12;
 
-        bridge.syncLayerSnapshotsFromJson(
+        bridge.syncDrawingSnapshotsFromJson(
             [
                 {
                     glyphName: 'A',
                     layerId: 'layer-1',
-                    layerJson: {
+                    drawingJson: {
                         id: 'layer-1',
                         _interpolationRequestId: 9,
                         isInterpolated: true,
@@ -3449,17 +3465,17 @@ describe('Transactions', () => {
             null
         );
 
-        const nextLayer = bridge.getFontJsonSnapshot().glyphs[0].layers[0];
-        expect(nextLayer.width).toBe(original.width);
-        expect(nextLayer.master).toEqual(original.master);
-        expect(nextLayer._interpolationRequestId).toBeUndefined();
-        expect(nextLayer.isInterpolated).toBeUndefined();
-        expect(nextLayer.anchors[0].y).toBe(original.anchors[0].y + 12);
+        const nextDrawing = bridge.getFontJsonSnapshot().glyphs[0].layers[0];
+        expect(nextDrawing.width).toBe(original.width);
+        expect(nextDrawing.master).toEqual(original.master);
+        expect(nextDrawing._interpolationRequestId).toBeUndefined();
+        expect(nextDrawing.isInterpolated).toBeUndefined();
+        expect(nextDrawing.anchors[0].y).toBe(original.anchors[0].y + 12);
 
-        const layerRootEntries = bridge
+        const drawingRootEntries = bridge
             .getChangeLog()
             .filter((entry) => entry.path === 'glyphs.A:layers.layer-1');
-        for (const entry of layerRootEntries) {
+        for (const entry of drawingRootEntries) {
             const recorded = entry.replayNewValue ?? entry.newValue;
             if (
                 recorded &&
@@ -3482,16 +3498,16 @@ describe('Transactions', () => {
         const { bridge, fontJson } = createTestBridge(
             'layer-snapshot-node-delete'
         );
-        const layer = fontJson.glyphs[0].layers[0];
-        const originalNodes = cloneValue(layer.shapes[0].nodes);
+        const drawing = fontJson.glyphs[0].layers[0];
+        const originalNodes = cloneValue(drawing.shapes[0].nodes);
 
-        layer.shapes[0].nodes.splice(1, 1);
-        bridge.syncLayerSnapshotsFromJson(
+        drawing.shapes[0].nodes.splice(1, 1);
+        bridge.syncDrawingSnapshotsFromJson(
             [
                 {
                     glyphName: 'A',
                     layerId: 'layer-1',
-                    layerJson: layer
+                    drawingJson: drawing
                 }
             ],
             'Delete point',
@@ -3528,14 +3544,14 @@ describe('Transactions', () => {
         const { bridge, fontJson } = createTestBridge(
             'layer-snapshot-extension-array-delete'
         );
-        const layer = fontJson.glyphs[0].layers[0];
-        layer.format_specific = { customValues: ['one', 'two'] };
-        bridge.syncLayerSnapshotsFromJson(
+        const drawing = fontJson.glyphs[0].layers[0];
+        drawing.format_specific = { customValues: ['one', 'two'] };
+        bridge.syncDrawingSnapshotsFromJson(
             [
                 {
                     glyphName: 'A',
                     layerId: 'layer-1',
-                    layerJson: layer
+                    drawingJson: drawing
                 }
             ],
             'Seed extension array',
@@ -3549,13 +3565,13 @@ describe('Transactions', () => {
         );
         const logStart = bridge.getChangeLog().length;
 
-        layer.format_specific.customValues.pop();
-        bridge.syncLayerSnapshotsFromJson(
+        drawing.format_specific.customValues.pop();
+        bridge.syncDrawingSnapshotsFromJson(
             [
                 {
                     glyphName: 'A',
                     layerId: 'layer-1',
-                    layerJson: layer
+                    drawingJson: drawing
                 }
             ],
             'Delete extension item',
@@ -3589,7 +3605,7 @@ describe('Transactions', () => {
     });
 
     test('multi-layer snapshots update canonical nodes without duplicating parent shapes', () => {
-        const fontJson = makeThreeMasterThreeLayerFont();
+        const fontJson = makeThreeStationThreeDrawingFont();
         const receiverFontJson = cloneValue(fontJson);
         const bridge = new ChangeBridge('granular-linked-layer-sync');
         const receiverBridge = new ChangeBridge(
@@ -3603,15 +3619,15 @@ describe('Transactions', () => {
             update = nextUpdate;
         });
 
-        const [extraThinLayer, regularLayer] = fontJson.glyphs[0].layers;
-        const extraThinShapeCount = extraThinLayer.shapes.length;
-        extraThinLayer.shapes[0].nodes[0].x = 125;
-        regularLayer.shapes[0].nodes[0].x = 175;
+        const [extraThinDrawing, regularDrawing] = fontJson.glyphs[0].layers;
+        const extraThinShapeCount = extraThinDrawing.shapes.length;
+        extraThinDrawing.shapes[0].nodes[0].x = 125;
+        regularDrawing.shapes[0].nodes[0].x = 175;
 
-        bridge.syncLayersFromJson(
+        bridge.syncDrawingsFromJson(
             [
-                { glyphName: 'A', layerId: extraThinLayer.id },
-                { glyphName: 'A', layerId: regularLayer.id }
+                { glyphName: 'A', layerId: extraThinDrawing.id },
+                { glyphName: 'A', layerId: regularDrawing.id }
             ],
             'Convert',
             undefined,
@@ -3647,9 +3663,9 @@ describe('Transactions', () => {
         );
 
         // A second canonical-node update must reuse the existing parent shape.
-        extraThinLayer.shapes[0].nodes[0].x = 225;
-        bridge.syncLayersFromJson(
-            [{ glyphName: 'A', layerId: extraThinLayer.id }],
+        extraThinDrawing.shapes[0].nodes[0].x = 225;
+        bridge.syncDrawingsFromJson(
+            [{ glyphName: 'A', layerId: extraThinDrawing.id }],
             'Move path again',
             undefined,
             undefined,
@@ -3675,7 +3691,7 @@ describe('Transactions', () => {
     });
 
     test('single-layer snapshots preserve parent shape identity across nested node ops', () => {
-        const fontJson = makeThreeMasterThreeLayerFont();
+        const fontJson = makeThreeStationThreeDrawingFont();
         const receiverFontJson = cloneValue(fontJson);
         const bridge = new ChangeBridge('granular-single-layer-atomic-shapes');
         const receiverBridge = new ChangeBridge(
@@ -3689,13 +3705,13 @@ describe('Transactions', () => {
             update = nextUpdate;
         });
 
-        const layer = fontJson.glyphs[0].layers[0];
-        const shapeCount = layer.shapes.length;
+        const drawing = fontJson.glyphs[0].layers[0];
+        const shapeCount = drawing.shapes.length;
         const logStart = bridge.getChangeLog().length;
 
-        layer.shapes[0].nodes[0].x = 125;
-        bridge.syncLayersFromJson(
-            [{ glyphName: 'A', layerId: layer.id }],
+        drawing.shapes[0].nodes[0].x = 125;
+        bridge.syncDrawingsFromJson(
+            [{ glyphName: 'A', layerId: drawing.id }],
             'Move path',
             undefined,
             undefined,
@@ -3710,9 +3726,9 @@ describe('Transactions', () => {
             bridge.getNewChangeLogEntries()
         );
 
-        layer.shapes[0].nodes[0].x = 225;
-        bridge.syncLayersFromJson(
-            [{ glyphName: 'A', layerId: layer.id }],
+        drawing.shapes[0].nodes[0].x = 225;
+        bridge.syncDrawingsFromJson(
+            [{ glyphName: 'A', layerId: drawing.id }],
             'Move path again',
             undefined,
             undefined,
@@ -3767,16 +3783,16 @@ describe('Transactions', () => {
             lastUpdate = update;
             lastEntries = changeLogEntries;
         });
-        const receiverLayerMap = receiverBridge.getYValue([
+        const receiverDrawingMap = receiverBridge.getYValue([
             'glyphs',
             'B',
             'layers',
             'layer-2'
         ]);
-        const sourceLayer = fontJson.glyphs[0].layers[0];
-        const dependentLayer = fontJson.glyphs[1].layers[0];
-        const receiverDependentLayer = receiverFontJson.glyphs[1].layers[0];
-        dependentLayer.shapes.push({
+        const sourceDrawing = fontJson.glyphs[0].layers[0];
+        const dependentDrawing = fontJson.glyphs[1].layers[0];
+        const receiverDependentDrawing = receiverFontJson.glyphs[1].layers[0];
+        dependentDrawing.shapes.push({
             reference: 'acutecomb',
             transform: {
                 translation: [118, 83],
@@ -3787,11 +3803,11 @@ describe('Transactions', () => {
             },
             format_specific: { seed: true }
         });
-        receiverDependentLayer.shapes.push(
-            cloneValue(dependentLayer.shapes[1])
+        receiverDependentDrawing.shapes.push(
+            cloneValue(dependentDrawing.shapes[1])
         );
 
-        bridge.syncLayersFromJson(
+        bridge.syncDrawingsFromJson(
             [{ glyphName: 'B', layerId: 'layer-2' }],
             'Seed dependent component',
             undefined,
@@ -3806,21 +3822,21 @@ describe('Transactions', () => {
         const logStart = bridge.getChangeLog().length;
         remotePackets.length = 0;
 
-        sourceLayer.shapes[0].nodes[1].y = 760;
-        const dependentSnapshot = JSON.parse(JSON.stringify(dependentLayer));
+        sourceDrawing.shapes[0].nodes[1].y = 760;
+        const dependentSnapshot = JSON.parse(JSON.stringify(dependentDrawing));
         dependentSnapshot.shapes[1].transform.translation = [-122, -32];
 
-        bridge.syncLayerSnapshotsFromJson(
+        bridge.syncDrawingSnapshotsFromJson(
             [
                 {
                     glyphName: 'A',
                     layerId: 'layer-1',
-                    layerJson: sourceLayer
+                    drawingJson: sourceDrawing
                 },
                 {
                     glyphName: 'B',
                     layerId: 'layer-2',
-                    layerJson: dependentSnapshot
+                    drawingJson: dependentSnapshot
                 }
             ],
             'Drag point',
@@ -3886,7 +3902,7 @@ describe('Transactions', () => {
         ).toEqual([-122, -32]);
         expect(
             receiverBridge.getYValue(['glyphs', 'B', 'layers', 'layer-2'])
-        ).toBe(receiverLayerMap);
+        ).toBe(receiverDrawingMap);
 
         receiverBridge.destroy();
     });
@@ -3895,7 +3911,7 @@ describe('Transactions', () => {
         const { bridge, fontJson } = createTestBridge(
             'explicit-layer-snapshot-metadata-only'
         );
-        const layer = fontJson.glyphs[0].layers[0];
+        const drawing = fontJson.glyphs[0].layers[0];
         const localUpdates = [];
         const workerUpdates = [];
         bridge.onLocalUpdate((update, _message, changeLogEntries) => {
@@ -3907,12 +3923,12 @@ describe('Transactions', () => {
 
         const logStart = bridge.getChangeLog().length;
 
-        bridge.syncLayerSnapshotsFromJson(
+        bridge.syncDrawingSnapshotsFromJson(
             [
                 {
                     glyphName: 'A',
                     layerId: 'layer-1',
-                    layerJson: cloneValue(layer)
+                    drawingJson: cloneValue(drawing)
                 }
             ],
             'Drag point',
@@ -3952,13 +3968,13 @@ describe('Transactions', () => {
         const { bridge, fontJson } = createTestBridge(
             'granular-layer-sync-pruned'
         );
-        const layer = fontJson.glyphs[0].layers[0];
-        const originalGuides = cloneValue(layer.guides);
-        layer.shapes[0].nodes[0].x = 125;
-        layer.shapes[0].nodes[0].y = 15;
-        delete layer.guides;
-        delete layer.format_specific;
-        bridge.syncLayersFromJson(
+        const drawing = fontJson.glyphs[0].layers[0];
+        const originalGuides = cloneValue(drawing.guides);
+        drawing.shapes[0].nodes[0].x = 125;
+        drawing.shapes[0].nodes[0].y = 15;
+        delete drawing.guides;
+        delete drawing.format_specific;
+        bridge.syncDrawingsFromJson(
             [{ glyphName: 'A', layerId: 'layer-1' }],
             'Drag point',
             undefined,
@@ -3995,29 +4011,29 @@ describe('Transactions', () => {
                 bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'guides'])
             )
         ).toEqual(originalGuides);
-        expect(getYDocLayerNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
+        expect(getYDocDrawingNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
             125
         );
     });
 
     test('snapshot preserves unowned Y.Doc optional layer fields', () => {
         const fontJson = makeMinimalFont();
-        const layer = fontJson.glyphs[0].layers[0];
-        layer.format_specific = {
+        const drawing = fontJson.glyphs[0].layers[0];
+        drawing.format_specific = {
             'com.schriftgestalt.Glyphs.attr': {}
         };
-        delete layer.anchors;
-        const componentIndex = layer.shapes.findIndex(
+        delete drawing.anchors;
+        const componentIndex = drawing.shapes.findIndex(
             (shape) => typeof shape.reference === 'string'
         );
-        const shapeCount = layer.shapes.length;
+        const shapeCount = drawing.shapes.length;
         const initialTranslation = cloneValue(
-            layer.shapes[componentIndex].transform.translation
+            drawing.shapes[componentIndex].transform.translation
         );
         const bridge = new ChangeBridge('component-transform-optional-fields');
         bridge.initFromJson(fontJson);
 
-        const componentSnapshot = cloneValue(layer);
+        const componentSnapshot = cloneValue(drawing);
         componentSnapshot.anchors = [];
         componentSnapshot.format_specific = {};
         componentSnapshot.shapes[componentIndex].transform.translation = [
@@ -4025,13 +4041,13 @@ describe('Transactions', () => {
         ];
         const logStart = bridge.getChangeLog().length;
 
-        bridge.syncLayerSnapshotsFromJson(
+        bridge.syncDrawingSnapshotsFromJson(
             [
                 {
                     glyphName: 'A',
                     layerId: 'layer-1',
-                    layerJson: componentSnapshot,
-                    authoritativeOptionalLayerFields: []
+                    drawingJson: componentSnapshot,
+                    authoritativeOptionalDrawingFields: []
                 }
             ],
             'Drag component',
@@ -4084,12 +4100,12 @@ describe('Transactions', () => {
             )
         ).toEqual(initialTranslation);
         expect(fontJson.glyphs[0].layers[0].shapes).toHaveLength(shapeCount);
-        const rebuiltLayer = Font.fromData(fontJson)
+        const rebuiltDrawing = Font.fromData(fontJson)
             .findGlyph('A')
-            .findLayerById('layer-1');
-        expect(rebuiltLayer.shapes).toHaveLength(shapeCount);
+            .findDrawingById('layer-1');
+        expect(rebuiltDrawing.shapes).toHaveLength(shapeCount);
         expect(
-            rebuiltLayer.shapes[componentIndex].asComponent().transform
+            rebuiltDrawing.shapes[componentIndex].asComponent().transform
                 .translation
         ).toEqual(initialTranslation);
         expect(
@@ -4109,28 +4125,28 @@ describe('Transactions', () => {
 
     test('ordinary layer snapshot preserves unowned optional fields', () => {
         const fontJson = makeMinimalFont();
-        const layer = fontJson.glyphs[0].layers[0];
-        layer.format_specific = {
+        const drawing = fontJson.glyphs[0].layers[0];
+        drawing.format_specific = {
             'com.schriftgestalt.Glyphs.attr': {}
         };
-        delete layer.anchors;
-        delete layer.guides;
+        delete drawing.anchors;
+        delete drawing.guides;
         const bridge = new ChangeBridge('outline-optional-fields');
         bridge.initFromJson(fontJson);
 
-        const snapshot = cloneValue(layer);
+        const snapshot = cloneValue(drawing);
         snapshot.anchors = [];
         snapshot.guides = [];
         snapshot.format_specific = {};
         snapshot.width += 100;
 
-        bridge.syncLayerSnapshotsFromJson(
+        bridge.syncDrawingSnapshotsFromJson(
             [
                 {
                     glyphName: 'A',
                     layerId: 'layer-1',
-                    layerJson: snapshot,
-                    authoritativeOptionalLayerFields: []
+                    drawingJson: snapshot,
+                    authoritativeOptionalDrawingFields: []
                 }
             ],
             'Set width',
@@ -4170,25 +4186,25 @@ describe('Transactions', () => {
 
     test('snapshot applies declared optional layer field clears', () => {
         const fontJson = makeMinimalFont();
-        const layer = fontJson.glyphs[0].layers[0];
-        layer.anchors = [{ name: 'top', x: 50, y: 700 }];
-        layer.guides = [{ pos: 500, angle: 0 }];
-        layer.format_specific = { 'com.schriftgestalt.Glyphs.attr': {} };
+        const drawing = fontJson.glyphs[0].layers[0];
+        drawing.anchors = [{ name: 'top', x: 50, y: 700 }];
+        drawing.guides = [{ pos: 500, angle: 0 }];
+        drawing.format_specific = { 'com.schriftgestalt.Glyphs.attr': {} };
         const bridge = new ChangeBridge('declared-optional-layer-fields');
         bridge.initFromJson(fontJson);
 
-        const snapshot = cloneValue(layer);
+        const snapshot = cloneValue(drawing);
         snapshot.anchors = [];
         snapshot.guides = [];
         snapshot.format_specific = {};
 
-        bridge.syncLayerSnapshotsFromJson(
+        bridge.syncDrawingSnapshotsFromJson(
             [
                 {
                     glyphName: 'A',
                     layerId: 'layer-1',
-                    layerJson: snapshot,
-                    authoritativeOptionalLayerFields: [
+                    drawingJson: snapshot,
+                    authoritativeOptionalDrawingFields: [
                         'anchors',
                         'guides',
                         'format_specific'
@@ -4306,7 +4322,7 @@ describe('Transactions', () => {
 
     test('net no-op point drag transaction does not emit history or Yjs changes', () => {
         const { bridge, font } = createTestBridge('test-noop-drag');
-        const node = font.glyphs[0].layers[0].shapes[0].asPath().nodes[0];
+        const node = font.glyphs[0].drawings[0].shapes[0].asPath().nodes[0];
 
         bridge.beginTransaction('Drag point', null, {
             compileChangeSource: 'test-sync',
@@ -4320,10 +4336,10 @@ describe('Transactions', () => {
 
         expect(bridge.getChangeLog()).toHaveLength(0);
         expect(bridge.canUndo('A', 'layer-1')).toBe(false);
-        expect(getYDocLayerNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
+        expect(getYDocDrawingNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
             100
         );
-        expect(getYDocLayerNodeValue(bridge, 'A', 'layer-1', 0, 0, 'y')).toBe(
+        expect(getYDocDrawingNodeValue(bridge, 'A', 'layer-1', 0, 0, 'y')).toBe(
             0
         );
     });
@@ -4349,14 +4365,14 @@ describe('Transactions', () => {
         );
         bridge.endTransaction();
 
-        const layerItems = buildHistoryStackItems(bridge.getChangeLog(), {
+        const drawingItems = buildHistoryStackItems(bridge.getChangeLog(), {
             glyphName: 'A',
             layerId: 'layer-1'
         });
 
-        expect(layerItems).toHaveLength(1);
-        expect(layerItems[0].undoScope).toBe('layer');
-        expect(layerItems[0].entries).toHaveLength(2);
+        expect(drawingItems).toHaveLength(1);
+        expect(drawingItems[0].undoScope).toBe('layer');
+        expect(drawingItems[0].entries).toHaveLength(2);
 
         expect(bridge.undo('A', 'layer-1')).toEqual(
             expect.objectContaining({
@@ -4365,10 +4381,10 @@ describe('Transactions', () => {
                 layerId: 'layer-1'
             })
         );
-        expect(getYDocLayerNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
+        expect(getYDocDrawingNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
             100
         );
-        expect(getYDocLayerNodeValue(bridge, 'A', 'layer-1', 0, 0, 'y')).toBe(
+        expect(getYDocDrawingNodeValue(bridge, 'A', 'layer-1', 0, 0, 'y')).toBe(
             0
         );
     });
@@ -4444,20 +4460,20 @@ describe('Transactions', () => {
         );
         bridge.endTransaction();
 
-        const layer1Items = buildHistoryStackItems(bridge.getChangeLog(), {
+        const drawing1Items = buildHistoryStackItems(bridge.getChangeLog(), {
             glyphName: 'A',
             layerId: 'layer-1'
         });
-        const layer1bItems = buildHistoryStackItems(bridge.getChangeLog(), {
+        const drawing1bItems = buildHistoryStackItems(bridge.getChangeLog(), {
             glyphName: 'A',
             layerId: 'layer-1b'
         });
 
-        expect(layer1Items).toHaveLength(1);
-        expect(layer1bItems).toHaveLength(1);
-        expect(layer1bItems[0].id).toBe(layer1Items[0].id);
-        expect(layer1Items[0].undoScope).toBe('glyph');
-        expect(layer1Items[0].originatingLayerId).toBe('layer-1');
+        expect(drawing1Items).toHaveLength(1);
+        expect(drawing1bItems).toHaveLength(1);
+        expect(drawing1bItems[0].id).toBe(drawing1Items[0].id);
+        expect(drawing1Items[0].undoScope).toBe('glyph');
+        expect(drawing1Items[0].originatingLayerId).toBe('layer-1');
 
         expect(bridge.undo('A', 'layer-1b')).not.toBeNull();
         expect(
@@ -4489,23 +4505,23 @@ describe('Transactions', () => {
         );
         bridge.endTransaction();
 
-        const layerItems = buildHistoryStackItems(bridge.getChangeLog(), {
+        const drawingItems = buildHistoryStackItems(bridge.getChangeLog(), {
             glyphName: 'A',
             layerId: 'layer-1'
         });
-        expect(layerItems).toHaveLength(1);
-        expect(layerItems[0].undoScope).toBe('layer');
-        expect(layerItems[0].originatingGlyphName).toBe('A');
-        expect(layerItems[0].originatingLayerId).toBe('layer-1');
+        expect(drawingItems).toHaveLength(1);
+        expect(drawingItems[0].undoScope).toBe('layer');
+        expect(drawingItems[0].originatingGlyphName).toBe('A');
+        expect(drawingItems[0].originatingLayerId).toBe('layer-1');
 
-        const dependentLayerItems = buildHistoryStackItems(
+        const dependentDrawingItems = buildHistoryStackItems(
             bridge.getChangeLog(),
             {
                 glyphName: 'B',
                 layerId: 'layer-2'
             }
         );
-        expect(dependentLayerItems).toHaveLength(0);
+        expect(dependentDrawingItems).toHaveLength(0);
         expect(
             buildHistoryStackItems(bridge.getChangeLog(), { surface: 'font' })
         ).toHaveLength(0);
@@ -4615,22 +4631,22 @@ describe('Model setter change recording', () => {
     test('materializing a background path records only incremental layer changes', () => {
         const { bridge, font } = createTestBridge('background-path');
         const glyph = font.findGlyph('A');
-        const foreground = glyph.findLayerById('layer-1');
-        const background = foreground.backgroundLayer;
+        const foreground = glyph.findDrawingById('layer-1');
+        const background = foreground.backgroundDrawing;
 
         const backgroundPath = background.addPath();
         backgroundPath.appendNode(100, 200);
 
-        const materialized = glyph.findLayerById(
-            foreground.background_layer_id
+        const materialized = glyph.findDrawingById(
+            foreground.background_drawing_id
         );
         expect(materialized).toBeDefined();
         expect(materialized.paths).toHaveLength(1);
         const bridgeBackground = bridge
             .getFontJsonSnapshot()
             .glyphs.find((candidate) => candidate.name === 'A')
-            .layers.find((layer) => layer.id === materialized.id);
-        expect(bridgeBackground.master).toEqual(foreground.master);
+            .layers.find((drawing) => drawing.id === materialized.id);
+        expect(bridgeBackground.master).toEqual(foreground.station);
         expect(bridgeBackground.location).toEqual(foreground.location);
         const rawBridgeBackground = fromYType(
             bridge.getYValue(['glyphs', 'A', 'layers', materialized.id])
@@ -4663,10 +4679,10 @@ describe('Model setter change recording', () => {
         const glyph = fontJson.glyphs.find(
             (candidate) => candidate.name === 'A'
         );
-        const layer = glyph.layers.find(
+        const drawing = glyph.layers.find(
             (candidate) => candidate.id === 'layer-1'
         );
-        layer.shapes = [
+        drawing.shapes = [
             {
                 id: 'editor-only-path-id',
                 nodes: [{ x: 100, y: 200, nodetype: 'Line' }],
@@ -4674,8 +4690,8 @@ describe('Model setter change recording', () => {
             }
         ];
 
-        bridge.syncLayersFromJson(
-            [{ glyphName: 'A', layerId: layer.id }],
+        bridge.syncDrawingsFromJson(
+            [{ glyphName: 'A', layerId: drawing.id }],
             'Draw path',
             undefined,
             undefined,
@@ -4686,10 +4702,10 @@ describe('Model setter change recording', () => {
             null
         );
 
-        const rawLayer = fromYType(
+        const rawDrawing = fromYType(
             bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1'])
         );
-        expect(stripGeometryIds(rawLayer.shapes)).toEqual([
+        expect(stripGeometryIds(rawDrawing.shapes)).toEqual([
             {
                 nodes: [{ x: 100, y: 200, nodetype: 'Line', smooth: false }],
                 closed: false
@@ -4717,15 +4733,15 @@ describe('Model setter change recording', () => {
     test('structural background command-path sync stores a valid sibling shape', () => {
         const { bridge, font } = createTestBridge('structural-background-path');
         const glyph = font.findGlyph('A');
-        const foreground = glyph.findLayerById('layer-1');
-        const background = foreground.backgroundLayer;
+        const foreground = glyph.findDrawingById('layer-1');
+        const background = foreground.backgroundDrawing;
 
         withSuppressedModelRecording(() => {
             const path = background.addPath(false);
             path._appendLine({ x: 100, y: 200 });
         });
 
-        bridge.syncLayersFromJson(
+        bridge.syncDrawingsFromJson(
             [{ glyphName: 'A', layerId: background.id }],
             'Draw path',
             undefined,
@@ -4774,7 +4790,9 @@ describe('Model setter change recording', () => {
         const glyph = fontJson.glyphs.find(
             (candidate) => candidate.name === 'A'
         );
-        const foreground = glyph.layers.find((layer) => layer.id === 'layer-1');
+        const foreground = glyph.layers.find(
+            (drawing) => drawing.id === 'layer-1'
+        );
         const background = {
             id: 'background-layer-1',
             width: foreground.width,
@@ -4788,12 +4806,12 @@ describe('Model setter change recording', () => {
         };
 
         glyph.layers.push(background);
-        bridge.syncLayerSnapshotsFromJson(
+        bridge.syncDrawingSnapshotsFromJson(
             [
                 {
                     glyphName: 'A',
                     layerId: background.id,
-                    layerJson: background
+                    drawingJson: background
                 }
             ],
             'Draw path',
@@ -4848,7 +4866,7 @@ describe('Model setter change recording', () => {
             stripGeometryIds(
                 receiverFontJson.glyphs
                     .find((candidate) => candidate.name === 'A')
-                    .layers.find((layer) => layer.id === background.id)
+                    .layers.find((drawing) => drawing.id === background.id)
             )
         ).toEqual(
             expect.objectContaining({
@@ -4877,7 +4895,7 @@ describe('Model setter change recording', () => {
         expect(
             receiverFontJson.glyphs
                 .find((candidate) => candidate.name === 'A')
-                .layers.find((layer) => layer.id === background.id)
+                .layers.find((drawing) => drawing.id === background.id)
         ).toBeUndefined();
 
         bridge.redo('A', background.id);
@@ -4909,7 +4927,7 @@ describe('Model setter change recording', () => {
         expect(
             receiverFontJson.glyphs
                 .find((candidate) => candidate.name === 'A')
-                .layers.find((layer) => layer.id === background.id)
+                .layers.find((drawing) => drawing.id === background.id)
         ).toEqual(
             expect.objectContaining({
                 is_background: true,
@@ -4933,7 +4951,9 @@ describe('Model setter change recording', () => {
         const glyph = fontJson.glyphs.find(
             (candidate) => candidate.name === 'A'
         );
-        const foreground = glyph.layers.find((layer) => layer.id === 'layer-1');
+        const foreground = glyph.layers.find(
+            (drawing) => drawing.id === 'layer-1'
+        );
         const background = {
             id: 'background-layer-1',
             width: foreground.width,
@@ -4950,17 +4970,17 @@ describe('Model setter change recording', () => {
         // fontJson is the bridge's mutable JSON reference, so the new sibling
         // is visible there before the Y.Doc receives its insert operation.
         glyph.layers.push(background);
-        bridge.syncLayerSnapshotsFromJson(
+        bridge.syncDrawingSnapshotsFromJson(
             [
                 {
                     glyphName: 'A',
                     layerId: foreground.id,
-                    layerJson: foreground
+                    drawingJson: foreground
                 },
                 {
                     glyphName: 'A',
                     layerId: background.id,
-                    layerJson: background
+                    drawingJson: background
                 }
             ],
             'Draw path',
@@ -4974,11 +4994,11 @@ describe('Model setter change recording', () => {
         );
 
         receiverBridge.applyDocumentSetState(bridge.encodeDocumentSet());
-        const receiverLayers = receiverFontJson.glyphs.find(
+        const receiverDrawings = receiverFontJson.glyphs.find(
             (candidate) => candidate.name === 'A'
         ).layers;
 
-        expect(receiverLayers).toEqual(
+        expect(receiverDrawings).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({
                     id: foreground.id,
@@ -5024,8 +5044,8 @@ describe('Model setter change recording', () => {
             const isComponentAutomaticAlignment =
                 spec.className === 'Component' &&
                 spec.property === 'automaticAlignment';
-            const isMasterRtlKerning =
-                spec.className === 'Master' && spec.property === 'kerning_rtl';
+            const isStationRtlKerning =
+                spec.className === 'Station' && spec.property === 'kerning_rtl';
             const isPathIsSubtraction =
                 spec.className === 'Path' && spec.property === 'isSubtraction';
             const oldValue = cloneValue(
@@ -5036,7 +5056,7 @@ describe('Model setter change recording', () => {
             const candidateValue =
                 spec.className === 'Node' && spec.property === 'nodetype'
                     ? 'Curve'
-                    : isMasterRtlKerning
+                    : isStationRtlKerning
                       ? // Kerning maps keep only "left:right" pairs.
                         { ...target.kerning_rtl, 'beh-ar:alef-ar': -20 }
                       : mutateValue(target[spec.property]);
@@ -5044,7 +5064,7 @@ describe('Model setter change recording', () => {
                 ? 'com.schriftgestalt.Glyphs.componentAnchor'
                 : isComponentAutomaticAlignment
                   ? 'format_specific'
-                  : spec.property;
+                  : dataKeyForModelProperty(spec.className, spec.property);
 
             target[spec.property] = cloneValue(candidateValue);
 
@@ -5062,7 +5082,14 @@ describe('Model setter change recording', () => {
                       ])
                 : isComponentAutomaticAlignment
                   ? target.getPath().concat('format_specific')
-                  : target.getPath().concat(spec.property);
+                  : target
+                        .getPath()
+                        .concat(
+                            dataKeyForModelProperty(
+                                spec.className,
+                                spec.property
+                            )
+                        );
             const log = bridge.getChangeLog();
 
             // The `nodes` property records one atomic array replacement.
@@ -5072,7 +5099,7 @@ describe('Model setter change recording', () => {
                 const shapeYMap = bridge.getYValue(shapePath);
                 const reconstructed = normalizeYDocValue(shapeYMap);
                 expect(reconstructed.nodes).toEqual(expectedValue);
-            } else if (isMasterRtlKerning) {
+            } else if (isStationRtlKerning) {
                 // RTL kerning is flat per master, like LTR: one entry, and
                 // no Glyphs-style copy in the font's format-specific data.
                 expect(log).toHaveLength(1);
@@ -5140,7 +5167,7 @@ describe('Model setter change recording', () => {
                     expect(log[0].newValue).toEqual(expect.any(Array));
                 }
                 expect(
-                    getYDocLayerNodeValue(
+                    getYDocDrawingNodeValue(
                         bridge,
                         String(path[1]),
                         String(path[3]),
@@ -5223,7 +5250,16 @@ describe('Model mutable getter change recording', () => {
             expect(log.length).toBeGreaterThanOrEqual(1);
             expect(
                 normalizeYValue(
-                    bridge.getYValue(target.getPath().concat(spec.property))
+                    bridge.getYValue(
+                        target
+                            .getPath()
+                            .concat(
+                                dataKeyForModelProperty(
+                                    spec.className,
+                                    spec.property
+                                )
+                            )
+                    )
                 )
             ).toEqual(expectedValue);
         }
@@ -5323,7 +5359,7 @@ describe('Model mutable getter change recording', () => {
             font.note = '';
             font.features.prefixes.global.code = 'lookupflag 0;';
             font.features.features[0][1].code = 'sub f i by fi;';
-            font.glyphs[0].layers[0].width = 610;
+            font.glyphs[0].drawings[0].width = 610;
         } finally {
             bridge.endTransaction();
         }
@@ -5504,7 +5540,7 @@ describe('Model collection mutator change recording', () => {
         expect(
             COLLECTION_MUTATOR_SPECS.some(
                 (spec) =>
-                    spec.className === 'Layer' && spec.method === 'addPath'
+                    spec.className === 'Drawing' && spec.method === 'addPath'
             )
         ).toBe(true);
     });
@@ -5543,19 +5579,19 @@ describe('Model collection mutator change recording', () => {
     test('wrapper collections reject direct structural mutation and keep users on bridge-backed methods', () => {
         const { font } = createTestBridge('collection-guards');
         const glyph = font.findGlyph('A');
-        const layer = glyph.layers[0];
-        const path = layer.shapes[0].asPath();
+        const drawing = glyph.drawings[0];
+        const path = drawing.shapes[0].asPath();
 
         expect(() => {
             font.glyphs.push(glyph);
         }).toThrow(/addGlyph\(\)|removeGlyph\(\)|duplicateGlyph\(\)/);
 
         expect(() => {
-            Reflect.set(glyph.layers, 0, layer);
-        }).toThrow(/addLayer\(\)|removeLayer\(\)/);
+            Reflect.set(glyph.drawings, 0, drawing);
+        }).toThrow(/addDrawing\(\)|removeDrawing\(\)/);
 
         expect(() => {
-            layer.guides.splice(0, 1);
+            drawing.guides.splice(0, 1);
         }).toThrow(/addGuide\(\)|removeGuide\(\)/);
 
         expect(() => {
@@ -5565,9 +5601,9 @@ describe('Model collection mutator change recording', () => {
 
     test('lsb setter records bridge-visible geometry updates in one transaction', () => {
         const { bridge, font } = createTestBridge('layer-lsb');
-        const layer = font.findGlyph('A').layers[0];
+        const drawing = font.findGlyph('A').drawings[0];
 
-        layer.lsb = 50;
+        drawing.lsb = 50;
 
         const log = bridge.getChangeLog();
 
@@ -5592,7 +5628,7 @@ describe('Model collection mutator change recording', () => {
                 'glyphs.A:layers.layer-1:width'
             ])
         );
-        expect(getYDocLayerNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
+        expect(getYDocDrawingNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
             60
         );
         expect(
@@ -5613,14 +5649,14 @@ describe('Model collection mutator change recording', () => {
 
     test('two sequential LSB updates keep a single reconstructed path', () => {
         const { bridge, font } = createTestBridge('layer-lsb-sequential');
-        const layer = font.findGlyph('A').layers[0];
+        const drawing = font.findGlyph('A').drawings[0];
         const shapes = () =>
             bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'shapes']);
 
         expect(shapes()).toHaveLength(2);
-        layer.lsb = 50;
+        drawing.lsb = 50;
         expect(shapes()).toHaveLength(2);
-        const xAfterFirst = getYDocLayerNodeValue(
+        const xAfterFirst = getYDocDrawingNodeValue(
             bridge,
             'A',
             'layer-1',
@@ -5629,16 +5665,16 @@ describe('Model collection mutator change recording', () => {
             'x'
         );
         expect(xAfterFirst).toBe(60);
-        layer.lsb = 20;
+        drawing.lsb = 20;
         expect(shapes()).toHaveLength(2);
         expect(
-            getYDocLayerNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')
+            getYDocDrawingNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')
         ).toEqual(expect.any(Number));
     });
 
     test('undo/redo restores topology and packed coordinates after reverse', () => {
         const { bridge, font } = createTestBridge('layer-reverse-undo');
-        const path = font.findGlyph('A').layers[0].shapes[0].asPath();
+        const path = font.findGlyph('A').drawings[0].shapes[0].asPath();
         const originalNodes = path.toJSON().nodes.map((node) => ({
             id: node.id,
             x: node.x,
@@ -5654,7 +5690,7 @@ describe('Model collection mutator change recording', () => {
         bridge.undo('A', 'layer-1');
         const undone = font
             .findGlyph('A')
-            .layers[0].shapes[0].asPath()
+            .drawings[0].shapes[0].asPath()
             .toJSON().nodes;
         expect(undone.map((node) => node.id)).toEqual(
             originalNodes.map((node) => node.id)
@@ -5667,7 +5703,7 @@ describe('Model collection mutator change recording', () => {
         expect(
             font
                 .findGlyph('A')
-                .layers[0].shapes[0].asPath()
+                .drawings[0].shapes[0].asPath()
                 .toJSON()
                 .nodes.map((node) => node.id)
         ).toEqual(reversedIds);
@@ -5685,7 +5721,7 @@ describe('Model collection mutator change recording', () => {
         bridge.initFromJson(fontJson);
         window.changeBridge = bridge;
         const font = Font.fromData(fontJson);
-        const path = font.findGlyph('A').layers[0].shapes[0].asPath();
+        const path = font.findGlyph('A').drawings[0].shapes[0].asPath();
 
         expect(
             Array.isArray(
@@ -5744,7 +5780,7 @@ describe('Model collection mutator change recording', () => {
         nodes[0].x = 120;
 
         expect(bridge.getChangeLog()).toHaveLength(1);
-        expect(getYDocLayerNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
+        expect(getYDocDrawingNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
             120
         );
     });
@@ -6744,13 +6780,13 @@ describe('WindowSync', () => {
         main.setFontJson(cloneValue(fontJson));
         const syncLinked = new WindowSync(linked, 'font-channel-object-undo');
         const syncMain = new WindowSync(main, 'font-channel-object-undo');
-        const layerPath = ['glyphs', 'A', 'layers', 'layer-1'];
+        const drawingPath = ['glyphs', 'A', 'layers', 'layer-1'];
         const formatSpecific = () => {
-            const value = main.getYValue([...layerPath, 'format_specific']);
+            const value = main.getYValue([...drawingPath, 'format_specific']);
             return value?.toJSON ? value.toJSON() : value;
         };
         linked.recordChange(
-            layerPath,
+            drawingPath,
             'format_specific',
             { alignment: -1 },
             { alignment: 1 }
@@ -6791,12 +6827,12 @@ describe('WindowSync', () => {
 
         const receiverLogStart = bridge2.getChangeLog().length;
 
-        bridge1.syncLayerSnapshotsFromJson(
+        bridge1.syncDrawingSnapshotsFromJson(
             [
                 {
                     glyphName: 'A',
                     layerId: 'layer-1',
-                    layerJson: cloneValue(fontJson1.glyphs[0].layers[0])
+                    drawingJson: cloneValue(fontJson1.glyphs[0].layers[0])
                 }
             ],
             'Drag point',
@@ -6838,22 +6874,22 @@ describe('WindowSync', () => {
         const linkedFontJson = cloneValue(mainFontJson);
         const mainBridge = new ChangeBridge('fuzz-main');
         const linkedBridge = new ChangeBridge('fuzz-linked');
-        const layerId = 'master-regular';
+        const drawingId = 'master-regular';
         const replayTargets = [
-            { glyphName: 'a', layerId },
-            { glyphName: 'adieresis', layerId }
+            { glyphName: 'a', layerId: drawingId },
+            { glyphName: 'adieresis', layerId: drawingId }
         ];
         const workerCaches = {
             main: new Map(),
             linked: new Map()
         };
 
-        function layerFromBridge(bridge, glyphName, targetLayerId) {
+        function drawingFromBridge(bridge, glyphName, targetDrawingId) {
             return bridge.getYValue([
                 'glyphs',
                 glyphName,
                 'layers',
-                targetLayerId
+                targetDrawingId
             ]);
         }
 
@@ -6866,7 +6902,7 @@ describe('WindowSync', () => {
                     `${target.glyphName}:${target.layerId}`,
                     cloneValue(
                         fromYType(
-                            layerFromBridge(
+                            drawingFromBridge(
                                 bridge,
                                 target.glyphName,
                                 target.layerId
@@ -6877,13 +6913,13 @@ describe('WindowSync', () => {
             }
         }
 
-        function normalizeLayer(layer) {
+        function normalizeDrawing(drawing) {
             const source =
-                layer &&
-                typeof layer.get === 'function' &&
-                typeof layer.forEach === 'function'
-                    ? fromYType(layer)
-                    : layer;
+                drawing &&
+                typeof drawing.get === 'function' &&
+                typeof drawing.forEach === 'function'
+                    ? fromYType(drawing)
+                    : drawing;
             const normalized = cloneValue(source);
             delete normalized.id;
             delete normalized.name;
@@ -6937,9 +6973,9 @@ describe('WindowSync', () => {
 
         function snapshot(fontJson) {
             return {
-                a: normalizeLayer(findGlyphLayer(fontJson, 'a', layerId)),
-                adieresis: normalizeLayer(
-                    findGlyphLayer(fontJson, 'adieresis', layerId)
+                a: normalizeDrawing(findGlyphDrawing(fontJson, 'a', drawingId)),
+                adieresis: normalizeDrawing(
+                    findGlyphDrawing(fontJson, 'adieresis', drawingId)
                 )
             };
         }
@@ -6947,42 +6983,42 @@ describe('WindowSync', () => {
         function assertConverged() {
             expect(snapshot(linkedFontJson)).toEqual(snapshot(mainFontJson));
             expect(
-                normalizeLayer(layerFromBridge(mainBridge, 'a', layerId))
+                normalizeDrawing(drawingFromBridge(mainBridge, 'a', drawingId))
             ).toEqual(
-                normalizeLayer(findGlyphLayer(mainFontJson, 'a', layerId))
+                normalizeDrawing(findGlyphDrawing(mainFontJson, 'a', drawingId))
             );
             expect(
-                normalizeLayer(
-                    layerFromBridge(linkedBridge, 'adieresis', layerId)
+                normalizeDrawing(
+                    drawingFromBridge(linkedBridge, 'adieresis', drawingId)
                 )
             ).toEqual(
-                normalizeLayer(
-                    findGlyphLayer(linkedFontJson, 'adieresis', layerId)
+                normalizeDrawing(
+                    findGlyphDrawing(linkedFontJson, 'adieresis', drawingId)
                 )
             );
 
             for (const [windowName, cache] of Object.entries(workerCaches)) {
                 const fontJson =
                     windowName === 'main' ? mainFontJson : linkedFontJson;
-                expect(normalizeLayer(cache.get(`a:${layerId}`))).toEqual(
-                    normalizeLayer(findGlyphLayer(fontJson, 'a', layerId))
+                expect(normalizeDrawing(cache.get(`a:${drawingId}`))).toEqual(
+                    normalizeDrawing(findGlyphDrawing(fontJson, 'a', drawingId))
                 );
                 expect(
-                    normalizeLayer(cache.get(`adieresis:${layerId}`))
+                    normalizeDrawing(cache.get(`adieresis:${drawingId}`))
                 ).toEqual(
-                    normalizeLayer(
-                        findGlyphLayer(fontJson, 'adieresis', layerId)
+                    normalizeDrawing(
+                        findGlyphDrawing(fontJson, 'adieresis', drawingId)
                     )
                 );
             }
 
             expect(
-                findGlyphLayer(mainFontJson, 'adieresis', layerId).shapes[0]
+                findGlyphDrawing(mainFontJson, 'adieresis', drawingId).shapes[0]
                     .reference
             ).toBe('a');
             expect(
-                findGlyphLayer(linkedFontJson, 'adieresis', layerId).shapes[0]
-                    .reference
+                findGlyphDrawing(linkedFontJson, 'adieresis', drawingId)
+                    .shapes[0].reference
             ).toBe('a');
         }
 
@@ -7008,7 +7044,7 @@ describe('WindowSync', () => {
             workerCaches.main.set(
                 `${target.glyphName}:${target.layerId}`,
                 cloneValue(
-                    layerFromBridge(
+                    drawingFromBridge(
                         mainBridge,
                         target.glyphName,
                         target.layerId
@@ -7018,7 +7054,7 @@ describe('WindowSync', () => {
             workerCaches.linked.set(
                 `${target.glyphName}:${target.layerId}`,
                 cloneValue(
-                    layerFromBridge(
+                    drawingFromBridge(
                         linkedBridge,
                         target.glyphName,
                         target.layerId
@@ -7034,24 +7070,28 @@ describe('WindowSync', () => {
         ];
 
         function commitEdit(windowState, editKind, step) {
-            const aLayer = findGlyphLayer(windowState.fontJson, 'a', layerId);
-            const adieresisLayer = findGlyphLayer(
+            const aDrawing = findGlyphDrawing(
+                windowState.fontJson,
+                'a',
+                drawingId
+            );
+            const adieresisDrawing = findGlyphDrawing(
                 windowState.fontJson,
                 'adieresis',
-                layerId
+                drawingId
             );
             if (editKind === 'outline') {
-                aLayer.shapes[0].nodes[0].x += 1 + Math.floor(random() * 8);
+                aDrawing.shapes[0].nodes[0].x += 1 + Math.floor(random() * 8);
             } else if (editKind === 'anchor') {
-                aLayer.anchors[0].y += 1 + Math.floor(random() * 12);
-                adieresisLayer.shapes[1].transform.translation[1] =
-                    aLayer.anchors[0].y;
+                aDrawing.anchors[0].y += 1 + Math.floor(random() * 12);
+                adieresisDrawing.shapes[1].transform.translation[1] =
+                    aDrawing.anchors[0].y;
             } else {
-                aLayer.width += 1 + Math.floor(random() * 15);
-                adieresisLayer.width = aLayer.width;
+                aDrawing.width += 1 + Math.floor(random() * 15);
+                adieresisDrawing.width = aDrawing.width;
             }
 
-            windowState.bridge.syncLayersFromJson(
+            windowState.bridge.syncDrawingsFromJson(
                 replayTargets,
                 `${windowState.name} ${editKind} ${step}`,
                 undefined,
@@ -7067,7 +7107,7 @@ describe('WindowSync', () => {
         for (let step = 0; step < 18; step++) {
             const windowState = windows[Math.floor(random() * windows.length)];
             const roll = random();
-            if (roll < 0.68 || !windowState.bridge.canUndo('a', layerId)) {
+            if (roll < 0.68 || !windowState.bridge.canUndo('a', drawingId)) {
                 const editKinds = ['outline', 'anchor', 'sidebearing'];
                 commitEdit(
                     windowState,
@@ -7076,11 +7116,11 @@ describe('WindowSync', () => {
                 );
             } else if (
                 roll < 0.86 ||
-                !windowState.bridge.canRedo('a', layerId)
+                !windowState.bridge.canRedo('a', drawingId)
             ) {
-                windowState.bridge.undo('a', layerId);
+                windowState.bridge.undo('a', drawingId);
             } else {
-                windowState.bridge.redo('a', layerId);
+                windowState.bridge.redo('a', drawingId);
             }
 
             assertConverged();
@@ -7095,7 +7135,7 @@ describe('WindowSync', () => {
         const linkedFontJson = cloneValue(mainFontJson);
         const mainBridge = new ChangeBridge('envelope-undo-main');
         const linkedBridge = new ChangeBridge('envelope-undo-linked');
-        const layerId = 'master-regular';
+        const drawingId = 'master-regular';
         mainBridge.initFromJson(mainFontJson);
         linkedBridge.setFontJson(linkedFontJson);
         linkedBridge.applyDocumentSetState(mainBridge.encodeDocumentSet());
@@ -7105,20 +7145,21 @@ describe('WindowSync', () => {
             'font-channel-env-undo'
         );
 
-        const aLayer = findGlyphLayer(mainFontJson, 'a', layerId);
-        const adieresisLayer = findGlyphLayer(
+        const aDrawing = findGlyphDrawing(mainFontJson, 'a', drawingId);
+        const adieresisDrawing = findGlyphDrawing(
             mainFontJson,
             'adieresis',
-            layerId
+            drawingId
         );
-        aLayer.anchors[0].x -= 10;
-        aLayer.anchors[0].y += 80;
-        adieresisLayer.shapes[1].transform.translation[1] = aLayer.anchors[0].y;
+        aDrawing.anchors[0].x -= 10;
+        aDrawing.anchors[0].y += 80;
+        adieresisDrawing.shapes[1].transform.translation[1] =
+            aDrawing.anchors[0].y;
         const targets = [
-            { glyphName: 'a', layerId },
-            { glyphName: 'adieresis', layerId }
+            { glyphName: 'a', layerId: drawingId },
+            { glyphName: 'adieresis', layerId: drawingId }
         ];
-        mainBridge.syncLayersFromJson(
+        mainBridge.syncDrawingsFromJson(
             targets,
             'Drag anchor',
             undefined,
@@ -7131,11 +7172,11 @@ describe('WindowSync', () => {
         );
         flushTimers();
 
-        expect(linkedBridge.canUndo('a', layerId)).toBe(true);
-        expect(linkedBridge.undo('a', layerId)).not.toBeNull();
+        expect(linkedBridge.canUndo('a', drawingId)).toBe(true);
+        expect(linkedBridge.undo('a', drawingId)).not.toBeNull();
         flushTimers();
         const anchorX = (bridge) =>
-            fromYType(bridge.getYValue(['glyphs', 'a', 'layers', layerId]))
+            fromYType(bridge.getYValue(['glyphs', 'a', 'layers', drawingId]))
                 .anchors[0].x;
         expect(anchorX(linkedBridge)).toBe(300);
         expect(anchorX(mainBridge)).toBe(300);
@@ -7469,13 +7510,13 @@ describe('Model path resolution', () => {
 
     test('Layer.getPath includes glyph and layer id', () => {
         const { font } = createTestBridge('test-1');
-        const layer = font.glyphs[0].layers[0];
-        expect(layer.getPath()).toEqual(['glyphs', 'A', 'layers', 'layer-1']);
+        const drawing = font.glyphs[0].drawings[0];
+        expect(drawing.getPath()).toEqual(['glyphs', 'A', 'layers', 'layer-1']);
     });
 
     test('Node.getPath includes full path from font root', () => {
         const { font } = createTestBridge('test-1');
-        const node = font.glyphs[0].layers[0].shapes[0].asPath().nodes[0];
+        const node = font.glyphs[0].drawings[0].shapes[0].asPath().nodes[0];
         const path = node.getPath();
         // Should be: glyphs, A, layers, layer-1, shapes, 0, nodes, 0
         expect(path[0]).toBe('glyphs');
@@ -7495,7 +7536,7 @@ describe('Model path resolution', () => {
 
     test('Master.getPath returns ["masters", index]', () => {
         const { font } = createTestBridge('test-1');
-        expect(font.masters[0].getPath()).toEqual(['masters', 0]);
+        expect(font.stations[0].getPath()).toEqual(['masters', 0]);
     });
 
     test('Instance.getPath returns ["instances", index]', () => {
@@ -7505,7 +7546,7 @@ describe('Model path resolution', () => {
 
     test('Anchor.getPath includes layer and anchor index', () => {
         const { font } = createTestBridge('test-1');
-        const anchor = font.glyphs[0].layers[0].anchors[0];
+        const anchor = font.glyphs[0].drawings[0].anchors[0];
         const path = anchor.getPath();
         expect(path).toEqual([
             'glyphs',
@@ -7519,7 +7560,7 @@ describe('Model path resolution', () => {
 
     test('Guide.getPath includes layer and guide index', () => {
         const { font } = createTestBridge('test-1');
-        const guide = font.glyphs[0].layers[0].guides[0];
+        const guide = font.glyphs[0].drawings[0].guides[0];
         const path = guide.getPath();
         expect(path).toEqual(['glyphs', 'A', 'layers', 'layer-1', 'guides', 0]);
     });
@@ -7532,7 +7573,7 @@ describe('Model path resolution', () => {
 describe('Sequential changes', () => {
     test('multiple node moves produce independent log entries', () => {
         const { bridge, font } = createTestBridge('test-1');
-        const node = font.glyphs[0].layers[0].shapes[0].asPath().nodes[0];
+        const node = font.glyphs[0].drawings[0].shapes[0].asPath().nodes[0];
         node.x = 110;
         node.x = 120;
         node.x = 130;
@@ -7557,8 +7598,8 @@ describe('Sequential changes', () => {
 
     test('changes across different glyphs produce correct paths', () => {
         const { bridge, font } = createTestBridge('test-1');
-        font.glyphs[0].layers[0].width = 700; // glyph A
-        font.glyphs[1].layers[0].width = 800; // glyph B
+        font.glyphs[0].drawings[0].width = 700; // glyph A
+        font.glyphs[1].drawings[0].width = 800; // glyph B
         const log = bridge.getChangeLog();
         expect(log).toHaveLength(2);
         expect(log[0].path).toContain('A');
@@ -7867,12 +7908,12 @@ describe('syncGlyphFromJson', () => {
         const localUpdates = [];
         const workerUpdates = [];
         const committedChanges = [];
-        const layerId = fontJson.glyphs[0].layers[0].id;
-        const oldLayer = JSON.parse(
+        const drawingId = fontJson.glyphs[0].layers[0].id;
+        const oldDrawing = JSON.parse(
             JSON.stringify(fontJson.glyphs[0].layers[0])
         );
-        const newLayer = {
-            ...oldLayer,
+        const newDrawing = {
+            ...oldDrawing,
             width: 777
         };
 
@@ -7896,7 +7937,7 @@ describe('syncGlyphFromJson', () => {
         const clonedGlyphMap = clonedDoc.getMap('glyph');
         const baseline = Y.encodeStateVector(clonedDoc);
         clonedDoc.transact(() => {
-            setYPath(clonedGlyphMap, ['layers', layerId], newLayer);
+            setYPath(clonedGlyphMap, ['layers', drawingId], newDrawing);
         });
         const update = Y.encodeStateAsUpdate(clonedDoc, baseline);
 
@@ -7905,11 +7946,13 @@ describe('syncGlyphFromJson', () => {
             [
                 {
                     op: 'set',
-                    path: ['glyphs', 'A', 'layers', layerId],
-                    oldValue: oldLayer,
-                    newValue: newLayer,
-                    applyMode: 'layer-snapshot',
-                    workerReplayTargets: [{ glyphName: 'A', layerId }]
+                    path: ['glyphs', 'A', 'layers', drawingId],
+                    oldValue: oldDrawing,
+                    newValue: newDrawing,
+                    applyMode: 'drawing-snapshot',
+                    workerReplayTargets: [
+                        { glyphName: 'A', layerId: drawingId }
+                    ]
                 }
             ],
             'Rust batch'
@@ -7938,12 +7981,12 @@ describe('syncGlyphFromJson', () => {
                         'glyphs',
                         'A',
                         'layers',
-                        layerId
+                        drawingId
                     ]),
                     workerReplayTargets: [
                         {
                             glyphName: 'A',
-                            layerId
+                            layerId: drawingId
                         }
                     ]
                 })
@@ -7969,7 +8012,7 @@ describe('syncGlyphFromJson', () => {
 
         const shards = bridge.encodeDocumentSet();
         const peerBaseline = JSON.parse(JSON.stringify(fontJson));
-        const encodeWidth = (glyphName, layerId) => {
+        const encodeWidth = (glyphName, drawingId) => {
             const documentId = bridge.documentIdForPath(['glyphs', glyphName]);
             const shard = shards.find((s) => s.documentId === documentId);
             const doc = new Y.Doc({ gc: false });
@@ -7977,7 +8020,7 @@ describe('syncGlyphFromJson', () => {
             const baseline = Y.encodeStateVector(doc);
             const glyph = fontJson.glyphs.find((g) => g.name === glyphName);
             doc.transact(() => {
-                setYPath(doc.getMap('glyph'), ['layers', layerId], {
+                setYPath(doc.getMap('glyph'), ['layers', drawingId], {
                     ...JSON.parse(JSON.stringify(glyph.layers[0])),
                     width: 888
                 });
@@ -7991,7 +8034,7 @@ describe('syncGlyphFromJson', () => {
             encodeWidth('A', 'layer-1'),
             encodeWidth('Zmulti', 'layer-b')
         ];
-        const oldLayer = JSON.parse(
+        const oldDrawing = JSON.parse(
             JSON.stringify(fontJson.glyphs[0].layers[0])
         );
 
@@ -8002,9 +8045,9 @@ describe('syncGlyphFromJson', () => {
                 {
                     op: 'set',
                     path: ['glyphs', 'A', 'layers', 'layer-1'],
-                    oldValue: oldLayer,
-                    newValue: { ...oldLayer, width: 888 },
-                    applyMode: 'layer-snapshot',
+                    oldValue: oldDrawing,
+                    newValue: { ...oldDrawing, width: 888 },
+                    applyMode: 'drawing-snapshot',
                     workerReplayTargets: [
                         { glyphName: 'A', layerId: 'layer-1' }
                     ]
@@ -8063,20 +8106,24 @@ describe('syncGlyphFromJson', () => {
         const peerBaseline = JSON.parse(JSON.stringify(fontJson));
         const operations = [];
         const documentUpdates = [];
-        for (const [glyphName, layerId] of [
+        for (const [glyphName, drawingId] of [
             ['A', 'layer-1'],
             ['Zmulti', 'layer-b']
         ]) {
             const glyph = fontJson.glyphs.find((g) => g.name === glyphName);
-            const oldLayer = JSON.parse(JSON.stringify(glyph.layers[0]));
-            const newLayer = { ...oldLayer, width: 777 };
+            const oldDrawing = JSON.parse(JSON.stringify(glyph.layers[0]));
+            const newDrawing = { ...oldDrawing, width: 777 };
             const documentId = bridge.documentIdForPath(['glyphs', glyphName]);
             const shard = shards.find((s) => s.documentId === documentId);
             const doc = new Y.Doc({ gc: false });
             Y.applyUpdate(doc, shard.bytes);
             const baseline = Y.encodeStateVector(doc);
             doc.transact(() => {
-                setYPath(doc.getMap('glyph'), ['layers', layerId], newLayer);
+                setYPath(
+                    doc.getMap('glyph'),
+                    ['layers', drawingId],
+                    newDrawing
+                );
             });
             documentUpdates.push({
                 documentId,
@@ -8084,11 +8131,11 @@ describe('syncGlyphFromJson', () => {
             });
             operations.push({
                 op: 'set',
-                path: ['glyphs', glyphName, 'layers', layerId],
-                oldValue: oldLayer,
-                newValue: newLayer,
-                applyMode: 'layer-snapshot',
-                workerReplayTargets: [{ glyphName, layerId }]
+                path: ['glyphs', glyphName, 'layers', drawingId],
+                oldValue: oldDrawing,
+                newValue: newDrawing,
+                applyMode: 'drawing-snapshot',
+                workerReplayTargets: [{ glyphName, layerId: drawingId }]
             });
         }
 
@@ -8745,11 +8792,11 @@ describe('syncGlyphFromJson', () => {
 
     test('glyph snapshot replay preserves array-node shape storage for undo and redo', () => {
         const { bridge, fontJson } = createTestBridge('test-1');
-        const layerPath = ['glyphs', 'A', 'layers', 'layer-1'];
-        const editedLayer = fontJson.glyphs[0].layers[0];
+        const drawingPath = ['glyphs', 'A', 'layers', 'layer-1'];
+        const editedDrawing = fontJson.glyphs[0].layers[0];
 
-        editedLayer.shapes[0].nodes[0].x += 43;
-        editedLayer.anchors[0].x += 17;
+        editedDrawing.shapes[0].nodes[0].x += 43;
+        editedDrawing.anchors[0].x += 17;
         bridge.syncGlyphFromJson(
             'A',
             'Glyph snapshot edit',
@@ -8764,74 +8811,76 @@ describe('syncGlyphFromJson', () => {
         );
 
         bridge.undo('A', 'layer-1');
-        let layerMap = bridge.getYValue(layerPath);
-        expect(typeof layerMap.get('geometryTopology')).toBe('string');
-        expect(layerMap.get('nodePositionsById')).toBeInstanceOf(Y.Map);
-        expect(layerMap.get('shapeDataById')).toBeInstanceOf(Y.Map);
-        expect(layerMap.get('shapes')).toBeUndefined();
-        expect(layerMap.get('anchors')).toBeUndefined();
-        expect(layerMap.get('shapesById')).toBeUndefined();
-        expect(layerMap.get('shapeOrder')).toBeUndefined();
-        expect(layerMap.get('anchorsById')).toBeInstanceOf(Y.Map);
-        expect(layerMap.get('anchorOrder')).toBeInstanceOf(Y.Array);
-        expect(normalizeYDocValue(layerMap).shapes[0].nodes[0].x).toBe(100);
+        let drawingMap = bridge.getYValue(drawingPath);
+        expect(typeof drawingMap.get('geometryTopology')).toBe('string');
+        expect(drawingMap.get('nodePositionsById')).toBeInstanceOf(Y.Map);
+        expect(drawingMap.get('shapeDataById')).toBeInstanceOf(Y.Map);
+        expect(drawingMap.get('shapes')).toBeUndefined();
+        expect(drawingMap.get('anchors')).toBeUndefined();
+        expect(drawingMap.get('shapesById')).toBeUndefined();
+        expect(drawingMap.get('shapeOrder')).toBeUndefined();
+        expect(drawingMap.get('anchorsById')).toBeInstanceOf(Y.Map);
+        expect(drawingMap.get('anchorOrder')).toBeInstanceOf(Y.Array);
+        expect(normalizeYDocValue(drawingMap).shapes[0].nodes[0].x).toBe(100);
 
         bridge.redo('A', 'layer-1');
-        layerMap = bridge.getYValue(layerPath);
-        expect(typeof layerMap.get('geometryTopology')).toBe('string');
-        expect(layerMap.get('nodePositionsById')).toBeInstanceOf(Y.Map);
-        expect(layerMap.get('shapeDataById')).toBeInstanceOf(Y.Map);
-        expect(layerMap.get('shapes')).toBeUndefined();
-        expect(layerMap.get('anchors')).toBeUndefined();
-        expect(layerMap.get('shapesById')).toBeUndefined();
-        expect(layerMap.get('shapeOrder')).toBeUndefined();
-        expect(layerMap.get('anchorsById')).toBeInstanceOf(Y.Map);
-        expect(layerMap.get('anchorOrder')).toBeInstanceOf(Y.Array);
-        expect(normalizeYDocValue(layerMap).shapes[0].nodes[0].x).toBe(
-            editedLayer.shapes[0].nodes[0].x
+        drawingMap = bridge.getYValue(drawingPath);
+        expect(typeof drawingMap.get('geometryTopology')).toBe('string');
+        expect(drawingMap.get('nodePositionsById')).toBeInstanceOf(Y.Map);
+        expect(drawingMap.get('shapeDataById')).toBeInstanceOf(Y.Map);
+        expect(drawingMap.get('shapes')).toBeUndefined();
+        expect(drawingMap.get('anchors')).toBeUndefined();
+        expect(drawingMap.get('shapesById')).toBeUndefined();
+        expect(drawingMap.get('shapeOrder')).toBeUndefined();
+        expect(drawingMap.get('anchorsById')).toBeInstanceOf(Y.Map);
+        expect(drawingMap.get('anchorOrder')).toBeInstanceOf(Y.Array);
+        expect(normalizeYDocValue(drawingMap).shapes[0].nodes[0].x).toBe(
+            editedDrawing.shapes[0].nodes[0].x
         );
-        expect(normalizeYDocValue(layerMap).anchors[0].x).toBe(
-            editedLayer.anchors[0].x
+        expect(normalizeYDocValue(drawingMap).anchors[0].x).toBe(
+            editedDrawing.anchors[0].x
         );
     });
 
     test('malformed scalar layer snapshot payload does not clear an existing layer root', () => {
         const { bridge } = createTestBridge('test-1');
-        const layerPath = ['glyphs', 'A', 'layers', 'layer-1'];
-        const originalLayer = normalizeYDocValue(bridge.getYValue(layerPath));
+        const drawingPath = ['glyphs', 'A', 'layers', 'layer-1'];
+        const originalDrawing = normalizeYDocValue(
+            bridge.getYValue(drawingPath)
+        );
 
         bridge._applyBufferedOperation({
             op: 'set',
-            path: layerPath,
+            path: drawingPath,
             oldValue: 'A',
             newValue: 'Drag point',
-            applyMode: 'layer-snapshot'
+            applyMode: 'drawing-snapshot'
         });
 
-        expect(normalizeYDocValue(bridge.getYValue(layerPath))).toEqual(
-            originalLayer
+        expect(normalizeYDocValue(bridge.getYValue(drawingPath))).toEqual(
+            originalDrawing
         );
     });
 
     test('malformed scalar layer snapshot payload does not create an empty missing layer root', () => {
         const { bridge } = createTestBridge('test-1');
-        const missingLayerPath = ['glyphs', 'A', 'layers', 'missing-layer'];
+        const missingDrawingPath = ['glyphs', 'A', 'layers', 'missing-layer'];
 
         bridge._applyBufferedOperation({
             op: 'set',
-            path: missingLayerPath,
+            path: missingDrawingPath,
             oldValue: 'A',
             newValue: 'Drag point',
-            applyMode: 'layer-snapshot'
+            applyMode: 'drawing-snapshot'
         });
 
-        expect(bridge.getYValue(missingLayerPath)).toBeUndefined();
+        expect(bridge.getYValue(missingDrawingPath)).toBeUndefined();
     });
 
     test('valid layer snapshot payload still materializes a missing layer root', () => {
         const { bridge } = createTestBridge('test-1');
-        const missingLayerPath = ['glyphs', 'A', 'layers', 'missing-layer'];
-        const layerSnapshot = {
+        const missingDrawingPath = ['glyphs', 'A', 'layers', 'missing-layer'];
+        const drawingSnapshot = {
             id: 'missing-layer',
             width: 480,
             master: {
@@ -8844,33 +8893,35 @@ describe('syncGlyphFromJson', () => {
 
         bridge._applyBufferedOperation({
             op: 'set',
-            path: missingLayerPath,
+            path: missingDrawingPath,
             oldValue: null,
-            newValue: layerSnapshot,
-            applyMode: 'layer-snapshot'
+            newValue: drawingSnapshot,
+            applyMode: 'drawing-snapshot'
         });
 
-        expect(normalizeYDocValue(bridge.getYValue(missingLayerPath))).toEqual(
-            layerSnapshot
-        );
+        expect(
+            normalizeYDocValue(bridge.getYValue(missingDrawingPath))
+        ).toEqual(drawingSnapshot);
     });
 
     test('partial layer snapshot updates do not delete omitted layer fields', () => {
         const { bridge } = createTestBridge('test-1');
-        const layerPath = ['glyphs', 'A', 'layers', 'layer-1'];
-        const originalLayer = normalizeYDocValue(bridge.getYValue(layerPath));
+        const drawingPath = ['glyphs', 'A', 'layers', 'layer-1'];
+        const originalDrawing = normalizeYDocValue(
+            bridge.getYValue(drawingPath)
+        );
 
         bridge._applyBufferedOperation({
             op: 'set',
-            path: layerPath,
+            path: drawingPath,
             oldValue: { width: 600 },
             newValue: { width: 620 },
-            applyMode: 'layer-snapshot'
+            applyMode: 'drawing-snapshot'
         });
 
-        expect(normalizeYDocValue(bridge.getYValue(layerPath))).toEqual(
+        expect(normalizeYDocValue(bridge.getYValue(drawingPath))).toEqual(
             expect.objectContaining({
-                ...originalLayer,
+                ...originalDrawing,
                 width: 620
             })
         );
@@ -8878,14 +8929,14 @@ describe('syncGlyphFromJson', () => {
 
     test('partial layer snapshot without width preserves an existing valid width', () => {
         const { bridge } = createTestBridge('test-1');
-        const layerPath = ['glyphs', 'A', 'layers', 'layer-1'];
+        const drawingPath = ['glyphs', 'A', 'layers', 'layer-1'];
 
         bridge._applyBufferedOperation({
             op: 'set',
-            path: layerPath,
+            path: drawingPath,
             oldValue: { anchors: [] },
             newValue: { anchors: [{ name: 'top', x: 100, y: 700 }] },
-            applyMode: 'layer-snapshot'
+            applyMode: 'drawing-snapshot'
         });
 
         expect(
@@ -8895,73 +8946,75 @@ describe('syncGlyphFromJson', () => {
 
     test('sparse layer delta without width leaves existing width alone (no throw)', () => {
         const { bridge } = createTestBridge('test-1');
-        const layerPath = ['glyphs', 'A', 'layers', 'layer-1'];
-        deleteBridgeYPath(bridge, [...layerPath, 'width']);
+        const drawingPath = ['glyphs', 'A', 'layers', 'layer-1'];
+        deleteBridgeYPath(bridge, [...drawingPath, 'width']);
 
         // Sparse delta: only anchors changed, width absent means "don't touch."
         expect(() =>
             bridge._applyBufferedOperation({
                 op: 'set',
-                path: layerPath,
+                path: drawingPath,
                 oldValue: { anchors: [] },
                 newValue: { anchors: [{ name: 'top', x: 100, y: 700 }] },
-                applyMode: 'layer-snapshot'
+                applyMode: 'drawing-snapshot'
             })
         ).not.toThrow();
 
         // Width is still absent — the Y.Doc was already corrupted.
-        expect(bridge.getYValue([...layerPath, 'width'])).toBeUndefined();
+        expect(bridge.getYValue([...drawingPath, 'width'])).toBeUndefined();
     });
 
     test('sparse layer delta with null width preserves existing valid width', () => {
         const { bridge } = createTestBridge('test-1');
-        const layerPath = ['glyphs', 'A', 'layers', 'layer-1'];
+        const drawingPath = ['glyphs', 'A', 'layers', 'layer-1'];
 
         // Delta with width=null is invalid — the receiver silently
         // drops the invalid width and preserves the existing valid width.
         expect(() =>
             bridge._applyBufferedOperation({
                 op: 'set',
-                path: layerPath,
+                path: drawingPath,
                 oldValue: { width: 600 },
                 newValue: { width: null, anchors: [] },
-                applyMode: 'layer-snapshot'
+                applyMode: 'drawing-snapshot'
             })
         ).not.toThrow();
 
-        expect(bridge.getYValue([...layerPath, 'width'])).toBe(600);
+        expect(bridge.getYValue([...drawingPath, 'width'])).toBe(600);
     });
 
     test('partial layer snapshot does not materialize a missing layer root', () => {
         const { bridge } = createTestBridge('test-1');
-        const missingLayerPath = ['glyphs', 'A', 'layers', 'missing-layer'];
+        const missingDrawingPath = ['glyphs', 'A', 'layers', 'missing-layer'];
 
         bridge._applyBufferedOperation({
             op: 'set',
-            path: missingLayerPath,
+            path: missingDrawingPath,
             oldValue: null,
             newValue: { width: 620 },
-            applyMode: 'layer-snapshot'
+            applyMode: 'drawing-snapshot'
         });
 
-        expect(bridge.getYValue(missingLayerPath)).toBeUndefined();
+        expect(bridge.getYValue(missingDrawingPath)).toBeUndefined();
     });
 
     test('partial object layer snapshot payload does not clear omission-sensitive keys', () => {
         const { bridge } = createTestBridge('test-1');
-        const layerPath = ['glyphs', 'A', 'layers', 'layer-1'];
-        const originalLayer = normalizeYDocValue(bridge.getYValue(layerPath));
+        const drawingPath = ['glyphs', 'A', 'layers', 'layer-1'];
+        const originalDrawing = normalizeYDocValue(
+            bridge.getYValue(drawingPath)
+        );
 
         bridge._applyBufferedOperation({
             op: 'set',
-            path: layerPath,
+            path: drawingPath,
             oldValue: { width: 600 },
             newValue: { width: 600 },
-            applyMode: 'layer-snapshot'
+            applyMode: 'drawing-snapshot'
         });
 
-        expect(normalizeYDocValue(bridge.getYValue(layerPath))).toEqual(
-            originalLayer
+        expect(normalizeYDocValue(bridge.getYValue(drawingPath))).toEqual(
+            originalDrawing
         );
     });
 
@@ -9082,7 +9135,7 @@ describe('syncGlyphFromJson', () => {
                 'name'
             ])
         ).toBe('top');
-        expect(getYDocLayerNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
+        expect(getYDocDrawingNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
             150
         );
         expect(
@@ -9161,7 +9214,7 @@ describe('syncGlyphFromJson', () => {
                 'name'
             ])
         ).toBe('top');
-        expect(getYDocLayerNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
+        expect(getYDocDrawingNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
             175
         );
     });
@@ -9169,22 +9222,22 @@ describe('syncGlyphFromJson', () => {
     test('layer-scoped undo restores original outlines after remove and recreate with the same layer id', () => {
         const { bridge, font } = createTestBridge('reinterpolate-undo');
         const glyph = font.findGlyph('A');
-        const originalLayer = glyph.findLayerById('layer-1');
-        const originalSnapshot = cloneValue(originalLayer.toJSON());
+        const originalDrawing = glyph.findDrawingById('layer-1');
+        const originalSnapshot = cloneValue(originalDrawing.toJSON());
 
-        bridge.beginTransaction('Reinterpolate layer', null, {
+        bridge.beginTransaction('Reinterpolate drawing', null, {
             compileChangeSource: 'test-sync',
             compileEditType: null
         });
-        glyph.removeLayerById('layer-1');
+        glyph.removeDrawingById('layer-1');
 
-        const recreatedLayer = glyph.addLayer(
+        const recreatedDrawing = glyph.addDrawing(
             910,
             originalSnapshot.master,
             'layer-1'
         );
         withSuppressedModelRecording(() => {
-            recreatedLayer.syncFromEditorLayerData({
+            recreatedDrawing.syncFromEditorDrawingData({
                 width: 910,
                 shapes: [
                     {
@@ -9217,7 +9270,7 @@ describe('syncGlyphFromJson', () => {
         });
         bridge.syncGlyphFromJson(
             'A',
-            'Reinterpolate layer sync',
+            'Reinterpolate drawing sync',
             undefined,
             undefined,
             'layer-1',
@@ -9311,10 +9364,10 @@ describe('syncGlyphFromJson', () => {
     test('glyph-scoped undo restores linked-layer curve point insertion cleanly', () => {
         const font = Font.fromData(makeMinimalFont());
         const fontJson = font.toJSON();
-        const baseLayer = cloneValue(fontJson.glyphs[0].layers[0]);
+        const baseDrawing = cloneValue(fontJson.glyphs[0].layers[0]);
         fontJson.glyphs[0].layers = [
             {
-                ...cloneValue(baseLayer),
+                ...cloneValue(baseDrawing),
                 id: 'layer-1',
                 shapes: [
                     {
@@ -9331,7 +9384,7 @@ describe('syncGlyphFromJson', () => {
                 guides: []
             },
             {
-                ...cloneValue(baseLayer),
+                ...cloneValue(baseDrawing),
                 id: 'layer-1b',
                 shapes: [
                     {
@@ -9354,12 +9407,12 @@ describe('syncGlyphFromJson', () => {
         window.changeBridge = bridge;
 
         const glyph = font.findGlyph('A');
-        const layer1 = glyph.findLayerById('layer-1');
-        const layer2 = glyph.findLayerById('layer-1b');
+        const drawing1 = glyph.findDrawingById('layer-1');
+        const drawing2 = glyph.findDrawingById('layer-1b');
 
         withSuppressedModelRecording(() => {
-            layer1.paths[0]._addPoint(0, 0.5);
-            layer2.paths[0]._addPoint(0, 0.5);
+            drawing1.paths[0]._addPoint(0, 0.5);
+            drawing2.paths[0]._addPoint(0, 0.5);
         });
         bridge.syncGlyphFromJson(
             'A',
@@ -9383,7 +9436,7 @@ describe('syncGlyphFromJson', () => {
         expect(historyItems[0].undoScope).toBe('glyph');
         expect(
             fontJson.glyphs[0].layers.map(
-                (layer) => layer.shapes[0].nodes.length
+                (drawing) => drawing.shapes[0].nodes.length
             )
         ).toEqual([7, 7]);
 
@@ -9391,7 +9444,7 @@ describe('syncGlyphFromJson', () => {
 
         expect(
             fontJson.glyphs[0].layers.map(
-                (layer) => layer.shapes[0].nodes.length
+                (drawing) => drawing.shapes[0].nodes.length
             )
         ).toEqual([4, 4]);
         expect(fontJson.glyphs[0].layers[0].shapes[0].nodes[0].nodetype).toBe(
@@ -9405,10 +9458,10 @@ describe('syncGlyphFromJson', () => {
     test('glyph-scoped undo restores linked-layer smooth point slide cleanly', () => {
         const font = Font.fromData(makeMinimalFont());
         const fontJson = font.toJSON();
-        const baseLayer = cloneValue(fontJson.glyphs[0].layers[0]);
+        const baseDrawing = cloneValue(fontJson.glyphs[0].layers[0]);
         fontJson.glyphs[0].layers = [
             {
-                ...cloneValue(baseLayer),
+                ...cloneValue(baseDrawing),
                 id: 'layer-1',
                 shapes: [
                     {
@@ -9428,7 +9481,7 @@ describe('syncGlyphFromJson', () => {
                 guides: []
             },
             {
-                ...cloneValue(baseLayer),
+                ...cloneValue(baseDrawing),
                 id: 'layer-1b',
                 shapes: [
                     {
@@ -9449,8 +9502,8 @@ describe('syncGlyphFromJson', () => {
             }
         ];
 
-        const originalNodesByLayer = fontJson.glyphs[0].layers.map((layer) =>
-            cloneValue(layer.shapes[0].nodes)
+        const originalNodesByDrawing = fontJson.glyphs[0].layers.map(
+            (drawing) => cloneValue(drawing.shapes[0].nodes)
         );
 
         const bridge = new ChangeBridge('test-linked-slide-point');
@@ -9458,16 +9511,16 @@ describe('syncGlyphFromJson', () => {
         window.changeBridge = bridge;
 
         const glyph = font.findGlyph('A');
-        const layer1 = glyph.findLayerById('layer-1');
-        const layer2 = glyph.findLayerById('layer-1b');
+        const drawing1 = glyph.findDrawingById('layer-1');
+        const drawing2 = glyph.findDrawingById('layer-1b');
 
         withSuppressedModelRecording(() => {
-            const result = layer1.paths[0]._slideSmoothOnCurve(3, {
+            const result = drawing1.paths[0]._slideSmoothOnCurve(3, {
                 x: 120,
                 y: 10
             });
             expect(result).not.toBeNull();
-            layer2.paths[0]._slideSmoothOnCurveAtT(3, result.t);
+            drawing2.paths[0]._slideSmoothOnCurveAtT(3, result.t);
         });
         bridge.syncGlyphFromJson(
             'A',
@@ -9490,10 +9543,10 @@ describe('syncGlyphFromJson', () => {
         expect(historyItems).toHaveLength(1);
         expect(historyItems[0].undoScope).toBe('glyph');
         expect(fontJson.glyphs[0].layers[0].shapes[0].nodes[3].x).not.toBe(
-            originalNodesByLayer[0][3].x
+            originalNodesByDrawing[0][3].x
         );
         expect(fontJson.glyphs[0].layers[1].shapes[0].nodes[3].x).not.toBe(
-            originalNodesByLayer[1][3].x
+            originalNodesByDrawing[1][3].x
         );
 
         expect(bridge.undo('A', 'layer-1')).toEqual(
@@ -9510,10 +9563,10 @@ describe('syncGlyphFromJson', () => {
             );
         expect(
             normalizeNodes(fontJson.glyphs[0].layers[0].shapes[0].nodes)
-        ).toEqual(normalizeNodes(originalNodesByLayer[0]));
+        ).toEqual(normalizeNodes(originalNodesByDrawing[0]));
         expect(
             normalizeNodes(fontJson.glyphs[0].layers[1].shapes[0].nodes)
-        ).toEqual(normalizeNodes(originalNodesByLayer[1]));
+        ).toEqual(normalizeNodes(originalNodesByDrawing[1]));
     });
 
     test('undo works after two consecutive syncs - each sync is a separate undo step', () => {
@@ -9725,7 +9778,7 @@ describe('syncGlyphFromJson', () => {
 
         // Remove from source JSON and sync again; Y.Doc should prune it
         fontJson.glyphs[0].layers = fontJson.glyphs[0].layers.filter(
-            (layer) => layer.id !== 'layer-temp'
+            (drawing) => drawing.id !== 'layer-temp'
         );
         bridge.syncGlyphFromJson(
             'A',
@@ -9962,7 +10015,7 @@ describe('syncGlyphFromJson', () => {
         expect(redoEntry.transactionLabel).toBe('Redo');
     });
 
-    test('undo emits layerFingerprintChanged when replay changes a layer fingerprint', () => {
+    test('undo emits drawingFingerprintChanged when replay changes a layer fingerprint', () => {
         const { bridge, fontJson } = createTestBridge('fingerprint-undo');
         const dispatchSpy = jest.spyOn(window, 'dispatchEvent');
 
@@ -9993,7 +10046,7 @@ describe('syncGlyphFromJson', () => {
 
         expect(dispatchSpy).toHaveBeenCalledWith(
             expect.objectContaining({
-                type: 'layerFingerprintChanged',
+                type: 'drawingFingerprintChanged',
                 detail: {
                     glyphName: 'A',
                     layerId: 'layer-1'
@@ -10082,7 +10135,7 @@ describe('syncGlyphFromJson', () => {
         window.fontCompilation = originalFontCompilation;
     });
 
-    test('linked window emits layerFingerprintChanged when receiving a remote fingerprint-changing update', () => {
+    test('linked window emits drawingFingerprintChanged when receiving a remote fingerprint-changing update', () => {
         const font1 = makeMinimalFont();
         const bridge1 = new ChangeBridge('primary');
         bridge1.initFromJson(font1);
@@ -10119,7 +10172,7 @@ describe('syncGlyphFromJson', () => {
 
         expect(dispatchSpy).toHaveBeenCalledWith(
             expect.objectContaining({
-                type: 'layerFingerprintChanged',
+                type: 'drawingFingerprintChanged',
                 detail: {
                     glyphName: 'A',
                     layerId: 'layer-1'
@@ -10183,9 +10236,9 @@ describe('syncGlyphFromJson', () => {
                 'x'
             ])
         ).toBe(320);
-        expect(getYDocLayerNodeValue(bridge2, 'A', 'layer-1', 0, 0, 'x')).toBe(
-            100
-        );
+        expect(
+            getYDocDrawingNodeValue(bridge2, 'A', 'layer-1', 0, 0, 'x')
+        ).toBe(100);
 
         sync1.destroy();
         sync2.destroy();
@@ -10194,7 +10247,7 @@ describe('syncGlyphFromJson', () => {
     });
 
     test('linked window keeps sibling default layers when a remote single-layer edit arrives', () => {
-        const senderFontJson = makeThreeMasterThreeLayerFont();
+        const senderFontJson = makeThreeStationThreeDrawingFont();
         const receiverFontJson = cloneValue(senderFontJson);
         const senderBridge = new ChangeBridge('sender-three-layer');
         const receiverBridge = new ChangeBridge('receiver-three-layer');
@@ -10228,7 +10281,7 @@ describe('syncGlyphFromJson', () => {
 
         expect(receiverFontJson.glyphs[0].layers).toHaveLength(3);
         expect(
-            receiverFontJson.glyphs[0].layers.map((layer) => layer.id)
+            receiverFontJson.glyphs[0].layers.map((drawing) => drawing.id)
         ).toEqual(['master-extrathin', 'master-regular', 'master-bold']);
         expect(receiverFontJson.glyphs[0].layers[1].master).toEqual({
             type: 'DefaultForMaster',
@@ -10255,7 +10308,7 @@ describe('syncGlyphFromJson', () => {
         receiverBridge.setFontJson(receiverFontJson);
         receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
 
-        const receiverLayerPath = ['glyphs', 'A', 'layers', 'layer-1'];
+        const receiverDrawingPath = ['glyphs', 'A', 'layers', 'layer-1'];
 
         for (const nextX of [123, 146, 171]) {
             senderFontJson.glyphs[0].layers[0].shapes[0].nodes[0].x = nextX;
@@ -10277,11 +10330,11 @@ describe('syncGlyphFromJson', () => {
             applyCapturedPackets(receiverBridge, packets);
 
             expect(
-                receiverBridge.getYValue([...receiverLayerPath, 'width'])
+                receiverBridge.getYValue([...receiverDrawingPath, 'width'])
             ).toBe(600);
             expect(
                 fromYType(
-                    receiverBridge.getYValue([...receiverLayerPath, 'master'])
+                    receiverBridge.getYValue([...receiverDrawingPath, 'master'])
                 )
             ).toEqual({
                 type: 'DefaultForMaster',
@@ -10289,14 +10342,21 @@ describe('syncGlyphFromJson', () => {
             });
             expect(
                 receiverBridge.getYValue([
-                    ...receiverLayerPath,
+                    ...receiverDrawingPath,
                     'anchors',
                     0,
                     'x'
                 ])
             ).toBe(300);
             expect(
-                getYDocLayerNodeValue(receiverBridge, 'A', 'layer-1', 0, 0, 'x')
+                getYDocDrawingNodeValue(
+                    receiverBridge,
+                    'A',
+                    'layer-1',
+                    0,
+                    0,
+                    'x'
+                )
             ).toBe(nextX);
             expect(
                 receiverFontJson.glyphs[0].layers[0].shapes[0].nodes[0].x
@@ -10350,7 +10410,7 @@ describe('syncGlyphFromJson', () => {
                 { captureInUndo: false, fromCollaborator: true }
             );
         }
-        expect(getYDocLayerNodeValue(local, 'A', 'layer-1', 0, 0, 'x')).toBe(
+        expect(getYDocDrawingNodeValue(local, 'A', 'layer-1', 0, 0, 'x')).toBe(
             200
         );
 
@@ -10362,7 +10422,7 @@ describe('syncGlyphFromJson', () => {
             window.removeEventListener('history-replay-blocked', blocked);
         }
         expect(blocked).toHaveBeenCalledTimes(1);
-        expect(getYDocLayerNodeValue(local, 'A', 'layer-1', 0, 0, 'x')).toBe(
+        expect(getYDocDrawingNodeValue(local, 'A', 'layer-1', 0, 0, 'x')).toBe(
             200
         );
 
@@ -10375,14 +10435,14 @@ describe('syncGlyphFromJson', () => {
         bridge.initFromJson(makeMinimalFont());
         // An update that arrives before the one it builds on leaves the
         // width briefly unreadable; this must not throw and stop syncing.
-        const normalized = bridge._normalizeLayerSnapshot(
+        const normalized = bridge._normalizeDrawingSnapshot(
             'layer-1',
             { id: 'layer-1', width: undefined, shapes: [] },
             { id: 'layer-1', width: 600, shapes: [] }
         );
         expect(normalized.width).toBe(600);
         expect(() =>
-            bridge._normalizeLayerSnapshot(
+            bridge._normalizeDrawingSnapshot(
                 'layer-1',
                 { id: 'layer-1', width: undefined, shapes: [] },
                 { id: 'layer-1', shapes: [] }
@@ -10434,7 +10494,7 @@ describe('syncGlyphFromJson', () => {
 
         expect(local.undo('A', 'layer-1')).not.toBeNull();
         expect(
-            getYDocLayerNodeValue(local, 'A', 'layer-1', 0, 0, 'x')
+            getYDocDrawingNodeValue(local, 'A', 'layer-1', 0, 0, 'x')
         ).not.toBe(123);
         local.destroy();
     });
@@ -10459,7 +10519,7 @@ describe('syncGlyphFromJson', () => {
 
         const senderNode = senderFontModel
             .findGlyph('A')
-            .findLayerById('layer-1').paths[0].nodes[0];
+            .findDrawingById('layer-1').paths[0].nodes[0];
 
         senderBridge.runWithoutRecording(() => {
             senderNode.x += 23;
@@ -10495,7 +10555,7 @@ describe('syncGlyphFromJson', () => {
         const receiverFontModel = Font.fromData(cloneValue(receiverFontJson));
         const receiverNode = receiverFontModel
             .findGlyph('A')
-            .findLayerById('layer-1').paths[0].nodes[0];
+            .findDrawingById('layer-1').paths[0].nodes[0];
 
         expect(receiverNode.x).toBe(senderNode.x);
         expect(receiverNode.y).toBe(senderNode.y);
@@ -10531,7 +10591,7 @@ describe('syncGlyphFromJson', () => {
         const applyRemoteGranularMove = (nodeIndex, dx, dy) => {
             const senderNode = senderFontModel
                 .findGlyph('A')
-                .findLayerById('layer-1').paths[0].nodes[nodeIndex];
+                .findDrawingById('layer-1').paths[0].nodes[nodeIndex];
 
             senderBridge.runWithoutRecording(() => {
                 senderNode.x += dx;
@@ -10587,17 +10647,17 @@ describe('syncGlyphFromJson', () => {
         applyRemoteGranularMove(0, 23, 11);
         applyRemoteGranularMove(1, -17, 19);
 
-        const receiverLayerModel = window.fontManager.currentFont.fontModel
+        const receiverDrawingModel = window.fontManager.currentFont.fontModel
             .findGlyph('A')
-            .findLayerById('layer-1');
+            .findDrawingById('layer-1');
 
-        expect(receiverLayerModel.toJSON()).toEqual(
+        expect(receiverDrawingModel.toJSON()).toEqual(
             receiverFontJson.glyphs[0].layers[0]
         );
-        expect(receiverLayerModel.paths[0].nodes[0].x).toBe(
+        expect(receiverDrawingModel.paths[0].nodes[0].x).toBe(
             receiverFontJson.glyphs[0].layers[0].shapes[0].nodes[0].x
         );
-        expect(receiverLayerModel.paths[0].nodes[1].y).toBe(
+        expect(receiverDrawingModel.paths[0].nodes[1].y).toBe(
             receiverFontJson.glyphs[0].layers[0].shapes[0].nodes[1].y
         );
 
@@ -10781,7 +10841,7 @@ describe('syncGlyphFromJson', () => {
     });
 
     test('linked window remote layer delete patches glyph state without full rebuild', () => {
-        const senderFontJson = makeThreeMasterThreeLayerFont();
+        const senderFontJson = makeThreeStationThreeDrawingFont();
         const receiverFontJson = cloneValue(senderFontJson);
         const senderBridge = new ChangeBridge('sender-remote-layer-delete');
         const receiverBridge = new ChangeBridge('receiver-remote-layer-delete');
@@ -10795,7 +10855,7 @@ describe('syncGlyphFromJson', () => {
         });
 
         const syncSpy = jest.spyOn(receiverBridge, '_syncJsonFromYDoc');
-        const deletedLayer = cloneValue(senderFontJson.glyphs[0].layers[1]);
+        const deletedDrawing = cloneValue(senderFontJson.glyphs[0].layers[1]);
         senderFontJson.glyphs[0].layers.splice(1, 1);
 
         senderBridge.beginTransaction('Delete layer', null, {
@@ -10804,8 +10864,8 @@ describe('syncGlyphFromJson', () => {
         });
         try {
             senderBridge.recordRemove(
-                ['glyphs', 'A', 'layers', deletedLayer.id],
-                deletedLayer
+                ['glyphs', 'A', 'layers', deletedDrawing.id],
+                deletedDrawing
             );
         } finally {
             senderBridge.endTransaction();
@@ -10818,7 +10878,7 @@ describe('syncGlyphFromJson', () => {
 
         expect(syncSpy).not.toHaveBeenCalled();
         expect(
-            receiverFontJson.glyphs[0].layers.map((layer) => layer.id)
+            receiverFontJson.glyphs[0].layers.map((drawing) => drawing.id)
         ).toEqual(['master-extrathin', 'master-bold']);
 
         syncSpy.mockRestore();
@@ -10827,7 +10887,7 @@ describe('syncGlyphFromJson', () => {
     });
 
     test('linked window remote layer create with replay targets patches glyph state without full rebuild', () => {
-        const senderFontJson = makeThreeMasterThreeLayerFont();
+        const senderFontJson = makeThreeStationThreeDrawingFont();
         const receiverFontJson = cloneValue(senderFontJson);
         const senderBridge = new ChangeBridge('sender-remote-layer-create');
         const receiverBridge = new ChangeBridge('receiver-remote-layer-create');
@@ -10842,7 +10902,7 @@ describe('syncGlyphFromJson', () => {
 
         const syncSpy = jest.spyOn(receiverBridge, '_syncJsonFromYDoc');
         senderFontJson.glyphs[0].layers.push({
-            id: 'associated-layer-create',
+            id: 'associated-drawing-create',
             width: 615,
             master: {
                 type: 'AssociatedWithMaster',
@@ -10859,7 +10919,7 @@ describe('syncGlyphFromJson', () => {
             'Create interpolated layer sync',
             undefined,
             undefined,
-            'associated-layer-create',
+            'associated-drawing-create',
             undefined,
             undefined,
             undefined,
@@ -10874,8 +10934,8 @@ describe('syncGlyphFromJson', () => {
 
         expect(syncSpy).not.toHaveBeenCalled();
         expect(
-            receiverFontJson.glyphs[0].layers.map((layer) => layer.id)
-        ).toEqual(senderFontJson.glyphs[0].layers.map((layer) => layer.id));
+            receiverFontJson.glyphs[0].layers.map((drawing) => drawing.id)
+        ).toEqual(senderFontJson.glyphs[0].layers.map((drawing) => drawing.id));
 
         syncSpy.mockRestore();
         senderBridge.destroy();
@@ -10883,10 +10943,10 @@ describe('syncGlyphFromJson', () => {
     });
 
     test('linked window remote layer add then delete restores the original glyph state without full rebuild', () => {
-        const senderFontJson = makeThreeMasterThreeLayerFont();
+        const senderFontJson = makeThreeStationThreeDrawingFont();
         const receiverFontJson = cloneValue(senderFontJson);
-        const originalLayerIds = senderFontJson.glyphs[0].layers.map(
-            (layer) => layer.id
+        const originalDrawingIds = senderFontJson.glyphs[0].layers.map(
+            (drawing) => drawing.id
         );
         const senderBridge = new ChangeBridge('sender-remote-layer-lifecycle');
         const receiverBridge = new ChangeBridge(
@@ -10906,7 +10966,7 @@ describe('syncGlyphFromJson', () => {
             receiverBridge,
             '_rehydrateEntireFontJsonFromYDoc'
         );
-        const addedLayer = {
+        const addedDrawing = {
             id: 'associated-layer-lifecycle',
             width: 615,
             master: {
@@ -10919,13 +10979,13 @@ describe('syncGlyphFromJson', () => {
             guides: []
         };
 
-        senderFontJson.glyphs[0].layers.push(addedLayer);
+        senderFontJson.glyphs[0].layers.push(addedDrawing);
         senderBridge.syncGlyphFromJson(
             'A',
             'Create interpolated layer sync',
             undefined,
             undefined,
-            addedLayer.id,
+            addedDrawing.id,
             undefined,
             undefined,
             undefined,
@@ -10941,12 +11001,12 @@ describe('syncGlyphFromJson', () => {
         expect(syncSpy).not.toHaveBeenCalled();
         expect(fullSyncSpy).not.toHaveBeenCalled();
         expect(
-            receiverFontJson.glyphs[0].layers.map((layer) => layer.id)
-        ).toEqual([...originalLayerIds, addedLayer.id]);
+            receiverFontJson.glyphs[0].layers.map((drawing) => drawing.id)
+        ).toEqual([...originalDrawingIds, addedDrawing.id]);
 
         senderFontJson.glyphs[0].layers =
             senderFontJson.glyphs[0].layers.filter(
-                (layer) => layer.id !== addedLayer.id
+                (drawing) => drawing.id !== addedDrawing.id
             );
 
         senderBridge.beginTransaction('Delete layer', null, {
@@ -10955,8 +11015,8 @@ describe('syncGlyphFromJson', () => {
         });
         try {
             senderBridge.recordRemove(
-                ['glyphs', 'A', 'layers', addedLayer.id],
-                cloneValue(addedLayer)
+                ['glyphs', 'A', 'layers', addedDrawing.id],
+                cloneValue(addedDrawing)
             );
         } finally {
             senderBridge.endTransaction();
@@ -10970,11 +11030,11 @@ describe('syncGlyphFromJson', () => {
         expect(syncSpy).not.toHaveBeenCalled();
         expect(fullSyncSpy).not.toHaveBeenCalled();
         expect(
-            receiverFontJson.glyphs[0].layers.map((layer) => layer.id)
-        ).toEqual(originalLayerIds);
+            receiverFontJson.glyphs[0].layers.map((drawing) => drawing.id)
+        ).toEqual(originalDrawingIds);
         expect(
             receiverFontJson.glyphs[0].layers.find(
-                (layer) => layer.id === addedLayer.id
+                (drawing) => drawing.id === addedDrawing.id
             )
         ).toBeUndefined();
 
@@ -10985,7 +11045,7 @@ describe('syncGlyphFromJson', () => {
     });
 
     test('linked window whole-glyph structural sync with replay targets prunes stale associated layers', () => {
-        const senderFontJson = makeThreeMasterThreeLayerFont();
+        const senderFontJson = makeThreeStationThreeDrawingFont();
         const receiverFontJson = cloneValue(senderFontJson);
         const senderBridge = new ChangeBridge('sender-structural-prune');
         const receiverBridge = new ChangeBridge('receiver-structural-prune');
@@ -11031,11 +11091,11 @@ describe('syncGlyphFromJson', () => {
         );
 
         expect(
-            receiverFontJson.glyphs[0].layers.map((layer) => layer.id)
-        ).toEqual(senderFontJson.glyphs[0].layers.map((layer) => layer.id));
+            receiverFontJson.glyphs[0].layers.map((drawing) => drawing.id)
+        ).toEqual(senderFontJson.glyphs[0].layers.map((drawing) => drawing.id));
         expect(
             receiverFontJson.glyphs[0].layers.some(
-                (layer) => layer.id === 'stale-associated-layer'
+                (drawing) => drawing.id === 'stale-associated-layer'
             )
         ).toBe(false);
 
@@ -11044,7 +11104,7 @@ describe('syncGlyphFromJson', () => {
     });
 
     test('layer-id glyph sync of a removed layer prunes that layer from peers', () => {
-        const senderFontJson = makeThreeMasterThreeLayerFont();
+        const senderFontJson = makeThreeStationThreeDrawingFont();
         const receiverFontJson = cloneValue(senderFontJson);
         const senderBridge = new ChangeBridge('sender-deleted-layer-id');
         const receiverBridge = new ChangeBridge('receiver-deleted-layer-id');
@@ -11057,18 +11117,18 @@ describe('syncGlyphFromJson', () => {
             lastUpdate = update;
         });
 
-        const removedLayerId = senderFontJson.glyphs[0].layers[1].id;
+        const removedDrawingId = senderFontJson.glyphs[0].layers[1].id;
         senderFontJson.glyphs[0].layers.splice(1, 1);
         senderBridge.syncGlyphFromJson(
             'A',
             'Delete layer sync',
             undefined,
             undefined,
-            removedLayerId,
+            removedDrawingId,
             undefined,
             undefined,
-            'layer-delete',
-            'layer-delete',
+            'drawing-delete',
+            'drawing-delete',
             null
         );
 
@@ -11078,15 +11138,15 @@ describe('syncGlyphFromJson', () => {
         );
 
         expect(
-            receiverFontJson.glyphs[0].layers.map((layer) => layer.id)
-        ).toEqual(senderFontJson.glyphs[0].layers.map((layer) => layer.id));
+            receiverFontJson.glyphs[0].layers.map((drawing) => drawing.id)
+        ).toEqual(senderFontJson.glyphs[0].layers.map((drawing) => drawing.id));
         expect(
             receiverFontJson.glyphs[0].layers.some(
-                (layer) => layer.id === removedLayerId
+                (drawing) => drawing.id === removedDrawingId
             )
         ).toBe(false);
         expect(
-            senderBridge.getYValue(['glyphs', 'A', 'layers', removedLayerId])
+            senderBridge.getYValue(['glyphs', 'A', 'layers', removedDrawingId])
         ).toBeUndefined();
 
         senderBridge.destroy();
@@ -11094,7 +11154,7 @@ describe('syncGlyphFromJson', () => {
     });
 
     test('cloud envelope glyph-snapshot layer delete prunes remote JSON without snapshot metadata', () => {
-        const senderFontJson = makeThreeMasterThreeLayerFont();
+        const senderFontJson = makeThreeStationThreeDrawingFont();
         const receiverFontJson = cloneValue(senderFontJson);
         const senderBridge = new ChangeBridge('sender-cloud-structural-prune');
         const receiverBridge = new ChangeBridge(
@@ -11143,12 +11203,12 @@ describe('syncGlyphFromJson', () => {
         );
 
         expect(
-            receiverFontJson.glyphs[0].layers.map((layer) => layer.id)
-        ).toEqual(senderFontJson.glyphs[0].layers.map((layer) => layer.id));
+            receiverFontJson.glyphs[0].layers.map((drawing) => drawing.id)
+        ).toEqual(senderFontJson.glyphs[0].layers.map((drawing) => drawing.id));
         expect(receiverBridge.canUndo('A', 'master-extrathin')).toBe(true);
         expect(receiverBridge.undo('A', 'master-extrathin')).not.toBeNull();
         expect(
-            receiverFontJson.glyphs[0].layers.map((layer) => layer.id)
+            receiverFontJson.glyphs[0].layers.map((drawing) => drawing.id)
         ).toHaveLength(senderFontJson.glyphs[0].layers.length + 1);
 
         senderBridge.destroy();
@@ -11162,7 +11222,7 @@ describe('syncGlyphFromJson', () => {
         const receiverBridge = new ChangeBridge('receiver-cloud-layer-undo');
         let lastUpdate = null;
         let lastCollaborationMessage = null;
-        const layerId = senderFontJson.glyphs[0].layers[0].id;
+        const drawingId = senderFontJson.glyphs[0].layers[0].id;
 
         senderBridge.initFromJson(senderFontJson);
         receiverBridge.setFontJson(receiverFontJson);
@@ -11178,7 +11238,7 @@ describe('syncGlyphFromJson', () => {
             'Remote width drag',
             undefined,
             undefined,
-            layerId,
+            drawingId,
             undefined,
             undefined,
             undefined,
@@ -11195,7 +11255,7 @@ describe('syncGlyphFromJson', () => {
         );
 
         expect(receiverFontJson.glyphs[0].layers[0].width).toBe(741);
-        expect(receiverBridge.canUndo('A', layerId)).toBe(true);
+        expect(receiverBridge.canUndo('A', drawingId)).toBe(true);
 
         senderBridge.destroy();
         receiverBridge.destroy();
@@ -11334,9 +11394,9 @@ describe('syncGlyphFromJson', () => {
                 'x'
             ])
         ).toBe(340);
-        expect(getYDocLayerNodeValue(bridge2, 'A', 'layer-1', 0, 0, 'x')).toBe(
-            100
-        );
+        expect(
+            getYDocDrawingNodeValue(bridge2, 'A', 'layer-1', 0, 0, 'x')
+        ).toBe(100);
 
         sync1.destroy();
         sync2.destroy();
@@ -11345,7 +11405,7 @@ describe('syncGlyphFromJson', () => {
     });
 
     test('linked window preserves all layer masters after remote undo of single-layer edit', () => {
-        const senderFontJson = makeThreeMasterThreeLayerFont();
+        const senderFontJson = makeThreeStationThreeDrawingFont();
         const receiverFontJson = cloneValue(senderFontJson);
         const senderBridge = new ChangeBridge('sender-undo-master');
         const receiverBridge = new ChangeBridge('receiver-undo-master');
@@ -11545,7 +11605,7 @@ describe('syncGlyphFromJson', () => {
         receiverBridge.destroy();
     });
 
-    test('syncLayersFromJson preserves multi-target worker replay metadata across remote apply', () => {
+    test('syncDrawingsFromJson preserves multi-target worker replay metadata across remote apply', () => {
         const senderFontJson = makeMinimalFont();
         const receiverFontJson = cloneValue(senderFontJson);
         const senderBridge = new ChangeBridge('sender-multi-target');
@@ -11563,7 +11623,7 @@ describe('syncGlyphFromJson', () => {
             { glyphName: 'B', layerId: 'layer-2' }
         ];
 
-        senderBridge.syncLayersFromJson(
+        senderBridge.syncDrawingsFromJson(
             changedTargets,
             'Batch dependent layer refresh',
             undefined,
@@ -11602,7 +11662,7 @@ describe('syncGlyphFromJson', () => {
         receiverBridge.destroy();
     });
 
-    test('syncLayersFromJson carries recomposed dependent sidebearing layers across remote apply', () => {
+    test('syncDrawingsFromJson carries recomposed dependent sidebearing layers across remote apply', () => {
         const senderFontJson = makeMinimalFont();
         senderFontJson.glyphs[0].layers[0].format_specific = {
             opaque: { nested: [null, 'source'] }
@@ -11639,7 +11699,7 @@ describe('syncGlyphFromJson', () => {
             { glyphName: 'A', layerId: 'layer-1' }
         ];
 
-        senderBridge.syncLayersFromJson(
+        senderBridge.syncDrawingsFromJson(
             changedTargets,
             'Set LSB',
             undefined,
@@ -11677,25 +11737,25 @@ describe('syncGlyphFromJson', () => {
         expect(
             receiverFontJson.glyphs[0].layers[0].shapes[1].transform.translation
         ).toEqual([123, 45]);
-        const receiverSourceLayer = normalizeYDocValue(
+        const receiverSourceDrawing = normalizeYDocValue(
             receiverBridge.getYValue(['glyphs', 'A', 'layers', 'layer-1'])
         );
-        const receiverDependentLayer = normalizeYDocValue(
+        const receiverDependentDrawing = normalizeYDocValue(
             receiverBridge.getYValue(['glyphs', 'B', 'layers', 'layer-2'])
         );
 
-        expect(receiverSourceLayer.name).toBe('Regular');
-        expect(receiverSourceLayer.format_specific).toEqual({
+        expect(receiverSourceDrawing.name).toBe('Regular');
+        expect(receiverSourceDrawing.format_specific).toEqual({
             opaque: { nested: [null, 'source'] }
         });
-        expect(receiverSourceLayer.vendor_extension).toEqual({
+        expect(receiverSourceDrawing.vendor_extension).toEqual({
             payload: ['source']
         });
-        expect(receiverDependentLayer.name).toBe('Regular');
-        expect(receiverDependentLayer.format_specific).toEqual({
+        expect(receiverDependentDrawing.name).toBe('Regular');
+        expect(receiverDependentDrawing.format_specific).toEqual({
             opaque: { nested: [null, 'dependent'] }
         });
-        expect(receiverDependentLayer.vendor_extension).toEqual({
+        expect(receiverDependentDrawing.vendor_extension).toEqual({
             payload: ['dependent']
         });
 
@@ -11703,7 +11763,7 @@ describe('syncGlyphFromJson', () => {
         receiverBridge.destroy();
     });
 
-    test('syncLayersFromJson preserves partial layer fragments in batched remote apply', () => {
+    test('syncDrawingsFromJson preserves partial layer fragments in batched remote apply', () => {
         const senderFontJson = makeMinimalFont();
         const receiverFontJson = cloneValue(senderFontJson);
         const senderBridge = new ChangeBridge('sender-batched-partial-layer');
@@ -11726,7 +11786,7 @@ describe('syncGlyphFromJson', () => {
             { glyphName: 'B', layerId: 'layer-2' }
         ];
 
-        senderBridge.syncLayersFromJson(
+        senderBridge.syncDrawingsFromJson(
             changedTargets,
             'Batch partial anchor refresh',
             undefined,
@@ -11766,11 +11826,11 @@ describe('syncGlyphFromJson', () => {
             'test-full-layer-no-guides'
         );
 
-        const nextLayer = cloneValue(fontJson.glyphs[0].layers[0]);
-        nextLayer.width = 777;
-        nextLayer.anchors[0].x = 345;
-        delete nextLayer.guides;
-        fontJson.glyphs[0].layers[0] = nextLayer;
+        const nextDrawing = cloneValue(fontJson.glyphs[0].layers[0]);
+        nextDrawing.width = 777;
+        nextDrawing.anchors[0].x = 345;
+        delete nextDrawing.guides;
+        fontJson.glyphs[0].layers[0] = nextDrawing;
 
         bridge.syncGlyphFromJson(
             'A',
@@ -11795,7 +11855,7 @@ describe('syncGlyphFromJson', () => {
         ]);
     });
 
-    test('syncLayersFromJson batched layer lifecycle in a transaction preserves undo for recreated layers', () => {
+    test('syncDrawingsFromJson batched layer lifecycle in a transaction preserves undo for recreated layers', () => {
         const font = Font.fromData(makeMinimalFont());
         const fontJson = font.toJSON();
         const bridge = new ChangeBridge('batched-layer-lifecycle-undo');
@@ -11803,23 +11863,23 @@ describe('syncGlyphFromJson', () => {
         window.changeBridge = bridge;
 
         const glyph = font.findGlyph('A');
-        const originalLayer = glyph.findLayerById('layer-1');
-        const originalSnapshot = cloneValue(originalLayer.toJSON());
+        const originalDrawing = glyph.findDrawingById('layer-1');
+        const originalSnapshot = cloneValue(originalDrawing.toJSON());
         const originalWidthB = fontJson.glyphs[1].layers[0].width;
 
         bridge.beginTransaction('Reinterpolate dependent layers', null, {
             compileChangeSource: 'test-sync',
             compileEditType: null
         });
-        glyph.removeLayerById('layer-1');
+        glyph.removeDrawingById('layer-1');
 
-        const recreatedLayer = glyph.addLayer(
+        const recreatedDrawing = glyph.addDrawing(
             910,
             originalSnapshot.master,
             'layer-1'
         );
         withSuppressedModelRecording(() => {
-            recreatedLayer.syncFromEditorLayerData({
+            recreatedDrawing.syncFromEditorDrawingData({
                 width: 910,
                 shapes: [
                     {
@@ -11852,7 +11912,7 @@ describe('syncGlyphFromJson', () => {
         });
         fontJson.glyphs[1].layers[0].width = 777;
 
-        bridge.syncLayersFromJson(
+        bridge.syncDrawingsFromJson(
             [
                 { glyphName: 'A', layerId: 'layer-1' },
                 { glyphName: 'B', layerId: 'layer-2' }
@@ -11901,7 +11961,7 @@ describe('syncGlyphFromJson', () => {
     });
 
     test('full-state sync canonicalizes linked raw layer snapshots by dropping undefined and transient fields', () => {
-        const senderFontJson = makeThreeMasterThreeLayerFont();
+        const senderFontJson = makeThreeStationThreeDrawingFont();
         const receiverFontJson = cloneValue(senderFontJson);
         const senderBridge = new ChangeBridge('sender-canonical');
         const receiverBridge = new ChangeBridge('receiver-canonical');
@@ -11941,7 +12001,7 @@ describe('syncGlyphFromJson', () => {
             { glyphName: 'B', layerId: 'layer-2' }
         ];
 
-        bridge.syncLayersFromJson(
+        bridge.syncDrawingsFromJson(
             changedTargets,
             'Batch dependent layer refresh',
             undefined,
@@ -12009,7 +12069,7 @@ describe('syncGlyphFromJson', () => {
 
         fontJson.glyphs[0].layers[0].anchors[0].x = originalAnchorX + 25;
         fontJson.glyphs[1].layers[0].width = originalWidthB + 60;
-        bridge.syncLayersFromJson(
+        bridge.syncDrawingsFromJson(
             [
                 { glyphName: 'A', layerId: 'layer-1' },
                 { glyphName: 'B', layerId: 'layer-2' }
@@ -12067,7 +12127,7 @@ describe('syncGlyphFromJson', () => {
         bridge.destroy();
     });
 
-    test('linked window emits layerFingerprintChanged when receiving a remote undo that changes a layer fingerprint', () => {
+    test('linked window emits drawingFingerprintChanged when receiving a remote undo that changes a layer fingerprint', () => {
         const font1 = makeMinimalFont();
         const bridge1 = new ChangeBridge('primary');
         bridge1.initFromJson(font1);
@@ -12108,7 +12168,7 @@ describe('syncGlyphFromJson', () => {
 
         expect(dispatchSpy).toHaveBeenCalledWith(
             expect.objectContaining({
-                type: 'layerFingerprintChanged',
+                type: 'drawingFingerprintChanged',
                 detail: {
                     glyphName: 'A',
                     layerId: 'layer-1'
@@ -12192,14 +12252,14 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
             path: ['glyphs', 'A', 'layers', 'layer-1'],
             oldValue: { anchors: fontJson.glyphs[0].layers[0].anchors },
             newValue: { anchors: [{ name: 'top', x: 111, y: 222 }] },
-            applyMode: 'layer-snapshot'
+            applyMode: 'drawing-snapshot'
         });
         bridge._syncJsonFromYDoc({ glyphName: 'A', layerId: 'layer-1' });
 
-        const yLayer = normalizeYDocValue(
+        const yDrawing = normalizeYDocValue(
             bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1'])
         );
-        expect(yLayer.shapes[0].nodes[0].x).toBe(100);
+        expect(yDrawing.shapes[0].nodes[0].x).toBe(100);
         expect(fontJson.glyphs[0].layers[0].shapes[0].nodes[0].x).toBe(100);
         expect(fontJson.glyphs[0].layers[0].anchors[0]).toEqual(
             expect.objectContaining({ name: 'top', x: 111, y: 222 })
@@ -12225,14 +12285,14 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
                 },
                 shapes: []
             },
-            applyMode: 'layer-snapshot'
+            applyMode: 'drawing-snapshot'
         });
         bridge._syncJsonFromYDoc({ glyphName: 'A', layerId: 'layer-1' });
 
-        const yLayer = normalizeYDocValue(
+        const yDrawing = normalizeYDocValue(
             bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1'])
         );
-        expect(yLayer.shapes).toEqual([]);
+        expect(yDrawing.shapes).toEqual([]);
         expect(fontJson.glyphs[0].layers[0].shapes).toEqual([]);
     });
 
@@ -12247,14 +12307,14 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
             path: ['glyphs', 'A', 'layers', 'layer-1'],
             oldValue: { shapes: fontJson.glyphs[0].layers[0].shapes },
             newValue: { shapes: null },
-            applyMode: 'layer-snapshot'
+            applyMode: 'drawing-snapshot'
         });
         bridge._syncJsonFromYDoc({ glyphName: 'A', layerId: 'layer-1' });
 
-        const yLayer = normalizeYDocValue(
+        const yDrawing = normalizeYDocValue(
             bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1'])
         );
-        expect(yLayer.shapes || []).toEqual([]);
+        expect(yDrawing.shapes || []).toEqual([]);
         expect(fontJson.glyphs[0].layers[0].shapes || []).toEqual([]);
     });
 
@@ -12335,12 +12395,12 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         const fontJson = makeMinimalFont();
         const bridge = new ChangeBridge('test-sync-ydoc-unscoped');
         bridge.initFromJson(fontJson);
-        const unrelatedLayer = fontJson.glyphs[1].layers[0];
+        const unrelatedDrawing = fontJson.glyphs[1].layers[0];
 
         expect(() => bridge._syncJsonFromYDoc()).toThrow(
-            'requires valid layer scope hints'
+            'requires valid drawing scope hints'
         );
-        expect(fontJson.glyphs[1].layers[0]).toBe(unrelatedLayer);
+        expect(fontJson.glyphs[1].layers[0]).toBe(unrelatedDrawing);
     });
 
     test('layer-scoped undo patches only the changed layer — other glyph data is not rebuilt', () => {
@@ -12351,8 +12411,8 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
 
         // Capture reference to glyph B's layer object BEFORE the edit.
         // If scope-aware sync is working, this exact object must survive undo.
-        const glyphBLayerBefore = fontJson.glyphs[1].layers[0];
-        expect(glyphBLayerBefore).toBeDefined();
+        const glyphBDrawingBefore = fontJson.glyphs[1].layers[0];
+        expect(glyphBDrawingBefore).toBeDefined();
 
         // Record a node-position change on glyph A, layer-1
         bridge.beginTransaction('Move node', null, {
@@ -12368,7 +12428,7 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         bridge.endTransaction();
 
         // Confirm the Y.Doc now holds the new value
-        expect(getYDocLayerNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
+        expect(getYDocDrawingNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
             150
         );
 
@@ -12383,13 +12443,13 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         );
 
         // Y.Doc should be reverted
-        expect(getYDocLayerNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
+        expect(getYDocDrawingNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
             100
         );
 
         // Glyph B's layer object MUST be the same reference as before.
         // A regression to full-font reconstruction would create a new object.
-        expect(fontJson.glyphs[1].layers[0]).toBe(glyphBLayerBefore);
+        expect(fontJson.glyphs[1].layers[0]).toBe(glyphBDrawingBefore);
     });
 
     test('layer-scoped undo correctly patches _fontJson for the changed layer', () => {
@@ -12411,7 +12471,7 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         );
         bridge.endTransaction();
 
-        // Override fontJson to reflect the edit (simulating what saveLayerData does)
+        // Override fontJson to reflect the edit (simulating what saveDrawingData does)
         fontJson.glyphs[0].layers[0].width = 700;
 
         bridge.undo('A', 'layer-1');
@@ -12659,7 +12719,7 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
             receiverBridge.applyRemoteUpdate(update, entries);
         });
 
-        const layerMapBefore = senderBridge.getYValue([
+        const drawingMapBefore = senderBridge.getYValue([
             'glyphs',
             'A',
             'layers',
@@ -12707,7 +12767,7 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         ).toBe(true);
         expect(
             senderBridge.getYValue(['glyphs', 'A', 'layers', 'layer-1'])
-        ).toBe(layerMapBefore);
+        ).toBe(drawingMapBefore);
         expect(senderJson.note).toBe('Changed outside Counterpunch');
         expect(senderJson.glyphs[0].layers[0].width).toBe(777);
         expect(receiverBridge.getYValue(['note'])).toBe(
@@ -12744,14 +12804,14 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         receiverBridge.setFontJson(receiverJson);
         receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
 
-        const staleLayerSnapshot = cloneValue(senderJson.glyphs[0].layers[0]);
+        const staleDrawingSnapshot = cloneValue(senderJson.glyphs[0].layers[0]);
         const transactionFinalizer = jest.fn(() => [
             {
                 op: 'set',
                 path: ['glyphs', 'A', 'layers', 'layer-1'],
-                oldValue: staleLayerSnapshot,
-                newValue: staleLayerSnapshot,
-                applyMode: 'layer-snapshot'
+                oldValue: staleDrawingSnapshot,
+                newValue: staleDrawingSnapshot,
+                applyMode: 'drawing-snapshot'
             }
         ]);
         senderBridge.setTransactionFinalizer(transactionFinalizer);
@@ -12760,9 +12820,9 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         });
 
         const sourceSnapshot = cloneValue(senderBridge.getFontJsonSnapshot());
-        const sourceLayer = sourceSnapshot.glyphs[0].layers[0];
-        sourceLayer.width = 777;
-        sourceLayer.shapes[0].nodes[0].x = 123;
+        const sourceDrawing = sourceSnapshot.glyphs[0].layers[0];
+        sourceDrawing.width = 777;
+        sourceDrawing.shapes[0].nodes[0].x = 123;
 
         expect(
             senderBridge.applyExternalSourceReload(
@@ -12832,8 +12892,8 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         // Simulate runtime/model-only fields that have not been committed to
         // Y.Doc. They must not be interpreted as external source removals.
         for (const glyph of fontJson.glyphs) {
-            for (const layer of glyph.layers) {
-                layer.runtimeOnlyExpansion = { selected: true };
+            for (const drawing of glyph.layers) {
+                drawing.runtimeOnlyExpansion = { selected: true };
             }
         }
 
@@ -12962,12 +13022,12 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
             'C',
             'A'
         ]);
-        expect(senderJson.glyphs[1].layers.map((layer) => layer.id)).toEqual([
-            'layer-4'
-        ]);
-        expect(receiverJson.glyphs[1].layers.map((layer) => layer.id)).toEqual([
-            'layer-4'
-        ]);
+        expect(
+            senderJson.glyphs[1].layers.map((drawing) => drawing.id)
+        ).toEqual(['layer-4']);
+        expect(
+            receiverJson.glyphs[1].layers.map((drawing) => drawing.id)
+        ).toEqual(['layer-4']);
 
         expect(senderBridge.undo()).not.toBeNull();
         expect(senderJson.glyphs.map((glyph) => glyph.name)).toEqual([
@@ -12978,12 +13038,12 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
             'A',
             'B'
         ]);
-        expect(senderJson.glyphs[0].layers.map((layer) => layer.id)).toEqual([
-            'layer-1'
-        ]);
-        expect(receiverJson.glyphs[0].layers.map((layer) => layer.id)).toEqual([
-            'layer-1'
-        ]);
+        expect(
+            senderJson.glyphs[0].layers.map((drawing) => drawing.id)
+        ).toEqual(['layer-1']);
+        expect(
+            receiverJson.glyphs[0].layers.map((drawing) => drawing.id)
+        ).toEqual(['layer-1']);
 
         expect(senderBridge.redo()).not.toBeNull();
         expect(senderJson.glyphs.map((glyph) => glyph.name)).toEqual([
@@ -12994,12 +13054,12 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
             'C',
             'A'
         ]);
-        expect(senderJson.glyphs[1].layers.map((layer) => layer.id)).toEqual([
-            'layer-4'
-        ]);
-        expect(receiverJson.glyphs[1].layers.map((layer) => layer.id)).toEqual([
-            'layer-4'
-        ]);
+        expect(
+            senderJson.glyphs[1].layers.map((drawing) => drawing.id)
+        ).toEqual(['layer-4']);
+        expect(
+            receiverJson.glyphs[1].layers.map((drawing) => drawing.id)
+        ).toEqual(['layer-4']);
 
         senderBridge.destroy();
         receiverBridge.destroy();
@@ -13019,11 +13079,11 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
             ).status
         ).toBe('committed');
 
-        const rawLayer = fromYType(
+        const rawDrawing = fromYType(
             bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1'])
         );
-        expect(Array.isArray(rawLayer.shapes[0].nodes)).toBe(true);
-        expect(rawLayer.shapes[0].nodes[1].x).toBe(325);
+        expect(Array.isArray(rawDrawing.shapes[0].nodes)).toBe(true);
+        expect(rawDrawing.shapes[0].nodes[1].x).toBe(325);
         expect(fontJson.glyphs[0].layers[0].shapes[0].nodes[1].x).toBe(325);
 
         bridge.destroy();

@@ -190,12 +190,18 @@ export async function installJsonCanonicalizer(page: Page): Promise<void> {
             return value;
         };
 
-        testWindow.__canonicalizeLayerSnapshotForTests = (layer: any): any => {
-            if (!layer || typeof layer !== 'object' || Array.isArray(layer)) {
-                return layer;
+        testWindow.__canonicalizeLayerSnapshotForTests = (
+            drawing: any
+        ): any => {
+            if (
+                !drawing ||
+                typeof drawing !== 'object' ||
+                Array.isArray(drawing)
+            ) {
+                return drawing;
             }
 
-            const canonicalLayer = { ...layer };
+            const canonicalDrawing = { ...drawing };
             const canonicalizeNodeForTest = (node: any) => {
                 if (!node || typeof node !== 'object') {
                     return node;
@@ -203,45 +209,46 @@ export async function installJsonCanonicalizer(page: Page): Promise<void> {
                 const { id: _id, ...nodeWithoutId } = node;
                 return nodeWithoutId;
             };
-            if (canonicalLayer.height === undefined) {
-                delete canonicalLayer.height;
+            if (canonicalDrawing.height === undefined) {
+                delete canonicalDrawing.height;
             }
-            if (canonicalLayer.vertWidth === undefined) {
-                delete canonicalLayer.vertWidth;
+            if (canonicalDrawing.vertWidth === undefined) {
+                delete canonicalDrawing.vertWidth;
             }
-            if (canonicalLayer.isInterpolated === false) {
-                delete canonicalLayer.isInterpolated;
+            if (canonicalDrawing.isInterpolated === false) {
+                delete canonicalDrawing.isInterpolated;
             }
-            if (canonicalLayer.name === undefined) {
-                delete canonicalLayer.name;
+            if (canonicalDrawing.name === undefined) {
+                delete canonicalDrawing.name;
             }
 
-            const master = canonicalLayer.master;
+            const station = canonicalDrawing.master;
             if (
-                master &&
-                typeof master === 'object' &&
-                !Array.isArray(master) &&
-                master.type === 'DefaultForMaster' &&
-                typeof master.master === 'string'
+                station &&
+                typeof station === 'object' &&
+                !Array.isArray(station) &&
+                station.type === 'DefaultForMaster' &&
+                typeof station.master === 'string'
             ) {
-                const masterModel = testWindow.currentFontModel?.masters?.find(
-                    (candidate: any) => candidate?.id === master.master
-                );
-                const masterName =
-                    typeof masterModel?.name === 'string'
-                        ? masterModel.name
-                        : masterModel?.name?.dflt || '';
+                const stationModel =
+                    testWindow.currentFontModel?.stations?.find(
+                        (candidate: any) => candidate?.id === station.master
+                    );
+                const stationName =
+                    typeof stationModel?.name === 'string'
+                        ? stationModel.name
+                        : stationModel?.name?.dflt || '';
                 if (
-                    typeof canonicalLayer.name === 'string' &&
-                    (!canonicalLayer.name.length ||
-                        (masterName && canonicalLayer.name === masterName))
+                    typeof canonicalDrawing.name === 'string' &&
+                    (!canonicalDrawing.name.length ||
+                        (stationName && canonicalDrawing.name === stationName))
                 ) {
-                    delete canonicalLayer.name;
+                    delete canonicalDrawing.name;
                 }
             }
 
-            if (Array.isArray(canonicalLayer.shapes)) {
-                canonicalLayer.shapes = canonicalLayer.shapes.map(
+            if (Array.isArray(canonicalDrawing.shapes)) {
+                canonicalDrawing.shapes = canonicalDrawing.shapes.map(
                     (shape: any) => {
                         if (
                             !shape ||
@@ -263,8 +270,8 @@ export async function installJsonCanonicalizer(page: Page): Promise<void> {
                 );
             }
 
-            if (Array.isArray(canonicalLayer.anchors)) {
-                canonicalLayer.anchors = canonicalLayer.anchors.map(
+            if (Array.isArray(canonicalDrawing.anchors)) {
+                canonicalDrawing.anchors = canonicalDrawing.anchors.map(
                     (anchor: any) => {
                         if (
                             !anchor ||
@@ -281,7 +288,7 @@ export async function installJsonCanonicalizer(page: Page): Promise<void> {
                 );
             }
 
-            return testWindow.__canonicalizeJsonValueForTests(canonicalLayer);
+            return testWindow.__canonicalizeJsonValueForTests(canonicalDrawing);
         };
 
         testWindow.__canonicalizeGlyphSnapshotForTests = (glyph: any): any => {
@@ -292,8 +299,8 @@ export async function installJsonCanonicalizer(page: Page): Promise<void> {
             const canonicalGlyph = { ...glyph };
             if (Array.isArray(canonicalGlyph.layers)) {
                 canonicalGlyph.layers = canonicalGlyph.layers.map(
-                    (layer: any) =>
-                        testWindow.__canonicalizeLayerSnapshotForTests(layer)
+                    (drawing: any) =>
+                        testWindow.__canonicalizeLayerSnapshotForTests(drawing)
                 );
             }
 
@@ -467,31 +474,31 @@ export async function waitForRemoteChange(
         : new Error('Timed out waiting for remote fontModelSync');
 }
 
-export async function waitForRawLayerAnchors(
+export async function waitForRawDrawingAnchors(
     page: Page,
     glyphName: string,
-    layerId: string,
+    drawingId: string,
     expectedAnchors: any
 ): Promise<void> {
     try {
         await page.waitForFunction(
-            ({ glyphName, layerId, expectedAnchors }) => {
+            ({ glyphName, layerId: drawingId, expectedAnchors }) => {
                 const rawData = (window as any).fontManager?.currentFont
                     ?.babelfontData;
                 const glyph = rawData?.glyphs?.find(
                     (candidate: any) => candidate.name === glyphName
                 );
-                const layer = glyph?.layers?.find(
-                    (candidate: any) => candidate.id === layerId
+                const drawing = glyph?.layers?.find(
+                    (candidate: any) => candidate.id === drawingId
                 );
-                if (!layer) {
+                if (!drawing) {
                     return false;
                 }
 
                 return (
                     JSON.stringify(
                         (window as any).__canonicalizeJsonValueForTests(
-                            layer.anchors ?? null
+                            drawing.anchors ?? null
                         )
                     ) ===
                     JSON.stringify(
@@ -501,19 +508,19 @@ export async function waitForRawLayerAnchors(
                     )
                 );
             },
-            { glyphName, layerId, expectedAnchors },
+            { glyphName, layerId: drawingId, expectedAnchors },
             { timeout: 20000 }
         );
     } catch (error) {
-        const currentRawAnchors = await extractRawLayerAnchors(
+        const currentRawAnchors = await extractRawDrawingAnchors(
             page,
             glyphName,
-            layerId
+            drawingId
         );
-        const currentYDocAnchors = await extractYDocLayerAnchors(
+        const currentYDocAnchors = await extractYDocDrawingAnchors(
             page,
             glyphName,
-            layerId
+            drawingId
         );
         throw new Error(
             [
@@ -569,7 +576,7 @@ export async function getCompilationErrorText(
 }
 
 /** Extract comparable glyph layer data from a page's font model. */
-export async function extractGlyphLayerData(
+export async function extractGlyphDrawingData(
     page: Page,
     glyphNames: string[]
 ): Promise<Record<string, any>> {
@@ -584,18 +591,18 @@ export async function extractGlyphLayerData(
                 continue;
             }
 
-            const layers: Record<string, any> = {};
-            for (const layer of glyph.layers || []) {
-                const layerData: Record<string, any> = {
-                    id: layer.id,
-                    name: layer.name,
-                    width: layer.width,
-                    master: layer.master
+            const drawings: Record<string, any> = {};
+            for (const drawing of glyph.drawings || []) {
+                const drawingData: Record<string, any> = {
+                    id: drawing.id,
+                    name: drawing.name,
+                    width: drawing.width,
+                    master: drawing.station
                 };
 
                 // Shapes: extract nodes/paths and components separately
                 const shapes = [];
-                for (const shape of layer.shapes || []) {
+                for (const shape of drawing.shapes || []) {
                     try {
                         const path = shape.asPath?.();
                         if (path) {
@@ -633,21 +640,21 @@ export async function extractGlyphLayerData(
                         data: JSON.parse(JSON.stringify(shape.data || shape))
                     });
                 }
-                layerData.shapes = shapes;
+                drawingData.shapes = shapes;
 
                 // Anchors
-                layerData.anchors = (layer.anchors || []).map((a: any) => ({
+                drawingData.anchors = (drawing.anchors || []).map((a: any) => ({
                     name: a.name,
                     x: a.x,
                     y: a.y
                 }));
 
-                layers[layer.id] = (
+                drawings[drawing.id] = (
                     window as any
-                ).__canonicalizeLayerSnapshotForTests(layerData);
+                ).__canonicalizeLayerSnapshotForTests(drawingData);
             }
 
-            result[name] = { layers };
+            result[name] = { layers: drawings };
         }
 
         return result;
@@ -655,25 +662,25 @@ export async function extractGlyphLayerData(
 }
 
 /** Extract raw babelfontData layer properties for a specific layer ID. */
-export async function extractRawLayerProperties(
+export async function extractRawDrawingProperties(
     page: Page,
     glyphName: string,
-    layerId: string
+    drawingId: string
 ): Promise<Record<string, any> | null> {
     return page.evaluate(
-        ({ glyphName, layerId }) => {
+        ({ glyphName, layerId: drawingId }) => {
             const rawData = (window as any).fontManager?.currentFont
                 ?.babelfontData;
             const glyph = rawData?.glyphs?.find(
                 (g: any) => g.name === glyphName
             );
-            const layer = glyph?.layers?.find((l: any) => l.id === layerId);
-            if (!layer) return null;
+            const drawing = glyph?.layers?.find((l: any) => l.id === drawingId);
+            if (!drawing) return null;
 
             // Return a copy with all enumerable own properties
             const result: Record<string, any> = {};
-            for (const key of Object.keys(layer)) {
-                const value = layer[key];
+            for (const key of Object.keys(drawing)) {
+                const value = drawing[key];
                 // Skip shapes/anchors for brevity (tested separately)
                 if (key === 'shapes' || key === 'anchors') continue;
                 result[key] =
@@ -683,78 +690,79 @@ export async function extractRawLayerProperties(
             }
             return (window as any).__canonicalizeLayerSnapshotForTests(result);
         },
-        { glyphName, layerId }
+        { glyphName, layerId: drawingId }
     );
 }
 
 /** Extract Y.Doc layer keys for a specific layer. */
-export async function extractYDocLayerKeys(
+export async function extractYDocDrawingKeys(
     page: Page,
     glyphName: string,
-    layerId: string
+    drawingId: string
 ): Promise<string[]> {
     return page.evaluate(
-        ({ glyphName, layerId }) => {
+        ({ glyphName, layerId: drawingId }) => {
             const bridge = (window as any).changeBridge;
             if (!bridge) return [];
-            const layerMap = bridge.getYValue?.([
+            const drawingMap = bridge.getYValue?.([
                 'glyphs',
                 glyphName,
                 'layers',
-                layerId
+                drawingId
             ]);
-            if (!layerMap || typeof layerMap.forEach !== 'function') return [];
+            if (!drawingMap || typeof drawingMap.forEach !== 'function')
+                return [];
 
             const keys: string[] = [];
-            layerMap.forEach((_v: any, k: string) => keys.push(k));
+            drawingMap.forEach((_v: any, k: string) => keys.push(k));
             return keys.sort();
         },
-        { glyphName, layerId }
+        { glyphName, layerId: drawingId }
     );
 }
 
-export async function extractYDocLayerAnchors(
+export async function extractYDocDrawingAnchors(
     page: Page,
     glyphName: string,
-    layerId: string
+    drawingId: string
 ): Promise<any> {
     return page.evaluate(
-        ({ glyphName, layerId }) => {
+        ({ glyphName, layerId: drawingId }) => {
             const bridge = (window as any).changeBridge;
             if (!bridge) return null;
-            const layerMap = bridge.getYValue?.([
+            const drawingMap = bridge.getYValue?.([
                 'glyphs',
                 glyphName,
                 'layers',
-                layerId
+                drawingId
             ]);
-            const anchors = layerMap?.get?.('anchors');
+            const anchors = drawingMap?.get?.('anchors');
             if (!anchors || typeof anchors.toJSON !== 'function') {
                 return null;
             }
             return JSON.parse(JSON.stringify(anchors.toJSON()));
         },
-        { glyphName, layerId }
+        { glyphName, layerId: drawingId }
     );
 }
 
 /** Extract shapes from a specific layer via raw babelfontData for deep comparison. */
-export async function extractRawLayerShapes(
+export async function extractRawDrawingShapes(
     page: Page,
     glyphName: string,
-    layerId: string
+    drawingId: string
 ): Promise<any> {
     return page.evaluate(
-        ({ glyphName, layerId }) => {
+        ({ glyphName, layerId: drawingId }) => {
             const rawData = (window as any).fontManager?.currentFont
                 ?.babelfontData;
             const glyph = rawData?.glyphs?.find(
                 (g: any) => g.name === glyphName
             );
-            const layer = glyph?.layers?.find((l: any) => l.id === layerId);
-            if (!layer) return null;
+            const drawing = glyph?.layers?.find((l: any) => l.id === drawingId);
+            if (!drawing) return null;
 
-            const rawShapes = JSON.parse(JSON.stringify(layer.shapes));
+            const rawShapes = JSON.parse(JSON.stringify(drawing.shapes));
             if (!Array.isArray(rawShapes)) {
                 return rawShapes;
             }
@@ -770,147 +778,150 @@ export async function extractRawLayerShapes(
 
                 return (
                     (window as any).__canonicalizeLayerSnapshotForTests({
-                        id: layerId,
-                        width: layer.width,
+                        id: drawingId,
+                        width: drawing.width,
                         shapes: [shape]
                     }).shapes?.[0] ?? shape
                 );
             });
         },
-        { glyphName, layerId }
+        { glyphName, layerId: drawingId }
     );
 }
 
 /** Extract anchors from a specific layer via raw babelfontData. */
-export async function extractRawLayerAnchors(
+export async function extractRawDrawingAnchors(
     page: Page,
     glyphName: string,
-    layerId: string
+    drawingId: string
 ): Promise<any> {
     return page.evaluate(
-        ({ glyphName, layerId }) => {
+        ({ glyphName, layerId: drawingId }) => {
             const rawData = (window as any).fontManager?.currentFont
                 ?.babelfontData;
             const glyph = rawData?.glyphs?.find(
                 (g: any) => g.name === glyphName
             );
-            const layer = glyph?.layers?.find((l: any) => l.id === layerId);
-            if (!layer) return null;
-            return JSON.parse(JSON.stringify(layer.anchors));
+            const drawing = glyph?.layers?.find((l: any) => l.id === drawingId);
+            if (!drawing) return null;
+            return JSON.parse(JSON.stringify(drawing.anchors));
         },
-        { glyphName, layerId }
+        { glyphName, layerId: drawingId }
     );
 }
 
 /** Find the Regular master's layer ID in the Fustat font. */
-export async function findThinLayerId(page: Page): Promise<string> {
+export async function findThinDrawingId(page: Page): Promise<string> {
     // Prefer the authoritative model layer that belongs to the Thin master.
     // Fall back to the granular Y.Doc layer map when model metadata is sparse.
     return page.evaluate(() => {
         try {
             const fontModel = (window as any).currentFontModel;
-            const masters = fontModel?.masters || [];
-            let thinMasterId = '';
-            for (const master of masters) {
+            const stations = fontModel?.stations || [];
+            let thinStationId = '';
+            for (const station of stations) {
                 const nameStr =
-                    typeof master.name === 'string'
-                        ? master.name
-                        : master.name?.dflt || '';
+                    typeof station.name === 'string'
+                        ? station.name
+                        : station.name?.dflt || '';
                 if (
-                    master.location?.wght === 200 ||
+                    station.location?.wght === 200 ||
                     nameStr === 'Thin' ||
                     nameStr === 'ExtraLight'
                 ) {
-                    thinMasterId = master.id;
+                    thinStationId = station.id;
                     break;
                 }
             }
-            if (!thinMasterId) thinMasterId = masters[0]?.id || '';
-            if (!thinMasterId) return '';
+            if (!thinStationId) thinStationId = stations[0]?.id || '';
+            if (!thinStationId) return '';
 
             const glyph = fontModel?.findGlyph?.('a');
-            const modelLayers = Array.isArray(glyph?.layers)
-                ? glyph.layers
+            const modelDrawings = Array.isArray(glyph?.drawings)
+                ? glyph.drawings
                 : [];
-            for (const layer of modelLayers) {
-                const layerId = String(layer?.id ?? '');
-                const masterRef = String(
-                    layer?.master ?? layer?.data?.master ?? layerId
+            for (const drawing of modelDrawings) {
+                const drawingId = String(drawing?.id ?? '');
+                const stationRef = String(
+                    drawing?.station ?? drawing?.data?.master ?? drawingId
                 );
-                const shapes = Array.isArray(layer?.shapes)
-                    ? layer.shapes
-                    : Array.isArray(layer?.data?.shapes)
-                      ? layer.data.shapes
-                      : Array.isArray(layer?.paths)
-                        ? layer.paths
-                        : Array.isArray(layer?.data?.paths)
-                          ? layer.data.paths
+                const shapes = Array.isArray(drawing?.shapes)
+                    ? drawing.shapes
+                    : Array.isArray(drawing?.data?.shapes)
+                      ? drawing.data.shapes
+                      : Array.isArray(drawing?.paths)
+                        ? drawing.paths
+                        : Array.isArray(drawing?.data?.paths)
+                          ? drawing.data.paths
                           : [];
-                const anchors = Array.isArray(layer?.anchors)
-                    ? layer.anchors
-                    : Array.isArray(layer?.data?.anchors)
-                      ? layer.data.anchors
+                const anchors = Array.isArray(drawing?.anchors)
+                    ? drawing.anchors
+                    : Array.isArray(drawing?.data?.anchors)
+                      ? drawing.data.anchors
                       : [];
 
                 if (
-                    layerId &&
-                    (masterRef === thinMasterId || layerId === thinMasterId) &&
+                    drawingId &&
+                    (stationRef === thinStationId ||
+                        drawingId === thinStationId) &&
                     (shapes.length > 0 || anchors.length > 0)
                 ) {
-                    return layerId;
+                    return drawingId;
                 }
             }
-            const firstMasterLayer = modelLayers.find((layer: any) => {
-                const layerId = String(layer?.id ?? '');
-                const masterRef = String(
-                    layer?.master ?? layer?.data?.master ?? ''
+            const firstStationDrawing = modelDrawings.find((drawing: any) => {
+                const drawingId = String(drawing?.id ?? '');
+                const stationRef = String(
+                    drawing?.station ?? drawing?.data?.master ?? ''
                 );
                 return (
-                    layerId &&
-                    (masterRef === thinMasterId || layerId === thinMasterId)
+                    drawingId &&
+                    (stationRef === thinStationId ||
+                        drawingId === thinStationId)
                 );
             });
-            if (firstMasterLayer?.id) {
-                return String(firstMasterLayer.id);
+            if (firstStationDrawing?.id) {
+                return String(firstStationDrawing.id);
             }
-            if (modelLayers[0]?.id) {
-                return String(modelLayers[0].id);
+            if (modelDrawings[0]?.id) {
+                return String(modelDrawings[0].id);
             }
 
             const bridge = (window as any).changeBridge;
-            const layersMap = bridge?.getYValue?.(['glyphs', 'a', 'layers']);
-            if (!layersMap) return '';
+            const drawingsMap = bridge?.getYValue?.(['glyphs', 'a', 'layers']);
+            if (!drawingsMap) return '';
 
             let result = '';
-            layersMap.forEach((layerMap: any, layerId: string) => {
+            drawingsMap.forEach((drawingMap: any, drawingId: string) => {
                 if (result) return;
-                if (!layerMap || typeof layerMap.forEach !== 'function') return;
+                if (!drawingMap || typeof drawingMap.forEach !== 'function')
+                    return;
 
                 let hasAnchors = false;
                 let hasShapes = false;
-                let masterRef = '';
-                layerMap.forEach((v: any, k: string) => {
+                let stationRef = '';
+                drawingMap.forEach((v: any, k: string) => {
                     if (k === 'anchors' || k === 'anchorsById')
                         hasAnchors = true;
                     if (k === 'shapes' || k === 'shapesById') hasShapes = true;
                     if (k === 'master') {
-                        if (typeof v === 'string') masterRef = v;
+                        if (typeof v === 'string') stationRef = v;
                         else if (v && typeof v === 'object') {
                             if (typeof v.get === 'function') {
-                                masterRef =
+                                stationRef =
                                     v.get('master') ||
                                     v.get('DefaultForMaster') ||
                                     '';
                             } else {
-                                masterRef =
+                                stationRef =
                                     v.master || v.DefaultForMaster || '';
                             }
                         }
                     }
                 });
 
-                if (hasAnchors && hasShapes && masterRef === thinMasterId) {
-                    result = layerId;
+                if (hasAnchors && hasShapes && stationRef === thinStationId) {
+                    result = drawingId;
                 }
             });
 
@@ -922,13 +933,13 @@ export async function findThinLayerId(page: Page): Promise<string> {
 }
 
 /** Count layers in the model for a glyph (only default master layers). */
-export async function countModelLayers(
+export async function countModelDrawings(
     page: Page,
     glyphName: string
 ): Promise<number> {
     return page.evaluate((name) => {
         const glyph = (window as any).currentFontModel?.findGlyph(name);
-        return glyph?.layers?.length || 0;
+        return glyph?.drawings?.length || 0;
     }, glyphName);
 }
 
@@ -1021,7 +1032,7 @@ export async function setAxisSliderValue(
     await page.waitForTimeout(500);
 }
 
-export async function getModelLayerIds(
+export async function getModelDrawingIds(
     page: Page,
     glyphName: string
 ): Promise<string[]> {
@@ -1032,29 +1043,29 @@ export async function getModelLayerIds(
                 ? glyph.toJSON()
                 : glyph?.data;
         return Array.isArray(snapshot?.layers)
-            ? snapshot.layers.map((layer: any) => String(layer?.id || ''))
+            ? snapshot.layers.map((drawing: any) => String(drawing?.id || ''))
             : [];
     }, glyphName);
 }
 
-export async function extractActiveLayerSelectionState(page: Page): Promise<{
+export async function extractActiveDrawingSelectionState(page: Page): Promise<{
     currentGlyphName: string | null;
-    selectedLayerId: string | null;
-    currentLayerExists: boolean;
+    selectedDrawingId: string | null;
+    currentDrawingExists: boolean;
     glyphStack: string | null;
 }> {
     return page.evaluate(() => {
         const outlineEditor = (window as any).glyphCanvas?.outlineEditor;
         const currentGlyph = outlineEditor?.getCurrentGlyphModel?.();
-        const currentLayerId = outlineEditor?.getCurrentLayerId?.() || null;
+        const currentDrawingId = outlineEditor?.getCurrentDrawingId?.() || null;
 
         return {
             currentGlyphName: outlineEditor?.currentGlyphName || null,
-            selectedLayerId: outlineEditor?.selectedLayerId || null,
-            currentLayerExists: !!(
+            selectedDrawingId: outlineEditor?.selectedDrawingId || null,
+            currentDrawingExists: !!(
                 currentGlyph &&
-                currentLayerId &&
-                currentGlyph.findLayerById?.(currentLayerId)
+                currentDrawingId &&
+                currentGlyph.findDrawingById?.(currentDrawingId)
             ),
             glyphStack: outlineEditor?.glyphStack || null
         };
@@ -1065,18 +1076,20 @@ export async function extractActiveInterpolatedRenderState(
     page: Page
 ): Promise<{
     currentGlyphName: string | null;
-    selectedLayerId: string | null;
-    currentLayerId: string | null;
-    layerDataExists: boolean;
-    layerDataIsInterpolated: boolean;
+    selectedDrawingId: string | null;
+    currentDrawingId: string | null;
+    drawingDataExists: boolean;
+    drawingDataIsInterpolated: boolean;
     shapeCount: number;
     pathShapeCount: number;
     anchorCount: number;
 }> {
     return page.evaluate(() => {
         const outlineEditor = (window as any).glyphCanvas?.outlineEditor;
-        const layerData = outlineEditor?.getCurrentLayerDataFromStack?.();
-        const shapes = Array.isArray(layerData?.shapes) ? layerData.shapes : [];
+        const drawingData = outlineEditor?.getCurrentDrawingDataFromStack?.();
+        const shapes = Array.isArray(drawingData?.shapes)
+            ? drawingData.shapes
+            : [];
         const pathShapeCount = shapes.filter((shape: any) => {
             if (!shape || typeof shape !== 'object') {
                 return false;
@@ -1093,14 +1106,14 @@ export async function extractActiveInterpolatedRenderState(
 
         return {
             currentGlyphName: outlineEditor?.currentGlyphName || null,
-            selectedLayerId: outlineEditor?.selectedLayerId || null,
-            currentLayerId: outlineEditor?.getCurrentLayerId?.() || null,
-            layerDataExists: !!layerData,
-            layerDataIsInterpolated: layerData?.isInterpolated === true,
+            selectedDrawingId: outlineEditor?.selectedDrawingId || null,
+            currentDrawingId: outlineEditor?.getCurrentDrawingId?.() || null,
+            drawingDataExists: !!drawingData,
+            drawingDataIsInterpolated: drawingData?.isInterpolated === true,
             shapeCount: shapes.length,
             pathShapeCount,
-            anchorCount: Array.isArray(layerData?.anchors)
-                ? layerData.anchors.length
+            anchorCount: Array.isArray(drawingData?.anchors)
+                ? drawingData.anchors.length
                 : 0
         };
     });
@@ -1160,25 +1173,25 @@ export async function setInterpolatedEditorState(
             await glyphCanvas.doUIUpdateAsync();
 
             const beforeAutoSelect = {
-                selectedLayerId: outlineEditor.selectedLayerId,
+                selectedDrawingId: outlineEditor.selectedDrawingId,
                 currentGlyphName: outlineEditor.currentGlyphName,
-                currentLayerId: outlineEditor.getCurrentLayerId?.() || null,
-                layerDataExists: !!outlineEditor.layerData,
-                shapeCount: Array.isArray(outlineEditor.layerData?.shapes)
-                    ? outlineEditor.layerData.shapes.length
+                currentDrawingId: outlineEditor.getCurrentDrawingId?.() || null,
+                drawingDataExists: !!outlineEditor.drawingData,
+                shapeCount: Array.isArray(outlineEditor.drawingData?.shapes)
+                    ? outlineEditor.drawingData.shapes.length
                     : 0
             };
-            await outlineEditor.autoSelectMatchingLayer();
+            await outlineEditor.autoSelectMatchingDrawing();
             const afterAutoSelect = {
-                selectedLayerId: outlineEditor.selectedLayerId,
+                selectedDrawingId: outlineEditor.selectedDrawingId,
                 currentGlyphName: outlineEditor.currentGlyphName,
-                currentLayerId: outlineEditor.getCurrentLayerId?.() || null,
-                layerDataExists: !!outlineEditor.layerData,
-                shapeCount: Array.isArray(outlineEditor.layerData?.shapes)
-                    ? outlineEditor.layerData.shapes.length
+                currentDrawingId: outlineEditor.getCurrentDrawingId?.() || null,
+                drawingDataExists: !!outlineEditor.drawingData,
+                shapeCount: Array.isArray(outlineEditor.drawingData?.shapes)
+                    ? outlineEditor.drawingData.shapes.length
                     : 0
             };
-            if (outlineEditor.selectedLayerId === null) {
+            if (outlineEditor.selectedDrawingId === null) {
                 try {
                     await outlineEditor.interpolateCurrentGlyph(true);
                 } catch (error) {
@@ -1194,7 +1207,7 @@ export async function setInterpolatedEditorState(
             }
 
             // After interpolation, wait for layer data
-            if (!outlineEditor.layerData) {
+            if (!outlineEditor.drawingData) {
                 await glyphCanvas.doUIUpdateAsync();
             }
 
@@ -1202,15 +1215,16 @@ export async function setInterpolatedEditorState(
                 beforeAutoSelect,
                 afterAutoSelect,
                 afterInterpolate: {
-                    selectedLayerId: outlineEditor.selectedLayerId,
+                    selectedDrawingId: outlineEditor.selectedDrawingId,
                     currentGlyphName: outlineEditor.currentGlyphName,
-                    currentLayerId: outlineEditor.getCurrentLayerId?.() || null,
-                    layerDataExists: !!outlineEditor.layerData,
-                    shapeCount: Array.isArray(outlineEditor.layerData?.shapes)
-                        ? outlineEditor.layerData.shapes.length
+                    currentDrawingId:
+                        outlineEditor.getCurrentDrawingId?.() || null,
+                    drawingDataExists: !!outlineEditor.drawingData,
+                    shapeCount: Array.isArray(outlineEditor.drawingData?.shapes)
+                        ? outlineEditor.drawingData.shapes.length
                         : 0,
                     isInterpolated:
-                        outlineEditor.layerData?.isInterpolated === true,
+                        outlineEditor.drawingData?.isInterpolated === true,
                     glyphStack: outlineEditor.glyphStack || null,
                     variationSettings: { ...axesManager.variationSettings }
                 }
@@ -1222,34 +1236,36 @@ export async function setInterpolatedEditorState(
     return interpolationResult;
 }
 
-export async function extractYDocLayerIds(
+export async function extractYDocDrawingIds(
     page: Page,
     glyphName: string
 ): Promise<string[]> {
     return page.evaluate((name) => {
         const bridge = (window as any).changeBridge;
-        const layersMap = bridge?.fontMap
+        const drawingsMap = bridge?.fontMap
             ?.get('glyphs')
             ?.get(name)
             ?.get?.('layers');
-        if (!layersMap || typeof layersMap.forEach !== 'function') {
+        if (!drawingsMap || typeof drawingsMap.forEach !== 'function') {
             return [];
         }
 
         const ids: string[] = [];
-        layersMap.forEach((_value: any, layerId: string) => ids.push(layerId));
+        drawingsMap.forEach((_value: any, drawingId: string) =>
+            ids.push(drawingId)
+        );
         return ids;
     }, glyphName);
 }
 
-export async function waitForNewAssociatedLayerId(
+export async function waitForNewAssociatedDrawingId(
     page: Page,
     glyphName: string,
-    previousLayerIds: string[],
+    previousDrawingIds: string[],
     timeout = 20000
 ): Promise<string> {
     await page.waitForFunction(
-        ({ glyphName, previousLayerIds }) => {
+        ({ glyphName, previousLayerIds: previousDrawingIds }) => {
             const glyph = (window as any).currentFontModel?.findGlyph(
                 glyphName
             );
@@ -1258,17 +1274,17 @@ export async function waitForNewAssociatedLayerId(
                     ? glyph.toJSON()
                     : glyph?.data;
             return !!snapshot?.layers?.find(
-                (layer: any) =>
-                    layer?.master?.type === 'AssociatedWithMaster' &&
-                    !previousLayerIds.includes(String(layer?.id || ''))
+                (drawing: any) =>
+                    drawing?.master?.type === 'AssociatedWithMaster' &&
+                    !previousDrawingIds.includes(String(drawing?.id || ''))
             )?.id;
         },
-        { glyphName, previousLayerIds },
+        { glyphName, previousLayerIds: previousDrawingIds },
         { timeout }
     );
 
     return page.evaluate(
-        ({ glyphName, previousLayerIds }) => {
+        ({ glyphName, previousLayerIds: previousDrawingIds }) => {
             const glyph = (window as any).currentFontModel?.findGlyph(
                 glyphName
             );
@@ -1278,23 +1294,23 @@ export async function waitForNewAssociatedLayerId(
                     : glyph?.data;
             return (
                 snapshot?.layers?.find(
-                    (layer: any) =>
-                        layer?.master?.type === 'AssociatedWithMaster' &&
-                        !previousLayerIds.includes(String(layer?.id || ''))
+                    (drawing: any) =>
+                        drawing?.master?.type === 'AssociatedWithMaster' &&
+                        !previousDrawingIds.includes(String(drawing?.id || ''))
                 )?.id || ''
             );
         },
-        { glyphName, previousLayerIds }
+        { glyphName, previousLayerIds: previousDrawingIds }
     );
 }
 
-export async function waitForLayerIdToDisappear(
+export async function waitForDrawingIdToDisappear(
     page: Page,
     glyphName: string,
-    layerId: string
+    drawingId: string
 ): Promise<void> {
     await page.waitForFunction(
-        ({ glyphName, layerId }) => {
+        ({ glyphName, layerId: drawingId }) => {
             const glyph = (window as any).currentFontModel?.findGlyph(
                 glyphName
             );
@@ -1303,24 +1319,24 @@ export async function waitForLayerIdToDisappear(
                     ? glyph.toJSON()
                     : glyph?.data;
             return !snapshot?.layers?.some(
-                (layer: any) => String(layer?.id || '') === layerId
+                (drawing: any) => String(drawing?.id || '') === drawingId
             );
         },
-        { glyphName, layerId },
+        { glyphName, layerId: drawingId },
         { timeout: 20000 }
     );
 }
 
-export async function selectLayerRow(
+export async function selectDrawingRow(
     page: Page,
-    layerId: string
+    drawingId: string
 ): Promise<void> {
-    const layerRow = page.locator(
-        `#glyph-properties-sidebar .editor-layer-item[data-layer-id="${layerId}"]`
+    const drawingRow = page.locator(
+        `#glyph-properties-sidebar .editor-drawing-item[data-drawing-id="${drawingId}"]`
     );
-    await expect(layerRow).toBeVisible();
-    await layerRow.click();
-    await expect(layerRow).toHaveClass(/selected/);
+    await expect(drawingRow).toBeVisible();
+    await drawingRow.click();
+    await expect(drawingRow).toHaveClass(/selected/);
 }
 
 export async function dismissVisibleTippies(page: Page): Promise<void> {
@@ -1350,17 +1366,17 @@ export async function dismissVisibleTippies(page: Page): Promise<void> {
     );
 }
 
-export async function waitForVisibleLayerRows(page: Page): Promise<void> {
+export async function waitForVisibleDrawingRows(page: Page): Promise<void> {
     await page.waitForFunction(
         () =>
-            document.querySelectorAll('.editor-layer-item[data-layer-id]')
+            document.querySelectorAll('.editor-drawing-item[data-drawing-id]')
                 .length > 0,
         undefined,
         { timeout: 10000 }
     );
 }
 
-export async function refreshEditorLayerPanel(page: Page): Promise<void> {
+export async function refreshEditorDrawingPanel(page: Page): Promise<void> {
     await page.evaluate(async () => {
         const glyphCanvas = (window as any).glyphCanvas;
         await glyphCanvas?.updatePropertiesUI?.();
@@ -1394,11 +1410,11 @@ export async function alignEditorCanvas(
         glyphCanvas.outlineEditor.active = true;
         glyphCanvas.outlineEditor.currentGlyphName = nextGlyphName;
         await glyphCanvas.doUIUpdateAsync();
-        await glyphCanvas.outlineEditor.autoSelectMatchingLayer();
+        await glyphCanvas.outlineEditor.autoSelectMatchingDrawing();
         await glyphCanvas.doUIUpdateAsync();
     }, glyphName);
-    await refreshEditorLayerPanel(page);
-    await waitForVisibleLayerRows(page);
+    await refreshEditorDrawingPanel(page);
+    await waitForVisibleDrawingRows(page);
 }
 
 function firstJsonMismatch(
@@ -1436,7 +1452,7 @@ function firstJsonMismatch(
     return path || 'root';
 }
 
-export async function waitUntilGlyphLayerDataMatches(
+export async function waitUntilGlyphDrawingDataMatches(
     sourcePage: Page,
     targetPage: Page,
     glyphNames: string[],
@@ -1447,8 +1463,8 @@ export async function waitUntilGlyphLayerDataMatches(
     let lastTarget: unknown;
     while (Date.now() < deadline) {
         [lastSource, lastTarget] = await Promise.all([
-            extractGlyphLayerData(sourcePage, glyphNames),
-            extractGlyphLayerData(targetPage, glyphNames)
+            extractGlyphDrawingData(sourcePage, glyphNames),
+            extractGlyphDrawingData(targetPage, glyphNames)
         ]);
         if (JSON.stringify(lastSource) === JSON.stringify(lastTarget)) {
             return;

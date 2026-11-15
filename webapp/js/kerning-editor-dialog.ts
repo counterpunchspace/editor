@@ -1,10 +1,10 @@
 import { ArrowAdjustableTextInput } from './arrow-adjustable-text-input';
-import type { Master } from './babelfont-model';
+import type { Station } from './babelfont-model';
 import { forEachKerningPair } from './delete-glyphs-preflight';
 import {
     getKerningPairValue,
-    getMasterDisplayLabel,
-    setKerningPairValueOnMaster,
+    getStationDisplayLabel,
+    setKerningPairValueOnStation,
     type KerningContainer
 } from './kerning-utils';
 import { Logger } from './logger';
@@ -303,21 +303,25 @@ export class KerningEditorDialog {
         this.renderTable({ preserveScroll: true });
     }
 
-    private getMasters(): Master[] {
+    private getStations(): Station[] {
         const font = window.currentFontModel;
-        if (!font?.masters) {
+        if (!font?.stations) {
             return [];
         }
-        return [...font.masters];
+        return [...font.stations];
     }
 
-    private collectRows(masters: Master[]): KerningPairRow[] {
+    private collectRows(stations: Station[]): KerningPairRow[] {
         const isRTL = this.direction === 'rtl';
         const byPair = new Map<string, KerningPairRow>();
 
-        for (let masterIndex = 0; masterIndex < masters.length; masterIndex++) {
-            const master = masters[masterIndex];
-            const kerning = (isRTL ? master.kerning_rtl : master.kerning) as
+        for (
+            let stationIndex = 0;
+            stationIndex < stations.length;
+            stationIndex++
+        ) {
+            const station = stations[stationIndex];
+            const kerning = (isRTL ? station.kerning_rtl : station.kerning) as
                 KerningContainer | undefined;
             forEachKerningPair(kerning, (first, second) => {
                 const key = `${first}\u0000${second}`;
@@ -326,7 +330,7 @@ export class KerningEditorDialog {
                     row = {
                         first,
                         second,
-                        values: masters.map(() => null)
+                        values: stations.map(() => null)
                     };
                     byPair.set(key, row);
                 }
@@ -335,15 +339,15 @@ export class KerningEditorDialog {
 
         for (const row of byPair.values()) {
             for (
-                let masterIndex = 0;
-                masterIndex < masters.length;
-                masterIndex++
+                let stationIndex = 0;
+                stationIndex < stations.length;
+                stationIndex++
             ) {
-                const master = masters[masterIndex];
+                const station = stations[stationIndex];
                 const kerning = (
-                    isRTL ? master.kerning_rtl : master.kerning
+                    isRTL ? station.kerning_rtl : station.kerning
                 ) as KerningContainer | undefined;
-                row.values[masterIndex] = getKerningPairValue(
+                row.values[stationIndex] = getKerningPairValue(
                     kerning,
                     row.first,
                     row.second
@@ -432,8 +436,8 @@ export class KerningEditorDialog {
             ? this.tableWrap.scrollLeft
             : 0;
 
-        const masters = this.getMasters();
-        const rows = this.collectRows(masters);
+        const stations = this.getStations();
+        const rows = this.collectRows(stations);
         let hasSelectedRow =
             this.selectedFirst !== null &&
             this.selectedSecond !== null &&
@@ -471,9 +475,9 @@ export class KerningEditorDialog {
 
         this.arrowInputs = [];
 
-        if (masters.length === 0) {
+        if (stations.length === 0) {
             this.tableWrap.innerHTML =
-                '<div class="kerning-editor-empty">No masters in this font.</div>';
+                '<div class="kerning-editor-empty">No stations in this font.</div>';
             this.updateDeleteEnabled(false);
             return;
         }
@@ -487,10 +491,10 @@ export class KerningEditorDialog {
             return;
         }
 
-        const masterHeaders = masters
+        const stationHeaders = stations
             .map(
-                (master) =>
-                    `<th class="kerning-editor-value-col" title="${escapeHtml(master.id)}">${escapeHtml(getMasterDisplayLabel(master))}</th>`
+                (station) =>
+                    `<th class="kerning-editor-value-col" title="${escapeHtml(station.id)}">${escapeHtml(getStationDisplayLabel(station))}</th>`
             )
             .join('');
 
@@ -505,12 +509,12 @@ export class KerningEditorDialog {
                     ? ' selected'
                     : '';
                 const valueCells = row.values
-                    .map((value, masterIndex) => {
+                    .map((value, stationIndex) => {
                         const display =
                             value === null || value === undefined
                                 ? ''
                                 : String(value);
-                        return `<td class="kerning-editor-value-col"><input type="text" class="kerning-editor-value-input" inputmode="numeric" data-master-index="${masterIndex}" data-first="${escapeHtml(row.first)}" data-second="${escapeHtml(row.second)}" value="${escapeHtml(display)}" spellcheck="false"></td>`;
+                        return `<td class="kerning-editor-value-col"><input type="text" class="kerning-editor-value-input" inputmode="numeric" data-station-index="${stationIndex}" data-first="${escapeHtml(row.first)}" data-second="${escapeHtml(row.second)}" value="${escapeHtml(display)}" spellcheck="false"></td>`;
                     })
                     .join('');
                 return `<tr class="${selectedClass.trim()}" data-first="${escapeHtml(row.first)}" data-second="${escapeHtml(row.second)}"><td class="kerning-editor-pair-col">${formatPairSideHtml(row.first)}</td><td class="kerning-editor-pair-col">${formatPairSideHtml(row.second)}</td>${valueCells}</tr>`;
@@ -523,7 +527,7 @@ export class KerningEditorDialog {
                     <tr>
                         <th class="kerning-editor-pair-col kerning-editor-sortable" data-sort-column="first">First${this.sortIndicator('first')}</th>
                         <th class="kerning-editor-pair-col kerning-editor-sortable" data-sort-column="second">Second${this.sortIndicator('second')}</th>
-                        ${masterHeaders}
+                        ${stationHeaders}
                     </tr>
                 </thead>
                 <tbody>${body}</tbody>
@@ -600,7 +604,7 @@ export class KerningEditorDialog {
                 }
             });
 
-            const masterIndex = Number(element.dataset.masterIndex);
+            const stationIndex = Number(element.dataset.stationIndex);
             const first = element.dataset.first || '';
             const second = element.dataset.second || '';
 
@@ -615,14 +619,14 @@ export class KerningEditorDialog {
                         ) {
                             return Number(trimmed);
                         }
-                        const masters = this.getMasters();
-                        const master = masters[masterIndex];
-                        if (!master) {
+                        const stations = this.getStations();
+                        const station = stations[stationIndex];
+                        if (!station) {
                             return 0;
                         }
                         const isRTL = this.direction === 'rtl';
                         const kerning = (
-                            isRTL ? master.kerning_rtl : master.kerning
+                            isRTL ? station.kerning_rtl : station.kerning
                         ) as KerningContainer | undefined;
                         return getKerningPairValue(kerning, first, second) ?? 0;
                     },
@@ -633,7 +637,7 @@ export class KerningEditorDialog {
                     },
                     findReplacementInput: () => {
                         const inputs = this.tableWrap?.querySelectorAll(
-                            `.kerning-editor-value-input[data-master-index="${masterIndex}"]`
+                            `.kerning-editor-value-input[data-station-index="${stationIndex}"]`
                         );
                         if (!inputs) {
                             return null;
@@ -650,7 +654,7 @@ export class KerningEditorDialog {
                         return null;
                     },
                     burstScope: () =>
-                        [this.direction, masterIndex, first, second].join(',')
+                        [this.direction, stationIndex, first, second].join(',')
                 })
             );
         });
@@ -699,12 +703,12 @@ export class KerningEditorDialog {
         input: HTMLInputElement,
         forcedValue?: number | null
     ): Promise<void> {
-        const masters = this.getMasters();
-        const masterIndex = Number(input.dataset.masterIndex);
-        const master = masters[masterIndex];
+        const stations = this.getStations();
+        const stationIndex = Number(input.dataset.stationIndex);
+        const station = stations[stationIndex];
         const first = input.dataset.first || '';
         const second = input.dataset.second || '';
-        if (!master || !first || !second) {
+        if (!station || !first || !second) {
             return;
         }
 
@@ -726,7 +730,7 @@ export class KerningEditorDialog {
         }
 
         const isRTL = this.direction === 'rtl';
-        const kerning = (isRTL ? master.kerning_rtl : master.kerning) as
+        const kerning = (isRTL ? station.kerning_rtl : station.kerning) as
             KerningContainer | undefined;
         const currentValue = getKerningPairValue(kerning, first, second);
         if (currentValue === nextValue) {
@@ -739,8 +743,8 @@ export class KerningEditorDialog {
             compileEditType: 'kerning-value'
         });
         try {
-            setKerningPairValueOnMaster(
-                master,
+            setKerningPairValueOnStation(
+                station,
                 first,
                 second,
                 nextValue,
@@ -765,8 +769,8 @@ export class KerningEditorDialog {
 
         const first = this.selectedFirst;
         const second = this.selectedSecond;
-        const masters = this.getMasters();
-        if (masters.length === 0) {
+        const stations = this.getStations();
+        if (stations.length === 0) {
             return;
         }
 
@@ -776,8 +780,14 @@ export class KerningEditorDialog {
             compileEditType: 'kerning-value'
         });
         try {
-            for (const master of masters) {
-                setKerningPairValueOnMaster(master, first, second, null, isRTL);
+            for (const station of stations) {
+                setKerningPairValueOnStation(
+                    station,
+                    first,
+                    second,
+                    null,
+                    isRTL
+                );
             }
         } finally {
             window.patchSyncEngine?.endTransaction();

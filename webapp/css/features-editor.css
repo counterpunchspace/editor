@@ -300,11 +300,11 @@
     overflow-wrap: anywhere;
 }
 
-.features-section-header .editor-layers-header-actions {
+.features-section-header .editor-drawings-header-actions {
     margin-left: auto;
 }
 
-.features-section-header .editor-layer-add-button {
+.features-section-header .editor-drawing-add-button {
     font-size: 13px;
     line-height: 1;
 }

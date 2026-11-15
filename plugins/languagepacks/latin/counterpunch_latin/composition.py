@@ -87,7 +87,7 @@ class LatinCompositionProvider:
             positioned.append(
                 {
                     "glyph_name": request.get("glyph_name"),
-                    "master_id": request.get("master_id"),
+                    "station_id": request.get("station_id"),
                     "positions": positions,
                 }
             )

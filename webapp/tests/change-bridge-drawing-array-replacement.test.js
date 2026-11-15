@@ -1,7 +1,7 @@
 const { PatchSyncEngine: ChangeBridge } = require('../js/patch-sync-engine');
 const { yDocToJson } = require('../js/change-bridge-ydoc');
 
-function makeLayerArrayReplacementFont() {
+function makeDrawingArrayReplacementFont() {
     return {
         upm: 1000,
         version: [1, 0],
@@ -57,18 +57,23 @@ function cloneJson(value) {
 
 describe('ChangeBridge layer snapshot array replacement', () => {
     test('preserves layer root identity while deep-merging visual arrays by id', () => {
-        const fontJson = makeLayerArrayReplacementFont();
+        const fontJson = makeDrawingArrayReplacementFont();
         // Ensure stable ids for indexed-map schema
         const { ensureStableIds } = require('../js/babelfont-model');
         ensureStableIds(fontJson);
         const bridge = new ChangeBridge();
         bridge.initFromJson(fontJson);
 
-        const layerMap = bridge.getYValue(['glyphs', 'oacute', 'layers', 'L0']);
+        const drawingMap = bridge.getYValue([
+            'glyphs',
+            'oacute',
+            'layers',
+            'L0'
+        ]);
 
-        const initialLayerMap = layerMap;
-        const initialShapeData = layerMap.get('shapeDataById');
-        const initialAnchorsById = layerMap.get('anchorsById');
+        const initialDrawingMap = drawingMap;
+        const initialShapeData = drawingMap.get('shapeDataById');
+        const initialAnchorsById = drawingMap.get('anchorsById');
 
         const updatedFontJson = cloneJson(fontJson);
         updatedFontJson.glyphs[0].layers[0].shapes[1].transform.translation = [
@@ -76,7 +81,7 @@ describe('ChangeBridge layer snapshot array replacement', () => {
         ];
         updatedFontJson.glyphs[0].layers[0].anchors[0].y = 618;
         bridge.setFontJson(updatedFontJson);
-        bridge.syncLayersFromJson(
+        bridge.syncDrawingsFromJson(
             [{ glyphName: 'oacute', layerId: 'L0' }],
             'Drag anchor',
             undefined,
@@ -89,9 +94,9 @@ describe('ChangeBridge layer snapshot array replacement', () => {
         );
 
         // Layer root identity preserved (deep-merge, not replace)
-        expect(layerMap).toBe(initialLayerMap);
-        expect(layerMap.get('shapeDataById')).toBe(initialShapeData);
-        expect(layerMap.get('anchorsById')).toBe(initialAnchorsById);
+        expect(drawingMap).toBe(initialDrawingMap);
+        expect(drawingMap.get('shapeDataById')).toBe(initialShapeData);
+        expect(drawingMap.get('anchorsById')).toBe(initialAnchorsById);
 
         const secondFontJson = cloneJson(updatedFontJson);
         secondFontJson.glyphs[0].layers[0].shapes[1].transform.translation = [
@@ -99,7 +104,7 @@ describe('ChangeBridge layer snapshot array replacement', () => {
         ];
         secondFontJson.glyphs[0].layers[0].anchors[0].y = 744;
         bridge.setFontJson(secondFontJson);
-        bridge.syncLayersFromJson(
+        bridge.syncDrawingsFromJson(
             [{ glyphName: 'oacute', layerId: 'L0' }],
             'Drag anchor',
             undefined,
@@ -111,13 +116,13 @@ describe('ChangeBridge layer snapshot array replacement', () => {
             null
         );
 
-        expect(layerMap).toBe(initialLayerMap);
+        expect(drawingMap).toBe(initialDrawingMap);
 
         const decoded = bridge.getFontJsonSnapshot();
         const glyph = decoded.glyphs.find((entry) => entry.name === 'oacute');
-        const layer = glyph.layers.find((entry) => entry.id === 'L0');
+        const drawing = glyph.layers.find((entry) => entry.id === 'L0');
 
-        expect(layer.shapes[1].transform.translation).toEqual([238, 744]);
-        expect(layer.anchors[0].y).toBe(744);
+        expect(drawing.shapes[1].transform.translation).toEqual([238, 744]);
+        expect(drawing.anchors[0].y).toBe(744);
     });
 });

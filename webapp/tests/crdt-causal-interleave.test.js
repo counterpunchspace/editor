@@ -1,11 +1,11 @@
 const Y = require('yjs');
 
-function snapshotLayer(doc) {
-    const layer = doc.getMap('layer');
+function snapshotDrawing(doc) {
+    const drawing = doc.getMap('layer');
     return {
-        width: layer.get('width'),
-        deleted: layer.get('deleted') === true,
-        reversed: layer.get('reversed') === true
+        width: drawing.get('width'),
+        deleted: drawing.get('deleted') === true,
+        reversed: drawing.get('reversed') === true
     };
 }
 
@@ -44,8 +44,8 @@ describe('independent Y.Doc causal interleaving', () => {
         exchange(b, bThenA);
         exchange(a, bThenA);
 
-        expect(snapshotLayer(aThenB)).toEqual(snapshotLayer(bThenA));
-        expect(snapshotLayer(aThenB)).toEqual({
+        expect(snapshotDrawing(aThenB)).toEqual(snapshotDrawing(bThenA));
+        expect(snapshotDrawing(aThenB)).toEqual({
             width: 640,
             deleted: true,
             reversed: true

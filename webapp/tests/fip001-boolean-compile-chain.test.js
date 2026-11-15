@@ -76,7 +76,7 @@ function makeBooleanFont() {
 describe('fip001-boolean Glyphs save/open/compile chain', () => {
     test('model flag survives Glyphs save and changes compiled outlines', () => {
         const font = makeBooleanFont();
-        const cutter = font.glyphs[0].layers[0].paths[1];
+        const cutter = font.glyphs[0].drawings[0].paths[1];
         cutter.isSubtraction = true;
 
         expect(cutter.isSubtraction).toBe(true);

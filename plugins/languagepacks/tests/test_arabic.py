@@ -20,7 +20,7 @@ class Component:
         self.reference = reference
 
 
-class Layer:
+class Drawing:
     def __init__(self, components):
         self.is_background = False
         self.components = [Component(name) for name in components]
@@ -30,7 +30,7 @@ class Glyph:
     def __init__(self, name, codepoints=None, components=None):
         self.name = name
         self.codepoints = list(codepoints or [])
-        self.layers = [] if components is None else [Layer(components)]
+        self.drawings = [] if components is None else [Drawing(components)]
 
 
 class Font:

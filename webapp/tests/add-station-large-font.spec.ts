@@ -52,7 +52,7 @@ test('adding a master to a 1,000-glyph font finishes and keeps the page responsi
     const before = await page.evaluate(() => {
         const font = (window as any).currentFontModel;
         return {
-            masters: font.masters.length,
+            masters: font.stations.length,
             glyphs: font.glyphs.length
         };
     });
@@ -63,10 +63,10 @@ test('adding a master to a 1,000-glyph font finishes and keeps the page responsi
         w.__addMasterResult = null;
         const startedAt = performance.now();
         w.currentFontModel
-            .addMaster(undefined, { location: { wght: 150 } })
-            .then((master: { id?: string } | null) => {
+            .addStation(undefined, { location: { wght: 150 } })
+            .then((station: { id?: string } | null) => {
                 w.__addMasterResult = {
-                    id: master?.id ?? null,
+                    id: station?.id ?? null,
                     ms: performance.now() - startedAt
                 };
             })
@@ -103,17 +103,17 @@ test('adding a master to a 1,000-glyph font finishes and keeps the page responsi
         )
         .toBe('ready');
 
-    const coverage = await page.evaluate((masterId: string) => {
+    const coverage = await page.evaluate((stationId: string) => {
         const font = (window as any).currentFontModel;
         const missing = font.glyphs
             .filter(
                 (glyph: any) =>
-                    !(glyph.layers || []).some(
-                        (layer: any) => layer?.master?.master === masterId
+                    !(glyph.drawings || []).some(
+                        (drawing: any) => drawing?.station?.master === stationId
                     )
             )
             .map((glyph: any) => glyph.name);
-        return { masters: font.masters.length, missing };
+        return { masters: font.stations.length, missing };
     }, result.id);
     expect(coverage.masters).toBe(before.masters + 1);
     expect(coverage.missing).toEqual([]);
@@ -130,7 +130,7 @@ test('adding a master to a 1,000-glyph font finishes and keeps the page responsi
             w.__compiles.push((event as CustomEvent).detail?.error ?? null);
         });
     });
-    for (const [action, masters] of [
+    for (const [action, stations] of [
         ['undo', before.masters],
         ['redo', before.masters + 1]
     ] as const) {
@@ -144,10 +144,10 @@ test('adding a master to a 1,000-glyph font finishes and keeps the page responsi
         await expect
             .poll(() =>
                 page.evaluate(
-                    () => (window as any).currentFontModel.masters.length
+                    () => (window as any).currentFontModel.stations.length
                 )
             )
-            .toBe(masters);
+            .toBe(stations);
         await expect
             .poll(
                 () => page.evaluate(() => (window as any).__compiles.length),

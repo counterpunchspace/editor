@@ -33,7 +33,7 @@ def classify_glyph(glyph):
 
 `is_candidate()` does not need to predict the final answer. It only decides whether `classify_glyph()` is worth calling. A candidate may still return `None`. For a filter that finds glyphs without anchors, do not use a gate: both anchor-bearing and anchorless glyphs must be classified.
 
-`EVENT_TYPES` lists only glyph-content changes that can change this filter's answer. The app reclassifies the affected glyph after a matching committed edit. Do not subscribe to `glyph.created`, `glyph.deleted`, `glyph.renamed`, or `font.masters.changed`. The app always manages those. A filter that only looks at glyph names has no such events and uses `EVENT_TYPES = []`; it still updates when glyphs are added, renamed or removed. It also emits `glyph.compatibility.changed` only when a glyph's compatibility actually changes, so compatibility filters should subscribe to that targeted event.
+`EVENT_TYPES` lists only glyph-content changes that can change this filter's answer. The app reclassifies the affected glyph after a matching committed edit. Do not subscribe to `glyph.created`, `glyph.deleted`, `glyph.renamed`, or `font.stations.changed`. The app always manages those. A filter that only looks at glyph names has no such events and uses `EVENT_TYPES = []`; it still updates when glyphs are added, renamed or removed. It also emits `glyph.compatibility.changed` only when a glyph's compatibility actually changes, so compatibility filters should subscribe to that targeted event.
 
 Supported event types:
 
@@ -41,16 +41,16 @@ Supported event types:
 - `glyph.category.changed` — Category assignment changed.
 - `glyph.export.changed` — Export flag changed.
 - `glyph.production-name.changed` — Production name changed.
-- `glyph.paths.changed` — Path geometry or structure changed on one or more layers.
+- `glyph.paths.changed` — Path geometry or structure changed on one or more drawings.
 - `glyph.components.changed` — Component membership changed (add, remove, or replace).
 - `glyph.component.reference.changed` — A component changed which glyph it references.
 - `glyph.component.transform.changed` — A component transform changed.
-- `glyph.anchors.changed` — Anchors changed on one or more layers.
-- `glyph.guides.changed` — Guides changed on one or more layers.
-- `glyph.layers.changed` — A layer was added, removed, or otherwise structurally changed.
-- `glyph.layer.location.changed` — An intermediate layer location changed.
-- `glyph.metrics.changed` — Layer metrics such as advance width or sidebearings changed.
-- `glyph.metrics-key.changed` — A glyph- or layer-level metrics key (LSB/RSB formula) changed.
+- `glyph.anchors.changed` — Anchors changed on one or more drawings.
+- `glyph.guides.changed` — Guides changed on one or more drawings.
+- `glyph.drawings.changed` — A drawing was added, removed, or otherwise structurally changed.
+- `glyph.drawing.location.changed` — A free drawing’s location changed.
+- `glyph.metrics.changed` — Drawing metrics such as advance width or sidebearings changed.
+- `glyph.metrics-key.changed` — A glyph- or drawing-level metrics key (LSB/RSB formula) changed.
 - `glyph.compatibility.changed` — `Glyph.isCompatible` toggled.
 
 The app scans all glyphs when a filter first loads, reloads, or is explicitly refreshed. After that, it updates only changed glyphs. Filters run read-only; they must not edit the font. Keep both functions small. Expensive whole-font searches, I/O, and asynchronous work do not belong here.

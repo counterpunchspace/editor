@@ -294,8 +294,8 @@ test.describe('Font Editor Basic Workflow', () => {
         });
 
         const refreshedUiState = await page.evaluate(() => ({
-            layerCount: document.querySelectorAll(
-                '.editor-layers-list .editor-layer-item'
+            drawingCount: document.querySelectorAll(
+                '.editor-drawings-list .editor-drawing-item'
             ).length,
             featureSectionChildren:
                 document.getElementById('glyph-features-section')
@@ -339,7 +339,7 @@ test.describe('Font Editor Basic Workflow', () => {
         expect(urlFileAfter).toBe(
             'memory:///user/YanoneKaffeesatz.designspace'
         );
-        expect(refreshedUiState.layerCount).toBeGreaterThan(0);
+        expect(refreshedUiState.drawingCount).toBeGreaterThan(0);
         if (refreshedUiState.sourceFeatureCount > 0) {
             expect(refreshedUiState.featureSectionChildren).toBeGreaterThan(0);
         }
@@ -662,38 +662,40 @@ test.describe('Font Editor Basic Workflow', () => {
 
         // Click through layers list dynamically: 2nd -> 3rd -> 1st
         console.log('[Test] Cycling layers via layers list');
-        const layerItems = page.locator(
-            '.editor-layers-list .editor-layer-item[data-layer-id]'
+        const drawingItems = page.locator(
+            '.editor-drawings-list .editor-drawing-item[data-drawing-id]'
         );
-        const layerCount = await layerItems.count();
-        expect(layerCount).toBeGreaterThanOrEqual(3);
+        const drawingCount = await drawingItems.count();
+        expect(drawingCount).toBeGreaterThanOrEqual(3);
 
-        const clickLayerAndWait = async (
+        const clickDrawingAndWait = async (
             index: number,
             snapshotNumber: string,
             snapshotLabel: string
         ) => {
-            const target = layerItems.nth(index);
-            const targetLayerId = await target.getAttribute('data-layer-id');
-            expect(targetLayerId).toBeTruthy();
+            const target = drawingItems.nth(index);
+            const targetDrawingId =
+                await target.getAttribute('data-drawing-id');
+            expect(targetDrawingId).toBeTruthy();
 
             await target.click();
 
-            await page.waitForFunction((expectedLayerId) => {
+            await page.waitForFunction((expectedDrawingId) => {
                 const selected = document.querySelector(
-                    '.editor-layers-list .editor-layer-item.selected[data-layer-id]'
+                    '.editor-drawings-list .editor-drawing-item.selected[data-drawing-id]'
                 );
-                const selectedLayerId = selected?.getAttribute('data-layer-id');
+                const selectedDrawingId =
+                    selected?.getAttribute('data-drawing-id');
                 const glyphCanvas = (window as any).glyphCanvas;
-                const isLayerAnimating =
-                    !!glyphCanvas?.outlineEditor?.isLayerSwitchAnimating;
+                const isDrawingAnimating =
+                    !!glyphCanvas?.outlineEditor?.isDrawingSwitchAnimating;
                 const isAxisAnimating = !!glyphCanvas?.axesManager?.isAnimating;
                 return (
-                    !isLayerAnimating &&
+                    !isDrawingAnimating &&
                     !isAxisAnimating &&
-                    selectedLayerId === expectedLayerId
+                    selectedDrawingId === expectedDrawingId
                 );
-            }, targetLayerId);
+            }, targetDrawingId);
 
             await page.evaluate(async () => {
                 await new Promise<void>((resolve) =>
@@ -714,11 +716,11 @@ test.describe('Font Editor Basic Workflow', () => {
         };
 
         // second layer
-        await clickLayerAndWait(1, '14', 'layer-second-selected');
+        await clickDrawingAndWait(1, '14', 'layer-second-selected');
         // third layer
-        await clickLayerAndWait(2, '15', 'layer-third-selected');
+        await clickDrawingAndWait(2, '15', 'layer-third-selected');
         // back to first layer
-        await clickLayerAndWait(0, '16', 'layer-first-reselected');
+        await clickDrawingAndWait(0, '16', 'layer-first-reselected');
 
         // Adjust variation setting via editor sidebar axis value input
         console.log('[Test] Setting variation axis value to 300');

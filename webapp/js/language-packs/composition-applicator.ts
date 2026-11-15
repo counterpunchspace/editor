@@ -41,8 +41,8 @@ export function applyCompositionPlan(
                 placeDrawing(added, glyph.drawing, font.upm || 1000);
             } else {
                 if (glyph.width === 0) {
-                    for (const layer of added.layers || []) {
-                        layer.width = 0;
+                    for (const drawing of added.drawings || []) {
+                        drawing.width = 0;
                     }
                 }
                 placeAnchors(added, glyph.anchors);
@@ -56,10 +56,10 @@ export function applyCompositionPlan(
             if (!glyph) {
                 continue;
             }
-            for (const layer of glyph.layers || []) {
-                clearLayerShapes(layer);
+            for (const drawing of glyph.drawings || []) {
+                clearDrawingShapes(drawing);
                 for (const component of composite.components) {
-                    layer.addComponent(component);
+                    drawing.addComponent(component);
                 }
             }
         }
@@ -92,25 +92,25 @@ export function applyCompositionPlan(
 function placeDrawing(glyph: Glyph, drawing: GlyphDrawing, upm: number): void {
     rememberPlaceholderDrawing(glyph.name, drawing);
     const scale = upm / (drawing.upm || upm || 1000);
-    for (const layer of glyph.layers || []) {
-        layer.width = drawing.width * scale;
+    for (const target of glyph.drawings || []) {
+        target.width = drawing.width * scale;
         for (const anchor of drawing.anchors) {
-            layer.addAnchor(anchor.x * scale, anchor.y * scale, anchor.name);
+            target.addAnchor(anchor.x * scale, anchor.y * scale, anchor.name);
         }
     }
 }
 
 function placeAnchors(
     glyph: Glyph,
-    anchors: Array<{ masterId: string; name: string; x: number; y: number }>
+    anchors: Array<{ stationId: string; name: string; x: number; y: number }>
 ): void {
     for (const anchor of anchors) {
-        const layer = (glyph.layers || []).find(
+        const drawing = (glyph.drawings || []).find(
             (candidate) =>
-                candidate.master?.master === anchor.masterId ||
-                candidate.id === anchor.masterId
+                candidate.station?.master === anchor.stationId ||
+                candidate.id === anchor.stationId
         );
-        layer?.addAnchor(anchor.x, anchor.y, anchor.name);
+        drawing?.addAnchor(anchor.x, anchor.y, anchor.name);
     }
 }
 
@@ -118,22 +118,22 @@ function clearGlyph(glyph: Glyph | undefined): void {
     if (!glyph) {
         return;
     }
-    for (const layer of glyph.layers || []) {
-        clearLayerShapes(layer);
+    for (const drawing of glyph.drawings || []) {
+        clearDrawingShapes(drawing);
     }
 }
 
-function clearLayerShapes(layer: {
+function clearDrawingShapes(drawing: {
     shapes?: unknown[];
     removeShape(index: number): void;
 }): void {
-    const shapes = layer.shapes;
+    const shapes = drawing.shapes;
     if (!shapes?.length) {
         return;
     }
     // Delete from the end. Two removals of index 0 share one Yjs path and
     // collapse into a single delete, which keeps every shape after the first.
     for (let index = shapes.length - 1; index >= 0; index -= 1) {
-        layer.removeShape(index);
+        drawing.removeShape(index);
     }
 }

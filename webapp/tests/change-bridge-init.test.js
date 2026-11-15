@@ -168,28 +168,32 @@ describe('handleRemoteChangeRefresh', () => {
     });
 
     test('reconciles a materialized background selection after a local committed edit', async () => {
-        const backgroundLayerId = 'background-layer';
+        const backgroundDrawingId = 'background-layer';
         const refreshOrder = [];
         const outlineEditor = {
             active: true,
             draggingSomething: false,
-            selectedLayerId: backgroundLayerId,
+            selectedDrawingId: backgroundDrawingId,
             parseGlyphStack: jest.fn(() => [
-                { glyphName: 'a', layerId: backgroundLayerId }
+                { glyphName: 'a', layerId: backgroundDrawingId }
             ]),
             reconcileSelectionAfterModelSync: jest.fn(async () => {
                 refreshOrder.push('reconcile');
-                expect(outlineEditor.selectedLayerId).toBe(backgroundLayerId);
+                expect(outlineEditor.selectedDrawingId).toBe(
+                    backgroundDrawingId
+                );
             }),
             runDeterministicRefresh: jest.fn(async (refresh) => {
                 refreshOrder.push('refresh');
                 await refresh();
             }),
-            fetchLayerData: jest.fn(async (skipRender, glyphName) => {
+            fetchDrawingData: jest.fn(async (skipRender, glyphName) => {
                 refreshOrder.push('fetch');
                 expect(skipRender).toBe(true);
                 expect(glyphName).toBe('a');
-                expect(outlineEditor.selectedLayerId).toBe(backgroundLayerId);
+                expect(outlineEditor.selectedDrawingId).toBe(
+                    backgroundDrawingId
+                );
             })
         };
         const requestCompile = jest.fn(async () => {
@@ -210,11 +214,11 @@ describe('handleRemoteChangeRefresh', () => {
                     findGlyph: jest.fn((glyphName) =>
                         glyphName === 'a'
                             ? {
-                                  findLayerById: jest.fn((layerId) =>
-                                      layerId === backgroundLayerId
+                                  findDrawingById: jest.fn((drawingId) =>
+                                      drawingId === backgroundDrawingId
                                           ? {
                                                 toJSON: () => ({
-                                                    id: backgroundLayerId,
+                                                    id: backgroundDrawingId,
                                                     is_background: true,
                                                     shapes: []
                                                 })
@@ -235,9 +239,9 @@ describe('handleRemoteChangeRefresh', () => {
                 [
                     {
                         transactionLabel: 'Edit path',
-                        path: `glyphs.a.layers.${backgroundLayerId}.shapes.0.nodes.0.x`,
+                        path: `glyphs.a.layers.${backgroundDrawingId}.shapes.0.nodes.0.x`,
                         workerReplayTargets: [
-                            { glyphName: 'a', layerId: backgroundLayerId }
+                            { glyphName: 'a', layerId: backgroundDrawingId }
                         ]
                     }
                 ],
@@ -254,7 +258,7 @@ describe('handleRemoteChangeRefresh', () => {
         ).toHaveBeenCalledWith({
             skipRender: true
         });
-        expect(outlineEditor.fetchLayerData).toHaveBeenCalledWith(true, 'a');
+        expect(outlineEditor.fetchDrawingData).toHaveBeenCalledWith(true, 'a');
         expect(requestCompile).toHaveBeenCalledWith(
             'change-bridge-local',
             null
@@ -269,17 +273,17 @@ describe('handleRemoteChangeRefresh', () => {
     });
 
     test('defers local background reconciliation while a drag is active', async () => {
-        const backgroundLayerId = 'background-layer';
+        const backgroundDrawingId = 'background-layer';
         const outlineEditor = {
             active: true,
             draggingSomething: true,
             pendingRemoteRefreshAfterDrag: false,
-            selectedLayerId: backgroundLayerId,
+            selectedDrawingId: backgroundDrawingId,
             parseGlyphStack: jest.fn(() => [
-                { glyphName: 'a', layerId: backgroundLayerId }
+                { glyphName: 'a', layerId: backgroundDrawingId }
             ]),
             reconcileSelectionAfterModelSync: jest.fn(),
-            fetchLayerData: jest.fn()
+            fetchDrawingData: jest.fn()
         };
         const requestCompile = jest.fn(async () => {});
 
@@ -294,11 +298,11 @@ describe('handleRemoteChangeRefresh', () => {
                     findGlyph: jest.fn((glyphName) =>
                         glyphName === 'a'
                             ? {
-                                  findLayerById: jest.fn((layerId) =>
-                                      layerId === backgroundLayerId
+                                  findDrawingById: jest.fn((drawingId) =>
+                                      drawingId === backgroundDrawingId
                                           ? {
                                                 toJSON: () => ({
-                                                    id: backgroundLayerId,
+                                                    id: backgroundDrawingId,
                                                     is_background: true,
                                                     shapes: []
                                                 })
@@ -319,9 +323,9 @@ describe('handleRemoteChangeRefresh', () => {
                 [
                     {
                         transactionLabel: 'Edit path',
-                        path: `glyphs.a.layers.${backgroundLayerId}.shapes.0.nodes.0.x`,
+                        path: `glyphs.a.layers.${backgroundDrawingId}.shapes.0.nodes.0.x`,
                         workerReplayTargets: [
-                            { glyphName: 'a', layerId: backgroundLayerId }
+                            { glyphName: 'a', layerId: backgroundDrawingId }
                         ]
                     }
                 ],
@@ -340,7 +344,7 @@ describe('handleRemoteChangeRefresh', () => {
         expect(
             outlineEditor.reconcileSelectionAfterModelSync
         ).not.toHaveBeenCalled();
-        expect(outlineEditor.fetchLayerData).not.toHaveBeenCalled();
+        expect(outlineEditor.fetchDrawingData).not.toHaveBeenCalled();
         expect(requestCompile).toHaveBeenCalledWith(
             'change-bridge-local',
             null
@@ -350,17 +354,17 @@ describe('handleRemoteChangeRefresh', () => {
     test.each(['undo', 'redo'])(
         'reconciles a materialized background selection after local %s',
         async (historyAction) => {
-            const backgroundLayerId = 'd82d1a85-7bc6-4ece-9b01-d9f9afda2f5a';
+            const backgroundDrawingId = 'd82d1a85-7bc6-4ece-9b01-d9f9afda2f5a';
             const outlineEditor = {
                 active: true,
                 draggingSomething: false,
-                selectedLayerId: backgroundLayerId,
+                selectedDrawingId: backgroundDrawingId,
                 parseGlyphStack: jest.fn(() => [
-                    { glyphName: 'a', layerId: backgroundLayerId }
+                    { glyphName: 'a', layerId: backgroundDrawingId }
                 ]),
                 reconcileSelectionAfterModelSync: jest.fn(async () => {}),
                 runDeterministicRefresh: jest.fn(async (refresh) => refresh()),
-                fetchLayerData: jest.fn(async () => {})
+                fetchDrawingData: jest.fn(async () => {})
             };
             const requestCompile = jest.fn(async () => {});
 
@@ -378,12 +382,12 @@ describe('handleRemoteChangeRefresh', () => {
                         findGlyph: jest.fn((glyphName) =>
                             glyphName === 'a'
                                 ? {
-                                      findLayerById: jest.fn((layerId) =>
-                                          layerId === backgroundLayerId
+                                      findDrawingById: jest.fn((drawingId) =>
+                                          drawingId === backgroundDrawingId
                                               ? {
                                                     is_background: true,
                                                     toJSON: () => ({
-                                                        id: backgroundLayerId,
+                                                        id: backgroundDrawingId,
                                                         is_background: true,
                                                         shapes: []
                                                     })
@@ -405,9 +409,9 @@ describe('handleRemoteChangeRefresh', () => {
                         {
                             historyAction,
                             transactionLabel: 'Edit path',
-                            path: `glyphs.a.layers.${backgroundLayerId}.shapes.0.nodes.0.x`,
+                            path: `glyphs.a.layers.${backgroundDrawingId}.shapes.0.nodes.0.x`,
                             workerReplayTargets: [
-                                { glyphName: 'a', layerId: backgroundLayerId }
+                                { glyphName: 'a', layerId: backgroundDrawingId }
                             ]
                         }
                     ],
@@ -427,7 +431,7 @@ describe('handleRemoteChangeRefresh', () => {
             ).toHaveBeenCalledWith({
                 skipRender: true
             });
-            expect(outlineEditor.fetchLayerData).toHaveBeenCalledWith(
+            expect(outlineEditor.fetchDrawingData).toHaveBeenCalledWith(
                 true,
                 'a'
             );
@@ -937,7 +941,7 @@ describe('handleRemoteChangeRefresh', () => {
         const showErrorMock = jest.fn();
         const originalSendMessage = fontCompilation.sendMessage;
         const originalIsInitialized = fontCompilation.isInitialized;
-        const expectedLayer = {
+        const expectedDrawing = {
             width: 533,
             id: 'layer-1',
             master: { type: 'DefaultForMaster', master: 'master-1' },
@@ -954,7 +958,7 @@ describe('handleRemoteChangeRefresh', () => {
             guides: [],
             format_specific: {}
         };
-        const rustLayerDifferentKeyOrder = {
+        const rustDrawingDifferentKeyOrder = {
             master: { master: 'master-1', type: 'DefaultForMaster' },
             shapes: [
                 {
@@ -971,14 +975,14 @@ describe('handleRemoteChangeRefresh', () => {
             format_specific: {},
             id: 'layer-1'
         };
-        const dependentLayer = {
+        const dependentDrawing = {
             width: 533,
             id: 'layer-1',
             master: { type: 'DefaultForMaster', master: 'master-1' },
             shapes: [{ id: 'component-1', reference: 'a' }],
             format_specific: {}
         };
-        const dependentLayerDifferentKeyOrder = {
+        const dependentDrawingDifferentKeyOrder = {
             shapes: [{ reference: 'a', id: 'component-1' }],
             width: 533,
             master: { master: 'master-1', type: 'DefaultForMaster' },
@@ -991,16 +995,16 @@ describe('handleRemoteChangeRefresh', () => {
                     {
                         glyphName: 'a',
                         layerId: 'layer-1',
-                        canonicalLayer: rustLayerDifferentKeyOrder,
-                        subsetLayer: rustLayerDifferentKeyOrder,
-                        ydocLayer: rustLayerDifferentKeyOrder
+                        canonicalDrawing: rustDrawingDifferentKeyOrder,
+                        subsetDrawing: rustDrawingDifferentKeyOrder,
+                        ydocDrawing: rustDrawingDifferentKeyOrder
                     },
                     {
                         glyphName: 'aacute',
                         layerId: 'layer-1',
-                        canonicalLayer: dependentLayerDifferentKeyOrder,
-                        subsetLayer: null,
-                        ydocLayer: dependentLayerDifferentKeyOrder
+                        canonicalDrawing: dependentDrawingDifferentKeyOrder,
+                        subsetDrawing: null,
+                        ydocDrawing: dependentDrawingDifferentKeyOrder
                     }
                 ]
             })
@@ -1016,15 +1020,15 @@ describe('handleRemoteChangeRefresh', () => {
                 fontModel: {
                     collectComponentDependentGlyphs: jest.fn(() => new Set()),
                     findGlyph: jest.fn((glyphName) => ({
-                        findLayerById: jest.fn((layerId) => {
-                            if (layerId !== 'layer-1') {
+                        findDrawingById: jest.fn((drawingId) => {
+                            if (drawingId !== 'layer-1') {
                                 return null;
                             }
                             if (glyphName === 'a') {
-                                return { toJSON: () => expectedLayer };
+                                return { toJSON: () => expectedDrawing };
                             }
                             if (glyphName === 'aacute') {
-                                return { toJSON: () => dependentLayer };
+                                return { toJSON: () => dependentDrawing };
                             }
                             return null;
                         })
@@ -1033,7 +1037,7 @@ describe('handleRemoteChangeRefresh', () => {
             },
             lastChangeSource: 'keyboard-outline',
             lastEditType: 'outline',
-            normalizeLayerForRust: jest.fn((layer) => layer)
+            normalizeDrawingForRust: jest.fn((drawing) => drawing)
         };
 
         try {
@@ -1084,7 +1088,7 @@ describe('handleRemoteChangeRefresh', () => {
         const showErrorMock = jest.fn();
         const originalSendMessage = fontCompilation.sendMessage;
         const originalIsInitialized = fontCompilation.isInitialized;
-        const expectedLayer = {
+        const expectedDrawing = {
             width: 533,
             id: 'layer-1',
             master: { type: 'DefaultForMaster', master: 'master-1' },
@@ -1099,8 +1103,8 @@ describe('handleRemoteChangeRefresh', () => {
             ],
             anchors: [{ name: 'top', x: 145, y: 594 }]
         };
-        const rustCanonicalLayer = {
-            ...expectedLayer,
+        const rustCanonicalDrawing = {
+            ...expectedDrawing,
             guides: [],
             format_specific: {}
         };
@@ -1110,9 +1114,9 @@ describe('handleRemoteChangeRefresh', () => {
                     {
                         glyphName: 'a',
                         layerId: 'layer-1',
-                        canonicalLayer: rustCanonicalLayer,
-                        subsetLayer: rustCanonicalLayer,
-                        ydocLayer: expectedLayer
+                        canonicalDrawing: rustCanonicalDrawing,
+                        subsetDrawing: rustCanonicalDrawing,
+                        ydocDrawing: expectedDrawing
                     }
                 ]
             })
@@ -1128,10 +1132,10 @@ describe('handleRemoteChangeRefresh', () => {
                 fontModel: {
                     collectComponentDependentGlyphs: jest.fn(() => new Set()),
                     findGlyph: jest.fn((glyphName) => ({
-                        findLayerById: jest.fn((layerId) =>
-                            glyphName === 'a' && layerId === 'layer-1'
+                        findDrawingById: jest.fn((drawingId) =>
+                            glyphName === 'a' && drawingId === 'layer-1'
                                 ? {
-                                      toJSON: () => expectedLayer
+                                      toJSON: () => expectedDrawing
                                   }
                                 : null
                         )
@@ -1140,7 +1144,7 @@ describe('handleRemoteChangeRefresh', () => {
             },
             lastChangeSource: 'keyboard-outline',
             lastEditType: 'outline',
-            normalizeLayerForRust: jest.fn((layer) => layer)
+            normalizeDrawingForRust: jest.fn((drawing) => drawing)
         };
 
         try {
@@ -1190,7 +1194,7 @@ describe('handleRemoteChangeRefresh', () => {
         const showErrorMock = jest.fn();
         const originalSendMessage = fontCompilation.sendMessage;
         const originalIsInitialized = fontCompilation.isInitialized;
-        const expectedLayer = {
+        const expectedDrawing = {
             width: 533,
             id: 'layer-1',
             master: { type: 'DefaultForMaster', master: 'master-1' },
@@ -1205,8 +1209,8 @@ describe('handleRemoteChangeRefresh', () => {
             ],
             anchors: [{ name: 'top', x: 145, y: 594 }]
         };
-        const rustCanonicalLayer = {
-            ...expectedLayer,
+        const rustCanonicalDrawing = {
+            ...expectedDrawing,
             format_specific: {
                 com: {
                     schriftgestalt: {
@@ -1223,9 +1227,9 @@ describe('handleRemoteChangeRefresh', () => {
                     {
                         glyphName: 'a',
                         layerId: 'layer-1',
-                        canonicalLayer: rustCanonicalLayer,
-                        subsetLayer: rustCanonicalLayer,
-                        ydocLayer: expectedLayer
+                        canonicalDrawing: rustCanonicalDrawing,
+                        subsetDrawing: rustCanonicalDrawing,
+                        ydocDrawing: expectedDrawing
                     }
                 ]
             })
@@ -1241,10 +1245,10 @@ describe('handleRemoteChangeRefresh', () => {
                 fontModel: {
                     collectComponentDependentGlyphs: jest.fn(() => new Set()),
                     findGlyph: jest.fn((glyphName) => ({
-                        findLayerById: jest.fn((layerId) =>
-                            glyphName === 'a' && layerId === 'layer-1'
+                        findDrawingById: jest.fn((drawingId) =>
+                            glyphName === 'a' && drawingId === 'layer-1'
                                 ? {
-                                      toJSON: () => expectedLayer
+                                      toJSON: () => expectedDrawing
                                   }
                                 : null
                         )
@@ -1253,7 +1257,7 @@ describe('handleRemoteChangeRefresh', () => {
             },
             lastChangeSource: 'keyboard-outline',
             lastEditType: 'outline',
-            normalizeLayerForRust: jest.fn((layer) => layer)
+            normalizeDrawingForRust: jest.fn((drawing) => drawing)
         };
 
         try {
@@ -1303,7 +1307,7 @@ describe('handleRemoteChangeRefresh', () => {
         const showErrorMock = jest.fn();
         const originalSendMessage = fontCompilation.sendMessage;
         const originalIsInitialized = fontCompilation.isInitialized;
-        const expectedLayer = {
+        const expectedDrawing = {
             width: 533,
             id: 'layer-1',
             master: { type: 'DefaultForMaster', master: 'master-1' },
@@ -1318,8 +1322,8 @@ describe('handleRemoteChangeRefresh', () => {
             ],
             anchors: [{ name: 'top', x: 145, y: 594 }]
         };
-        const rustCanonicalLayer = {
-            ...expectedLayer,
+        const rustCanonicalDrawing = {
+            ...expectedDrawing,
             format_specific: { legacy: true }
         };
         const sendMessageMock = jest.fn(async () => ({
@@ -1328,9 +1332,9 @@ describe('handleRemoteChangeRefresh', () => {
                     {
                         glyphName: 'a',
                         layerId: 'layer-1',
-                        canonicalLayer: rustCanonicalLayer,
-                        subsetLayer: rustCanonicalLayer,
-                        ydocLayer: expectedLayer
+                        canonicalDrawing: rustCanonicalDrawing,
+                        subsetDrawing: rustCanonicalDrawing,
+                        ydocDrawing: expectedDrawing
                     }
                 ]
             })
@@ -1346,10 +1350,10 @@ describe('handleRemoteChangeRefresh', () => {
                 fontModel: {
                     collectComponentDependentGlyphs: jest.fn(() => new Set()),
                     findGlyph: jest.fn((glyphName) => ({
-                        findLayerById: jest.fn((layerId) =>
-                            glyphName === 'a' && layerId === 'layer-1'
+                        findDrawingById: jest.fn((drawingId) =>
+                            glyphName === 'a' && drawingId === 'layer-1'
                                 ? {
-                                      toJSON: () => expectedLayer
+                                      toJSON: () => expectedDrawing
                                   }
                                 : null
                         )
@@ -1358,7 +1362,7 @@ describe('handleRemoteChangeRefresh', () => {
             },
             lastChangeSource: 'keyboard-outline',
             lastEditType: 'outline',
-            normalizeLayerForRust: jest.fn((layer) => layer)
+            normalizeDrawingForRust: jest.fn((drawing) => drawing)
         };
 
         try {
@@ -1408,7 +1412,7 @@ describe('handleRemoteChangeRefresh', () => {
         const showErrorMock = jest.fn();
         const originalSendMessage = fontCompilation.sendMessage;
         const originalIsInitialized = fontCompilation.isInitialized;
-        const sourceLayer = {
+        const sourceDrawing = {
             width: 533,
             id: '3114FB65-9464-41A5-B67E-A8F9F43C0EF1',
             master: {
@@ -1432,7 +1436,7 @@ describe('handleRemoteChangeRefresh', () => {
                 'com.schriftgestalt.Glyphs.attr': {}
             }
         };
-        const dependentLayer = {
+        const dependentDrawing = {
             width: 533,
             id: '3114FB65-9464-41A5-B67E-A8F9F43C0EF1',
             master: {
@@ -1473,16 +1477,16 @@ describe('handleRemoteChangeRefresh', () => {
                     {
                         glyphName: 'a',
                         layerId: '3114FB65-9464-41A5-B67E-A8F9F43C0EF1',
-                        canonicalLayer: sourceLayer,
-                        subsetLayer: null,
-                        ydocLayer: sourceLayer
+                        canonicalDrawing: sourceDrawing,
+                        subsetDrawing: null,
+                        ydocDrawing: sourceDrawing
                     },
                     {
                         glyphName: 'aacute',
                         layerId: '3114FB65-9464-41A5-B67E-A8F9F43C0EF1',
-                        canonicalLayer: dependentLayer,
-                        subsetLayer: null,
-                        ydocLayer: dependentLayer
+                        canonicalDrawing: dependentDrawing,
+                        subsetDrawing: null,
+                        ydocDrawing: dependentDrawing
                     }
                 ]
             })
@@ -1498,14 +1502,14 @@ describe('handleRemoteChangeRefresh', () => {
                 fontModel: {
                     collectComponentDependentGlyphs: jest.fn(() => new Set()),
                     findGlyph: jest.fn((glyphName) => ({
-                        findLayerById: jest.fn((layerId) =>
+                        findDrawingById: jest.fn((drawingId) =>
                             glyphName === 'a' &&
-                            layerId === '3114FB65-9464-41A5-B67E-A8F9F43C0EF1'
-                                ? { toJSON: () => sourceLayer }
+                            drawingId === '3114FB65-9464-41A5-B67E-A8F9F43C0EF1'
+                                ? { toJSON: () => sourceDrawing }
                                 : glyphName === 'aacute' &&
-                                    layerId ===
+                                    drawingId ===
                                         '3114FB65-9464-41A5-B67E-A8F9F43C0EF1'
-                                  ? { toJSON: () => dependentLayer }
+                                  ? { toJSON: () => dependentDrawing }
                                   : null
                         )
                     }))
@@ -1513,7 +1517,7 @@ describe('handleRemoteChangeRefresh', () => {
             },
             lastChangeSource: 'keyboard-outline',
             lastEditType: 'outline',
-            normalizeLayerForRust: jest.fn((layer) => layer)
+            normalizeDrawingForRust: jest.fn((drawing) => drawing)
         };
 
         try {
@@ -1570,7 +1574,7 @@ describe('handleRemoteChangeRefresh', () => {
         const showErrorMock = jest.fn();
         const originalSendMessage = fontCompilation.sendMessage;
         const originalIsInitialized = fontCompilation.isInitialized;
-        const expectedLayer = {
+        const expectedDrawing = {
             width: 542,
             shapes: [],
             anchors: [{ name: 'top', x: 278, y: 500 }],
@@ -1582,9 +1586,9 @@ describe('handleRemoteChangeRefresh', () => {
                     {
                         glyphName: 'a',
                         layerId: 'layer-1',
-                        canonicalLayer: expectedLayer,
-                        subsetLayer: expectedLayer,
-                        ydocLayer: expectedLayer
+                        canonicalDrawing: expectedDrawing,
+                        subsetDrawing: expectedDrawing,
+                        ydocDrawing: expectedDrawing
                     }
                 ]
             })
@@ -1600,10 +1604,10 @@ describe('handleRemoteChangeRefresh', () => {
                 fontModel: {
                     collectComponentDependentGlyphs: jest.fn(() => new Set()),
                     findGlyph: jest.fn((glyphName) => ({
-                        findLayerById: jest.fn((layerId) =>
-                            glyphName === 'a' && layerId === 'layer-1'
+                        findDrawingById: jest.fn((drawingId) =>
+                            glyphName === 'a' && drawingId === 'layer-1'
                                 ? {
-                                      toJSON: () => expectedLayer
+                                      toJSON: () => expectedDrawing
                                   }
                                 : null
                         )
@@ -1614,7 +1618,7 @@ describe('handleRemoteChangeRefresh', () => {
             pendingCommittedKeyboardDriftCheckAfterDrag: true,
             lastChangeSource: 'keyboard-outline',
             lastEditType: 'outline',
-            normalizeLayerForRust: jest.fn((layer) => layer)
+            normalizeDrawingForRust: jest.fn((drawing) => drawing)
         };
         const fontManagerState = window.fontManager;
 
@@ -1685,7 +1689,7 @@ describe('handleRemoteChangeRefresh', () => {
             pendingCommittedKeyboardDriftCheckAfterDrag: false,
             lastChangeSource: 'keyboard-outline',
             lastEditType: 'outline',
-            normalizeLayerForRust: jest.fn((layer) => layer)
+            normalizeDrawingForRust: jest.fn((drawing) => drawing)
         };
 
         try {
@@ -1775,7 +1779,7 @@ describe('handleRemoteChangeRefresh', () => {
         const refreshOrder = [];
         const awaitWorkerSync = jest.fn(async () => {
             refreshOrder.push('sync');
-            window.fontManager.lastChangeSource = 'master-reinterpolate-batch';
+            window.fontManager.lastChangeSource = 'station-reinterpolate-batch';
             window.fontManager.lastEditType = 'outline';
         });
         const requestCompile = jest.fn(async () => {
@@ -1791,7 +1795,7 @@ describe('handleRemoteChangeRefresh', () => {
                     collectComponentDependentGlyphs: jest.fn(() => new Set())
                 }
             },
-            lastChangeSource: 'master-reinterpolate-batch',
+            lastChangeSource: 'station-reinterpolate-batch',
             lastEditType: 'outline'
         };
 
@@ -1799,7 +1803,7 @@ describe('handleRemoteChangeRefresh', () => {
             await handleCommittedChangeRefresh(
                 [
                     {
-                        transactionLabel: 'Reinterpolate layer batch sync',
+                        transactionLabel: 'Reinterpolate drawing batch sync',
                         path: 'glyphs.A',
                         workerReplayTargets: [
                             {
@@ -2348,7 +2352,7 @@ describe('handleRemoteChangeRefresh', () => {
         const reconcileSelectionAfterModelSync = jest.fn(async () => {
             refreshOrder.push('reconcile');
         });
-        const fetchLayerData = jest.fn(async (skipRender, glyphName) => {
+        const fetchDrawingData = jest.fn(async (skipRender, glyphName) => {
             refreshOrder.push(
                 `fetch:${skipRender ? 'skip' : 'render'}:${glyphName}`
             );
@@ -2360,10 +2364,10 @@ describe('handleRemoteChangeRefresh', () => {
                 active: true,
                 draggingSomething: false,
                 pendingRemoteRefreshAfterDrag: false,
-                selectedLayerId: 'master-regular',
+                selectedDrawingId: 'master-regular',
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'a' }]),
                 reconcileSelectionAfterModelSync,
-                fetchLayerData,
+                fetchDrawingData,
                 runDeterministicRefresh: jest.fn(async (callback) => {
                     refreshOrder.push('deterministic');
                     await callback();
@@ -2411,7 +2415,7 @@ describe('handleRemoteChangeRefresh', () => {
         expect(reconcileSelectionAfterModelSync).toHaveBeenCalledWith({
             skipRender: true
         });
-        expect(fetchLayerData).toHaveBeenCalledWith(true, 'a');
+        expect(fetchDrawingData).toHaveBeenCalledWith(true, 'a');
         expect(requestRepaintAfterCompile).toHaveBeenCalledTimes(1);
         expect(requestCompile).toHaveBeenCalledWith('remote-change', null);
         expect(refreshOrder).toEqual([
@@ -2505,7 +2509,7 @@ describe('handleRemoteChangeRefresh', () => {
         await handleRemoteChangeRefresh(
             [
                 {
-                    transactionLabel: 'Reinterpolate layer batch sync',
+                    transactionLabel: 'Reinterpolate drawing batch sync',
                     path: 'glyphs.A',
                     workerReplayTargets: replayTargets
                 }
@@ -2528,7 +2532,7 @@ describe('handleRemoteChangeRefresh', () => {
         await handleRemoteChangeRefresh(
             [
                 {
-                    transactionLabel: 'Reinterpolate layer sync',
+                    transactionLabel: 'Reinterpolate drawing sync',
                     path: 'glyphs.A.layers.brace-layer',
                     workerReplayTargets: replayTargets
                 }
@@ -2800,18 +2804,18 @@ describe('handleRemoteChangeRefresh', () => {
 
         function installReceiverHarness({
             activeGlyphName,
-            activeLayerId,
-            currentLayerWidth,
+            activeDrawingId: activeDrawingId,
+            currentDrawingWidth,
             initialPanX,
             initialScale,
             editMode = true,
             draggingSomething = false
         }) {
-            const layer = { width: currentLayerWidth };
+            const drawing = { width: currentDrawingWidth };
             const fontModel = {
                 findGlyph: jest.fn(() => ({
-                    findLayerById: jest.fn((id) =>
-                        id === activeLayerId ? layer : null
+                    findDrawingById: jest.fn((id) =>
+                        id === activeDrawingId ? drawing : null
                     )
                 }))
             };
@@ -2825,7 +2829,7 @@ describe('handleRemoteChangeRefresh', () => {
                 outlineEditor: {
                     active: editMode,
                     draggingSomething,
-                    selectedLayerId: activeLayerId,
+                    selectedDrawingId: activeDrawingId,
                     parseGlyphStack: () => [{ glyphName: activeGlyphName }],
                     performHitDetection: jest.fn()
                 },
@@ -2834,7 +2838,7 @@ describe('handleRemoteChangeRefresh', () => {
                 reapplyIdleViewLock,
                 hasPendingIdleViewLock: jest.fn(() => !draggingSomething),
                 clearIdleViewLock,
-                syncCurrentOutlineLayerDataFromModel: jest.fn(),
+                syncCurrentOutlineDrawingDataFromModel: jest.fn(),
                 updatePropertyPanel: jest.fn(),
                 render: jest.fn()
             };
@@ -2849,8 +2853,8 @@ describe('handleRemoteChangeRefresh', () => {
         test("remote colon-path sidebearing packet locks this window's edit-mode bbox", async () => {
             const { glyphCanvas } = installReceiverHarness({
                 activeGlyphName: 'a',
-                activeLayerId: 'master-regular',
-                currentLayerWidth: 560,
+                activeDrawingId: 'master-regular',
+                currentDrawingWidth: 560,
                 initialPanX: 200,
                 initialScale: 2
             });
@@ -2883,8 +2887,8 @@ describe('handleRemoteChangeRefresh', () => {
         test("remote outline packet on another glyph locks this window's active origin", async () => {
             const { glyphCanvas } = installReceiverHarness({
                 activeGlyphName: 'a',
-                activeLayerId: 'master-regular',
-                currentLayerWidth: 560,
+                activeDrawingId: 'master-regular',
+                currentDrawingWidth: 560,
                 initialPanX: 200,
                 initialScale: 2
             });
@@ -2915,8 +2919,8 @@ describe('handleRemoteChangeRefresh', () => {
         test("remote keyed LSB outline packet locks this window's advance right edge", async () => {
             const { glyphCanvas } = installReceiverHarness({
                 activeGlyphName: 'm',
-                activeLayerId: 'master-regular',
-                currentLayerWidth: 560,
+                activeDrawingId: 'master-regular',
+                currentDrawingWidth: 560,
                 initialPanX: 200,
                 initialScale: 2
             });
@@ -2951,8 +2955,8 @@ describe('handleRemoteChangeRefresh', () => {
         test('remote kerning-value packet in text mode requests the pair-glyph lock', async () => {
             const { glyphCanvas } = installReceiverHarness({
                 activeGlyphName: 'a',
-                activeLayerId: 'master-regular',
-                currentLayerWidth: 500,
+                activeDrawingId: 'master-regular',
+                currentDrawingWidth: 500,
                 initialPanX: 200,
                 initialScale: 2,
                 editMode: false
@@ -2986,8 +2990,8 @@ describe('handleRemoteChangeRefresh', () => {
         test("remote sidebearing packet on another glyph locks this window's edit-mode bbox", async () => {
             const { glyphCanvas } = installReceiverHarness({
                 activeGlyphName: 'a',
-                activeLayerId: 'master-regular',
-                currentLayerWidth: 560,
+                activeDrawingId: 'master-regular',
+                currentDrawingWidth: 560,
                 initialPanX: 200,
                 initialScale: 2
             });
@@ -3019,8 +3023,8 @@ describe('handleRemoteChangeRefresh', () => {
         test('local idle sidebearing commit uses the same viewer lock', async () => {
             const { glyphCanvas } = installReceiverHarness({
                 activeGlyphName: 'a',
-                activeLayerId: 'master-regular',
-                currentLayerWidth: 560,
+                activeDrawingId: 'master-regular',
+                currentDrawingWidth: 560,
                 initialPanX: 200,
                 initialScale: 2
             });
@@ -3053,8 +3057,8 @@ describe('handleRemoteChangeRefresh', () => {
         test('local component drag commit with keyed visualAnchorSide locks the right edge', async () => {
             const { glyphCanvas } = installReceiverHarness({
                 activeGlyphName: 'adieresis',
-                activeLayerId: 'master-regular',
-                currentLayerWidth: 560,
+                activeDrawingId: 'master-regular',
+                currentDrawingWidth: 560,
                 initialPanX: 200,
                 initialScale: 2
             });
@@ -3090,8 +3094,8 @@ describe('handleRemoteChangeRefresh', () => {
         test('a live drag on this window bypasses the idle viewer lock', async () => {
             const { glyphCanvas } = installReceiverHarness({
                 activeGlyphName: 'a',
-                activeLayerId: 'master-regular',
-                currentLayerWidth: 560,
+                activeDrawingId: 'master-regular',
+                currentDrawingWidth: 560,
                 initialPanX: 200,
                 initialScale: 2,
                 draggingSomething: true
@@ -3188,7 +3192,7 @@ describe('bridge Yjs worker callback', () => {
     });
 
     test('anchors the active layer for a synchronous Arrow key sidebearing undo packet', async () => {
-        const layer = { width: 600, isAutomaticAlignedLayer: () => false };
+        const drawing = { width: 600, isAutomaticAlignedDrawing: () => false };
         const anchor = { center: null };
         let canvasWidth = 600;
 
@@ -3211,7 +3215,7 @@ describe('bridge Yjs worker callback', () => {
                 requestRecompileWithoutDataChange: jest.fn(),
                 fontModel: {
                     findGlyph: jest.fn(() => ({
-                        findLayerById: jest.fn(() => layer)
+                        findDrawingById: jest.fn(() => drawing)
                     })),
                     collectComponentDependentGlyphs: jest.fn(() => new Set())
                 }
@@ -3220,8 +3224,8 @@ describe('bridge Yjs worker callback', () => {
         window.glyphCanvas = {
             viewportManager: { panX: 100, panY: 0, scale: 1 },
             getCurrentGlyphName: () => 'A',
-            syncCurrentOutlineLayerDataFromModel: jest.fn((modelLayer) => {
-                canvasWidth = modelLayer.width;
+            syncCurrentOutlineDrawingDataFromModel: jest.fn((modelDrawing) => {
+                canvasWidth = modelDrawing.width;
             }),
             requestRepaintAfterCompile: jest.fn(),
             render: jest.fn(),
@@ -3231,7 +3235,7 @@ describe('bridge Yjs worker callback', () => {
                 return true;
             }),
             reapplyIdleViewLock: jest.fn(() => {
-                canvasWidth = layer.width;
+                canvasWidth = drawing.width;
                 window.glyphCanvas.viewportManager.panX =
                     anchor.center - canvasWidth / 2;
                 return true;
@@ -3239,14 +3243,14 @@ describe('bridge Yjs worker callback', () => {
             clearIdleViewLock: jest.fn(),
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: () => [{ glyphName: 'A' }]
             }
         };
 
         const bridge = initializeBridgeHarness();
         bridge.undo = jest.fn(() => {
-            layer.width = 500;
+            drawing.width = 500;
             for (const callback of bridge._committedChangeListeners) {
                 callback(
                     [
@@ -3265,12 +3269,12 @@ describe('bridge Yjs worker callback', () => {
         });
 
         const centerBefore =
-            window.glyphCanvas.viewportManager.panX + layer.width / 2;
+            window.glyphCanvas.viewportManager.panX + drawing.width / 2;
         await runBridgeUndoRedo('undo', 'A', 'A', 'layer-1');
 
-        expect(window.glyphCanvas.viewportManager.panX + layer.width / 2).toBe(
-            centerBefore
-        );
+        expect(
+            window.glyphCanvas.viewportManager.panX + drawing.width / 2
+        ).toBe(centerBefore);
         expect(window.glyphCanvas.captureIdleViewLock).toHaveBeenCalled();
         expect(window.glyphCanvas.reapplyIdleViewLock).toHaveBeenCalled();
         expect(window.glyphCanvas.render).not.toHaveBeenCalled();
@@ -4107,9 +4111,9 @@ describe('buildCascadingRecompositionOperations', () => {
 
         fontJson.glyphs[0].layers[0].width = 700;
 
-        const sourceLayer = {
+        const sourceDrawing = {
             id: 'layer-1',
-            getMatchingLayerOnGlyph: jest.fn((glyphName) =>
+            getMatchingDrawingOnGlyph: jest.fn((glyphName) =>
                 glyphName === 'B' ? { id: 'layer-2' } : null
             )
         };
@@ -4119,16 +4123,18 @@ describe('buildCascadingRecompositionOperations', () => {
                     findGlyph: jest.fn((glyphName) => {
                         if (glyphName === 'A') {
                             return {
-                                findLayerById: jest.fn((layerId) =>
-                                    layerId === 'layer-1' ? sourceLayer : null
+                                findDrawingById: jest.fn((drawingId) =>
+                                    drawingId === 'layer-1'
+                                        ? sourceDrawing
+                                        : null
                                 )
                             };
                         }
 
                         if (glyphName === 'B') {
                             return {
-                                findLayerById: jest.fn((layerId) =>
-                                    layerId === 'layer-2'
+                                findDrawingById: jest.fn((drawingId) =>
+                                    drawingId === 'layer-2'
                                         ? { id: 'layer-2' }
                                         : null
                                 )
@@ -4164,7 +4170,7 @@ describe('buildCascadingRecompositionOperations', () => {
                     id: 'layer-2',
                     width: 710
                 }),
-                applyMode: 'layer-snapshot',
+                applyMode: 'drawing-snapshot',
                 workerReplayTargets: [
                     {
                         glyphName: 'B',
@@ -4189,11 +4195,11 @@ describe('buildCascadingRecompositionOperations', () => {
         ];
         const bridge = new ChangeBridge('cascade-test');
         bridge.initFromJson(fontJson);
-        const yLayer = bridge
+        const yDrawing = bridge
             .getYValue(['glyphs', 'A'])
             .get('layers')
             .get('layer-1');
-        const nodeId = fromYType(yLayer).shapes[0].nodes[0].id;
+        const nodeId = fromYType(yDrawing).shapes[0].nodes[0].id;
         expect(nodeId).toBeTruthy();
 
         // The model after the edit: the point moved and its metrics key
@@ -4206,9 +4212,9 @@ describe('buildCascadingRecompositionOperations', () => {
             currentFont: {
                 fontModel: {
                     findGlyph: jest.fn(() => ({
-                        findLayerById: jest.fn(() => ({
+                        findDrawingById: jest.fn(() => ({
                             id: 'layer-1',
-                            getMatchingLayerOnGlyph: jest.fn(() => null)
+                            getMatchingDrawingOnGlyph: jest.fn(() => null)
                         }))
                     })),
                     rebuildAutomaticCompositesForGlyphs: jest.fn(
@@ -4257,9 +4263,9 @@ describe('buildCascadingRecompositionOperations', () => {
 
         fontJson.glyphs[0].layers[0].width = 700;
 
-        const sourceLayer = {
+        const sourceDrawing = {
             id: 'layer-1',
-            getMatchingLayerOnGlyph: jest.fn((glyphName) =>
+            getMatchingDrawingOnGlyph: jest.fn((glyphName) =>
                 glyphName === 'B' ? { id: 'layer-2' } : null
             )
         };
@@ -4269,16 +4275,18 @@ describe('buildCascadingRecompositionOperations', () => {
                     findGlyph: jest.fn((glyphName) => {
                         if (glyphName === 'A') {
                             return {
-                                findLayerById: jest.fn((layerId) =>
-                                    layerId === 'layer-1' ? sourceLayer : null
+                                findDrawingById: jest.fn((drawingId) =>
+                                    drawingId === 'layer-1'
+                                        ? sourceDrawing
+                                        : null
                                 )
                             };
                         }
 
                         if (glyphName === 'B') {
                             return {
-                                findLayerById: jest.fn((layerId) =>
-                                    layerId === 'layer-2'
+                                findDrawingById: jest.fn((drawingId) =>
+                                    drawingId === 'layer-2'
                                         ? { id: 'layer-2' }
                                         : null
                                 )
@@ -4325,9 +4333,9 @@ describe('buildCascadingRecompositionOperations', () => {
 
         fontJson.glyphs[0].layers[0].width = 700;
 
-        const sourceLayer = {
+        const sourceDrawing = {
             id: 'layer-1',
-            getMatchingLayerOnGlyph: jest.fn(() => null)
+            getMatchingDrawingOnGlyph: jest.fn(() => null)
         };
         window.fontManager = {
             currentFont: {
@@ -4335,8 +4343,10 @@ describe('buildCascadingRecompositionOperations', () => {
                     findGlyph: jest.fn((glyphName) => {
                         if (glyphName === 'A') {
                             return {
-                                findLayerById: jest.fn((layerId) =>
-                                    layerId === 'layer-1' ? sourceLayer : null
+                                findDrawingById: jest.fn((drawingId) =>
+                                    drawingId === 'layer-1'
+                                        ? sourceDrawing
+                                        : null
                                 )
                             };
                         }
@@ -4392,9 +4402,9 @@ describe('buildCascadingRecompositionOperations', () => {
 
         fontJson.glyphs[0].layers[0].anchors = [];
 
-        const sourceLayer = {
+        const sourceDrawing = {
             id: 'layer-1',
-            getMatchingLayerOnGlyph: jest.fn(() => null)
+            getMatchingDrawingOnGlyph: jest.fn(() => null)
         };
         window.fontManager = {
             currentFont: {
@@ -4402,8 +4412,10 @@ describe('buildCascadingRecompositionOperations', () => {
                     findGlyph: jest.fn((glyphName) => {
                         if (glyphName === 'A') {
                             return {
-                                findLayerById: jest.fn((layerId) =>
-                                    layerId === 'layer-1' ? sourceLayer : null
+                                findDrawingById: jest.fn((drawingId) =>
+                                    drawingId === 'layer-1'
+                                        ? sourceDrawing
+                                        : null
                                 )
                             };
                         }
@@ -4497,12 +4509,12 @@ describe('buildCascadingRecompositionOperations', () => {
                     )
             )
         ).toEqual([]);
-        const sourceLayerOp = operations.find(
+        const sourceDrawingOp = operations.find(
             (operation) =>
                 Array.isArray(operation.path) && operation.path[1] === 'A'
         );
-        if (sourceLayerOp) {
-            expect(sourceLayerOp.oldValue.anchors).toEqual(
+        if (sourceDrawingOp) {
+            expect(sourceDrawingOp.oldValue.anchors).toEqual(
                 expect.arrayContaining([
                     expect.objectContaining({ name: 'top', y: 719 })
                 ])
@@ -4523,9 +4535,9 @@ describe('buildCascadingRecompositionOperations', () => {
         expect(typeof topId).toBe('string');
         fontJson.glyphs[0].layers[0].anchors = [];
 
-        const sourceLayer = {
+        const sourceDrawing = {
             id: 'layer-1',
-            getMatchingLayerOnGlyph: jest.fn(() => null)
+            getMatchingDrawingOnGlyph: jest.fn(() => null)
         };
         window.fontManager = {
             currentFont: {
@@ -4533,8 +4545,10 @@ describe('buildCascadingRecompositionOperations', () => {
                     findGlyph: jest.fn((glyphName) => {
                         if (glyphName === 'A') {
                             return {
-                                findLayerById: jest.fn((layerId) =>
-                                    layerId === 'layer-1' ? sourceLayer : null
+                                findDrawingById: jest.fn((drawingId) =>
+                                    drawingId === 'layer-1'
+                                        ? sourceDrawing
+                                        : null
                                 )
                             };
                         }
@@ -4701,7 +4715,7 @@ describe('buildCascadingRecompositionOperations', () => {
                 oldValue: { id: 'layer-1', width: 600 },
                 newValue: { id: 'layer-1', width: 700 },
                 applyPath: ['glyphs', 'A', 'layers', 'layer-1'],
-                applyMode: 'layer-snapshot',
+                applyMode: 'drawing-snapshot',
                 applyNewValue: { id: 'layer-1', width: 700 },
                 workerReplayTargets: [
                     { glyphName: 'A', layerId: 'layer-1' },
@@ -4723,9 +4737,9 @@ describe('buildCascadingRecompositionOperations', () => {
 
         fontJson.glyphs[0].layers[0].width = 700;
 
-        const sourceLayer = {
+        const sourceDrawing = {
             id: 'layer-1',
-            getMatchingLayerOnGlyph: jest.fn((glyphName) =>
+            getMatchingDrawingOnGlyph: jest.fn((glyphName) =>
                 glyphName === 'B' ? { id: 'layer-2' } : null
             )
         };
@@ -4735,16 +4749,18 @@ describe('buildCascadingRecompositionOperations', () => {
                     findGlyph: jest.fn((glyphName) => {
                         if (glyphName === 'A') {
                             return {
-                                findLayerById: jest.fn((layerId) =>
-                                    layerId === 'layer-1' ? sourceLayer : null
+                                findDrawingById: jest.fn((drawingId) =>
+                                    drawingId === 'layer-1'
+                                        ? sourceDrawing
+                                        : null
                                 )
                             };
                         }
 
                         if (glyphName === 'B') {
                             return {
-                                findLayerById: jest.fn((layerId) =>
-                                    layerId === 'layer-2'
+                                findDrawingById: jest.fn((drawingId) =>
+                                    drawingId === 'layer-2'
                                         ? { id: 'layer-2' }
                                         : null
                                 )
@@ -4790,9 +4806,9 @@ describe('buildCascadingRecompositionOperations', () => {
 
         fontJson.glyphs[0].layers[0].anchors = [];
 
-        const sourceLayer = {
+        const sourceDrawing = {
             id: 'layer-1',
-            getMatchingLayerOnGlyph: jest.fn(() => null)
+            getMatchingDrawingOnGlyph: jest.fn(() => null)
         };
         window.fontManager = {
             currentFont: {
@@ -4800,8 +4816,10 @@ describe('buildCascadingRecompositionOperations', () => {
                     findGlyph: jest.fn((glyphName) => {
                         if (glyphName === 'A') {
                             return {
-                                findLayerById: jest.fn((layerId) =>
-                                    layerId === 'layer-1' ? sourceLayer : null
+                                findDrawingById: jest.fn((drawingId) =>
+                                    drawingId === 'layer-1'
+                                        ? sourceDrawing
+                                        : null
                                 )
                             };
                         }
@@ -4836,7 +4854,7 @@ describe('buildCascadingRecompositionOperations', () => {
         expect(
             window.fontManager.currentFont.fontModel.recomputeMetricsKeys
         ).not.toHaveBeenCalled();
-        // No cascade layer targets because getMatchingLayerOnGlyph returns
+        // No cascade layer targets because getMatchingDrawingOnGlyph returns
         // null, so no layer operations are emitted.
         expect(operations).toEqual([]);
     });
@@ -4990,7 +5008,7 @@ describe('shouldInvalidateLayoutClosureForCommittedEntries', () => {
         expect(result).toBe(false);
     });
 
-    test('returns false for layer-snapshot paths with colon separator', () => {
+    test('returns false for drawing-snapshot paths with colon separator', () => {
         const result =
             changeBridgeInit.shouldInvalidateLayoutClosureForCommittedEntries([
                 { path: 'glyphs.alef:layers.A.0:anchors.0.x' }
@@ -5039,7 +5057,7 @@ describe('shouldInvalidateLayoutClosureForCommittedEntries', () => {
             changeBridgeInit.shouldInvalidateLayoutClosureForCommittedEntries([
                 {
                     path: 'glyphs.A',
-                    transactionLabel: 'Reinterpolate layer batch sync',
+                    transactionLabel: 'Reinterpolate drawing batch sync',
                     workerReplayTargets: [
                         { glyphName: 'A', layerId: 'master-bold' }
                     ]
@@ -5087,10 +5105,10 @@ describe('syncRustCacheAndRefreshCanvas', () => {
     });
 
     test('keeps worker replay targets out of visible advance refreshes', async () => {
-        const activeLayer = {
+        const activeDrawing = {
             id: 'active-brace-layer',
             width: 510,
-            getMatchingLayerOnGlyph: jest.fn((glyphName) =>
+            getMatchingDrawingOnGlyph: jest.fn((glyphName) =>
                 glyphName === 'n'
                     ? {
                           id: 'dependent-brace-layer',
@@ -5100,13 +5118,13 @@ describe('syncRustCacheAndRefreshCanvas', () => {
             )
         };
         const activeGlyph = {
-            findLayerById: jest.fn((layerId) =>
-                layerId === 'active-brace-layer' ? activeLayer : undefined
+            findDrawingById: jest.fn((drawingId) =>
+                drawingId === 'active-brace-layer' ? activeDrawing : undefined
             )
         };
         const dependentGlyph = {
-            findLayerById: jest.fn((layerId) =>
-                layerId === 'dependent-brace-layer'
+            findDrawingById: jest.fn((drawingId) =>
+                drawingId === 'dependent-brace-layer'
                     ? { id: 'dependent-brace-layer', width: 640 }
                     : undefined
             )
@@ -5123,7 +5141,7 @@ describe('syncRustCacheAndRefreshCanvas', () => {
             })
         };
         const refreshGlyphAdvancesLive = jest.fn();
-        const fetchLayerData = jest.fn(async () => {});
+        const fetchDrawingData = jest.fn(async () => {});
         const reconcileSelectionAfterModelSync = jest.fn(async () => {});
 
         fontCompilation.isInitialized = false;
@@ -5140,11 +5158,11 @@ describe('syncRustCacheAndRefreshCanvas', () => {
             requestRepaintAfterCompile: jest.fn(),
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'active-brace-layer',
+                selectedDrawingId: 'active-brace-layer',
                 draggingSomething: false,
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'l' }]),
                 reconcileSelectionAfterModelSync,
-                fetchLayerData
+                fetchDrawingData
             }
         };
 
@@ -5159,7 +5177,7 @@ describe('syncRustCacheAndRefreshCanvas', () => {
         expect(reconcileSelectionAfterModelSync).toHaveBeenCalledWith({
             skipRender: true
         });
-        expect(fetchLayerData).toHaveBeenCalledWith(true, 'l');
+        expect(fetchDrawingData).toHaveBeenCalledWith(true, 'l');
         expect(refreshGlyphAdvancesLive).not.toHaveBeenCalled();
     });
 
@@ -5181,7 +5199,7 @@ describe('syncRustCacheAndRefreshCanvas', () => {
                 }
             },
             refreshWorkerCacheForReplayTargets,
-            submitLayerToWorkerCache: jest.fn(),
+            submitDrawingToWorkerCache: jest.fn(),
             awaitWorkerCacheUpdate
         };
         window.glyphCanvas = {
@@ -5192,11 +5210,11 @@ describe('syncRustCacheAndRefreshCanvas', () => {
             requestRepaintAfterCompile: jest.fn(),
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'master-regular',
+                selectedDrawingId: 'master-regular',
                 draggingSomething: false,
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'l' }]),
                 reconcileSelectionAfterModelSync: jest.fn(async () => {}),
-                fetchLayerData: jest.fn(async () => {})
+                fetchDrawingData: jest.fn(async () => {})
             }
         };
 
@@ -5210,7 +5228,7 @@ describe('syncRustCacheAndRefreshCanvas', () => {
 
             expect(refreshWorkerCacheForReplayTargets).not.toHaveBeenCalled();
             expect(
-                window.fontManager.submitLayerToWorkerCache
+                window.fontManager.submitDrawingToWorkerCache
             ).not.toHaveBeenCalled();
             expect(awaitWorkerDocumentSync).toHaveBeenCalledTimes(1);
             expect(awaitWorkerCacheUpdate).toHaveBeenCalledTimes(1);
@@ -5234,7 +5252,7 @@ describe('syncRustCacheAndRefreshCanvas', () => {
                 }
             },
             refreshWorkerCacheForReplayTargets: jest.fn(),
-            submitLayerToWorkerCache: jest.fn(),
+            submitDrawingToWorkerCache: jest.fn(),
             awaitWorkerCacheUpdate
         };
         window.glyphCanvas = {
@@ -5245,22 +5263,22 @@ describe('syncRustCacheAndRefreshCanvas', () => {
             requestRepaintAfterCompile: jest.fn(),
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'master-regular',
+                selectedDrawingId: 'master-regular',
                 draggingSomething: false,
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'l' }]),
                 reconcileSelectionAfterModelSync: jest.fn(async () => {}),
-                fetchLayerData: jest.fn(async () => {})
+                fetchDrawingData: jest.fn(async () => {})
             }
         };
 
         try {
             await syncRustCacheAndRefreshCanvas(undefined, undefined, {
                 skipDeferredCanvasRepaint: true,
-                allowSelectedLayerFallback: false
+                allowSelectedDrawingFallback: false
             });
 
             expect(
-                window.fontManager.submitLayerToWorkerCache
+                window.fontManager.submitDrawingToWorkerCache
             ).not.toHaveBeenCalled();
             expect(awaitWorkerDocumentSync).toHaveBeenCalledTimes(1);
             expect(awaitWorkerCacheUpdate).toHaveBeenCalledTimes(1);
@@ -5269,11 +5287,11 @@ describe('syncRustCacheAndRefreshCanvas', () => {
         }
     });
 
-    test('no longer falls back to submitLayerToWorkerCache for stack layers', async () => {
+    test('no longer falls back to submitDrawingToWorkerCache for stack layers', async () => {
         const awaitWorkerDocumentSync = jest
             .spyOn(fontCompilation, 'awaitWorkerDocumentSync')
             .mockResolvedValue();
-        const submitLayerToWorkerCache = jest.fn().mockResolvedValue(true);
+        const submitDrawingToWorkerCache = jest.fn().mockResolvedValue(true);
         const awaitWorkerCacheUpdate = jest.fn(async () => {});
 
         fontCompilation.isInitialized = true;
@@ -5285,7 +5303,7 @@ describe('syncRustCacheAndRefreshCanvas', () => {
                 }
             },
             refreshWorkerCacheForReplayTargets: jest.fn(),
-            submitLayerToWorkerCache,
+            submitDrawingToWorkerCache: submitDrawingToWorkerCache,
             awaitWorkerCacheUpdate
         };
         window.glyphCanvas = {
@@ -5296,13 +5314,13 @@ describe('syncRustCacheAndRefreshCanvas', () => {
             requestRepaintAfterCompile: jest.fn(),
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'foreground-layer',
+                selectedDrawingId: 'foreground-layer',
                 draggingSomething: false,
                 parseGlyphStack: jest.fn(() => [
                     { glyphName: 'A', layerId: 'background-layer' }
                 ]),
                 reconcileSelectionAfterModelSync: jest.fn(async () => {}),
-                fetchLayerData: jest.fn(async () => {})
+                fetchDrawingData: jest.fn(async () => {})
             }
         };
 
@@ -5311,7 +5329,7 @@ describe('syncRustCacheAndRefreshCanvas', () => {
                 skipDeferredCanvasRepaint: true
             });
 
-            expect(submitLayerToWorkerCache).not.toHaveBeenCalled();
+            expect(submitDrawingToWorkerCache).not.toHaveBeenCalled();
             expect(awaitWorkerDocumentSync).toHaveBeenCalledTimes(1);
             expect(awaitWorkerCacheUpdate).toHaveBeenCalledTimes(1);
         } finally {
@@ -5826,7 +5844,7 @@ describe('committed undo/redo compile requests', () => {
             currentFont: {
                 fontModel: {
                     findGlyph: jest.fn(() => ({
-                        findLayerById: jest.fn(() => ({ width: 500 }))
+                        findDrawingById: jest.fn(() => ({ width: 500 }))
                     }))
                 },
                 compileRequestVersion: 0,
@@ -5853,15 +5871,15 @@ describe('committed undo/redo compile requests', () => {
             viewportManager: { panX: 100, scale: 2 },
             textRunEditor: { refreshGlyphAdvancesLive: jest.fn() },
             requestRepaintAfterCompile: jest.fn(),
-            syncCurrentOutlineLayerDataFromModel: jest.fn(),
+            syncCurrentOutlineDrawingDataFromModel: jest.fn(),
             updatePropertyPanel: jest.fn(),
             render: jest.fn(),
             outlineEditor: {
                 active: true,
                 currentGlyphName: 'a',
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: () => [{ glyphName: 'a' }],
-                fetchLayerData: jest.fn(),
+                fetchDrawingData: jest.fn(),
                 performHitDetection: jest.fn()
             },
             getCurrentGlyphName: () => 'a'
@@ -5914,16 +5932,16 @@ describe('committed undo/redo compile requests', () => {
         });
     });
 
-    test('undo outline replay reuses forward layer-snapshot metadata instead of generic undo source', async () => {
+    test('undo outline replay reuses forward drawing-snapshot metadata instead of generic undo source', async () => {
         const refreshGlyphAdvancesLive = jest.fn();
-        const fetchLayerData = jest.fn();
-        const syncCurrentOutlineLayerDataFromModel = jest.fn();
+        const fetchDrawingData = jest.fn();
+        const syncCurrentOutlineDrawingDataFromModel = jest.fn();
         const render = jest.fn();
         const flushPendingKeyboardPreviewCommit = jest.fn(async () => {});
 
         const makeFontModel = () => ({
             findGlyph: jest.fn(() => ({
-                findLayerById: jest.fn(() => ({ width: 520 }))
+                findDrawingById: jest.fn(() => ({ width: 520 }))
             }))
         });
 
@@ -5964,18 +5982,19 @@ describe('committed undo/redo compile requests', () => {
             viewportManager: { panX: 100, scale: 2 },
             textRunEditor: { refreshGlyphAdvancesLive },
             requestRepaintAfterCompile: jest.fn(),
-            syncCurrentOutlineLayerDataFromModel,
+            syncCurrentOutlineDrawingDataFromModel:
+                syncCurrentOutlineDrawingDataFromModel,
             updatePropertyPanel: jest.fn(),
             render,
             outlineEditor: {
                 active: true,
                 currentGlyphName: 'a',
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: () => [{ glyphName: 'a' }],
                 flushPendingKeyboardPreviewCommit,
-                canRefreshSelectedLayerFromModelExactly: jest.fn(() => true),
-                refreshSelectedLayerFromModel: jest.fn(() => true),
-                fetchLayerData,
+                canRefreshSelectedDrawingFromModelExactly: jest.fn(() => true),
+                refreshSelectedDrawingFromModel: jest.fn(() => true),
+                fetchDrawingData: fetchDrawingData,
                 performHitDetection: jest.fn()
             },
             getCurrentGlyphName: () => 'a'
@@ -6051,14 +6070,14 @@ describe('committed undo/redo compile requests', () => {
             })
         });
         expect(flushPendingKeyboardPreviewCommit).toHaveBeenCalledTimes(1);
-        expect(fetchLayerData).not.toHaveBeenCalled();
+        expect(fetchDrawingData).not.toHaveBeenCalled();
     });
 
     test('unstamped local sidebearing commits compile full and refresh layer data', async () => {
         const originalFontManager = window.fontManager;
         const originalGlyphCanvas = window.glyphCanvas;
-        const fetchLayerData = jest.fn();
-        const refreshSelectedLayerFromModel = jest.fn(() => true);
+        const fetchDrawingData = jest.fn();
+        const refreshSelectedDrawingFromModel = jest.fn(() => true);
         const refreshGlyphAdvancesLive = jest.fn();
         const requestCompile = jest.fn(async () => {});
 
@@ -6067,8 +6086,8 @@ describe('committed undo/redo compile requests', () => {
                 fontModel: {
                     collectComponentDependentGlyphs: jest.fn(() => new Set()),
                     findGlyph: jest.fn(() => ({
-                        findLayerById: jest.fn(() => ({
-                            isAutomaticAlignedLayer: jest.fn(() => false)
+                        findDrawingById: jest.fn(() => ({
+                            isAutomaticAlignedDrawing: jest.fn(() => false)
                         }))
                     }))
                 }
@@ -6083,15 +6102,15 @@ describe('committed undo/redo compile requests', () => {
             outlineEditor: {
                 active: true,
                 draggingSomething: false,
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'a' }]),
                 reconcileSelectionAfterModelSync: jest.fn(async () => false),
                 runDeterministicRefresh: jest.fn(async (refresh) => {
                     await refresh();
                 }),
-                canRefreshSelectedLayerFromModelExactly: jest.fn(() => true),
-                refreshSelectedLayerFromModel,
-                fetchLayerData
+                canRefreshSelectedDrawingFromModelExactly: jest.fn(() => true),
+                refreshSelectedDrawingFromModel,
+                fetchDrawingData
             }
         };
 
@@ -6120,8 +6139,8 @@ describe('committed undo/redo compile requests', () => {
             window.glyphCanvas = originalGlyphCanvas;
         }
 
-        expect(refreshSelectedLayerFromModel).not.toHaveBeenCalled();
-        expect(fetchLayerData).toHaveBeenCalledTimes(1);
+        expect(refreshSelectedDrawingFromModel).not.toHaveBeenCalled();
+        expect(fetchDrawingData).toHaveBeenCalledTimes(1);
         expect(refreshGlyphAdvancesLive).not.toHaveBeenCalled();
         expect(requestCompile).toHaveBeenCalledWith(
             'change-bridge-local',
@@ -6132,7 +6151,7 @@ describe('committed undo/redo compile requests', () => {
     test('local committed outline falls back to fetching layer data when exact refresh is unavailable', async () => {
         const originalFontManager = window.fontManager;
         const originalGlyphCanvas = window.glyphCanvas;
-        const fetchLayerData = jest.fn(async () => {});
+        const fetchDrawingData = jest.fn(async () => {});
         const requestCompile = jest.fn(async () => {});
 
         window.fontManager = {
@@ -6140,8 +6159,8 @@ describe('committed undo/redo compile requests', () => {
                 fontModel: {
                     collectComponentDependentGlyphs: jest.fn(() => new Set()),
                     findGlyph: jest.fn(() => ({
-                        findLayerById: jest.fn(() => ({
-                            isAutomaticAlignedLayer: jest.fn(() => false)
+                        findDrawingById: jest.fn(() => ({
+                            isAutomaticAlignedDrawing: jest.fn(() => false)
                         }))
                     }))
                 }
@@ -6152,15 +6171,15 @@ describe('committed undo/redo compile requests', () => {
             outlineEditor: {
                 active: true,
                 draggingSomething: false,
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'a' }]),
                 reconcileSelectionAfterModelSync: jest.fn(async () => false),
                 runDeterministicRefresh: jest.fn(async (refresh) => {
                     await refresh();
                 }),
-                canRefreshSelectedLayerFromModelExactly: jest.fn(() => false),
-                refreshSelectedLayerFromModel: jest.fn(),
-                fetchLayerData
+                canRefreshSelectedDrawingFromModelExactly: jest.fn(() => false),
+                refreshSelectedDrawingFromModel: jest.fn(),
+                fetchDrawingData
             }
         };
 
@@ -6183,7 +6202,7 @@ describe('committed undo/redo compile requests', () => {
             window.glyphCanvas = originalGlyphCanvas;
         }
 
-        expect(fetchLayerData).toHaveBeenCalledWith(true, 'a');
+        expect(fetchDrawingData).toHaveBeenCalledWith(true, 'a');
         expect(requestCompile).toHaveBeenCalledWith(
             'change-bridge-local',
             null
@@ -6207,9 +6226,9 @@ describe('committed undo/redo compile requests', () => {
                 currentFont: {
                     fontModel: {
                         findGlyph: jest.fn((glyphName) => ({
-                            findLayerById: jest.fn(() => ({
+                            findDrawingById: jest.fn(() => ({
                                 width: glyphName === 'adieresis' ? 640 : 500,
-                                isAutomaticAlignedLayer: jest.fn(() => false)
+                                isAutomaticAlignedDrawing: jest.fn(() => false)
                             }))
                         }))
                     }
@@ -6230,7 +6249,7 @@ describe('committed undo/redo compile requests', () => {
                 outlineEditor: {
                     active: true,
                     draggingSomething: false,
-                    selectedLayerId: 'layer-1',
+                    selectedDrawingId: 'layer-1',
                     parseGlyphStack: jest.fn(() => [{ glyphName: 'a' }]),
                     reconcileSelectionAfterModelSync: jest.fn(
                         async () => false
@@ -6238,7 +6257,7 @@ describe('committed undo/redo compile requests', () => {
                     runDeterministicRefresh: jest.fn(async (refresh) => {
                         await refresh();
                     }),
-                    fetchLayerData: jest.fn()
+                    fetchDrawingData: jest.fn()
                 },
                 getCurrentGlyphName: jest.fn(() => 'a')
             };
@@ -6295,9 +6314,9 @@ describe('committed undo/redo compile requests', () => {
                 currentFont: {
                     fontModel: {
                         findGlyph: jest.fn(() => ({
-                            findLayerById: jest.fn(() => ({
+                            findDrawingById: jest.fn(() => ({
                                 width: 500,
-                                isAutomaticAlignedLayer: jest.fn(() => false)
+                                isAutomaticAlignedDrawing: jest.fn(() => false)
                             }))
                         }))
                     }
@@ -6314,7 +6333,7 @@ describe('committed undo/redo compile requests', () => {
                 outlineEditor: {
                     active: true,
                     draggingSomething: false,
-                    selectedLayerId: 'layer-1',
+                    selectedDrawingId: 'layer-1',
                     parseGlyphStack: jest.fn(() => [{ glyphName: 'a' }]),
                     reconcileSelectionAfterModelSync: jest.fn(
                         async () => false
@@ -6322,7 +6341,7 @@ describe('committed undo/redo compile requests', () => {
                     runDeterministicRefresh: jest.fn(async (refresh) => {
                         await refresh();
                     }),
-                    fetchLayerData: jest.fn()
+                    fetchDrawingData: jest.fn()
                 },
                 getCurrentGlyphName: jest.fn(() => 'a')
             };
@@ -6364,9 +6383,9 @@ describe('committed undo/redo compile requests', () => {
             currentFont: {
                 fontModel: {
                     findGlyph: jest.fn(() => ({
-                        findLayerById: jest.fn(() => ({
+                        findDrawingById: jest.fn(() => ({
                             width: 520,
-                            isAutomaticAlignedLayer: jest.fn(() => false)
+                            isAutomaticAlignedDrawing: jest.fn(() => false)
                         }))
                     }))
                 }
@@ -6381,13 +6400,13 @@ describe('committed undo/redo compile requests', () => {
             outlineEditor: {
                 active: true,
                 draggingSomething: false,
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'a' }]),
                 reconcileSelectionAfterModelSync: jest.fn(async () => false),
                 runDeterministicRefresh: jest.fn(async (refresh) => {
                     await refresh();
                 }),
-                fetchLayerData: jest.fn()
+                fetchDrawingData: jest.fn()
             },
             getCurrentGlyphName: jest.fn(() => 'a')
         };

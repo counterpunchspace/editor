@@ -1,5 +1,5 @@
 /**
- * Add axis dialog: three steps (axis, new masters, details) with a ladder
+ * Add axis dialog: three steps (axis, new stations, details) with a ladder
  * preview and summary that stay visible. Resolves with what to commit; the
  * caller writes it.
  */
@@ -23,11 +23,11 @@ import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
 export type AddAxisDialogResult =
     | { kind: 'cancel' }
     | { kind: 'axis-only'; model: AddAxisModel }
-    | { kind: 'with-masters'; model: AddAxisModel };
+    | { kind: 'with-stations'; model: AddAxisModel };
 
 export type AddAxisDialogOptions = {
     font: AxisDialogFont;
-    /** Shown on step 2 when masters can't be added right now (e.g. a partly downloaded cloud font). */
+    /** Shown on step 2 when stations can't be added right now (e.g. a partly downloaded cloud font). */
     blockedNotice?: HTMLElement | null;
 };
 
@@ -57,7 +57,7 @@ const DIALOG_HTML = `
             <div class="add-axis-tabs" role="tablist" aria-label="Steps">
                 <button type="button" role="tab" data-page="1"><span class="add-axis-tab-n">1</span>Axis<i class="add-axis-tab-err" hidden></i></button>
                 <span class="add-axis-tabs-optional" aria-hidden="true">Optional</span>
-                <button type="button" role="tab" data-page="2" aria-description="Optional"><span class="add-axis-tab-n">2</span>New masters<i class="add-axis-tab-err" hidden></i></button>
+                <button type="button" role="tab" data-page="2" aria-description="Optional"><span class="add-axis-tab-n">2</span>New stations<i class="add-axis-tab-err" hidden></i></button>
                 <button type="button" role="tab" data-page="3" aria-description="Optional"><span class="add-axis-tab-n">3</span>Details<i class="add-axis-tab-err" hidden></i></button>
             </div>
             <div class="add-axis-pages">
@@ -81,7 +81,7 @@ const DIALOG_HTML = `
                     <div class="add-axis-cols">
                         <div class="add-axis-col add-axis-col-hint">
                             <div class="add-axis-subtitle">Direction</div>
-                            <div class="add-axis-seg" role="group" aria-label="Where new masters go" data-role="direction">
+                            <div class="add-axis-seg" role="group" aria-label="Where new stations go" data-role="direction">
                                 <button type="button" data-dir="below"></button>
                                 <button type="button" data-dir="both">Both</button>
                                 <button type="button" data-dir="above"></button>
@@ -92,15 +92,15 @@ const DIALOG_HTML = `
                             <div class="add-axis-subtitle">Positions on the axis</div>
                             <div class="add-axis-field-row">
                                 <div class="add-axis-field" data-role="field-min">
-                                    <label for="add-axis-pos-min" data-role="label-min">New masters at</label>
+                                    <label for="add-axis-pos-min" data-role="label-min">New stations at</label>
                                     <div class="add-axis-pos"><input type="number" step="any" id="add-axis-pos-min" class="dialog-input add-axis-num" data-role="pos-min"><span class="add-axis-stylename" data-role="name-min"></span></div>
                                 </div>
                                 <div class="add-axis-field">
-                                    <label for="add-axis-pos-existing">Your masters stay at</label>
+                                    <label for="add-axis-pos-existing">Your stations stay at</label>
                                     <div class="add-axis-pos"><input type="number" step="any" id="add-axis-pos-existing" class="dialog-input add-axis-num" data-role="pos-existing"><span class="add-axis-stylename" data-role="name-existing"></span></div>
                                 </div>
                                 <div class="add-axis-field" data-role="field-max">
-                                    <label for="add-axis-pos-max" data-role="label-max">New masters at</label>
+                                    <label for="add-axis-pos-max" data-role="label-max">New stations at</label>
                                     <div class="add-axis-pos"><input type="number" step="any" id="add-axis-pos-max" class="dialog-input add-axis-num" data-role="pos-max"><span class="add-axis-stylename" data-role="name-max"></span></div>
                                 </div>
                             </div>
@@ -111,9 +111,9 @@ const DIALOG_HTML = `
                 </section>
                 <section class="add-axis-page" data-page="3" role="tabpanel">
                     <div class="add-axis-block">
-                        <div class="add-axis-subtitle">Default master</div>
+                        <div class="add-axis-subtitle">Default station</div>
                         <div class="add-axis-cols add-axis-default-row">
-                            <div class="add-axis-seg" role="group" aria-label="Default master" data-role="default"></div>
+                            <div class="add-axis-seg" role="group" aria-label="Default station" data-role="default"></div>
                             <p class="add-axis-hint" data-role="default-hint"></p>
                         </div>
                     </div>
@@ -121,7 +121,7 @@ const DIALOG_HTML = `
                         <div class="add-axis-block add-axis-grow">
                             <div class="add-axis-subtitle">What to copy from each original</div>
                             <label class="add-axis-opt"><input type="checkbox" data-role="opt-kerning"><span>Kerning and guides<small>Without this, the copies start with empty kerning. Metrics are always copied.</small></span></label>
-                            <label class="add-axis-opt"><input type="checkbox" data-role="opt-brace"><span>Intermediate layers <span class="add-axis-count" data-role="brace-count"></span><small>Also called brace layers. Copying them keeps their corrections working on the new side.</small></span></label>
+                            <label class="add-axis-opt"><input type="checkbox" data-role="opt-brace"><span>Free drawings <span class="add-axis-count" data-role="brace-count"></span><small>Called brace layers in Glyphs. Copying them keeps their corrections working on the new side.</small></span></label>
                             <label class="add-axis-opt"><input type="checkbox" data-role="opt-instances"><span>Instances<small>Adds a copy of each instance at the new side’s position.</small></span></label>
                         </div>
                         <div class="add-axis-block add-axis-grow">
@@ -136,8 +136,8 @@ const DIALOG_HTML = `
         </div>
         <aside class="add-axis-side" aria-label="Preview">
             <div class="add-axis-plot">
-                <div class="add-axis-plot-scroll"><svg data-role="plot" viewBox="0 0 300 120" role="img" aria-label="Preview: each of your masters and its new copies"></svg></div>
-                <div class="add-axis-legend"><span><i class="add-axis-dot add-axis-dot-exist"></i>Your masters</span><span><i class="add-axis-dot add-axis-dot-new"></i>New</span><span><i class="add-axis-dot add-axis-dot-off"></i>Not added</span><span><i class="add-axis-dot add-axis-dot-def"></i>Default master</span></div>
+                <div class="add-axis-plot-scroll"><svg data-role="plot" viewBox="0 0 300 120" role="img" aria-label="Preview: each of your stations and its new copies"></svg></div>
+                <div class="add-axis-legend"><span><i class="add-axis-dot add-axis-dot-exist"></i>Your stations</span><span><i class="add-axis-dot add-axis-dot-new"></i>New</span><span><i class="add-axis-dot add-axis-dot-off"></i>Not added</span><span><i class="add-axis-dot add-axis-dot-def"></i>Default station</span></div>
             </div>
             <div class="add-axis-summary" data-role="summary" aria-live="polite"></div>
         </aside>
@@ -150,7 +150,7 @@ const DIALOG_HTML = `
         <div class="add-axis-foot-group add-axis-foot-end">
             <span class="add-axis-foot-why" data-role="why"></span>
             <button type="button" class="dialog-button" data-role="cancel">Cancel</button>
-            <button type="button" class="dialog-button" data-role="axis-only">Add axis without masters</button>
+            <button type="button" class="dialog-button" data-role="axis-only">Add axis without stations</button>
             <button type="button" class="dialog-button dialog-button-primary" data-role="commit"></button>
         </div>
     </div>
@@ -161,9 +161,9 @@ export function openAddAxisDialog(
 ): Promise<AddAxisDialogResult> {
     const model = new AddAxisModel(options.font);
     const font = options.font;
-    const hasMasters = font.masters.length > 0;
-    const mastersBlocked = !!options.blockedNotice || !hasMasters;
-    if (mastersBlocked) {
+    const hasStations = font.masters.length > 0;
+    const stationsBlocked = !!options.blockedNotice || !hasStations;
+    if (stationsBlocked) {
         model.setColumnOn('min', false);
         model.setColumnOn('max', false);
     }
@@ -186,9 +186,9 @@ export function openAddAxisDialog(
 
         if (options.blockedNotice) {
             $('blocked').appendChild(options.blockedNotice);
-        } else if (!hasMasters) {
+        } else if (!hasStations) {
             $('blocked').innerHTML =
-                '<p class="add-axis-hint">This font has no masters yet, so there is nothing to copy. The axis is added on its own.</p>';
+                '<p class="add-axis-hint">This font has no stations yet, so there is nothing to copy. The axis is added on its own.</p>';
         }
         $('brace-count').textContent = font.braceGlyphCount
             ? `(${plural(font.braceGlyphCount, 'glyph has', 'glyphs have')} them)`
@@ -231,23 +231,23 @@ export function openAddAxisDialog(
             const word = model
                 .directionWords()
                 [model.direction === 'below' ? 0 : 1].toLowerCase();
-            const names = model.sortedMasters().map((m) => m.name);
+            const names = model.sortedStations().map((m) => m.name);
             const axisCount = font.axes.length;
-            const masterCount = font.masters.length;
-            const newCount = mastersBlocked ? 0 : model.newMasters().length;
+            const stationCount = font.masters.length;
+            const newCount = stationsBlocked ? 0 : model.newStations().length;
             let intro: string;
-            if (!hasMasters) {
+            if (!hasStations) {
                 intro =
-                    'Your font has no masters yet, so the axis is added on its own.';
+                    'Your font has no stations yet, so the axis is added on its own.';
             } else if (axisCount === 0) {
-                intro = `Your font has one master, ${esc(names[0])}. Adding an axis turns it into a variable font: ${esc(names[0])} gets a copy at the other end of the new axis, for example a ${word} one.`;
+                intro = `Your font has one station, ${esc(names[0])}. Adding an axis turns it into a variable font: ${esc(names[0])} gets a copy at the other end of the new axis, for example a ${word} one.`;
             } else if (axisCount === 1) {
-                intro = `Your font has a ${esc(font.axes[0].name)} axis with ${esc(namesOrCount(names, 'masters'))}. A new axis needs masters at its other end too, so each of your masters gets a copy there, for example a ${word} one.`;
+                intro = `Your font has a ${esc(font.axes[0].name)} axis with ${esc(namesOrCount(names, 'stations'))}. A new axis needs stations at its other end too, so each of your stations gets a copy there, for example a ${word} one.`;
             } else {
-                intro = `Your font has ${axisCount} axes (${esc(listNames(font.axes.map((a) => a.name)))}) and ${masterCount} masters. A new axis needs masters at its other end too, so each master gets a copy there, for example a ${word} one.`;
+                intro = `Your font has ${axisCount} axes (${esc(listNames(font.axes.map((a) => a.name)))}) and ${stationCount} stations. A new axis needs stations at its other end too, so each station gets a copy there, for example a ${word} one.`;
             }
             const work = newCount
-                ? `<p>You will have <b>${masterCount + newCount}</b> masters to draw instead of <b>${masterCount}</b>.${masterCount > 1 ? ' You can untick masters on step 2 to add fewer.' : ''}</p>`
+                ? `<p>You will have <b>${stationCount + newCount}</b> stations to draw instead of <b>${stationCount}</b>.${stationCount > 1 ? ' You can untick stations on step 2 to add fewer.' : ''}</p>`
                 : '';
             $('explain').innerHTML = `
                 <p><b>What happens.</b> ${intro}</p>
@@ -257,7 +257,7 @@ export function openAddAxisDialog(
         };
 
         // ---------- step 2 ----------
-        const renderMastersStep = () => {
+        const renderStationsStep = () => {
             const words = model.directionWords();
             root.querySelectorAll<HTMLButtonElement>(
                 '[data-role="direction"] button'
@@ -287,22 +287,22 @@ export function openAddAxisDialog(
             $('direction-hint').innerHTML =
                 model.direction === 'both'
                     ? one
-                        ? `${esc(model.defaultMaster.name)} gets two copies, one ${lower} and one ${higher}.`
-                        : `Each of your masters gets two copies, one ${lower} and one ${higher}. That is up to <b>${font.masters.length * 2}</b> new masters.`
+                        ? `${esc(model.defaultStation.name)} gets two copies, one ${lower} and one ${higher}.`
+                        : `Each of your stations gets two copies, one ${lower} and one ${higher}. That is up to <b>${font.masters.length * 2}</b> new stations.`
                     : one
-                      ? `${esc(model.defaultMaster.name)} gets one ${single} copy.`
-                      : `Each of your masters gets one ${single} copy. Untick masters in the table to add fewer.`;
+                      ? `${esc(model.defaultStation.name)} gets one ${single} copy.`
+                      : `Each of your stations gets one ${single} copy. Untick stations in the table to add fewer.`;
             const sides = model.sides();
             $('field-min').hidden = !sides.includes('min');
             $('field-max').hidden = !sides.includes('max');
             $('label-min').textContent =
                 model.direction === 'both'
                     ? `${words[0]} copies at`
-                    : 'New masters at';
+                    : 'New stations at';
             $('label-max').textContent =
                 model.direction === 'both'
                     ? `${words[1]} copies at`
-                    : 'New masters at';
+                    : 'New stations at';
             setVal(input('pos-existing'), model.existingAt);
             setVal(input('pos-min'), model.columnValue('min'));
             setVal(input('pos-max'), model.columnValue('max'));
@@ -322,12 +322,12 @@ export function openAddAxisDialog(
         // patched in place so typing never loses focus.
         const renderGrid = () => {
             const sides = model.sides();
-            const masters = model.sortedMasters();
+            const stations = model.sortedStations();
             const key = JSON.stringify([
                 sides,
-                mastersBlocked,
+                stationsBlocked,
                 sides.map((side) =>
-                    masters.map((m) => model.cell(m.id, side).on)
+                    stations.map((m) => model.cell(m.id, side).on)
                 )
             ]);
             const grid = $('grid');
@@ -336,26 +336,26 @@ export function openAddAxisDialog(
                 const head = sides
                     .map(
                         (side) => `<th><div class="add-axis-col-head">
-                        <div class="add-axis-col-top"><input type="checkbox" data-colchk="${side}" ${mastersBlocked ? 'disabled' : ''} aria-label="Add all ${side} copies"><span data-colhead="${side}"></span></div>
+                        <div class="add-axis-col-top"><input type="checkbox" data-colchk="${side}" ${stationsBlocked ? 'disabled' : ''} aria-label="Add all ${side} copies"><span data-colhead="${side}"></span></div>
                         <div class="add-axis-col-sub">Name ending <input type="text" class="dialog-input" data-suffix="${side}" aria-label="Name ending for ${side} copies"></div>
                     </div></th>`
                     )
                     .join('');
-                const rows = masters
-                    .map((master) => {
+                const rows = stations
+                    .map((station) => {
                         const cells = sides
                             .map((side) => {
-                                const k = `${master.id}:${side}`;
-                                const on = model.cell(master.id, side).on;
+                                const k = `${station.id}:${side}`;
+                                const on = model.cell(station.id, side).on;
                                 return `<td><div class="add-axis-cell${on ? '' : ' is-off'}">
-                                <input type="checkbox" data-on="${k}" ${on ? 'checked' : ''} ${mastersBlocked ? 'disabled' : ''} aria-label="Add a copy of ${esc(master.name)}">
+                                <input type="checkbox" data-on="${k}" ${on ? 'checked' : ''} ${stationsBlocked ? 'disabled' : ''} aria-label="Add a copy of ${esc(station.name)}">
                                 <input type="text" class="dialog-input add-axis-cell-name" data-name="${k}" ${on ? '' : 'disabled'} aria-label="Name">
                                 <input type="number" step="any" class="dialog-input add-axis-num" data-val="${k}" ${on ? '' : 'disabled'} aria-label="Position">
                                 <button type="button" class="add-axis-reset" data-reset="${k}" hidden>Reset</button>
                             </div></td>`;
                             })
                             .join('');
-                        return `<tr><td><div class="add-axis-src-name">${esc(master.name)}</div><div class="add-axis-src-loc">${esc(model.locationText(master))}</div></td>${cells}</tr>`;
+                        return `<tr><td><div class="add-axis-src-name">${esc(station.name)}</div><div class="add-axis-src-loc">${esc(model.locationText(station))}</div></td>${cells}</tr>`;
                     })
                     .join('');
                 grid.innerHTML = `<thead><tr><th>Copy of</th>${head}</tr></thead><tbody>${rows}</tbody>`;
@@ -377,17 +377,17 @@ export function openAddAxisDialog(
                     'is-custom',
                     model.suffixEdited[side] !== undefined
                 );
-                for (const master of font.masters) {
-                    const k = `${master.id}:${side}`;
-                    const cell = model.cell(master.id, side);
-                    const custom = model.isCustomValue(master.id, side);
+                for (const station of font.masters) {
+                    const k = `${station.id}:${side}`;
+                    const cell = model.cell(station.id, side);
+                    const custom = model.isCustomValue(station.id, side);
                     const bad = shown.bad.has(k);
                     const nameEl = q<HTMLInputElement>(`[data-name="${k}"]`);
                     const valueEl = q<HTMLInputElement>(`[data-val="${k}"]`);
-                    setVal(nameEl, model.cellName(master, side));
+                    setVal(nameEl, model.cellName(station, side));
                     nameEl.classList.toggle('is-custom', cell.name !== null);
                     nameEl.classList.toggle('is-bad', shown.bad.has(`n:${k}`));
-                    setVal(valueEl, model.cellValue(master.id, side));
+                    setVal(valueEl, model.cellValue(station.id, side));
                     valueEl.classList.toggle('is-bad', bad);
                     valueEl.classList.toggle('is-custom', !bad && custom);
                     q<HTMLElement>(`[data-reset="${k}"]`).hidden = !(
@@ -401,7 +401,7 @@ export function openAddAxisDialog(
         // ---------- step 3 ----------
         const renderDetailsStep = () => {
             const choiceOption = (side: Side) => {
-                const name = model.cellName(model.defaultMaster, side);
+                const name = model.cellName(model.defaultStation, side);
                 return {
                     value: side as DefaultChoice,
                     label: `${clipText(name, 24)} · new`,
@@ -413,18 +413,18 @@ export function openAddAxisDialog(
                 ...(sides.includes('min') ? [choiceOption('min')] : []),
                 {
                     value: 'existing' as DefaultChoice,
-                    label: `${clipText(model.defaultMaster.name, 24)} · current`,
-                    full: model.defaultMaster.name
+                    label: `${clipText(model.defaultStation.name, 24)} · current`,
+                    full: model.defaultStation.name
                 },
                 ...(sides.includes('max') ? [choiceOption('max')] : [])
             ];
             const current = model.effectiveDefaultChoice();
-            if (!hasMasters) {
+            if (!hasStations) {
                 $('default').innerHTML = '';
                 $('default-hint').textContent =
-                    'There is nothing to choose: the font has no masters yet.';
+                    'There is nothing to choose: the font has no stations yet.';
             }
-            $('default').innerHTML = !hasMasters
+            $('default').innerHTML = !hasStations
                 ? ''
                 : options
                       .map((option) => {
@@ -437,19 +437,19 @@ export function openAddAxisDialog(
                           return `<button type="button" data-def="${option.value}" aria-pressed="${current === option.value}" ${valid ? '' : 'disabled'} ${title ? `title="${esc(title)}"` : ''}>${esc(option.label)}</button>`;
                       })
                       .join('');
-            if (!hasMasters) {
+            if (!hasStations) {
                 // Hint already set above.
             } else if (current === 'existing') {
                 $('default-hint').innerHTML =
-                    `The default master is the one apps show when they ignore variations, and the one the compiled font is built from. <b>${esc(model.defaultMaster.name)}</b> stays the default, so your font keeps its current look. Keep this unless you have a reason to change it.`;
+                    `The default station is the one apps show when they ignore variations, and the one the compiled font is built from. <b>${esc(model.defaultStation.name)}</b> stays the default, so your font keeps its current look. Keep this unless you have a reason to change it.`;
             } else {
-                const name = esc(model.cellName(model.defaultMaster, current));
+                const name = esc(model.cellName(model.defaultStation, current));
                 $('default-hint').innerHTML =
-                    `<b>${name}</b> becomes the default master: apps that ignore variations show ${name}, and the compiled font is built from it. Your existing instances keep their position.`;
+                    `<b>${name}</b> becomes the default station: apps that ignore variations show ${name}, and the compiled font is built from it. Your existing instances keep their position.`;
             }
             input('opt-kerning').checked = model.copyKerning;
             input('opt-brace').checked =
-                model.copyIntermediateLayers && !!font.braceGlyphCount;
+                model.copyFreeDrawings && !!font.braceGlyphCount;
             input('opt-instances').checked = model.copyInstances;
             input('opt-instances').disabled = !font.instanceCount;
             input('opt-separate').checked = model.separate;
@@ -462,7 +462,7 @@ export function openAddAxisDialog(
             const map = $('map');
             if (key !== mapKey) {
                 mapKey = key;
-                map.innerHTML = `<thead><tr><th>Masters</th><th>Position</th><th>Userspace</th><th></th></tr></thead><tbody>${rows
+                map.innerHTML = `<thead><tr><th>Stations</th><th>Position</th><th>Userspace</th><th></th></tr></thead><tbody>${rows
                     .map(
                         (
                             row
@@ -478,7 +478,7 @@ export function openAddAxisDialog(
                 const who = cell('data-who');
                 who.textContent =
                     row.all && row.names.length > 3
-                        ? `All ${row.names.length} of your masters`
+                        ? `All ${row.names.length} of your stations`
                         : listShort(row.names, 2);
                 who.title = row.names.length > 3 ? row.names.join(', ') : '';
                 cell('data-pos').textContent = fmt(row.position);
@@ -495,12 +495,12 @@ export function openAddAxisDialog(
                 ROW = 20,
                 HEAD = 18,
                 TOP = 22;
-            const masters = model.sortedMasters();
+            const stations = model.sortedStations();
             const e = model.existingAt;
             const values = [e];
             for (const side of model.sides()) {
-                for (const master of masters) {
-                    values.push(model.cellValue(master.id, side));
+                for (const station of stations) {
+                    values.push(model.cellValue(station.id, side));
                 }
             }
             const finite = values.filter(Number.isFinite);
@@ -519,16 +519,16 @@ export function openAddAxisDialog(
             // Rows, grouped under the first axis when there are two or more.
             type Item = {
                 head?: string;
-                master?: (typeof masters)[number];
+                master?: (typeof stations)[number];
                 label: string;
                 y: number;
             };
             const items: Item[] = [];
             let y = TOP;
             let lastGroup: number | undefined;
-            for (const master of masters) {
+            for (const station of stations) {
                 if (font.axes.length >= 2) {
-                    const group = master.location[font.axes[0].tag] ?? 0;
+                    const group = station.location[font.axes[0].tag] ?? 0;
                     if (group !== lastGroup) {
                         items.push({
                             head: `${font.axes[0].name} ${group}`,
@@ -539,7 +539,11 @@ export function openAddAxisDialog(
                         lastGroup = group;
                     }
                 }
-                items.push({ master, label: master.name, y: y + ROW / 2 });
+                items.push({
+                    master: station,
+                    label: station.name,
+                    y: y + ROW / 2
+                });
                 y += ROW;
             }
             // Under a heading, drop the leading words the whole group shares
@@ -580,14 +584,14 @@ export function openAddAxisDialog(
             const font10 = 'font-size="10" font-family="Inter, sans-serif"';
             const mono10 =
                 'font-size="10" font-family="IBM Plex Mono, monospace"';
-            let s = `<text x="4" y="12" class="add-axis-plot-muted" ${font10}>Your masters</text>
+            let s = `<text x="4" y="12" class="add-axis-plot-muted" ${font10}>Your stations</text>
                 <text x="${X1}" y="12" class="add-axis-plot-muted" text-anchor="end" ${font10}>${esc(clipText(model.name || model.tag, 22))} →</text>`;
             const ticks: Array<{ d: number; u: number }> = [];
             [
                 { d: e, u: model.existingUserValue() },
-                ...model.newMasters().map(({ master, side }) => ({
-                    d: model.cellValue(master.id, side),
-                    u: model.cellUser(master.id, side)
+                ...model.newStations().map(({ master: station, side }) => ({
+                    d: model.cellValue(station.id, side),
+                    u: model.cellUser(station.id, side)
                 }))
             ].forEach((tick) => {
                 if (
@@ -620,38 +624,38 @@ export function openAddAxisDialog(
             const defX =
                 choice === 'existing'
                     ? e
-                    : model.cellValue(model.defaultMaster.id, choice);
+                    : model.cellValue(model.defaultStation.id, choice);
             for (const item of items) {
                 if (item.head !== undefined) {
                     s += `<text x="4" y="${item.y}" class="add-axis-plot-faint" font-size="9" letter-spacing=".04em" font-family="Inter, sans-serif">${esc(item.head.toUpperCase())}</text>`;
                     continue;
                 }
-                const master = item.master!;
+                const station = item.master!;
                 const rowY = item.y;
-                const isDefault = master.id === model.defaultMaster.id;
-                s += `<g><title>${esc(master.name)} (${esc(model.locationText(master))})</title>
+                const isDefault = station.id === model.defaultStation.id;
+                s += `<g><title>${esc(station.name)} (${esc(model.locationText(station))})</title>
                     <text x="4" y="${rowY + 3.5}" class="${isDefault ? 'add-axis-plot-text' : 'add-axis-plot-muted'}" ${font10}>${esc(clipText(item.label, 19))}</text></g>`;
                 if (!Number.isFinite(e)) {
                     continue;
                 }
                 for (const side of model.sides()) {
-                    const value = model.cellValue(master.id, side);
+                    const value = model.cellValue(station.id, side);
                     if (!Number.isFinite(value)) {
                         continue;
                     }
                     const on =
-                        model.cell(master.id, side).on && !mastersBlocked;
+                        model.cell(station.id, side).on && !stationsBlocked;
                     s += `<line x1="${x(e)}" y1="${rowY}" x2="${x(value)}" y2="${rowY}" class="${on ? 'add-axis-plot-link' : 'add-axis-plot-link-off'}" />`;
                 }
                 s += `<circle cx="${x(e)}" cy="${rowY}" r="4" class="add-axis-plot-dot-exist" />`;
                 for (const side of model.sides()) {
-                    const value = model.cellValue(master.id, side);
+                    const value = model.cellValue(station.id, side);
                     if (!Number.isFinite(value)) {
                         continue;
                     }
                     const on =
-                        model.cell(master.id, side).on && !mastersBlocked;
-                    const name = model.cellName(master, side);
+                        model.cell(station.id, side).on && !stationsBlocked;
+                    const name = model.cellName(station, side);
                     s += `<g><title>${esc(on ? name : `${name} (not added)`)} at ${value}</title>${
                         on
                             ? `<circle cx="${x(value)}" cy="${rowY}" r="5" class="add-axis-plot-dot-new" />`
@@ -668,13 +672,13 @@ export function openAddAxisDialog(
 
         // ---------- summary ----------
         const renderSummary = () => {
-            const added = mastersBlocked ? [] : model.newMasters();
+            const added = stationsBlocked ? [] : model.newStations();
             const axis = model.deriveAxis();
             const lines: string[] = [];
             lines.push(
                 added.length
-                    ? `<p>Adds <b>${added.length}</b> master${added.length > 1 ? 's' : ''}: ${esc(listShort(added.map((m) => m.name)))}.</p>`
-                    : `<p>No masters selected. The axis is added on its own.</p>`
+                    ? `<p>Adds <b>${added.length}</b> station${added.length > 1 ? 's' : ''}: ${esc(listShort(added.map((m) => m.name)))}.</p>`
+                    : `<p>No stations selected. The axis is added on its own.</p>`
             );
             lines.push(
                 `<p>The ${esc(model.name)} axis runs from <b>${fmt(axis.min)}</b> to <b>${fmt(axis.max)}</b>, default <b>${fmt(axis.default)}</b>.</p>`
@@ -682,7 +686,7 @@ export function openAddAxisDialog(
             const choice = model.effectiveDefaultChoice();
             if (added.length && choice !== 'existing') {
                 lines.push(
-                    `<p class="add-axis-flag">Default master changes to ${esc(model.cellName(model.defaultMaster, choice))}.</p>`
+                    `<p class="add-axis-flag">Default station changes to ${esc(model.cellName(model.defaultStation, choice))}.</p>`
                 );
             }
             if (added.length && model.separate) {
@@ -698,11 +702,11 @@ export function openAddAxisDialog(
             }
             if (
                 added.length &&
-                !model.copyIntermediateLayers &&
+                !model.copyFreeDrawings &&
                 font.braceGlyphCount
             ) {
                 lines.push(
-                    '<p class="add-axis-flag">Intermediate layers are not copied.</p>'
+                    '<p class="add-axis-flag">Free drawings are not copied.</p>'
                 );
             }
             if (added.length && model.copyInstances && font.instanceCount) {
@@ -716,15 +720,15 @@ export function openAddAxisDialog(
                 );
             }
             if (added.length) {
-                const braceShare = model.copyIntermediateLayers
+                const braceShare = model.copyFreeDrawings
                     ? Math.round(
-                          (font.braceLayerCount * added.length) /
+                          (font.freeDrawingCount * added.length) /
                               font.masters.length
                       )
                     : 0;
-                const layers = added.length * font.glyphCount + braceShare;
+                const drawings = added.length * font.glyphCount + braceShare;
                 lines.push(
-                    `<p>About ${layers.toLocaleString('en-US')} layers across ${font.glyphCount.toLocaleString('en-US')} glyphs, one undo step.</p>`
+                    `<p>About ${drawings.toLocaleString('en-US')} drawings across ${font.glyphCount.toLocaleString('en-US')} glyphs, one undo step.</p>`
                 );
             }
             $('summary').innerHTML = lines.join('');
@@ -736,7 +740,7 @@ export function openAddAxisDialog(
                 shown = live;
             }
             renderAxisStep();
-            renderMastersStep();
+            renderStationsStep();
             renderDetailsStep();
             renderPlot();
             renderSummary();
@@ -778,10 +782,10 @@ export function openAddAxisDialog(
             $('why').textContent = firstBad
                 ? `Check step ${firstBad} to continue.`
                 : '';
-            const count = mastersBlocked ? 0 : model.newMasters().length;
+            const count = stationsBlocked ? 0 : model.newStations().length;
             const commit = $<HTMLButtonElement>('commit');
             commit.textContent = count
-                ? `Add axis and ${count} master${count > 1 ? 's' : ''}`
+                ? `Add axis and ${count} station${count > 1 ? 's' : ''}`
                 : 'Add axis';
             commit.disabled =
                 liveErrors > 0 && (count > 0 || live.errors[1].length > 0);
@@ -825,18 +829,18 @@ export function openAddAxisDialog(
                 model.defaultChoice = target.dataset.def as DefaultChoice;
                 render(false);
             } else if (target.dataset.reset) {
-                const [masterId, side] = target.dataset.reset.split(':');
-                model.resetCell(masterId, side as Side);
+                const [stationId, side] = target.dataset.reset.split(':');
+                model.resetCell(stationId, side as Side);
                 render(false);
             } else if (role === 'close' || role === 'cancel') {
                 close({ kind: 'cancel' });
             } else if (role === 'axis-only') {
                 close({ kind: 'axis-only', model });
             } else if (role === 'commit') {
-                const count = mastersBlocked ? 0 : model.newMasters().length;
+                const count = stationsBlocked ? 0 : model.newStations().length;
                 close(
                     count
-                        ? { kind: 'with-masters', model }
+                        ? { kind: 'with-stations', model }
                         : { kind: 'axis-only', model }
                 );
             }
@@ -870,7 +874,7 @@ export function openAddAxisDialog(
             }
             if (target.dataset.role === 'axis-type') {
                 model.loadAxis(target.value);
-                if (mastersBlocked) {
+                if (stationsBlocked) {
                     model.setColumnOn('min', false);
                     model.setColumnOn('max', false);
                 }
@@ -886,16 +890,16 @@ export function openAddAxisDialog(
             const el = target as HTMLInputElement;
             const role = el.dataset.role;
             if (el.dataset.on) {
-                const [masterId, side] = el.dataset.on.split(':');
-                model.cell(masterId, side as Side).on = el.checked;
+                const [stationId, side] = el.dataset.on.split(':');
+                model.cell(stationId, side as Side).on = el.checked;
             } else if (el.dataset.colchk) {
                 model.setColumnOn(el.dataset.colchk as Side, el.checked);
             } else if (el.dataset.val) {
-                const [masterId, side] = el.dataset.val.split(':');
-                model.setCellValue(masterId, side as Side, number(el));
+                const [stationId, side] = el.dataset.val.split(':');
+                model.setCellValue(stationId, side as Side, number(el));
             } else if (el.dataset.name) {
-                const [masterId, side] = el.dataset.name.split(':');
-                model.setCellName(masterId, side as Side, el.value);
+                const [stationId, side] = el.dataset.name.split(':');
+                model.setCellName(stationId, side as Side, el.value);
             } else if (el.dataset.suffix) {
                 model.setSuffix(el.dataset.suffix as Side, el.value);
             } else if (el.dataset.mapu) {
@@ -903,7 +907,7 @@ export function openAddAxisDialog(
             } else if (role === 'opt-kerning') {
                 model.copyKerning = el.checked;
             } else if (role === 'opt-brace') {
-                model.copyIntermediateLayers = el.checked;
+                model.copyFreeDrawings = el.checked;
             } else if (role === 'opt-instances') {
                 model.copyInstances = el.checked;
             } else if (role === 'opt-separate') {

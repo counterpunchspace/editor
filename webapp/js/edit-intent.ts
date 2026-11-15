@@ -14,7 +14,7 @@ export type CompileEditStamp =
     | 'guide'
     | 'feature'
     | 'text-subset'
-    | 'master-topology'
+    | 'station-topology'
     | null;
 
 export type EditingDataFreshnessMode =
@@ -46,7 +46,7 @@ const KNOWN_STAMPS = new Set<string>([
     'guide',
     'feature',
     'text-subset',
-    'master-topology'
+    'station-topology'
 ]);
 
 const OUTLINE_LIVE_OVERRIDES: CompileOptionOverrides = {
@@ -172,7 +172,7 @@ export function compilationPlan(input: {
         input.forceFull ||
         editType === null ||
         editType === 'feature' ||
-        editType === 'master-topology'
+        editType === 'station-topology'
     ) {
         const textSubset =
             editType === 'text-subset' || changeSource === 'text-input';

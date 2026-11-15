@@ -12,9 +12,9 @@ import {
 
 const IDENTITY = [1, 0, 0, 1, 0, 0];
 
-function layer(type, master, shapes) {
+function drawing(type, station, shapes) {
     return {
-        master: { type, master },
+        station: { type, master: station },
         paths: shapes.paths || [],
         components: shapes.components || [],
         anchors: shapes.anchors || []
@@ -39,30 +39,32 @@ function installFont() {
     const glyphs = {
         edieresis: {
             codepoints: [0x00eb],
-            findLayerByMasterId() {
-                return this.layers[0];
+            findDrawingByStationId() {
+                return this.drawings[0];
             },
-            layers: [
-                layer('AssociatedWithMaster', 'light', {}),
-                layer('DefaultForMaster', 'light', {
+            drawings: [
+                drawing('AssociatedWithMaster', 'light', {}),
+                drawing('DefaultForMaster', 'light', {
                     components: [component('e'), component('dieresiscomb')]
                 })
             ]
         },
         e: {
             codepoints: [0x0065],
-            layers: [layer('DefaultForMaster', 'light', { paths: [pathInk()] })]
+            drawings: [
+                drawing('DefaultForMaster', 'light', { paths: [pathInk()] })
+            ]
         },
         dieresiscomb: {
             codepoints: [0x0308],
-            findLayerByMasterId() {
-                return this.layers[0];
+            findDrawingByStationId() {
+                return this.drawings[0];
             },
-            layers: [
-                layer('AssociatedWithMaster', 'light', {
+            drawings: [
+                drawing('AssociatedWithMaster', 'light', {
                     anchors: [{ name: '_top', x: 147, y: 492 }]
                 }),
-                layer('DefaultForMaster', 'light', {
+                drawing('DefaultForMaster', 'light', {
                     components: [
                         component('dotaccentcomb'),
                         component('dotaccentcomb')
@@ -72,18 +74,20 @@ function installFont() {
         },
         dotaccentcomb: {
             codepoints: [0x0307],
-            layers: [layer('DefaultForMaster', 'light', { paths: [pathInk()] })]
+            drawings: [
+                drawing('DefaultForMaster', 'light', { paths: [pathInk()] })
+            ]
         },
         aring: {
             codepoints: [0x00e5],
-            layers: [layer('DefaultForMaster', 'light', {})]
+            drawings: [drawing('DefaultForMaster', 'light', {})]
         },
         skeleton: {
-            layers: [layer('DefaultForMaster', 'light', {})]
+            drawings: [drawing('DefaultForMaster', 'light', {})]
         }
     };
     window.glyphCanvas = {
-        textRunEditor: { selectedMasterId: 'light' }
+        textRunEditor: { selectedStationId: 'light' }
     };
     window.currentFontModel = {
         upm: 1000,
@@ -208,9 +212,9 @@ describe('Fustat edieresis placeholder', () => {
                 )
             )
         );
-        const masterId = font.masters[0].id;
+        const stationId = font.stations[0].id;
         window.glyphCanvas = {
-            textRunEditor: { selectedMasterId: masterId }
+            textRunEditor: { selectedStationId: stationId }
         };
         window.currentFontModel = font;
         rememberPlaceholderDrawing('dieresiscomb', {
@@ -230,9 +234,9 @@ describe('Fustat edieresis placeholder', () => {
         });
 
         const mark = font.findGlyph('dieresiscomb');
-        expect(mark.layers.some((layer) => layer.components.length > 0)).toBe(
-            true
-        );
+        expect(
+            mark.drawings.some((drawing) => drawing.components.length > 0)
+        ).toBe(true);
         expect(paintEvents('edieresis')).toEqual([]);
         expect(paintEvents('dieresiscomb')).toEqual([]);
         expect(placeholderContoursForReference('dieresiscomb')).toEqual([]);

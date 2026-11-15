@@ -53,7 +53,7 @@ function isSameOrderFeatureTupleList(
 
 /**
  * Derive forward and inverse structural operations between two font snapshots.
- * Glyphs and layers are keyed by their stable names and ids. Feature lists
+ * Glyphs and drawings are keyed by their stable names and ids. Feature lists
  * with unchanged tags diff each feature's code. Other arrays stay atomic so
  * their ordering and storage representation remain schema-safe.
  */

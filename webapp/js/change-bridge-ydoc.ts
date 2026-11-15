@@ -9,24 +9,24 @@
 import * as Y from 'yjs';
 import { generateStableId } from './babelfont-model';
 import {
-    omitRestingLayerRuntimeKeys,
-    RESTING_LAYER_IDENTITY_KEYS,
-    RESTING_LAYER_RUNTIME_KEYS,
+    omitRestingDrawingRuntimeKeys,
+    RESTING_DRAWING_IDENTITY_KEYS,
+    RESTING_DRAWING_RUNTIME_KEYS,
     toRestingComponentTransform,
-    toRestingLayerJson
-} from './resting-layer-json';
+    toRestingDrawingJson
+} from './resting-drawing-json';
 import { flattenKerningMap } from './delete-glyphs-preflight';
 import {
     geometryHasNormalizedStorage,
     getNodeIdAt,
     getShapeIdAt,
-    LAYER_GEOMETRY_TOPOLOGY_KEY,
-    LAYER_NODE_POSITIONS_KEY,
-    LAYER_SHAPE_DATA_KEY,
-    readLayerGeometry,
-    writeLayerGeometry,
+    DRAWING_GEOMETRY_TOPOLOGY_KEY,
+    DRAWING_NODE_POSITIONS_KEY,
+    DRAWING_SHAPE_DATA_KEY,
+    readDrawingGeometry,
+    writeDrawingGeometry,
     writeNodePosition
-} from './layer-geometry-ydoc';
+} from './drawing-geometry-ydoc';
 import {
     yArrayToArray,
     yMapForEach,
@@ -228,7 +228,7 @@ export function normalizeValueForYDocWrite(value: unknown): unknown {
         return value;
     }
 
-    const record = omitRestingLayerRuntimeKeys(
+    const record = omitRestingDrawingRuntimeKeys(
         value as Record<string, unknown>
     );
 
@@ -298,38 +298,38 @@ function coerceNumericPath(path: (string | number)[]): (string | number)[] {
 // ── JSON → Y.Doc ────────────────────────────────────────────────────
 
 /**
- * Convert a layer object to a Y.Map.
+ * Convert a drawing object to a Y.Map.
  *
  * Shapes stay an upstream-truthful ordered array so path `nodes` remain compact
  * strings in resting Y.Doc state. Anchors and guides keep the existing indexed
  * map structure because their ids are editor/runtime metadata and this change
  * only migrates path node storage.
  */
-function layerToYMap(layerData: Record<string, unknown>): Y.Map<unknown> {
+function drawingToYMap(drawingData: Record<string, unknown>): Y.Map<unknown> {
     const map = new Y.Map<unknown>();
-    layerData = toRestingLayerJson(layerData, {
+    drawingData = toRestingDrawingJson(drawingData, {
         mode: 'delta',
         strict: true,
         context: 'Y.Doc write'
     });
 
     // Non-array fields: set directly via toYType
-    for (const [k, v] of Object.entries(layerData)) {
+    for (const [k, v] of Object.entries(drawingData)) {
         if (k === 'shapes' || k === 'anchors' || k === 'guides') {
             continue; // handled below
         }
         map.set(k, toYType(v));
     }
 
-    if (Array.isArray(layerData.shapes)) {
-        writeLayerGeometry(map, layerData.shapes, toYType);
+    if (Array.isArray(drawingData.shapes)) {
+        writeDrawingGeometry(map, drawingData.shapes, toYType);
     }
 
     // anchors → anchorsById + anchorOrder
-    if (Array.isArray(layerData.anchors)) {
+    if (Array.isArray(drawingData.anchors)) {
         const anchorsById = new Y.Map<unknown>();
         const anchorOrder = new Y.Array<unknown>();
-        for (const anchor of layerData.anchors) {
+        for (const anchor of drawingData.anchors) {
             const anchorId = (anchor as any)?.id ?? generateStableId();
             (anchor as any).id = anchorId;
             anchorsById.set(anchorId, toYType(anchor));
@@ -340,10 +340,10 @@ function layerToYMap(layerData: Record<string, unknown>): Y.Map<unknown> {
     }
 
     // guides → guidesById + guideOrder
-    if (Array.isArray(layerData.guides)) {
+    if (Array.isArray(drawingData.guides)) {
         const guidesById = new Y.Map<unknown>();
         const guideOrder = new Y.Array<unknown>();
-        for (const guide of layerData.guides) {
+        for (const guide of drawingData.guides) {
             const guideId = (guide as any)?.id ?? generateStableId();
             (guide as any).id = guideId;
             guidesById.set(guideId, toYType(guide));
@@ -356,33 +356,33 @@ function layerToYMap(layerData: Record<string, unknown>): Y.Map<unknown> {
     return map;
 }
 
-function restingLayerContextFromYMap(
-    layerMap: Y.Map<unknown>
+function restingDrawingContextFromYMap(
+    drawingMap: Y.Map<unknown>
 ): Record<string, unknown> {
     const existing: Record<string, unknown> = {};
-    const width = yMapGet(layerMap, 'width');
+    const width = yMapGet(drawingMap, 'width');
     if (typeof width === 'number' && Number.isFinite(width)) {
         existing.width = width;
     }
-    const id = yMapGet(layerMap, 'id');
+    const id = yMapGet(drawingMap, 'id');
     if (typeof id === 'string' && id.length) {
         existing.id = id;
     }
-    const master = yMapGet(layerMap, 'master');
-    if (master !== undefined) {
-        existing.master = fromYType(master);
+    const station = yMapGet(drawingMap, 'master');
+    if (station !== undefined) {
+        existing.master = fromYType(station);
     }
     try {
-        const shapes = yMapGet(layerMap, 'shapes');
+        const shapes = yMapGet(drawingMap, 'shapes');
         if (shapes !== undefined) {
             existing.shapes = fromYType(shapes);
-        } else if (geometryHasNormalizedStorage(layerMap)) {
-            existing.shapes = readLayerGeometry(layerMap);
+        } else if (geometryHasNormalizedStorage(drawingMap)) {
+            existing.shapes = readDrawingGeometry(drawingMap);
         }
     } catch {
         try {
-            if (geometryHasNormalizedStorage(layerMap)) {
-                existing.shapes = readLayerGeometry(layerMap);
+            if (geometryHasNormalizedStorage(drawingMap)) {
+                existing.shapes = readDrawingGeometry(drawingMap);
             }
         } catch {
             // Identity-only fallback remains if both encodings are unreadable.
@@ -392,55 +392,57 @@ function restingLayerContextFromYMap(
 }
 
 /**
- * Glyph layers must be a Y.Map keyed by layer id. Whole-glyph writes that
+ * Glyph drawings must be a Y.Map keyed by drawing id. Whole-glyph writes that
  * go through generic `toYType` store `layers` as a Y.Array; the next
- * layer delta would otherwise replace that array with an empty map and
- * drop every other master layer.
+ * drawing delta would otherwise replace that array with an empty map and
+ * drop every other drawing.
  */
-export function ensureGlyphLayersMap(glyphMap: Y.Map<unknown>): Y.Map<unknown> {
+export function ensureGlyphDrawingsMap(
+    glyphMap: Y.Map<unknown>
+): Y.Map<unknown> {
     const existing = glyphMap.get('layers');
     if (isYMap(existing)) {
         return existing;
     }
 
-    const migratedLayers: Array<[string, Record<string, unknown>]> = [];
+    const migratedDrawings: Array<[string, Record<string, unknown>]> = [];
     if (isYArray(existing)) {
-        for (const layerVal of existing.toArray()) {
-            const layerJson = fromYType(layerVal);
-            if (!isPlainObject(layerJson)) {
+        for (const drawingVal of existing.toArray()) {
+            const drawingJson = fromYType(drawingVal);
+            if (!isPlainObject(drawingJson)) {
                 continue;
             }
-            const layerId = layerJson.id;
-            if (typeof layerId === 'string' && layerId.length) {
-                migratedLayers.push([layerId, layerJson]);
+            const drawingId = drawingJson.id;
+            if (typeof drawingId === 'string' && drawingId.length) {
+                migratedDrawings.push([drawingId, drawingJson]);
             }
         }
     }
 
-    const layersMap = new Y.Map<unknown>();
-    glyphMap.set('layers', layersMap);
-    for (const [layerId, layerJson] of migratedLayers) {
-        layersMap.set(layerId, toYType(layerJson) as Y.Map<unknown>);
+    const drawingsMap = new Y.Map<unknown>();
+    glyphMap.set('layers', drawingsMap);
+    for (const [drawingId, drawingJson] of migratedDrawings) {
+        drawingsMap.set(drawingId, toYType(drawingJson) as Y.Map<unknown>);
     }
-    return layersMap;
+    return drawingsMap;
 }
 
 /**
- * Deep-merge a flat layer JSON into an existing layer Y.Map in a Y.Doc.
+ * Deep-merge a flat drawing JSON into an existing drawing Y.Map in a Y.Doc.
  * Keeps shapes as an atomic ordered array, while anchors and guides use
  * indexed maps. A shape is an untagged Rust enum, so retaining fields from a
  * previous shape can create an invalid hybrid representation in the worker
  * subset cache.
  * Used by the worker cache path so undo/redo and receiver refresh produce
- * granular deltas, not whole-layer replaces.
+ * granular deltas, not whole-drawing replaces.
  *
- * If the layer Y.Map doesn't exist yet, creates it from the flat JSON.
+ * If the drawing Y.Map doesn't exist yet, creates it from the flat JSON.
  */
-export function applyLayerDelta(
+export function applyDrawingDelta(
     fontMap: Y.Map<unknown>,
     glyphName: string,
-    layerId: string,
-    layerData: Record<string, unknown>
+    drawingId: string,
+    drawingData: Record<string, unknown>
 ): void {
     const glyphsMap = fontMap.get('glyphs');
     const glyphMap = isYMap(glyphsMap)
@@ -450,56 +452,58 @@ export function applyLayerDelta(
           ? fontMap
           : null;
     if (!isYMap(glyphMap)) return;
-    const layersMapTyped = ensureGlyphLayersMap(glyphMap);
-    let layerMap = layersMapTyped.get(layerId);
-    const existingLayerJson = isYMap(layerMap)
-        ? restingLayerContextFromYMap(layerMap)
+    const drawingsMapTyped = ensureGlyphDrawingsMap(glyphMap);
+    let drawingMap = drawingsMapTyped.get(drawingId);
+    const existingDrawingJson = isYMap(drawingMap)
+        ? restingDrawingContextFromYMap(drawingMap)
         : null;
-    const sanitizedLayerData = toRestingLayerJson(layerData, {
-        existing: existingLayerJson,
-        mode: isYMap(layerMap) ? 'delta' : 'replace',
+    const sanitizedDrawingData = toRestingDrawingJson(drawingData, {
+        existing: existingDrawingJson,
+        mode: isYMap(drawingMap) ? 'delta' : 'replace',
         context: 'Y.Doc write'
     });
-    if (!isYMap(layerMap)) {
-        // Layer doesn't exist — create from flat JSON
-        layersMapTyped.set(layerId, layerToYMap(sanitizedLayerData));
+    if (!isYMap(drawingMap)) {
+        // Drawing doesn't exist — create from flat JSON
+        drawingsMapTyped.set(drawingId, drawingToYMap(sanitizedDrawingData));
         return;
     }
 
-    const normalizedLayerData = normalizeValueForYDocWrite(
-        sanitizedLayerData
+    const normalizedDrawingData = normalizeValueForYDocWrite(
+        sanitizedDrawingData
     ) as Record<string, unknown>;
 
-    for (const runtimeKey of RESTING_LAYER_RUNTIME_KEYS) {
-        layerMap.delete(runtimeKey);
+    for (const runtimeKey of RESTING_DRAWING_RUNTIME_KEYS) {
+        drawingMap.delete(runtimeKey);
     }
 
     // Deep-merge each key
-    for (const [key, value] of Object.entries(normalizedLayerData)) {
+    for (const [key, value] of Object.entries(normalizedDrawingData)) {
         if (value === null || value === undefined) {
             if (
-                (RESTING_LAYER_IDENTITY_KEYS as readonly string[]).includes(key)
+                (RESTING_DRAWING_IDENTITY_KEYS as readonly string[]).includes(
+                    key
+                )
             ) {
                 continue;
             }
             if (key === 'shapes') {
-                writeLayerGeometry(layerMap, [], toYType);
+                writeDrawingGeometry(drawingMap, [], toYType);
                 continue;
             }
-            layerMap.delete(key);
+            drawingMap.delete(key);
         } else if (key === 'shapes' && Array.isArray(value)) {
-            writeLayerGeometry(layerMap, value, toYType);
+            writeDrawingGeometry(drawingMap, value, toYType);
         } else if (
             (key === 'anchors' || key === 'guides') &&
             Array.isArray(value)
         ) {
-            applyIndexedMapArray(layerMap, key, value);
+            applyIndexedMapArray(drawingMap, key, value);
         } else {
-            const existing = layerMap.get(key);
+            const existing = drawingMap.get(key);
             if (isYMap(existing) && isPlainObject(value)) {
                 replaceYMapContents(existing, value as Record<string, unknown>);
             } else {
-                layerMap.set(key, toYType(value));
+                drawingMap.set(key, toYType(value));
             }
         }
     }
@@ -511,14 +515,14 @@ export function applyLayerDelta(
  * elements produce Yjs operations.
  */
 export function applyIndexedMapArray(
-    layerMap: Y.Map<unknown>,
+    drawingMap: Y.Map<unknown>,
     arrayKey: string,
     nextArray: unknown[]
 ): void {
-    const byIdMap = ensureIndexedMap(layerMap, arrayKey);
+    const byIdMap = ensureIndexedMap(drawingMap, arrayKey);
     if (!byIdMap) return;
     const mapping = INDEXED_MAP_KEYS[arrayKey]!;
-    const orderArr = yMapGet(layerMap, mapping.order);
+    const orderArr = yMapGet(drawingMap, mapping.order);
     const orderIntegrated = isYArray(orderArr) && Boolean(orderArr.doc);
     const currentOrder: string[] = orderIntegrated
         ? (orderArr.toArray() as string[])
@@ -578,7 +582,7 @@ export function applyIndexedMapArray(
             if (nextIds.length > 0) {
                 nextOrder.insert(0, nextIds);
             }
-            layerMap.set(mapping.order, nextOrder);
+            drawingMap.set(mapping.order, nextOrder);
         }
     }
 }
@@ -591,9 +595,9 @@ export const YMAP_INFRASTRUCTURE_KEYS = new Set([
     'guideOrder',
     'featuresById',
     'featureOrder',
-    LAYER_GEOMETRY_TOPOLOGY_KEY,
-    LAYER_NODE_POSITIONS_KEY,
-    LAYER_SHAPE_DATA_KEY
+    DRAWING_GEOMETRY_TOPOLOGY_KEY,
+    DRAWING_NODE_POSITIONS_KEY,
+    DRAWING_SHAPE_DATA_KEY
 ]);
 
 /**
@@ -621,7 +625,7 @@ function replaceYMapContentsInternal(
         if (
             !nextKeys.has(key) &&
             !YMAP_INFRASTRUCTURE_KEYS.has(key) &&
-            !(RESTING_LAYER_IDENTITY_KEYS as readonly string[]).includes(key)
+            !(RESTING_DRAWING_IDENTITY_KEYS as readonly string[]).includes(key)
         ) {
             targetMap.delete(key);
         }
@@ -648,7 +652,7 @@ function replaceYMapContentsInternal(
                 value as Record<string, unknown>
             );
         } else if (key === 'shapes' && Array.isArray(value)) {
-            writeLayerGeometry(targetMap, value, toYType);
+            writeDrawingGeometry(targetMap, value, toYType);
         } else if (key === 'nodes' && !Array.isArray(value)) {
             throw new TypeError('Y.Doc path nodes must be arrays.');
         } else if (isYMap(current) && isPlainObject(value)) {
@@ -671,8 +675,8 @@ function replaceYMapContentsInternal(
  * Convert a plain JS value into a Y.Map, Y.Array, or primitive suitable
  * for insertion into a Y.Doc.
  *
- * Babelfont-aware: Path objects store node arrays; Layer
- * objects keep glyph/layer structure while storing shapes as plain ordered
+ * Babelfont-aware: Path objects store node arrays; Drawing
+ * objects keep glyph/drawing structure while storing shapes as plain ordered
  * arrays and anchors/guides as indexed maps.
  */
 export function toYType(value: unknown): unknown {
@@ -700,12 +704,12 @@ export function toYType(value: unknown): unknown {
             return map;
         }
 
-        // Check if this is a Layer (has shapes array) → indexed-map for shapes/anchors/guides
+        // Check if this is a Drawing (has shapes array) → indexed-map for shapes/anchors/guides
         if (
             'shapes' in normalizedValue &&
             Array.isArray(normalizedValue.shapes)
         ) {
-            return layerToYMap(normalizedValue);
+            return drawingToYMap(normalizedValue);
         }
 
         if (
@@ -734,7 +738,7 @@ export function toYType(value: unknown): unknown {
 
 /**
  * Fill a glyph Y.Map using the live editor conventions: `layers` is a Y.Map
- * keyed by layer id, `layerOrder` is the display order.
+ * keyed by drawing id, `layerOrder` is the display order.
  */
 export function fillGlyphYMap(
     glyphJson: Record<string, unknown>,
@@ -742,46 +746,53 @@ export function fillGlyphYMap(
 ): void {
     for (const [gk, gv] of Object.entries(glyphJson)) {
         if (gk === 'layers' && Array.isArray(gv)) {
-            const layersMap = new Y.Map();
-            const layerOrder = new Y.Array<unknown>();
-            for (const layerJson of gv as Record<string, unknown>[]) {
-                const layerId = (layerJson.id as string) || crypto.randomUUID();
-                layersMap.set(layerId, toYType(layerJson) as Y.Map<unknown>);
-                layerOrder.push([layerId]);
+            const drawingsMap = new Y.Map();
+            const drawingOrder = new Y.Array<unknown>();
+            for (const drawingJson of gv as Record<string, unknown>[]) {
+                const drawingId =
+                    (drawingJson.id as string) || crypto.randomUUID();
+                drawingsMap.set(
+                    drawingId,
+                    toYType(drawingJson) as Y.Map<unknown>
+                );
+                drawingOrder.push([drawingId]);
             }
-            glyphMap.set('layers', layersMap);
-            glyphMap.set('layerOrder', layerOrder);
+            glyphMap.set('layers', drawingsMap);
+            glyphMap.set('layerOrder', drawingOrder);
         } else if (
             gk === 'layers' &&
             gv &&
             typeof gv === 'object' &&
             !Array.isArray(gv)
         ) {
-            const layersMap = new Y.Map();
-            const layerOrder = new Y.Array<unknown>();
-            for (const [layerKey, layerValue] of Object.entries(
+            const drawingsMap = new Y.Map();
+            const drawingOrder = new Y.Array<unknown>();
+            for (const [drawingKey, drawingValue] of Object.entries(
                 gv as Record<string, unknown>
             )) {
                 if (
-                    !layerValue ||
-                    typeof layerValue !== 'object' ||
-                    Array.isArray(layerValue)
+                    !drawingValue ||
+                    typeof drawingValue !== 'object' ||
+                    Array.isArray(drawingValue)
                 ) {
                     continue;
                 }
-                const layerJson = layerValue as Record<string, unknown>;
-                const layerId =
-                    typeof layerJson.id === 'string' && layerJson.id
-                        ? layerJson.id
-                        : layerKey;
-                if (typeof layerJson.id !== 'string' || !layerJson.id) {
-                    layerJson.id = layerId;
+                const drawingJson = drawingValue as Record<string, unknown>;
+                const drawingId =
+                    typeof drawingJson.id === 'string' && drawingJson.id
+                        ? drawingJson.id
+                        : drawingKey;
+                if (typeof drawingJson.id !== 'string' || !drawingJson.id) {
+                    drawingJson.id = drawingId;
                 }
-                layersMap.set(layerId, toYType(layerJson) as Y.Map<unknown>);
-                layerOrder.push([layerId]);
+                drawingsMap.set(
+                    drawingId,
+                    toYType(drawingJson) as Y.Map<unknown>
+                );
+                drawingOrder.push([drawingId]);
             }
-            glyphMap.set('layers', layersMap);
-            glyphMap.set('layerOrder', layerOrder);
+            glyphMap.set('layers', drawingsMap);
+            glyphMap.set('layerOrder', drawingOrder);
         } else if (gk === 'codepoints' && Array.isArray(gv)) {
             glyphMap.set('codepoints', createMembershipMap(gv.map(String)));
         } else {
@@ -835,14 +846,14 @@ export function jsonToCoreFontMap(
             fontMap.set(
                 key,
                 toYType(
-                    value.map((master) => {
-                        if (!isPlainObject(master)) {
-                            return master;
+                    value.map((station) => {
+                        if (!isPlainObject(station)) {
+                            return station;
                         }
                         return {
-                            ...master,
-                            kerning: flattenKerningMap(master.kerning),
-                            kerning_rtl: flattenKerningMap(master.kerning_rtl)
+                            ...station,
+                            kerning: flattenKerningMap(station.kerning),
+                            kerning_rtl: flattenKerningMap(station.kerning_rtl)
                         };
                     })
                 )
@@ -866,7 +877,7 @@ export function jsonToCoreFontMap(
  * Populate a Y.Map from a babelfont Font JSON object.
  *
  * Glyphs are stored as a Y.Map keyed by glyph name (not an array).
- * Within each glyph, layers are stored as a Y.Map keyed by layer id.
+ * Within each glyph, drawings are stored as a Y.Map keyed by drawing id.
  * Everything else follows the normal JSON→Y.Type mapping.
  */
 export function jsonToYDoc(
@@ -891,14 +902,14 @@ export function jsonToYDoc(
             fontMap.set(
                 key,
                 toYType(
-                    value.map((master) => {
-                        if (!isPlainObject(master)) {
-                            return master;
+                    value.map((station) => {
+                        if (!isPlainObject(station)) {
+                            return station;
                         }
                         return {
-                            ...master,
-                            kerning: flattenKerningMap(master.kerning),
-                            kerning_rtl: flattenKerningMap(master.kerning_rtl)
+                            ...station,
+                            kerning: flattenKerningMap(station.kerning),
+                            kerning_rtl: flattenKerningMap(station.kerning_rtl)
                         };
                     })
                 )
@@ -951,26 +962,29 @@ function fromYGlyphMap(glyphMap: Y.Map<unknown>): Record<string, unknown> {
         }
     });
 
-    const layersMap = glyphMap.get('layers');
-    if (layersMap instanceof Y.Map) {
-        const layers: Record<string, unknown>[] = [];
-        for (const [layerId, layerValue] of getOrderedMapEntries(
-            layersMap,
+    const drawingsMap = glyphMap.get('layers');
+    if (drawingsMap instanceof Y.Map) {
+        const drawings: Record<string, unknown>[] = [];
+        for (const [drawingId, drawingValue] of getOrderedMapEntries(
+            drawingsMap,
             glyphMap.get('layerOrder')
         )) {
-            const layerJson = fromYType(layerValue);
-            const layerRecord =
-                layerJson &&
-                typeof layerJson === 'object' &&
-                !Array.isArray(layerJson)
-                    ? (layerJson as Record<string, unknown>)
+            const drawingJson = fromYType(drawingValue);
+            const drawingRecord =
+                drawingJson &&
+                typeof drawingJson === 'object' &&
+                !Array.isArray(drawingJson)
+                    ? (drawingJson as Record<string, unknown>)
                     : {};
-            if (typeof layerRecord.id !== 'string' || !layerRecord.id.length) {
-                layerRecord.id = layerId;
+            if (
+                typeof drawingRecord.id !== 'string' ||
+                !drawingRecord.id.length
+            ) {
+                drawingRecord.id = drawingId;
             }
-            layers.push(layerRecord);
+            drawings.push(drawingRecord);
         }
-        glyphJson.layers = layers;
+        glyphJson.layers = drawings;
     }
 
     return glyphJson;
@@ -998,7 +1012,7 @@ export function fromYType(value: unknown): unknown {
             return kernGroupsFromY(value);
         }
 
-        // Check for indexed-map structure (any *ById key indicates a layer)
+        // Check for indexed-map structure (any *ById key indicates a drawing)
         if (
             geometryHasNormalizedStorage(value) ||
             (yMapHas(value, 'anchorsById') &&
@@ -1006,7 +1020,7 @@ export function fromYType(value: unknown): unknown {
             (yMapHas(value, 'guidesById') &&
                 yMapGet(value, 'guidesById') instanceof Y.Map)
         ) {
-            return fromYLayerMap(value);
+            return fromYDrawingMap(value);
         }
 
         yMapForEach(value, (v: unknown, k: string) => {
@@ -1047,14 +1061,14 @@ export function fromYType(value: unknown): unknown {
 }
 
 /**
- * Reverse `layerToYMap`: read a layer Y.Map back into a flat layer object with
+ * Reverse `drawingToYMap`: read a drawing Y.Map back into a flat drawing object with
  * ordered `shapes` plus indexed-map-backed `anchors`/`guides` arrays.
  */
-function fromYLayerMap(layerMap: Y.Map<unknown>): Record<string, unknown> {
+function fromYDrawingMap(drawingMap: Y.Map<unknown>): Record<string, unknown> {
     const obj: Record<string, unknown> = {};
 
     // Non-indexed-map keys
-    layerMap.forEach((v: unknown, k: string) => {
+    drawingMap.forEach((v: unknown, k: string) => {
         if (
             k !== 'anchorsById' &&
             k !== 'anchorOrder' &&
@@ -1063,24 +1077,24 @@ function fromYLayerMap(layerMap: Y.Map<unknown>): Record<string, unknown> {
             k !== 'shapes' &&
             k !== 'anchors' &&
             k !== 'guides' &&
-            k !== LAYER_GEOMETRY_TOPOLOGY_KEY &&
-            k !== LAYER_NODE_POSITIONS_KEY &&
-            k !== LAYER_SHAPE_DATA_KEY
+            k !== DRAWING_GEOMETRY_TOPOLOGY_KEY &&
+            k !== DRAWING_NODE_POSITIONS_KEY &&
+            k !== DRAWING_SHAPE_DATA_KEY
         ) {
             obj[k] = fromYType(v);
         }
     });
 
     const readShapesArray = (): unknown[] | undefined => {
-        const shapes = layerMap.get('shapes');
+        const shapes = drawingMap.get('shapes');
         if (shapes instanceof Y.Array) {
             return fromYType(shapes) as unknown[];
         }
         return undefined;
     };
     try {
-        const normalizedShapes = geometryHasNormalizedStorage(layerMap)
-            ? readLayerGeometry(layerMap)
+        const normalizedShapes = geometryHasNormalizedStorage(drawingMap)
+            ? readDrawingGeometry(drawingMap)
             : null;
         if (normalizedShapes && normalizedShapes.length > 0) {
             obj.shapes = normalizedShapes;
@@ -1102,8 +1116,8 @@ function fromYLayerMap(layerMap: Y.Map<unknown>): Record<string, unknown> {
     }
 
     // anchorsById + anchorOrder → anchors array
-    const anchorsById = layerMap.get('anchorsById');
-    const anchorOrder = layerMap.get('anchorOrder');
+    const anchorsById = drawingMap.get('anchorsById');
+    const anchorOrder = drawingMap.get('anchorOrder');
     if (anchorsById instanceof Y.Map) {
         const orderedIds: string[] =
             anchorOrder instanceof Y.Array
@@ -1127,8 +1141,8 @@ function fromYLayerMap(layerMap: Y.Map<unknown>): Record<string, unknown> {
     }
 
     // guidesById + guideOrder → guides array
-    const guidesById = layerMap.get('guidesById');
-    const guideOrder = layerMap.get('guideOrder');
+    const guidesById = drawingMap.get('guidesById');
+    const guideOrder = drawingMap.get('guideOrder');
     if (guidesById instanceof Y.Map) {
         const orderedIds: string[] =
             guideOrder instanceof Y.Array
@@ -1153,7 +1167,7 @@ function fromYLayerMap(layerMap: Y.Map<unknown>): Record<string, unknown> {
 /**
  * Extract the full babelfont Font JSON from a Y.Doc fontMap.
  *
- * Reverses the keyed-map structure for glyphs and layers back into arrays.
+ * Reverses the keyed-map structure for glyphs and drawings back into arrays.
  *
  * Reserved for explicit bootstrap/test snapshots. Steady-state editor,
  * cloud-save, and synchronization paths must use their scoped bridge APIs.
@@ -1238,7 +1252,7 @@ export function getYPath(
 
             if (segStr === 'shapes' && geometryHasNormalizedStorage(current)) {
                 try {
-                    current = readLayerGeometry(current) || [];
+                    current = readDrawingGeometry(current) || [];
                 } catch {
                     return undefined;
                 }
@@ -1698,34 +1712,34 @@ function navigateIndexedMap(
     return isYMap(entry) ? entry : null;
 }
 
-function locateLayerMap(
+function locateDrawingMap(
     root: Y.Map<unknown>,
     path: (string | number)[],
     createMissing = false
-): { layerMap: Y.Map<unknown>; rest: (string | number)[] } | null {
+): { drawingMap: Y.Map<unknown>; rest: (string | number)[] } | null {
     let current: unknown = root;
     for (let i = 0; i < path.length; i++) {
         if (!isYMap(current)) {
             return null;
         }
         if (String(path[i]) === 'layers' && i + 1 < path.length) {
-            const layersMap = ensureGlyphLayersMap(current);
-            const layerId = String(path[i + 1]);
-            let layer = layersMap.get(layerId);
-            if (!isYMap(layer)) {
+            const drawingsMap = ensureGlyphDrawingsMap(current);
+            const drawingId = String(path[i + 1]);
+            let drawing = drawingsMap.get(drawingId);
+            if (!isYMap(drawing)) {
                 if (!createMissing) {
                     return null;
                 }
                 const created = new Y.Map<unknown>();
-                created.set('id', layerId);
-                layersMap.set(layerId, created);
-                layer = created;
+                created.set('id', drawingId);
+                drawingsMap.set(drawingId, created);
+                drawing = created;
             }
-            if (!isYMap(layer)) {
+            if (!isYMap(drawing)) {
                 return null;
             }
             return {
-                layerMap: layer,
+                drawingMap: drawing,
                 rest: path.slice(i + 2)
             };
         }
@@ -1745,16 +1759,16 @@ function locateLayerMap(
 }
 
 function deleteNormalizedShapePath(
-    layerMap: Y.Map<unknown>,
+    drawingMap: Y.Map<unknown>,
     rest: (string | number)[]
 ): boolean {
     if (rest[0] !== 'shapes' || rest.length !== 2) {
         return false;
     }
-    if (!geometryHasNormalizedStorage(layerMap)) {
+    if (!geometryHasNormalizedStorage(drawingMap)) {
         return false;
     }
-    const shapes = readLayerGeometry(layerMap);
+    const shapes = readDrawingGeometry(drawingMap);
     if (!shapes) {
         return false;
     }
@@ -1767,22 +1781,22 @@ function deleteNormalizedShapePath(
         return false;
     }
     shapes.splice(shapeIndex, 1);
-    writeLayerGeometry(layerMap, shapes, toYType);
+    writeDrawingGeometry(drawingMap, shapes, toYType);
     return true;
 }
 
 function writeNormalizedShapePath(
-    layerMap: Y.Map<unknown>,
+    drawingMap: Y.Map<unknown>,
     rest: (string | number)[],
     value: unknown
 ): boolean {
     if (rest[0] !== 'shapes') {
-        if (rest[0] === LAYER_NODE_POSITIONS_KEY && rest.length === 2) {
+        if (rest[0] === DRAWING_NODE_POSITIONS_KEY && rest.length === 2) {
             const packed = typeof value === 'string' ? value : String(value);
-            let positionMap = layerMap.get(LAYER_NODE_POSITIONS_KEY);
+            let positionMap = drawingMap.get(DRAWING_NODE_POSITIONS_KEY);
             if (!isYMap(positionMap)) {
                 positionMap = new Y.Map<unknown>();
-                layerMap.set(LAYER_NODE_POSITIONS_KEY, positionMap);
+                drawingMap.set(DRAWING_NODE_POSITIONS_KEY, positionMap);
             }
             if (!isYMap(positionMap)) {
                 return false;
@@ -1792,7 +1806,7 @@ function writeNormalizedShapePath(
         }
         return false;
     }
-    if (!geometryHasNormalizedStorage(layerMap) && rest.length > 1) {
+    if (!geometryHasNormalizedStorage(drawingMap) && rest.length > 1) {
         const shapeIndex = Number(rest[1]);
         if (!Number.isInteger(shapeIndex) || shapeIndex < 0) {
             return false;
@@ -1804,20 +1818,20 @@ function writeNormalizedShapePath(
                 nodes: [{ x: 0, y: 0, nodetype: 'Line', smooth: false }]
             });
         }
-        writeLayerGeometry(layerMap, bootstrap, toYType);
+        writeDrawingGeometry(drawingMap, bootstrap, toYType);
     }
-    if (!geometryHasNormalizedStorage(layerMap) && rest.length === 1) {
+    if (!geometryHasNormalizedStorage(drawingMap) && rest.length === 1) {
         if (Array.isArray(value)) {
-            writeLayerGeometry(layerMap, value as unknown[], toYType);
+            writeDrawingGeometry(drawingMap, value as unknown[], toYType);
             return true;
         }
         return false;
     }
 
-    const shapes = readLayerGeometry(layerMap);
+    const shapes = readDrawingGeometry(drawingMap);
     if (!shapes) {
         if (Array.isArray(value) && rest.length === 1) {
-            writeLayerGeometry(layerMap, value as unknown[], toYType);
+            writeDrawingGeometry(drawingMap, value as unknown[], toYType);
             return true;
         }
         return false;
@@ -1825,16 +1839,16 @@ function writeNormalizedShapePath(
 
     if (rest.length === 1) {
         if (!Array.isArray(value)) {
-            throw new TypeError('Layer shapes must be an array.');
+            throw new TypeError('Drawing shapes must be an array.');
         }
-        writeLayerGeometry(layerMap, value as unknown[], toYType);
+        writeDrawingGeometry(drawingMap, value as unknown[], toYType);
         return true;
     }
 
     const shapeIndex = Number(rest[1]);
     if (rest.length === 2) {
         shapes[shapeIndex] = value as Record<string, unknown>;
-        writeLayerGeometry(layerMap, shapes, toYType);
+        writeDrawingGeometry(drawingMap, shapes, toYType);
         return true;
     }
 
@@ -1842,7 +1856,7 @@ function writeNormalizedShapePath(
         const shape = shapes[shapeIndex] as Record<string, unknown>;
         if (rest.length === 3) {
             shape.nodes = value;
-            writeLayerGeometry(layerMap, shapes, toYType);
+            writeDrawingGeometry(drawingMap, shapes, toYType);
             return true;
         }
         const nodeIndex = Number(rest[3]);
@@ -1852,16 +1866,16 @@ function writeNormalizedShapePath(
         if (rest.length === 4) {
             nodes[nodeIndex] = value as Record<string, unknown>;
             shape.nodes = nodes;
-            writeLayerGeometry(layerMap, shapes, toYType);
+            writeDrawingGeometry(drawingMap, shapes, toYType);
             return true;
         }
         const property = String(rest[4]);
         if (property === 'x' || property === 'y') {
-            const nodeId = getNodeIdAt(layerMap, shapeIndex, nodeIndex);
+            const nodeId = getNodeIdAt(drawingMap, shapeIndex, nodeIndex);
             const node = (nodes[nodeIndex] || {}) as Record<string, unknown>;
             const nextX = property === 'x' ? Number(value) : Number(node.x);
             const nextY = property === 'y' ? Number(value) : Number(node.y);
-            writeNodePosition(layerMap, nodeId, nextX, nextY);
+            writeNodePosition(drawingMap, nodeId, nextX, nextY);
             return true;
         }
         const node = {
@@ -1870,7 +1884,7 @@ function writeNormalizedShapePath(
         };
         nodes[nodeIndex] = node;
         shape.nodes = nodes;
-        writeLayerGeometry(layerMap, shapes, toYType);
+        writeDrawingGeometry(drawingMap, shapes, toYType);
         return true;
     }
 
@@ -1879,7 +1893,7 @@ function writeNormalizedShapePath(
     };
     setDeepValue(shape, rest.slice(2), value);
     shapes[shapeIndex] = shape;
-    writeLayerGeometry(layerMap, shapes, toYType);
+    writeDrawingGeometry(drawingMap, shapes, toYType);
     return true;
 }
 
@@ -1928,10 +1942,10 @@ export function setYPath(
     if (path.length === 0) return;
     path = coerceNumericPath(path);
 
-    const located = locateLayerMap(root, path, true);
+    const located = locateDrawingMap(root, path, true);
     if (
         located &&
-        writeNormalizedShapePath(located.layerMap, located.rest, value)
+        writeNormalizedShapePath(located.drawingMap, located.rest, value)
     ) {
         return;
     }
@@ -1974,7 +1988,7 @@ export function setYPath(
             // Always use the indexed-map structure for these keys,
             // creating it if it doesn't exist yet.
             if (typeof seg === 'string' && INDEXED_MAP_KEYS[segStr]) {
-                // Master guides are a flat Y.Array. Creating guidesById
+                // Station guides are a flat Y.Array. Creating guidesById
                 // here discards that array and turns each pos.x / pos.y
                 // write into a new guide.
                 const existingById = getIndexedByIdMap(current, segStr);
@@ -2134,7 +2148,7 @@ export function setYPath(
     // Special case: when setting an indexed-map array key (shapes, anchors,
     // guides) as the terminal segment on a Y.Map,
     // update the *ById+*Order structure instead of setting a flat
-    // key. This handles layer-level shape/anchor/guide replacements
+    // key. This handles drawing-level shape/anchor/guide replacements
     // and path-level node replacements that arrive as whole-array
     // set operations (e.g. from the lsb setter).
     if (
@@ -2220,9 +2234,9 @@ export function setYPath(
         path[2] === 'layers' &&
         isPlainObject(value)
     ) {
-        const existingLayer = current.get(lastSegStr);
-        if (isYMap(existingLayer)) {
-            applyLayerDelta(
+        const existingDrawing = current.get(lastSegStr);
+        if (isYMap(existingDrawing)) {
+            applyDrawingDelta(
                 root,
                 String(path[1]),
                 lastSegStr,
@@ -2276,8 +2290,11 @@ export function deleteYPath(
     if (path.length === 0) return;
     path = coerceNumericPath(path);
 
-    const located = locateLayerMap(root, path, false);
-    if (located && deleteNormalizedShapePath(located.layerMap, located.rest)) {
+    const located = locateDrawingMap(root, path, false);
+    if (
+        located &&
+        deleteNormalizedShapePath(located.drawingMap, located.rest)
+    ) {
         return;
     }
 

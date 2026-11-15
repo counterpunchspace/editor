@@ -131,9 +131,9 @@ async function openFolderFiles(name, format, root, files) {
     return { font, files, root, ...disk };
 }
 
-function layerWidthEntry(glyphName, layerId) {
+function drawingWidthEntry(glyphName, drawingId) {
     return {
-        path: `glyphs.${glyphName}:layers.${layerId}:width`,
+        path: `glyphs.${glyphName}:layers.${drawingId}:width`,
         op: 'set',
         glyphRenames: []
     };
@@ -143,7 +143,7 @@ function editWidth(font, glyphName, delta) {
     const glyph = font.babelfontData.glyphs.find((g) => g.name === glyphName);
     glyph.layers[0].width += delta;
     font.folderSaveTracker.recordEntries([
-        layerWidthEntry(glyphName, glyph.layers[0].id)
+        drawingWidthEntry(glyphName, glyph.layers[0].id)
     ]);
     font.hasUnsavedChanges = true;
     return glyph.layers[0].width;
@@ -711,15 +711,15 @@ describe('designspace projects', () => {
 
         const bold = font.babelfontData.masters[1].id;
         const glyph = font.babelfontData.glyphs.find((g) => g.name === 'A');
-        const layer = glyph.layers.find(
+        const drawing = glyph.layers.find(
             (l) =>
                 l.master?.type === 'DefaultForMaster' &&
                 l.master.master === bold
         );
-        layer.width += 10;
+        drawing.width += 10;
         font.folderSaveTracker.recordEntries([
             {
-                path: `glyphs.A:layers.${layer.id}:width`,
+                path: `glyphs.A:layers.${drawing.id}:width`,
                 op: 'set',
                 glyphRenames: []
             }

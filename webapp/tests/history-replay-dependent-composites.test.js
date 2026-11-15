@@ -20,7 +20,7 @@ function rect(x0, y0, x1, y1) {
     };
 }
 
-function layer(fields) {
+function drawing(fields) {
     return {
         id: 'M1',
         master: { type: 'DefaultForMaster', master: 'M1' },
@@ -58,7 +58,7 @@ function makeFont() {
                 exported: true,
                 format_specific: {},
                 layers: [
-                    layer({
+                    drawing({
                         width: 540,
                         shapes: [rect(60, 0, 480, 500)],
                         anchors: [{ name: 'top', x: 270, y: 500 }]
@@ -72,7 +72,7 @@ function makeFont() {
                 exported: true,
                 format_specific: {},
                 layers: [
-                    layer({
+                    drawing({
                         width: 0,
                         shapes: [rect(-100, 560, 100, 620)],
                         anchors: [{ name: '_top', x: 0, y: 500 }]
@@ -86,7 +86,7 @@ function makeFont() {
                 exported: true,
                 format_specific: {},
                 layers: [
-                    layer({
+                    drawing({
                         width: 540,
                         shapes: [
                             {
@@ -135,8 +135,8 @@ describe('history replay recomposes dependent composites', () => {
                 syncJsonFromModel: () => {}
             }
         };
-        const a = font.findGlyph('a').findLayerById('M1');
-        const adieresis = font.findGlyph('adieresis.alt').findLayerById('M1');
+        const a = font.findGlyph('a').findDrawingById('M1');
+        const adieresis = font.findGlyph('adieresis.alt').findDrawingById('M1');
 
         // A composite whose name has a dot, as alternates do: its room must
         // be found from the path the undo names it by.
@@ -147,7 +147,7 @@ describe('history replay recomposes dependent composites', () => {
             top.x -= 29;
             top.y += 10;
         });
-        engine.syncLayersFromJson(
+        engine.syncDrawingsFromJson(
             [{ glyphName: 'a', layerId: 'M1' }],
             'Drag anchor',
             undefined,
@@ -170,7 +170,7 @@ describe('history replay recomposes dependent composites', () => {
             }
             adieresis.rebuildAutomaticComposition();
         });
-        engine.syncLayersFromJson(
+        engine.syncDrawingsFromJson(
             [{ glyphName: 'adieresis.alt', layerId: 'M1' }],
             'Automatic alignment',
             undefined,

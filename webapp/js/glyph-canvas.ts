@@ -68,8 +68,8 @@ import {
     FeatureVariationGlyph,
     Glyph,
     Guide,
-    Layer,
-    Master,
+    Drawing,
+    Station,
     withSuppressedModelRecording
 } from './babelfont-model';
 import { updateUrlState, encodeLocation } from './url-state';
@@ -83,12 +83,12 @@ import { SavedVariationState } from './saved-variation-state';
 import { ArrowAdjustableTextInput } from './arrow-adjustable-text-input';
 import { InFlightPacer } from './in-flight-pacer';
 import { LatestSamplePump } from './latest-sample-pump';
-import { LayerDataNormalizer } from './layer-data-normalizer';
+import { DrawingDataNormalizer } from './drawing-data-normalizer';
 import {
     buildOrderedKerningPairs,
     getKerningPairValue,
     getOrderedKerningPairKey,
-    setKerningPairValueOnMaster,
+    setKerningPairValueOnStation,
     type KerningContainer
 } from './kerning-utils';
 import { getPreviewArea } from './editor-preview-area-pref';
@@ -244,13 +244,13 @@ type NormalizedDecomposedTransform = {
     order: 'Glyphs' | 'RestOfTheWorld';
 };
 
-type LayerListContextTarget = {
+type DrawingListContextTarget = {
     glyphName: string;
-    masterId: string;
+    stationId: string;
     layerId: string | null;
     userspaceLocation: UserspaceLocation | null;
     designLocation: DesignspaceLocation | null;
-    isMasterBound: boolean;
+    isStationBound: boolean;
 };
 
 type FeatureVariationAxisRule = {
@@ -261,7 +261,7 @@ type FeatureVariationAxisRule = {
 type KerningSide = 'first' | 'second';
 
 type TextModeKerningStatus =
-    'ready' | 'off-master' | 'bidi-boundary' | 'no-pair';
+    'ready' | 'off-station' | 'bidi-boundary' | 'no-pair';
 
 type TextRunClusterInfo = {
     glyphIndex: number;
@@ -297,7 +297,7 @@ type TextModeKerningContext = {
     status: TextModeKerningStatus;
     message: string;
     isRTL: boolean;
-    master: Master | null;
+    station: Station | null;
     metrics: Record<string, number> | null;
     firstGlyphName: string | null;
     secondGlyphName: string | null;
@@ -341,7 +341,7 @@ type TextModeKerningOverlayCacheEntry = {
 
 type TextModeKerningOverlayCache = {
     layoutVersion: number;
-    masterId: string;
+    stationId: string;
     overlays: TextModeKerningOverlay[];
     entries: TextModeKerningOverlayCacheEntry[];
     entriesByAdjacencyKey: Map<string, TextModeKerningOverlayCacheEntry>;
@@ -1299,7 +1299,7 @@ class GlyphCanvas {
     private idleViewLockUsesBbox = false;
     private idleViewLockUsesRightEdge = false;
 
-    // Flag to suppress rendering during critical operations (e.g., layer data swap)
+    // Flag to suppress rendering during critical operations (e.g., drawing data swap)
     renderSuppressed: boolean = false;
     hasDeferredRenderRequest: boolean = false;
     pendingCanvasBackingStoreSync: boolean = false;
@@ -1310,14 +1310,14 @@ class GlyphCanvas {
     private cutInFlight = false;
     private clipboardPasteKind: ClipboardPasteKind = 'empty';
 
-    private handleLayerFingerprintChanged = (event: Event): void => {
+    private handleDrawingFingerprintChanged = (event: Event): void => {
         if (!this.outlineEditor.active) {
             return;
         }
 
         const detail = (event as CustomEvent).detail;
         const currentGlyphName =
-            this.outlineEditor.getLayerLinkGlyphName() ||
+            this.outlineEditor.getDrawingLinkGlyphName() ||
             this.getCurrentGlyphName();
 
         if (detail?.glyphName && detail.glyphName !== currentGlyphName) {
@@ -1326,7 +1326,7 @@ class GlyphCanvas {
 
         if (this.outlineEditor.draggingSomething) {
             console.log(
-                '[DRAG-DEBUG] Skipping updatePropertiesUI from layerFingerprintChanged during drag'
+                '[DRAG-DEBUG] Skipping updatePropertiesUI from drawingFingerprintChanged during drag'
             );
             return;
         }
@@ -1336,7 +1336,7 @@ class GlyphCanvas {
 
     /**
      * Copy selected overview glyphs as Counterpunch JSON (whole-glyph payload)
-     * plus SVG of paths from each glyph's first foreground layer.
+     * plus SVG of paths from each glyph's first foreground drawing.
      */
     private copySelectedOverviewGlyphsToClipboard(
         event?: ClipboardEvent | null
@@ -1521,13 +1521,13 @@ class GlyphCanvas {
                 continue;
             }
             glyphs.push(serializeGlyphForClipboard(glyph));
-            const layer = (glyph.layers || []).find(
-                (candidate: Layer) => !candidate.is_background
+            const drawing = (glyph.drawings || []).find(
+                (candidate: Drawing) => !candidate.is_background
             );
-            if (!layer) {
+            if (!drawing) {
                 continue;
             }
-            for (const shape of layer.shapes || []) {
+            for (const shape of drawing.shapes || []) {
                 if (shape.isPath?.()) {
                     svgPaths.push(serializePathForClipboard(shape.asPath()));
                 }
@@ -2184,8 +2184,8 @@ class GlyphCanvas {
 
     setupEventListeners(): void {
         window.addEventListener(
-            'layerFingerprintChanged',
-            this.handleLayerFingerprintChanged
+            'drawingFingerprintChanged',
+            this.handleDrawingFingerprintChanged
         );
         window.addEventListener('fontModelSync', this.handleFontModelSync);
         window.addEventListener(
@@ -2432,7 +2432,7 @@ class GlyphCanvas {
             true
         );
 
-        // Outline / overview paste: use `.focused` for view routing. Layer paste
+        // Outline / overview paste: use `.focused` for view routing. Drawing paste
         // additionally requires active glyph editing; outlineEditor.active alone
         // is not a view target because a glyph tab can stay active in overview.
         // Chromium web custom formats (Fontra) need async clipboard.read().
@@ -2781,7 +2781,7 @@ class GlyphCanvas {
 
                     const summaryLinkButton =
                         this.propertiesSection?.querySelector(
-                            '.editor-layer-link-summary-toggle'
+                            '.editor-drawing-link-summary-toggle'
                         ) as HTMLButtonElement | null;
                     summaryLinkButton?.click();
                 }
@@ -3254,25 +3254,25 @@ class GlyphCanvas {
             this.outlineEditor.onSliderMouseDown();
             // Also capture text mode cursor position for auto-panning
             if (!this.outlineEditor.active && this.textRunEditor) {
-                const selectedMasterId = this.textRunEditor.selectedMasterId;
+                const selectedStationId = this.textRunEditor.selectedStationId;
                 if (
                     this.axesManager &&
                     this.textModeEscapeState.save(
-                        selectedMasterId,
+                        selectedStationId,
                         this.axesManager.variationSettings
                     )
                 ) {
                     console.log(
                         '[GlyphCanvas] Saved previous text mode state for Escape:',
                         {
-                            masterId: selectedMasterId,
+                            stationId: selectedStationId,
                             settings: this.axesManager.variationSettings
                         }
                     );
                 }
 
-                this.textRunEditor.selectedMasterId = null;
-                this.updateMasterSelection();
+                this.textRunEditor.selectedStationId = null;
+                this.updateStationSelection();
                 this.captureTextModeAutoPanAnchor();
             }
         });
@@ -3294,13 +3294,13 @@ class GlyphCanvas {
             }
         });
         this.axesManager!.on('textFieldAnimationComplete', async () => {
-            // Skip layer selection during loop animation (play button)
+            // Skip drawing selection during loop animation (play button)
             if (this.axesManager!.isLoopAnimating) {
                 return;
             }
-            // Handle layer selection after text field change animation completes
+            // Handle drawing selection after text field change animation completes
             if (this.outlineEditor.active) {
-                await this.outlineEditor.autoSelectMatchingLayer();
+                await this.outlineEditor.autoSelectMatchingDrawing();
                 this.outlineEditor.isInterpolating = false;
                 this.render();
             }
@@ -3321,8 +3321,8 @@ class GlyphCanvas {
             try {
                 console.log('[GlyphCanvas] animationComplete event triggered', {
                     isInterpolating: this.outlineEditor.isInterpolating,
-                    isLayerSwitchAnimating:
-                        this.outlineEditor.isLayerSwitchAnimating,
+                    isDrawingSwitchAnimating:
+                        this.outlineEditor.isDrawingSwitchAnimating,
                     isSliderActive: this.axesManager!.isSliderActive
                 });
             } catch (e) {
@@ -3331,18 +3331,18 @@ class GlyphCanvas {
                     e
                 );
             }
-            // If we were animating a layer switch, restore the target layer data
-            if (this.outlineEditor.isLayerSwitchAnimating) {
+            // If we were animating a drawing switch, restore the target drawing data
+            if (this.outlineEditor.isDrawingSwitchAnimating) {
                 console.log(
-                    '[GlyphCanvas] Animation complete - calling restoreTargetLayerDataAfterAnimating()'
+                    '[GlyphCanvas] Animation complete - calling restoreTargetDrawingDataAfterAnimating()'
                 );
-                this.outlineEditor.restoreTargetLayerDataAfterAnimating();
-                this.outlineEditor.isLayerSwitchAnimating = false;
+                this.outlineEditor.restoreTargetDrawingDataAfterAnimating();
+                this.outlineEditor.isDrawingSwitchAnimating = false;
                 console.log(
-                    '[GlyphCanvas] Layer switch animation restoration complete'
+                    '[GlyphCanvas] Drawing switch animation restoration complete'
                 );
 
-                // NOTE: autoSelectMatchingLayer() is already called inside restoreTargetLayerDataAfterAnimating()
+                // NOTE: autoSelectMatchingDrawing() is already called inside restoreTargetDrawingDataAfterAnimating()
                 // so we don't need to call it again here
 
                 this.textRunEditor!.shapeText();
@@ -3370,24 +3370,24 @@ class GlyphCanvas {
             'onSliderChange',
             this.outlineEditor.onSliderChange.bind(this.outlineEditor)
         );
-        // Auto-select or deselect master/layer when slider changes
+        // Auto-select or deselect station/drawing when slider changes
         this.axesManager!.on('onSliderChange', () => {
-            // Skip layer selection during loop animation (play button)
+            // Skip drawing selection during loop animation (play button)
             if (this.axesManager!.isLoopAnimating) {
                 return;
             }
             if (this.outlineEditor.active) {
-                // In edit mode, auto-select matching layer during slider drag
+                // In edit mode, auto-select matching drawing during slider drag
                 console.log(
-                    '[GlyphCanvas] Slider changed in edit mode, calling autoSelectMatchingLayer'
+                    '[GlyphCanvas] Slider changed in edit mode, calling autoSelectMatchingDrawing'
                 );
-                this.outlineEditor.autoSelectMatchingLayer();
+                this.outlineEditor.autoSelectMatchingDrawing();
             } else {
-                // In text mode, auto-select matching master
+                // In text mode, auto-select matching station
                 console.log(
-                    '[GlyphCanvas] Slider changed, calling autoSelectMatchingMaster'
+                    '[GlyphCanvas] Slider changed, calling autoSelectMatchingStation'
                 );
-                this.autoSelectMatchingMaster();
+                this.autoSelectMatchingStation();
             }
         });
         // Also check after animation completes to handle the final value
@@ -3396,20 +3396,20 @@ class GlyphCanvas {
             if (this.axesManager!.isLoopAnimating) {
                 return;
             }
-            // Skip during layer switch animations - layer restoration will handle it
-            if (this.outlineEditor.isLayerSwitchAnimating) {
+            // Skip during drawing switch animations - drawing restoration will handle it
+            if (this.outlineEditor.isDrawingSwitchAnimating) {
                 console.log(
-                    '[GlyphCanvas] Animation complete during layer switch - skipping autoSelectMatchingMaster'
+                    '[GlyphCanvas] Animation complete during drawing switch - skipping autoSelectMatchingStation'
                 );
                 return;
             }
             console.log(
-                '[GlyphCanvas] Animation complete, calling autoSelectMatchingMaster'
+                '[GlyphCanvas] Animation complete, calling autoSelectMatchingStation'
             );
             if (this.outlineEditor.active) {
-                void this.outlineEditor.autoSelectMatchingLayer();
+                void this.outlineEditor.autoSelectMatchingDrawing();
             } else {
-                this.autoSelectMatchingMaster();
+                this.autoSelectMatchingStation();
             }
         });
     }
@@ -3522,11 +3522,11 @@ class GlyphCanvas {
                     }
                 }
 
-                // Clear layer data immediately to prevent rendering stale outlines
-                this.outlineEditor.layerData = null;
+                // Clear drawing data immediately to prevent rendering stale outlines
+                this.outlineEditor.drawingData = null;
 
                 // Clear glyph_stack when switching to a new glyph
-                // It will be rebuilt when a layer is selected for the new glyph
+                // It will be rebuilt when a drawing is selected for the new glyph
                 this.outlineEditor.glyphStack = '';
 
                 if (ix != -1) {
@@ -3659,7 +3659,7 @@ class GlyphCanvas {
 
         // Check for double-click
         if (e.detail === 2) {
-            // In outline editor mode with layer selected
+            // In outline editor mode with drawing selected
             const doubleClickHandled = this.outlineEditor.onDoubleClick(e);
             if (doubleClickHandled) {
                 return; // Skip single-click logic
@@ -3987,7 +3987,7 @@ class GlyphCanvas {
         // Stack preview has its own transformed hit targets and pointer behavior.
         if (this.stackPreviewAnimator.shouldRenderStackPreview()) {
             this.canvas!.style.cursor =
-                this.stackPreviewAnimator.hoveredLayerTreeIndex !== null
+                this.stackPreviewAnimator.hoveredDrawingTreeIndex !== null
                     ? 'pointer'
                     : 'default';
             return;
@@ -4022,8 +4022,8 @@ class GlyphCanvas {
 
     updateHoveredGlyph(): void {
         if (this.stackPreviewAnimator.shouldRenderStackPreview()) {
-            const hoveredLayerTreeIndex =
-                this.renderer?.hitTestStackPreviewLayer(
+            const hoveredDrawingTreeIndex =
+                this.renderer?.hitTestStackPreviewDrawing(
                     this.mouseX,
                     this.mouseY
                 ) ?? null;
@@ -4031,11 +4031,11 @@ class GlyphCanvas {
             let didChange = false;
 
             if (
-                this.stackPreviewAnimator.hoveredLayerTreeIndex !==
-                hoveredLayerTreeIndex
+                this.stackPreviewAnimator.hoveredDrawingTreeIndex !==
+                hoveredDrawingTreeIndex
             ) {
-                this.stackPreviewAnimator.hoveredLayerTreeIndex =
-                    hoveredLayerTreeIndex;
+                this.stackPreviewAnimator.hoveredDrawingTreeIndex =
+                    hoveredDrawingTreeIndex;
                 didChange = true;
             }
 
@@ -4076,8 +4076,8 @@ class GlyphCanvas {
             return;
         }
 
-        if (this.stackPreviewAnimator.hoveredLayerTreeIndex !== null) {
-            this.stackPreviewAnimator.hoveredLayerTreeIndex = null;
+        if (this.stackPreviewAnimator.hoveredDrawingTreeIndex !== null) {
+            this.stackPreviewAnimator.hoveredDrawingTreeIndex = null;
         }
 
         let foundIndex = -1;
@@ -4220,20 +4220,20 @@ class GlyphCanvas {
 
     /**
      * Highest/lowest visible vertical metrics for text-mode empty-glyph hits.
-     * Falls back to the drawn caret extent when masters have no metrics.
+     * Falls back to the drawn caret extent when stations have no metrics.
      */
     getTextModeVerticalMetricsBand(): { lowest: number; highest: number } {
         const fontModel = fontManager.currentFont?.fontModel;
-        const selectedMaster = this.getSelectedTextModeKerningMaster();
-        const master =
-            selectedMaster ||
-            fontModel?.masters?.find(
-                (candidate: Master) => candidate?.metrics
+        const selectedStation = this.getSelectedTextModeKerningStation();
+        const station =
+            selectedStation ||
+            fontModel?.stations?.find(
+                (candidate: Station) => candidate?.metrics
             ) ||
-            fontModel?.masters?.[0] ||
+            fontModel?.stations?.[0] ||
             null;
 
-        const rawMetrics = master?.metrics;
+        const rawMetrics = station?.metrics;
         let verticalMetrics: Record<string, number> | null = null;
         if (rawMetrics && typeof rawMetrics === 'object') {
             verticalMetrics = Object.fromEntries(
@@ -4297,7 +4297,7 @@ class GlyphCanvas {
             if (!glyphData || !glyphData.trim()) {
                 return true;
             }
-            const bounds = Layer.calculateSvgPathBounds(glyphData);
+            const bounds = Drawing.calculateSvgPathBounds(glyphData);
             if (!bounds) {
                 return true;
             }
@@ -4567,7 +4567,7 @@ class GlyphCanvas {
                     'Shaped text after editing font reload'
                 );
 
-                // Update properties UI to show master list in text mode
+                // Update properties UI to show station list in text mode
                 if (!options?.skipPropertiesUIUpdate) {
                     const propertiesUiSpanId = timelineSpanStart(
                         'canvas.setFont.updatePropertiesUI'
@@ -4576,38 +4576,41 @@ class GlyphCanvas {
                     timelineSpanEnd(propertiesUiSpanId);
                 }
 
-                // Seed first master instantly on initial load (no animation).
+                // Seed first station instantly on initial load (no animation).
                 // Startup URL/state restore may overwrite this before the single
                 // fontReady overview render; avoid variationLocationChanged races.
                 const armedLocation =
                     window.stateManager?.editor_variation_location;
-                const mastersForInitialSeed =
+                const stationsForInitialSeed =
                     !this.initialFontLoaded &&
                     !(armedLocation && Object.keys(armedLocation).length > 0)
-                        ? fontManager.currentFont?.fontModel?.masters
+                        ? fontManager.currentFont?.fontModel?.stations
                         : undefined;
-                if (mastersForInitialSeed && mastersForInitialSeed.length > 0) {
+                if (
+                    stationsForInitialSeed &&
+                    stationsForInitialSeed.length > 0
+                ) {
                     const fontModel = fontManager.currentFont!.fontModel!;
-                    const firstMaster = mastersForInitialSeed[0];
+                    const firstStation = stationsForInitialSeed[0];
                     if (
-                        firstMaster?.id &&
-                        firstMaster.location &&
+                        firstStation?.id &&
+                        firstStation.location &&
                         fontModel.axes &&
                         this.axesManager
                     ) {
                         const userspaceLocation = designspaceToUserspace(
-                            firstMaster.location,
+                            firstStation.location,
                             fontModel.axes as any
                         );
                         this.textModeEscapeState.clear();
-                        this.applyTextModeKerningMasterChange(firstMaster.id);
+                        this.applyTextModeKerningStationChange(firstStation.id);
                         for (const [tag, value] of Object.entries(
                             userspaceLocation
                         )) {
                             this.axesManager.setAxisValue(tag, Number(value));
                         }
                         this.axesManager.updateAxisSliders();
-                        this.updateMasterSelection();
+                        this.updateStationSelection();
                         this.updatePropertyPanel();
                     }
                 }
@@ -4706,7 +4709,7 @@ class GlyphCanvas {
 
         this.outlineEditor.active = false;
         this.textRunEditor!.selectedGlyphIndex = -1;
-        this.outlineEditor.selectedLayerId = null;
+        this.outlineEditor.selectedDrawingId = null;
         this.outlineEditor.notifyEditToolsChanged();
         window.fontManager?.notifyActiveEditorGlyphRoom?.();
 
@@ -4720,8 +4723,8 @@ class GlyphCanvas {
         // Clear outline editor state
         this.outlineEditor.clearState();
 
-        // Auto-select matching master based on current axis slider positions
-        this.autoSelectMatchingMaster();
+        // Auto-select matching station based on current axis slider positions
+        this.autoSelectMatchingStation();
 
         console.log(`Exited glyph edit mode - returned to text edit mode`);
         this.updatePropertyPanel();
@@ -4746,14 +4749,14 @@ class GlyphCanvas {
         editorHealth.notePropertiesUpdateFinished();
 
         this.outlineEditor.active = false;
-        this.outlineEditor.selectedLayerId = null;
+        this.outlineEditor.selectedDrawingId = null;
         this.outlineEditor.glyphStack = '';
         this.outlineEditor.clearState();
 
         if (this.textRunEditor) {
             this.textRunEditor.selectedGlyphIndex = -1;
             this.textRunEditor.cursorPosition = 0;
-            this.textRunEditor.selectedMasterId = null;
+            this.textRunEditor.selectedStationId = null;
             this.textRunEditor.selectionStart = null;
             this.textRunEditor.selectionEnd = null;
 
@@ -4824,9 +4827,7 @@ class GlyphCanvas {
             const header = document.createElement('div');
             header.className = 'info-popup-header';
             const title = document.createElement('h3');
-            title.textContent = isEditing
-                ? 'Edit Feature Variation'
-                : 'Add Feature Variation';
+            title.textContent = isEditing ? 'Edit Variation' : 'Add Variation';
             const closeButton = document.createElement('button');
             closeButton.type = 'button';
             closeButton.className = 'info-popup-close';
@@ -4999,18 +5000,18 @@ class GlyphCanvas {
         });
     }
 
-    async displayMastersList(
+    async displayStationsList(
         targetContainer: HTMLElement = this.propertiesSection!,
-        autoSelectLayer: boolean = true
+        autoSelectDrawing: boolean = true
     ): Promise<void> {
-        // Display unified masters/layers list
-        // In text mode: show all masters, click selects master location
-        // In edit mode: show all masters, check if glyph has corresponding layers
-        //   - if layer exists: show active, click loads layer
-        //   - if layer missing: show inactive/disabled
+        // Display unified stations/drawings list
+        // In text mode: show all stations, click selects station location
+        // In edit mode: show all stations, check if glyph has corresponding drawings
+        //   - if drawing exists: show active, click loads drawing
+        //   - if drawing missing: show inactive/disabled
         console.log(
-            '[GlyphCanvas] displayMastersList called, selectedLayerId:',
-            this.outlineEditor?.selectedLayerId
+            '[GlyphCanvas] displayStationsList called, selectedDrawingId:',
+            this.outlineEditor?.selectedDrawingId
         );
 
         if (!targetContainer || !fontManager.currentFont?.fontModel) {
@@ -5019,33 +5020,33 @@ class GlyphCanvas {
         }
 
         const fontModel = fontManager.currentFont.fontModel;
-        if (!fontModel.masters || fontModel.masters.length === 0) {
-            console.log('[GlyphCanvas] No masters found');
+        if (!fontModel.stations || fontModel.stations.length === 0) {
+            console.log('[GlyphCanvas] No stations found');
             return;
         }
 
         const isEditMode = this.outlineEditor.active;
-        const preselectedLayerId = isEditMode
-            ? (this.outlineEditor.isEditingBackgroundLayer()
-                  ? this.outlineEditor.getPairedLayerModel()?.id
+        const preselectedDrawingId = isEditMode
+            ? (this.outlineEditor.isEditingBackgroundDrawing()
+                  ? this.outlineEditor.getPairedDrawingModel()?.id
                   : null) ||
-              this.outlineEditor.selectedLayerId ||
-              this.outlineEditor.findMatchingLayer()?.id
+              this.outlineEditor.selectedDrawingId ||
+              this.outlineEditor.findMatchingDrawing()?.id
             : null;
         console.log(
             '[GlyphCanvas] Found',
-            fontModel.masters.length,
-            'masters, mode:',
+            fontModel.stations.length,
+            'stations, mode:',
             isEditMode ? 'edit' : 'text'
         );
 
-        // In edit mode, get current glyph and its layers
+        // In edit mode, get current glyph and its drawings
         let glyph: Glyph | FeatureVariationGlyph | undefined;
-        let glyphLayers: Layer[] = [];
+        let glyphDrawings: Drawing[] = [];
         if (isEditMode) {
             const authoringGlyphName =
                 this.outlineEditor.getAuthoringRootGlyphName();
-            // Fetch glyph data (needed for interpolation and layer management)
+            // Fetch glyph data (needed for interpolation and drawing management)
             this.fontData =
                 await fontManager.fetchGlyphData(authoringGlyphName);
 
@@ -5054,11 +5055,11 @@ class GlyphCanvas {
                 !this.fontData.layers ||
                 this.fontData.layers.length === 0
             ) {
-                console.log('[GlyphCanvas] No font data or layers found');
+                console.log('[GlyphCanvas] No font data or drawings found');
                 return;
             }
 
-            // Store glyph name for interpolation (needed even when not on a layer)
+            // Store glyph name for interpolation (needed even when not on a drawing)
             // But only if we're NOT in component editing mode
             if (
                 this.fontData.glyphName &&
@@ -5074,61 +5075,61 @@ class GlyphCanvas {
             }
 
             const glyphName = this.outlineEditor.isEditingComponent()
-                ? this.outlineEditor.getLayerLinkGlyphName() ||
+                ? this.outlineEditor.getDrawingLinkGlyphName() ||
                   authoringGlyphName
                 : this.outlineEditor.parseGlyphStack()[0]?.glyphName ||
                   authoringGlyphName;
             glyph = fontModel.resolveGlyphView(glyphName);
-            glyphLayers = glyph?.layers || [];
+            glyphDrawings = glyph?.drawings || [];
             console.log(
                 '[GlyphCanvas] Edit mode: glyph',
                 glyphName,
                 'has',
-                glyphLayers.length,
-                'layers'
+                glyphDrawings.length,
+                'drawings'
             );
         }
 
-        const layersWidget = document.createElement('div');
-        layersWidget.className = 'editor-layers-widget';
+        const drawingsWidget = document.createElement('div');
+        drawingsWidget.className = 'editor-drawings-widget';
 
         // Add section title
         const sectionTitle = document.createElement('div');
-        sectionTitle.className = 'editor-section-title editor-layers-header';
+        sectionTitle.className = 'editor-section-title editor-drawings-header';
 
         const sectionTitleText = document.createElement('span');
         sectionTitleText.className = 'editor-section-title-text';
-        sectionTitleText.textContent = isEditMode ? 'Layers' : 'Masters';
+        sectionTitleText.textContent = isEditMode ? 'Drawings' : 'Stations';
         sectionTitle.appendChild(sectionTitleText);
 
         const glyphNameForLinkState =
-            this.outlineEditor.getLayerLinkGlyphName() ||
+            this.outlineEditor.getDrawingLinkGlyphName() ||
             glyph?.name ||
             this.getCurrentGlyphName();
         const axesOrder =
             (fontModel as any).axesOrder ||
             (fontModel.axes || []).map((axis: any) => axis.tag).sort();
-        const activeLayer =
-            isEditMode && preselectedLayerId
-                ? glyphLayers.find(
-                      (candidate) => candidate.id === preselectedLayerId
+        const activeDrawing =
+            isEditMode && preselectedDrawingId
+                ? glyphDrawings.find(
+                      (candidate) => candidate.id === preselectedDrawingId
                   )
                 : undefined;
-        const activeLayerFingerprint = activeLayer?.fingerprint || null;
-        const displayedLayerIds: string[] = [];
-        const layerLinkButtons: HTMLButtonElement[] = [];
-        const layerRows: LayerListContextTarget[] = [];
+        const activeDrawingFingerprint = activeDrawing?.fingerprint || null;
+        const displayedDrawingIds: string[] = [];
+        const drawingLinkButtons: HTMLButtonElement[] = [];
+        const drawingRows: DrawingListContextTarget[] = [];
 
-        const isLayerCompatibleWithActive = (
-            layer: Layer | undefined
+        const isDrawingCompatibleWithActive = (
+            drawing: Drawing | undefined
         ): boolean => {
-            if (!isEditMode || !layer?.id || !activeLayerFingerprint) {
+            if (!isEditMode || !drawing?.id || !activeDrawingFingerprint) {
                 return true;
             }
 
             return (
-                layer.id === activeLayer?.id ||
-                layer.fingerprint === activeLayerFingerprint
+                drawing.id === activeDrawing?.id ||
+                drawing.fingerprint === activeDrawingFingerprint
             );
         };
 
@@ -5154,7 +5155,7 @@ class GlyphCanvas {
             const button = document.createElement('button');
             button.type = 'button';
             button.className =
-                `editor-layer-link-toggle ${extraClassName}`.trim();
+                `editor-drawing-link-toggle ${extraClassName}`.trim();
 
             const icon = document.createElement('span');
             icon.className = 'material-symbols-outlined';
@@ -5187,8 +5188,8 @@ class GlyphCanvas {
 
         const createCompatibilityIndicator = (): HTMLSpanElement => {
             const indicator = document.createElement('span');
-            indicator.className = 'editor-layer-compatibility-indicator';
-            indicator.title = 'Outline is incompatible with the active layer';
+            indicator.className = 'editor-drawing-compatibility-indicator';
+            indicator.title = 'Outline is incompatible with the active drawing';
 
             const icon = document.createElement('span');
             icon.className = 'material-symbols-outlined';
@@ -5199,105 +5200,105 @@ class GlyphCanvas {
         };
 
         let summaryLinkButton: HTMLButtonElement | null = null;
-        let addLayerButton: HTMLButtonElement | null = null;
-        const refreshLayerLinkControls = (): void => {
+        let addDrawingButton: HTMLButtonElement | null = null;
+        const refreshDrawingLinkControls = (): void => {
             if (!isEditMode || !summaryLinkButton) {
                 return;
             }
 
-            const hasExactLayerAtCurrentLocation =
-                !!this.outlineEditor.findMatchingLayer(glyphNameForLinkState);
+            const hasExactDrawingAtCurrentLocation =
+                !!this.outlineEditor.findMatchingDrawing(glyphNameForLinkState);
 
-            const allLinked = this.outlineEditor.areAllLayersLinked(
-                displayedLayerIds,
+            const allLinked = this.outlineEditor.areAllDrawingsLinked(
+                displayedDrawingIds,
                 glyphNameForLinkState
             );
 
-            summaryLinkButton.disabled = displayedLayerIds.length === 0;
+            summaryLinkButton.disabled = displayedDrawingIds.length === 0;
             setLinkButtonState(
                 summaryLinkButton,
                 allLinked,
-                'Unlink all layers (Cmd+Alt+L)',
-                'Link all layers (Cmd+Alt+L)'
+                'Unlink all drawings (Cmd+Alt+L)',
+                'Link all drawings (Cmd+Alt+L)'
             );
 
-            for (const button of layerLinkButtons) {
-                const layerId = button.getAttribute('data-layer-id');
-                const linked = this.outlineEditor.isLayerLinked(
-                    layerId,
+            for (const button of drawingLinkButtons) {
+                const drawingId = button.getAttribute('data-drawing-id');
+                const linked = this.outlineEditor.isDrawingLinked(
+                    drawingId,
                     glyphNameForLinkState
                 );
                 setLinkButtonState(
                     button,
                     linked,
-                    'Unlink layer',
-                    'Link layer'
+                    'Unlink drawing',
+                    'Link drawing'
                 );
             }
 
-            if (addLayerButton) {
-                addLayerButton.disabled =
-                    !glyphNameForLinkState || hasExactLayerAtCurrentLocation;
+            if (addDrawingButton) {
+                addDrawingButton.disabled =
+                    !glyphNameForLinkState || hasExactDrawingAtCurrentLocation;
             }
         };
 
         if (isEditMode) {
             const headerActions = document.createElement('div');
-            headerActions.className = 'editor-layers-header-actions';
+            headerActions.className = 'editor-drawings-header-actions';
 
-            addLayerButton = createHeaderIconButton(
+            addDrawingButton = createHeaderIconButton(
                 'add',
-                'Create layer at current location',
+                'Create drawing at current location',
                 async () => {
                     const currentUserspaceLocation =
                         this.outlineEditor.getCurrentUserspaceLocation();
-                    const masterId = this.outlineEditor.findClosestMasterId(
+                    const stationId = this.outlineEditor.findClosestStationId(
                         currentUserspaceLocation
                     );
-                    if (!masterId) {
+                    if (!stationId) {
                         return;
                     }
-                    const master = (fontModel.masters || []).find(
-                        (candidate: any) => candidate.id === masterId
+                    const station = (fontModel.stations || []).find(
+                        (candidate: any) => candidate.id === stationId
                     );
                     const designLocation = userspaceToDesignspace(
                         currentUserspaceLocation,
                         fontModel.axes || []
                     );
-                    await this.outlineEditor.createInterpolatedLayer({
+                    await this.outlineEditor.createInterpolatedDrawing({
                         glyphName: glyphNameForLinkState,
                         userspaceLocation: currentUserspaceLocation,
-                        masterId,
+                        stationId,
                         designLocation,
-                        isMasterBound: false,
-                        changeSource: 'layer-create-button',
-                        selectNewLayer: true,
+                        isStationBound: false,
+                        changeSource: 'drawing-create-button',
+                        selectNewDrawing: true,
                         extrapolate: true
                     });
                     await this.updatePropertiesUI();
                     this.render();
                 },
-                'editor-layer-add-button'
+                'editor-drawing-add-button'
             );
-            headerActions.appendChild(addLayerButton);
+            headerActions.appendChild(addDrawingButton);
 
             summaryLinkButton = createLinkButton(() => {
-                const linkAll = !this.outlineEditor.areAllLayersLinked(
-                    displayedLayerIds,
+                const linkAll = !this.outlineEditor.areAllDrawingsLinked(
+                    displayedDrawingIds,
                     glyphNameForLinkState
                 );
-                this.outlineEditor.setAllLayersLinked(
-                    displayedLayerIds,
+                this.outlineEditor.setAllDrawingsLinked(
+                    displayedDrawingIds,
                     linkAll,
                     glyphNameForLinkState
                 );
-                refreshLayerLinkControls();
-            }, 'editor-layer-link-summary-toggle');
+                refreshDrawingLinkControls();
+            }, 'editor-drawing-link-summary-toggle');
             headerActions.appendChild(summaryLinkButton);
             sectionTitle.appendChild(headerActions);
         }
 
-        layersWidget.appendChild(sectionTitle);
+        drawingsWidget.appendChild(sectionTitle);
 
         const sourceGlyph =
             glyph instanceof FeatureVariationGlyph ? glyph.sourceGlyph : glyph;
@@ -5314,11 +5315,11 @@ class GlyphCanvas {
                 this.outlineEditor.getSelectedRootFeatureVariationId();
             featureVariationsWidget = document.createElement('div');
             featureVariationsWidget.className =
-                'editor-layers-widget editor-feature-variations-widget';
+                'editor-drawings-widget editor-feature-variations-widget';
 
             const featureVariationsHeader = document.createElement('div');
             featureVariationsHeader.className =
-                'editor-section-title editor-layers-header';
+                'editor-section-title editor-drawings-header';
             const featureVariationsTitle = document.createElement('span');
             featureVariationsTitle.className = 'editor-section-title-text';
             featureVariationsTitle.textContent = 'Variations';
@@ -5356,7 +5357,7 @@ class GlyphCanvas {
                 );
                 return conditions.length
                     ? conditions.join(', ')
-                    : `Feature variation ${index + 1}`;
+                    : `Variation ${index + 1}`;
             };
 
             const selectFeatureVariation = async (
@@ -5364,16 +5365,16 @@ class GlyphCanvas {
             ): Promise<void> => {
                 this.outlineEditor.setRootFeatureVariationSelection(
                     featureVariationId,
-                    { clearLayerSelection: true }
+                    { clearDrawingSelection: true }
                 );
-                await this.outlineEditor.autoSelectMatchingLayer({
+                await this.outlineEditor.autoSelectMatchingDrawing({
                     skipRender: true
                 });
-                if (this.outlineEditor.selectedLayerId === null) {
+                if (this.outlineEditor.selectedDrawingId === null) {
                     await this.outlineEditor.interpolateCurrentGlyph(true);
                 }
                 await this.updatePropertiesUI({
-                    skipAutoSelectMatchingLayer: true
+                    skipAutoSelectMatchingDrawing: true
                 });
                 this.render();
             };
@@ -5396,7 +5397,7 @@ class GlyphCanvas {
                     await selectFeatureVariation(nextFeatureVariation.id);
                 } catch (error) {
                     console.warn(
-                        '[GlyphCanvas] Could not update feature variation settings:',
+                        '[GlyphCanvas] Could not update variation settings:',
                         error
                     );
                 }
@@ -5405,11 +5406,11 @@ class GlyphCanvas {
             const featureVariationsHeaderActions =
                 document.createElement('div');
             featureVariationsHeaderActions.className =
-                'editor-layers-header-actions';
+                'editor-drawings-header-actions';
             featureVariationsHeaderActions.appendChild(
                 createHeaderIconButton(
                     'add',
-                    'Add feature variation',
+                    'Add variation',
                     () => {
                         void openFeatureVariationSettings();
                     },
@@ -5420,7 +5421,7 @@ class GlyphCanvas {
             featureVariationsWidget.appendChild(featureVariationsHeader);
 
             const buildFeatureVariationContextMenuHtml = (): string => `
-                <div class="plugin-menu" tabindex="0" role="menu" aria-label="Feature variation actions">
+                <div class="plugin-menu" tabindex="0" role="menu" aria-label="Variation actions">
                     <div class="plugin-menu-item" data-action="edit" role="menuitem">
                         <span class="material-symbols-outlined">edit</span>
                         <span>Edit</span>
@@ -5436,9 +5437,7 @@ class GlyphCanvas {
                 featureVariation: FeatureVariationGlyph
             ): Promise<void> => {
                 if (
-                    !window.confirm(
-                        'Remove this feature variation from all master layers?'
-                    )
+                    !window.confirm('Remove this variation from all drawings?')
                 ) {
                     return;
                 }
@@ -5454,7 +5453,7 @@ class GlyphCanvas {
                 }
 
                 await this.updatePropertiesUI({
-                    skipAutoSelectMatchingLayer: true
+                    skipAutoSelectMatchingDrawing: true
                 });
                 this.render();
             };
@@ -5543,7 +5542,7 @@ class GlyphCanvas {
             };
 
             const featureVariationsList = document.createElement('div');
-            featureVariationsList.className = 'editor-layers-list';
+            featureVariationsList.className = 'editor-drawings-list';
             const createFeatureVariationItem = (
                 label: string,
                 featureVariationId: string | null,
@@ -5551,7 +5550,7 @@ class GlyphCanvas {
             ): HTMLDivElement => {
                 const item = document.createElement('div');
                 item.className =
-                    'editor-layer-item editor-feature-variation-item';
+                    'editor-drawing-item editor-feature-variation-item';
                 item.setAttribute(
                     'data-feature-variation-id',
                     featureVariationId || ''
@@ -5561,9 +5560,9 @@ class GlyphCanvas {
                 }
 
                 const itemContent = document.createElement('div');
-                itemContent.className = 'editor-layer-item-content';
+                itemContent.className = 'editor-drawing-item-content';
                 const name = document.createElement('div');
-                name.className = 'master-item-name';
+                name.className = 'station-item-name';
                 name.textContent = label;
                 itemContent.appendChild(name);
                 item.appendChild(itemContent);
@@ -5597,9 +5596,9 @@ class GlyphCanvas {
             }
         }
 
-        // Create masters/layers list
-        const mastersList = document.createElement('div');
-        mastersList.className = 'editor-layers-list';
+        // Create stations/drawings list
+        const stationsList = document.createElement('div');
+        stationsList.className = 'editor-drawings-list';
 
         const getLocationTags = (
             ...locations: Array<Record<string, number> | undefined | null>
@@ -5660,11 +5659,11 @@ class GlyphCanvas {
             );
         };
 
-        const getLayerMasterId = (layer: Layer): string | undefined => {
-            const layerMaster = layer.master;
-            if (layerMaster && typeof layerMaster === 'object') {
-                if ('type' in layerMaster) {
-                    return (layerMaster as any).master;
+        const getDrawingStationId = (drawing: Drawing): string | undefined => {
+            const drawingStation = drawing.station;
+            if (drawingStation && typeof drawingStation === 'object') {
+                if ('type' in drawingStation) {
+                    return (drawingStation as any).master;
                 }
             }
             return undefined;
@@ -5680,45 +5679,45 @@ class GlyphCanvas {
             return designspaceToUserspace(location, fontModel.axes || []);
         };
 
-        const buildLayerContextMenuHtml = (
-            target: LayerListContextTarget
+        const buildDrawingContextMenuHtml = (
+            target: DrawingListContextTarget
         ): string => {
             const items: string[] = [];
 
-            if (!target.isMasterBound) {
+            if (!target.isStationBound) {
                 items.push(`
-                    <div class="plugin-menu-item plugin-menu-item-danger" data-action="delete-layer" role="menuitem" tabindex="-1">
+                    <div class="plugin-menu-item plugin-menu-item-danger" data-action="delete-drawing" role="menuitem" tabindex="-1">
                         <span class="material-symbols-outlined">delete</span>
-                        <span>Delete layer</span>
+                        <span>Delete drawing</span>
                     </div>
                 `);
             }
             items.push(`
-                <div class="plugin-menu-item" data-action="reinterpolate-layer" role="menuitem" tabindex="-1">
+                <div class="plugin-menu-item" data-action="reinterpolate-drawing" role="menuitem" tabindex="-1">
                     <span class="material-symbols-outlined">refresh</span>
                     <span>Reinterpolate</span>
                 </div>
             `);
 
-            return `<div class="plugin-menu" tabindex="0" role="menu" aria-label="Layer actions">${items.join('')}</div>`;
+            return `<div class="plugin-menu" tabindex="0" role="menu" aria-label="Drawing actions">${items.join('')}</div>`;
         };
 
-        const runLayerContextAction = async (
-            target: LayerListContextTarget,
+        const runDrawingContextAction = async (
+            target: DrawingListContextTarget,
             action: string | null
         ): Promise<void> => {
-            if (action === 'delete-layer' && target.layerId) {
-                await this.outlineEditor.deleteLayerById(target.layerId, {
+            if (action === 'delete-drawing' && target.layerId) {
+                await this.outlineEditor.deleteDrawingById(target.layerId, {
                     glyphName: target.glyphName,
-                    changeSource: 'layer-delete-context-menu'
+                    changeSource: 'drawing-delete-context-menu'
                 });
-            } else if (action === 'reinterpolate-layer' && target.layerId) {
-                await this.outlineEditor.reinterpolateLayerById(
+            } else if (action === 'reinterpolate-drawing' && target.layerId) {
+                await this.outlineEditor.reinterpolateDrawingById(
                     target.layerId,
                     {
                         glyphName: target.glyphName,
-                        changeSource: 'layer-reinterpolate-context-menu',
-                        selectNewLayer: true
+                        changeSource: 'drawing-reinterpolate-context-menu',
+                        selectNewDrawing: true
                     }
                 );
             }
@@ -5729,33 +5728,33 @@ class GlyphCanvas {
 
         const resolveLiveRowActionTarget = (
             item: HTMLDivElement,
-            fallbackTarget: LayerListContextTarget
-        ): LayerListContextTarget => {
+            fallbackTarget: DrawingListContextTarget
+        ): DrawingListContextTarget => {
             const glyphName =
                 item.getAttribute('data-glyph-name') ||
                 fallbackTarget.glyphName;
-            const layerId = item.getAttribute('data-layer-id');
+            const drawingId = item.getAttribute('data-drawing-id');
 
             return {
                 ...fallbackTarget,
                 glyphName,
-                layerId: layerId || null
+                layerId: drawingId || null
             };
         };
 
-        const attachLayerContextMenu = (
+        const attachDrawingContextMenu = (
             item: HTMLDivElement,
-            target: LayerListContextTarget
+            target: DrawingListContextTarget
         ): void => {
             if (!isEditMode || !target.layerId) {
                 return;
             }
 
             const backdrop = getOrCreateBackdrop(
-                'editor-layer-list-context-menu-backdrop'
+                'editor-drawing-list-context-menu-backdrop'
             );
             const tippyInstance = tippy(item, {
-                content: buildLayerContextMenuHtml(target),
+                content: buildDrawingContextMenuHtml(target),
                 allowHTML: true,
                 trigger: 'manual',
                 interactive: true,
@@ -5786,7 +5785,10 @@ class GlyphCanvas {
                                 await new Promise((resolve) =>
                                     requestAnimationFrame(resolve)
                                 );
-                                await runLayerContextAction(liveTarget, action);
+                                await runDrawingContextAction(
+                                    liveTarget,
+                                    action
+                                );
                             };
                         }
                     );
@@ -5804,7 +5806,7 @@ class GlyphCanvas {
                 const mouseX = event.clientX;
                 const mouseY = event.clientY;
                 tippyInstance.setProps({
-                    content: buildLayerContextMenuHtml(target),
+                    content: buildDrawingContextMenuHtml(target),
                     getReferenceClientRect: () => ({
                         width: 0,
                         height: 0,
@@ -5822,51 +5824,51 @@ class GlyphCanvas {
             });
         };
 
-        const createLayerItem = (
-            master: any,
-            layer: Layer | undefined,
+        const createDrawingItem = (
+            station: any,
+            drawing: Drawing | undefined,
             displayName: string,
             axisValues: string[],
             italicizeName: boolean = false,
-            target?: LayerListContextTarget
+            target?: DrawingListContextTarget
         ): HTMLDivElement => {
             const item = document.createElement('div');
-            item.className = 'editor-layer-item';
-            item.setAttribute('data-master-id', master.id!);
+            item.className = 'editor-drawing-item';
+            item.setAttribute('data-station-id', station.id!);
             if (target?.glyphName) {
                 item.setAttribute('data-glyph-name', target.glyphName);
             }
 
-            if (layer?.id) {
-                item.setAttribute('data-layer-id', layer.id);
+            if (drawing?.id) {
+                item.setAttribute('data-drawing-id', drawing.id);
             }
 
             if (isEditMode) {
-                if (layer?.id && preselectedLayerId === layer.id) {
+                if (drawing?.id && preselectedDrawingId === drawing.id) {
                     item.classList.add('selected');
                 }
-            } else if (this.textRunEditor!.selectedMasterId === master.id) {
+            } else if (this.textRunEditor!.selectedStationId === station.id) {
                 item.classList.add('selected');
             }
 
             const itemContent = document.createElement('div');
-            itemContent.className = 'editor-layer-item-content';
+            itemContent.className = 'editor-drawing-item-content';
 
             const nameSpan = document.createElement('div');
-            nameSpan.className = 'master-item-name';
+            nameSpan.className = 'station-item-name';
             if (italicizeName) {
-                nameSpan.classList.add('master-item-name-intermediate');
+                nameSpan.classList.add('station-item-name-free');
             }
             nameSpan.textContent = displayName;
             itemContent.appendChild(nameSpan);
 
             if (axisValues.length > 0) {
                 const axisSpan = document.createElement('div');
-                axisSpan.className = 'master-item-location';
+                axisSpan.className = 'station-item-location';
                 axisSpan.replaceChildren(
                     ...axisValues.map((line) => {
                         const lineEl = document.createElement('div');
-                        lineEl.className = 'master-item-location-line';
+                        lineEl.className = 'station-item-location-line';
                         lineEl.textContent = line;
                         return lineEl;
                     })
@@ -5876,46 +5878,49 @@ class GlyphCanvas {
 
             item.appendChild(itemContent);
 
-            if (isEditMode && layer?.id) {
-                displayedLayerIds.push(layer.id);
+            if (isEditMode && drawing?.id) {
+                displayedDrawingIds.push(drawing.id);
                 const linkButton = createLinkButton(() => {
-                    const nextLinked = !this.outlineEditor.isLayerLinked(
-                        layer.id,
+                    const nextLinked = !this.outlineEditor.isDrawingLinked(
+                        drawing.id,
                         glyphNameForLinkState
                     );
-                    this.outlineEditor.setLayerLinked(
-                        layer.id,
+                    this.outlineEditor.setDrawingLinked(
+                        drawing.id,
                         nextLinked,
                         glyphNameForLinkState
                     );
-                    refreshLayerLinkControls();
+                    refreshDrawingLinkControls();
                 });
 
-                linkButton.setAttribute('data-layer-id', layer.id);
-                layerLinkButtons.push(linkButton);
+                linkButton.setAttribute('data-drawing-id', drawing.id);
+                drawingLinkButtons.push(linkButton);
                 item.appendChild(linkButton);
 
-                if (!isLayerCompatibleWithActive(layer)) {
+                if (!isDrawingCompatibleWithActive(drawing)) {
                     item.appendChild(createCompatibilityIndicator());
                 }
             }
 
             item.addEventListener('click', () => {
-                if (isEditMode && layer) {
-                    this.outlineEditor.selectRootFeatureVariationForLayer(
-                        layer.id
+                if (isEditMode && drawing) {
+                    this.outlineEditor.selectRootFeatureVariationForDrawing(
+                        drawing.id
                     );
-                    void this.outlineEditor.selectLayer({
-                        id: layer.id,
-                        name: layer.name,
-                        master: layer.master,
-                        location: layer.location,
-                        shapes: layer.shapes || [],
-                        width: layer.width,
+                    void this.outlineEditor.selectDrawing({
+                        id: drawing.id,
+                        name: drawing.name,
+                        master: drawing.station,
+                        location: drawing.location,
+                        shapes: drawing.shapes || [],
+                        width: drawing.width,
                         isInterpolated: false
                     } as any);
                 } else {
-                    void this.selectMaster(master.id!, master.location || {});
+                    void this.selectStation(
+                        station.id!,
+                        station.location || {}
+                    );
                 }
 
                 const editorView = document.getElementById('view-editor');
@@ -5925,61 +5930,61 @@ class GlyphCanvas {
             });
 
             if (target) {
-                attachLayerContextMenu(item, target);
+                attachDrawingContextMenu(item, target);
             }
 
             return item;
         };
 
-        for (const master of fontModel.masters) {
-            const masterName =
-                typeof master.name === 'string'
-                    ? master.name
-                    : master.name && 'dflt' in master.name
-                      ? master.name.dflt
-                      : master.name && 'en' in master.name
-                        ? master.name.en
+        for (const station of fontModel.stations) {
+            const stationName =
+                typeof station.name === 'string'
+                    ? station.name
+                    : station.name && 'dflt' in station.name
+                      ? station.name.dflt
+                      : station.name && 'en' in station.name
+                        ? station.name.en
                         : null;
 
-            let defaultLayer: Layer | undefined;
-            let intermediateLayers: Layer[] = [];
+            let defaultDrawing: Drawing | undefined;
+            let freeDrawings: Drawing[] = [];
 
             if (isEditMode) {
-                defaultLayer = glyphLayers.find((layer) => {
-                    const layerMaster = layer.master;
-                    const isFeatureVariationMasterLayer =
+                defaultDrawing = glyphDrawings.find((drawing) => {
+                    const drawingStation = drawing.station;
+                    const isFeatureVariationStationDrawing =
                         glyph instanceof FeatureVariationGlyph &&
-                        layerMaster &&
-                        typeof layerMaster === 'object' &&
-                        'type' in layerMaster &&
-                        layerMaster.type === 'AssociatedWithMaster' &&
-                        (!layer.location ||
-                            Object.keys(layer.location).length === 0);
+                        drawingStation &&
+                        typeof drawingStation === 'object' &&
+                        'type' in drawingStation &&
+                        drawingStation.type === 'AssociatedWithMaster' &&
+                        (!drawing.location ||
+                            Object.keys(drawing.location).length === 0);
                     return (
-                        layerMaster &&
-                        typeof layerMaster === 'object' &&
-                        'type' in layerMaster &&
-                        (layerMaster.type === 'DefaultForMaster' ||
-                            isFeatureVariationMasterLayer) &&
-                        getLayerMasterId(layer) === master.id
+                        drawingStation &&
+                        typeof drawingStation === 'object' &&
+                        'type' in drawingStation &&
+                        (drawingStation.type === 'DefaultForMaster' ||
+                            isFeatureVariationStationDrawing) &&
+                        getDrawingStationId(drawing) === station.id
                     );
                 });
 
-                intermediateLayers = glyphLayers.filter((layer) => {
-                    const layerMaster = layer.master;
+                freeDrawings = glyphDrawings.filter((drawing) => {
+                    const drawingStation = drawing.station;
                     return (
-                        layerMaster &&
-                        typeof layerMaster === 'object' &&
-                        'type' in layerMaster &&
-                        layerMaster.type === 'AssociatedWithMaster' &&
-                        getLayerMasterId(layer) === master.id &&
-                        layer.id !== defaultLayer?.id &&
-                        !!layer.location &&
-                        Object.keys(layer.location).length > 0
+                        drawingStation &&
+                        typeof drawingStation === 'object' &&
+                        'type' in drawingStation &&
+                        drawingStation.type === 'AssociatedWithMaster' &&
+                        getDrawingStationId(drawing) === station.id &&
+                        drawing.id !== defaultDrawing?.id &&
+                        !!drawing.location &&
+                        Object.keys(drawing.location).length > 0
                     );
                 });
 
-                intermediateLayers.sort((left, right) => {
+                freeDrawings.sort((left, right) => {
                     return compareLocationMaps(
                         (left.location || {}) as Record<string, any>,
                         (right.location || {}) as Record<string, any>,
@@ -5989,82 +5994,82 @@ class GlyphCanvas {
             }
 
             if (isEditMode) {
-                if (defaultLayer) {
-                    const masterTarget: LayerListContextTarget = {
+                if (defaultDrawing) {
+                    const stationTarget: DrawingListContextTarget = {
                         glyphName: glyphNameForLinkState,
-                        masterId: master.id,
-                        layerId: defaultLayer.id || null,
+                        stationId: station.id,
+                        layerId: defaultDrawing.id || null,
                         userspaceLocation: getUserspaceLocationForDisplay(
-                            master.location
+                            station.location
                         ),
-                        designLocation: master.location || null,
-                        isMasterBound: true
+                        designLocation: station.location || null,
+                        isStationBound: true
                     };
 
-                    const masterItem = createLayerItem(
-                        master,
-                        defaultLayer,
-                        masterName || 'Default',
-                        formatAxisValues(master.location),
+                    const stationItem = createDrawingItem(
+                        station,
+                        defaultDrawing,
+                        stationName || 'Default',
+                        formatAxisValues(station.location),
                         false,
-                        masterTarget
+                        stationTarget
                     );
-                    mastersList.appendChild(masterItem);
-                    layerRows.push(masterTarget);
+                    stationsList.appendChild(stationItem);
+                    drawingRows.push(stationTarget);
                 }
 
-                if (intermediateLayers.length > 0) {
-                    for (const intermediateLayer of intermediateLayers) {
-                        const braceTarget: LayerListContextTarget = {
+                if (freeDrawings.length > 0) {
+                    for (const freeDrawing of freeDrawings) {
+                        const braceTarget: DrawingListContextTarget = {
                             glyphName: glyphNameForLinkState,
-                            masterId: master.id,
-                            layerId: intermediateLayer.id || null,
+                            stationId: station.id,
+                            layerId: freeDrawing.id || null,
                             userspaceLocation: getUserspaceLocationForDisplay(
-                                intermediateLayer.location
+                                freeDrawing.location
                             ),
-                            designLocation: intermediateLayer.location || null,
-                            isMasterBound: false
+                            designLocation: freeDrawing.location || null,
+                            isStationBound: false
                         };
-                        const braceItem = createLayerItem(
-                            master,
-                            intermediateLayer,
-                            intermediateLayer.getComputedName(),
-                            formatAxisValues(intermediateLayer.location),
+                        const braceItem = createDrawingItem(
+                            station,
+                            freeDrawing,
+                            freeDrawing.getComputedName(),
+                            formatAxisValues(freeDrawing.location),
                             true,
                             braceTarget
                         );
-                        mastersList.appendChild(braceItem);
-                        layerRows.push(braceTarget);
+                        stationsList.appendChild(braceItem);
+                        drawingRows.push(braceTarget);
                     }
                 }
             } else {
-                const masterItem = createLayerItem(
-                    master,
-                    glyphLayers.find((l) => {
-                        const lm = l.master;
+                const stationItem = createDrawingItem(
+                    station,
+                    glyphDrawings.find((l) => {
+                        const lm = l.station;
                         return (
                             lm &&
                             typeof lm === 'object' &&
                             'type' in lm &&
                             lm.type === 'DefaultForMaster' &&
-                            getLayerMasterId(l) === master.id
+                            getDrawingStationId(l) === station.id
                         );
-                    }) as Layer | undefined,
-                    masterName || 'Default',
-                    formatAxisValues(master.location),
+                    }) as Drawing | undefined,
+                    stationName || 'Default',
+                    formatAxisValues(station.location),
                     false,
                     undefined
                 );
-                mastersList.appendChild(masterItem);
+                stationsList.appendChild(stationItem);
             }
         }
 
-        layersWidget.appendChild(mastersList);
-        refreshLayerLinkControls();
+        drawingsWidget.appendChild(stationsList);
+        refreshDrawingLinkControls();
         if (featureVariationsWidget) {
             targetContainer.appendChild(featureVariationsWidget);
         }
-        targetContainer.appendChild(layersWidget);
+        targetContainer.appendChild(drawingsWidget);
 
         // In edit mode, add glyph_stack debug label (development mode only, not in test mode)
         if (isEditMode && window.isDevelopment?.() && !window.isTestMode?.()) {
@@ -6086,27 +6091,27 @@ class GlyphCanvas {
             targetContainer.appendChild(stackLabel);
         }
 
-        // In edit mode, auto-select layer if current axis values match a layer's master location
-        if (isEditMode && autoSelectLayer) {
-            await this.outlineEditor.autoSelectMatchingLayer();
+        // In edit mode, auto-select a drawing if current axis values match a drawing's station location
+        if (isEditMode && autoSelectDrawing) {
+            await this.outlineEditor.autoSelectMatchingDrawing();
         }
     }
 
-    async selectMaster(
-        masterId: string,
-        masterLocation: DesignspaceLocation
+    async selectStation(
+        stationId: string,
+        stationLocation: DesignspaceLocation
     ): Promise<void> {
-        // Ensure a full compile before layer/master switch
+        // Ensure a full compile before drawing/station switch
         await fontManager.ensureFullEditingCompile();
 
         this.textModeEscapeState.clear();
 
-        // Select a master and animate to its location
+        // Select a station and animate to its location
         console.log(
-            '[GlyphCanvas] Selecting master:',
-            masterId,
+            '[GlyphCanvas] Selecting station:',
+            stationId,
             'with design location:',
-            masterLocation
+            stationLocation
         );
 
         // Convert design location to userspace location
@@ -6119,7 +6124,7 @@ class GlyphCanvas {
         }
 
         const userspaceLocation = designspaceToUserspace(
-            masterLocation,
+            stationLocation,
             fontModel.axes as any
         );
         console.log(
@@ -6127,17 +6132,17 @@ class GlyphCanvas {
             userspaceLocation
         );
 
-        // Store selected master ID
-        this.applyTextModeKerningMasterChange(masterId);
+        // Store selected station ID
+        this.applyTextModeKerningStationChange(stationId);
 
-        // Update master list UI
-        this.updateMasterSelection();
+        // Update station list UI
+        this.updateStationSelection();
         this.updatePropertyPanel();
 
         // Capture cursor position for auto-pan during animation
         this.captureTextModeAutoPanAnchor();
 
-        // Animate to master location (10 frames) using userspace coordinates
+        // Animate to station location (10 frames) using userspace coordinates
         await this.animateToLocation(userspaceLocation, 10);
 
         // Clear auto-pan anchor after animation
@@ -6151,22 +6156,25 @@ class GlyphCanvas {
         }
     }
 
-    async cycleMasters(moveUp: boolean): Promise<void> {
-        // Cycle through masters with Cmd+Up (previous) or Cmd+Down (next) in text mode
+    async cycleStations(moveUp: boolean): Promise<void> {
+        // Cycle through stations with Cmd+Up (previous) or Cmd+Down (next) in text mode
         const fontModel = fontManager.currentFont?.fontModel;
-        if (!fontModel?.masters || fontModel.masters.length === 0) {
+        if (!fontModel?.stations || fontModel.stations.length === 0) {
             return;
         }
 
-        const masters = fontModel.masters;
-        const currentMasterId = this.textRunEditor!.selectedMasterId;
+        const stations = fontModel.stations;
+        const currentStationId = this.textRunEditor!.selectedStationId;
 
-        // Find current master index
-        let currentIndex = masters.findIndex((m) => m.id === currentMasterId);
+        // Find current station index
+        let currentIndex = stations.findIndex((m) => m.id === currentStationId);
 
-        // If no master selected or not found, select first master
+        // If no station selected or not found, select first station
         if (currentIndex === -1) {
-            await this.selectMaster(masters[0].id!, masters[0].location || {});
+            await this.selectStation(
+                stations[0].id!,
+                stations[0].location || {}
+            );
             return;
         }
 
@@ -6175,31 +6183,31 @@ class GlyphCanvas {
         if (moveUp) {
             nextIndex = currentIndex - 1;
             if (nextIndex < 0) {
-                nextIndex = masters.length - 1; // Wrap to last
+                nextIndex = stations.length - 1; // Wrap to last
             }
         } else {
             nextIndex = currentIndex + 1;
-            if (nextIndex >= masters.length) {
+            if (nextIndex >= stations.length) {
                 nextIndex = 0; // Wrap to first
             }
         }
 
-        // Select the next master
-        await this.selectMaster(
-            masters[nextIndex].id!,
-            masters[nextIndex].location || {}
+        // Select the next station
+        await this.selectStation(
+            stations[nextIndex].id!,
+            stations[nextIndex].location || {}
         );
     }
 
-    updateMasterSelection(): void {
-        // Update the visual selection highlight for master items
+    updateStationSelection(): void {
+        // Update the visual selection highlight for station items
         if (!this.propertiesSection) return;
 
-        const masterItems =
-            this.propertiesSection.querySelectorAll('[data-master-id]');
-        masterItems.forEach((item: any) => {
-            const masterId = item.getAttribute('data-master-id');
-            if (masterId === this.textRunEditor!.selectedMasterId) {
+        const stationItems =
+            this.propertiesSection.querySelectorAll('[data-station-id]');
+        stationItems.forEach((item: any) => {
+            const stationId = item.getAttribute('data-station-id');
+            if (stationId === this.textRunEditor!.selectedStationId) {
                 item.classList.add('selected');
             } else {
                 item.classList.remove('selected');
@@ -6216,24 +6224,24 @@ class GlyphCanvas {
             return;
         }
 
-        await this.autoSelectMatchingMaster();
+        await this.autoSelectMatchingStation();
 
-        if (this.textRunEditor.selectedMasterId !== null) {
+        if (this.textRunEditor.selectedStationId !== null) {
             this.textModeEscapeState.sync(
-                this.textRunEditor.selectedMasterId,
+                this.textRunEditor.selectedStationId,
                 this.axesManager.variationSettings
             );
             console.log(
-                '[GlyphCanvas] Updated previous text mode state to new master:',
+                '[GlyphCanvas] Updated previous text mode state to new station:',
                 {
-                    masterId: this.textRunEditor.selectedMasterId,
+                    stationId: this.textRunEditor.selectedStationId,
                     settings: this.axesManager.variationSettings
                 }
             );
         }
     }
 
-    alignTextModeEscapeStateWithCurrentMaster(): void {
+    alignTextModeEscapeStateWithCurrentStation(): void {
         if (
             this.outlineEditor.active ||
             !this.textRunEditor ||
@@ -6243,7 +6251,7 @@ class GlyphCanvas {
         }
 
         this.textModeEscapeState.sync(
-            this.textRunEditor.selectedMasterId,
+            this.textRunEditor.selectedStationId,
             this.axesManager.variationSettings
         );
     }
@@ -6272,7 +6280,7 @@ class GlyphCanvas {
 
         if (
             this.textModeEscapeState.matchesCurrent(
-                this.textRunEditor?.selectedMasterId || null
+                this.textRunEditor?.selectedStationId || null
             )
         ) {
             this.textModeEscapeState.clear();
@@ -6285,14 +6293,14 @@ class GlyphCanvas {
         }
 
         const fontModel = fontManager.currentFont?.fontModel;
-        const previousMaster = fontModel?.masters?.find(
-            (master) => master.id === previousState.selectionId
+        const previousStation = fontModel?.stations?.find(
+            (station) => station.id === previousState.selectionId
         );
 
-        if (previousMaster?.location) {
-            await this.selectMaster(
+        if (previousStation?.location) {
+            await this.selectStation(
                 previousState.selectionId,
-                previousMaster.location
+                previousStation.location
             );
             return;
         }
@@ -6302,10 +6310,10 @@ class GlyphCanvas {
         }
     }
 
-    async autoSelectMatchingMaster(): Promise<void> {
-        // Check if current axis values match a master location
-        // If so, select that master. If not, deselect current master.
-        console.log('[GlyphCanvas] autoSelectMatchingMaster called');
+    async autoSelectMatchingStation(): Promise<void> {
+        // Check if current axis values match a station location
+        // If so, select that station. If not, deselect current station.
+        console.log('[GlyphCanvas] autoSelectMatchingStation called');
         if (!fontManager.currentFont?.fontModel) {
             console.log('[GlyphCanvas] No font model, returning');
             return;
@@ -6316,8 +6324,8 @@ class GlyphCanvas {
         }
 
         const fontModel = fontManager.currentFont.fontModel;
-        if (!fontModel.masters || !fontModel.axes) {
-            console.log('[GlyphCanvas] No masters or axes, returning');
+        if (!fontModel.stations || !fontModel.axes) {
+            console.log('[GlyphCanvas] No stations or axes, returning');
             return;
         }
 
@@ -6335,40 +6343,40 @@ class GlyphCanvas {
                 this.axesManager.getAxisValue(axis.tag) || axis.default;
         }
 
-        // Convert to designspace for comparison with master.location (which is in designspace)
+        // Convert to designspace for comparison with station.location (which is in designspace)
         const currentLocation = userspaceToDesignspace(
             currentLocationUserspace,
             fontModel.axes as any
         );
 
-        // Check each master for a match (tolerance of 0.5)
+        // Check each station for a match (tolerance of 0.5)
         const tolerance = 0.5;
-        let matchingMaster: any = null;
+        let matchingStation: any = null;
 
         console.log(
-            '[GlyphCanvas] Checking masters. Current location (userspace):',
+            '[GlyphCanvas] Checking stations. Current location (userspace):',
             currentLocationUserspace,
             '(designspace):',
             currentLocation
         );
 
-        for (const master of fontModel.masters) {
-            if (!master.location) continue;
+        for (const station of fontModel.stations) {
+            if (!station.location) continue;
 
             // Compare in designspace - both are in designspace
-            const masterLocation = master.location;
+            const stationLocation = station.location;
 
             console.log(
-                '[GlyphCanvas] Master',
-                master.id,
+                '[GlyphCanvas] Station',
+                station.id,
                 'location (designspace):',
-                masterLocation
+                stationLocation
             );
 
             // Check if all axes match within tolerance
             let allMatch = true;
-            for (const tag in masterLocation) {
-                const masterValue = Number(masterLocation[tag]);
+            for (const tag in stationLocation) {
+                const stationValue = Number(stationLocation[tag]);
                 const currentValue =
                     currentLocation[tag] === undefined
                         ? undefined
@@ -6377,48 +6385,48 @@ class GlyphCanvas {
                     allMatch = false;
                     break;
                 }
-                const diff = Math.abs(masterValue - currentValue);
+                const diff = Math.abs(stationValue - currentValue);
                 console.log(
-                    `[GlyphCanvas]   Axis ${tag}: master=${masterValue}, current=${currentValue}, diff=${diff}, match=${diff <= tolerance}`
+                    `[GlyphCanvas]   Axis ${tag}: station=${stationValue}, current=${currentValue}, diff=${diff}, match=${diff <= tolerance}`
                 );
-                if (Math.abs(masterValue - currentValue) > tolerance) {
+                if (Math.abs(stationValue - currentValue) > tolerance) {
                     allMatch = false;
                     break;
                 }
             }
 
             console.log(
-                '[GlyphCanvas] Master',
-                master.id,
+                '[GlyphCanvas] Station',
+                station.id,
                 'allMatch:',
                 allMatch
             );
 
             if (allMatch) {
-                matchingMaster = master;
+                matchingStation = station;
                 break;
             }
         }
 
         // Update selection based on match
         if (
-            matchingMaster &&
-            this.textRunEditor!.selectedMasterId !== matchingMaster.id
+            matchingStation &&
+            this.textRunEditor!.selectedStationId !== matchingStation.id
         ) {
             console.log(
-                '[GlyphCanvas] Auto-selecting master:',
-                matchingMaster.id
+                '[GlyphCanvas] Auto-selecting station:',
+                matchingStation.id
             );
-            this.applyTextModeKerningMasterChange(matchingMaster.id);
-            this.updateMasterSelection();
+            this.applyTextModeKerningStationChange(matchingStation.id);
+            this.updateStationSelection();
             this.updatePropertyPanel();
         } else if (
-            !matchingMaster &&
-            this.textRunEditor!.selectedMasterId !== null
+            !matchingStation &&
+            this.textRunEditor!.selectedStationId !== null
         ) {
-            console.log('[GlyphCanvas] Deselecting master (no match)');
-            this.applyTextModeKerningMasterChange(null);
-            this.updateMasterSelection();
+            console.log('[GlyphCanvas] Deselecting station (no match)');
+            this.applyTextModeKerningStationChange(null);
+            this.updateStationSelection();
             this.updatePropertyPanel();
         }
     }
@@ -6518,7 +6526,7 @@ class GlyphCanvas {
             })
         );
 
-        await this.autoSelectMatchingMaster();
+        await this.autoSelectMatchingStation();
     }
 
     getCurrentGlyphName(): string {
@@ -6570,9 +6578,9 @@ class GlyphCanvas {
         this.updatePropertiesUI();
         this.updatePropertyPanel();
 
-        // Only render if we're on a layer (not interpolating)
+        // Only render if we're on a drawing (not interpolating)
         // If interpolating, render will be called after interpolation completes
-        if (this.outlineEditor.selectedLayerId !== null) {
+        if (this.outlineEditor.selectedDrawingId !== null) {
             this.render();
             this.outlineEditor.performHitDetection(null);
         }
@@ -6638,7 +6646,7 @@ class GlyphCanvas {
                 );
             }
 
-            this.outlineEditor.layerData = null;
+            this.outlineEditor.drawingData = null;
             this.outlineEditor.glyphStack = '';
             this.outlineEditor.currentGlyphName = nextAuthoringRootGlyphName;
 
@@ -6646,7 +6654,7 @@ class GlyphCanvas {
             this.updateComponentBreadcrumb();
             this.updatePropertyPanel();
 
-            if (this.outlineEditor.selectedLayerId !== null) {
+            if (this.outlineEditor.selectedDrawingId !== null) {
                 this.render();
                 this.outlineEditor.performHitDetection(null);
             }
@@ -6658,14 +6666,14 @@ class GlyphCanvas {
     }
 
     async doUIUpdateAsync(): Promise<void> {
-        // Async version that waits for layer data to be loaded
+        // Async version that waits for drawing data to be loaded
         this.updateComponentBreadcrumb();
         await this.updatePropertiesUI();
         this.updatePropertyPanel();
 
-        // Only render if we're on a layer (not interpolating)
+        // Only render if we're on a drawing (not interpolating)
         // If interpolating, render will be called after interpolation completes
-        if (this.outlineEditor.selectedLayerId !== null) {
+        if (this.outlineEditor.selectedDrawingId !== null) {
             this.render();
             this.outlineEditor.performHitDetection(null);
         }
@@ -6677,9 +6685,9 @@ class GlyphCanvas {
         this.outlineEditor.updateEditorTitleBar();
     }
 
-    private getCurrentLayerModel(): Layer | null {
+    private getCurrentDrawingModel(): Drawing | null {
         const fontModel = fontManager.currentFont?.fontModel;
-        if (!fontModel || !this.outlineEditor.selectedLayerId) {
+        if (!fontModel || !this.outlineEditor.selectedDrawingId) {
             return null;
         }
 
@@ -6689,10 +6697,12 @@ class GlyphCanvas {
             return null;
         }
 
-        return glyph.findLayerById(this.outlineEditor.selectedLayerId) || null;
+        return (
+            glyph.findDrawingById(this.outlineEditor.selectedDrawingId) || null
+        );
     }
 
-    private getCurrentEditingLayerModel(): Layer | null {
+    private getCurrentEditingDrawingModel(): Drawing | null {
         const fontModel = fontManager.currentFont?.fontModel;
         if (!fontModel) {
             return null;
@@ -6704,10 +6714,10 @@ class GlyphCanvas {
         const glyphName =
             currentStackItem?.glyphName ??
             this.outlineEditor.getAuthoringRootGlyphName();
-        const layerId =
-            currentStackItem?.layerId ?? this.outlineEditor.selectedLayerId;
+        const drawingId =
+            currentStackItem?.layerId ?? this.outlineEditor.selectedDrawingId;
 
-        if (!glyphName || !layerId) {
+        if (!glyphName || !drawingId) {
             return null;
         }
 
@@ -6716,10 +6726,10 @@ class GlyphCanvas {
             return null;
         }
 
-        return glyph.findLayerById(layerId) || null;
+        return glyph.findDrawingById(drawingId) || null;
     }
 
-    private getSelectedComponentModels(layer: Layer): Component[] {
+    private getSelectedComponentModels(drawing: Drawing): Component[] {
         const componentIndices = this.outlineEditor.selectedComponents;
         if (componentIndices.length === 0) {
             return [];
@@ -6727,7 +6737,7 @@ class GlyphCanvas {
 
         const components: Component[] = [];
         for (const componentIndex of componentIndices) {
-            const shape = layer.shapes?.[componentIndex];
+            const shape = drawing.shapes?.[componentIndex];
             if (shape?.isComponent()) {
                 components.push(shape.asComponent());
             }
@@ -6736,7 +6746,7 @@ class GlyphCanvas {
         return components;
     }
 
-    private getSelectedAnchorModels(layer: Layer): Anchor[] {
+    private getSelectedAnchorModels(drawing: Drawing): Anchor[] {
         const anchorIndices = this.outlineEditor.selectedAnchors;
         if (anchorIndices.length === 0) {
             return [];
@@ -6744,7 +6754,7 @@ class GlyphCanvas {
 
         const anchors: Anchor[] = [];
         for (const anchorIndex of anchorIndices) {
-            const anchor = layer.anchors?.[anchorIndex];
+            const anchor = drawing.anchors?.[anchorIndex];
             if (anchor) {
                 anchors.push(anchor);
             }
@@ -6753,39 +6763,39 @@ class GlyphCanvas {
         return anchors;
     }
 
-    /** Layer that owns local guides (foreground when editing a background). */
-    private getGuideOwningLayerModel(): Layer | null {
-        const layer = this.getCurrentEditingLayerModel();
-        if (!layer) {
+    /** Drawing that owns local guides (foreground when editing a background). */
+    private getGuideOwningDrawingModel(): Drawing | null {
+        const drawing = this.getCurrentEditingDrawingModel();
+        if (!drawing) {
             return null;
         }
 
-        if (layer.is_background) {
-            const foreground = layer.backgroundLayer;
+        if (drawing.is_background) {
+            const foreground = drawing.backgroundDrawing;
             return foreground && !foreground.is_background ? foreground : null;
         }
 
-        return layer;
+        return drawing;
     }
 
-    private getCurrentEditingMasterModel(): Master | null {
-        const layer =
-            this.getGuideOwningLayerModel() ||
-            this.getCurrentEditingLayerModel();
-        if (!layer) {
+    private getCurrentEditingStationModel(): Station | null {
+        const drawing =
+            this.getGuideOwningDrawingModel() ||
+            this.getCurrentEditingDrawingModel();
+        if (!drawing) {
             return null;
         }
 
-        const masterId =
-            typeof layer.master === 'object' && layer.master
-                ? layer.master.master || null
+        const stationId =
+            typeof drawing.station === 'object' && drawing.station
+                ? drawing.station.master || null
                 : null;
-        if (!masterId) {
+        if (!stationId) {
             return null;
         }
 
-        const masters = fontManager.currentFont?.fontModel?.masters || [];
-        return masters.find((master) => master.id === masterId) || null;
+        const stations = fontManager.currentFont?.fontModel?.stations || [];
+        return stations.find((station) => station.id === stationId) || null;
     }
 
     private getSelectedGuideModel(): Guide | null {
@@ -6794,43 +6804,43 @@ class GlyphCanvas {
             return null;
         }
 
-        if (handle.scope === 'layer') {
-            const layer = this.getGuideOwningLayerModel();
-            return layer?.guides?.[handle.index] || null;
+        if (handle.scope === 'drawing') {
+            const drawing = this.getGuideOwningDrawingModel();
+            return drawing?.guides?.[handle.index] || null;
         }
 
-        const master = this.getCurrentEditingMasterModel();
-        return master?.guides?.[handle.index] || null;
+        const station = this.getCurrentEditingStationModel();
+        return station?.guides?.[handle.index] || null;
     }
 
-    private layerHasAnchorNamed(
-        layer: Layer,
+    private drawingHasAnchorNamed(
+        drawing: Drawing,
         name: string,
         excludeIndices: number[] = []
     ): boolean {
         const excluded = new Set(excludeIndices);
-        return (layer.anchors || []).some(
+        return (drawing.anchors || []).some(
             (anchor, index) =>
                 !excluded.has(index) && (anchor.name || '') === name
         );
     }
 
     private canEditSelectedComponentTranslation(
-        layer: Layer,
+        drawing: Drawing,
         components: Component[]
     ): boolean {
-        return components.length > 0 && !layer.isAutomaticAlignedLayer();
+        return components.length > 0 && !drawing.isAutomaticAlignedDrawing();
     }
 
     private getAutomaticComponentAnchorOverrideOptions(
-        layer: Layer,
+        drawing: Drawing,
         components: Component[]
     ): string[] {
         if (components.length !== 1 || !components[0].isAutomaticAligned()) {
             return [];
         }
 
-        return layer.getAutomaticComponentTargetAnchorOptions(components[0]);
+        return drawing.getAutomaticComponentTargetAnchorOptions(components[0]);
     }
 
     private getNormalizedComponentTransform(
@@ -6939,7 +6949,7 @@ class GlyphCanvas {
      * Open the single-glyph picker to replace the selected component reference.
      */
     private openComponentReferencePicker(
-        layer: Layer,
+        drawing: Drawing,
         component: Component
     ): void {
         window.findGlyphDialog.open({
@@ -6951,7 +6961,7 @@ class GlyphCanvas {
                 const reference = glyphNames[0];
                 if (reference) {
                     void this.commitComponentReferenceChange(
-                        layer,
+                        drawing,
                         component,
                         reference
                     );
@@ -6969,7 +6979,7 @@ class GlyphCanvas {
      * Replace a component reference in the normal component update transaction.
      */
     private async commitComponentReferenceChange(
-        layer: Layer,
+        drawing: Drawing,
         component: Component,
         reference: string
     ): Promise<void> {
@@ -6978,17 +6988,17 @@ class GlyphCanvas {
             return;
         }
 
-        const glyphName = layer.parent()?.name;
+        const glyphName = drawing.parent()?.name;
         if (!glyphName) {
             return;
         }
 
-        const componentIndex = layer.shapes?.findIndex(
+        const componentIndex = drawing.shapes?.findIndex(
             (shape) => shape.isComponent() && shape.asComponent() === component
         );
         const selectedComponentIndex =
             this.outlineEditor.selectedComponents.find((shapeIndex) => {
-                const shape = layer.shapes?.[shapeIndex];
+                const shape = drawing.shapes?.[shapeIndex];
                 if (!shape?.isComponent()) {
                     return false;
                 }
@@ -7005,19 +7015,19 @@ class GlyphCanvas {
             return;
         }
 
-        const linkedLayers = layer._getLinkedLayers?.() || [];
-        const targetComponents = [layer, ...linkedLayers].map(
-            (targetLayer) => targetLayer.shapes?.[targetComponentIndex]
+        const linkedDrawings = drawing._getLinkedDrawings?.() || [];
+        const targetComponents = [drawing, ...linkedDrawings].map(
+            (targetDrawing) => targetDrawing.shapes?.[targetComponentIndex]
         );
         if (targetComponents.some((shape) => !shape?.isComponent())) {
             return;
         }
 
-        const structuralLayerTargets = [layer, ...linkedLayers]
-            .filter((targetLayer) => !!targetLayer.id)
-            .map((targetLayer) => ({
+        const structuralDrawingTargets = [drawing, ...linkedDrawings]
+            .filter((targetDrawing) => !!targetDrawing.id)
+            .map((targetDrawing) => ({
                 glyphName,
-                layerId: targetLayer.id!
+                layerId: targetDrawing.id!
             }));
         const affectedGlyphNames = new Set<string>([glyphName]);
         window.patchSyncEngine?.beginTransaction(
@@ -7037,7 +7047,7 @@ class GlyphCanvas {
                 affectedGlyphNames.add(affectedGlyphName);
             }
             this.outlineEditor.prepareComponentStructuralChange(
-                structuralLayerTargets
+                structuralDrawingTargets
             );
         } finally {
             window.patchSyncEngine?.endTransaction();
@@ -7045,7 +7055,7 @@ class GlyphCanvas {
 
         await this.finalizeComponentPropertyPanelMutation(
             Array.from(affectedGlyphNames),
-            layer.id ?? null
+            drawing.id ?? null
         );
     }
 
@@ -7053,8 +7063,8 @@ class GlyphCanvas {
      * Open the single-glyph picker for a component placed at the origin.
      */
     public openAddComponentDialog(): void {
-        const layer = this.getCurrentEditingLayerModel();
-        if (!layer) {
+        const drawing = this.getCurrentEditingDrawingModel();
+        if (!drawing) {
             return;
         }
 
@@ -7066,7 +7076,7 @@ class GlyphCanvas {
             onConfirm: (glyphNames) => {
                 const reference = glyphNames[0];
                 if (reference) {
-                    void this.addComponentToLayer(layer, reference);
+                    void this.addComponentToDrawing(drawing, reference);
                 }
             },
             onClose: () => {
@@ -7084,8 +7094,8 @@ class GlyphCanvas {
         x: number;
         y: number;
     }): Promise<void> {
-        const layer = this.getCurrentEditingLayerModel();
-        if (!layer || layer.is_background) {
+        const drawing = this.getCurrentEditingDrawingModel();
+        if (!drawing || drawing.is_background) {
             return;
         }
 
@@ -7105,9 +7115,9 @@ class GlyphCanvas {
             return;
         }
 
-        if (this.layerHasAnchorNamed(layer, name)) {
+        if (this.drawingHasAnchorNamed(drawing, name)) {
             window.alert(
-                `An anchor named "${name}" already exists on this layer.`
+                `An anchor named “${name}” already exists on this drawing.`
             );
             if (this.canvas) {
                 setTimeout(() => this.canvas!.focus(), 0);
@@ -7115,19 +7125,19 @@ class GlyphCanvas {
             return;
         }
 
-        await this.addAnchorAtPosition(layer, name, position);
+        await this.addAnchorAtPosition(drawing, name, position);
     }
 
     /**
-     * Insert a local (layer) guideline at the captured canvas position with no
+     * Insert a local (drawing) guideline at the captured canvas position with no
      * name, select it, and ensure guidelines are visible.
      */
     public async addGuideAtPosition(position: {
         x: number;
         y: number;
     }): Promise<void> {
-        const layer = this.getCurrentEditingLayerModel();
-        if (!layer || layer.is_background) {
+        const drawing = this.getCurrentEditingDrawingModel();
+        if (!drawing || drawing.is_background) {
             return;
         }
 
@@ -7136,7 +7146,7 @@ class GlyphCanvas {
             compileEditType: 'guide'
         });
         try {
-            layer.addGuide({
+            drawing.addGuide({
                 x: Math.round(position.x),
                 y: Math.round(position.y),
                 angle: 0
@@ -7145,13 +7155,13 @@ class GlyphCanvas {
             window.patchSyncEngine?.endTransaction();
         }
 
-        const guideIndex = (layer.guides?.length ?? 1) - 1;
+        const guideIndex = (drawing.guides?.length ?? 1) - 1;
         this.outlineEditor.selectedPoints = [];
         this.outlineEditor.selectedAnchors = [];
         this.outlineEditor.selectedComponents = [];
         this.outlineEditor.selectedSidebearingHandle = null;
         this.outlineEditor.selectedGuideHandle =
-            guideIndex >= 0 ? { scope: 'layer', index: guideIndex } : null;
+            guideIndex >= 0 ? { scope: 'drawing', index: guideIndex } : null;
 
         if (!this.outlineEditor.guidelinesVisible) {
             this.outlineEditor.setGuidelinesVisible(true);
@@ -7167,49 +7177,49 @@ class GlyphCanvas {
     /**
      * Insert a component at the origin and select it.
      */
-    private async addComponentToLayer(
-        layer: Layer,
+    private async addComponentToDrawing(
+        drawing: Drawing,
         reference: string
     ): Promise<void> {
-        const activeLayer = this.getCurrentEditingLayerModel();
+        const activeDrawing = this.getCurrentEditingDrawingModel();
         if (
-            !activeLayer ||
-            activeLayer.id !== layer.id ||
-            activeLayer.parent()?.name !== layer.parent()?.name
+            !activeDrawing ||
+            activeDrawing.id !== drawing.id ||
+            activeDrawing.parent()?.name !== drawing.parent()?.name
         ) {
             return;
         }
 
-        const glyphName = activeLayer.parent()?.name;
+        const glyphName = activeDrawing.parent()?.name;
         if (!glyphName) {
             return;
         }
 
-        const linkedLayers = activeLayer._getLinkedLayers?.() || [];
+        const linkedDrawings = activeDrawing._getLinkedDrawings?.() || [];
         const affectedGlyphNames = new Set<string>([glyphName]);
         window.patchSyncEngine?.beginTransaction('Add component', null, {
             compileChangeSource: 'keyboard-outline',
             compileEditType: null
         });
         try {
-            for (const targetLayer of [activeLayer, ...linkedLayers]) {
-                targetLayer.addComponent(reference);
+            for (const targetDrawing of [activeDrawing, ...linkedDrawings]) {
+                targetDrawing.addComponent(reference);
             }
             if (
-                activeLayer.is_background &&
-                activeLayer.id &&
-                this.outlineEditor.selectedLayerId !== activeLayer.id
+                activeDrawing.is_background &&
+                activeDrawing.id &&
+                this.outlineEditor.selectedDrawingId !== activeDrawing.id
             ) {
-                this.outlineEditor.selectedLayerId = activeLayer.id;
-                this.outlineEditor.rebuildGlyphStackWithNewLayer(
-                    activeLayer.id
+                this.outlineEditor.selectedDrawingId = activeDrawing.id;
+                this.outlineEditor.rebuildGlyphStackWithNewDrawing(
+                    activeDrawing.id
                 );
             }
-            const structuralLayerTargets = [activeLayer, ...linkedLayers]
-                .filter((targetLayer) => !!targetLayer.id)
-                .map((targetLayer) => ({
+            const structuralDrawingTargets = [activeDrawing, ...linkedDrawings]
+                .filter((targetDrawing) => !!targetDrawing.id)
+                .map((targetDrawing) => ({
                     glyphName,
-                    layerId: targetLayer.id!
+                    layerId: targetDrawing.id!
                 }));
             for (const affectedGlyphName of fontManager.currentFont?.fontModel?.recomputeMetricsKeys(
                 new Set([glyphName])
@@ -7217,20 +7227,20 @@ class GlyphCanvas {
                 affectedGlyphNames.add(affectedGlyphName);
             }
             this.outlineEditor.prepareComponentStructuralChange(
-                structuralLayerTargets
+                structuralDrawingTargets
             );
         } finally {
             window.patchSyncEngine?.endTransaction();
         }
 
-        const shapeIndex = (activeLayer.shapes?.length ?? 1) - 1;
+        const shapeIndex = (activeDrawing.shapes?.length ?? 1) - 1;
         if (shapeIndex >= 0) {
             this.outlineEditor.selectedComponents = [shapeIndex];
         }
 
         await this.finalizeComponentPropertyPanelMutation(
             Array.from(affectedGlyphNames),
-            activeLayer.id ?? null
+            activeDrawing.id ?? null
         );
     }
 
@@ -7238,47 +7248,47 @@ class GlyphCanvas {
      * Insert an anchor at the captured canvas position and select it.
      */
     private async addAnchorAtPosition(
-        layer: Layer,
+        drawing: Drawing,
         name: string,
         position: { x: number; y: number }
     ): Promise<void> {
-        const activeLayer = this.getCurrentEditingLayerModel();
+        const activeDrawing = this.getCurrentEditingDrawingModel();
         if (
-            !activeLayer ||
-            activeLayer.id !== layer.id ||
-            activeLayer.parent()?.name !== layer.parent()?.name
+            !activeDrawing ||
+            activeDrawing.id !== drawing.id ||
+            activeDrawing.parent()?.name !== drawing.parent()?.name
         ) {
             return;
         }
 
-        const glyphName = activeLayer.parent()?.name;
+        const glyphName = activeDrawing.parent()?.name;
         if (!glyphName) {
             return;
         }
 
-        if (this.layerHasAnchorNamed(activeLayer, name)) {
+        if (this.drawingHasAnchorNamed(activeDrawing, name)) {
             window.alert(
-                `An anchor named "${name}" already exists on this layer.`
+                `An anchor named “${name}” already exists on this drawing.`
             );
             return;
         }
 
-        const linkedLayers = activeLayer._getLinkedLayers?.() || [];
-        const targetLayers = [activeLayer, ...linkedLayers];
-        for (const targetLayer of linkedLayers) {
-            if (this.layerHasAnchorNamed(targetLayer, name)) {
+        const linkedDrawings = activeDrawing._getLinkedDrawings?.() || [];
+        const targetDrawings = [activeDrawing, ...linkedDrawings];
+        for (const targetDrawing of linkedDrawings) {
+            if (this.drawingHasAnchorNamed(targetDrawing, name)) {
                 window.alert(
-                    `An anchor named "${name}" already exists on a linked layer.`
+                    `An anchor named “${name}” already exists on a linked drawing.`
                 );
                 return;
             }
         }
 
-        const structuralLayerTargets = targetLayers
-            .filter((targetLayer) => !!targetLayer.id)
-            .map((targetLayer) => ({
+        const structuralDrawingTargets = targetDrawings
+            .filter((targetDrawing) => !!targetDrawing.id)
+            .map((targetDrawing) => ({
                 glyphName,
-                layerId: targetLayer.id!
+                layerId: targetDrawing.id!
             }));
         const affectedGlyphNames = new Set<string>([glyphName]);
         const roundedX = Math.round(position.x);
@@ -7288,8 +7298,8 @@ class GlyphCanvas {
             compileEditType: null
         });
         try {
-            for (const targetLayer of targetLayers) {
-                targetLayer.addAnchor(roundedX, roundedY, name);
+            for (const targetDrawing of targetDrawings) {
+                targetDrawing.addAnchor(roundedX, roundedY, name);
             }
             for (const affectedGlyphName of fontManager.currentFont?.fontModel?.recomputeMetricsKeys(
                 new Set([glyphName])
@@ -7297,13 +7307,13 @@ class GlyphCanvas {
                 affectedGlyphNames.add(affectedGlyphName);
             }
             this.outlineEditor.prepareAnchorStructuralChange(
-                structuralLayerTargets
+                structuralDrawingTargets
             );
         } finally {
             window.patchSyncEngine?.endTransaction();
         }
 
-        const anchorIndex = (activeLayer.anchors?.length ?? 1) - 1;
+        const anchorIndex = (activeDrawing.anchors?.length ?? 1) - 1;
         if (anchorIndex >= 0) {
             this.outlineEditor.selectedAnchors = [anchorIndex];
             this.outlineEditor.selectedPoints = [];
@@ -7314,7 +7324,7 @@ class GlyphCanvas {
 
         await this.finalizeAnchorPropertyPanelMutation(
             Array.from(affectedGlyphNames),
-            activeLayer.id ?? null
+            activeDrawing.id ?? null
         );
     }
 
@@ -7334,26 +7344,26 @@ class GlyphCanvas {
 
     private async finalizeComponentPropertyPanelMutation(
         affectedGlyphNames: string[],
-        layerId: string | null
+        drawingId: string | null
     ): Promise<void> {
         try {
             // When PatchSyncEngine is active, the authoritative bridge Yjs
             // packet + shared committed-change funnel own worker sync and
             // compile wake-up. A second refreshGlyphsAfterModelBatch would
-            // delete/recreate the selected layer on the worker mirror and
-            // diverge that layer's CRDT identity from the bridge document
+            // delete/recreate the selected drawing on the worker mirror and
+            // diverge that drawing's CRDT identity from the bridge document
             // (COMPILATION_EDIT_POLICY §19 / property-panel rule).
             const bridgeOwnsCommittedRefresh = !!window.patchSyncEngine;
             if (!bridgeOwnsCommittedRefresh && affectedGlyphNames.length > 0) {
                 await window.fontManager?.refreshGlyphsAfterModelBatch?.(
                     affectedGlyphNames,
-                    layerId || undefined
+                    drawingId || undefined
                 );
             }
-            await this.outlineEditor.fetchLayerData(true);
+            await this.outlineEditor.fetchDrawingData(true);
         } catch (error) {
             console.warn(
-                'Failed to refresh layer after component property-panel update',
+                'Failed to refresh drawing after component property-panel update',
                 error
             );
         }
@@ -7365,20 +7375,20 @@ class GlyphCanvas {
 
     private async finalizeAnchorPropertyPanelMutation(
         affectedGlyphNames: string[],
-        layerId: string | null
+        drawingId: string | null
     ): Promise<void> {
         try {
             const bridgeOwnsCommittedRefresh = !!window.patchSyncEngine;
             if (!bridgeOwnsCommittedRefresh && affectedGlyphNames.length > 0) {
                 await window.fontManager?.refreshGlyphsAfterModelBatch?.(
                     affectedGlyphNames,
-                    layerId || undefined
+                    drawingId || undefined
                 );
             }
-            await this.outlineEditor.fetchLayerData(true);
+            await this.outlineEditor.fetchDrawingData(true);
         } catch (error) {
             console.warn(
-                'Failed to refresh layer after anchor property-panel update',
+                'Failed to refresh drawing after anchor property-panel update',
                 error
             );
         }
@@ -7391,14 +7401,14 @@ class GlyphCanvas {
     private async finalizeGuidePropertyPanelMutation(): Promise<void> {
         // Guide edits never trigger font compilation (COMPILATION_EDIT_POLICY §15).
         try {
-            const owningLayer = this.getGuideOwningLayerModel();
-            if (owningLayer) {
-                this.syncCurrentOutlineLayerDataFromModel(owningLayer);
+            const owningDrawing = this.getGuideOwningDrawingModel();
+            if (owningDrawing) {
+                this.syncCurrentOutlineDrawingDataFromModel(owningDrawing);
             }
-            await this.outlineEditor.fetchLayerData(true);
+            await this.outlineEditor.fetchDrawingData(true);
         } catch (error) {
             console.warn(
-                'Failed to refresh layer after guide property-panel update',
+                'Failed to refresh drawing after guide property-panel update',
                 error
             );
         }
@@ -7409,12 +7419,12 @@ class GlyphCanvas {
 
         const handle = this.outlineEditor.selectedGuideHandle;
         const guide = this.getSelectedGuideModel();
-        const master = this.getCurrentEditingMasterModel();
+        const station = this.getCurrentEditingStationModel();
         if (guide && handle && window.compileFilterHost) {
             void window.compileFilterHost.onGuideCommitted({
                 kind: 'position',
-                scope: handle.scope === 'layer' ? 'layer' : 'master',
-                masterId: master?.id,
+                scope: handle.scope === 'drawing' ? 'drawing' : 'station',
+                stationId: station?.id,
                 name: guide.name,
                 pos: {
                     x: guide.pos?.x,
@@ -7518,15 +7528,15 @@ class GlyphCanvas {
             return;
         }
 
-        const currentlyGlobal = handle.scope === 'master';
+        const currentlyGlobal = handle.scope === 'station';
         if (currentlyGlobal === isGlobal) {
             this.updatePropertyPanel();
             return;
         }
 
-        const layer = this.getGuideOwningLayerModel();
-        const master = this.getCurrentEditingMasterModel();
-        if (!layer || !master) {
+        const drawing = this.getGuideOwningDrawingModel();
+        const station = this.getCurrentEditingStationModel();
+        if (!drawing || !station) {
             this.updatePropertyPanel();
             return;
         }
@@ -7550,7 +7560,7 @@ class GlyphCanvas {
             // Local → Global
             const selectedIndex = handle.index;
             const selectedName = guide.name;
-            const linkedLayers = layer._getLinkedLayers?.() || [];
+            const linkedDrawings = drawing._getLinkedDrawings?.() || [];
 
             window.patchSyncEngine?.beginTransaction(
                 'Make guide global',
@@ -7561,29 +7571,30 @@ class GlyphCanvas {
                 }
             );
             try {
-                layer.removeGuide(selectedIndex);
+                drawing.removeGuide(selectedIndex);
                 if (selectedName) {
-                    for (const linkedLayer of linkedLayers) {
-                        const linkedGuideIndex = linkedLayer.guides?.findIndex(
-                            (candidate) => candidate.name === selectedName
-                        );
+                    for (const linkedDrawing of linkedDrawings) {
+                        const linkedGuideIndex =
+                            linkedDrawing.guides?.findIndex(
+                                (candidate) => candidate.name === selectedName
+                            );
                         if (
                             linkedGuideIndex !== undefined &&
                             linkedGuideIndex >= 0
                         ) {
-                            linkedLayer.removeGuide(linkedGuideIndex);
+                            linkedDrawing.removeGuide(linkedGuideIndex);
                         }
                     }
                 }
 
-                master.addGuide(pos, name, color);
-                const newIndex = (master.guides?.length ?? 1) - 1;
+                station.addGuide(pos, name, color);
+                const newIndex = (station.guides?.length ?? 1) - 1;
                 this.outlineEditor.selectedPoints = [];
                 this.outlineEditor.selectedAnchors = [];
                 this.outlineEditor.selectedComponents = [];
                 this.outlineEditor.selectedSidebearingHandle = null;
                 this.outlineEditor.selectedGuideHandle = {
-                    scope: 'master',
+                    scope: 'station',
                     index: newIndex
                 };
             } finally {
@@ -7598,15 +7609,15 @@ class GlyphCanvas {
                 compileEditType: 'guide'
             });
             try {
-                master.removeGuide(selectedIndex);
-                layer.addGuide(pos, name, color);
-                const newIndex = (layer.guides?.length ?? 1) - 1;
+                station.removeGuide(selectedIndex);
+                drawing.addGuide(pos, name, color);
+                const newIndex = (drawing.guides?.length ?? 1) - 1;
                 this.outlineEditor.selectedPoints = [];
                 this.outlineEditor.selectedAnchors = [];
                 this.outlineEditor.selectedComponents = [];
                 this.outlineEditor.selectedSidebearingHandle = null;
                 this.outlineEditor.selectedGuideHandle = {
-                    scope: 'layer',
+                    scope: 'drawing',
                     index: newIndex
                 };
             } finally {
@@ -7624,8 +7635,8 @@ class GlyphCanvas {
             return;
         }
 
-        const layer = this.getCurrentEditingLayerModel();
-        if (!layer) {
+        const drawing = this.getCurrentEditingDrawingModel();
+        if (!drawing) {
             return;
         }
 
@@ -7636,7 +7647,7 @@ class GlyphCanvas {
         }
 
         const anchorIndex = selectedIndices[0];
-        const anchor = layer.anchors?.[anchorIndex];
+        const anchor = drawing.anchors?.[anchorIndex];
         if (!anchor) {
             this.updatePropertyPanel();
             return;
@@ -7653,26 +7664,26 @@ class GlyphCanvas {
             return;
         }
 
-        if (this.layerHasAnchorNamed(layer, nextName, [anchorIndex])) {
+        if (this.drawingHasAnchorNamed(drawing, nextName, [anchorIndex])) {
             window.alert(
-                `An anchor named "${nextName}" already exists on this layer.`
+                `An anchor named “${nextName}” already exists on this drawing.`
             );
             this.updatePropertyPanel();
             return;
         }
 
         const previousName = anchor.name || '';
-        const glyphName = layer.parent()?.name;
+        const glyphName = drawing.parent()?.name;
         if (!glyphName) {
             this.updatePropertyPanel();
             return;
         }
 
-        const linkedLayers = layer._getLinkedLayers?.() || [];
-        for (const linkedLayer of linkedLayers) {
-            if (this.layerHasAnchorNamed(linkedLayer, nextName)) {
+        const linkedDrawings = drawing._getLinkedDrawings?.() || [];
+        for (const linkedDrawing of linkedDrawings) {
+            if (this.drawingHasAnchorNamed(linkedDrawing, nextName)) {
                 window.alert(
-                    `An anchor named "${nextName}" already exists on a linked layer.`
+                    `An anchor named “${nextName}” already exists on a linked drawing.`
                 );
                 this.updatePropertyPanel();
                 return;
@@ -7680,11 +7691,11 @@ class GlyphCanvas {
         }
 
         const affectedGlyphNames = new Set<string>([glyphName]);
-        const structuralLayerTargets = [layer, ...linkedLayers]
-            .filter((targetLayer) => !!targetLayer.id)
-            .map((targetLayer) => ({
+        const structuralDrawingTargets = [drawing, ...linkedDrawings]
+            .filter((targetDrawing) => !!targetDrawing.id)
+            .map((targetDrawing) => ({
                 glyphName,
-                layerId: targetLayer.id!
+                layerId: targetDrawing.id!
             }));
 
         window.patchSyncEngine?.beginTransaction('Rename anchor', null, {
@@ -7693,8 +7704,8 @@ class GlyphCanvas {
         });
         try {
             anchor.name = nextName;
-            for (const linkedLayer of linkedLayers) {
-                const linkedAnchor = linkedLayer.anchors?.find(
+            for (const linkedDrawing of linkedDrawings) {
+                const linkedAnchor = linkedDrawing.anchors?.find(
                     (candidate) => (candidate.name || '') === previousName
                 );
                 if (linkedAnchor) {
@@ -7707,7 +7718,7 @@ class GlyphCanvas {
                 affectedGlyphNames.add(affectedGlyphName);
             }
             this.outlineEditor.prepareAnchorStructuralChange(
-                structuralLayerTargets
+                structuralDrawingTargets
             );
         } finally {
             window.patchSyncEngine?.endTransaction();
@@ -7715,7 +7726,7 @@ class GlyphCanvas {
 
         await this.finalizeAnchorPropertyPanelMutation(
             Array.from(affectedGlyphNames),
-            layer.id ?? null
+            drawing.id ?? null
         );
     }
 
@@ -7727,8 +7738,8 @@ class GlyphCanvas {
             return;
         }
 
-        const layer = this.getCurrentEditingLayerModel();
-        if (!layer) {
+        const drawing = this.getCurrentEditingDrawingModel();
+        if (!drawing) {
             return;
         }
 
@@ -7739,7 +7750,7 @@ class GlyphCanvas {
         }
 
         const numericValue = Number(trimmedValue);
-        const selectedAnchors = this.getSelectedAnchorModels(layer);
+        const selectedAnchors = this.getSelectedAnchorModels(drawing);
         if (selectedAnchors.length === 0) {
             return;
         }
@@ -7763,7 +7774,7 @@ class GlyphCanvas {
                 }
             }
 
-            const glyphName = layer.parent()?.name;
+            const glyphName = drawing.parent()?.name;
             if (glyphName) {
                 affectedGlyphNames.add(glyphName);
                 for (const affectedGlyphName of fontManager.currentFont?.fontModel?.recomputeMetricsKeys(
@@ -7781,7 +7792,7 @@ class GlyphCanvas {
             return;
         }
 
-        const glyphName = layer.parent()?.name;
+        const glyphName = drawing.parent()?.name;
         if (!glyphName) {
             this.updatePropertyPanel();
             return;
@@ -7793,7 +7804,7 @@ class GlyphCanvas {
                     ? affectedGlyphNames
                     : new Set([glyphName])
             ),
-            layer.id ?? null
+            drawing.id ?? null
         );
     }
 
@@ -7808,8 +7819,8 @@ class GlyphCanvas {
             return;
         }
 
-        const layer = this.getCurrentEditingLayerModel();
-        if (!layer) {
+        const drawing = this.getCurrentEditingDrawingModel();
+        if (!drawing) {
             return;
         }
 
@@ -7820,14 +7831,17 @@ class GlyphCanvas {
         }
 
         const numericValue = Number(trimmedValue);
-        const selectedComponents = this.getSelectedComponentModels(layer);
+        const selectedComponents = this.getSelectedComponentModels(drawing);
         if (selectedComponents.length === 0) {
             return;
         }
 
         if (
             (field === 'translateX' || field === 'translateY') &&
-            !this.canEditSelectedComponentTranslation(layer, selectedComponents)
+            !this.canEditSelectedComponentTranslation(
+                drawing,
+                selectedComponents
+            )
         ) {
             this.updatePropertyPanel();
             return;
@@ -7853,7 +7867,7 @@ class GlyphCanvas {
                 }
             }
 
-            const glyphName = layer.parent()?.name;
+            const glyphName = drawing.parent()?.name;
             if (glyphName) {
                 affectedGlyphNames.add(glyphName);
                 for (const affectedGlyphName of fontManager.currentFont?.fontModel?.recomputeMetricsKeys(
@@ -7871,7 +7885,7 @@ class GlyphCanvas {
             return;
         }
 
-        const glyphName = layer.parent()?.name;
+        const glyphName = drawing.parent()?.name;
         if (!glyphName) {
             this.updatePropertyPanel();
             return;
@@ -7883,19 +7897,19 @@ class GlyphCanvas {
                     ? affectedGlyphNames
                     : new Set([glyphName])
             ),
-            layer.id ?? null
+            drawing.id ?? null
         );
     }
 
     private async commitComponentAutoAlignmentPropertyPanelValue(
         checked: boolean
     ): Promise<void> {
-        const currentLayer = this.getCurrentEditingLayerModel();
-        if (!currentLayer) {
+        const currentDrawing = this.getCurrentEditingDrawingModel();
+        if (!currentDrawing) {
             return;
         }
 
-        const glyph = currentLayer.parent();
+        const glyph = currentDrawing.parent();
         if (!glyph) {
             return;
         }
@@ -7913,9 +7927,9 @@ class GlyphCanvas {
             { compileChangeSource: 'keyboard-outline', compileEditType: null }
         );
         try {
-            for (const layer of glyph.layers || []) {
+            for (const drawing of glyph.drawings || []) {
                 for (const componentIndex of componentIndices) {
-                    const shape = layer.shapes?.[componentIndex];
+                    const shape = drawing.shapes?.[componentIndex];
                     if (!shape?.isComponent()) {
                         continue;
                     }
@@ -7945,20 +7959,20 @@ class GlyphCanvas {
 
         await this.finalizeComponentPropertyPanelMutation(
             Array.from(affectedGlyphNames),
-            currentLayer.id ?? null
+            currentDrawing.id ?? null
         );
     }
 
     private async commitComponentAnchorPropertyPanelValue(
         value: string
     ): Promise<void> {
-        const currentLayer = this.getCurrentEditingLayerModel();
-        if (!currentLayer) {
+        const currentDrawing = this.getCurrentEditingDrawingModel();
+        if (!currentDrawing) {
             return;
         }
 
         const selectedComponents =
-            this.getSelectedComponentModels(currentLayer);
+            this.getSelectedComponentModels(currentDrawing);
         if (selectedComponents.length !== 1) {
             return;
         }
@@ -7971,7 +7985,7 @@ class GlyphCanvas {
             return;
         }
 
-        const glyphName = currentLayer.parent()?.name;
+        const glyphName = currentDrawing.parent()?.name;
         if (!glyphName) {
             this.updatePropertyPanel();
             return;
@@ -7996,7 +8010,7 @@ class GlyphCanvas {
 
         await this.finalizeComponentPropertyPanelMutation(
             Array.from(affectedGlyphNames),
-            currentLayer.id ?? null
+            currentDrawing.id ?? null
         );
     }
 
@@ -8032,8 +8046,8 @@ class GlyphCanvas {
             return {};
         }
 
-        const currentLayer = this.getCurrentLayerModel();
-        if (!currentLayer || !Number.isFinite(currentLayer.width)) {
+        const currentDrawing = this.getCurrentDrawingModel();
+        if (!currentDrawing || !Number.isFinite(currentDrawing.width)) {
             return {};
         }
 
@@ -8048,17 +8062,17 @@ class GlyphCanvas {
         }
 
         if (fontManager.lastEditType !== 'anchor') {
-            return { [sourceGlyphName]: currentLayer.width };
+            return { [sourceGlyphName]: currentDrawing.width };
         }
 
-        const currentLayerId = this.outlineEditor.selectedLayerId;
-        const masterId =
-            typeof currentLayer.master === 'object' && currentLayer.master
-                ? currentLayer.master.master || null
+        const currentDrawingId = this.outlineEditor.selectedDrawingId;
+        const stationId =
+            typeof currentDrawing.station === 'object' && currentDrawing.station
+                ? currentDrawing.station.master || null
                 : null;
         const fontModel = fontManager.currentFont?.fontModel;
         if (!fontModel) {
-            return { [sourceGlyphName]: currentLayer.width };
+            return { [sourceGlyphName]: currentDrawing.width };
         }
 
         const glyphNames =
@@ -8079,20 +8093,22 @@ class GlyphCanvas {
             }
 
             const glyph = fontModel.resolveGlyphView(candidateGlyphName);
-            const layer =
-                (currentLayerId
-                    ? glyph?.findLayerById(currentLayerId)
+            const drawing =
+                (currentDrawingId
+                    ? glyph?.findDrawingById(currentDrawingId)
                     : undefined) ||
-                (masterId ? glyph?.findLayerByMasterId(masterId) : undefined);
-            if (!layer || !Number.isFinite(layer.width)) {
+                (stationId
+                    ? glyph?.findDrawingByStationId(stationId)
+                    : undefined);
+            if (!drawing || !Number.isFinite(drawing.width)) {
                 continue;
             }
 
-            glyphAdvances[candidateSourceGlyphName] = layer.width;
+            glyphAdvances[candidateSourceGlyphName] = drawing.width;
         }
 
         if (!(sourceGlyphName in glyphAdvances)) {
-            glyphAdvances[sourceGlyphName] = currentLayer.width;
+            glyphAdvances[sourceGlyphName] = currentDrawing.width;
         }
 
         return glyphAdvances;
@@ -8137,13 +8153,13 @@ class GlyphCanvas {
             return;
         }
 
-        const layer = this.getCurrentEditingLayerModel();
-        if (!layer) {
+        const drawing = this.getCurrentEditingDrawingModel();
+        if (!drawing) {
             return;
         }
 
         if (
-            layer.isAutomaticAlignedLayer() &&
+            drawing.isAutomaticAlignedDrawing() &&
             trimmedValue &&
             !/^==?[+-]/.test(trimmedValue)
         ) {
@@ -8165,13 +8181,13 @@ class GlyphCanvas {
             return;
         }
 
-        const previousWidth = layer.width;
+        const previousWidth = drawing.width;
         const previousChangeSource = fontManager.lastChangeSource;
         const previousEditType = fontManager.lastEditType;
         const previousChangeVersion = fontManager.currentFont?.changeVersion;
 
         this.setSidebearingKeyCompileContext();
-        const resolution = layer.applySidebearingInput(side, value);
+        const resolution = drawing.applySidebearingInput(side, value);
         if (resolution.rejected) {
             fontManager.setEditingCompileContext(
                 previousChangeSource,
@@ -8184,13 +8200,14 @@ class GlyphCanvas {
             return;
         }
         const glyphName =
-            (typeof layer.parent === 'function'
-                ? layer.parent()?.name
+            (typeof drawing.parent === 'function'
+                ? drawing.parent()?.name
                 : null) ?? this.getCurrentGlyphName();
-        const usesIncrementalLayerRefresh = resolution.updateScope === 'layer';
+        const usesIncrementalDrawingRefresh =
+            resolution.updateScope === 'layer';
 
         const { advancesRefreshed } = syncModelSidebearingEditToCanvas(this, {
-            layer,
+            layer: drawing,
             glyphName,
             side,
             previousWidth,
@@ -8221,8 +8238,9 @@ class GlyphCanvas {
             !resolution.error &&
             !isPlainNumericInputValue(trimmedValue) &&
             affectedGlyphNames.length > 0;
-        const shouldFetchLayerData =
-            usesIncrementalLayerRefresh || layer.isAutomaticAlignedLayer();
+        const shouldFetchDrawingData =
+            usesIncrementalDrawingRefresh ||
+            drawing.isAutomaticAlignedDrawing();
 
         if (!modelChanged && !shouldRecompileAfterRefresh) {
             // No actual font data change — restore previous compile context.
@@ -8238,8 +8256,8 @@ class GlyphCanvas {
             if (!bridgeOwnsCommittedRefresh && affectedGlyphNames.length > 0) {
                 await window.fontManager?.refreshGlyphsAfterModelBatch?.(
                     affectedGlyphNames,
-                    usesIncrementalLayerRefresh
-                        ? this.outlineEditor.selectedLayerId
+                    usesIncrementalDrawingRefresh
+                        ? this.outlineEditor.selectedDrawingId
                         : undefined
                 );
             }
@@ -8249,35 +8267,35 @@ class GlyphCanvas {
                 window.autoCompileManager?.checkAndSchedule?.();
             }
 
-            if (shouldFetchLayerData) {
-                await this.outlineEditor.fetchLayerData(true);
+            if (shouldFetchDrawingData) {
+                await this.outlineEditor.fetchDrawingData(true);
             }
         } catch (error) {
             console.warn(
-                'Failed to refresh layer after property-panel update',
+                'Failed to refresh drawing after property-panel update',
                 error
             );
         }
 
-        if (shouldFetchLayerData) {
+        if (shouldFetchDrawingData) {
             this.updatePropertyPanel();
             this.outlineEditor.performHitDetection(null);
             this.render();
         }
     }
 
-    syncCurrentOutlineLayerDataFromModel(layer: Layer): void {
+    syncCurrentOutlineDrawingDataFromModel(drawing: Drawing): void {
         if (
-            !this.outlineEditor.selectedLayerId ||
-            this.outlineEditor.selectedLayerId !== layer.id ||
-            !this.outlineEditor.layerData ||
-            this.outlineEditor.layerData.isInterpolated
+            !this.outlineEditor.selectedDrawingId ||
+            this.outlineEditor.selectedDrawingId !== drawing.id ||
+            !this.outlineEditor.drawingData ||
+            this.outlineEditor.drawingData.isInterpolated
         ) {
             return;
         }
 
-        this.outlineEditor.layerData = LayerDataNormalizer.normalize(
-            layer.toJSON(),
+        this.outlineEditor.drawingData = DrawingDataNormalizer.normalize(
+            drawing.toJSON(),
             false
         );
     }
@@ -8354,7 +8372,7 @@ class GlyphCanvas {
         const {
             rootGlyphName: contextRootGlyphName,
             undoGlyphName: contextUndoGlyphName,
-            undoLayerId: contextUndoLayerId,
+            undoDrawingId: contextUndoDrawingId,
             historyTargetKey,
             surface
         } = getUndoRedoContext();
@@ -8363,11 +8381,13 @@ class GlyphCanvas {
             contextUndoGlyphName ??
             parsedStack[parsedStack.length - 1]?.glyphName ??
             undefined;
-        const undoLayerId =
-            contextUndoLayerId ?? this.outlineEditor.selectedLayerId ?? null;
+        const undoDrawingId =
+            contextUndoDrawingId ??
+            this.outlineEditor.selectedDrawingId ??
+            null;
 
         if (this.outlineEditor.active && (!rootGlyphName || !undoGlyphName)) {
-            if (undoGlyphName || undoLayerId) {
+            if (undoGlyphName || undoDrawingId) {
                 console.warn(
                     'Skipping property-input undo/redo: active outline editor has incomplete glyph stack'
                 );
@@ -8382,23 +8402,23 @@ class GlyphCanvas {
             event.shiftKey ? 'redo' : 'undo',
             undoGlyphName,
             rootGlyphName,
-            undoLayerId,
+            undoDrawingId,
             historyTargetKey,
             surface
         );
         return true;
     }
 
-    private getSelectedTextModeKerningMaster(): Master | null {
-        if (!this.textRunEditor?.selectedMasterId) {
+    private getSelectedTextModeKerningStation(): Station | null {
+        if (!this.textRunEditor?.selectedStationId) {
             return null;
         }
 
         const fontModel = fontManager.currentFont?.fontModel;
         return (
-            fontModel?.masters?.find(
-                (candidate: Master) =>
-                    candidate.id === this.textRunEditor?.selectedMasterId
+            fontModel?.stations?.find(
+                (candidate: Station) =>
+                    candidate.id === this.textRunEditor?.selectedStationId
             ) ?? null
         );
     }
@@ -8427,28 +8447,28 @@ class GlyphCanvas {
     }
 
     private getTextModeKerningDraftScopeKey(
-        masterId: string | null,
+        stationId: string | null,
         isRTL: boolean
     ): string | null {
-        if (!masterId) {
+        if (!stationId) {
             return null;
         }
 
-        return `${masterId}\u0000${isRTL ? 'rtl' : 'ltr'}`;
+        return `${stationId}\u0000${isRTL ? 'rtl' : 'ltr'}`;
     }
 
-    private applyTextModeKerningMasterChange(
-        nextMasterId: string | null
+    private applyTextModeKerningStationChange(
+        nextStationId: string | null
     ): void {
         if (!this.textRunEditor) {
             return;
         }
 
-        if (this.textRunEditor.selectedMasterId === nextMasterId) {
+        if (this.textRunEditor.selectedStationId === nextStationId) {
             return;
         }
 
-        this.textRunEditor.selectedMasterId = nextMasterId;
+        this.textRunEditor.selectedStationId = nextStationId;
         this.textRunEditor.relayoutLines();
         this.invalidateTextModeKerningOverlayCache();
         this.textModeKerningSelectionPinned = false;
@@ -8505,7 +8525,7 @@ class GlyphCanvas {
     }
 
     private getPreferredTextModeKerningSelection(
-        master: Master | null,
+        station: Station | null,
         firstKeys: string[],
         secondKeys: string[],
         isRTL: boolean = false
@@ -8519,11 +8539,11 @@ class GlyphCanvas {
             secondKey: pickFallbackKey(secondKeys)
         };
 
-        if (!master) {
+        if (!station) {
             return fallbackSelection;
         }
 
-        const kerning = (isRTL ? master.kerning_rtl : master.kerning) as
+        const kerning = (isRTL ? station.kerning_rtl : station.kerning) as
             KerningContainer | undefined;
         if (!kerning) {
             return fallbackSelection;
@@ -8552,14 +8572,14 @@ class GlyphCanvas {
     }
 
     private resolveTextModeKerningSelection(
-        master: Master | null,
+        station: Station | null,
         firstKeys: string[],
         secondKeys: string[],
         currentSelection: TextModeKerningSelection | null,
         isRTL: boolean = false
     ): TextModeKerningSelection {
         const preferredSelection = this.getPreferredTextModeKerningSelection(
-            master,
+            station,
             firstKeys,
             secondKeys,
             isRTL
@@ -8573,11 +8593,11 @@ class GlyphCanvas {
             return preferredSelection;
         }
 
-        if (!master) {
+        if (!station) {
             return currentSelection;
         }
 
-        const kerning = (isRTL ? master.kerning_rtl : master.kerning) as
+        const kerning = (isRTL ? station.kerning_rtl : station.kerning) as
             KerningContainer | undefined;
         const currentValue =
             kerning &&
@@ -8616,14 +8636,18 @@ class GlyphCanvas {
         side: KerningSide,
         glyphName: string,
         groupNames: string[],
-        master: Master | null,
+        station: Station | null,
         oppositeKeys: string[],
         selectedOppositeKey: string | null,
         activeKey: string | null,
         isRTL: boolean = false
     ): TextModeKerningOperand[] {
         const kerning = (
-            master ? (isRTL ? master.kerning_rtl : master.kerning) : undefined
+            station
+                ? isRTL
+                    ? station.kerning_rtl
+                    : station.kerning
+                : undefined
         ) as KerningContainer | undefined;
         const options = [
             {
@@ -8699,7 +8723,7 @@ class GlyphCanvas {
             status: 'no-pair',
             message: 'Place the cursor between two glyphs',
             isRTL: false,
-            master: null,
+            station: null,
             metrics: null,
             firstGlyphName: null,
             secondGlyphName: null,
@@ -8773,7 +8797,7 @@ class GlyphCanvas {
 
         this.syncTextModeKerningSelectionScope(
             [
-                this.textRunEditor.selectedMasterId || '',
+                this.textRunEditor.selectedStationId || '',
                 firstGlyphName,
                 secondGlyphName,
                 String(firstCluster.start),
@@ -8803,9 +8827,9 @@ class GlyphCanvas {
             firstKeys,
             secondKeys
         );
-        const master = this.getSelectedTextModeKerningMaster();
+        const station = this.getSelectedTextModeKerningStation();
         const resolvedSelection = this.resolveTextModeKerningSelection(
-            master,
+            station,
             firstKeys,
             secondKeys,
             selection,
@@ -8817,7 +8841,7 @@ class GlyphCanvas {
             'first',
             firstGlyphName,
             firstGroupNames,
-            master,
+            station,
             secondKeys,
             resolvedSelection.secondKey,
             resolvedSelection.firstKey,
@@ -8827,7 +8851,7 @@ class GlyphCanvas {
             'second',
             secondGlyphName,
             secondGroupNames,
-            master,
+            station,
             firstKeys,
             resolvedSelection.firstKey,
             resolvedSelection.secondKey,
@@ -8835,11 +8859,11 @@ class GlyphCanvas {
         );
 
         const selectedValue =
-            master && resolvedSelection.firstKey && resolvedSelection.secondKey
+            station && resolvedSelection.firstKey && resolvedSelection.secondKey
                 ? getKerningPairValue(
                       (firstCluster.isRTL
-                          ? master.kerning_rtl
-                          : master.kerning) as KerningContainer | undefined,
+                          ? station.kerning_rtl
+                          : station.kerning) as KerningContainer | undefined,
                       resolvedSelection.firstKey,
                       resolvedSelection.secondKey
                   )
@@ -8854,11 +8878,12 @@ class GlyphCanvas {
             )?.label ?? null;
 
         return {
-            status: master ? 'ready' : 'off-master',
-            message: master ? '' : 'Select an exact master to edit kerning',
+            status: station ? 'ready' : 'off-station',
+            message: station ? '' : 'Select an exact station to edit kerning',
             isRTL: firstCluster.isRTL,
-            master,
-            metrics: (master?.metrics as Record<string, number> | null) || null,
+            station: station,
+            metrics:
+                (station?.metrics as Record<string, number> | null) || null,
             firstGlyphName,
             secondGlyphName,
             firstCluster,
@@ -8937,14 +8962,15 @@ class GlyphCanvas {
 
     private recomputeTextModeKerningOverlayCacheEntry(
         entry: TextModeKerningOverlayCacheEntry,
-        master: Master
+        station: Station
     ): void {
-        const kerning = (entry.isRTL ? master.kerning_rtl : master.kerning) as
-            KerningContainer | undefined;
+        const kerning = (
+            entry.isRTL ? station.kerning_rtl : station.kerning
+        ) as KerningContainer | undefined;
         const metrics =
-            (master.metrics as Record<string, number> | null) || null;
+            (station.metrics as Record<string, number> | null) || null;
         const preferredSelection = this.getPreferredTextModeKerningSelection(
-            master,
+            station,
             entry.firstKeys,
             entry.secondKeys,
             entry.isRTL
@@ -8983,8 +9009,8 @@ class GlyphCanvas {
             return null;
         }
 
-        const master = this.getSelectedTextModeKerningMaster();
-        if (!master?.id || !master.kerning || !master.metrics) {
+        const station = this.getSelectedTextModeKerningStation();
+        if (!station?.id || !station.kerning || !station.metrics) {
             return null;
         }
 
@@ -9049,7 +9075,7 @@ class GlyphCanvas {
                 overlay: null
             };
 
-            this.recomputeTextModeKerningOverlayCacheEntry(entry, master);
+            this.recomputeTextModeKerningOverlayCacheEntry(entry, station);
             entries.push(entry);
             entriesByAdjacencyKey.set(adjacencyKey, entry);
 
@@ -9073,7 +9099,7 @@ class GlyphCanvas {
 
         const cache: TextModeKerningOverlayCache = {
             layoutVersion: this.textRunEditor.layoutVersion,
-            masterId: master.id,
+            stationId: station.id,
             overlays: [],
             entries,
             entriesByAdjacencyKey,
@@ -9088,8 +9114,8 @@ class GlyphCanvas {
             return null;
         }
 
-        const master = this.getSelectedTextModeKerningMaster();
-        if (!master?.id) {
+        const station = this.getSelectedTextModeKerningStation();
+        if (!station?.id) {
             this.textModeKerningOverlayCache = null;
             return null;
         }
@@ -9098,7 +9124,7 @@ class GlyphCanvas {
         if (
             cache &&
             cache.layoutVersion === this.textRunEditor.layoutVersion &&
-            cache.masterId === master.id
+            cache.stationId === station.id
         ) {
             return cache;
         }
@@ -9109,12 +9135,12 @@ class GlyphCanvas {
     }
 
     private patchTextModeKerningOverlayCachePair(
-        master: Master,
+        station: Station,
         firstKey: string,
         secondKey: string
     ): void {
         const cache = this.getTextModeKerningOverlayCache();
-        if (!cache || cache.masterId !== master.id) {
+        if (!cache || cache.stationId !== station.id) {
             return;
         }
 
@@ -9130,7 +9156,7 @@ class GlyphCanvas {
                 continue;
             }
 
-            this.recomputeTextModeKerningOverlayCacheEntry(entry, master);
+            this.recomputeTextModeKerningOverlayCacheEntry(entry, station);
         }
 
         this.rebuildTextModeKerningOverlayCacheOverlays(cache);
@@ -9260,7 +9286,7 @@ class GlyphCanvas {
         options: { flushImmediately?: boolean } = {}
     ): Promise<void> {
         if (
-            !context.master ||
+            !context.station ||
             !context.selectedFirstKey ||
             !context.selectedSecondKey
         ) {
@@ -9291,7 +9317,7 @@ class GlyphCanvas {
             this.textModeKerningDraftPairKey = nextPairKey;
             this.textModeKerningDraftScopeKey =
                 this.getTextModeKerningDraftScopeKey(
-                    context.master.id || null,
+                    context.station.id || null,
                     context.isRTL
                 );
             this.textModeKerningDraftValue = trimmedValue;
@@ -9363,7 +9389,7 @@ class GlyphCanvas {
         context: TextModeKerningContext
     ): string {
         return [
-            context.master?.id || '',
+            context.station?.id || '',
             context.isRTL ? 'rtl' : 'ltr',
             getTextModeKerningPairKey(
                 context.selectedFirstKey || '',
@@ -9425,7 +9451,7 @@ class GlyphCanvas {
         context: TextModeKerningContext
     ): Promise<void> {
         if (
-            !context.master ||
+            !context.station ||
             !context.selectedFirstKey ||
             !context.selectedSecondKey
         ) {
@@ -9433,7 +9459,7 @@ class GlyphCanvas {
         }
 
         this.writeTextModeKerningPairValue(
-            context.master,
+            context.station,
             context.selectedFirstKey,
             context.selectedSecondKey,
             nextValue,
@@ -9447,7 +9473,7 @@ class GlyphCanvas {
         this.textModeKerningDraftPairKey = pairKey;
         this.textModeKerningDraftScopeKey =
             this.getTextModeKerningDraftScopeKey(
-                context.master.id || null,
+                context.station.id || null,
                 context.isRTL
             );
         this.textModeKerningDraftValue =
@@ -9460,7 +9486,7 @@ class GlyphCanvas {
      * drag) share one history item and reach the room as one send.
      */
     private writeTextModeKerningPairValue(
-        master: Master,
+        station: Station,
         firstKey: string,
         secondKey: string,
         value: number | null,
@@ -9476,15 +9502,15 @@ class GlyphCanvas {
                 }
             );
             try {
-                setKerningPairValueOnMaster(
-                    master,
+                setKerningPairValueOnStation(
+                    station,
                     firstKey,
                     secondKey,
                     value,
                     isRTL
                 );
                 this.patchTextModeKerningOverlayCachePair(
-                    master,
+                    station,
                     firstKey,
                     secondKey
                 );
@@ -9494,7 +9520,7 @@ class GlyphCanvas {
         };
         const burstKey = [
             'kerning',
-            master.id || '',
+            station.id || '',
             isRTL ? 'rtl' : 'ltr',
             getTextModeKerningPairKey(firstKey, secondKey)
         ].join(':');
@@ -9617,7 +9643,7 @@ class GlyphCanvas {
         const context = this.getCurrentTextModeKerningContext();
         if (
             context.status !== 'ready' ||
-            !context.master ||
+            !context.station ||
             !context.selectedFirstKey ||
             !context.selectedSecondKey
         ) {
@@ -9788,12 +9814,13 @@ class GlyphCanvas {
 
         const isAnchorOnlySelection = this.hasAnchorOnlySelection();
         if (isAnchorOnlySelection) {
-            const currentLayer = this.getCurrentEditingLayerModel();
-            if (!currentLayer) {
+            const currentDrawing = this.getCurrentEditingDrawingModel();
+            if (!currentDrawing) {
                 return;
             }
 
-            const selectedAnchors = this.getSelectedAnchorModels(currentLayer);
+            const selectedAnchors =
+                this.getSelectedAnchorModels(currentDrawing);
             if (selectedAnchors.length === 0) {
                 return;
             }
@@ -9941,7 +9968,7 @@ class GlyphCanvas {
                         this.propertyPanel?.querySelector(
                             `.glyph-property-input[data-property-field="anchor-${field}"]`
                         ) as HTMLInputElement | null,
-                    burstScope: () => this.outlineEditor.selectedLayerId ?? ''
+                    burstScope: () => this.outlineEditor.selectedDrawingId ?? ''
                 });
 
                 input.addEventListener('change', () => {
@@ -10039,7 +10066,7 @@ class GlyphCanvas {
             }
 
             const guideHandle = this.outlineEditor.selectedGuideHandle!;
-            const isGlobal = guideHandle.scope === 'master';
+            const isGlobal = guideHandle.scope === 'station';
 
             this.propertyPanel.classList.add('component-properties');
 
@@ -10169,7 +10196,7 @@ class GlyphCanvas {
                         this.propertyPanel?.querySelector(
                             `.glyph-property-input[data-property-field="guide-${field}"]`
                         ) as HTMLInputElement | null,
-                    burstScope: () => this.outlineEditor.selectedLayerId ?? ''
+                    burstScope: () => this.outlineEditor.selectedDrawingId ?? ''
                 });
 
                 input.addEventListener('change', () => {
@@ -10285,7 +10312,7 @@ class GlyphCanvas {
             globalLabel.className = 'glyph-property-control-label';
             globalLabel.textContent = 'Global';
             globalLabel.title =
-                'Master-level guideline (shared across glyphs for this master)';
+                'Station-level guideline (shared across glyphs for this station)';
 
             globalControl.appendChild(globalLabel);
             globalControl.appendChild(globalInput);
@@ -10304,15 +10331,15 @@ class GlyphCanvas {
             const content = document.createElement('div');
             content.className = 'glyph-component-property-panel-content';
 
-            const currentLayer = this.getCurrentEditingLayerModel();
-            const selectedPathIndexes = currentLayer
+            const currentDrawing = this.getCurrentEditingDrawingModel();
+            const selectedPathIndexes = currentDrawing
                 ? [
                       ...new Set(
                           this.outlineEditor.selectedPoints
                               .map((point) => point.contourIndex)
                               .filter((index) =>
                                   Boolean(
-                                      currentLayer.shapes?.[index]?.isPath?.()
+                                      currentDrawing.shapes?.[index]?.isPath?.()
                                   )
                               )
                       )
@@ -10320,13 +10347,13 @@ class GlyphCanvas {
                 : [];
             if (
                 selectedPathIndexes.length > 0 &&
-                currentLayer &&
-                !this.outlineEditor.getCurrentLayerDataFromStack()
+                currentDrawing &&
+                !this.outlineEditor.getCurrentDrawingDataFromStack()
                     ?.isInterpolated
             ) {
                 const allSubtracting = selectedPathIndexes.every((index) =>
                     Boolean(
-                        currentLayer.shapes?.[index]?.asPath?.().isSubtraction
+                        currentDrawing.shapes?.[index]?.asPath?.().isSubtraction
                     )
                 );
                 const subtractControl = document.createElement('label');
@@ -10361,7 +10388,7 @@ class GlyphCanvas {
 
                 const allClosed = selectedPathIndexes.every(
                     (index) =>
-                        currentLayer.shapes?.[index]?.asPath?.().closed !==
+                        currentDrawing.shapes?.[index]?.asPath?.().closed !==
                         false
                 );
                 if (
@@ -10409,13 +10436,13 @@ class GlyphCanvas {
         }
 
         if (isComponentOnlySelection) {
-            const currentLayer = this.getCurrentEditingLayerModel();
-            if (!currentLayer) {
+            const currentDrawing = this.getCurrentEditingDrawingModel();
+            if (!currentDrawing) {
                 return;
             }
 
             const selectedComponents =
-                this.getSelectedComponentModels(currentLayer);
+                this.getSelectedComponentModels(currentDrawing);
             if (selectedComponents.length === 0) {
                 return;
             }
@@ -10425,12 +10452,12 @@ class GlyphCanvas {
             const content = document.createElement('div');
             content.className = 'glyph-component-property-panel-content';
             const translationLocked = !this.canEditSelectedComponentTranslation(
-                currentLayer,
+                currentDrawing,
                 selectedComponents
             );
             const anchorOverrideOptions =
                 this.getAutomaticComponentAnchorOverrideOptions(
-                    currentLayer,
+                    currentDrawing,
                     selectedComponents
                 );
 
@@ -10516,7 +10543,7 @@ class GlyphCanvas {
                                       `.glyph-property-input[data-property-field="component-${field}"]`
                                   ) as HTMLInputElement | null,
                               burstScope: () =>
-                                  this.outlineEditor.selectedLayerId ?? ''
+                                  this.outlineEditor.selectedDrawingId ?? ''
                           });
 
                 input.addEventListener('change', () => {
@@ -10643,7 +10670,7 @@ class GlyphCanvas {
                 replaceButton.innerHTML =
                     '<span class="material-symbols-outlined">swap_horiz</span>';
                 replaceButton.addEventListener('click', () =>
-                    this.openComponentReferencePicker(currentLayer, component)
+                    this.openComponentReferencePicker(currentDrawing, component)
                 );
                 referenceBox.appendChild(replaceButton);
 
@@ -10743,20 +10770,20 @@ class GlyphCanvas {
             return;
         }
 
-        if (this.outlineEditor.isEditingBackgroundLayer()) {
+        if (this.outlineEditor.isEditingBackgroundDrawing()) {
             this.propertyPanel.classList.add('hidden');
             this.propertyPanel.textContent = '';
             return;
         }
 
-        const layer = this.getCurrentEditingLayerModel();
-        if (!layer) {
+        const drawing = this.getCurrentEditingDrawingModel();
+        if (!drawing) {
             return;
         }
 
         const content = document.createElement('div');
         content.className = 'glyph-property-panel-content';
-        const automaticLayer = layer.isAutomaticAlignedLayer();
+        const automaticDrawing = drawing.isAutomaticAlignedDrawing();
 
         const createControl = (side: 'left' | 'right', shortLabel: string) => {
             const wrapper = document.createElement('div');
@@ -10775,36 +10802,37 @@ class GlyphCanvas {
             input.dataset.sidebearingSide = side;
             input.dataset.propertyField = `side-${side}`;
 
-            const resolution = layer.resolveMetricsKey(side);
+            const resolution = drawing.resolveMetricsKey(side);
             const storedMetricsKey =
                 (side === 'left'
-                    ? layer.leftMetricsKey || layer.parent()?.leftMetricsKey
-                    : layer.rightMetricsKey ||
-                      layer.parent()?.rightMetricsKey) || undefined;
+                    ? drawing.leftMetricsKey || drawing.parent()?.leftMetricsKey
+                    : drawing.rightMetricsKey ||
+                      drawing.parent()?.rightMetricsKey) || undefined;
             const metricsKey = resolution.input
                 ? storedMetricsKey || resolution.input
                 : undefined;
-            const showAutoPlaceholder = !metricsKey && automaticLayer;
+            const showAutoPlaceholder = !metricsKey && automaticDrawing;
             const displayedValue = showAutoPlaceholder
                 ? ''
                 : (metricsKey ??
-                  String(side === 'left' ? layer.lsb : layer.rsb));
+                  String(side === 'left' ? drawing.lsb : drawing.rsb));
             input.value = displayedValue;
             if (showAutoPlaceholder) {
                 input.placeholder = '=+0 or ==+0';
             }
-            if (automaticLayer) {
+            if (automaticDrawing) {
                 input.title =
-                    'Automatic layers only accept =+/- or ==+/- sidebearing adjustments';
+                    'Automatic drawings only accept =+/- or ==+/- sidebearing adjustments';
             }
             if (resolution.error) {
                 input.classList.add('invalid');
             }
 
             const getResolvedValue = () =>
-                resolution.value ?? (side === 'left' ? layer.lsb : layer.rsb);
+                resolution.value ??
+                (side === 'left' ? drawing.lsb : drawing.rsb);
 
-            const arrowInputController = automaticLayer
+            const arrowInputController = automaticDrawing
                 ? null
                 : new ArrowAdjustableTextInput({
                       input,
@@ -10825,7 +10853,8 @@ class GlyphCanvas {
                           this.propertyPanel?.querySelector(
                               `.glyph-property-input[data-property-field="side-${side}"]`
                           ) as HTMLInputElement | null,
-                      burstScope: () => this.outlineEditor.selectedLayerId ?? ''
+                      burstScope: () =>
+                          this.outlineEditor.selectedDrawingId ?? ''
                   });
 
             input.addEventListener('change', () => {
@@ -10884,7 +10913,8 @@ class GlyphCanvas {
             const valueLabel = document.createElement('span');
             valueLabel.className = 'glyph-property-value';
             valueLabel.textContent = String(
-                resolution.value ?? (side === 'left' ? layer.lsb : layer.rsb)
+                resolution.value ??
+                    (side === 'left' ? drawing.lsb : drawing.rsb)
             );
 
             wrapper.appendChild(label);
@@ -10904,7 +10934,7 @@ class GlyphCanvas {
 
             const valueLabel = document.createElement('span');
             valueLabel.className = 'glyph-property-display-value';
-            valueLabel.textContent = String(layer.width);
+            valueLabel.textContent = String(drawing.width);
 
             wrapper.appendChild(label);
             wrapper.appendChild(valueLabel);
@@ -11011,7 +11041,7 @@ class GlyphCanvas {
 
         const center = document.createElement('div');
 
-        if (context.status === 'off-master') {
+        if (context.status === 'off-station') {
             const message = document.createElement('span');
             message.className = 'glyph-property-value';
             message.textContent = context.message;
@@ -11040,7 +11070,7 @@ class GlyphCanvas {
                     ? `${context.selectedFirstKey}\u0000${context.selectedSecondKey}`
                     : null;
             const draftScopeKey = this.getTextModeKerningDraftScopeKey(
-                context.master?.id || null,
+                context.station?.id || null,
                 context.isRTL
             );
             const initialValue =
@@ -11245,35 +11275,37 @@ class GlyphCanvas {
         this.restoreActivePropertyInput(activeInputState);
     }
 
-    getSortedLayers(layers: any[] | undefined = this.fontData?.layers): any[] {
-        if (!this.fontData || !layers || layers.length === 0) {
+    getSortedDrawings(
+        drawings: any[] | undefined = this.fontData?.layers
+    ): any[] {
+        if (!this.fontData || !drawings || drawings.length === 0) {
             return [];
         }
 
-        // Get sorted layers by master order.
-        // Within one master, keep default layers first, then brace layers.
-        const sortedLayers = [...layers].sort((a, b) => {
-            const masterIndexA = this.fontData.masters.findIndex(
-                (m: any) => m.id === a._master
+        // Get sorted drawings by station order.
+        // Within one station, keep default drawings first, then free drawings.
+        const sortedDrawings = [...drawings].sort((a, b) => {
+            const stationIndexA = this.fontData.masters.findIndex(
+                (m: any) => m.id === a._station
             );
-            const masterIndexB = this.fontData.masters.findIndex(
-                (m: any) => m.id === b._master
+            const stationIndexB = this.fontData.masters.findIndex(
+                (m: any) => m.id === b._station
             );
 
             const posA =
-                masterIndexA === -1
+                stationIndexA === -1
                     ? this.fontData.masters.length
-                    : masterIndexA;
+                    : stationIndexA;
             const posB =
-                masterIndexB === -1
+                stationIndexB === -1
                     ? this.fontData.masters.length
-                    : masterIndexB;
+                    : stationIndexB;
 
             if (posA !== posB) {
                 return posA - posB;
             }
 
-            // Within same master: default layers (no location) before brace layers
+            // Within same station: default drawings (no location) before free drawings
             const isBraceA = !!a.location && Object.keys(a.location).length > 0;
             const isBraceB = !!b.location && Object.keys(b.location).length > 0;
             if (isBraceA !== isBraceB) {
@@ -11296,7 +11328,7 @@ class GlyphCanvas {
 
             return 0;
         });
-        return sortedLayers;
+        return sortedDrawings;
     }
 
     doubleClickOnGlyph(index: number): void {
@@ -11369,13 +11401,13 @@ class GlyphCanvas {
             return null;
         }
 
-        const rootLayerData = this.outlineEditor.layerData;
-        if (!rootLayerData) {
+        const rootDrawingData = this.outlineEditor.drawingData;
+        if (!rootDrawingData) {
             return null;
         }
 
         // Always frame the root glyph (Cmd+0 behavior), even when editing nested components.
-        const bounds = Layer.calculateBoundingBox(rootLayerData, true);
+        const bounds = Drawing.calculateBoundingBox(rootDrawingData, true);
         if (!bounds) {
             return null;
         }
@@ -11545,7 +11577,7 @@ class GlyphCanvas {
     }
 
     async updatePropertiesUI(options?: {
-        skipAutoSelectMatchingLayer?: boolean;
+        skipAutoSelectMatchingDrawing?: boolean;
     }): Promise<void> {
         if (!this.propertiesSection) return;
 
@@ -11580,10 +11612,10 @@ class GlyphCanvas {
 
             const nextContent = document.createElement('div');
 
-            // Show unified master/layer list for both text and edit modes
+            // Show unified station/drawing list for both text and edit modes
             if (!this.outlineEditor.active) {
                 // Text mode
-                await this.displayMastersList(nextContent);
+                await this.displayStationsList(nextContent);
                 this.propertiesSection.replaceChildren(
                     ...Array.from(nextContent.childNodes)
                 );
@@ -11597,7 +11629,7 @@ class GlyphCanvas {
                 this.textRunEditor!.selectedGlyphIndex <
                     this.textRunEditor!.shapedGlyphs.length
             ) {
-                await this.displayMastersList(nextContent, false); // Build off-DOM first; select after mount
+                await this.displayStationsList(nextContent, false); // Build off-DOM first; select after mount
             } else {
                 // No glyph selected
                 const emptyMessage = document.createElement('div');
@@ -11616,17 +11648,17 @@ class GlyphCanvas {
                 this.textRunEditor!.selectedGlyphIndex <
                     this.textRunEditor!.shapedGlyphs.length
             ) {
-                if (options?.skipAutoSelectMatchingLayer) {
-                    this.outlineEditor.updateLayerSelection();
+                if (options?.skipAutoSelectMatchingDrawing) {
+                    this.outlineEditor.updateDrawingSelection();
                     return;
                 }
                 if (this.outlineEditor.draggingSomething) {
                     console.log(
-                        '[DRAG-DEBUG] Skipping autoSelectMatchingLayer from updatePropertiesUI during drag'
+                        '[DRAG-DEBUG] Skipping autoSelectMatchingDrawing from updatePropertiesUI during drag'
                     );
                     return;
                 }
-                await this.outlineEditor.autoSelectMatchingLayer({
+                await this.outlineEditor.autoSelectMatchingDrawing({
                     skipRender: true
                 });
                 if (
@@ -11924,11 +11956,11 @@ class GlyphCanvas {
             sequence: (lastRenderState?.sequence ?? 0) + 1,
             mode: this.outlineEditor.active ? 'edit' : 'text',
             selectedGlyphIndex: this.textRunEditor?.selectedGlyphIndex ?? -1,
-            selectedLayerId: this.outlineEditor.selectedLayerId ?? null,
+            selectedDrawingId: this.outlineEditor.selectedDrawingId ?? null,
             glyphStack: this.outlineEditor.glyphStack || '',
-            hasLayerData: Boolean(this.outlineEditor.layerData),
+            hasDrawingData: Boolean(this.outlineEditor.drawingData),
             isInterpolated: Boolean(
-                this.outlineEditor.layerData?.isInterpolated
+                this.outlineEditor.drawingData?.isInterpolated
             ),
             isPreviewMode: this.outlineEditor.isPreviewMode,
             hasRenderVerticalMetrics: renderVerticalMetricEntries.length > 0,
@@ -12008,8 +12040,8 @@ class GlyphCanvas {
     destroy(): void {
         this.featureChangeAnimator?.cancel();
         window.removeEventListener(
-            'layerFingerprintChanged',
-            this.handleLayerFingerprintChanged
+            'drawingFingerprintChanged',
+            this.handleDrawingFingerprintChanged
         );
         window.removeEventListener('fontModelSync', this.handleFontModelSync);
         window.removeEventListener(
@@ -12115,14 +12147,14 @@ class GlyphCanvas {
             return;
         }
 
-        // Handle Cmd+Up/Down to cycle through masters in text mode
+        // Handle Cmd+Up/Down to cycle through stations in text mode
         if (
             (e.metaKey || e.ctrlKey) &&
             !this.outlineEditor.active &&
             (e.key === 'ArrowUp' || e.key === 'ArrowDown')
         ) {
             e.preventDefault();
-            this.cycleMasters(e.key === 'ArrowUp');
+            this.cycleStations(e.key === 'ArrowUp');
             return;
         }
 
@@ -12434,7 +12466,7 @@ class GlyphCanvas {
     /**
      * Font-space lock point for text-mode cursor auto-pan and OT feature
      * clips. Edit-mode feature clips use the selected glyph origin (not
-     * outline bbox center — that is layer-switch / interpolation).
+     * outline bbox center — that is drawing-switch / interpolation).
      */
     private getViewportAnchorFontPosition(): { x: number; y: number } {
         const textRun = this.textRunEditor;
@@ -13072,7 +13104,7 @@ function setupFontLoadingListener() {
                             gc.consumeIdleViewLockAfterReshape();
                         }
                         await gc.updatePropertiesUI({
-                            skipAutoSelectMatchingLayer: true
+                            skipAutoSelectMatchingDrawing: true
                         });
                         gc.render();
                         if (deferredCommittedSidebearingRender) {

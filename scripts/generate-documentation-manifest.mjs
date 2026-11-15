@@ -5,28 +5,29 @@
  * prefixes sort entries and are stripped from stable ids.
  */
 
-import { readdir, readFile, writeFile } from 'fs/promises';
-import { dirname, join } from 'path';
-import { fileURLToPath } from 'url';
-import { posix as pathPosix } from 'path';
+import { readdir, readFile, writeFile } from "fs/promises";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
+import { posix as pathPosix } from "path";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
-export const DOCUMENTATION_ROOT = join(SCRIPT_DIR, '..', 'documentation');
+export const DOCUMENTATION_ROOT = join(SCRIPT_DIR, "..", "documentation");
 
-const SKIP_NAMES = new Set(['readme.md', 'manifest.json']);
+const SKIP_NAMES = new Set(["readme.md", "manifest.json"]);
 const PREFIX_PATTERN = /^(\d+)-/;
 const ROOT_ORDER = [
-    'getting-started',
-    'files',
-    'migrate',
-    'editor',
-    'features',
-    'overview',
-    'python',
-    'ai',
-    'reference',
-    'troubleshooting',
-    'acknowledgements'
+    "getting-started",
+    "type-design",
+    "files",
+    "migrate",
+    "editor",
+    "features",
+    "overview",
+    "python",
+    "ai",
+    "reference",
+    "troubleshooting",
+    "acknowledgements",
 ];
 
 /**
@@ -34,7 +35,7 @@ const ROOT_ORDER = [
  * @returns {string}
  */
 export function stripNumericPrefix(name) {
-    return name.replace(PREFIX_PATTERN, '');
+    return name.replace(PREFIX_PATTERN, "");
 }
 
 /**
@@ -42,12 +43,12 @@ export function stripNumericPrefix(name) {
  * @returns {string}
  */
 export function pageIdFromRelativePath(relativePath) {
-    const withoutExt = relativePath.replace(/\.md$/i, '');
-    const parts = withoutExt.split('/').map((part) => stripNumericPrefix(part));
-    if (parts[parts.length - 1] === 'index') {
+    const withoutExt = relativePath.replace(/\.md$/i, "");
+    const parts = withoutExt.split("/").map((part) => stripNumericPrefix(part));
+    if (parts[parts.length - 1] === "index") {
         parts.pop();
     }
-    return parts.join('/');
+    return parts.join("/");
 }
 
 /**
@@ -56,14 +57,14 @@ export function pageIdFromRelativePath(relativePath) {
  */
 export function titleFromFolderName(folderName) {
     const slug = stripNumericPrefix(folderName);
-    if (slug === 'ai') {
-        return 'AI assistant';
+    if (slug === "ai") {
+        return "AI assistant";
     }
     return slug
-        .split('-')
+        .split("-")
         .filter(Boolean)
         .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-        .join(' ');
+        .join(" ");
 }
 
 /**
@@ -82,7 +83,7 @@ export function titleFromMarkdown(markdown, fallback) {
  */
 function shouldSkipName(name) {
     const lower = name.toLowerCase();
-    return SKIP_NAMES.has(lower) || lower.startsWith('.');
+    return SKIP_NAMES.has(lower) || lower.startsWith(".");
 }
 
 /**
@@ -96,8 +97,8 @@ async function readSortedEntries(rootDir, relativeDir) {
     return entries.sort((a, b) =>
         a.name.localeCompare(b.name, undefined, {
             numeric: true,
-            sensitivity: 'base'
-        })
+            sensitivity: "base",
+        }),
     );
 }
 
@@ -106,7 +107,7 @@ async function readSortedEntries(rootDir, relativeDir) {
  * @returns {number}
  */
 function rootOrderIndex(name) {
-    const key = stripNumericPrefix(name.replace(/\.md$/i, ''));
+    const key = stripNumericPrefix(name.replace(/\.md$/i, ""));
     const index = ROOT_ORDER.indexOf(key);
     return index === -1 ? ROOT_ORDER.length : index;
 }
@@ -126,7 +127,7 @@ async function collectNodes(rootDir, relativeDir) {
             }
             return a.name.localeCompare(b.name, undefined, {
                 numeric: true,
-                sensitivity: 'base'
+                sensitivity: "base",
             });
         });
     }
@@ -143,39 +144,40 @@ async function collectNodes(rootDir, relativeDir) {
             : entry.name;
 
         if (entry.isDirectory()) {
-            if (entry.name === 'images' || entry.name === 'assets') {
+            if (entry.name === "images" || entry.name === "assets") {
                 continue;
             }
             const children = await collectNodes(rootDir, relPath);
             const indexChild = children.find(
-                (child) => child.kind === 'page' && child.path?.endsWith('/index.md')
+                (child) =>
+                    child.kind === "page" && child.path?.endsWith("/index.md"),
             );
             const sectionTitle = indexChild
                 ? indexChild.title
                 : titleFromFolderName(entry.name);
             nodes.push({
-                id: pageIdFromRelativePath(relPath + '/index.md'),
+                id: pageIdFromRelativePath(relPath + "/index.md"),
                 title: sectionTitle,
-                kind: 'section',
+                kind: "section",
                 ...(indexChild ? { path: indexChild.path } : {}),
-                children: children.filter((child) => child !== indexChild)
+                children: children.filter((child) => child !== indexChild),
             });
             continue;
         }
 
-        if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.md')) {
+        if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".md")) {
             continue;
         }
 
-        const markdown = await readFile(join(rootDir, relPath), 'utf8');
+        const markdown = await readFile(join(rootDir, relPath), "utf8");
         const fallback = titleFromFolderName(
-            stripNumericPrefix(entry.name.replace(/\.md$/i, ''))
+            stripNumericPrefix(entry.name.replace(/\.md$/i, "")),
         );
         nodes.push({
             id: pageIdFromRelativePath(relPath),
             title: titleFromMarkdown(markdown, fallback),
-            kind: 'page',
-            path: relPath
+            kind: "page",
+            path: relPath,
         });
     }
 
@@ -188,7 +190,7 @@ async function collectNodes(rootDir, relativeDir) {
  */
 function firstPageId(nodes) {
     for (const node of nodes) {
-        if (node.kind === 'page') {
+        if (node.kind === "page") {
             return node.id;
         }
         if (Array.isArray(node.children)) {
@@ -205,11 +207,11 @@ function firstPageId(nodes) {
  * @param {string} [rootDir]
  */
 export async function buildManifest(rootDir = DOCUMENTATION_ROOT) {
-    const nodes = await collectNodes(rootDir, '');
+    const nodes = await collectNodes(rootDir, "");
     return {
         version: 1,
-        defaultId: firstPageId(nodes) || '',
-        nodes
+        defaultId: firstPageId(nodes) || "",
+        nodes,
     };
 }
 
@@ -218,10 +220,10 @@ export async function buildManifest(rootDir = DOCUMENTATION_ROOT) {
  */
 export async function writeManifest(rootDir = DOCUMENTATION_ROOT) {
     const manifest = await buildManifest(rootDir);
-    const outputPath = join(rootDir, 'manifest.json');
+    const outputPath = join(rootDir, "manifest.json");
     const contents = `${JSON.stringify(manifest, null, 4)}\n`;
     try {
-        const existing = await readFile(outputPath, 'utf8');
+        const existing = await readFile(outputPath, "utf8");
         if (existing === contents) {
             return { manifest, outputPath, wrote: false };
         }
@@ -239,7 +241,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
                 return;
             }
             console.log(
-                `Wrote ${outputPath} (${manifest.nodes.length} top-level nodes)`
+                `Wrote ${outputPath} (${manifest.nodes.length} top-level nodes)`,
             );
         })
         .catch((error) => {

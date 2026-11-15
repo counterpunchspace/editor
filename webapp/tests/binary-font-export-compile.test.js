@@ -168,8 +168,8 @@ function componentClosure(fontJson, names) {
     const queue = [...keep];
     while (queue.length) {
         const glyph = byName.get(queue.pop());
-        for (const layer of glyph?.layers || []) {
-            for (const shape of layer.shapes || []) {
+        for (const drawing of glyph?.layers || []) {
+            for (const shape of drawing.shapes || []) {
                 if (
                     typeof shape.reference === 'string' &&
                     !keep.has(shape.reference)

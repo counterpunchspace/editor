@@ -379,11 +379,11 @@ describe('clipboard Counterpunch JSON converter', () => {
 });
 
 describe('applyPasteFragment', () => {
-    function makeLayer({ linked = true, background = false } = {}) {
+    function makeDrawing({ linked = true, background = false } = {}) {
         const anchors = [];
         const guides = [];
         const shapes = [];
-        const layer = {
+        const drawing = {
             is_background: background,
             linked,
             width: 600,
@@ -435,16 +435,16 @@ describe('applyPasteFragment', () => {
                 guides.push(guide);
                 return guide;
             },
-            _getLinkedLayers() {
+            _getLinkedDrawings() {
                 return linked ? this._linked || [] : [];
             }
         };
-        return layer;
+        return drawing;
     }
 
     test('fans out paths to linked layers', () => {
-        const active = makeLayer({ linked: true });
-        const linked = makeLayer({ linked: true });
+        const active = makeDrawing({ linked: true });
+        const linked = makeDrawing({ linked: true });
         active._linked = [linked];
 
         applyPasteFragment(
@@ -465,10 +465,10 @@ describe('applyPasteFragment', () => {
                 guides: []
             },
             {
-                activeLayer: active,
-                linkedLayers: [linked],
+                activeDrawing: active,
+                linkedDrawings: [linked],
                 master: null,
-                layerWidth: 600,
+                drawingWidth: 600,
                 verticalMetrics: { Ascender: 800, Descender: -200 },
                 glyphExists: () => true
             }
@@ -480,7 +480,7 @@ describe('applyPasteFragment', () => {
     });
 
     test('centers SVG paste in the layer', () => {
-        const active = makeLayer({ linked: false });
+        const active = makeDrawing({ linked: false });
         applyPasteFragment(
             {
                 format: 'svg',
@@ -501,10 +501,10 @@ describe('applyPasteFragment', () => {
                 guides: []
             },
             {
-                activeLayer: active,
-                linkedLayers: [],
+                activeDrawing: active,
+                linkedDrawings: [],
                 master: null,
-                layerWidth: 600,
+                drawingWidth: 600,
                 verticalMetrics: { Ascender: 800, Descender: -200 },
                 glyphExists: () => true
             }
@@ -519,7 +519,7 @@ describe('applyPasteFragment', () => {
     });
 
     test('keeps absolute coords for Counterpunch JSON selection', () => {
-        const active = makeLayer({ linked: false });
+        const active = makeDrawing({ linked: false });
         applyPasteFragment(
             {
                 format: 'counterpunch-json',
@@ -538,10 +538,10 @@ describe('applyPasteFragment', () => {
                 guides: []
             },
             {
-                activeLayer: active,
-                linkedLayers: [],
+                activeDrawing: active,
+                linkedDrawings: [],
                 master: null,
-                layerWidth: 600,
+                drawingWidth: 600,
                 verticalMetrics: { Ascender: 800, Descender: -200 },
                 glyphExists: () => true
             }
@@ -556,8 +556,8 @@ describe('applyPasteFragment', () => {
     });
 
     test('updates existing anchor on active layer only', () => {
-        const active = makeLayer({ linked: true });
-        const linked = makeLayer({ linked: true });
+        const active = makeDrawing({ linked: true });
+        const linked = makeDrawing({ linked: true });
         active.addAnchor(1, 2, 'top');
         linked.addAnchor(3, 4, 'top');
 
@@ -571,10 +571,10 @@ describe('applyPasteFragment', () => {
                 guides: []
             },
             {
-                activeLayer: active,
-                linkedLayers: [linked],
+                activeDrawing: active,
+                linkedDrawings: [linked],
                 master: null,
-                layerWidth: 600,
+                drawingWidth: 600,
                 verticalMetrics: null,
                 glyphExists: () => true
             }
@@ -585,7 +585,7 @@ describe('applyPasteFragment', () => {
     });
 
     test('preserves component affine transform on paste', () => {
-        const active = makeLayer({ linked: false });
+        const active = makeDrawing({ linked: false });
         applyPasteFragment(
             {
                 format: 'counterpunch-json',
@@ -605,10 +605,10 @@ describe('applyPasteFragment', () => {
                 guides: []
             },
             {
-                activeLayer: active,
-                linkedLayers: [],
+                activeDrawing: active,
+                linkedDrawings: [],
                 master: null,
-                layerWidth: 600,
+                drawingWidth: 600,
                 verticalMetrics: null,
                 glyphExists: () => true
             }
@@ -623,7 +623,7 @@ describe('applyPasteFragment', () => {
     });
 
     test('pastes components onto a background layer and skips anchors', () => {
-        const background = makeLayer({ linked: false, background: true });
+        const background = makeDrawing({ linked: false, background: true });
         applyPasteFragment(
             {
                 format: 'counterpunch-json',
@@ -642,10 +642,10 @@ describe('applyPasteFragment', () => {
                 guides: []
             },
             {
-                activeLayer: background,
-                linkedLayers: [],
+                activeDrawing: background,
+                linkedDrawings: [],
                 master: null,
-                layerWidth: 600,
+                drawingWidth: 600,
                 verticalMetrics: null,
                 glyphExists: () => true
             }
@@ -677,7 +677,7 @@ describe('applyReplaceSelectedPaths', () => {
         };
     }
 
-    function makeLayerWithAnchors(anchorList) {
+    function makeDrawingWithAnchors(anchorList) {
         const anchors = anchorList.map((anchor) => ({ ...anchor }));
         return {
             anchors,
@@ -698,10 +698,10 @@ describe('applyReplaceSelectedPaths', () => {
             { x: 10, y: 0, nodetype: 'Line' },
             { x: 10, y: 10, nodetype: 'Line' }
         ]);
-        const active = makeLayerWithAnchors([{ name: 'top', x: 5, y: 20 }]);
+        const active = makeDrawingWithAnchors([{ name: 'top', x: 5, y: 20 }]);
 
         const result = applyReplaceSelectedPaths({
-            activeLayer: active,
+            activeDrawing: active,
             selectedPaths: [path],
             selectedAnchorNames: [],
             fragment: {
@@ -742,13 +742,13 @@ describe('applyReplaceSelectedPaths', () => {
             { x: 0, y: 0, nodetype: 'Line' },
             { x: 1, y: 1, nodetype: 'Line' }
         ]);
-        const active = makeLayerWithAnchors([
+        const active = makeDrawingWithAnchors([
             { name: 'top', x: 5, y: 20 },
             { name: 'bottom', x: 5, y: 0 }
         ]);
 
         const result = applyReplaceSelectedPaths({
-            activeLayer: active,
+            activeDrawing: active,
             selectedPaths: [path],
             selectedAnchorNames: ['top'],
             fragment: {
@@ -783,7 +783,7 @@ describe('applyReplaceSelectedPaths', () => {
             { x: 0, y: 0, nodetype: 'Line' },
             { x: 10, y: 0, nodetype: 'Line' }
         ]);
-        const active = makeLayerWithAnchors([]);
+        const active = makeDrawingWithAnchors([]);
 
         expect(
             arePastePathsStructurallyCompatible(path, {
@@ -798,7 +798,7 @@ describe('applyReplaceSelectedPaths', () => {
         ).toBe(false);
 
         const badStructure = applyReplaceSelectedPaths({
-            activeLayer: active,
+            activeDrawing: active,
             selectedPaths: [path],
             selectedAnchorNames: [],
             fragment: {
@@ -823,7 +823,7 @@ describe('applyReplaceSelectedPaths', () => {
         expect(badStructure.error).toMatch(/not structurally compatible/);
 
         const badCount = applyReplaceSelectedPaths({
-            activeLayer: active,
+            activeDrawing: active,
             selectedPaths: [path],
             selectedAnchorNames: [],
             fragment: {
@@ -862,14 +862,14 @@ describe('applyReplaceSelectedPaths', () => {
             { x: 5, y: 5, nodetype: 'OffCurve' },
             { x: 6, y: 6, nodetype: 'Curve' }
         ]);
-        const active = makeLayerWithAnchors([
+        const active = makeDrawingWithAnchors([
             { name: 'top', x: 0, y: 0 },
             { name: 'bottom', x: 0, y: 0 }
         ]);
 
         // Same contour as clipboard, but starts on a Curve (Fontra-style).
         const result = applyReplaceSelectedPaths({
-            activeLayer: active,
+            activeDrawing: active,
             selectedPaths: [path],
             selectedAnchorNames: [],
             fragment: {
@@ -1290,7 +1290,7 @@ describe('clipboard SVG serializer', () => {
 });
 
 describe('applyPasteGlyphsDocument', () => {
-    function makeLayer(masterId) {
+    function makeDrawing(stationId) {
         const anchors = [];
         const guides = [];
         const shapes = [];
@@ -1299,8 +1299,8 @@ describe('applyPasteGlyphsDocument', () => {
             width: 400,
             leftMetricsKey: null,
             rightMetricsKey: null,
-            master: masterId
-                ? { type: 'DefaultForMaster', master: masterId }
+            station: stationId
+                ? { type: 'DefaultForMaster', master: stationId }
                 : undefined,
             location: undefined,
             format_specific: undefined,
@@ -1308,7 +1308,7 @@ describe('applyPasteGlyphsDocument', () => {
             guides,
             shapes,
             paths: [],
-            getMaster() {
+            getStation() {
                 return null;
             },
             addPath(closed) {
@@ -1358,20 +1358,20 @@ describe('applyPasteGlyphsDocument', () => {
         };
     }
 
-    function makeFont(masterCount, existingNames = [], axisKeys = []) {
+    function makeFont(stationCount, existingNames = [], axisKeys = []) {
         const glyphOrder = [...existingNames];
         const glyphStore = new Map();
         for (const name of existingNames) {
-            glyphStore.set(name, { name, layers: [] });
+            glyphStore.set(name, { name, drawings: [] });
         }
-        const masters = Array.from({ length: masterCount }, (_, index) => ({
+        const stations = Array.from({ length: stationCount }, (_, index) => ({
             id: `master-${index}`
         }));
         const axes = axisKeys.map((key) =>
             key.length === 4 ? { id: key, tag: key } : { id: key, tag: 'wght' }
         );
         return {
-            masters,
+            stations,
             axes,
             glyphOrder,
             findGlyph(name) {
@@ -1410,18 +1410,20 @@ describe('applyPasteGlyphsDocument', () => {
                 return lastIndex >= 0 ? lastIndex + 1 : glyphOrder.length;
             },
             addGlyph(name, _category = 'Base', options = {}) {
-                const layers = masters.map((master) => makeLayer(master.id));
+                const drawings = stations.map((station) =>
+                    makeDrawing(station.id)
+                );
                 const glyph = {
                     name,
                     leftMetricsKey: null,
                     rightMetricsKey: null,
-                    layers,
-                    addLayer(width, master) {
-                        const layer = makeLayer();
-                        layer.width = width;
-                        layer.master = master;
-                        layers.push(layer);
-                        return layer;
+                    drawings,
+                    addDrawing(width, station) {
+                        const drawing = makeDrawing();
+                        drawing.width = width;
+                        drawing.station = station;
+                        drawings.push(drawing);
+                        return drawing;
                     }
                 };
                 const insertIndex =
@@ -1435,7 +1437,7 @@ describe('applyPasteGlyphsDocument', () => {
         };
     }
 
-    function mastersMeta(count) {
+    function stationsMeta(count) {
         return Array.from({ length: count }, (_, index) => ({
             id: `source-master-${index}`,
             name: `Master ${index}`
@@ -1450,7 +1452,7 @@ describe('applyPasteGlyphsDocument', () => {
                 format: 'counterpunch-json',
                 kind: 'glyphs',
                 version: 1,
-                masters: mastersMeta(2),
+                masters: stationsMeta(2),
                 glyphs: [
                     {
                         name: 'o',
@@ -1508,11 +1510,11 @@ describe('applyPasteGlyphsDocument', () => {
         expect(result.createdGlyphNames).toEqual(['o']);
         const glyph = font.findGlyph('o');
         expect(glyph.leftMetricsKey).toBe('=H');
-        expect(glyph.layers[0].width).toBe(500);
-        expect(glyph.layers[1].width).toBe(560);
-        expect(glyph.layers[0].paths).toHaveLength(1);
-        expect(glyph.layers[1].paths).toHaveLength(1);
-        expect(glyph.layers[1].anchors[0]).toMatchObject({
+        expect(glyph.drawings[0].width).toBe(500);
+        expect(glyph.drawings[1].width).toBe(560);
+        expect(glyph.drawings[0].paths).toHaveLength(1);
+        expect(glyph.drawings[1].paths).toHaveLength(1);
+        expect(glyph.drawings[1].anchors[0]).toMatchObject({
             name: 'top',
             x: 30,
             y: 700
@@ -1526,7 +1528,7 @@ describe('applyPasteGlyphsDocument', () => {
                 format: 'counterpunch-json',
                 kind: 'glyphs',
                 version: 1,
-                masters: mastersMeta(1),
+                masters: stationsMeta(1),
                 glyphs: [
                     {
                         name: 'o',
@@ -1560,7 +1562,7 @@ describe('applyPasteGlyphsDocument', () => {
         expect(result.error).toBeUndefined();
         expect(result.createdGlyphNames).toEqual(['o.002']);
         expect(font.glyphOrder).toEqual(['a', 'o', 'o.001', 'o.002', 'p']);
-        expect(font.findGlyph('o.002').layers[0].paths).toHaveLength(1);
+        expect(font.findGlyph('o.002').drawings[0].paths).toHaveLength(1);
     });
 
     test('pastes layer copies as AssociatedWithMaster without location', () => {
@@ -1570,7 +1572,7 @@ describe('applyPasteGlyphsDocument', () => {
                 format: 'counterpunch-json',
                 kind: 'glyphs',
                 version: 1,
-                masters: mastersMeta(1),
+                masters: stationsMeta(1),
                 glyphs: [
                     {
                         name: 'o',
@@ -1614,13 +1616,13 @@ describe('applyPasteGlyphsDocument', () => {
 
         expect(result.error).toBeUndefined();
         const glyph = font.findGlyph('o');
-        expect(glyph.layers).toHaveLength(2);
-        expect(glyph.layers[1].master).toEqual({
+        expect(glyph.drawings).toHaveLength(2);
+        expect(glyph.drawings[1].station).toEqual({
             type: 'AssociatedWithMaster',
             master: 'master-0'
         });
-        expect(glyph.layers[1].location).toBeUndefined();
-        expect(glyph.layers[1].paths).toHaveLength(1);
+        expect(glyph.drawings[1].location).toBeUndefined();
+        expect(glyph.drawings[1].paths).toHaveLength(1);
     });
 
     test('skips braces when axis keys are missing and warns', () => {
@@ -1630,7 +1632,7 @@ describe('applyPasteGlyphsDocument', () => {
                 format: 'counterpunch-json',
                 kind: 'glyphs',
                 version: 1,
-                masters: mastersMeta(1),
+                masters: stationsMeta(1),
                 glyphs: [
                     {
                         name: 'o',
@@ -1674,8 +1676,8 @@ describe('applyPasteGlyphsDocument', () => {
         );
 
         expect(result.error).toBeUndefined();
-        expect(result.warnings[0]).toMatch(/Skipped 1 intermediate/);
-        expect(font.findGlyph('o').layers).toHaveLength(1);
+        expect(result.warnings[0]).toMatch(/Skipped 1 free drawing/);
+        expect(font.findGlyph('o').drawings).toHaveLength(1);
     });
 
     test('allocates .001 when the glyph name already exists', () => {
@@ -1685,7 +1687,7 @@ describe('applyPasteGlyphsDocument', () => {
                 format: 'counterpunch-json',
                 kind: 'glyphs',
                 version: 1,
-                masters: mastersMeta(1),
+                masters: stationsMeta(1),
                 glyphs: [
                     {
                         name: 'a',
@@ -1713,7 +1715,7 @@ describe('applyPasteGlyphsDocument', () => {
 
         expect(result.error).toBeUndefined();
         expect(result.createdGlyphNames).toEqual(['a.001']);
-        expect(font.findGlyph('a.001').layers[0].width).toBe(480);
+        expect(font.findGlyph('a.001').drawings[0].width).toBe(480);
     });
 
     test('refuses paste when master counts differ', () => {
@@ -1723,7 +1725,7 @@ describe('applyPasteGlyphsDocument', () => {
                 format: 'counterpunch-json',
                 kind: 'glyphs',
                 version: 1,
-                masters: mastersMeta(2),
+                masters: stationsMeta(2),
                 glyphs: [
                     {
                         name: 'o',
@@ -1748,7 +1750,7 @@ describe('applyPasteGlyphsDocument', () => {
             }
         );
 
-        expect(result.error).toMatch(/Clipboard has 2 masters, font has 1/);
+        expect(result.error).toMatch(/Clipboard has 2 stations, font has 1/);
         expect(font.findGlyph('o')).toBeUndefined();
     });
 });
@@ -1763,7 +1765,7 @@ describe('clipboard internal round-trips', () => {
         buildSelectionClipboardDocument,
         serializeAnchorForClipboard,
         serializeComponentForClipboard,
-        serializeFontMastersForClipboard,
+        serializeFontStationsForClipboard,
         serializeGlyphForClipboard,
         serializeGuideForClipboard,
         serializePathForClipboard,
@@ -1934,8 +1936,8 @@ describe('clipboard internal round-trips', () => {
             name: serialized.name,
             leftMetricsKey: serialized.leftMetricsKey ?? null,
             rightMetricsKey: serialized.rightMetricsKey ?? null,
-            layers: serialized.layers.map((layer) => {
-                const { layerId: _layerId, ...rest } = layer;
+            layers: serialized.layers.map((drawing) => {
+                const { layerId: _drawingId, ...rest } = drawing;
                 return rest;
             }),
             featureVariations: serialized.featureVariations || []
@@ -1953,34 +1955,34 @@ describe('clipboard internal round-trips', () => {
         };
     }
 
-    function buildSelectionFromLayer(layer, glyphName) {
+    function buildSelectionFromDrawing(drawing, glyphName) {
         return buildSelectionClipboardDocument({
             glyphName,
-            layerId: layer.id ?? null,
-            paths: (layer.paths || []).map((path) =>
+            layerId: drawing.id ?? null,
+            paths: (drawing.paths || []).map((path) =>
                 serializePathForClipboard(path)
             ),
-            components: (layer.components || []).map((component) =>
+            components: (drawing.components || []).map((component) =>
                 serializeComponentForClipboard(component)
             ),
-            anchors: (layer.anchors || [])
+            anchors: (drawing.anchors || [])
                 .filter((anchor) => !!anchor.name)
                 .map((anchor) => serializeAnchorForClipboard(anchor)),
-            guides: (layer.guides || []).map((guide) =>
+            guides: (drawing.guides || []).map((guide) =>
                 serializeGuideForClipboard(guide, false)
             )
         });
     }
 
-    function clearLayerObjects(layer) {
-        while ((layer.shapes || []).length > 0) {
-            layer.removeShape(0);
+    function clearDrawingObjects(drawing) {
+        while ((drawing.shapes || []).length > 0) {
+            drawing.removeShape(0);
         }
-        while ((layer.anchors || []).length > 0) {
-            layer.removeAnchor(0);
+        while ((drawing.anchors || []).length > 0) {
+            drawing.removeAnchor(0);
         }
-        while ((layer.guides || []).length > 0) {
-            layer.removeGuide(0);
+        while ((drawing.guides || []).length > 0) {
+            drawing.removeGuide(0);
         }
     }
 
@@ -1995,7 +1997,7 @@ describe('clipboard internal round-trips', () => {
             names.map((name) =>
                 serializeGlyphForClipboard(font.findGlyph(name))
             ),
-            serializeFontMastersForClipboard(font)
+            serializeFontStationsForClipboard(font)
         );
         expect(document).not.toBeNull();
 
@@ -2029,9 +2031,9 @@ describe('clipboard internal round-trips', () => {
     test('copy layer objects, clear the layer, paste JSON back identically', () => {
         const font = Font.fromData(makeRoundTripFontData());
         const glyph = font.findGlyph('b');
-        const layer = glyph.layers[0];
+        const drawing = glyph.drawings[0];
 
-        const document = buildSelectionFromLayer(layer, glyph.name);
+        const document = buildSelectionFromDrawing(drawing, glyph.name);
         expect(document).not.toBeNull();
         const before = selectionContentSnapshot(document);
 
@@ -2040,18 +2042,18 @@ describe('clipboard internal round-trips', () => {
         );
         expect(parsed.kind).toBe('selection');
 
-        clearLayerObjects(layer);
-        expect(layer.paths).toHaveLength(0);
-        expect(layer.components).toHaveLength(0);
-        expect(layer.anchors).toHaveLength(0);
-        expect(layer.guides).toHaveLength(0);
+        clearDrawingObjects(drawing);
+        expect(drawing.paths).toHaveLength(0);
+        expect(drawing.components).toHaveLength(0);
+        expect(drawing.anchors).toHaveLength(0);
+        expect(drawing.guides).toHaveLength(0);
 
         const result = withSuppressedModelRecording(() =>
             applyPasteFragment(parsed.fragment, {
-                activeLayer: layer,
-                linkedLayers: [],
-                master: layer.getMaster?.() ?? null,
-                layerWidth: layer.width,
+                activeDrawing: drawing,
+                linkedDrawings: [],
+                master: drawing.getStation?.() ?? null,
+                drawingWidth: drawing.width,
                 verticalMetrics: null,
                 glyphExists: (name) => !!font.findGlyph(name)
             })
@@ -2064,7 +2066,7 @@ describe('clipboard internal round-trips', () => {
         expect(result.addedGuideCount).toBe(before.guides.length);
 
         const after = selectionContentSnapshot(
-            buildSelectionFromLayer(layer, glyph.name)
+            buildSelectionFromDrawing(drawing, glyph.name)
         );
         expect(after).toEqual(before);
     });
@@ -2072,19 +2074,20 @@ describe('clipboard internal round-trips', () => {
     test('round-trips format_specific for every copied layer object', () => {
         const font = Font.fromData(makeRoundTripFontData());
         const glyph = font.findGlyph('b');
-        const layer = glyph.layers[0];
-        layer.paths[0].format_specific = { 'com.example.path': 'path-data' };
-        layer.components[0].format_specific = {
+        const drawing = glyph.drawings[0];
+        drawing.paths[0].format_specific = { 'com.example.path': 'path-data' };
+        drawing.components[0].format_specific = {
             'com.example.component': 'component-data'
         };
-        layer.anchors[0].format_specific = {
+        drawing.anchors[0].format_specific = {
             'com.example.anchor': 'anchor-data'
         };
-        layer.addGuide({ x: 0, y: 300, angle: 0 }, 'guide').format_specific = {
-            'com.example.guide': 'guide-data'
-        };
+        drawing.addGuide({ x: 0, y: 300, angle: 0 }, 'guide').format_specific =
+            {
+                'com.example.guide': 'guide-data'
+            };
 
-        const document = buildSelectionFromLayer(layer, glyph.name);
+        const document = buildSelectionFromDrawing(drawing, glyph.name);
         const parsed = parseCounterpunchJson(
             stringifyClipboardDocument(document)
         );
@@ -2103,28 +2106,28 @@ describe('clipboard internal round-trips', () => {
             'com.example.guide': 'guide-data'
         });
 
-        clearLayerObjects(layer);
+        clearDrawingObjects(drawing);
         withSuppressedModelRecording(() =>
             applyPasteFragment(fragment, {
-                activeLayer: layer,
-                linkedLayers: [],
-                master: layer.getMaster?.() ?? null,
-                layerWidth: layer.width,
+                activeDrawing: drawing,
+                linkedDrawings: [],
+                master: drawing.getStation?.() ?? null,
+                drawingWidth: drawing.width,
                 verticalMetrics: null,
                 glyphExists: (name) => !!font.findGlyph(name)
             })
         );
 
-        expect(layer.paths[0].format_specific).toEqual({
+        expect(drawing.paths[0].format_specific).toEqual({
             'com.example.path': 'path-data'
         });
-        expect(layer.components[0].format_specific).toEqual({
+        expect(drawing.components[0].format_specific).toEqual({
             'com.example.component': 'component-data'
         });
-        expect(layer.anchors[0].format_specific).toEqual({
+        expect(drawing.anchors[0].format_specific).toEqual({
             'com.example.anchor': 'anchor-data'
         });
-        expect(layer.guides[0].format_specific).toEqual({
+        expect(drawing.guides[0].format_specific).toEqual({
             'com.example.guide': 'guide-data'
         });
     });

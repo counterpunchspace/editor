@@ -15,7 +15,7 @@ def classify_glyph(glyph):
     return not glyph.anchors
 ```
 
-Return `False` to hide a glyph or `True` to show it without groups. Return a mapping with groups only when categories are needed. Do not use lifecycle events in `EVENT_TYPES`: `glyph.created`, `glyph.deleted`, and `glyph.renamed` are always handled by the host. A filter that only reads glyph names uses `EVENT_TYPES = []`. Do not use `font.masters.changed` in a simple filter. Every returned group is a complete `{name, color}` mapping; group names identify groups and colors are last-wins.
+Return `False` to hide a glyph or `True` to show it without groups. Return a mapping with groups only when categories are needed. Do not use lifecycle events in `EVENT_TYPES`: `glyph.created`, `glyph.deleted`, and `glyph.renamed` are always handled by the host. A filter that only reads glyph names uses `EVENT_TYPES = []`. Do not use `font.stations.changed` in a simple filter. Every returned group is a complete `{name, color}` mapping; group names identify groups and colors are last-wins.
 
 ## Events
 
@@ -68,26 +68,26 @@ Return `False` to hide a glyph or `True` to show it without groups. Return a map
 ## `glyph.paths.changed`
 
 - Name: Glyph Paths Changed
-- Description: Path geometry or path structure on one or more layers of a glyph changed.
+- Description: Path geometry or path structure on one or more drawings of a glyph changed.
 
 ### Metadata
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `glyphName` | `string` | Yes | The affected glyph's name. |
-| `layerIds` | `string[]` | No | Layer IDs touched by the change, when known. |
+| `drawingIds` | `string[]` | No | Drawing IDs touched by the change, when known. |
 
 ## `glyph.components.changed`
 
 - Name: Glyph Components Changed
-- Description: Component membership on one or more layers of a glyph changed (add, remove, or replace).
+- Description: Component membership on one or more drawings of a glyph changed (add, remove, or replace).
 
 ### Metadata
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `glyphName` | `string` | Yes | The affected glyph's name. |
-| `layerIds` | `string[]` | No | Layer IDs touched by the change, when known. |
+| `drawingIds` | `string[]` | No | Drawing IDs touched by the change, when known. |
 
 ## `glyph.component.reference.changed`
 
@@ -99,7 +99,7 @@ Return `False` to hide a glyph or `True` to show it without groups. Return a map
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `glyphName` | `string` | Yes | The affected glyph's name. |
-| `layerIds` | `string[]` | No | Layer IDs touched by the change, when known. |
+| `drawingIds` | `string[]` | No | Drawing IDs touched by the change, when known. |
 
 ## `glyph.component.transform.changed`
 
@@ -111,79 +111,79 @@ Return `False` to hide a glyph or `True` to show it without groups. Return a map
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `glyphName` | `string` | Yes | The affected glyph's name. |
-| `layerIds` | `string[]` | No | Layer IDs touched by the change, when known. |
+| `drawingIds` | `string[]` | No | Drawing IDs touched by the change, when known. |
 
 ## `glyph.anchors.changed`
 
 - Name: Glyph Anchors Changed
-- Description: Anchors on one or more layers of a glyph changed.
+- Description: Anchors on one or more drawings of a glyph changed.
 
 ### Metadata
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `glyphName` | `string` | Yes | The affected glyph's name. |
-| `layerIds` | `string[]` | No | Layer IDs touched by the change, when known. |
+| `drawingIds` | `string[]` | No | Drawing IDs touched by the change, when known. |
 
 ## `glyph.guides.changed`
 
 - Name: Glyph Guides Changed
-- Description: Guides on one or more layers of a glyph changed.
+- Description: Guides on one or more drawings of a glyph changed.
 
 ### Metadata
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `glyphName` | `string` | Yes | The affected glyph's name. |
-| `layerIds` | `string[]` | No | Layer IDs touched by the change, when known. |
+| `drawingIds` | `string[]` | No | Drawing IDs touched by the change, when known. |
 
-## `glyph.layers.changed`
+## `glyph.drawings.changed`
 
-- Name: Glyph Layers Changed
-- Description: A glyph layer was added, removed, or otherwise structurally changed.
-
-### Metadata
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `glyphName` | `string` | Yes | The affected glyph's name. |
-| `layerIds` | `string[]` | No | Layer IDs touched by the change, when known. |
-
-## `glyph.layer.location.changed`
-
-- Name: Glyph Layer Location Changed
-- Description: An intermediate layer location (designspace coordinates) changed.
+- Name: Glyph Drawings Changed
+- Description: A glyph drawing was added, removed, or otherwise structurally changed.
 
 ### Metadata
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `glyphName` | `string` | Yes | The affected glyph's name. |
-| `layerIds` | `string[]` | No | Layer IDs touched by the change, when known. |
+| `drawingIds` | `string[]` | No | Drawing IDs touched by the change, when known. |
+
+## `glyph.drawing.location.changed`
+
+- Name: Glyph Drawing Location Changed
+- Description: A free drawing’s location (designspace coordinates) changed.
+
+### Metadata
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `glyphName` | `string` | Yes | The affected glyph's name. |
+| `drawingIds` | `string[]` | No | Drawing IDs touched by the change, when known. |
 
 ## `glyph.metrics.changed`
 
 - Name: Glyph Metrics Changed
-- Description: Layer metrics such as advance width or sidebearings changed.
+- Description: Drawing metrics such as advance width or sidebearings changed.
 
 ### Metadata
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `glyphName` | `string` | Yes | The affected glyph's name. |
-| `layerIds` | `string[]` | No | Layer IDs touched by the change, when known. |
+| `drawingIds` | `string[]` | No | Drawing IDs touched by the change, when known. |
 
 ## `glyph.metrics-key.changed`
 
 - Name: Glyph Metrics Key Changed
-- Description: A glyph- or layer-level metrics key (LSB/RSB formula) changed.
+- Description: A glyph- or drawing-level metrics key (LSB/RSB formula) changed.
 
 ### Metadata
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `glyphName` | `string` | Yes | The affected glyph's name. |
-| `layerIds` | `string[]` | No | Layer IDs touched by the change, when known. |
+| `drawingIds` | `string[]` | No | Drawing IDs touched by the change, when known. |
 
 ## `glyph.compatibility.changed`
 
@@ -195,6 +195,6 @@ Return `False` to hide a glyph or `True` to show it without groups. Return a map
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `glyphName` | `string` | Yes | The glyph whose compatibility changed. |
-| `compatible` | `boolean` | Yes | Whether the glyph's relevant layers are compatible after the change. |
-| `layerIds` | `string[]` | Yes | The layer IDs considered by the compatibility check. |
+| `compatible` | `boolean` | Yes | Whether the glyph’s relevant drawings are compatible after the change. |
+| `drawingIds` | `string[]` | Yes | The drawing IDs considered by the compatibility check. |
 

@@ -2,10 +2,10 @@
  * Live previews for linked windows.
  *
  * While a drag or a key burst is going on, the editing window stages its
- * changed layers in its own worker and keeps the Yjs document untouched until
+ * changed drawings in its own worker and keeps the Yjs document untouched until
  * the gesture commits. Linked windows would see nothing before that. The
- * sender therefore also posts those layers, throttled, and a linked window
- * stages them the same way: its model layers (without recording a change),
+ * sender therefore also posts those drawings, throttled, and a linked window
+ * stages them the same way: its model drawings (without recording a change),
  * its worker overlay, a live compile, a repaint. The commit that follows is
  * an ordinary Yjs update that replaces all of it. Collaborators in other
  * browsers get no previews, only the commit.
@@ -15,7 +15,7 @@ import { Logger } from './logger';
 
 const console = new Logger('LinkedLivePreview');
 
-export type LivePreviewLayerRecord = {
+export type LivePreviewDrawingRecord = {
     glyphName: string;
     layerId: string;
     layerData: Babelfont.Layer;
@@ -27,10 +27,10 @@ export type LivePreviewCompile = {
 };
 
 export type LivePreviewPayload = {
-    /** Compile-facing layers for the worker overlay (recomposed dependents too). */
-    overlay: LivePreviewLayerRecord[];
-    /** Logical layers for the model; automatic layers recompose on their own. */
-    model: LivePreviewLayerRecord[];
+    /** Compile-facing drawings for the worker overlay (recomposed dependents too). */
+    overlay: LivePreviewDrawingRecord[];
+    /** Logical drawings for the model; automatic drawings recompose on their own. */
+    model: LivePreviewDrawingRecord[];
     compile: LivePreviewCompile | null;
 };
 
@@ -120,12 +120,12 @@ export class LivePreviewThrottle<T> {
 export type LinkedPreviewHost = {
     /** This window is in a drag or burst of its own; it keeps its own state. */
     isBusyLocally(): boolean;
-    applyModelLayers(records: LivePreviewLayerRecord[]): void;
-    /** Put the model layers back to what the document holds. */
-    revertModelLayers(
+    applyModelDrawings(records: LivePreviewDrawingRecord[]): void;
+    /** Put the model drawings back to what the document holds. */
+    revertModelDrawings(
         targets: Array<{ glyphName: string; layerId: string }>
     ): void;
-    stageOverlay(records: LivePreviewLayerRecord[]): Promise<boolean>;
+    stageOverlay(records: LivePreviewDrawingRecord[]): Promise<boolean>;
     requestCompile(compile: LivePreviewCompile): void;
     repaint(glyphNames: string[]): void | Promise<void>;
     clearOverlay(): void;
@@ -190,15 +190,15 @@ export class LinkedLivePreviewReceiver {
     }
 
     /**
-     * A committed update arrived. When it covers the previewed layers it is
+     * A committed update arrived. When it covers the previewed drawings it is
      * the authority and nothing needs reverting; an unrelated commit (another
      * glyph, a collaborator) leaves the preview in place.
      */
-    settle(touchedLayerIds: Set<string>): void {
+    settle(touchedDrawingIds: Set<string>): void {
         if (
             this.active &&
             !this.active.targets.some((target) =>
-                touchedLayerIds.has(target.layerId)
+                touchedDrawingIds.has(target.layerId)
             )
         ) {
             return;
@@ -238,7 +238,7 @@ export class LinkedLivePreviewReceiver {
             string,
             { glyphName: string; layerId: string }
         >();
-        // Layers an earlier tick previewed stay to be reverted, even when
+        // Drawings an earlier tick previewed stay to be reverted, even when
         // this tick no longer covers them.
         for (const target of this.active?.targets ?? []) {
             targets.set(`${target.glyphName}\u0000${target.layerId}`, target);
@@ -255,8 +255,8 @@ export class LinkedLivePreviewReceiver {
         };
         try {
             if (payload.model.length) {
-                this.host.applyModelLayers(payload.model);
-                // Show the layers at once: the glyph open in the editor is
+                this.host.applyModelDrawings(payload.model);
+                // Show the drawings at once: the glyph open in the editor is
                 // drawn from the model and need not wait for the worker.
                 await this.host.repaint([
                     ...new Set(
@@ -298,7 +298,7 @@ export class LinkedLivePreviewReceiver {
             return;
         }
         try {
-            this.host.revertModelLayers(active.targets);
+            this.host.revertModelDrawings(active.targets);
             this.host.clearOverlay();
             this.host.recompile();
             void this.host.repaint([

@@ -13,7 +13,7 @@ function snapshot(overrides = {}) {
         editMode: true,
         selectedGlyphName: 'H',
         glyphStack: 'H@layer',
-        layerDataPresent: true,
+        drawingDataPresent: true,
         glyphSelectedAt: 9_000,
         pendingInterpolateCount: 0,
         oldestPendingInterpolateAt: null,
@@ -35,7 +35,7 @@ describe('evaluateEditorHealth', () => {
                     propertiesUpdateStartedAt:
                         10_000 - (UI_BLOCK_REVEAL_MS - 1),
                     glyphStack: '',
-                    layerDataPresent: false
+                    drawingDataPresent: false
                 })
             )
         ).toEqual([]);
@@ -47,7 +47,7 @@ describe('evaluateEditorHealth', () => {
                 propertiesUpdateStartedAt: 10_000 - UI_BLOCK_REVEAL_MS,
                 propertiesUpdateSkipCount: 2,
                 glyphStack: '',
-                layerDataPresent: false
+                drawingDataPresent: false
             })
         );
         expect(issues.map((issue) => issue.id)).toContain('ui-blocked');
@@ -59,7 +59,7 @@ describe('evaluateEditorHealth', () => {
             evaluateEditorHealth(
                 snapshot({
                     glyphStack: '',
-                    layerDataPresent: false,
+                    drawingDataPresent: false,
                     pendingCompileCount: 1,
                     glyphSelectedAt: 0
                 })
@@ -71,7 +71,7 @@ describe('evaluateEditorHealth', () => {
         const issues = evaluateEditorHealth(
             snapshot({
                 glyphStack: '',
-                layerDataPresent: false,
+                drawingDataPresent: false,
                 glyphSelectedAt: 10_000 - STACK_STALL_REVEAL_MS
             })
         );
@@ -117,7 +117,7 @@ describe('evaluateEditorHealth', () => {
                 priorSessionWasUnhealthy: true,
                 pageLoadedAt: 9_000,
                 glyphStack: '',
-                layerDataPresent: false,
+                drawingDataPresent: false,
                 glyphSelectedAt: 10_000 - STACK_STALL_REVEAL_MS
             })
         );

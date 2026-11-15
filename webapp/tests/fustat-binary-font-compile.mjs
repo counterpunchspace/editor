@@ -58,12 +58,12 @@ function glyphShard(glyph) {
     const glyphMap = doc.getMap('glyph');
     for (const [key, value] of Object.entries(glyph)) {
         if (key === 'layers' && Array.isArray(value)) {
-            const layers = new Y.Map();
-            for (const layer of value) {
-                const layerId = layer.id || 'layer';
-                layers.set(layerId, toY({ ...layer, id: layerId }));
+            const drawings = new Y.Map();
+            for (const drawing of value) {
+                const drawingId = drawing.id || 'layer';
+                drawings.set(drawingId, toY({ ...drawing, id: drawingId }));
             }
-            glyphMap.set('layers', layers);
+            glyphMap.set('layers', drawings);
             continue;
         }
         glyphMap.set(key, toY(value));

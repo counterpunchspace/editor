@@ -734,7 +734,7 @@ describe('CloudPlugin.openAsset', () => {
             glyphs: [
                 {
                     name: 'A',
-                    layers: [
+                    drawings: [
                         {
                             id: 'L0',
                             shapes: [{}, {}],
@@ -882,7 +882,7 @@ describe('CloudPlugin.openAsset', () => {
             glyphs: [
                 {
                     name: 'A',
-                    layers: [
+                    drawings: [
                         {
                             id: 'L0',
                             shapes: [{}, {}],
@@ -1191,7 +1191,7 @@ describe('CloudPlugin.openAsset', () => {
             glyphs: [
                 {
                     name: 'A',
-                    layers: [
+                    drawings: [
                         {
                             id: 'L0',
                             shapes: [{}, {}],
@@ -1243,7 +1243,7 @@ describe('CloudPlugin.openAsset', () => {
             glyphs: [
                 {
                     name: 'A',
-                    layers: [
+                    drawings: [
                         {
                             id: 'L0',
                             shapes: [{}, {}],
@@ -1287,7 +1287,7 @@ describe('CloudPlugin.openAsset', () => {
             glyphs: [
                 {
                     name: 'A',
-                    layers: [
+                    drawings: [
                         {
                             id: 'L0',
                             shapes: [{}, {}],
@@ -1399,7 +1399,7 @@ describe('CloudPlugin.openAsset', () => {
             glyphs: [
                 {
                     name: 'A',
-                    layers: [
+                    drawings: [
                         {
                             id: 'L0',
                             shapes: [{}, {}],
@@ -1509,7 +1509,7 @@ describe('CloudPlugin.openAsset', () => {
             glyphs: [
                 {
                     name: 'A',
-                    layers: [
+                    drawings: [
                         {
                             id: 'L0',
                             shapes: [{}, {}],
@@ -2202,7 +2202,7 @@ describe('CloudPlugin master topology gate', () => {
             residentIds: []
         });
 
-        expect(plugin.getMasterTopologyGate()).toEqual({ allowed: true });
+        expect(plugin.getStationTopologyGate()).toEqual({ allowed: true });
     });
 
     test('blocks master changes in a full session until catch-up loads every catalog glyph', () => {
@@ -2214,13 +2214,13 @@ describe('CloudPlugin master topology gate', () => {
                 resident.has(documentId.slice('glyph:'.length))
         };
 
-        const gate = plugin.getMasterTopologyGate();
+        const gate = plugin.getStationTopologyGate();
         expect(gate.allowed).toBe(false);
         expect(gate.reason).toMatch(/still downloading/);
         expect(gate.canReopenWithAllGlyphs).toBeUndefined();
 
         resident.add('id-b');
-        expect(plugin.getMasterTopologyGate()).toEqual({ allowed: true });
+        expect(plugin.getStationTopologyGate()).toEqual({ allowed: true });
     });
 
     test('a full session fetches catalog glyphs the HTTP hydrate missed', () => {
@@ -2256,7 +2256,7 @@ describe('CloudPlugin master topology gate', () => {
             residentIds: ['id-a', 'id-b']
         });
 
-        expect(plugin.getMasterTopologyGate()).toEqual({ allowed: true });
+        expect(plugin.getStationTopologyGate()).toEqual({ allowed: true });
     });
 
     test('blocks master changes while one catalog glyph is still on the server', () => {
@@ -2266,7 +2266,7 @@ describe('CloudPlugin master topology gate', () => {
             residentIds: ['id-a']
         });
 
-        const gate = plugin.getMasterTopologyGate();
+        const gate = plugin.getStationTopologyGate();
         expect(gate.allowed).toBe(false);
         expect(gate.reason).toMatch(/only partly downloaded/);
         expect(gate.reason).toMatch(/Reopen it with all glyphs/);
@@ -2280,7 +2280,7 @@ describe('CloudPlugin master topology gate', () => {
             residentIds: []
         });
 
-        const gate = plugin.getMasterTopologyGate();
+        const gate = plugin.getStationTopologyGate();
         expect(gate.allowed).toBe(false);
         expect(gate.canReopenWithAllGlyphs).toBe(false);
     });
@@ -2293,7 +2293,7 @@ describe('CloudPlugin master topology gate', () => {
         });
         plugin._overviewHydrateInFlight = Promise.resolve([]);
 
-        expect(plugin.getMasterTopologyGate().allowed).toBe(false);
+        expect(plugin.getStationTopologyGate().allowed).toBe(false);
     });
 
     test('does not offer a reopen at the forced-sparse catalog size', () => {
@@ -2310,7 +2310,7 @@ describe('CloudPlugin master topology gate', () => {
             residentIds: ids.slice(1)
         });
 
-        const gate = plugin.getMasterTopologyGate();
+        const gate = plugin.getStationTopologyGate();
         expect(gate.allowed).toBe(false);
         expect(gate.canReopenWithAllGlyphs).toBe(false);
         expect(gate.reason).toMatch(/stay on the server/);
@@ -2324,7 +2324,7 @@ describe('CloudPlugin master topology gate', () => {
         });
         window.windowRole = { isLinkedWindow: () => true };
 
-        expect(plugin.getMasterTopologyGate().canReopenWithAllGlyphs).toBe(
+        expect(plugin.getStationTopologyGate().canReopenWithAllGlyphs).toBe(
             false
         );
     });
@@ -2890,11 +2890,11 @@ describe('CloudPlugin glyph add quota', () => {
     test('Save As is blocked up front while a cloud font is partly downloaded', async () => {
         window.currentFontModel = { glyphs: [{}] };
         plugin.getCurrentAssetIdForSharing = () => 'asset-1';
-        plugin.getMasterTopologyGate = () => ({ allowed: false });
+        plugin.getStationTopologyGate = () => ({ allowed: false });
         const blocker = await plugin.getSaveAsBlocker();
         expect(blocker.note).toBe('This font isn’t fully downloaded');
 
-        plugin.getMasterTopologyGate = () => ({ allowed: true });
+        plugin.getStationTopologyGate = () => ({ allowed: true });
         await expect(plugin.getSaveAsBlocker()).resolves.toBeNull();
     });
 

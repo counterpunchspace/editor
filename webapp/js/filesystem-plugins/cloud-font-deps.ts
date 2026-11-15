@@ -73,14 +73,14 @@ function collectShapeReferences(glyph: Record<string, unknown>): string[] {
             visitShape(child);
         }
     };
-    const layers = Array.isArray(glyph.layers) ? glyph.layers : [];
-    for (const layer of layers) {
-        const layerRecord = asRecord(layer);
-        if (!layerRecord) {
+    const drawings = Array.isArray(glyph.layers) ? glyph.layers : [];
+    for (const drawing of drawings) {
+        const drawingRecord = asRecord(drawing);
+        if (!drawingRecord) {
             continue;
         }
-        const shapes = Array.isArray(layerRecord.shapes)
-            ? layerRecord.shapes
+        const shapes = Array.isArray(drawingRecord.shapes)
+            ? drawingRecord.shapes
             : [];
         for (const shape of shapes) {
             visitShape(shape);
@@ -113,16 +113,16 @@ function collectMetricsKeyStrings(glyph: Record<string, unknown>): string[] {
     pushKey(glyph.rightMetricsKey);
     pushKey(glyph.widthMetricsKey);
     pushFormatSpecificMetricKeys(glyph, pushKey);
-    const layers = Array.isArray(glyph.layers) ? glyph.layers : [];
-    for (const layer of layers) {
-        const layerRecord = asRecord(layer);
-        if (!layerRecord) {
+    const drawings = Array.isArray(glyph.layers) ? glyph.layers : [];
+    for (const drawing of drawings) {
+        const drawingRecord = asRecord(drawing);
+        if (!drawingRecord) {
             continue;
         }
-        pushKey(layerRecord.leftMetricsKey);
-        pushKey(layerRecord.rightMetricsKey);
-        pushKey(layerRecord.widthMetricsKey);
-        pushFormatSpecificMetricKeys(layerRecord, pushKey);
+        pushKey(drawingRecord.leftMetricsKey);
+        pushKey(drawingRecord.rightMetricsKey);
+        pushKey(drawingRecord.widthMetricsKey);
+        pushFormatSpecificMetricKeys(drawingRecord, pushKey);
     }
     return keys;
 }

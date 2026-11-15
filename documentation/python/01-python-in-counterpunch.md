@@ -10,12 +10,12 @@ These helpers are already in scope and do not need to be imported:
 font = Font()      # open font; fails if none is open
 others = OtherFonts()  # fonts open in Counterpunch's other windows
 glyph = Glyph()    # glyph being edited in edit mode
-layer = Layer()    # layer being edited in edit mode
-master = Master()  # selected master in edit or text mode
+drawing = Drawing()  # drawing being edited in edit mode
+station = Station()  # selected station in edit or text mode
 Notification('Title', 'Optional body')  # OS notification
 ```
 
-`OtherFonts()` returns the fonts open in Counterpunch's other windows as a list, empty when no other font is open. `Glyph()` and `Layer()` raise when outline editing is inactive. `Master()` uses the active layer in outline mode, or the selected master in text mode. `Notification(title, body="")` posts an OS notification. The first call may ask the browser for permission.
+`OtherFonts()` returns the fonts open in Counterpunch's other windows as a list, empty when no other font is open. `Glyph()` and `Drawing()` raise when outline editing is inactive. `Station()` uses the active drawing’s station in outline mode, or the selected station in text mode. `Notification(title, body="")` posts an OS notification. The first call may ask the browser for permission.
 
 ![Scripts view next to Konsole](images/python-views.png)
 

@@ -12,7 +12,7 @@ Browsers forget file access when they restart, unless Counterpunch is installed 
 
 ## Script or filter fails
 
-Usually a syntax error, an unexpected property, or calling `Glyph()` / `Layer()` outside outline editing. Shrink the test, read the first line of the error, and try the same call in Konsole. Filters must not edit the font.
+Usually a syntax error, an unexpected property, or calling `Glyph()` / `Drawing()` outside outline editing. Shrink the test, read the first line of the error, and try the same call in Konsole. Filters must not edit the font.
 
 ## AI assistant is unavailable
 

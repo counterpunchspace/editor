@@ -4,11 +4,11 @@
 
 Design record. Not scheduled. No loader or Babelfont converter is part of this note.
 
-A directory format, working name `.cpfont`, holding the same information as a Babelfont font. Every file is the same indented block format: Python’s indent rule, a colon after each key, and tokens separated by spaces. Feature source sits in a `code` block inside that format. A loader rebuilds Babelfont JSON in one linear pass: parse each file, expand path lines into nodes, flatten the layer tree, swap master slugs for ids.
+A directory format, working name `.cpfont`, holding the same information as a Babelfont font. Every file is the same indented block format: Python’s indent rule, a colon after each key, and tokens separated by spaces. Feature source sits in a `code` block inside that format. A loader rebuilds Babelfont JSON in one linear pass: parse each file, expand path lines into nodes, flatten the drawing tree, swap station slugs for ids.
 
 ## Why this shape
 
-Babelfont’s in-memory model (`[babelfont-rs/babelfont/src/font.rs](../../babelfont-rs/babelfont/src/font.rs)`, `[glyph.rs](../../babelfont-rs/babelfont/src/glyph.rs)`, `[layer.rs](../../babelfont-rs/babelfont/src/layer.rs)`) is one document: a flat `layers` array, backgrounds as sibling layers linked by `background_layer_id`, kerning pairs on each master, and nodes as `{"x","y","nodetype"}` objects. Counterpunch already projects that into main layers, attached backgrounds, and separate layer copies (`[Glyph.layers` in `editor/webapp/js/babelfont-model.ts](../webapp/js/babelfont-model.ts)`).
+Babelfont’s in-memory model (`[babelfont-rs/babelfont/src/font.rs](../../babelfont-rs/babelfont/src/font.rs)`, `[glyph.rs](../../babelfont-rs/babelfont/src/glyph.rs)`, `[layer.rs](../../babelfont-rs/babelfont/src/layer.rs)`) is one document: a flat `layers` array, backgrounds as sibling layers linked by `background_layer_id`, kerning pairs on each `masters` entry, and nodes as `{"x","y","nodetype"}` objects. Counterpunch already projects that into drawings, attached background drawings, and separate drawing copies (`[Glyph.drawings` in `editor/webapp/js/babelfont-model.ts](../webapp/js/babelfont-model.ts)`).
 
 Splitting files is what makes GitHub usable. The block spelling is what makes a point move a one-token diff: indent shows nesting, the schema tells a map from a list, and a path line has no comma for the previous line to rewrite. The parse tree of each file is the Babelfont JSON this structure implies. Every `format_specific` value is a JSON value, and the object appended to a node is JSON. Nothing else in the package is JSON. The bag has no schema, so a bare token cannot be turned back into a string, number, bool, null, object, or array.
 
@@ -21,7 +21,7 @@ flowchart TD
   pkg --> order[glyphorder.txt]
   pkg --> glyphs[glyphs directory]
   glyphs --> g[one block file per glyph]
-  g --> main[layers keyed by master]
+  g --> main[layers keyed by station]
   main --> bg[background]
   main --> mid[intermediates]
   g --> copies[copies]
@@ -55,10 +55,10 @@ Family.cpfont/
   variation-sequences           # only when UVS pairs exist
 ```
 
-- `font` is identity, names, axes, cross-axis mappings, masters, instances, master metrics, and master guides. It contains neither glyphs, nor kerning pairs, nor feature source.
+- `font` is identity, names, axes, cross-axis mappings, stations, instances, station metrics, and station guides. It contains neither glyphs, nor kerning pairs, nor feature source.
 - `glyphs/contents` maps each glyph name to its filename. That map is the glyph set. `glyphorder.txt` is one glyph name per line and is only the order. Names present in `contents` and absent from the order are appended in filename order. The order may also name glyphs that have no file. Reordering glyphs does not rewrite glyph files. A writer keeps an existing filename instead of inventing a new one.
 - The package contains plain files and directories only. Symlinks are not allowed.
-- Kerning is outside `font`. Groups are separate from pair values so a spacing change does not sit in the membership lists. One pair file per master keeps two people kerning different masters from colliding. RTL pairs, stored in Babelfont under `Font.format_specific`, are first-class here. Kerning files have no `format_specific` of their own.
+- Kerning is outside `font`. Groups are separate from pair values so a spacing change does not sit in the membership lists. One pair file per station keeps two people kerning different stations from colliding. RTL pairs, stored in Babelfont under `Font.format_specific`, are first-class here. Kerning files have no `format_specific` of their own.
 - Each class, prefix, and feature is one block file. Its `code` value is the AFDKO text. `features/features` is Babelfont’s `Features` object: include paths and that object’s bag.
 - Unicode variation sequences get their own file because CJK UVS lists are large and rarely edited with outlines. The map has no `format_specific`.
 - `data/` holds bulky files that would swamp a glyph diff: PNG images and TrueType or hint programs. A `format_specific` value may name a file there. Image color stays in the bag and is applied when the image is read. The stored PNG is unchanged.
@@ -69,9 +69,9 @@ Machine-local data stays out of the package: Babelfont `source`, and a save time
 
 ## Names, not UUIDs
 
-Masters, instances, and axes are referred to by a short slug (`regular`, `bold`, `wght`) defined once in `font`. Display names live only there. Renaming “Regular” to “Roman” does not touch glyph or kerning files. Changing a slug is a deliberate repo-wide rename.
+Stations, instances, and axes are referred to by a short slug (`regular`, `bold`, `wght`) defined once in `font`. Display names live only there. Renaming “Regular” to “Roman” does not touch glyph or kerning files. Changing a slug is a deliberate repo-wide rename.
 
-CRDT ids on glyphs, layers, paths, nodes, anchors, and components are not source. A Babelfont session can mint them on load. Writing them into the package would dominate every diff.
+CRDT ids on glyphs, drawings, paths, nodes, anchors, and components are not source. A Babelfont session can mint them on load. Writing them into the package would dominate every diff.
 
 `format_specific` stays what it is in `.babelfont`: one bag on the object it belongs to, written after that object’s own fields. See below. A few structures are promoted out of the bag so they are not stored twice: feature-variation rules, RTL kerning, kern-group membership, and metrics keys (`left`, `right`).
 
@@ -97,7 +97,7 @@ The encoding, applied before the `.glyph` suffix:
 
 The file is schema-directed. Indentation is the only nesting. A colon marks a key. The parser knows, at each block, whether it is reading a map, a list, or a scalar. Braces and quotes appear only inside a `format_specific` JSON object.
 
-Main layers are the master layers the Layers panel shows, keyed by master slug in master order. A background is nested on the layer it belongs to. Intermediates (brace layers: associated with that master and carrying a location) sit on that master, in axis order, because the panel groups them there. Layer copies (associated with a master, no location, not compiled) are a separate list. Feature-variation families are a third list so they stay distinct from copies.
+The `layers` map holds the drawings the Drawings list shows, keyed by station slug in station order. A background drawing is nested on the drawing it belongs to. Free drawings (`intermediates`: associated with that station and carrying a location) sit on that station, in axis order, because the panel groups them there. Drawing copies (associated with a station, no location, not compiled) are a separate list. Variation families are a third list so they stay distinct from copies.
 
 ```text
 name: A
@@ -148,9 +148,9 @@ variations:
 
 Glyph-level fields, matching Babelfont’s `Glyph`: `name`, `production`, `unicode` (hex strings, space-separated on one line), `category`, `exported` (omit when true), `direction`, smart-component `axes`, metrics keys (`left`, `right`), `format_specific`.
 
-A layer holds `width`, `shapes`, `anchors`, `guides`, optional `color`, optional color-font `layerIndex`, optional metrics-key overrides, and `format_specific`. Backgrounds hold `shapes` only. Anchors, guides, and advance stay on the foreground; the editor already treats them that way.
+A drawing holds `width`, `shapes`, `anchors`, `guides`, optional `color`, optional color-font `layerIndex`, optional metrics-key overrides, and `format_specific`. Backgrounds hold `shapes` only. Anchors, guides, and advance stay on the foreground; the editor already treats them that way.
 
-A missing master key means that master has no layer. An empty layer is a present key with no outlines.
+A missing station key means that station has no drawing. An empty drawing is a present key with no outlines.
 
 ### Grammar
 
@@ -158,9 +158,9 @@ A missing master key means that master has no layer. An empty layer is a present
 - A key runs to the first `:`. That lets a kerning pair contain a space (`A T: -30`). `key: value` is a scalar; the value is the rest of the line. `key:` with a deeper following line opens a block. A list of strings is the exception: each child line is one string and has no colon. The value of `format_specific` is not a block. It is one JSON object, parsed with `JSON.parse`, so a key inside the bag may contain spaces and colons.
 - A path’s nodes are groups on the `path:` line. A group is a type token (`c`, `cs`, `l`, `ls`, `q`, `qs`, `m`, `ms`, `o`), then x and y, then an optional JSON object that is that node’s `format_specific`. The path stays one line.
 - Blank lines are ignored. They never separate values. `#` starts a comment through end of line.
-- In a map (`layers`, a master layer, `location`), each key appears once.
+- In a map (`layers`, a drawing, `location`), each key appears once.
 - In a list, a line at the item indent starts an element. Lines indented under it belong to that element, until the next line at that indent or shallower. Head keys are `path` and `glyph` inside `shapes`, `master` inside `copies`, an axis tag or `location` inside `intermediates`, and an axis tag inside `variations`.
-- A single-axis intermediate is `wght: 450` with the layer body indented under it. Several axes use `location:` and put only axis keys in that map; `width` and `shapes` stay siblings of `location`, indented one level under the element head.
+- A single-axis free drawing is `wght: 450` with the drawing body indented under it. Several axes use `location:` and put only axis keys in that map; `width` and `shapes` stay siblings of `location`, indented one level under the element head.
 - The rest of a string line is one string (`name: f_f_l`, `category: Letter`). `unicode` and coordinate-like fields split on spaces. Known numeric fields coerce. There is no untyped guessing: a glyph named `no` stays the string `no`.
 - Quotes appear only when a value is empty or has leading or trailing spaces. They also appear inside a `format_specific` JSON object, where every string is quoted.
 
@@ -238,12 +238,12 @@ Promoted out of the bag, so they are not stored twice: feature-variation rules, 
 - `Master` (`[master.rs](../../babelfont-rs/babelfont/src/master.rs)`). `iconName`, `visible`, stem values, number values, userData. Designspace stashes the style name here.
 - `Instance` (`[instance.rs](../../babelfont-rs/babelfont/src/instance.rs)`). `weightClass`, `widthClass`, `exports`, `isBold`, `isItalic`, userData, custom parameters.
 - `Glyph` (`[glyph.rs](../../babelfont-rs/babelfont/src/glyph.rs)`). Short keys from Glyphs: `color`, `note`, `script`, `subcategory`, `locked`, `tags`, plus userData. `metric_left` / `metric_right` are the `left` / `right` fields instead.
-- `Layer` (`[layer.rs](../../babelfont-rs/babelfont/src/layer.rs)`). `colorLabel`, `attr`, hints, annotations, background image, vertical metrics, userData. Every layer in the file is this type: master, intermediate, copy, variation, and the nested background.
+- `Layer` (`[layer.rs](../../babelfont-rs/babelfont/src/layer.rs)`). `colorLabel`, `attr`, hints, annotations, background image, vertical metrics, userData. Every drawing in the file is this type: a station’s drawing, a free drawing, a copy, a variation, and the nested background.
 - `Path` (`[shape.rs](../../babelfont-rs/babelfont/src/shape.rs)`). `fip001-boolean`, `attr`. Indented under the path line.
 - `Component` (`[shape.rs](../../babelfont-rs/babelfont/src/shape.rs)`). `alignment`, `componentAnchor`, `componentLocked`, `attr`. Indented under the `glyph:` line.
 - `Node` (`[node.rs](../../babelfont-rs/babelfont/src/common/node.rs)`). Glyphs node `userData`, UFO point lib. The JSON object at the end of that node group, not an indented block.
 - `Anchor` (`[anchor.rs](../../babelfont-rs/babelfont/src/anchor.rs)`). `anchorLocked`, `anchorOrientation`, UFO lib.
-- `Guide` (`[guide.rs](../../babelfont-rs/babelfont/src/guide.rs)`). userData, on a master guide and on a layer guide.
+- `Guide` (`[guide.rs](../../babelfont-rs/babelfont/src/guide.rs)`). userData, on a station guide and on a drawing guide.
 - `Features` (`[features.rs](../../babelfont-rs/babelfont/src/features.rs)`). Fontra `customData`, copied through under its original keys. File: `features/features`.
 - `PossiblyAutomaticCode` (`[features.rs](../../babelfont-rs/babelfont/src/features.rs)`). On each class, prefix, and feature: `com.schriftgestalt.Glyphs.disabled`, `notes`, and `labels`.
 
@@ -303,7 +303,7 @@ Moving one pair’s value is a one-line diff. `kerning/rtl/regular` uses the sam
 
 ## Font file
 
-`font` lists metrics and guides on each master. Kerning lives under `kerning/`. `Axis.format_specific` is shown because the field is on the struct; Glyphs import leaves it empty and a writer then omits the block.
+`font` lists metrics and guides on each station. Kerning lives under `kerning/`. `Axis.format_specific` is shown because the field is on the struct; Glyphs import leaves it empty and a writer then omits the block.
 
 ```text
 format: 1
@@ -384,14 +384,14 @@ Shared:
 - Fixed key order, documented per object.
 - Omit default and empty values: `exported` when true, identity transforms, empty `format_specific`, empty backgrounds, `.0` on integral numbers.
 - Shortest round-trip decimal for fractional numbers. `100` stays `100`.
-- Layer keys follow master order. Intermediates follow axis order. Copies follow master slug, then name. Kern pairs and group members follow the sorts above.
+- Drawing keys follow station order. Free drawings follow axis order. Copies follow station slug, then name. Kern pairs and group members follow the sorts above.
 - The source file is the numeric authority. Degrees convert to Babelfont radians on the way in; the way out quantizes back to the stored degree value, so a load/save does not dirty `rotate`.
 
 Glyph files also:
 
 - One blank line between top-level sections (`layers`, `copies`, `variations`, `format_specific`). No blank lines inside a section.
 - Top-level order: `name`, `production`, `unicode`, `category`, `exported`, `direction`, `axes`, `left`, `right`, `layers`, `copies`, `variations`, `format_specific`.
-- Layer order: `width`, `left`, `right`, `shapes`, `anchors`, `guides`, `color`, `layerIndex`, `background`, `intermediates`, `format_specific`.
+- Drawing key order: `width`, `left`, `right`, `shapes`, `anchors`, `guides`, `color`, `layerIndex`, `background`, `intermediates`, `format_specific`.
 - On every object, `format_specific` is the last key. Its JSON object’s keys are sorted by string.
 
 Every `format_specific` value is one canonical compact JSON object on the same line: strings quoted, keys sorted, no extra spaces. A node’s trailing object follows the same JSON rules.
@@ -401,7 +401,7 @@ Every `format_specific` value is one canonical compact JSON object on the same l
 1. Parse every block file with an indent stack. Read `glyphs/contents` as the glyph-name-to-filename map and `glyphorder.txt` as lines. `JSON.parse` the whole `format_specific` object and every node suffix. A type token ending in `s` (`cs`, `ls`, `qs`, `ms`) sets `smooth`.
 2. Build Babelfont masters, axes, instances, names, and features from `font` and `features/`.
 3. Split each path line into nodes `{x, y, nodetype, smooth}`. A `{...}` after a node is that node’s `format_specific`. Expand each `path` / `glyph` entry into a path or component. Convert degrees to radians. `JSON.parse` each `format_specific` object onto that Babelfont object.
-4. Flatten the glyph hierarchy into `layers[]`: master layer as `DefaultForMaster`, each intermediate and each copy as `AssociatedWithMaster`, each variation layer the same plus axis rules. Mint a background sibling only when `background` is present, and link the pair.
+4. Flatten the glyph hierarchy into `layers[]`: each station’s drawing as `DefaultForMaster`, each free drawing and each copy as `AssociatedWithMaster`, each variation drawing the same plus axis rules. Mint a background sibling only when `background` is present, and link the pair.
 5. Expand kerning lines into each master’s `"left:right" → value` map, and groups into `first_kern_groups` / `second_kern_groups`.
 6. Mint fresh ids if the session wants them.
 
@@ -409,7 +409,7 @@ The reverse writer is the same steps inverted, then the canonical serializer. Ma
 
 ## Left out on purpose
 
-- One file per layer, and UFO’s font-wide layer directories. Each glyph is one file, and a background stays nested on its foreground.
+- One file per drawing, and UFO’s font-wide layer directories. Each glyph is one file, and a background stays nested on its foreground.
 - UFO’s rule that a glyph may belong to only one kerning group per side. Several groups on the same side are allowed.
 - JSON files. The package is the block format. JSON text appears only as a `format_specific` value or a node’s trailing bag.
 - List dashes and YAML typing.

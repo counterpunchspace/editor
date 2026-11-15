@@ -69,7 +69,7 @@ interface Preflights {
 }
 
 const COMPONENTS_EXPLANATION =
-    'Glyphs.app usually does not store whether components are automatically aligned. A glyph turns automatic only when the composition engine can place every component (by anchors, as an unattached-letter ligature including kerning, or as a single non-mark component) and the result matches the existing positions and layer width on every layer. Components that would move, or layers whose advance would change, stay manual.';
+    'Glyphs.app usually does not store whether components are automatically aligned. A glyph turns automatic only when the composition engine can place every component (by anchors, as an unattached-letter ligature including kerning, or as a single non-mark component) and the result matches the existing positions and width in every drawing. Components that would move, or drawings whose advance would change, stay manual.';
 
 function table(headers: string[], rows: string[][]): string {
     if (!rows.length) {
@@ -187,7 +187,7 @@ async function runConvertToCounterpunch(
         window.patchSyncEngine?.endTransaction();
     }
 
-    void window.glyphCanvas?.outlineEditor?.fetchLayerData?.(true);
+    void window.glyphCanvas?.outlineEditor?.fetchDrawingData?.(true);
     window.glyphCanvas?.updatePropertyPanel?.();
     window.glyphCanvas?.render?.();
 

@@ -3149,7 +3149,7 @@ describe('CloudAdapter durability failures', () => {
                 undefined,
                 undefined,
                 {
-                    allowSelectedLayerFallback: true
+                    allowSelectedDrawingFallback: true
                 }
             );
             expect(callOrder.slice(0, 2)).toEqual(['sync-cache', 'compile']);

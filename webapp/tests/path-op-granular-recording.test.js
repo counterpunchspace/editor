@@ -144,8 +144,8 @@ describe('Path._setStartNode — granular id-based recording', () => {
         ensureStableIds(fontJson);
         const font = new Font(fontJson);
         const glyph = font.glyphs[0];
-        const layer = glyph.layers[0];
-        const path = layer.paths[0];
+        const drawing = glyph.drawings[0];
+        const path = drawing.paths[0];
 
         // Verify nodes have ids
         const nodeIds = path.data.nodes.map((n) => n.id);
@@ -177,8 +177,8 @@ describe('Path._setStartNode — granular id-based recording', () => {
         ensureStableIds(fontJson);
         const font = new Font(fontJson);
         const glyph = font.glyphs[0];
-        const layer = glyph.layers[0];
-        const path = layer.paths[0];
+        const drawing = glyph.drawings[0];
+        const path = drawing.paths[0];
 
         const bridge = makeMockBridge();
         setupBridge(bridge);
@@ -204,8 +204,8 @@ describe('Path._setStartNode — granular id-based recording', () => {
         ensureStableIds(fontJson);
         const font = new Font(fontJson);
         const glyph = font.glyphs[0];
-        const layer = glyph.layers[0];
-        const path = layer.paths[0];
+        const drawing = glyph.drawings[0];
+        const path = drawing.paths[0];
 
         const beforeIds = path.data.nodes.map((n) => n.id);
 
@@ -226,7 +226,7 @@ describe('Path._setStartNode — granular id-based recording', () => {
         fontJson.glyphs[0].layers[0].shapes[0].closed = false;
         ensureStableIds(fontJson);
         const font = new Font(fontJson);
-        const path = font.glyphs[0].layers[0].paths[0];
+        const path = font.glyphs[0].drawings[0].paths[0];
 
         const bridge = makeMockBridge();
         setupBridge(bridge);
@@ -241,7 +241,7 @@ describe('Path._setStartNode — granular id-based recording', () => {
         const fontJson = makeTestFont(5);
         ensureStableIds(fontJson);
         const font = new Font(fontJson);
-        const path = font.glyphs[0].layers[0].paths[0];
+        const path = font.glyphs[0].drawings[0].paths[0];
 
         const bridge = makeMockBridge();
         setupBridge(bridge);
@@ -273,7 +273,7 @@ describe('Path._reverseDirection — granular id-based recording', () => {
         const fontJson = makeTestFont(5);
         ensureStableIds(fontJson);
         const font = new Font(fontJson);
-        const path = font.glyphs[0].layers[0].paths[0];
+        const path = font.glyphs[0].drawings[0].paths[0];
 
         const bridge = makeMockBridge();
         setupBridge(bridge);
@@ -295,7 +295,7 @@ describe('Path._reverseDirection — granular id-based recording', () => {
         const fontJson = makeTestFont(10);
         ensureStableIds(fontJson);
         const font = new Font(fontJson);
-        const path = font.glyphs[0].layers[0].paths[0];
+        const path = font.glyphs[0].drawings[0].paths[0];
 
         const bridge = makeMockBridge();
         setupBridge(bridge);
@@ -320,7 +320,7 @@ describe('Path._reverseDirection — granular id-based recording', () => {
         const fontJson = makeTestFont(5);
         ensureStableIds(fontJson);
         const font = new Font(fontJson);
-        const path = font.glyphs[0].layers[0].paths[0];
+        const path = font.glyphs[0].drawings[0].paths[0];
 
         const beforeIds = path.data.nodes.map((n) => n.id);
 
@@ -362,7 +362,7 @@ describe('Integration: set-start-point and reverse-direction byte budgets', () =
         setupBridge(bridge);
 
         const font = new Font(fontJson);
-        const path = font.glyphs[0].layers[0].paths[0];
+        const path = font.glyphs[0].drawings[0].paths[0];
 
         const glyphDoc = [...bridge._glyphDocs.values()][0];
         const beforeSV = Y.encodeStateVector(glyphDoc || bridge.yDoc);
@@ -386,8 +386,13 @@ describe('Integration: set-start-point and reverse-direction byte budgets', () =
         expect(update.length).toBeLessThan(3000);
 
         // Verify the Y.Doc state is correct — the first node is the former index 5.
-        const layerMap = bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1']);
-        expect(layerMap.get('shapes')).toBeUndefined();
+        const drawingMap = bridge.getYValue([
+            'glyphs',
+            'A',
+            'layers',
+            'layer-1'
+        ]);
+        expect(drawingMap.get('shapes')).toBeUndefined();
         expect(
             bridge.getYValue([
                 'glyphs',
@@ -412,7 +417,7 @@ describe('Integration: set-start-point and reverse-direction byte budgets', () =
         setupBridge(bridge);
 
         const font = new Font(fontJson);
-        const path = font.glyphs[0].layers[0].paths[0];
+        const path = font.glyphs[0].drawings[0].paths[0];
 
         const beforeSV = Y.encodeStateVector(bridge.yDoc);
 
@@ -435,7 +440,7 @@ describe('Integration: set-start-point and reverse-direction byte budgets', () =
         setupBridge(bridge);
 
         const font = new Font(fontJson);
-        const path = font.glyphs[0].layers[0].paths[0];
+        const path = font.glyphs[0].drawings[0].paths[0];
         const nodes = path.nodes;
         const oldX = nodes[0].x;
 
@@ -453,16 +458,16 @@ describe('Integration: set-start-point and reverse-direction byte budgets', () =
 describe('Assistant prompt transaction metadata', () => {
     test('preserves keyed glyph maps and collection order through undo and redo', () => {
         const fontJson = makeTestFont();
-        const secondLayer = JSON.parse(
+        const secondDrawing = JSON.parse(
             JSON.stringify(fontJson.glyphs[0].layers[0])
         );
-        secondLayer.id = 'layer-2';
-        fontJson.glyphs[0].layers.push(secondLayer);
+        secondDrawing.id = 'layer-2';
+        fontJson.glyphs[0].layers.push(secondDrawing);
 
         const secondGlyph = JSON.parse(JSON.stringify(fontJson.glyphs[0]));
         secondGlyph.name = 'B';
-        secondGlyph.layers.forEach((layer, index) => {
-            layer.id = `layer-b${index + 1}`;
+        secondGlyph.layers.forEach((drawing, index) => {
+            drawing.id = `layer-b${index + 1}`;
         });
         fontJson.glyphs.push(secondGlyph);
 
@@ -509,7 +514,7 @@ describe('Assistant prompt transaction metadata', () => {
             bridge
                 .getFontJsonSnapshot()
                 .glyphs.find((glyph) => glyph.name === 'A')
-                .layers.map((layer) => layer.id)
+                .layers.map((drawing) => drawing.id)
         ).toEqual(['layer-2', 'layer-1']);
 
         expect(
@@ -532,7 +537,7 @@ describe('Assistant prompt transaction metadata', () => {
             'A'
         ]);
         expect(
-            receiverFontJson.glyphs[1].layers.map((layer) => layer.id)
+            receiverFontJson.glyphs[1].layers.map((drawing) => drawing.id)
         ).toEqual(['layer-2', 'layer-1']);
 
         bridge.undo();
@@ -542,7 +547,7 @@ describe('Assistant prompt transaction metadata', () => {
         expect(
             bridge
                 .getFontJsonSnapshot()
-                .glyphs[0].layers.map((layer) => layer.id)
+                .glyphs[0].layers.map((drawing) => drawing.id)
         ).toEqual(['layer-1', 'layer-2']);
 
         bridge.redo();

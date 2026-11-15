@@ -2,51 +2,54 @@
 
 Type design mixes geometric, typographic, and technical terms. These are the meanings used in Counterpunch’s interface, object model, and handbook.
 
-- **Anchor** — a named point on a layer, used for attachment and measurement. Not part of a contour.
+- **Anchor** — a named point on a drawing, used for attachment and measurement. Not part of a contour.
 - **Assistant editing** — the pen toggle in the Assistant title bar. Off: inspect only. On: the assistant may mutate the font and edit an unsaved Script Editor buffer.
 - **Auto Align** — a component that follows automatic alignment (position and, when fully auto-aligned, spacing). See [Automatic composition](../editor/07-automatic-composition.md).
 - **Axis** — a variable dimension such as weight or width.
-- **Background layer** — a paired reference drawing behind a foreground layer. Paths only; it does not interpolate or own metrics.
-- **Base glyph** — a glyph’s ordinary layers, used when no feature variation is selected.
+- **Background drawing** — a reference outline behind a drawing. Paths only; it does not interpolate or own metrics.
+- **Base glyph** — a glyph’s ordinary drawings, used when no variation is selected.
 - **Browser storage** — in-browser storage for quick experiments. It stays in this browser only. Not a disk folder and not the Settings Folder.
 - **Cloud font** — a font hosted on Counterpunch’s servers. Local files are not uploaded unless you save them to the cloud with Save As or open an invite. See [Cloud fonts](../files/05-cloud-fonts.md).
 - **Codepoint** — a Unicode scalar assigned to a glyph (`glyph.codepoints`).
-- **Compatibility** — whether a glyph’s main layers share the same outline structure (paths, components, anchors) so they can interpolate (`glyph.isCompatible`).
+- **Compatibility** — whether a glyph’s drawings share the same outline structure (paths, components, anchors) so they can interpolate (`glyph.isCompatible`).
 - **Component** — a reference to another glyph’s outline, placed with an optional transformation.
 - **Contour** — a connected outline path that is part of a glyph. The object model calls this a **path**.
 - **Core** — in a cloud font, the shared part: names, features, kerning, and the glyph list. See [Cloud fonts](../files/05-cloud-fonts.md).
+- **Default station** — the station the compiled font is built from.
 - **Dependencies** — in a cloud font, the record of how glyphs use each other (for example components). See [Cloud fonts](../files/05-cloud-fonts.md).
-- **Designspace** — axis coordinates as stored on layers and masters. Feature-variation min/max use this space, not slider userspace.
-- **Feature variation** — an alternate layer family that is active only inside an axis range. The editor list is labeled **Variations**.
+- **Designspace** — axis coordinates as stored on stations and drawings. Variation min/max use this space, not slider userspace.
+- **Drawing** — a glyph’s outline at a station. Glyphs and UFO call these layers. All of a glyph’s stored outlines together are its **drawings** (`glyph.drawings`).
 - **Filter script** — Python in the Settings Folder `Filters` directory that decides which glyphs Overview shows.
 - **Font Destination** — an installed plugin that can receive an exported binary font.
+- **Free drawing** — a glyph’s outline at a location of its own, not at a station.
 - **Glyph** — a stored character shape: a letter, number, or symbol.
-- **Guide** — a guideline on a layer or master.
+- **Guide** — a guideline on a drawing or station.
 - **Handle** — an off-curve control point that shapes a curve segment.
-- **Instance** — a named style at chosen axis values. End-user apps typically expose these as a named list.
-- **Intermediate layer** — a stored layer at a non-master location.
-- **Interpolation** — generated shapes between masters. An interpolated view is temporary and not stored.
-- **Kerning** — a stored pair adjustment between two glyphs or kerning groups, edited in text mode at the current master.
+- **Instance** — a named location that you export as a static font or as a named instance of the variable font. End-user apps typically expose these as a named list.
+- **Interpolation** — generated shapes between drawings. An interpolated view is temporary and not stored.
+- **Kerning** — a stored pair adjustment between two glyphs or kerning groups, edited in text mode at the current station.
 - **Kerning group** — a named set of glyphs that share one side of a kerning pair. A glyph may have one group per side. Stored on the font as `first_kern_groups` and `second_kern_groups`.
-- **Layer** — a stored design state of a glyph, often a master in a variable font.
-- **Linked layer** — editor-only state: edits can apply to several selected layers of the same glyph at once. Not saved in the font.
-- **LKG** — left kerning group: the group on a glyph’s left side. In LTR text-mode kerning it is the **Second** operand. In RTL it is the **First** operand.
-- **LSB** — left sidebearing: the distance from `x = 0` to the left edge of the outline (`layer.lsb`).
-- **Master** — a key design at a location in axis space.
 - **Launcher** — the window Counterpunch starts with. It starts new fonts, opens fonts, and lists recent and open ones. See [The launcher](../files/01-files-view-basics.md).
+- **Layer** — one color layer of a drawing in a color font. Never a glyph’s outline at a location.
+- **Linked drawing** — editor-only state: edits can apply to several selected drawings of the same glyph at once. Not saved in the font.
+- **LKG** — left kerning group: the group on a glyph’s left side. In LTR text-mode kerning it is the **Second** operand. In RTL it is the **First** operand.
+- **Location** — any coordinate in the designspace. The current slider setting is the **current location**.
+- **LSB** — left sidebearing: the distance from `x = 0` to the left edge of the outline (`drawing.lsb`).
 - **Metrics key** — a sidebearing formula such as `=n+10` or `==|H` (`leftMetricsKey` / `rightMetricsKey`).
 - **Node / point** — an editable location on a contour. On-curve nodes sit on the path; off-curve nodes are handles.
 - **Path** — the object-model name for a **contour**.
+- **Pending sync** — cloud edits this browser still has to send. They are not on another device until they sync.
 - **Production name** — the compiled glyph name, when it differs from the working `name`.
 - **RKG** — right kerning group: the group on a glyph’s right side. In LTR text-mode kerning it is the **First** operand. In RTL it is the **Second** operand.
-- **RSB** — right sidebearing: the distance from the right edge of the outline to the advance width (`layer.rsb`).
+- **RSB** — right sidebearing: the distance from the right edge of the outline to the advance width (`drawing.rsb`).
 - **Settings Folder** — the local folder for app files: `Scripts`, `Filters`, and `Plugins`. Chosen in Settings (`Cmd/Ctrl+,`).
 - **Sidebearing** — space on one side of a glyph. The property panel labels the sides **LSB** and **RSB**.
+- **Station** — a font-wide named location where you draw. It carries axis location, metrics, alignment zones and kerning. Glyphs and UFO call these masters.
 - **Undo surface** — the focused `Cmd/Ctrl+Z` stack (Canvas, Overview, Font Info, Features, or Automation). History lists edits; it does not change which surface undo uses.
 - **UPM** — units per em: the font’s design grid (`font.upm`).
 - **Userspace** — axis values as shown on the editor sliders, which may differ from stored designspace coordinates. End-user apps expose the userspace coordinates, not designspace, unless they are identical.
-- **Pending sync** — cloud edits this browser still has to send. They are not on another device until they sync.
-- **W/Width** — advance **width** of the current layer (`layer.width`).
+- **Variation** — an alternate set of a glyph’s drawings that replaces the **base glyph** inside an axis range. The editor list is labeled **Variations**.
+- **W/Width** — advance **width** of the current drawing (`drawing.width`).
 - **Write-ahead log** — this browser’s store of unsent cloud edits. If it cannot be written, the cloud font stays read-only.
 
-Spacing is in [Sidebearing arithmetics](../editor/04-sidebearing-arithmetics.md). Pair kerning is in [Text-mode kerning](../editor/06-text-mode-kerning.md). Axes are in [Axes and masters](../editor/03-axes-masters.md). Folders are in [Project and settings folders](../getting-started/04-project-and-settings-folders.md). Scripting starts in [Python in Counterpunch](../python/01-python-in-counterpunch.md).
+Spacing is in [Sidebearing arithmetics](../editor/04-sidebearing-arithmetics.md). Pair kerning is in [Text-mode kerning](../editor/06-text-mode-kerning.md). Axes are in [Axes and stations](../editor/03-axes-stations.md). Folders are in [Project and settings folders](../getting-started/04-project-and-settings-folders.md). Scripting starts in [Python in Counterpunch](../python/01-python-in-counterpunch.md).

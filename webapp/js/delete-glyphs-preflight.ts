@@ -24,7 +24,7 @@ export type GlyphDeleteMetricsHit = {
     rightKey: string | null;
 };
 
-export type GlyphDeleteKernMasterColumn = {
+export type GlyphDeleteKernStationColumn = {
     id: string;
     label: string;
 };
@@ -32,7 +32,7 @@ export type GlyphDeleteKernMasterColumn = {
 export type GlyphDeleteKernPair = {
     left: string;
     right: string;
-    /** Parallel to GlyphDeletePreflight.kerningMasters; null = no value in that master. */
+    /** Parallel to GlyphDeletePreflight.kerningMasters; null = no value at that station. */
     values: Array<number | null>;
     /** True when deleteGlyphs will remove this pair (not merely drop a class member). */
     willRemove: boolean;
@@ -53,8 +53,8 @@ export type GlyphDeletePreflight = {
     metricsHits: GlyphDeleteMetricsHit[];
     /** Surviving glyphs that host component refs to deleted glyphs. */
     componentGlyphNames: string[];
-    /** Master columns for kerning preview tables. */
-    kerningMasters: GlyphDeleteKernMasterColumn[];
+    /** Station columns for kerning preview tables. */
+    kerningStations: GlyphDeleteKernStationColumn[];
     /** Unique LTR kerning pairs that will be removed. */
     kerningLtrHits: GlyphDeleteKernPair[];
     /** Unique RTL kerning pairs that will be removed. */

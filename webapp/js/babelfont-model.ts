@@ -17,7 +17,7 @@ import {
 } from './sparse-rename';
 import type { Babelfont } from './babelfont';
 import { setYPath } from './change-bridge-ydoc';
-import { toRestingLayerJson } from './resting-layer-json';
+import { toRestingDrawingJson } from './resting-drawing-json';
 import { glyphDataIndex, type GlyphDataSearchResult } from './glyph-data';
 import {
     labelsForGlyph,
@@ -41,12 +41,12 @@ export {
 import { assertModelMutationAllowed } from './model-mutation-policy';
 import type {
     FilesystemPlugin,
-    MasterTopologyGate
+    StationTopologyGate
 } from './filesystem-plugins/filesystem-plugin';
 import { applyGlyphRenameUiContext } from './rename-glyphs-ui-context';
 import { assertGlyphRenamePreflight } from './rename-glyphs-preflight';
 import { applyGlyphDeleteUiContext } from './delete-glyphs-ui-context';
-import { topologyEqualsForNodes } from './layer-geometry-ydoc';
+import { topologyEqualsForNodes } from './drawing-geometry-ydoc';
 import {
     countDeletedGlyphTokensInFeatureCode,
     collectFeatureLinesReferencingDeletedGlyphs,
@@ -112,19 +112,19 @@ export function ensureStableIds(
         }
     };
 
-    // Glyphs → layers → shapes/anchors/guides → nodes
+    // Glyphs → drawings → shapes/anchors/guides → nodes
     const glyphs = fontData.glyphs;
     if (Array.isArray(glyphs)) {
         for (const glyph of glyphs) {
             if (!glyph || typeof glyph !== 'object') continue;
-            const layers = (glyph as Record<string, unknown>).layers;
-            if (!Array.isArray(layers)) continue;
-            for (const layer of layers) {
-                if (!layer || typeof layer !== 'object') continue;
-                const layerObj = layer as Record<string, unknown>;
+            const drawings = (glyph as Record<string, unknown>).layers;
+            if (!Array.isArray(drawings)) continue;
+            for (const drawing of drawings) {
+                if (!drawing || typeof drawing !== 'object') continue;
+                const drawingObj = drawing as Record<string, unknown>;
 
                 // Shapes (paths and components)
-                const shapes = layerObj.shapes;
+                const shapes = drawingObj.shapes;
                 if (Array.isArray(shapes)) {
                     for (const shape of shapes) {
                         if (!shape || typeof shape !== 'object') continue;
@@ -146,7 +146,7 @@ export function ensureStableIds(
                 }
 
                 // Anchors
-                const anchors = layerObj.anchors;
+                const anchors = drawingObj.anchors;
                 if (Array.isArray(anchors)) {
                     for (const anchor of anchors) {
                         ensureId(anchor as Record<string, unknown> | undefined);
@@ -154,7 +154,7 @@ export function ensureStableIds(
                 }
 
                 // Guides
-                const guides = layerObj.guides;
+                const guides = drawingObj.guides;
                 if (Array.isArray(guides)) {
                     for (const guide of guides) {
                         ensureId(guide as Record<string, unknown> | undefined);
@@ -164,12 +164,12 @@ export function ensureStableIds(
         }
     }
 
-    // Masters → guides
-    const masters = fontData.masters;
-    if (Array.isArray(masters)) {
-        for (const master of masters) {
-            if (!master || typeof master !== 'object') continue;
-            const guides = (master as Record<string, unknown>).guides;
+    // Stations → guides
+    const stations = fontData.masters;
+    if (Array.isArray(stations)) {
+        for (const station of stations) {
+            if (!station || typeof station !== 'object') continue;
+            const guides = (station as Record<string, unknown>).guides;
             if (Array.isArray(guides)) {
                 for (const guide of guides) {
                     ensureId(guide as Record<string, unknown> | undefined);
@@ -189,7 +189,7 @@ import {
     normalizeAffineTransform,
     type ComponentShapeResolver
 } from './glyph-path-geometry';
-import { LayerDataNormalizer } from './layer-data-normalizer';
+import { DrawingDataNormalizer } from './drawing-data-normalizer';
 import { extendAxesForDesignspaceLocation } from './locations';
 import type { DesignspaceLocation, UserspaceLocation } from './locations';
 import { Bezier } from 'bezier-js';
@@ -208,7 +208,7 @@ import {
     getSidebearingTransactionLabel,
     type SidebearingSide
 } from './sidebearing-utils';
-import { translateLayerContentsX } from './x-translation-utils';
+import { translateDrawingContentsX } from './x-translation-utils';
 
 const console = new Logger('BabelfontModel');
 
@@ -324,8 +324,8 @@ type ParsedMetricsKey =
       };
 
 type MetricsKeyDependencyEntry = {
-    layer: Layer;
-    layerId: string;
+    drawing: Drawing;
+    drawingId: string;
     glyph: Glyph;
     glyphName: string;
     side: SidebearingSide;
@@ -390,9 +390,9 @@ type AutomaticCompositionSourceAnchor = {
 type ComputedAnchorMap = Record<string, { x: number; y: number }>;
 
 /**
- * Per-master vertical metrics. Access as attributes (`metrics.XHeight`).
+ * Per-station vertical metrics. Access as attributes (`metrics.XHeight`).
  */
-export type MasterMetrics = {
+export type StationMetrics = {
     XHeight?: number;
     CapHeight?: number;
     Ascender?: number;
@@ -758,14 +758,14 @@ export function withSuppressedMetricsKeyRecompute<T>(fn: () => T): T {
     }
 }
 
-export type InterpolationRustLayerTarget = {
+export type InterpolationRustDrawingTarget = {
     glyphName: string;
     layerId: string;
 };
 
 export type InterpolationRustBatchMetadata = {
     changedGlyphs: string[];
-    layerTargets: InterpolationRustLayerTarget[];
+    layerTargets: InterpolationRustDrawingTarget[];
     layerOperations: Array<{
         glyphName: string;
         layerId: string;
@@ -787,18 +787,18 @@ export type InterpolationRustBatchMetadata = {
 };
 
 /**
- * A new axis plus copies of existing masters along it, committed as one
+ * A new axis plus copies of existing stations along it, committed as one
  * batch. Positions are designspace values on the new axis.
  */
-export type AxisMasterCopyPlan = {
+export type AxisStationCopyPlan = {
     /** Full next axes list, including the new axis. */
     axes: Babelfont.Axis[];
-    /** Full next masters list: existing masters with the new tag, then the copies. */
+    /** Full next stations list: existing stations with the new tag, then the copies. */
     masters: Babelfont.Master[];
     /** Full next instances list, when instances change. */
     instances?: Babelfont.Instance[];
     axisTag: string;
-    /** Where the existing masters sit on the new axis. */
+    /** Where the existing stations sit on the new axis. */
     existingValue: number;
     copies: Array<{
         sourceMasterId: string;
@@ -808,14 +808,14 @@ export type AxisMasterCopyPlan = {
     copyIntermediateLayers: boolean;
 };
 
-type AddMasterInterpolationLocation = {
+type AddStationInterpolationLocation = {
     glyphName: string;
     designLocation: DesignspaceLocation;
 };
 
-type AddMasterOptions = {
+type AddStationOptions = {
     location?: DesignspaceLocation;
-    metricTemplateMasterId?: string;
+    metricTemplateStationId?: string;
 };
 
 function getCurrentWindowFontModel(): Font | null {
@@ -2945,7 +2945,7 @@ function findFontForModelObject(
     return null;
 }
 
-type SelectableLayerObject = Node | Anchor | Component | Guide;
+type SelectableDrawingObject = Node | Anchor | Component | Guide;
 
 type OutlineEditorSelectionPoint = {
     contourIndex: number;
@@ -2953,7 +2953,7 @@ type OutlineEditorSelectionPoint = {
 };
 
 type OutlineEditorGuideHandle = {
-    scope: 'master' | 'layer';
+    scope: 'station' | 'drawing';
     index: number;
 };
 
@@ -2968,24 +2968,24 @@ type OutlineEditorSelectionController = {
     selectedComponents?: number[];
     selectedGuideHandle?: OutlineEditorGuideHandle | null;
     selectedSidebearingHandle?: unknown;
-    selectedLayerId?: string | null;
+    selectedDrawingId?: string | null;
     glyphCanvas?: {
         updatePropertyPanel?: () => void;
         render?: () => void;
     };
-    getCurrentLayerModel?: () => Layer | null;
+    getCurrentDrawingModel?: () => Drawing | null;
     getCurrentGlyphModel?: () => Glyph | null;
-    getCurrentLayerId?: () => string | null;
-    getRootMasterModel?: () => Master | null;
+    getCurrentDrawingId?: () => string | null;
+    getRootStationModel?: () => Station | null;
 };
 
-type OutlineEditorLayerLinkController = {
-    isLayerLinked?: (
-        layerId: string | null | undefined,
+type OutlineEditorDrawingLinkController = {
+    isDrawingLinked?: (
+        drawingId: string | null | undefined,
         glyphName?: string | null
     ) => boolean;
-    setLayerLinked?: (
-        layerId: string | null | undefined,
+    setDrawingLinked?: (
+        drawingId: string | null | undefined,
         linked: boolean,
         glyphName?: string | null
     ) => void;
@@ -3004,7 +3004,7 @@ function getOutlineEditorSelectionController(): OutlineEditorSelectionController
     return outlineEditor as OutlineEditorSelectionController;
 }
 
-function getOutlineEditorLayerLinkController(): OutlineEditorLayerLinkController | null {
+function getOutlineEditorDrawingLinkController(): OutlineEditorDrawingLinkController | null {
     if (typeof window === 'undefined') {
         return null;
     }
@@ -3012,18 +3012,18 @@ function getOutlineEditorLayerLinkController(): OutlineEditorLayerLinkController
     const outlineEditor = (window as Unsafe).glyphCanvas?.outlineEditor;
     if (
         !outlineEditor ||
-        typeof outlineEditor.isLayerLinked !== 'function' ||
-        typeof outlineEditor.setLayerLinked !== 'function'
+        typeof outlineEditor.isDrawingLinked !== 'function' ||
+        typeof outlineEditor.setDrawingLinked !== 'function'
     ) {
         return null;
     }
 
-    return outlineEditor as OutlineEditorLayerLinkController;
+    return outlineEditor as OutlineEditorDrawingLinkController;
 }
 
-function refreshLayerLinkageUi(
+function refreshDrawingLinkageUi(
     glyphName: string | null,
-    layerId: string | null | undefined,
+    drawingId: string | null | undefined,
     linked: boolean
 ): void {
     if (typeof window === 'undefined') {
@@ -3031,8 +3031,8 @@ function refreshLayerLinkageUi(
     }
 
     window.dispatchEvent(
-        new CustomEvent('layerLinkageChanged', {
-            detail: { glyphName, layerId: layerId ?? null, linked }
+        new CustomEvent('drawingLinkageChanged', {
+            detail: { glyphName, layerId: drawingId ?? null, linked }
         })
     );
 
@@ -3089,34 +3089,34 @@ function getPathIndex(modelObj: ModelBase, segmentName: string): number | null {
     return null;
 }
 
-function getLayerForSelectableObject(value: unknown): Layer | null {
+function getDrawingForSelectableObject(value: unknown): Drawing | null {
     if (value instanceof Anchor) {
         const parent = value.parent();
-        return parent instanceof Layer ? parent : null;
+        return parent instanceof Drawing ? parent : null;
     }
 
     if (value instanceof Guide) {
         const parent = value.parent();
-        return parent instanceof Layer ? parent : null;
+        return parent instanceof Drawing ? parent : null;
     }
 
     if (value instanceof Component) {
         const parentShape = value.parent();
-        const parentLayer =
+        const parentDrawing =
             parentShape instanceof Shape ? parentShape.parent() : null;
-        return parentLayer instanceof Layer ? parentLayer : null;
+        return parentDrawing instanceof Drawing ? parentDrawing : null;
     }
 
     if (value instanceof Node) {
         const parentPath = value.parent();
         if (parentPath instanceof Path) {
             const pathParent = parentPath.parent();
-            if (pathParent instanceof Layer) {
+            if (pathParent instanceof Drawing) {
                 return pathParent;
             }
             if (pathParent instanceof Shape) {
-                const parentLayer = pathParent.parent();
-                return parentLayer instanceof Layer ? parentLayer : null;
+                const parentDrawing = pathParent.parent();
+                return parentDrawing instanceof Drawing ? parentDrawing : null;
             }
         }
     }
@@ -3124,11 +3124,11 @@ function getLayerForSelectableObject(value: unknown): Layer | null {
     return null;
 }
 
-function getCurrentOutlineEditorLayer(
+function getCurrentOutlineEditorDrawing(
     outlineEditor: OutlineEditorSelectionController
-): Layer | null {
-    const currentLayer = outlineEditor.getCurrentLayerModel?.();
-    return currentLayer instanceof Layer ? currentLayer : null;
+): Drawing | null {
+    const currentDrawing = outlineEditor.getCurrentDrawingModel?.();
+    return currentDrawing instanceof Drawing ? currentDrawing : null;
 }
 
 function getCurrentOutlineEditorGlyph(
@@ -3138,39 +3138,40 @@ function getCurrentOutlineEditorGlyph(
     return currentGlyph instanceof Glyph ? currentGlyph : null;
 }
 
-function isLayerActiveInOutlineEditor(
-    layer: Layer,
+function isDrawingActiveInOutlineEditor(
+    drawing: Drawing,
     outlineEditor: OutlineEditorSelectionController
 ): boolean {
-    const currentLayer = getCurrentOutlineEditorLayer(outlineEditor);
-    if (currentLayer) {
-        return areSameModelObject(layer, currentLayer);
+    const currentDrawing = getCurrentOutlineEditorDrawing(outlineEditor);
+    if (currentDrawing) {
+        return areSameModelObject(drawing, currentDrawing);
     }
 
-    const currentLayerId =
-        outlineEditor.getCurrentLayerId?.() ??
-        outlineEditor.selectedLayerId ??
+    const currentDrawingId =
+        outlineEditor.getCurrentDrawingId?.() ??
+        outlineEditor.selectedDrawingId ??
         null;
-    if (!currentLayerId || layer.id !== currentLayerId) {
+    if (!currentDrawingId || drawing.id !== currentDrawingId) {
         return false;
     }
 
     const currentGlyph = getCurrentOutlineEditorGlyph(outlineEditor);
-    const layerGlyph = layer.parent();
-    if (currentGlyph instanceof Glyph && layerGlyph instanceof Glyph) {
-        return areSameModelObject(currentGlyph, layerGlyph);
+    const drawingGlyph = drawing.parent();
+    if (currentGlyph instanceof Glyph && drawingGlyph instanceof Glyph) {
+        return areSameModelObject(currentGlyph, drawingGlyph);
     }
 
     return true;
 }
 
-function isMasterActiveInOutlineEditor(
-    master: Master,
+function isStationActiveInOutlineEditor(
+    station: Station,
     outlineEditor: OutlineEditorSelectionController
 ): boolean {
-    const rootMaster = outlineEditor.getRootMasterModel?.();
+    const rootStation = outlineEditor.getRootStationModel?.();
     return (
-        rootMaster instanceof Master && areSameModelObject(master, rootMaster)
+        rootStation instanceof Station &&
+        areSameModelObject(station, rootStation)
     );
 }
 
@@ -3181,53 +3182,53 @@ function refreshOutlineEditorSelectionUi(
     outlineEditor.glyphCanvas?.render?.();
 }
 
-function getPathOwningLayer(path: Path): Layer | null {
+function getPathOwningDrawing(path: Path): Drawing | null {
     const parent = path.parent();
-    if (parent instanceof Layer) {
+    if (parent instanceof Drawing) {
         return parent;
     }
 
     if (parent instanceof Shape) {
-        const layer = parent.parent();
-        return layer instanceof Layer ? layer : null;
+        const drawing = parent.parent();
+        return drawing instanceof Drawing ? drawing : null;
     }
 
     return null;
 }
 
-function dispatchLayerFingerprintChanged(
-    layer: Layer | null,
+function dispatchDrawingFingerprintChanged(
+    drawing: Drawing | null,
     previousFingerprint: string | null
 ): void {
-    if (!layer || typeof window === 'undefined') {
+    if (!drawing || typeof window === 'undefined') {
         return;
     }
 
-    if (layer.fingerprint === previousFingerprint) {
+    if (drawing.fingerprint === previousFingerprint) {
         return;
     }
 
-    const glyph = layer.parent();
+    const glyph = drawing.parent();
     const glyphName = glyph instanceof Glyph ? glyph.name : null;
-    if (!glyphName || !layer.id) {
+    if (!glyphName || !drawing.id) {
         return;
     }
 
-    // Structural outline edits can change layer compatibility fingerprints.
+    // Structural outline edits can change drawing compatibility fingerprints.
     window.dispatchEvent(
-        new CustomEvent('layerFingerprintChanged', {
+        new CustomEvent('drawingFingerprintChanged', {
             detail: {
                 glyphName,
-                layerId: layer.id
+                layerId: drawing.id
             }
         })
     );
 }
 
 function assertOutlineEditorSelectionMutationAllowed(
-    layer: Layer,
+    drawing: Drawing,
     outlineEditor: OutlineEditorSelectionController | null,
-    nextSelection: SelectableLayerObject[]
+    nextSelection: SelectableDrawingObject[]
 ): OutlineEditorSelectionController {
     if (!outlineEditor) {
         if (nextSelection.length === 0) {
@@ -3239,13 +3240,13 @@ function assertOutlineEditorSelectionMutationAllowed(
         );
     }
 
-    if (!isLayerActiveInOutlineEditor(layer, outlineEditor)) {
+    if (!isDrawingActiveInOutlineEditor(drawing, outlineEditor)) {
         if (nextSelection.length === 0) {
             return outlineEditor;
         }
 
         throw new Error(
-            'Cannot update selection on a layer that is not the active outline-editor layer.'
+            'Cannot update selection on a drawing that is not the active outline-editor drawing.'
         );
     }
 
@@ -3338,7 +3339,7 @@ export function buildInterpolationRustBatchOperations(
                 path,
                 oldValue: operation.oldValue,
                 newValue: operation.newValue,
-                applyMode: 'layer-snapshot' as const,
+                applyMode: 'drawing-snapshot' as const,
                 workerReplayTargets: [
                     {
                         glyphName: operation.glyphName,
@@ -3584,9 +3585,9 @@ function recordGranularNodesChange(
             if (!next.id) {
                 next.id = nodeId;
             }
-            const layerPath = basePath.slice(0, basePath.indexOf('shapes'));
+            const drawingPath = basePath.slice(0, basePath.indexOf('shapes'));
             recordPathChangeAndMarkDirty(
-                [...layerPath, 'nodePositionsById', nodeId],
+                [...drawingPath, 'nodePositionsById', nodeId],
                 `${previous.x} ${previous.y}`,
                 `${next.x} ${next.y}`
             );
@@ -3597,14 +3598,14 @@ function recordGranularNodesChange(
     recordPathChangeAndMarkDirty([...basePath, 'nodes'], oldNodes, newNodes);
 }
 
-function recordLayerShapesGeometryChange(
-    layerPath: (string | number)[],
+function recordDrawingShapesGeometryChange(
+    drawingPath: (string | number)[],
     oldShapes: unknown[],
     newShapes: unknown[]
 ): void {
     if (oldShapes.length !== newShapes.length) {
         recordPathChangeAndMarkDirty(
-            [...layerPath, 'shapes'],
+            [...drawingPath, 'shapes'],
             oldShapes,
             newShapes
         );
@@ -3642,7 +3643,7 @@ function recordLayerShapesGeometryChange(
 
     if (topologyChanged) {
         recordPathChangeAndMarkDirty(
-            [...layerPath, 'shapes'],
+            [...drawingPath, 'shapes'],
             oldShapes,
             newShapes
         );
@@ -3654,7 +3655,7 @@ function recordLayerShapesGeometryChange(
         const newShape = newShapes[i] as Unsafe | undefined;
         if (Array.isArray(oldShape?.nodes) && Array.isArray(newShape?.nodes)) {
             recordGranularNodesChange(
-                [...layerPath, 'shapes', i],
+                [...drawingPath, 'shapes', i],
                 oldShape.nodes as Babelfont.Node[],
                 newShape.nodes as Babelfont.Node[]
             );
@@ -3662,7 +3663,7 @@ function recordLayerShapesGeometryChange(
         }
         if (newShape?.transform) {
             recordPathChangeAndMarkDirty(
-                [...layerPath, 'shapes', i, 'transform'],
+                [...drawingPath, 'shapes', i, 'transform'],
                 oldShape?.transform,
                 newShape.transform
             );
@@ -3670,13 +3671,13 @@ function recordLayerShapesGeometryChange(
     }
 }
 
-function recomputeMetricsKeysForModelLayer(
-    layer: Layer | null | undefined
+function recomputeMetricsKeysForModelDrawing(
+    drawing: Drawing | null | undefined
 ): void {
     const bridge = getPatchSyncEngine() as any;
 
     if (
-        !layer ||
+        !drawing ||
         suppressMetricsKeyRecomputeDepth > 0 ||
         suppressModelRecordingDepth > 0 ||
         bridge?._suppressRecording ||
@@ -3685,7 +3686,7 @@ function recomputeMetricsKeysForModelLayer(
         return;
     }
 
-    const glyph = layer.parent();
+    const glyph = drawing.parent();
     const font =
         glyph instanceof Glyph ? (glyph.parent() as Font | null) : null;
     if (!font || !glyph?.name) {
@@ -3696,10 +3697,10 @@ function recomputeMetricsKeysForModelLayer(
 }
 
 function recomputeMetricsKeysForSelectableObject(
-    modelObj: SelectableLayerObject | null | undefined
+    modelObj: SelectableDrawingObject | null | undefined
 ): void {
-    recomputeMetricsKeysForModelLayer(
-        modelObj ? getLayerForSelectableObject(modelObj) : null
+    recomputeMetricsKeysForModelDrawing(
+        modelObj ? getDrawingForSelectableObject(modelObj) : null
     );
 }
 
@@ -3780,7 +3781,7 @@ function assertCanAddGlyphs(additionalGlyphCount: number): void {
     }
 }
 
-function masterTopologyGateForFont(font: Font): MasterTopologyGate {
+function stationTopologyGateForFont(font: Font): StationTopologyGate {
     if (getCurrentWindowFontModel() !== font) {
         return { allowed: true };
     }
@@ -3790,21 +3791,21 @@ function masterTopologyGateForFont(font: Font): MasterTopologyGate {
     for (const openedFont of openedFonts?.values?.() ?? []) {
         if (openedFont?.fontModel === font) {
             const plugin = openedFont.sourcePlugin;
-            return typeof plugin?.getMasterTopologyGate === 'function'
-                ? plugin.getMasterTopologyGate()
+            return typeof plugin?.getStationTopologyGate === 'function'
+                ? plugin.getStationTopologyGate()
                 : { allowed: true };
         }
     }
     return { allowed: true };
 }
 
-function assertMasterTopologyChangeAllowed(font: Font | null): void {
+function assertStationTopologyChangeAllowed(font: Font | null): void {
     if (!font) {
         return;
     }
-    const gate = masterTopologyGateForFont(font);
+    const gate = stationTopologyGateForFont(font);
     if (!gate.allowed) {
-        throw new Error(gate.reason || 'Masters cannot be changed right now');
+        throw new Error(gate.reason || 'Stations cannot be changed right now');
     }
 }
 
@@ -3821,7 +3822,7 @@ function getGlyphMetricFormatSpecificKey(side: SidebearingSide): string {
         : GLYPHS_GLYPH_METRIC_RIGHT_KEY;
 }
 
-function getLayerMetricFormatSpecificKey(side: SidebearingSide): string {
+function getDrawingMetricFormatSpecificKey(side: SidebearingSide): string {
     return side === 'left'
         ? GLYPHS_LAYER_METRIC_LEFT_KEY
         : GLYPHS_LAYER_METRIC_RIGHT_KEY;
@@ -4586,7 +4587,7 @@ function isDevelopmentMode(): boolean {
         : false;
 }
 
-function isTaggedLayerType(value: Unsafe): boolean {
+function isTaggedDrawingType(value: Unsafe): boolean {
     if (!value || typeof value !== 'object' || !('type' in value)) {
         return false;
     }
@@ -4608,21 +4609,21 @@ function isTaggedLayerType(value: Unsafe): boolean {
     return false;
 }
 
-function assertTaggedLayerMaster(master: Unsafe, context: string): void {
-    if (!isDevelopmentMode() || master === undefined) {
+function assertTaggedDrawingStation(station: Unsafe, context: string): void {
+    if (!isDevelopmentMode() || station === undefined) {
         return;
     }
 
-    if (!isTaggedLayerType(master)) {
+    if (!isTaggedDrawingType(station)) {
         let formatted = '[unserializable]';
         try {
-            formatted = JSON.stringify(master);
+            formatted = JSON.stringify(station);
         } catch (_error) {
             formatted = '[unserializable]';
         }
 
         throw new Error(
-            `[BabelfontModel] Non-tagged layer.master detected at ${context}. Received: ${formatted}`
+            `[BabelfontModel] Non-tagged drawing.station detected at ${context}. Received: ${formatted}`
         );
     }
 }
@@ -4744,15 +4745,15 @@ export class Node extends ArrayElementBase<Babelfont.Node, Path> {
     /** Whether this node is selected in the active outline editor. */
     get selected(): boolean {
         const outlineEditor = getOutlineEditorSelectionController();
-        const layer = getLayerForSelectableObject(this);
+        const drawing = getDrawingForSelectableObject(this);
         const contourIndex = getPathIndex(this, 'shapes');
         const nodeIndex = getPathIndex(this, 'nodes');
         if (
             !outlineEditor ||
-            !layer ||
+            !drawing ||
             contourIndex === null ||
             nodeIndex === null ||
-            !isLayerActiveInOutlineEditor(layer, outlineEditor)
+            !isDrawingActiveInOutlineEditor(drawing, outlineEditor)
         ) {
             return false;
         }
@@ -4766,18 +4767,18 @@ export class Node extends ArrayElementBase<Babelfont.Node, Path> {
 
     set selected(value: boolean) {
         assertModelMutationAllowed();
-        const layer = getLayerForSelectableObject(this);
-        if (!layer) {
+        const drawing = getDrawingForSelectableObject(this);
+        if (!drawing) {
             return;
         }
 
-        const currentSelection = layer.selection;
+        const currentSelection = drawing.selection;
         if (value) {
-            layer.selection = [...currentSelection, this];
+            drawing.selection = [...currentSelection, this];
             return;
         }
 
-        layer.selection = currentSelection.filter(
+        drawing.selection = currentSelection.filter(
             (item) => !areSameModelObject(item, this)
         );
     }
@@ -4883,9 +4884,9 @@ export class Node extends ArrayElementBase<Babelfont.Node, Path> {
 }
 
 /**
- * Path (contour) in a layer
+ * Path (contour) in a drawing
  */
-export class Path extends ArrayElementBase<PathData, Layer | Shape> {
+export class Path extends ArrayElementBase<PathData, Drawing | Shape> {
     /** Stable identifier for CRDT addressing. Generated on load; preserved across edits. */
     get id(): string | undefined {
         return this.data.id;
@@ -4900,11 +4901,11 @@ export class Path extends ArrayElementBase<PathData, Layer | Shape> {
         return this.data.nodes;
     }
 
-    private withLayerFingerprintChangeEvent<T>(fn: () => T): T {
-        const layer = getPathOwningLayer(this);
-        const previousFingerprint = layer?.fingerprint ?? null;
+    private withDrawingFingerprintChangeEvent<T>(fn: () => T): T {
+        const drawing = getPathOwningDrawing(this);
+        const previousFingerprint = drawing?.fingerprint ?? null;
         const result = fn();
-        dispatchLayerFingerprintChanged(layer, previousFingerprint);
+        dispatchDrawingFingerprintChanged(drawing, previousFingerprint);
         return result;
     }
 
@@ -4934,7 +4935,7 @@ export class Path extends ArrayElementBase<PathData, Layer | Shape> {
 
     set nodes(value: Babelfont.Node[]) {
         assertModelMutationAllowed();
-        this.withLayerFingerprintChangeEvent(() => {
+        this.withDrawingFingerprintChangeEvent(() => {
             assertModelMutationAllowed();
             const old = this.getMutableNodeArray().map((node) =>
                 cloneNodeData(node)
@@ -4951,7 +4952,7 @@ export class Path extends ArrayElementBase<PathData, Layer | Shape> {
 
     set closed(value: boolean) {
         assertModelMutationAllowed();
-        this.withLayerFingerprintChangeEvent(() => {
+        this.withDrawingFingerprintChangeEvent(() => {
             assertModelMutationAllowed();
             const old = this.data.closed;
             this.data.closed = value;
@@ -4970,7 +4971,7 @@ export class Path extends ArrayElementBase<PathData, Layer | Shape> {
 
     set format_specific(value: Record<string, Unsafe> | undefined) {
         assertModelMutationAllowed();
-        this.withLayerFingerprintChangeEvent(() => {
+        this.withDrawingFingerprintChangeEvent(() => {
             assertModelMutationAllowed();
             const old = this.data.format_specific;
             this.data.format_specific = value;
@@ -4990,7 +4991,7 @@ export class Path extends ArrayElementBase<PathData, Layer | Shape> {
         if (this.isSubtraction === Boolean(value)) {
             return;
         }
-        this.withLayerFingerprintChangeEvent(() => {
+        this.withDrawingFingerprintChangeEvent(() => {
             withBridgeTransaction(
                 value ? 'Subtract paths' : 'Clear path subtraction',
                 'keyboard-outline',
@@ -5035,7 +5036,7 @@ export class Path extends ArrayElementBase<PathData, Layer | Shape> {
         smooth?: boolean
     ): Node {
         assertModelMutationAllowed();
-        return this.withLayerFingerprintChangeEvent(() => {
+        return this.withDrawingFingerprintChangeEvent(() => {
             const nodeArray = this.getMutableNodeArray();
             const oldNodes = nodeArray.map((node) => cloneNodeData(node));
             const nodeData: Babelfont.Node = {
@@ -5062,7 +5063,7 @@ export class Path extends ArrayElementBase<PathData, Layer | Shape> {
      */
     removeNode(index: number): void {
         assertModelMutationAllowed();
-        this.withLayerFingerprintChangeEvent(() => {
+        this.withDrawingFingerprintChangeEvent(() => {
             const nodeArray = this.getMutableNodeArray();
             const oldNodes = nodeArray.map((node) => cloneNodeData(node));
             const removedNode = nodeArray[index];
@@ -5103,7 +5104,7 @@ export class Path extends ArrayElementBase<PathData, Layer | Shape> {
         t: number,
         roundCoordinates: boolean = false
     ): number | null {
-        return this.withLayerFingerprintChangeEvent(() => {
+        return this.withDrawingFingerprintChangeEvent(() => {
             assertModelMutationAllowed();
             const nodeArray = this.getMutableNodeArray();
             const descriptors = buildPathSegmentDescriptors({
@@ -5143,7 +5144,7 @@ export class Path extends ArrayElementBase<PathData, Layer | Shape> {
         point: { x: number; y: number },
         edge: 'start' | 'end' = 'end'
     ): number | null {
-        return this.withLayerFingerprintChangeEvent(() => {
+        return this.withDrawingFingerprintChangeEvent(() => {
             assertModelMutationAllowed();
             if (
                 !point ||
@@ -5205,7 +5206,7 @@ export class Path extends ArrayElementBase<PathData, Layer | Shape> {
     }
 
     _closeOpenPath(): boolean {
-        return this.withLayerFingerprintChangeEvent(() => {
+        return this.withDrawingFingerprintChangeEvent(() => {
             assertModelMutationAllowed();
             if (this.closed) {
                 return false;
@@ -5253,7 +5254,7 @@ export class Path extends ArrayElementBase<PathData, Layer | Shape> {
      * from Move to Line. Exact reverse of _openClosedPathAtNode.
      */
     _closeOpenPathByMerge(): boolean {
-        return this.withLayerFingerprintChangeEvent(() => {
+        return this.withDrawingFingerprintChangeEvent(() => {
             assertModelMutationAllowed();
             if (this.closed) {
                 return false;
@@ -5308,7 +5309,7 @@ export class Path extends ArrayElementBase<PathData, Layer | Shape> {
      * the other becomes the end. The overall shape is preserved.
      */
     _openClosedPathAtNode(nodeIndex: number): boolean {
-        return this.withLayerFingerprintChangeEvent(() => {
+        return this.withDrawingFingerprintChangeEvent(() => {
             assertModelMutationAllowed();
             if (!this.closed) {
                 return false;
@@ -5358,7 +5359,7 @@ export class Path extends ArrayElementBase<PathData, Layer | Shape> {
     }
 
     _splitOpenPathAtNode(nodeIndex: number): Babelfont.Path | null {
-        return this.withLayerFingerprintChangeEvent(() => {
+        return this.withDrawingFingerprintChangeEvent(() => {
             assertModelMutationAllowed();
             if (this.closed) {
                 return null;
@@ -5387,7 +5388,7 @@ export class Path extends ArrayElementBase<PathData, Layer | Shape> {
     }
 
     _setStartNode(nodeIndex: number): boolean {
-        return this.withLayerFingerprintChangeEvent(() => {
+        return this.withDrawingFingerprintChangeEvent(() => {
             assertModelMutationAllowed();
             if (!this.closed) {
                 return false;
@@ -5427,7 +5428,7 @@ export class Path extends ArrayElementBase<PathData, Layer | Shape> {
     }
 
     _reverseDirection(): boolean {
-        return this.withLayerFingerprintChangeEvent(() => {
+        return this.withDrawingFingerprintChangeEvent(() => {
             assertModelMutationAllowed();
             const nodeArray = this.getMutableNodeArray();
             if (nodeArray.length < 2) {
@@ -5527,7 +5528,7 @@ export class Path extends ArrayElementBase<PathData, Layer | Shape> {
     }
 
     _convertLineSegmentToCurve(segmentId: number): boolean {
-        return this.withLayerFingerprintChangeEvent(() => {
+        return this.withDrawingFingerprintChangeEvent(() => {
             assertModelMutationAllowed();
             const nodeArray = this.getMutableNodeArray();
             const descriptors = buildPathSegmentDescriptors({
@@ -5592,7 +5593,7 @@ export class Path extends ArrayElementBase<PathData, Layer | Shape> {
         nodeIndex: number,
         targetPoint: { x: number; y: number }
     ): { insertedNodeIndex: number; changed: boolean; t: number } | null {
-        return this.withLayerFingerprintChangeEvent(() => {
+        return this.withDrawingFingerprintChangeEvent(() => {
             assertModelMutationAllowed();
             const nodeArray = this.getMutableNodeArray();
             const oldNodes = nodeArray.map((node) => cloneNodeData(node));
@@ -5634,7 +5635,7 @@ export class Path extends ArrayElementBase<PathData, Layer | Shape> {
         nodeIndex: number,
         t: number
     ): { insertedNodeIndex: number; changed: boolean; t: number } | null {
-        return this.withLayerFingerprintChangeEvent(() => {
+        return this.withDrawingFingerprintChangeEvent(() => {
             assertModelMutationAllowed();
             const nodeArray = this.getMutableNodeArray();
             const oldNodes = nodeArray.map((node) => cloneNodeData(node));
@@ -5679,7 +5680,7 @@ export class Path extends ArrayElementBase<PathData, Layer | Shape> {
      * @returns true if deletion was successful, false otherwise
      */
     _deleteNode(nodeIndex: number): boolean {
-        return this.withLayerFingerprintChangeEvent(() => {
+        return this.withDrawingFingerprintChangeEvent(() => {
             assertModelMutationAllowed();
             const nodeArray = this.getMutableNodeArray();
             if (nodeIndex < 0 || nodeIndex >= nodeArray.length) {
@@ -5706,7 +5707,7 @@ export class Path extends ArrayElementBase<PathData, Layer | Shape> {
     }
 
     _deleteNodes(nodeIndices: number[]): boolean {
-        return this.withLayerFingerprintChangeEvent(() => {
+        return this.withDrawingFingerprintChangeEvent(() => {
             assertModelMutationAllowed();
             const nodeArray = this.getMutableNodeArray();
             const validNodeIndices = [...new Set(nodeIndices)]
@@ -5777,9 +5778,9 @@ export class Path extends ArrayElementBase<PathData, Layer | Shape> {
  * Component reference to another glyph
  */
 function componentShapeResolver(
-    sourceLayer: Layer | undefined,
+    sourceDrawing: Drawing | undefined,
     font?: Font,
-    masterId?: string
+    stationId?: string
 ): ComponentShapeResolver {
     return (component) => {
         const reference = component.reference;
@@ -5791,24 +5792,24 @@ function componentShapeResolver(
         }
         const fontModel = font;
         const componentGlyph = fontModel.findGlyph(reference);
-        if (!componentGlyph?.layers?.length) {
+        if (!componentGlyph?.drawings?.length) {
             return null;
         }
-        let layer = sourceLayer?.getMatchingLayerOnGlyph(reference);
-        if (!layer && masterId) {
-            layer = componentGlyph.layers.find(
-                (candidate) => candidate.master?.master === masterId
+        let drawing = sourceDrawing?.getMatchingDrawingOnGlyph(reference);
+        if (!drawing && stationId) {
+            drawing = componentGlyph.drawings.find(
+                (candidate) => candidate.station?.master === stationId
             );
         }
-        if (!layer) {
-            layer = componentGlyph.layers[0];
+        if (!drawing) {
+            drawing = componentGlyph.drawings[0];
         }
-        if (!layer) {
+        if (!drawing) {
             return null;
         }
         return {
-            shapes: layer.toJSON()?.shapes,
-            resolve: componentShapeResolver(layer, fontModel, masterId)
+            shapes: drawing.toJSON()?.shapes,
+            resolve: componentShapeResolver(drawing, fontModel, stationId)
         };
     };
 }
@@ -5828,13 +5829,13 @@ export class Component extends ArrayElementBase<ComponentData, Shape> {
     /** Whether this component is selected in the active outline editor. */
     get selected(): boolean {
         const outlineEditor = getOutlineEditorSelectionController();
-        const layer = getLayerForSelectableObject(this);
+        const drawing = getDrawingForSelectableObject(this);
         const shapeIndex = getPathIndex(this, 'shapes');
         if (
             !outlineEditor ||
-            !layer ||
+            !drawing ||
             shapeIndex === null ||
-            !isLayerActiveInOutlineEditor(layer, outlineEditor)
+            !isDrawingActiveInOutlineEditor(drawing, outlineEditor)
         ) {
             return false;
         }
@@ -5844,18 +5845,18 @@ export class Component extends ArrayElementBase<ComponentData, Shape> {
 
     set selected(value: boolean) {
         assertModelMutationAllowed();
-        const layer = getLayerForSelectableObject(this);
-        if (!layer) {
+        const drawing = getDrawingForSelectableObject(this);
+        if (!drawing) {
             return;
         }
 
-        const currentSelection = layer.selection;
+        const currentSelection = drawing.selection;
         if (value) {
-            layer.selection = [...currentSelection, this];
+            drawing.selection = [...currentSelection, this];
             return;
         }
 
-        layer.selection = currentSelection.filter(
+        drawing.selection = currentSelection.filter(
             (item) => !areSameModelObject(item, this)
         );
     }
@@ -5871,8 +5872,8 @@ export class Component extends ArrayElementBase<ComponentData, Shape> {
         recordAndMarkDirty(this, 'reference', old, value);
         // Invalidate reverse component index when component reference changes
         const shape = this.parent();
-        const layer = shape instanceof Shape ? shape.parent() : null;
-        const glyph = layer instanceof Layer ? layer.parent() : null;
+        const drawing = shape instanceof Shape ? shape.parent() : null;
+        const glyph = drawing instanceof Drawing ? drawing.parent() : null;
         const font =
             glyph instanceof Glyph ? (glyph.parent() as Font | null) : null;
         if (
@@ -5943,24 +5944,24 @@ export class Component extends ArrayElementBase<ComponentData, Shape> {
             GLYPHS_COMPONENT_ANCHOR_KEY,
             trimmed ? trimmed : undefined
         );
-        getLayerForSelectableObject(this)?.invalidateLayoutCache();
+        getDrawingForSelectableObject(this)?.invalidateLayoutCache();
     }
 
     /**
-     * Returns whether every component in the containing layer explicitly opts
+     * Returns whether every component in the containing drawing explicitly opts
      * into Glyphs automatic alignment.
      */
     isAutomaticAligned(): boolean {
-        const layer = getLayerForSelectableObject(this);
-        return layer
-            ? layer.isAutomaticAlignedLayer()
+        const drawing = getDrawingForSelectableObject(this);
+        return drawing
+            ? drawing.isAutomaticAlignedDrawing()
             : hasExplicitAutomaticComponentAlignment(this);
     }
 
     /**
      * Whether this component explicitly opts into Glyphs automatic alignment.
      * Unlike isAutomaticAligned(), this is per-component metadata and does not
-     * depend on the rest of its containing layer.
+     * depend on the rest of its containing drawing.
      */
     get automaticAlignment(): boolean {
         return hasExplicitAutomaticComponentAlignment(this);
@@ -5978,16 +5979,16 @@ export class Component extends ArrayElementBase<ComponentData, Shape> {
             ...(this.format_specific || {}),
             [GLYPHS_COMPONENT_ALIGNMENT_KEY]: nextValue
         };
-        const layer = getLayerForSelectableObject(this);
-        layer?.invalidateLayoutCache();
+        const drawing = getDrawingForSelectableObject(this);
+        drawing?.invalidateLayoutCache();
         if (value) {
-            layer?.assignAutomaticCompositeKerningGroups();
+            drawing?.assignAutomaticCompositeKerningGroups();
         }
     }
 
     /**
      * Returns whether this component itself carries Glyphs' explicit manual
-     * alignment metadata, independent of the layer's effective state.
+     * alignment metadata, independent of the drawing's effective state.
      */
     hasExplicitManualAlignment(): boolean {
         return hasExplicitManualComponentAlignment(this);
@@ -6029,20 +6030,20 @@ export class Component extends ArrayElementBase<ComponentData, Shape> {
     /**
      * Replace this component with its recursively flattened outlines in place.
      * Nested components are expanded with accumulated transforms. Returns the
-     * number of paths inserted, or `None` if the component is not on a layer.
+     * number of paths inserted, or `None` if the component is not on a drawing.
      * @example
      * count = component.decompose()
      */
     decompose(): number | null {
         assertModelMutationAllowed();
-        // Component -> Shape -> Layer
+        // Component -> Shape -> Drawing
         const shape = this.parent() as Shape;
-        const layer = shape?.parent() as Layer;
-        if (!shape || !layer) {
+        const drawing = shape?.parent() as Drawing;
+        if (!shape || !drawing) {
             return null;
         }
 
-        const shapes = layer.shapes;
+        const shapes = drawing.shapes;
         if (!shapes) {
             return null;
         }
@@ -6059,47 +6060,47 @@ export class Component extends ArrayElementBase<ComponentData, Shape> {
             )
             .map((path) => flattenedPathToStoredShape(path));
 
-        layer.removeShape(index);
+        drawing.removeShape(index);
         for (let pathOffset = 0; pathOffset < pathShapes.length; pathOffset++) {
-            layer.insertShapeAt(index + pathOffset, pathShapes[pathOffset]);
+            drawing.insertShapeAt(index + pathOffset, pathShapes[pathOffset]);
         }
         return pathShapes.length;
     }
 
     /**
      * Get all paths from this component with transforms applied recursively
-     * Automatically determines the correct master by walking up the parent chain
+     * Automatically determines the correct station by walking up the parent chain
      * @returns Array of transformed path data objects
      */
     getTransformedPaths(): Babelfont.Path[] {
         const shape = this.parent() as Shape;
         if (!shape) return [];
 
-        const layer = shape.parent() as Layer;
-        if (!layer) return [];
+        const drawing = shape.parent() as Drawing;
+        if (!drawing) return [];
 
-        const glyph = layer.parent() as Glyph;
+        const glyph = drawing.parent() as Glyph;
         if (!glyph) return [];
 
         const font = glyph.parent() as Font;
         if (!font) return [];
 
         const componentGlyph = font.findGlyph(this.reference);
-        if (!componentGlyph || !componentGlyph.layers) return [];
+        if (!componentGlyph || !componentGlyph.drawings) return [];
 
-        const componentLayer =
-            layer.getMatchingLayerOnGlyph(this.reference) ??
-            componentGlyph.layers[0];
-        if (!componentLayer) return [];
+        const componentDrawing =
+            drawing.getMatchingDrawingOnGlyph(this.reference) ??
+            componentGlyph.drawings[0];
+        if (!componentDrawing) return [];
 
         return flattenShapesToPaths(
-            componentLayer.toJSON()?.shapes,
+            componentDrawing.toJSON()?.shapes,
             normalizeAffineTransform(
                 this.transform || DecomposedAffineTransform.identity()
             ),
             {
                 resolveComponentShapes: componentShapeResolver(
-                    componentLayer,
+                    componentDrawing,
                     font
                 )
             }
@@ -6108,9 +6109,9 @@ export class Component extends ArrayElementBase<ComponentData, Shape> {
 }
 
 /**
- * Anchor point in a layer
+ * Anchor point in a drawing
  */
-export class Anchor extends ArrayElementBase<AnchorData, Layer> {
+export class Anchor extends ArrayElementBase<AnchorData, Drawing> {
     /** Stable identifier for CRDT addressing. Generated on load; preserved across edits. */
     get id(): string | undefined {
         return this.data.id;
@@ -6123,13 +6124,13 @@ export class Anchor extends ArrayElementBase<AnchorData, Layer> {
     /** Whether this anchor is selected in the active outline editor. */
     get selected(): boolean {
         const outlineEditor = getOutlineEditorSelectionController();
-        const layer = this.parent();
+        const drawing = this.parent();
         const anchorIndex = getPathIndex(this, 'anchors');
         if (
             !outlineEditor ||
-            !(layer instanceof Layer) ||
+            !(drawing instanceof Drawing) ||
             anchorIndex === null ||
-            !isLayerActiveInOutlineEditor(layer, outlineEditor)
+            !isDrawingActiveInOutlineEditor(drawing, outlineEditor)
         ) {
             return false;
         }
@@ -6139,18 +6140,18 @@ export class Anchor extends ArrayElementBase<AnchorData, Layer> {
 
     set selected(value: boolean) {
         assertModelMutationAllowed();
-        const layer = this.parent();
-        if (!(layer instanceof Layer)) {
+        const drawing = this.parent();
+        if (!(drawing instanceof Drawing)) {
             return;
         }
 
-        const currentSelection = layer.selection;
+        const currentSelection = drawing.selection;
         if (value) {
-            layer.selection = [...currentSelection, this];
+            drawing.selection = [...currentSelection, this];
             return;
         }
 
-        layer.selection = currentSelection.filter(
+        drawing.selection = currentSelection.filter(
             (item) => !areSameModelObject(item, this)
         );
     }
@@ -6164,8 +6165,8 @@ export class Anchor extends ArrayElementBase<AnchorData, Layer> {
         const old = this.data.x;
         this.data.x = value;
         recordAndMarkDirty(this, 'x', old, value);
-        const layer = getLayerForSelectableObject(this);
-        layer?.invalidateLayoutCache();
+        const drawing = getDrawingForSelectableObject(this);
+        drawing?.invalidateLayoutCache();
     }
 
     get y(): number {
@@ -6177,8 +6178,8 @@ export class Anchor extends ArrayElementBase<AnchorData, Layer> {
         const old = this.data.y;
         this.data.y = value;
         recordAndMarkDirty(this, 'y', old, value);
-        const layer = getLayerForSelectableObject(this);
-        layer?.invalidateLayoutCache();
+        const drawing = getDrawingForSelectableObject(this);
+        drawing?.invalidateLayoutCache();
     }
 
     get name(): string | undefined {
@@ -6215,9 +6216,9 @@ export class Anchor extends ArrayElementBase<AnchorData, Layer> {
 }
 
 /**
- * Guideline in a layer or master
+ * Guideline in a drawing or station
  */
-export class Guide extends ArrayElementBase<GuideData, Layer | Master> {
+export class Guide extends ArrayElementBase<GuideData, Drawing | Station> {
     /** Stable identifier for CRDT addressing. Generated on load; preserved across edits. */
     get id(): string | undefined {
         return this.data.id;
@@ -6241,19 +6242,19 @@ export class Guide extends ArrayElementBase<GuideData, Layer | Master> {
             return false;
         }
 
-        if (parent instanceof Layer) {
+        if (parent instanceof Drawing) {
             return (
-                selectedGuide.scope === 'layer' &&
+                selectedGuide.scope === 'drawing' &&
                 selectedGuide.index === guideIndex &&
-                isLayerActiveInOutlineEditor(parent, outlineEditor)
+                isDrawingActiveInOutlineEditor(parent, outlineEditor)
             );
         }
 
-        if (parent instanceof Master) {
+        if (parent instanceof Station) {
             return (
-                selectedGuide.scope === 'master' &&
+                selectedGuide.scope === 'station' &&
                 selectedGuide.index === guideIndex &&
-                isMasterActiveInOutlineEditor(parent, outlineEditor)
+                isStationActiveInOutlineEditor(parent, outlineEditor)
             );
         }
 
@@ -6284,10 +6285,10 @@ export class Guide extends ArrayElementBase<GuideData, Layer | Master> {
             );
         }
 
-        if (parent instanceof Layer) {
-            if (!isLayerActiveInOutlineEditor(parent, outlineEditor)) {
+        if (parent instanceof Drawing) {
+            if (!isDrawingActiveInOutlineEditor(parent, outlineEditor)) {
                 throw new Error(
-                    'Cannot update selection on a layer that is not the active outline-editor layer.'
+                    'Cannot update selection on a drawing that is not the active outline-editor drawing.'
                 );
             }
 
@@ -6296,17 +6297,17 @@ export class Guide extends ArrayElementBase<GuideData, Layer | Master> {
             outlineEditor.selectedComponents = [];
             outlineEditor.selectedSidebearingHandle = null;
             outlineEditor.selectedGuideHandle = {
-                scope: 'layer',
+                scope: 'drawing',
                 index: guideIndex
             };
             refreshOutlineEditorSelectionUi(outlineEditor);
             return;
         }
 
-        if (parent instanceof Master) {
-            if (!isMasterActiveInOutlineEditor(parent, outlineEditor)) {
+        if (parent instanceof Station) {
+            if (!isStationActiveInOutlineEditor(parent, outlineEditor)) {
                 throw new Error(
-                    'Cannot update selection on a master guide that is not active in the outline editor.'
+                    'Cannot update selection on a station guide that is not active in the outline editor.'
                 );
             }
 
@@ -6315,7 +6316,7 @@ export class Guide extends ArrayElementBase<GuideData, Layer | Master> {
             outlineEditor.selectedComponents = [];
             outlineEditor.selectedSidebearingHandle = null;
             outlineEditor.selectedGuideHandle = {
-                scope: 'master',
+                scope: 'station',
                 index: guideIndex
             };
             refreshOutlineEditorSelectionUi(outlineEditor);
@@ -6484,18 +6485,18 @@ export class Shape extends ArrayElementBase {
 }
 
 /**
- * Layer in a glyph representing a master or intermediate design
+ * A glyph’s drawing at a station, or a free drawing at a location of its own
  */
-export class Layer extends ArrayElementBase {
+export class Drawing extends ArrayElementBase {
     private _shapeWrappers: Shape[] | null = null;
     private _anchorWrappers: Anchor[] | null = null;
     private _guideWrappers: Guide[] | null = null;
-    private _virtualBackgroundOwner: Layer | null = null;
+    private _virtualBackgroundOwner: Drawing | null = null;
     private _cachedLayout: AutomaticCompositionLayout | null | undefined =
         undefined;
 
     /**
-     * Resting / Yjs / editor representation of this layer.
+     * Resting / Yjs / editor representation of this drawing.
      *
      * Automatic `=+/-=` offsets stay logical here: component translates are
      * unoffset and width already includes the adjustments. Never bake offsets
@@ -6513,7 +6514,7 @@ export class Layer extends ArrayElementBase {
      */
     toCompileJSON(): Unsafe {
         const data = this.toJSON();
-        if (!this.isAutomaticAlignedLayer()) {
+        if (!this.isAutomaticAlignedDrawing()) {
             return data;
         }
 
@@ -6528,8 +6529,8 @@ export class Layer extends ArrayElementBase {
             return data;
         }
 
-        const layerData = cloneForHistory(data);
-        const shapes = (layerData.shapes || []) as Unsafe[];
+        const drawingData = cloneForHistory(data);
+        const shapes = (drawingData.shapes || []) as Unsafe[];
         const components = this.components;
 
         for (let index = 0; index < components.length; index++) {
@@ -6568,8 +6569,8 @@ export class Layer extends ArrayElementBase {
             }
         }
 
-        layerData.width = this.getAutomaticCompositionDerivedWidth(layout);
-        return layerData;
+        drawingData.width = this.getAutomaticCompositionDerivedWidth(layout);
+        return drawingData;
     }
 
     /**
@@ -6603,14 +6604,14 @@ export class Layer extends ArrayElementBase {
 
     /**
      * Bulk-sync mutable properties from the outline editor's working
-     * copy into this layer's model data. Skips the expensive toJSON()
+     * copy into this drawing's model data. Skips the expensive toJSON()
      * round-trip and layout recomputation that would otherwise occur
-     * for automatic-aligned layers.
+     * for automatic-aligned drawings.
      *
      * Must be called inside withSuppressedModelRecording so that the
      * individual property mutations don't trigger recordAndMarkDirty.
      */
-    syncFromEditorLayerData(layerData: {
+    syncFromEditorDrawingData(drawingData: {
         width: number;
         height?: number;
         vertWidth?: number;
@@ -6620,7 +6621,7 @@ export class Layer extends ArrayElementBase {
         format_specific?: Record<string, Unsafe>;
     }): void {
         assertModelMutationAllowed();
-        const sanitized = toRestingLayerJson(layerData, {
+        const sanitized = toRestingDrawingJson(drawingData, {
             existing: this.data,
             mode: 'delta',
             allowWrapped: true,
@@ -6653,7 +6654,7 @@ export class Layer extends ArrayElementBase {
     private withFingerprintChangeEvent<T>(fn: () => T): T {
         const previousFingerprint = this.fingerprint;
         const result = fn();
-        dispatchLayerFingerprintChanged(this, previousFingerprint);
+        dispatchDrawingFingerprintChanged(this, previousFingerprint);
         // Invalidate reverse component index on any structural shape change
         const glyph = this.parent();
         const font =
@@ -6674,7 +6675,7 @@ export class Layer extends ArrayElementBase {
             case 'Move':
                 // Open-path endpoints can round-trip as either Move or Line
                 // while remaining structurally equivalent for interpolation and
-                // linked-layer compatibility purposes.
+                // linked-drawing compatibility purposes.
                 return 'Line';
             case 'Line':
             case 'OffCurve':
@@ -6688,12 +6689,12 @@ export class Layer extends ArrayElementBase {
 
     private getSelectionSnapshotFromOutlineEditor(
         outlineEditor: OutlineEditorSelectionController
-    ): SelectableLayerObject[] {
-        if (!isLayerActiveInOutlineEditor(this, outlineEditor)) {
+    ): SelectableDrawingObject[] {
+        if (!isDrawingActiveInOutlineEditor(this, outlineEditor)) {
             return [];
         }
 
-        const selection: SelectableLayerObject[] = [];
+        const selection: SelectableDrawingObject[] = [];
         const shapes = this.shapes || [];
         const anchors = this.anchors || [];
         const guides = this.guides || [];
@@ -6724,7 +6725,7 @@ export class Layer extends ArrayElementBase {
             }
         }
 
-        if (outlineEditor.selectedGuideHandle?.scope === 'layer') {
+        if (outlineEditor.selectedGuideHandle?.scope === 'drawing') {
             const guide = guides[outlineEditor.selectedGuideHandle.index];
             if (guide) {
                 selection.push(guide);
@@ -6736,8 +6737,11 @@ export class Layer extends ArrayElementBase {
 
     private normalizeSelectionInput(
         value:
-            SelectableLayerObject | SelectableLayerObject[] | null | undefined
-    ): SelectableLayerObject[] {
+            | SelectableDrawingObject
+            | SelectableDrawingObject[]
+            | null
+            | undefined
+    ): SelectableDrawingObject[] {
         const normalized =
             value === null || value === undefined
                 ? []
@@ -6745,7 +6749,7 @@ export class Layer extends ArrayElementBase {
                   ? value
                   : [value];
 
-        const dedupedSelection: SelectableLayerObject[] = [];
+        const dedupedSelection: SelectableDrawingObject[] = [];
         const seenPaths = new Set<string>();
 
         for (const item of normalized) {
@@ -6756,20 +6760,20 @@ export class Layer extends ArrayElementBase {
                 !(item instanceof Guide)
             ) {
                 throw new Error(
-                    'Layer.selection only accepts nodes, anchors, components, and layer guides.'
+                    'Drawing.selection only accepts nodes, anchors, components, and drawing guides.'
                 );
             }
 
-            const objectLayer = getLayerForSelectableObject(item);
-            if (!objectLayer || !areSameModelObject(objectLayer, this)) {
+            const objectDrawing = getDrawingForSelectableObject(item);
+            if (!objectDrawing || !areSameModelObject(objectDrawing, this)) {
                 throw new Error(
-                    'Layer.selection can only contain objects that belong to this layer.'
+                    'Drawing.selection can only contain objects that belong to this drawing.'
                 );
             }
 
-            if (item instanceof Guide && !(item.parent() instanceof Layer)) {
+            if (item instanceof Guide && !(item.parent() instanceof Drawing)) {
                 throw new Error(
-                    'Layer.selection only accepts layer guides, not master guides.'
+                    'Drawing.selection only accepts drawing guides, not station guides.'
                 );
             }
 
@@ -6786,7 +6790,7 @@ export class Layer extends ArrayElementBase {
             (item) => item instanceof Guide
         ).length;
         if (guideCount > 1) {
-            throw new Error('Layer.selection can contain at most one guide.');
+            throw new Error('Drawing.selection can contain at most one guide.');
         }
 
         if (guideCount === 1 && dedupedSelection.length > 1) {
@@ -6799,7 +6803,7 @@ export class Layer extends ArrayElementBase {
     }
 
     private applySelectionToOutlineEditor(
-        selection: SelectableLayerObject[]
+        selection: SelectableDrawingObject[]
     ): void {
         const outlineEditor = assertOutlineEditorSelectionMutationAllowed(
             this,
@@ -6847,7 +6851,10 @@ export class Layer extends ArrayElementBase {
             if (item instanceof Guide) {
                 const guideIndex = getPathIndex(item, 'guides');
                 if (guideIndex !== null) {
-                    selectedGuideHandle = { scope: 'layer', index: guideIndex };
+                    selectedGuideHandle = {
+                        scope: 'drawing',
+                        index: guideIndex
+                    };
                 }
             }
         }
@@ -6860,7 +6867,7 @@ export class Layer extends ArrayElementBase {
         refreshOutlineEditorSelectionUi(outlineEditor);
     }
 
-    _getSelectionSnapshotForPython(): SelectableLayerObject[] {
+    _getSelectionSnapshotForPython(): SelectableDrawingObject[] {
         const outlineEditor = getOutlineEditorSelectionController();
         return outlineEditor
             ? this.getSelectionSnapshotFromOutlineEditor(outlineEditor)
@@ -6869,7 +6876,10 @@ export class Layer extends ArrayElementBase {
 
     _setSelectionFromPython(
         value:
-            SelectableLayerObject | SelectableLayerObject[] | null | undefined
+            | SelectableDrawingObject
+            | SelectableDrawingObject[]
+            | null
+            | undefined
     ): void {
         this.applySelectionToOutlineEditor(this.normalizeSelectionInput(value));
     }
@@ -6896,7 +6906,7 @@ export class Layer extends ArrayElementBase {
     private getLocalSidebearingKey(side: SidebearingSide): string | undefined {
         return normalizeMetricsKeyValue(
             getModelFormatSpecific(this)?.[
-                getLayerMetricFormatSpecificKey(side)
+                getDrawingMetricFormatSpecificKey(side)
             ] as string | undefined
         );
     }
@@ -6909,7 +6919,7 @@ export class Layer extends ArrayElementBase {
         this.getFont()?.invalidateMetricsKeyDependencyEntries?.();
         setFormatSpecificKey(
             this,
-            getLayerMetricFormatSpecificKey(side),
+            getDrawingMetricFormatSpecificKey(side),
             value
         );
     }
@@ -6999,14 +7009,14 @@ export class Layer extends ArrayElementBase {
                 return;
             }
 
-            const layerData = this.toJSON();
-            const oldShapes = cloneForHistory(layerData.shapes || []);
-            const oldAnchors = cloneForHistory(layerData.anchors || []);
-            const oldWidth = layerData.width;
+            const drawingData = this.toJSON();
+            const oldShapes = cloneForHistory(drawingData.shapes || []);
+            const oldAnchors = cloneForHistory(drawingData.anchors || []);
+            const oldWidth = drawingData.width;
 
             withSuppressedMetricsKeyRecompute(() => {
                 withSuppressedModelRecording(() => {
-                    translateLayerContentsX(
+                    translateDrawingContentsX(
                         {
                             shapes: this.shapes || [],
                             anchors: this.anchors || [],
@@ -7044,22 +7054,22 @@ export class Layer extends ArrayElementBase {
                         : roundMetricValue(value + currentRsb);
                 });
 
-                this.translateMaterializedBackgroundLayerContentsX(offset);
+                this.translateMaterializedBackgroundDrawingContentsX(offset);
 
-                recordLayerShapesGeometryChange(
+                recordDrawingShapesGeometryChange(
                     this.getPath(),
                     oldShapes,
-                    cloneForHistory(layerData.shapes || [])
+                    cloneForHistory(drawingData.shapes || [])
                 );
-                if (oldAnchors.length || (layerData.anchors || []).length) {
+                if (oldAnchors.length || (drawingData.anchors || []).length) {
                     recordAndMarkDirty(
                         this,
                         'anchors',
                         oldAnchors,
-                        cloneForHistory(layerData.anchors || [])
+                        cloneForHistory(drawingData.anchors || [])
                     );
                 }
-                recordAndMarkDirty(this, 'width', oldWidth, layerData.width);
+                recordAndMarkDirty(this, 'width', oldWidth, drawingData.width);
             });
             return;
         }
@@ -7080,13 +7090,13 @@ export class Layer extends ArrayElementBase {
      * Keep an existing background drawing aligned with a foreground X shift.
      * Virtual empty backgrounds remain unmaterialized and are intentionally ignored.
      */
-    translateMaterializedBackgroundLayerContentsX(deltaX: number): void {
-        if (this.is_background || deltaX === 0 || !this.background_layer_id) {
+    translateMaterializedBackgroundDrawingContentsX(deltaX: number): void {
+        if (this.is_background || deltaX === 0 || !this.background_drawing_id) {
             return;
         }
 
-        const background = (this.parent() as Glyph | null)?.findLayerById(
-            this.background_layer_id
+        const background = (this.parent() as Glyph | null)?.findDrawingById(
+            this.background_drawing_id
         );
         if (
             !background?.is_background ||
@@ -7101,7 +7111,7 @@ export class Layer extends ArrayElementBase {
         const oldAnchors = cloneForHistory(backgroundData.anchors || []);
 
         withSuppressedModelRecording(() => {
-            translateLayerContentsX(
+            translateDrawingContentsX(
                 {
                     shapes: background.shapes || [],
                     anchors: background.anchors || [],
@@ -7132,7 +7142,7 @@ export class Layer extends ArrayElementBase {
             );
         });
 
-        recordLayerShapesGeometryChange(
+        recordDrawingShapesGeometryChange(
             background.getPath(),
             oldShapes,
             cloneForHistory(backgroundData.shapes || [])
@@ -7148,9 +7158,9 @@ export class Layer extends ArrayElementBase {
     }
 
     /**
-     * Resolve and apply this layer's own metrics keys (left/right)
+     * Resolve and apply this drawing's own metrics keys (left/right)
      * without scanning the full font. Use during interactive editing
-     * (keyboard/mouse) where only the current layer needs updating.
+     * (keyboard/mouse) where only the current drawing needs updating.
      */
     recomputeOwnMetricsKeys(): boolean {
         const glyph = this.parent() as Glyph | undefined;
@@ -7179,7 +7189,7 @@ export class Layer extends ArrayElementBase {
                 continue;
             }
 
-            if (this.isAutomaticAlignedLayer()) {
+            if (this.isAutomaticAlignedDrawing()) {
                 changed = true;
                 continue;
             }
@@ -7190,7 +7200,7 @@ export class Layer extends ArrayElementBase {
         return changed;
     }
 
-    isAutomaticAlignedLayer(): boolean {
+    isAutomaticAlignedDrawing(): boolean {
         const shapes = this.shapes || [];
         if (shapes.length === 0) {
             return false;
@@ -7213,12 +7223,12 @@ export class Layer extends ArrayElementBase {
      * non-mark bases (including ligatures, using LTR kerning between them),
      * two or more components where every non-base attaches by anchors, or a
      * single component whose referenced glyph is not a mark (Unicode general
-     * category does not start with M). Does not mutate the layer.
+     * category does not start with M). Does not mutate the drawing.
      */
     matchesAutomaticCompositionPreflight(
         sourceDataCache?: WeakMap<object, AutomaticCompositionSourceData>
     ): boolean {
-        if (this.isAutomaticAlignedLayer()) {
+        if (this.isAutomaticAlignedDrawing()) {
             return true;
         }
 
@@ -7258,7 +7268,7 @@ export class Layer extends ArrayElementBase {
     }
 
     /**
-     * Whether the composition engine can place this component-only layer.
+     * Whether the composition engine can place this component-only drawing.
      * Convert preflight and adding a component also allow unattached non-mark
      * bases (ligatures). Later unattached bases must still be non-marks.
      */
@@ -7283,7 +7293,7 @@ export class Layer extends ArrayElementBase {
         }
 
         for (const component of components) {
-            if (!this.getAutomaticComponentLayer(component)) {
+            if (!this.getAutomaticComponentDrawing(component)) {
                 return null;
             }
         }
@@ -7361,10 +7371,10 @@ export class Layer extends ArrayElementBase {
 
     /**
      * Copy kerning groups from resolved automatic bases onto this glyph.
-     * Invoked only when enabling automatic alignment makes the layer automatic.
+     * Invoked only when enabling automatic alignment makes the drawing automatic.
      */
     assignAutomaticCompositeKerningGroups(): boolean {
-        if (!this.isAutomaticAlignedLayer()) {
+        if (!this.isAutomaticAlignedDrawing()) {
             return false;
         }
 
@@ -7400,7 +7410,7 @@ export class Layer extends ArrayElementBase {
     }
 
     private collectAutomaticBaseGlyphNames(): string[] {
-        if (!this.isAutomaticAlignedLayer()) {
+        if (!this.isAutomaticAlignedDrawing()) {
             return [];
         }
 
@@ -7418,7 +7428,7 @@ export class Layer extends ArrayElementBase {
                 !placement ||
                 placement.attached ||
                 !component.reference ||
-                !this.getAutomaticComponentLayer(component)
+                !this.getAutomaticComponentDrawing(component)
             ) {
                 continue;
             }
@@ -7441,7 +7451,7 @@ export class Layer extends ArrayElementBase {
         }
         visited.add(glyph.name);
 
-        if (!this.isAutomaticAlignedLayer()) {
+        if (!this.isAutomaticAlignedDrawing()) {
             return glyph;
         }
 
@@ -7457,24 +7467,24 @@ export class Layer extends ArrayElementBase {
             return glyph;
         }
 
-        const baseLayer =
-            this.getMatchingLayerOnGlyph(baseName) ?? baseGlyph.layers?.[0];
-        if (!baseLayer?.isAutomaticAlignedLayer()) {
+        const baseDrawing =
+            this.getMatchingDrawingOnGlyph(baseName) ?? baseGlyph.drawings?.[0];
+        if (!baseDrawing?.isAutomaticAlignedDrawing()) {
             return baseGlyph;
         }
 
         return (
-            baseLayer.resolveAutomaticKerningGroupTerminal(side, visited) ??
+            baseDrawing.resolveAutomaticKerningGroupTerminal(side, visited) ??
             baseGlyph
         );
     }
 
-    private getAutomaticComponentLayer(
+    private getAutomaticComponentDrawing(
         component: Component
-    ): Layer | undefined {
+    ): Drawing | undefined {
         return (
-            this.getMatchingLayerOnGlyph(component.reference) ??
-            this.getFont()?.findGlyph(component.reference)?.layers?.[0]
+            this.getMatchingDrawingOnGlyph(component.reference) ??
+            this.getFont()?.findGlyph(component.reference)?.drawings?.[0]
         );
     }
 
@@ -7504,7 +7514,7 @@ export class Layer extends ArrayElementBase {
             return {};
         }
 
-        // A layer that already stores attachment anchors (`_top`, `_bottom`,
+        // A drawing that already stores attachment anchors (`_top`, `_bottom`,
         // …) is a complete composition source. Nested components are drawings
         // (dotbelow-ar → dotabove-ar) and must not contribute `_top` / `top`.
         if (this.hasStoredIncomingAttachmentAnchors()) {
@@ -7518,8 +7528,9 @@ export class Layer extends ArrayElementBase {
 
         const computed: ComputedAnchorMap = {};
         for (const component of this.components) {
-            const referencedLayer = this.getAutomaticComponentLayer(component);
-            if (!referencedLayer) {
+            const referencedDrawing =
+                this.getAutomaticComponentDrawing(component);
+            if (!referencedDrawing) {
                 continue;
             }
 
@@ -7527,8 +7538,8 @@ export class Layer extends ArrayElementBase {
                 getAutomaticComponentTransform(component)
             );
             const nested: ComputedAnchorMap = {
-                ...referencedLayer.collectComputedAnchors(nextVisited),
-                ...referencedLayer.collectOwnNamedAnchors()
+                ...referencedDrawing.collectComputedAnchors(nextVisited),
+                ...referencedDrawing.collectOwnNamedAnchors()
             };
             for (const [name, point] of Object.entries(nested)) {
                 const position = transformPointWithAffine(
@@ -7637,10 +7648,11 @@ export class Layer extends ArrayElementBase {
     }
 
     private getAutomaticCompositionSourceData(
-        componentLayer: Layer,
+        componentDrawing: Drawing,
         sourceDataCache?: WeakMap<object, AutomaticCompositionSourceData>
     ): AutomaticCompositionSourceData {
-        const cacheKey = componentLayer.getAutomaticCompositionSourceCacheKey();
+        const cacheKey =
+            componentDrawing.getAutomaticCompositionSourceCacheKey();
         const cachedSourceData = sourceDataCache?.get(cacheKey);
         if (cachedSourceData) {
             return cachedSourceData;
@@ -7656,7 +7668,7 @@ export class Layer extends ArrayElementBase {
             AutomaticCompositionSourceAnchor
         >();
         for (const [name, point] of Object.entries(
-            componentLayer.computedAnchors()
+            componentDrawing.computedAnchors()
         )) {
             mergedAnchors.set(name, {
                 name,
@@ -7664,7 +7676,7 @@ export class Layer extends ArrayElementBase {
                 y: point.y
             });
         }
-        for (const anchor of componentLayer.anchors || []) {
+        for (const anchor of componentDrawing.anchors || []) {
             if (!anchor.name) {
                 continue;
             }
@@ -7689,8 +7701,8 @@ export class Layer extends ArrayElementBase {
         }
 
         const sourceData: AutomaticCompositionSourceData = {
-            shapes: componentLayer.toJSON().shapes,
-            width: componentLayer.width,
+            shapes: componentDrawing.toJSON().shapes,
+            width: componentDrawing.width,
             incomingAnchors,
             outgoingAnchors,
             chainedBaseEntryAnchor
@@ -7770,15 +7782,15 @@ export class Layer extends ArrayElementBase {
         let baseAdvanceMaxX: number | null = null;
         const leftAdjustment = this.getAutomaticSidebearingAdjustment('left');
         const font = this.getFont();
-        const kerningMaster = this.getKerningMasterForComposition();
+        const kerningStation = this.getKerningStationForComposition();
         let previousUnattachedBaseReference: string | null = null;
 
         for (const input of inputs) {
-            const componentLayer = input.reference
-                ? (this.getMatchingLayerOnGlyph(input.reference) ??
-                  this.getFont()?.findGlyph(input.reference)?.layers?.[0])
+            const componentDrawing = input.reference
+                ? (this.getMatchingDrawingOnGlyph(input.reference) ??
+                  this.getFont()?.findGlyph(input.reference)?.drawings?.[0])
                 : undefined;
-            if (!componentLayer) {
+            if (!componentDrawing) {
                 placements.push({
                     translationX: 0,
                     translationY: 0,
@@ -7789,7 +7801,7 @@ export class Layer extends ArrayElementBase {
             }
 
             const sourceData = this.getAutomaticCompositionSourceData(
-                componentLayer,
+                componentDrawing,
                 sourceDataCache
             );
 
@@ -7819,9 +7831,9 @@ export class Layer extends ArrayElementBase {
                 previousUnattachedBaseReference &&
                 input.reference &&
                 font &&
-                kerningMaster
+                kerningStation
                     ? resolveKerningValueForGlyphPair(
-                          kerningMaster.kerning,
+                          kerningStation.kerning,
                           previousUnattachedBaseReference,
                           input.reference,
                           font.first_kern_groups,
@@ -7866,7 +7878,7 @@ export class Layer extends ArrayElementBase {
             if (contributesBaseMetrics) {
                 const componentShapes = sourceData.shapes;
                 if (componentShapes) {
-                    const componentBounds = Layer.calculateShapeBounds(
+                    const componentBounds = Drawing.calculateShapeBounds(
                         componentShapes,
                         appliedTransform
                     );
@@ -7968,7 +7980,7 @@ export class Layer extends ArrayElementBase {
                 return this._cachedLayout;
             }
 
-            if (!this.isAutomaticAlignedLayer()) {
+            if (!this.isAutomaticAlignedDrawing()) {
                 this._cachedLayout = null;
                 return null;
             }
@@ -7998,13 +8010,14 @@ export class Layer extends ArrayElementBase {
 
     private getAutomaticSidebearingAdjustment(side: SidebearingSide): number {
         const glyph = this.parent() as Glyph | undefined;
-        const layerFormatSpecific = this.data.format_specific as
+        const drawingFormatSpecific = this.data.format_specific as
             Record<string, Unsafe> | undefined;
         const glyphFormatSpecific = (glyph as Unsafe)?._data
             ?.format_specific as Record<string, Unsafe> | undefined;
         const key = normalizeMetricsKeyValue(
-            (layerFormatSpecific?.[getLayerMetricFormatSpecificKey(side)] as
-                string | undefined) ??
+            (drawingFormatSpecific?.[
+                getDrawingMetricFormatSpecificKey(side)
+            ] as string | undefined) ??
                 (glyphFormatSpecific?.[
                     getGlyphMetricFormatSpecificKey(side)
                 ] as string | undefined)
@@ -8033,7 +8046,7 @@ export class Layer extends ArrayElementBase {
     }
 
     getAutomaticComponentTargetAnchorOptions(component: Component): string[] {
-        if (!this.isAutomaticAlignedLayer()) {
+        if (!this.isAutomaticAlignedDrawing()) {
             return [];
         }
 
@@ -8057,10 +8070,10 @@ export class Layer extends ArrayElementBase {
 
         for (let index = 0; index < targetIndex; index++) {
             const currentComponent = components[index];
-            const componentLayer =
-                this.getAutomaticComponentLayer(currentComponent);
+            const componentDrawing =
+                this.getAutomaticComponentDrawing(currentComponent);
             const placement = layout.placements[index];
-            if (!componentLayer || !placement) {
+            if (!componentDrawing || !placement) {
                 continue;
             }
 
@@ -8071,7 +8084,7 @@ export class Layer extends ArrayElementBase {
             affine[5] = placement.translationY;
 
             const sourceData =
-                this.getAutomaticCompositionSourceData(componentLayer);
+                this.getAutomaticCompositionSourceData(componentDrawing);
 
             for (const anchorPoint of this.collectAutomaticComponentAnchors(
                 sourceData,
@@ -8081,13 +8094,13 @@ export class Layer extends ArrayElementBase {
             }
         }
 
-        const componentLayer = this.getAutomaticComponentLayer(component);
-        if (!componentLayer) {
+        const componentDrawing = this.getAutomaticComponentDrawing(component);
+        if (!componentDrawing) {
             return [];
         }
 
         const sourceData =
-            this.getAutomaticCompositionSourceData(componentLayer);
+            this.getAutomaticCompositionSourceData(componentDrawing);
         for (const incomingAnchor of sourceData.incomingAnchors) {
             if (!incomingAnchor.name) {
                 continue;
@@ -8143,28 +8156,30 @@ export class Layer extends ArrayElementBase {
     }
 
     /**
-     * Apply automatic component anchoring and derived width to mutable layer
-     * data without mutating the model layer itself.
+     * Apply automatic component anchoring and derived width to mutable drawing
+     * data without mutating the model drawing itself.
      *
      * This is used by live editor interactions, such as resize-box scaling,
      * where component transforms are already edited on a working copy and only
      * the automatic translations and width need to be refreshed.
      */
-    applyAutomaticCompositionToLayerData(
-        layerData: {
+    applyAutomaticCompositionToDrawingData(
+        drawingData: {
             shapes?: Unsafe[];
             width?: number;
         },
         sourceDataCache?: WeakMap<object, AutomaticCompositionSourceData>
     ): boolean {
         if (
-            !this.isAutomaticAlignedLayer() ||
-            !Array.isArray(layerData.shapes)
+            !this.isAutomaticAlignedDrawing() ||
+            !Array.isArray(drawingData.shapes)
         ) {
             return false;
         }
 
-        const parsed = this.parseLayerDataCompositionInputs(layerData.shapes);
+        const parsed = this.parseDrawingDataCompositionInputs(
+            drawingData.shapes
+        );
         if (!parsed) {
             return false;
         }
@@ -8204,17 +8219,17 @@ export class Layer extends ArrayElementBase {
 
         const nextWidth = this.getAutomaticCompositionDerivedWidth(layout);
         if (
-            layerData.width === undefined ||
-            Math.abs(layerData.width - nextWidth) > METRIC_UPDATE_EPSILON
+            drawingData.width === undefined ||
+            Math.abs(drawingData.width - nextWidth) > METRIC_UPDATE_EPSILON
         ) {
-            layerData.width = nextWidth;
+            drawingData.width = nextWidth;
             changed = true;
         }
 
         return changed;
     }
 
-    private parseLayerDataCompositionInputs(shapes: Unsafe[]): {
+    private parseDrawingDataCompositionInputs(shapes: Unsafe[]): {
         inputs: AutomaticCompositionComponentInput[];
         entries: {
             componentData: Unsafe;
@@ -8274,7 +8289,7 @@ export class Layer extends ArrayElementBase {
         return { inputs, entries };
     }
 
-    private getPrimaryAutoAlignedComponentLayer(): Layer | undefined {
+    private getPrimaryAutoAlignedComponentDrawing(): Drawing | undefined {
         const firstComponentShape = (this.shapes || []).find((shape) =>
             shape.isComponent()
         );
@@ -8287,7 +8302,7 @@ export class Layer extends ArrayElementBase {
             return undefined;
         }
 
-        return this.getMetricsReferenceLayerOnGlyph(reference);
+        return this.getMetricsReferenceDrawingOnGlyph(reference);
     }
 
     private getAutomaticDerivedSidebearing(
@@ -8315,18 +8330,18 @@ export class Layer extends ArrayElementBase {
         }
 
         const font = this.getFont();
-        const masterId = this.getMasterId();
-        if (!font || !masterId) {
+        const stationId = this.getStationId();
+        if (!font || !stationId) {
             return undefined;
         }
 
-        return font.findMaster(masterId)?.location;
+        return font.findStation(stationId)?.location;
     }
 
-    private getMetricsReferenceLayerOnGlyph(
+    private getMetricsReferenceDrawingOnGlyph(
         glyphName: string
-    ): Layer | undefined {
-        return this.getMatchingLayerOnGlyph(glyphName);
+    ): Drawing | undefined {
+        return this.getMatchingDrawingOnGlyph(glyphName);
     }
 
     resolveMetricsKey(
@@ -8349,7 +8364,7 @@ export class Layer extends ArrayElementBase {
             return {
                 input,
                 value: null,
-                error: 'Layer is not attached to a font',
+                error: 'Drawing is not attached to a font',
                 referencedGlyphNames: [],
                 isLocal: this.hasLocalSidebearingKey(side)
             };
@@ -8381,7 +8396,7 @@ export class Layer extends ArrayElementBase {
             }
 
             const automaticDerivedSidebearing =
-                this.isAutomaticAlignedLayer() &&
+                this.isAutomaticAlignedDrawing() &&
                 !isAutomaticSidebearingOverrideKey(input)
                     ? this.getAutomaticDerivedSidebearing(side)
                     : null;
@@ -8408,7 +8423,7 @@ export class Layer extends ArrayElementBase {
             }
 
             if (parsed.kind === 'automatic-offset') {
-                if (!this.isAutomaticAlignedLayer()) {
+                if (!this.isAutomaticAlignedDrawing()) {
                     return {
                         input,
                         value: roundMetricValue(parsed.delta),
@@ -8421,19 +8436,17 @@ export class Layer extends ArrayElementBase {
                 const baseSidebearing =
                     this.getAutomaticDerivedSidebearing(side) ??
                     (() => {
-                        const baseLayer =
-                            this.getPrimaryAutoAlignedComponentLayer();
-                        if (!baseLayer) {
+                        const baseDrawing =
+                            this.getPrimaryAutoAlignedComponentDrawing();
+                        if (!baseDrawing) {
                             return this.getDirectSidebearing(side);
                         }
 
-                        const componentResolution = baseLayer.resolveMetricsKey(
-                            side,
-                            stack
-                        );
+                        const componentResolution =
+                            baseDrawing.resolveMetricsKey(side, stack);
                         return componentResolution.error ||
                             componentResolution.value === null
-                            ? baseLayer.getDirectSidebearing(side)
+                            ? baseDrawing.getDirectSidebearing(side)
                             : componentResolution.value;
                     })();
 
@@ -8446,17 +8459,17 @@ export class Layer extends ArrayElementBase {
                 };
             }
 
-            let targetLayer: Layer | undefined;
+            let targetDrawing: Drawing | undefined;
             if (parsed.glyphName) {
-                targetLayer = this.getMetricsReferenceLayerOnGlyph(
+                targetDrawing = this.getMetricsReferenceDrawingOnGlyph(
                     parsed.glyphName
                 );
-                if (!targetLayer) {
+                if (!targetDrawing) {
                     const targetGlyph = font.findGlyph(parsed.glyphName);
-                    targetLayer = targetGlyph?.layers?.[0];
+                    targetDrawing = targetGlyph?.drawings?.[0];
                 }
 
-                if (!targetLayer) {
+                if (!targetDrawing) {
                     return {
                         input,
                         value: null,
@@ -8466,7 +8479,7 @@ export class Layer extends ArrayElementBase {
                     };
                 }
             } else {
-                targetLayer = this;
+                targetDrawing = this;
             }
 
             const targetSide = parsed.mirror
@@ -8477,7 +8490,7 @@ export class Layer extends ArrayElementBase {
 
             let baseValue: number | null = null;
             if (parsed.offsetY !== null) {
-                const measured = targetLayer.getSidebearingsAtHeight(
+                const measured = targetDrawing.getSidebearingsAtHeight(
                     parsed.offsetY
                 );
                 if (!measured) {
@@ -8493,11 +8506,11 @@ export class Layer extends ArrayElementBase {
                     targetSide === 'left' ? measured.left : measured.right;
             } else {
                 const targetKey =
-                    targetLayer.getLocalSidebearingKey(targetSide) ??
-                    targetLayer.getGlobalSidebearingKey(targetSide);
+                    targetDrawing.getLocalSidebearingKey(targetSide) ??
+                    targetDrawing.getGlobalSidebearingKey(targetSide);
 
                 if (targetKey) {
-                    const nested = targetLayer.resolveMetricsKey(
+                    const nested = targetDrawing.resolveMetricsKey(
                         targetSide,
                         stack
                     );
@@ -8512,7 +8525,7 @@ export class Layer extends ArrayElementBase {
                     }
                     baseValue = nested.value;
                 } else {
-                    baseValue = targetLayer.getDirectSidebearing(targetSide);
+                    baseValue = targetDrawing.getDirectSidebearing(targetSide);
                 }
             }
 
@@ -8602,7 +8615,10 @@ export class Layer extends ArrayElementBase {
                     };
                 }
 
-                if (this.isAutomaticAlignedLayer() && !/^==?[+-]/.test(input)) {
+                if (
+                    this.isAutomaticAlignedDrawing() &&
+                    !/^==?[+-]/.test(input)
+                ) {
                     return {
                         input,
                         value: null,
@@ -8686,7 +8702,7 @@ export class Layer extends ArrayElementBase {
                     [glyphName].filter(Boolean) as string[]
                 );
 
-                if (!this.isAutomaticAlignedLayer()) {
+                if (!this.isAutomaticAlignedDrawing()) {
                     this.setDirectSidebearing(side, applied.value);
                 }
 
@@ -8738,21 +8754,21 @@ export class Layer extends ArrayElementBase {
     }
 
     getPathSegment(): (string | number)[] {
-        const layerId = this.data.id;
-        return layerId ? ['layers', layerId] : ['layers', this._index];
+        const drawingId = this.data.id;
+        return drawingId ? ['layers', drawingId] : ['layers', this._index];
     }
 
-    private getMasterId(): string | undefined {
-        return this.master?.master;
+    private getStationId(): string | undefined {
+        return this.station?.master;
     }
 
     /**
-     * Get the resolved master object for this layer.
-     * Returns a Master only when this layer is a DefaultForMaster layer.
+     * Get the resolved station object for this drawing.
+     * Returns a Station only when this drawing is a DefaultForMaster drawing.
      */
-    getMaster(): Master | undefined {
-        const layerMaster = this.master;
-        if (!layerMaster || layerMaster.type !== 'DefaultForMaster') {
+    getStation(): Station | undefined {
+        const drawingStation = this.station;
+        if (!drawingStation || drawingStation.type !== 'DefaultForMaster') {
             return undefined;
         }
 
@@ -8762,26 +8778,26 @@ export class Layer extends ArrayElementBase {
         const font = glyph.parent() as Font;
         if (!font) return undefined;
 
-        return font.findMaster(layerMaster.master);
+        return font.findStation(drawingStation.master);
     }
 
-    private getKerningMasterForComposition(): Master | undefined {
-        const layerMaster = this.master;
+    private getKerningStationForComposition(): Station | undefined {
+        const drawingStation = this.station;
         if (
-            !layerMaster ||
-            (layerMaster.type !== 'DefaultForMaster' &&
-                layerMaster.type !== 'AssociatedWithMaster')
+            !drawingStation ||
+            (drawingStation.type !== 'DefaultForMaster' &&
+                drawingStation.type !== 'AssociatedWithMaster')
         ) {
             return undefined;
         }
 
-        return this.getFont()?.findMaster(layerMaster.master);
+        return this.getFont()?.findStation(drawingStation.master);
     }
 
     private collectUnattachedAutomaticBaseReferencePairs(): Array<
         [string, string]
     > {
-        if (!this.isAutomaticAlignedLayer()) {
+        if (!this.isAutomaticAlignedDrawing()) {
             return [];
         }
 
@@ -8808,7 +8824,7 @@ export class Layer extends ArrayElementBase {
     }
 
     /**
-     * True when this automatic layer stacks unattached bases that resolve to
+     * True when this automatic drawing stacks unattached bases that resolve to
      * the kerning pair (`glyph` or `@group` keys).
      */
     usesAutomaticLigatureKerningPair(
@@ -8871,32 +8887,32 @@ export class Layer extends ArrayElementBase {
     }
 
     getComputedName(): string {
-        const isIntermediateLayer =
-            this.master?.type === 'AssociatedWithMaster' &&
+        const isFreeDrawing =
+            this.station?.type === 'AssociatedWithMaster' &&
             !!this.location &&
             Object.keys(this.location).length > 0;
 
-        if (isIntermediateLayer) {
-            return 'Intermediate Layer';
+        if (isFreeDrawing) {
+            return 'Free drawing';
         }
 
-        const master = this.getMaster();
-        if (!master) {
+        const station = this.getStation();
+        if (!station) {
             return this.name && this.name.trim() !== '' ? this.name : 'Default';
         }
 
-        const masterName = master.toJSON().name;
-        if (typeof masterName === 'string') {
-            return masterName;
+        const stationName = station.toJSON().name;
+        if (typeof stationName === 'string') {
+            return stationName;
         }
-        if (masterName?.dflt) {
-            return masterName.dflt;
+        if (stationName?.dflt) {
+            return stationName.dflt;
         }
-        if (masterName?.en) {
-            return masterName.en;
+        if (stationName?.en) {
+            return stationName.en;
         }
 
-        const firstName = Object.values(masterName || {}).find(
+        const firstName = Object.values(stationName || {}).find(
             (value) => typeof value === 'string'
         );
         return typeof firstName === 'string' ? firstName : 'Default';
@@ -8971,20 +8987,20 @@ export class Layer extends ArrayElementBase {
     }
 
     /**
-     * Whether this layer is linked for editor multi-layer operations.
-     * This is editor-only runtime state keyed by glyph and layer ID; it is not persisted into font data.
+     * Whether this drawing is linked for editor multi-drawing operations.
+     * This is editor-only runtime state keyed by glyph and drawing ID; it is not persisted into font data.
      */
     get linked(): boolean {
         if (!this.id) {
             return true;
         }
 
-        const outlineEditor = getOutlineEditorLayerLinkController();
+        const outlineEditor = getOutlineEditorDrawingLinkController();
         if (!outlineEditor) {
             return true;
         }
 
-        return outlineEditor.isLayerLinked!(this.id, this.getGlyphName());
+        return outlineEditor.isDrawingLinked!(this.id, this.getGlyphName());
     }
 
     set linked(value: boolean) {
@@ -8993,14 +9009,14 @@ export class Layer extends ArrayElementBase {
             return;
         }
 
-        const outlineEditor = getOutlineEditorLayerLinkController();
+        const outlineEditor = getOutlineEditorDrawingLinkController();
         if (!outlineEditor) {
             return;
         }
 
         const linked = Boolean(value);
-        outlineEditor.setLayerLinked!(this.id, linked, this.getGlyphName());
-        refreshLayerLinkageUi(this.getGlyphName(), this.id, linked);
+        outlineEditor.setDrawingLinked!(this.id, linked, this.getGlyphName());
+        refreshDrawingLinkageUi(this.getGlyphName(), this.id, linked);
     }
 
     get name(): string | undefined {
@@ -9026,29 +9042,32 @@ export class Layer extends ArrayElementBase {
     }
 
     /**
-     * Tagged layer-to-master link: `{ "type": "DefaultForMaster", "master": id }`,
-     * `"AssociatedWithMaster"`, or `"FreeFloating"` (master optional).
+     * Tagged drawing-to-station link: `{ "type": "DefaultForMaster", "master": id }`,
+     * `"AssociatedWithMaster"`, or `"FreeFloating"` (`master` optional).
      * @example
-     * layer.master["type"]  # `type` is a Python keyword
-     * layer.master.master
+     * drawing.station["type"]  # `type` is a Python keyword
+     * drawing.station.master
      */
-    get master(): Babelfont.LayerType | undefined {
-        const layerId = this.data.id || '[no-layer-id]';
-        assertTaggedLayerMaster(this.data.master, `Layer#${layerId}.master`);
+    get station(): Babelfont.LayerType | undefined {
+        const drawingId = this.data.id || '[no-drawing-id]';
+        assertTaggedDrawingStation(
+            this.data.master,
+            `Drawing#${drawingId}.station`
+        );
         return getLiveMutableValue(this, 'master', this.data.master, () => {
-            const currentLayerId = this.data.id || '[no-layer-id]';
-            assertTaggedLayerMaster(
+            const currentDrawingId = this.data.id || '[no-drawing-id]';
+            assertTaggedDrawingStation(
                 this.data.master,
-                `Layer#${currentLayerId}.master`
+                `Drawing#${currentDrawingId}.station`
             );
             return this.data.master;
         });
     }
 
-    set master(value: Babelfont.LayerType | undefined) {
+    set station(value: Babelfont.LayerType | undefined) {
         assertModelMutationAllowed();
-        const layerId = this.data.id || '[no-layer-id]';
-        assertTaggedLayerMaster(value, `Layer#${layerId}.master(set)`);
+        const drawingId = this.data.id || '[no-drawing-id]';
+        assertTaggedDrawingStation(value, `Drawing#${drawingId}.station(set)`);
         const old = this.data.master;
         this.data.master = value;
         recordAndMarkDirty(this, 'master', old, value);
@@ -9085,15 +9104,15 @@ export class Layer extends ArrayElementBase {
         }
         return getReadOnlyCollectionValue(
             this._guideWrappers!,
-            'Layer.guides is a read-only collection view. Use addGuide() or removeGuide() for structural edits.'
+            'Drawing.guides is a read-only collection view. Use addGuide() or removeGuide() for structural edits.'
         );
     }
 
     /**
-     * Current UI selection on this layer.
+     * Current UI selection on this drawing.
      * Assign a node, anchor, component, guide, or a list of them to replace the selection.
      */
-    get selection(): SelectableLayerObject[] {
+    get selection(): SelectableDrawingObject[] {
         const outlineEditor = getOutlineEditorSelectionController();
         const selection = outlineEditor
             ? this.getSelectionSnapshotFromOutlineEditor(outlineEditor)
@@ -9101,13 +9120,16 @@ export class Layer extends ArrayElementBase {
 
         return getReadOnlyCollectionValue(
             selection,
-            'Layer.selection is a derived UI selection view. Assign a new selection list to change it.'
+            'Drawing.selection is a derived UI selection view. Assign a new selection list to change it.'
         );
     }
 
     set selection(
         value:
-            SelectableLayerObject | SelectableLayerObject[] | null | undefined
+            | SelectableDrawingObject
+            | SelectableDrawingObject[]
+            | null
+            | undefined
     ) {
         assertModelMutationAllowed();
         this._setSelectionFromPython(value);
@@ -9126,33 +9148,33 @@ export class Layer extends ArrayElementBase {
         }
         return getReadOnlyCollectionValue(
             this._shapeWrappers!,
-            'Layer.shapes is a read-only collection view. Use addPath(), addComponent(), addShape(), or removeShape() for structural edits.'
+            'Drawing.shapes is a read-only collection view. Use addPath(), addComponent(), addShape(), or removeShape() for structural edits.'
         );
     }
 
     /**
-     * Direct path objects in this layer, ready to use without Shape.asPath()
+     * Direct path objects in this drawing, ready to use without Shape.asPath()
      * @example
-     * path = layer.paths[0]
+     * path = drawing.paths[0]
      */
     get paths(): Path[] {
         return this.getFilteredShapes(
             (shape) => shape.isPath(),
             (shape) => shape.asPath(),
-            'Layer.paths is a read-only collection view. Use addPath() or removeShape() for structural edits.'
+            'Drawing.paths is a read-only collection view. Use addPath() or removeShape() for structural edits.'
         );
     }
 
     /**
-     * Direct component objects in this layer, ready to use without Shape.asComponent()
+     * Direct component objects in this drawing, ready to use without Shape.asComponent()
      * @example
-     * component = layer.components[0]
+     * component = drawing.components[0]
      */
     get components(): Component[] {
         return this.getFilteredShapes(
             (shape) => shape.isComponent(),
             (shape) => shape.asComponent(),
-            'Layer.components is a read-only collection view. Use addComponent() or removeShape() for structural edits.'
+            'Drawing.components is a read-only collection view. Use addComponent() or removeShape() for structural edits.'
         );
     }
 
@@ -9168,7 +9190,7 @@ export class Layer extends ArrayElementBase {
         }
         return getReadOnlyCollectionValue(
             this._anchorWrappers!,
-            'Layer.anchors is a read-only collection view. Use addAnchor() or removeAnchor() for structural edits.'
+            'Drawing.anchors is a read-only collection view. Use addAnchor() or removeAnchor() for structural edits.'
         );
     }
 
@@ -9177,20 +9199,20 @@ export class Layer extends ArrayElementBase {
     }
 
     /**
-     * Anchors inherited from this layer's component stack, in this layer's
-     * coordinate space. Stored anchors on this layer are not included; later
+     * Anchors inherited from this drawing's component stack, in this drawing's
+     * coordinate space. Stored anchors on this drawing are not included; later
      * components overwrite earlier names. Nested components are walked
-     * recursively unless this layer already stores an incoming attachment
+     * recursively unless this drawing already stores an incoming attachment
      * anchor (`_top`, `_bottom`, …): those nested shapes are drawings, not
      * identity, so their anchors are omitted.
      * @example
-     * anchors = layer.computedAnchors()
+     * anchors = drawing.computedAnchors()
      * top = anchors["top"]
      */
     computedAnchors(): ComputedAnchorMap {
         const stamp = this.computedAnchorsStamp();
         const cached = (
-            this as Layer & {
+            this as Drawing & {
                 _computedAnchorsCache?: {
                     stamp: string;
                     value: ComputedAnchorMap;
@@ -9202,7 +9224,7 @@ export class Layer extends ArrayElementBase {
         }
         const value = this.collectComputedAnchors(new Set());
         (
-            this as Layer & {
+            this as Drawing & {
                 _computedAnchorsCache?: {
                     stamp: string;
                     value: ComputedAnchorMap;
@@ -9214,21 +9236,21 @@ export class Layer extends ArrayElementBase {
 
     private computedAnchorsStamp(): string {
         const parts: string[] = [];
-        const visit = (layer: Layer, seen: Set<string>) => {
-            const glyphName = layer.getGlyphName() || '';
+        const visit = (drawing: Drawing, seen: Set<string>) => {
+            const glyphName = drawing.getGlyphName() || '';
             if (glyphName && seen.has(glyphName)) {
                 return;
             }
             if (glyphName) {
                 seen.add(glyphName);
             }
-            const anchors = (layer.anchors || [])
+            const anchors = (drawing.anchors || [])
                 .map((anchor) => `${anchor.name}:${anchor.x},${anchor.y}`)
                 .join(';');
-            const components = (layer.components || [])
+            const components = (drawing.components || [])
                 .map((component) => {
                     const referenced =
-                        layer.getAutomaticComponentLayer(component);
+                        drawing.getAutomaticComponentDrawing(component);
                     const transform = JSON.stringify(
                         component.transform || null
                     );
@@ -9236,10 +9258,11 @@ export class Layer extends ArrayElementBase {
                 })
                 .join('|');
             parts.push(
-                `${glyphName}#${layer.id || ''}[${anchors}](${components})`
+                `${glyphName}#${drawing.id || ''}[${anchors}](${components})`
             );
-            for (const component of layer.components || []) {
-                const referenced = layer.getAutomaticComponentLayer(component);
+            for (const component of drawing.components || []) {
+                const referenced =
+                    drawing.getAutomaticComponentDrawing(component);
                 if (referenced) {
                     visit(referenced, seen);
                 }
@@ -9263,11 +9286,11 @@ export class Layer extends ArrayElementBase {
         recordAndMarkDirty(this, 'color', old, value);
     }
 
-    get layer_index(): number | undefined {
+    get drawing_index(): number | undefined {
         return this.data.layer_index;
     }
 
-    set layer_index(value: number | undefined) {
+    set drawing_index(value: number | undefined) {
         assertModelMutationAllowed();
         const old = this.data.layer_index;
         this.data.layer_index = value;
@@ -9285,11 +9308,11 @@ export class Layer extends ArrayElementBase {
         recordAndMarkDirty(this, 'is_background', old, value);
     }
 
-    get background_layer_id(): string | undefined {
+    get background_drawing_id(): string | undefined {
         return this.data.background_layer_id;
     }
 
-    set background_layer_id(value: string | undefined) {
+    set background_drawing_id(value: string | undefined) {
         assertModelMutationAllowed();
         const old = this.data.background_layer_id;
         this.data.background_layer_id = value;
@@ -9297,35 +9320,35 @@ export class Layer extends ArrayElementBase {
     }
 
     /**
-     * The paired background layer. Empty backgrounds are transient until a path
+     * The paired background drawing. Empty backgrounds are transient until a path
      * or component is added, so merely accessing this property does not alter
      * the glyph.
      */
-    get backgroundLayer(): Layer {
+    get backgroundDrawing(): Drawing {
         if (this.is_background) {
             if (this._virtualBackgroundOwner) {
                 return this._virtualBackgroundOwner;
             }
-            const foreground = this.parent()?.layers?.find(
-                (layer: Layer) => layer.background_layer_id === this.id
+            const foreground = this.parent()?.drawings?.find(
+                (drawing: Drawing) => drawing.background_drawing_id === this.id
             );
             return foreground || this;
         }
 
         const glyph = this.parent() as Glyph | null;
-        const existing = this.background_layer_id
-            ? glyph?.findLayerById(this.background_layer_id)
+        const existing = this.background_drawing_id
+            ? glyph?.findDrawingById(this.background_drawing_id)
             : undefined;
         if (existing?.is_background) {
             return existing;
         }
 
-        const virtualBackground = new Layer(
+        const virtualBackground = new Drawing(
             [
                 {
                     id: `background-${this.id || this._index}`,
                     width: this.width,
-                    master: this.master,
+                    master: this.station,
                     location: this.location,
                     is_background: true,
                     background_layer_id: this.id
@@ -9338,7 +9361,7 @@ export class Layer extends ArrayElementBase {
         return virtualBackground;
     }
 
-    private ensureMaterializedBackgroundLayer(): void {
+    private ensureMaterializedBackgroundDrawing(): void {
         if (!this._virtualBackgroundOwner) {
             return;
         }
@@ -9347,11 +9370,11 @@ export class Layer extends ArrayElementBase {
         const glyph = owner.parent() as Glyph | null;
         if (!glyph) {
             throw new Error(
-                'Cannot materialize a background layer without a glyph'
+                'Cannot materialize a background drawing without a glyph'
             );
         }
 
-        const background = glyph.addBackgroundLayer(owner);
+        const background = glyph.addBackgroundDrawing(owner);
         this._parent = background._parent;
         this._index = background._index;
         this._parentObject = glyph;
@@ -9359,8 +9382,8 @@ export class Layer extends ArrayElementBase {
     }
 
     /**
-     * Intermediate designspace location. Access axis tags as attributes
-     * (`layer.location.wght`). Absent when the layer sits at its master default.
+     * The free drawing’s own designspace location. Access axis tags as attributes
+     * (`drawing.location.wght`). Absent when the drawing sits at its station.
      */
     get location(): DesignspaceLocation | undefined {
         return getLiveMutableValue(
@@ -9416,7 +9439,7 @@ export class Layer extends ArrayElementBase {
     }
 
     /**
-     * Add a new shape to the layer
+     * Add a new shape to the drawing
      */
     addShape(shape: Babelfont.Shape): Shape {
         assertModelMutationAllowed();
@@ -9428,10 +9451,10 @@ export class Layer extends ArrayElementBase {
                 !('reference' in shape)
             ) {
                 throw new Error(
-                    'Background layers can only contain paths and components'
+                    'Background drawings can only contain paths and components'
                 );
             }
-            this.ensureMaterializedBackgroundLayer();
+            this.ensureMaterializedBackgroundDrawing();
             if (!this.data.shapes) {
                 this.data.shapes = [];
             }
@@ -9452,9 +9475,9 @@ export class Layer extends ArrayElementBase {
     }
 
     /**
-     * Add a new path to the layer
+     * Add a new path to the drawing
      * @example
-     * path = layer.addPath(closed=True)
+     * path = drawing.addPath(closed=True)
      */
     addPath(closed: boolean | Record<string, Unsafe> = true): Path {
         assertModelMutationAllowed();
@@ -9478,15 +9501,15 @@ export class Layer extends ArrayElementBase {
     }
 
     /**
-     * Add a new component to the layer. If the layer is then eligible for
+     * Add a new component to the drawing. If the drawing is then eligible for
      * automatic composition (component-only, and the engine can place every
      * component — including unattached non-mark bases as a ligature), automatic
-     * alignment is enabled on every component and the layer is recomposed in
+     * alignment is enabled on every component and the drawing is recomposed in
      * the same transaction.
      * @example
-     * component = layer.addComponent("A")
+     * component = drawing.addComponent("A")
      * # With transformation matrix (legacy 6-element format converted to DecomposedAffine)
-     * component = layer.addComponent("acutecomb", [1, 0, 0, 1, 250, 500])
+     * component = drawing.addComponent("acutecomb", [1, 0, 0, 1, 250, 500])
      */
     addComponent(
         reference: string,
@@ -9539,8 +9562,8 @@ export class Layer extends ArrayElementBase {
         const shapes = this.shapes || [];
 
         if (shapeOrIndex instanceof Shape) {
-            const parentLayer = shapeOrIndex.parent();
-            if (parentLayer !== this) {
+            const parentDrawing = shapeOrIndex.parent();
+            if (parentDrawing !== this) {
                 return null;
             }
             const index = shapes.indexOf(shapeOrIndex);
@@ -9642,7 +9665,7 @@ export class Layer extends ArrayElementBase {
     }
 
     /**
-     * Move selected shapes as a unit in z-order. Linked layers with a matching
+     * Move selected shapes as a unit in z-order. Linked drawings with a matching
      * fingerprint receive the same index permutation.
      *
      * `backward` / `forward` swap each selected index with the adjacent
@@ -9657,10 +9680,10 @@ export class Layer extends ArrayElementBase {
         command: ShapeZOrderCommand
     ): Map<number, number> {
         assertModelMutationAllowed();
-        const linkedLayers = [...this._getLinkedLayers()];
+        const linkedDrawings = [...this._getLinkedDrawings()];
         const mapping = this.applyShapeZOrderMove(indexes, command);
-        for (const linkedLayer of linkedLayers) {
-            linkedLayer.applyShapeZOrderMove(indexes, command);
+        for (const linkedDrawing of linkedDrawings) {
+            linkedDrawing.applyShapeZOrderMove(indexes, command);
         }
         return mapping;
     }
@@ -9962,14 +9985,14 @@ export class Layer extends ArrayElementBase {
     }
 
     /**
-     * Add a new anchor to the layer
+     * Add a new anchor to the drawing
      * @example
-     * anchor = layer.addAnchor(250, 700, "top")
+     * anchor = drawing.addAnchor(250, 700, "top")
      */
     addAnchor(x: number, y: number, name?: string): Anchor {
         assertModelMutationAllowed();
         if (this.is_background) {
-            throw new Error('Background layers cannot contain anchors');
+            throw new Error('Background drawings cannot contain anchors');
         }
         if (!this.data.anchors) {
             this.data.anchors = [];
@@ -9996,7 +10019,7 @@ export class Layer extends ArrayElementBase {
     ): Guide {
         assertModelMutationAllowed();
         if (this.is_background) {
-            throw new Error('Background layers cannot contain guides');
+            throw new Error('Background drawings cannot contain guides');
         }
         if (!this.data.guides) {
             this.data.guides = [];
@@ -10195,7 +10218,7 @@ export class Layer extends ArrayElementBase {
             }
         }
 
-        return Layer.boundsFromMinMax(minX, minY, maxX, maxY);
+        return Drawing.boundsFromMinMax(minX, minY, maxX, maxY);
     }
 
     static calculatePathBounds(pathData: {
@@ -10383,33 +10406,37 @@ export class Layer extends ArrayElementBase {
             }
         }
 
-        return Layer.boundsFromSegments(segments);
+        return Drawing.boundsFromSegments(segments);
     }
 
     /**
-     * Flatten all components in the layer to paths with their transforms applied
+     * Flatten all components in the drawing to paths with their transforms applied
      * This recursively processes nested components to arbitrary depth
-     * @param layerData - Raw layer data object
+     * @param drawingData - Raw drawing data object
      * @param font - Font object for looking up component references
      * @returns Array of flattened path data objects with transformed coordinates
      */
     private static flattenComponents(
-        layerData: Unsafe,
+        drawingData: Unsafe,
         font?: Font,
-        masterId?: string,
-        matchingSource?: Layer
+        stationId?: string,
+        matchingSource?: Drawing
     ): Babelfont.Path[] {
-        return flattenShapesToPaths(layerData?.shapes, createIdentityAffine(), {
-            resolveComponentShapes: componentShapeResolver(
-                matchingSource,
-                font,
-                masterId
-            )
-        });
+        return flattenShapesToPaths(
+            drawingData?.shapes,
+            createIdentityAffine(),
+            {
+                resolveComponentShapes: componentShapeResolver(
+                    matchingSource,
+                    font,
+                    stationId
+                )
+            }
+        );
     }
 
     /**
-     * Get only direct paths in this layer (no components)
+     * Get only direct paths in this drawing (no components)
      * @returns Array of path data objects from shapes that are paths
      */
     private getDirectPaths(): Babelfont.Path[] {
@@ -10428,7 +10455,7 @@ export class Layer extends ArrayElementBase {
     }
 
     /**
-     * Get all paths in this layer including transformed paths from components (recursively flattened)
+     * Get all paths in this drawing including transformed paths from components (recursively flattened)
      * @returns Array of path data objects with all components resolved to transformed paths
      */
     getAllPaths(): Babelfont.Path[] {
@@ -10455,20 +10482,20 @@ export class Layer extends ArrayElementBase {
     }
 
     /**
-     * Calculate bounding box for layer data
-     * @param layerData - Raw layer data object
+     * Calculate bounding box for drawing data
+     * @param drawingData - Raw drawing data object
      * @param includeAnchors - If true, include anchors in the bounding box calculation (default: false)
      * @param font - Font object for component lookup (optional)
-     * @param masterId - Master ID for finding matching component layers (optional)
-     * @param matchingSource - Layer whose designspace location selects component layers
+     * @param stationId - Station ID for finding matching component drawings (optional)
+     * @param matchingSource - Drawing whose designspace location selects component drawings
      * @returns Bounding box {minX, minY, maxX, maxY, width, height} or null if no geometry
      */
     static calculateBoundingBox(
-        layerData: Unsafe,
+        drawingData: Unsafe,
         includeAnchors: boolean = false,
         font?: Font,
-        masterId?: string,
-        matchingSource?: Layer
+        stationId?: string,
+        matchingSource?: Drawing
     ): {
         minX: number;
         minY: number;
@@ -10480,17 +10507,17 @@ export class Layer extends ArrayElementBase {
         let bounds = null;
 
         // Get all paths (we need to use the static flattenComponents for compatibility)
-        // since we're working with raw layer data, not a Layer instance
-        const paths = Layer.flattenComponents(
-            layerData,
+        // since we're working with raw drawing data, not a Drawing instance
+        const paths = Drawing.flattenComponents(
+            drawingData,
             font,
-            masterId,
+            stationId,
             matchingSource
         );
 
         // Process all paths
         for (const path of paths) {
-            const pathBounds = Layer.calculatePathBounds(path);
+            const pathBounds = Drawing.calculatePathBounds(path);
             if (pathBounds) {
                 bounds = bounds
                     ? {
@@ -10506,8 +10533,8 @@ export class Layer extends ArrayElementBase {
         }
 
         // Include anchors in bounding box if requested
-        if (includeAnchors && layerData.anchors) {
-            for (const anchor of layerData.anchors) {
+        if (includeAnchors && drawingData.anchors) {
+            for (const anchor of drawingData.anchors) {
                 bounds = bounds
                     ? {
                           minX: Math.min(bounds.minX, anchor.x),
@@ -10534,8 +10561,8 @@ export class Layer extends ArrayElementBase {
             // the former; for the latter it masquerades as valid ink bounds and
             // makes every sidebearing read return 0.
             const hasPathGeometry =
-                Array.isArray(layerData.shapes) &&
-                layerData.shapes.some((shape: Unsafe) => {
+                Array.isArray(drawingData.shapes) &&
+                drawingData.shapes.some((shape: Unsafe) => {
                     if (!shape || typeof shape !== 'object') return false;
                     const record = shape as Record<string, Unsafe>;
                     const pathRecord = (record.Path ??
@@ -10546,19 +10573,19 @@ export class Layer extends ArrayElementBase {
                 });
             if (hasPathGeometry) {
                 console.warn(
-                    '[Layer] Bounding box could not be measured despite present ' +
+                    '[Drawing] Bounding box could not be measured despite present ' +
                         'path geometry. Falling back to advance-shaped bounds; ' +
-                        'sidebearing reads from this layer are not trustworthy.',
+                        'sidebearing reads from this drawing are not trustworthy.',
                     {
-                        width: layerData.width,
-                        shapeCount: layerData.shapes?.length
+                        width: drawingData.width,
+                        shapeCount: drawingData.shapes?.length
                     }
                 );
             }
 
-            // No points found (e.g., space character) - use glyph width from layer data
+            // No points found (e.g., space character) - use glyph width from drawing data
             // Create a small bbox: 10 units high, centered on baseline, as wide as the glyph
-            const glyphWidth = layerData.width || 250; // Fallback to 250 if no width
+            const glyphWidth = drawingData.width || 250; // Fallback to 250 if no width
             const height = 10;
 
             return {
@@ -10582,7 +10609,7 @@ export class Layer extends ArrayElementBase {
     }
 
     /**
-     * Calculate bounding box for this layer
+     * Calculate bounding box for this drawing
      * @param includeAnchors - If true, include anchors in the bounding box calculation (default: false)
      * @returns Bounding box {minX, minY, maxX, maxY, width, height} or null if no geometry
      */
@@ -10598,12 +10625,12 @@ export class Layer extends ArrayElementBase {
         const glyph = this.parent() as Glyph;
         const font = glyph ? (glyph.parent() as Font) : undefined;
 
-        const matchingSource = this.getComponentResolutionLayer();
-        return Layer.calculateBoundingBox(
+        const matchingSource = this.getComponentResolutionDrawing();
+        return Drawing.calculateBoundingBox(
             this.data,
             includeAnchors,
             font,
-            matchingSource.getMasterId(),
+            matchingSource.getStationId(),
             matchingSource
         );
     }
@@ -10628,7 +10655,7 @@ export class Layer extends ArrayElementBase {
             if (!path.nodes || !Array.isArray(path.nodes)) continue;
 
             // Use the reusable segment processor
-            const segments = Layer.processPathSegments({
+            const segments = Drawing.processPathSegments({
                 nodes: path.nodes,
                 closed: path.closed
             });
@@ -10801,7 +10828,7 @@ export class Layer extends ArrayElementBase {
     }
 
     /**
-     * Calculate intersections between a line segment and all paths in this layer
+     * Calculate intersections between a line segment and all paths in this drawing
      * @param p1 - First point {x, y} of the line segment
      * @param p2 - Second point {x, y} of the line segment
      * @param includeComponents - If true, include component paths (default: false)
@@ -10815,7 +10842,7 @@ export class Layer extends ArrayElementBase {
         const paths = includeComponents
             ? this.getAllPaths()
             : this.getDirectPaths();
-        return Layer.intersectPathsWithLine(paths, p1, p2);
+        return Drawing.intersectPathsWithLine(paths, p1, p2);
     }
 
     /**
@@ -10857,27 +10884,27 @@ export class Layer extends ArrayElementBase {
     }
 
     /**
-     * Background layers resolve component references through their partner
-     * foreground layer so painted geometry matches that foreground's
-     * master-bound neighbour on the referenced glyph.
+     * Background drawings resolve component references through their partner
+     * foreground drawing so painted geometry matches that foreground's
+     * station-bound neighbour on the referenced glyph.
      */
-    private getComponentResolutionLayer(): Layer {
+    private getComponentResolutionDrawing(): Drawing {
         if (!this.is_background) {
             return this;
         }
-        const partner = this.backgroundLayer;
+        const partner = this.backgroundDrawing;
         return partner && !partner.is_background ? partner : this;
     }
 
     /**
-     * Find the exact matching stored layer on another glyph for this layer's
+     * Find the exact matching stored drawing on another glyph for this drawing's
      * effective designspace location.
-     * Background layers resolve through their partner foreground layer.
+     * Background drawings resolve through their partner foreground drawing.
      */
-    getMatchingLayerOnGlyph(glyphName: string): Layer | undefined {
-        const source = this.getComponentResolutionLayer();
+    getMatchingDrawingOnGlyph(glyphName: string): Drawing | undefined {
+        const source = this.getComponentResolutionDrawing();
         if (source !== this) {
-            return source.getMatchingLayerOnGlyph(glyphName);
+            return source.getMatchingDrawingOnGlyph(glyphName);
         }
 
         const font = this.getFont();
@@ -10887,19 +10914,19 @@ export class Layer extends ArrayElementBase {
         }
 
         const targetGlyph = font.findGlyph(glyphName);
-        if (!targetGlyph || !targetGlyph.layers) {
+        if (!targetGlyph || !targetGlyph.drawings) {
             return undefined;
         }
 
-        for (const layer of targetGlyph.layers) {
+        for (const drawing of targetGlyph.drawings) {
             if (
                 locationsMatch(
                     designspaceLocation,
-                    layer.getEffectiveDesignspaceLocation(),
+                    drawing.getEffectiveDesignspaceLocation(),
                     font.axes
                 )
             ) {
-                return layer;
+                return drawing;
             }
         }
 
@@ -10907,7 +10934,7 @@ export class Layer extends ArrayElementBase {
     }
 
     /**
-     * Returns a normalized outline-compatibility fingerprint for this layer.
+     * Returns a normalized outline-compatibility fingerprint for this drawing.
      * The fingerprint includes components, paths, and anchors, with anchors
      * sorted by name and guides excluded.
      */
@@ -10917,7 +10944,7 @@ export class Layer extends ArrayElementBase {
         );
         const pathSignatures = (this.paths || []).map((path) => {
             const nodeTypes = path.nodes.map((node) =>
-                Layer.normalizeSignatureNodeType(node.nodetype)
+                Drawing.normalizeSignatureNodeType(node.nodetype)
             );
             const closedFlag = path.closed === false ? '0' : '1';
             const booleanSuffix = path.isSubtraction ? ':subtraction' : '';
@@ -10935,40 +10962,40 @@ export class Layer extends ArrayElementBase {
     }
 
     /**
-     * Internal helper for multi-layer editing workflows.
-     * Returns sibling layers on the same glyph that are currently linked and
-     * structurally compatible with this layer via matching fingerprints.
+     * Internal helper for multi-drawing editing workflows.
+     * Returns sibling drawings on the same glyph that are currently linked and
+     * structurally compatible with this drawing via matching fingerprints.
      */
-    _getLinkedLayers(): Layer[] {
+    _getLinkedDrawings(): Drawing[] {
         const glyph = this.parent() as Glyph | null;
         if (!glyph || this.is_background || !this.linked) {
             return [];
         }
 
         const referenceFingerprint = this.fingerprint;
-        const linkedLayers = (glyph.layers || []).filter(
-            (layer) =>
-                !areSameModelObject(layer, this) &&
-                !layer.is_background &&
-                layer.linked !== false &&
-                layer.fingerprint === referenceFingerprint
+        const linkedDrawings = (glyph.drawings || []).filter(
+            (drawing) =>
+                !areSameModelObject(drawing, this) &&
+                !drawing.is_background &&
+                drawing.linked !== false &&
+                drawing.fingerprint === referenceFingerprint
         );
 
         return getReadOnlyCollectionValue(
-            linkedLayers,
-            'Layer._getLinkedLayers() returns a read-only collection view.'
+            linkedDrawings,
+            'Drawing._getLinkedDrawings() returns a read-only collection view.'
         );
     }
 
     toString(): string {
-        const masterId = this.getMasterId() || 'Unsafe';
+        const stationId = this.getStationId() || 'Unsafe';
         const shapesCount = this.shapes?.length || 0;
-        return `<Layer width=${this.width} master="${masterId}" shapes=${shapesCount}>`;
+        return `<Drawing width=${this.width} station="${stationId}" shapes=${shapesCount}>`;
     }
 }
 
 function getAppliedMetricsKeySidebearing(
-    layer: Layer,
+    drawing: Drawing,
     side: SidebearingSide,
     resolution: MetricsKeyResolution
 ): { value: number | null; error: string | null } {
@@ -10979,7 +11006,7 @@ function getAppliedMetricsKeySidebearing(
         };
     }
 
-    const font = (layer.parent() as Glyph | undefined)?.parent() as
+    const font = (drawing.parent() as Glyph | undefined)?.parent() as
         Font | undefined;
     if (!font || !resolution.input) {
         return { value: resolution.value, error: null };
@@ -10994,7 +11021,7 @@ function getAppliedMetricsKeySidebearing(
         return { value: resolution.value, error: null };
     }
 
-    const measured = layer.getSidebearingsAtHeight(parsed.offsetY);
+    const measured = drawing.getSidebearingsAtHeight(parsed.offsetY);
     if (!measured) {
         return {
             value: null,
@@ -11004,7 +11031,7 @@ function getAppliedMetricsKeySidebearing(
 
     const measuredSidebearing =
         side === 'left' ? measured.left : measured.right;
-    const directSidebearing = side === 'left' ? layer.lsb : layer.rsb;
+    const directSidebearing = side === 'left' ? drawing.lsb : drawing.rsb;
 
     return {
         value: roundMetricValue(
@@ -11021,10 +11048,10 @@ const GLYPHS_FEATURE_VARIATION_ATTRIBUTES_KEY =
     'com.schriftgestalt.Glyphs.attr';
 
 function canonicalizeFeatureVariationAxisRules(
-    layer: Babelfont.Layer
+    drawing: Babelfont.Layer
 ): string | null {
     const attributes =
-        layer.format_specific?.[GLYPHS_FEATURE_VARIATION_ATTRIBUTES_KEY];
+        drawing.format_specific?.[GLYPHS_FEATURE_VARIATION_ATTRIBUTES_KEY];
     const axisRules =
         attributes &&
         typeof attributes === 'object' &&
@@ -11063,11 +11090,11 @@ function glyphTreeHasSubtraction(
     }
     visiting.add(glyphName);
     const font = glyph.parent();
-    for (const layer of glyph.layers || []) {
-        if (!layer || layer.is_background) {
+    for (const drawing of glyph.drawings || []) {
+        if (!drawing || drawing.is_background) {
             continue;
         }
-        for (const shape of layer.shapes || []) {
+        for (const shape of drawing.shapes || []) {
             if (shape.isPath?.() && shape.asPath().isSubtraction) {
                 return true;
             }
@@ -11097,14 +11124,14 @@ function glyphBooleanSourceKey(glyph: Glyph): string {
             return;
         }
         visiting.add(current.name);
-        for (const layer of current.layers || []) {
-            if (layer.is_background) {
+        for (const drawing of current.drawings || []) {
+            if (drawing.is_background) {
                 continue;
             }
             parts.push(
-                `${current.name}:${layer.id || ''}:${layer.fingerprint}`
+                `${current.name}:${drawing.id || ''}:${drawing.fingerprint}`
             );
-            for (const component of layer.components || []) {
+            for (const component of drawing.components || []) {
                 const referenced =
                     font && typeof font.findGlyph === 'function'
                         ? font.findGlyph(component.reference)
@@ -11120,7 +11147,7 @@ function glyphBooleanSourceKey(glyph: Glyph): string {
 }
 
 export class Glyph extends ArrayElementBase {
-    private _layerWrappers: Layer[] | null = null;
+    private _drawingWrappers: Drawing[] | null = null;
 
     private getGlobalSidebearingKey(side: SidebearingSide): string | undefined {
         return normalizeMetricsKeyValue(
@@ -11167,88 +11194,90 @@ export class Glyph extends ArrayElementBase {
         return ['glyphs', this.data.name || ''];
     }
 
-    private createUniqueLayerId(requestedLayerId?: string | null): string {
+    private createUniqueDrawingId(requestedDrawingId?: string | null): string {
         const existingIds = new Set(
             (this.data.layers || [])
-                .map((layer: Unsafe) => layer.id)
+                .map((drawing: Unsafe) => drawing.id)
                 .filter((id: Unsafe) => id)
         );
         if (
-            requestedLayerId &&
-            typeof requestedLayerId === 'string' &&
-            !existingIds.has(requestedLayerId)
+            requestedDrawingId &&
+            typeof requestedDrawingId === 'string' &&
+            !existingIds.has(requestedDrawingId)
         ) {
-            return requestedLayerId;
+            return requestedDrawingId;
         }
 
-        let layerId: string;
+        let drawingId: string;
         do {
-            layerId = crypto.randomUUID();
-        } while (existingIds.has(layerId));
-        return layerId;
+            drawingId = crypto.randomUUID();
+        } while (existingIds.has(drawingId));
+        return drawingId;
     }
 
-    private appendRawLayer(layerData: Babelfont.Layer): Layer {
+    private appendRawDrawing(drawingData: Babelfont.Layer): Drawing {
         assertModelMutationAllowed();
         if (!this.data.layers) {
             this.data.layers = [];
         }
         assertModelMutationAllowed();
-        this.data.layers.push(layerData);
-        this._layerWrappers = null;
+        this.data.layers.push(drawingData);
+        this._drawingWrappers = null;
         recordAddAndMarkDirty(
             [
                 ...this.getPath(),
                 'layers',
-                layerData.id || this.data.layers.length - 1
+                drawingData.id || this.data.layers.length - 1
             ],
-            layerData
+            drawingData
         );
-        return new Layer(this.data.layers, this.data.layers.length - 1, this);
+        return new Drawing(this.data.layers, this.data.layers.length - 1, this);
     }
 
-    getFeatureVariationLayerEntries(
+    getFeatureVariationDrawingEntries(
         familyId?: string
-    ): Array<{ familyId: string; layer: Layer }> {
+    ): Array<{ familyId: string; drawing: Drawing }> {
         if (!this.data.layers) {
             return [];
         }
 
-        return this.data.layers.flatMap((layerData: Unsafe, index: number) => {
-            if (layerData.is_background) {
-                return [];
-            }
-            const master = layerData.master as Unsafe;
-            if (
-                !master ||
-                typeof master !== 'object' ||
-                master.type !== 'AssociatedWithMaster'
-            ) {
-                return [];
-            }
-            const resolvedFamilyId =
-                canonicalizeFeatureVariationAxisRules(layerData);
-            if (
-                !resolvedFamilyId ||
-                (familyId && familyId !== resolvedFamilyId)
-            ) {
-                return [];
-            }
-            return [
-                {
-                    familyId: resolvedFamilyId,
-                    layer: new Layer(this.data.layers!, index, this)
+        return this.data.layers.flatMap(
+            (drawingData: Unsafe, index: number) => {
+                if (drawingData.is_background) {
+                    return [];
                 }
-            ];
-        });
+                const station = drawingData.master as Unsafe;
+                if (
+                    !station ||
+                    typeof station !== 'object' ||
+                    station.type !== 'AssociatedWithMaster'
+                ) {
+                    return [];
+                }
+                const resolvedFamilyId =
+                    canonicalizeFeatureVariationAxisRules(drawingData);
+                if (
+                    !resolvedFamilyId ||
+                    (familyId && familyId !== resolvedFamilyId)
+                ) {
+                    return [];
+                }
+                return [
+                    {
+                        familyId: resolvedFamilyId,
+                        drawing: new Drawing(this.data.layers!, index, this)
+                    }
+                ];
+            }
+        );
     }
 
     /**
-     * Synthetic, authorable views over this glyph's raw Glyphs feature-variation layers.
+     * Synthetic, authorable views over this glyph's raw Glyphs feature-variation drawings.
      */
     get featureVariations(): FeatureVariationGlyph[] {
         const familyIds = new Set(
-            this.getFeatureVariationLayerEntries().map(
+            this.getFeatureVariationDrawingEntries().map(
                 (entry) => entry.familyId
             )
         );
@@ -11262,8 +11291,8 @@ export class Glyph extends ArrayElementBase {
     }
 
     /**
-     * Create one associated feature-variation layer for every base master layer,
-     * copying each layer's materialized background when present.
+     * Create one associated feature-variation drawing for every base drawing,
+     * copying each drawing's materialized background when present.
      */
     addFeatureVariation(
         axisRules: FeatureVariationAxisRule[]
@@ -11276,63 +11305,64 @@ export class Glyph extends ArrayElementBase {
         } as unknown as Babelfont.Layer;
         const familyId = canonicalizeFeatureVariationAxisRules(template);
         if (!familyId) {
-            throw new Error('Feature variation axisRules must be an array.');
+            throw new Error('Variation axisRules must be an array.');
         }
-        if (this.getFeatureVariationLayerEntries(familyId).length > 0) {
+        if (this.getFeatureVariationDrawingEntries(familyId).length > 0) {
             throw new Error(
-                'A feature variation with these axis rules already exists.'
+                'A variation with these axis rules already exists.'
             );
         }
 
-        const baseLayers = (this.data.layers || []).filter(
-            (layerData: Unsafe) => {
-                const master = layerData.master as Unsafe;
+        const baseDrawings = (this.data.layers || []).filter(
+            (drawingData: Unsafe) => {
+                const station = drawingData.master as Unsafe;
                 return (
-                    !layerData.is_background &&
-                    master &&
-                    typeof master === 'object' &&
-                    master.type === 'DefaultForMaster'
+                    !drawingData.is_background &&
+                    station &&
+                    typeof station === 'object' &&
+                    station.type === 'DefaultForMaster'
                 );
             }
         );
-        if (baseLayers.length === 0) {
+        if (baseDrawings.length === 0) {
             throw new Error(
-                'Feature variations require at least one base master layer.'
+                'Variations require at least one drawing at a station.'
             );
         }
 
         return withBridgeTransaction(
-            'Add feature variation',
+            'Add variation',
             'feature-code',
             'feature',
             () => {
-                for (const baseLayer of baseLayers) {
-                    const masterId = (baseLayer.master as Unsafe).master;
-                    const layerData = cloneForHistory(
-                        baseLayer
+                for (const baseDrawing of baseDrawings) {
+                    const stationId = (baseDrawing.master as Unsafe).master;
+                    const drawingData = cloneForHistory(
+                        baseDrawing
                     ) as Babelfont.Layer;
-                    const baseBackgroundLayer = baseLayer.background_layer_id
-                        ? this.data.layers?.find(
-                              (candidate: Unsafe) =>
-                                  candidate.id ===
-                                      baseLayer.background_layer_id &&
-                                  candidate.is_background
-                          )
-                        : undefined;
-                    layerData.id = this.createUniqueLayerId();
-                    layerData.master = {
+                    const baseBackgroundDrawing =
+                        baseDrawing.background_layer_id
+                            ? this.data.layers?.find(
+                                  (candidate: Unsafe) =>
+                                      candidate.id ===
+                                          baseDrawing.background_layer_id &&
+                                      candidate.is_background
+                              )
+                            : undefined;
+                    drawingData.id = this.createUniqueDrawingId();
+                    drawingData.master = {
                         type: 'AssociatedWithMaster',
-                        master: masterId
+                        master: stationId
                     } as Babelfont.LayerType;
-                    delete layerData.location;
-                    delete layerData.is_background;
-                    delete layerData.background_layer_id;
+                    delete drawingData.location;
+                    delete drawingData.is_background;
+                    delete drawingData.background_layer_id;
                     const attributes =
-                        layerData.format_specific?.[
+                        drawingData.format_specific?.[
                             GLYPHS_FEATURE_VARIATION_ATTRIBUTES_KEY
                         ];
-                    layerData.format_specific = {
-                        ...(layerData.format_specific || {}),
+                    drawingData.format_specific = {
+                        ...(drawingData.format_specific || {}),
                         [GLYPHS_FEATURE_VARIATION_ATTRIBUTES_KEY]: {
                             ...(attributes &&
                             typeof attributes === 'object' &&
@@ -11343,24 +11373,26 @@ export class Glyph extends ArrayElementBase {
                         }
                     };
 
-                    if (baseBackgroundLayer) {
-                        const backgroundLayerData = cloneForHistory(
-                            baseBackgroundLayer
+                    if (baseBackgroundDrawing) {
+                        const backgroundDrawingData = cloneForHistory(
+                            baseBackgroundDrawing
                         ) as Babelfont.Layer;
-                        backgroundLayerData.id = this.createUniqueLayerId();
-                        backgroundLayerData.master = cloneForHistory(
-                            layerData.master
+                        backgroundDrawingData.id = this.createUniqueDrawingId();
+                        backgroundDrawingData.master = cloneForHistory(
+                            drawingData.master
                         );
-                        delete backgroundLayerData.location;
-                        backgroundLayerData.is_background = true;
-                        backgroundLayerData.background_layer_id = layerData.id;
-                        layerData.background_layer_id = backgroundLayerData.id;
-                        this.appendRawLayer(layerData);
-                        this.appendRawLayer(backgroundLayerData);
+                        delete backgroundDrawingData.location;
+                        backgroundDrawingData.is_background = true;
+                        backgroundDrawingData.background_layer_id =
+                            drawingData.id;
+                        drawingData.background_layer_id =
+                            backgroundDrawingData.id;
+                        this.appendRawDrawing(drawingData);
+                        this.appendRawDrawing(backgroundDrawingData);
                         continue;
                     }
 
-                    this.appendRawLayer(layerData);
+                    this.appendRawDrawing(drawingData);
                 }
 
                 return new FeatureVariationGlyph(this, familyId);
@@ -11369,7 +11401,7 @@ export class Glyph extends ArrayElementBase {
     }
 
     /**
-     * Delete every raw layer belonging to a feature-variation family.
+     * Delete every raw drawing belonging to a feature-variation family.
      */
     removeFeatureVariation(
         featureVariation: FeatureVariationGlyph | string
@@ -11380,18 +11412,20 @@ export class Glyph extends ArrayElementBase {
                 ? featureVariation
                 : featureVariation.id;
         withBridgeTransaction(
-            'Remove feature variation',
+            'Remove variation',
             'feature-code',
             'feature',
             () => {
-                const layerIds = this.getFeatureVariationLayerEntries(familyId)
+                const drawingIds = this.getFeatureVariationDrawingEntries(
+                    familyId
+                )
                     .flatMap((entry) => [
-                        entry.layer.id,
-                        entry.layer.background_layer_id
+                        entry.drawing.id,
+                        entry.drawing.background_drawing_id
                     ])
-                    .filter((layerId): layerId is string => !!layerId);
-                for (const layerId of layerIds) {
-                    this.removeLayerById(layerId);
+                    .filter((drawingId): drawingId is string => !!drawingId);
+                for (const drawingId of drawingIds) {
+                    this.removeDrawingById(drawingId);
                 }
             }
         );
@@ -11425,8 +11459,8 @@ export class Glyph extends ArrayElementBase {
         return 'Unknown';
     }
 
-    private getLayerIdentifier(layer: Layer): string {
-        return layer.id || layer.master?.master || '[Unsafe-layer]';
+    private getDrawingIdentifier(drawing: Drawing): string {
+        return drawing.id || drawing.station?.master || '[Unsafe-layer]';
     }
 
     get name(): string {
@@ -11546,7 +11580,7 @@ export class Glyph extends ArrayElementBase {
     }
 
     /**
-     * Copy computed component-stack anchors onto every foreground layer.
+     * Copy computed component-stack anchors onto every foreground drawing.
      * An empty list writes every computed anchor; otherwise only the named
      * anchors that exist in the computed set are added or updated.
      * @example
@@ -11569,12 +11603,12 @@ export class Glyph extends ArrayElementBase {
                 const applyAll = requestedNames.size === 0;
                 let changed = false;
 
-                for (const layer of this.layers || []) {
-                    if (layer.is_background) {
+                for (const drawing of this.drawings || []) {
+                    if (drawing.is_background) {
                         continue;
                     }
 
-                    const computed = layer.computedAnchors();
+                    const computed = drawing.computedAnchors();
                     const names = applyAll
                         ? Object.keys(computed)
                         : [...requestedNames];
@@ -11584,7 +11618,7 @@ export class Glyph extends ArrayElementBase {
                             continue;
                         }
 
-                        const existing = layer.findAnchor(name);
+                        const existing = drawing.findAnchor(name);
                         if (existing) {
                             if (
                                 Math.abs(existing.x - point.x) >
@@ -11599,7 +11633,7 @@ export class Glyph extends ArrayElementBase {
                             continue;
                         }
 
-                        layer.addAnchor(point.x, point.y, name);
+                        drawing.addAnchor(point.x, point.y, name);
                         changed = true;
                     }
                 }
@@ -11617,114 +11651,118 @@ export class Glyph extends ArrayElementBase {
         );
     }
 
-    get layers(): Layer[] | undefined {
+    get drawings(): Drawing[] | undefined {
         if (!this.data.layers) return undefined;
 
-        // Get font masters to filter and sort layers
+        // Get font stations to filter and sort drawings
         // Navigate up to Font object via parent chain
         const font = this.parent() as Font;
-        const fontMasters = font?.masters;
-        if (!fontMasters || fontMasters.length === 0) {
-            // Fallback: return all layers if we can't access font data
+        const fontStations = font?.stations;
+        if (!fontStations || fontStations.length === 0) {
+            // Fallback: return all drawings if we can't access font data
             if (
-                !this._layerWrappers ||
-                this._layerWrappers.length !== this.data.layers.length
+                !this._drawingWrappers ||
+                this._drawingWrappers.length !== this.data.layers.length
             ) {
-                this._layerWrappers = this.data.layers.map(
+                this._drawingWrappers = this.data.layers.map(
                     (_: Unsafe, i: number) =>
-                        new Layer(this.data.layers, i, this)
+                        new Drawing(this.data.layers, i, this)
                 );
             }
             return getReadOnlyCollectionValue(
-                this._layerWrappers!,
-                'Glyph.layers is a read-only collection view. Use addLayer() or removeLayer() for structural edits.'
+                this._drawingWrappers!,
+                'Glyph.drawings is a read-only collection view. Use addDrawing() or removeDrawing() for structural edits.'
             );
         }
 
-        // Filter: foreground layers that are either
-        // - default layers for their master, or
-        // - brace layers (AssociatedWithMaster + non-empty location)
-        const masterIds = new Set(fontMasters.map((m: Master) => m.id));
+        // Filter: foreground drawings that are either
+        // - default drawings for their station, or
+        // - free drawings (AssociatedWithMaster + non-empty location)
+        const stationIds = new Set(fontStations.map((m: Station) => m.id));
         const filteredIndices: number[] = [];
 
         for (let i = 0; i < this.data.layers.length; i++) {
-            const layer = this.data.layers[i];
-            if (!layer) {
+            const drawing = this.data.layers[i];
+            if (!drawing) {
                 continue;
             }
 
-            const layerId = layer.id || '[no-layer-id]';
-            assertTaggedLayerMaster(
-                layer.master,
-                `Glyph#${this.name}.${layerId}`
+            const drawingId = drawing.id || '[no-drawing-id]';
+            assertTaggedDrawingStation(
+                drawing.master,
+                `Glyph#${this.name}.${drawingId}`
             );
 
-            // Skip background layers
-            if (layer.is_background) continue;
+            // Skip background drawings
+            if (drawing.is_background) continue;
 
-            // Feature-variation layers are exposed through featureVariations,
-            // including their variation-owned intermediate layers.
-            if (canonicalizeFeatureVariationAxisRules(layer)) continue;
+            // Feature-variation drawings are exposed through featureVariations,
+            // including their variation-owned free drawings.
+            if (canonicalizeFeatureVariationAxisRules(drawing)) continue;
 
-            const isDefaultLayer =
-                layer.master &&
-                typeof layer.master === 'object' &&
-                'type' in layer.master &&
-                layer.master.type === 'DefaultForMaster';
+            const isDefaultDrawing =
+                drawing.master &&
+                typeof drawing.master === 'object' &&
+                'type' in drawing.master &&
+                drawing.master.type === 'DefaultForMaster';
 
-            const isAssociatedLayer =
-                layer.master &&
-                typeof layer.master === 'object' &&
-                'type' in layer.master &&
-                layer.master.type === 'AssociatedWithMaster';
+            const isAssociatedDrawing =
+                drawing.master &&
+                typeof drawing.master === 'object' &&
+                'type' in drawing.master &&
+                drawing.master.type === 'AssociatedWithMaster';
 
             const hasBraceLocation =
-                !!layer.location && Object.keys(layer.location).length > 0;
+                !!drawing.location && Object.keys(drawing.location).length > 0;
 
-            if (!isDefaultLayer && !(isAssociatedLayer && hasBraceLocation)) {
+            if (
+                !isDefaultDrawing &&
+                !(isAssociatedDrawing && hasBraceLocation)
+            ) {
                 continue;
             }
 
-            let masterId: string | undefined;
-            if (layer.master && typeof layer.master === 'object') {
-                if ('type' in layer.master) {
-                    masterId = (layer.master as Unsafe).master;
+            let stationId: string | undefined;
+            if (drawing.master && typeof drawing.master === 'object') {
+                if ('type' in drawing.master) {
+                    stationId = (drawing.master as Unsafe).master;
                 }
             }
-            if (!masterId) {
-                masterId = layer._master || layer.id;
+            if (!stationId) {
+                stationId = drawing._station || drawing.id;
             }
 
-            if (!masterId || !masterIds.has(masterId)) continue;
+            if (!stationId || !stationIds.has(stationId)) continue;
 
             filteredIndices.push(i);
         }
 
-        // Sort by master order. Within one master, keep the default layer
-        // first and brace layers after it. Array.sort is stable, so equal
+        // Sort by station order. Within one station, keep the default drawing
+        // first and free drawings after it. Array.sort is stable, so equal
         // keys keep source order.
-        const masterIndexById = new Map<string, number>();
-        fontMasters.forEach((m: Master, index: number) => {
-            if (!masterIndexById.has(m.id)) masterIndexById.set(m.id, index);
+        const stationIndexById = new Map<string, number>();
+        fontStations.forEach((m: Station, index: number) => {
+            if (!stationIndexById.has(m.id)) stationIndexById.set(m.id, index);
         });
-        const layersData = this.data.layers;
+        const drawingsData = this.data.layers;
         const sortKeys = new Map<number, { pos: number; rank: number }>();
         for (const i of filteredIndices) {
-            const masterData = layersData[i].master;
+            const stationData = drawingsData[i].master;
             const isTagged =
-                !!masterData &&
-                typeof masterData === 'object' &&
-                'type' in masterData;
-            const sortMasterId = isTagged
-                ? (masterData as Unsafe).master || ''
-                : layersData[i].id || '';
-            const masterIndex = masterIndexById.get(sortMasterId);
+                !!stationData &&
+                typeof stationData === 'object' &&
+                'type' in stationData;
+            const sortStationId = isTagged
+                ? (stationData as Unsafe).master || ''
+                : drawingsData[i].id || '';
+            const stationIndex = stationIndexById.get(sortStationId);
             sortKeys.set(i, {
                 pos:
-                    masterIndex === undefined
-                        ? fontMasters.length
-                        : masterIndex,
-                rank: isTagged && masterData.type === 'DefaultForMaster' ? 0 : 1
+                    stationIndex === undefined
+                        ? fontStations.length
+                        : stationIndex,
+                rank:
+                    isTagged && stationData.type === 'DefaultForMaster' ? 0 : 1
             });
         }
         filteredIndices.sort((a, b) => {
@@ -11733,12 +11771,12 @@ export class Glyph extends ArrayElementBase {
             return keyA.pos - keyB.pos || keyA.rank - keyB.rank;
         });
         const wrappers = filteredIndices.map(
-            (i: number) => new Layer(layersData, i, this)
+            (i: number) => new Drawing(drawingsData, i, this)
         );
 
         return getReadOnlyCollectionValue(
             wrappers,
-            'Glyph.layers is a read-only collection view. Use addLayer() or removeLayer() for structural edits.'
+            'Glyph.drawings is a read-only collection view. Use addDrawing() or removeDrawing() for structural edits.'
         );
     }
 
@@ -11781,124 +11819,126 @@ export class Glyph extends ArrayElementBase {
     }
 
     /**
-     * Add a new layer to the glyph.
+     * Add a new drawing to the glyph.
      *
-     * Default-for-master layers use the master id as the layer id so fontc
-     * can resolve each source to a master location.
+     * Default drawings (`DefaultForMaster`) use the station id as the drawing id so fontc
+     * can resolve each source to a station location.
      * @example
-     * layer = glyph.addLayer(500)  # 500 units wide
-     * layer = glyph.addLayer(500, {"type": "DefaultForMaster", "master": master.id}, master.id)
+     * drawing = glyph.addDrawing(500)  # 500 units wide
+     * drawing = glyph.addDrawing(500, {"type": "DefaultForMaster", "master": station.id}, station.id)
      */
-    addLayer(
+    addDrawing(
         width: number,
-        master?: Babelfont.LayerType,
-        requestedLayerId?: string | null
-    ): Layer {
+        station?: Babelfont.LayerType,
+        requestedDrawingId?: string | null
+    ): Drawing {
         assertModelMutationAllowed();
         if (!this.data.layers) {
             this.data.layers = [];
         }
 
-        const defaultMasterId =
-            master?.type === 'DefaultForMaster' &&
-            typeof master.master === 'string' &&
-            master.master.length
-                ? master.master
+        const defaultStationId =
+            station?.type === 'DefaultForMaster' &&
+            typeof station.master === 'string' &&
+            station.master.length
+                ? station.master
                 : null;
-        const layerData: Babelfont.Layer = {
+        const drawingData: Babelfont.Layer = {
             width,
-            id: this.createUniqueLayerId(requestedLayerId ?? defaultMasterId),
+            id: this.createUniqueDrawingId(
+                requestedDrawingId ?? defaultStationId
+            ),
             shapes: []
         };
-        if (master) {
-            layerData.master = cloneForHistory(master);
+        if (station) {
+            drawingData.master = cloneForHistory(station);
         }
-        return this.appendRawLayer(layerData);
+        return this.appendRawDrawing(drawingData);
     }
 
-    addBackgroundLayer(foreground: Layer): Layer {
+    addBackgroundDrawing(foreground: Drawing): Drawing {
         assertModelMutationAllowed();
         if (foreground.is_background) {
             throw new Error(
-                'A background layer cannot own another background layer'
+                'A background drawing cannot own another background drawing'
             );
         }
 
-        const existing = foreground.background_layer_id
-            ? this.findLayerById(foreground.background_layer_id)
+        const existing = foreground.background_drawing_id
+            ? this.findDrawingById(foreground.background_drawing_id)
             : undefined;
         if (existing?.is_background) {
             return existing;
         }
 
-        const background = this.addLayer(
+        const background = this.addDrawing(
             foreground.width,
-            cloneForHistory(foreground.master)
+            cloneForHistory(foreground.station)
         );
         background.location = cloneForHistory(foreground.location);
         background.is_background = true;
-        background.background_layer_id = foreground.id;
-        foreground.background_layer_id = background.id;
+        background.background_drawing_id = foreground.id;
+        foreground.background_drawing_id = background.id;
         return background;
     }
 
     /**
-     * Remove a layer at the specified index
+     * Remove a drawing at the specified index
      */
-    removeLayer(index: number): void {
+    removeDrawing(index: number): void {
         assertModelMutationAllowed();
         if (this.data.layers) {
-            const removedLayer = this.data.layers[index];
-            if (removedLayer === undefined) {
+            const removedDrawing = this.data.layers[index];
+            if (removedDrawing === undefined) {
                 return;
             }
 
             assertModelMutationAllowed();
 
             this.data.layers.splice(index, 1);
-            this._layerWrappers = null; // Invalidate cache
-            const layerKey = removedLayer.id ?? index;
+            this._drawingWrappers = null; // Invalidate cache
+            const drawingKey = removedDrawing.id ?? index;
             recordRemoveAndMarkDirty(
-                [...this.getPath(), 'layers', layerKey],
-                removedLayer
+                [...this.getPath(), 'layers', drawingKey],
+                removedDrawing
             );
         }
     }
 
     /**
-     * Remove a layer by its backing-array ID.
+     * Remove a drawing by its backing-array ID.
      */
-    removeLayerById(id: string): void {
+    removeDrawingById(id: string): void {
         assertModelMutationAllowed();
         if (!this.data.layers) {
             return;
         }
 
-        const index = this.data.layers.findIndex((layer: Unsafe) => {
-            return layer.id === id;
+        const index = this.data.layers.findIndex((drawing: Unsafe) => {
+            return drawing.id === id;
         });
 
         if (index >= 0) {
-            this.removeLayer(index);
+            this.removeDrawing(index);
         }
     }
 
     /**
-     * Find a layer by ID
+     * Find a drawing by ID
      */
-    findLayerById(id: string): Layer | undefined {
+    findDrawingById(id: string): Drawing | undefined {
         const index = this.data.layers.findIndex((l: Unsafe) => l.id === id);
         return index >= 0
-            ? new Layer(this.data.layers, index, this)
+            ? new Drawing(this.data.layers, index, this)
             : undefined;
     }
 
     /**
-     * Rewrite metrics keys and component refs on every stored layer, including
-     * backgrounds filtered out of the public `layers` view.
+     * Rewrite metrics keys and component refs on every stored drawing, including
+     * backgrounds filtered out of the public `drawings` view.
      */
     /**
-     * Component bases and metrics-key names on every stored layer,
+     * Component bases and metrics-key names on every stored drawing,
      * including backgrounds. The rename dialog plans rewires from this.
      */
     _collectRenameReferences(): {
@@ -11933,15 +11973,15 @@ export class Glyph extends ArrayElementBase {
         };
         pushMetrics(this.leftMetricsKey);
         pushMetrics(this.rightMetricsKey);
-        const layers = this.data.layers;
-        if (!Array.isArray(layers)) {
+        const drawings = this.data.layers;
+        if (!Array.isArray(drawings)) {
             return { references, components };
         }
-        for (let index = 0; index < layers.length; index++) {
-            const layer = new Layer(layers, index, this);
-            pushMetrics(layer.leftMetricsKey);
-            pushMetrics(layer.rightMetricsKey);
-            for (const component of layer.components) {
+        for (let index = 0; index < drawings.length; index++) {
+            const drawing = new Drawing(drawings, index, this);
+            pushMetrics(drawing.leftMetricsKey);
+            pushMetrics(drawing.rightMetricsKey);
+            for (const component of drawing.components) {
                 const reference = component.reference;
                 if (!reference) {
                     continue;
@@ -11955,7 +11995,7 @@ export class Glyph extends ArrayElementBase {
         return { references, components };
     }
 
-    _rewriteStoredLayerNameReferences(
+    _rewriteStoredDrawingNameReferences(
         replaceName: (value: string) => string,
         replaceMetricsKey: (value: string | undefined) => string | undefined
     ): void {
@@ -11963,16 +12003,16 @@ export class Glyph extends ArrayElementBase {
             return;
         }
         for (let index = 0; index < this.data.layers.length; index++) {
-            const layer = new Layer(this.data.layers, index, this);
-            const leftLayerKey = replaceMetricsKey(layer.leftMetricsKey);
-            const rightLayerKey = replaceMetricsKey(layer.rightMetricsKey);
-            if (leftLayerKey !== layer.leftMetricsKey) {
-                layer.leftMetricsKey = leftLayerKey;
+            const drawing = new Drawing(this.data.layers, index, this);
+            const leftDrawingKey = replaceMetricsKey(drawing.leftMetricsKey);
+            const rightDrawingKey = replaceMetricsKey(drawing.rightMetricsKey);
+            if (leftDrawingKey !== drawing.leftMetricsKey) {
+                drawing.leftMetricsKey = leftDrawingKey;
             }
-            if (rightLayerKey !== layer.rightMetricsKey) {
-                layer.rightMetricsKey = rightLayerKey;
+            if (rightDrawingKey !== drawing.rightMetricsKey) {
+                drawing.rightMetricsKey = rightDrawingKey;
             }
-            for (const component of layer.components) {
+            for (const component of drawing.components) {
                 const reference = replaceName(component.reference);
                 if (reference !== component.reference) {
                     component.reference = reference;
@@ -11983,24 +12023,24 @@ export class Glyph extends ArrayElementBase {
 
     /**
      * Remove component instances whose reference is in `deletedNames`.
-     * Walks every stored layer, including backgrounds.
+     * Walks every stored drawing, including backgrounds.
      */
-    _removeStoredLayerComponentReferences(
+    _removeStoredDrawingComponentReferences(
         deletedNames: ReadonlySet<string>
     ): void {
         if (!Array.isArray(this.data.layers) || deletedNames.size === 0) {
             return;
         }
         for (let index = 0; index < this.data.layers.length; index++) {
-            const layer = new Layer(this.data.layers, index, this);
+            const drawing = new Drawing(this.data.layers, index, this);
             // Remove by descending index so later removals do not invalidate
             // earlier indices, and never retain Component wrappers across splices.
             for (
-                let shapeIndex = (layer.shapes?.length ?? 0) - 1;
+                let shapeIndex = (drawing.shapes?.length ?? 0) - 1;
                 shapeIndex >= 0;
                 shapeIndex--
             ) {
-                const shapes = layer.shapes;
+                const shapes = drawing.shapes;
                 if (!shapes || shapeIndex >= shapes.length) {
                     continue;
                 }
@@ -12017,16 +12057,16 @@ export class Glyph extends ArrayElementBase {
                     typeof reference === 'string' &&
                     deletedNames.has(reference)
                 ) {
-                    layer.removeShape(shapeIndex);
+                    drawing.removeShape(shapeIndex);
                 }
             }
         }
     }
 
     /**
-     * Clear metrics keys on stored layers that reference deleted glyphs.
+     * Clear metrics keys on stored drawings that reference deleted glyphs.
      */
-    _clearStoredLayerMetricsKeysReferencing(
+    _clearStoredDrawingMetricsKeysReferencing(
         deletedNames: ReadonlySet<string>,
         font: Font
     ): void {
@@ -12045,33 +12085,33 @@ export class Glyph extends ArrayElementBase {
             );
         };
         for (let index = 0; index < this.data.layers.length; index++) {
-            const layer = new Layer(this.data.layers, index, this);
-            if (shouldClear(layer.leftMetricsKey)) {
-                layer.leftMetricsKey = undefined;
+            const drawing = new Drawing(this.data.layers, index, this);
+            if (shouldClear(drawing.leftMetricsKey)) {
+                drawing.leftMetricsKey = undefined;
             }
-            if (shouldClear(layer.rightMetricsKey)) {
-                layer.rightMetricsKey = undefined;
+            if (shouldClear(drawing.rightMetricsKey)) {
+                drawing.rightMetricsKey = undefined;
             }
         }
     }
 
     /**
-     * Find a layer by master ID
+     * Find a drawing by station ID
      */
-    findLayerByMasterId(masterId: string): Layer | undefined {
+    findDrawingByStationId(stationId: string): Drawing | undefined {
         const index = this.data.layers.findIndex((l: Unsafe) => {
-            const master = l.master;
-            if (!master) return false;
-            if (typeof master === 'object') {
+            const station = l.master;
+            if (!station) return false;
+            if (typeof station === 'object') {
                 if (
-                    master.type === 'DefaultForMaster' &&
-                    master.master === masterId
+                    station.type === 'DefaultForMaster' &&
+                    station.master === stationId
                 ) {
                     return true;
                 }
                 if (
-                    master.type === 'AssociatedWithMaster' &&
-                    master.master === masterId
+                    station.type === 'AssociatedWithMaster' &&
+                    station.master === stationId
                 ) {
                     return true;
                 }
@@ -12079,19 +12119,19 @@ export class Glyph extends ArrayElementBase {
             return false;
         });
         return index >= 0
-            ? new Layer(this.data.layers, index, this)
+            ? new Drawing(this.data.layers, index, this)
             : undefined;
     }
 
     /**
-     * Returns True/False based on whether the outline structure (components + paths + anchors) is compatible across all main layers of this glyph.
+     * Returns True/False based on whether the outline structure (components + paths + anchors) is compatible across all main drawings of this glyph.
      */
     get isCompatible(): boolean {
         return this.calculateOutlineCompatibility().compatible;
     }
 
     /**
-     * Compare outline structure across main layers (the same list shown in the UI).
+     * Compare outline structure across main drawings (the same list shown in the UI).
      *
      * Source fingerprints include path `fip001-boolean` flags. When any path in
      * this glyph or its component tree is a subtraction cutter, compatibility
@@ -12099,37 +12139,37 @@ export class Glyph extends ArrayElementBase {
      */
     calculateOutlineCompatibility(): {
         compatible: boolean;
-        layerCount: number;
-        referenceLayerId?: string;
-        incompatibleLayerIds: string[];
+        drawingCount: number;
+        referenceDrawingId?: string;
+        incompatibleDrawingIds: string[];
     } {
-        const layers = this.layers || [];
-        if (layers.length === 0) {
+        const drawings = this.drawings || [];
+        if (drawings.length === 0) {
             return {
                 compatible: true,
-                layerCount: 0,
-                incompatibleLayerIds: []
+                drawingCount: 0,
+                incompatibleDrawingIds: []
             };
         }
 
-        if (layers.length === 1) {
+        if (drawings.length === 1) {
             return {
                 compatible: true,
-                layerCount: 1,
-                referenceLayerId: this.getLayerIdentifier(layers[0]),
-                incompatibleLayerIds: []
+                drawingCount: 1,
+                referenceDrawingId: this.getDrawingIdentifier(drawings[0]),
+                incompatibleDrawingIds: []
             };
         }
 
-        const referenceLayer = layers[0];
-        const referenceLayerId = this.getLayerIdentifier(referenceLayer);
-        const referenceFingerprint = referenceLayer.fingerprint;
-        const incompatibleLayerIds: string[] = [];
+        const referenceDrawing = drawings[0];
+        const referenceDrawingId = this.getDrawingIdentifier(referenceDrawing);
+        const referenceFingerprint = referenceDrawing.fingerprint;
+        const incompatibleDrawingIds: string[] = [];
 
-        for (let i = 1; i < layers.length; i++) {
-            const layer = layers[i];
-            if (layer.fingerprint !== referenceFingerprint) {
-                incompatibleLayerIds.push(this.getLayerIdentifier(layer));
+        for (let i = 1; i < drawings.length; i++) {
+            const drawing = drawings[i];
+            if (drawing.fingerprint !== referenceFingerprint) {
+                incompatibleDrawingIds.push(this.getDrawingIdentifier(drawing));
             }
         }
 
@@ -12139,13 +12179,13 @@ export class Glyph extends ArrayElementBase {
             if (!cached || cached.sourceKey !== sourceKey) {
                 this.scheduleFilteredBooleanFingerprintRefresh(sourceKey);
             } else {
-                const referenceFiltered = cached.layers[referenceLayerId];
-                for (let i = 1; i < layers.length; i++) {
-                    const layer = layers[i];
-                    const layerId = this.getLayerIdentifier(layer);
-                    if (cached.layers[layerId] !== referenceFiltered) {
-                        if (!incompatibleLayerIds.includes(layerId)) {
-                            incompatibleLayerIds.push(layerId);
+                const referenceFiltered = cached.layers[referenceDrawingId];
+                for (let i = 1; i < drawings.length; i++) {
+                    const drawing = drawings[i];
+                    const drawingId = this.getDrawingIdentifier(drawing);
+                    if (cached.layers[drawingId] !== referenceFiltered) {
+                        if (!incompatibleDrawingIds.includes(drawingId)) {
+                            incompatibleDrawingIds.push(drawingId);
                         }
                     }
                 }
@@ -12153,10 +12193,10 @@ export class Glyph extends ArrayElementBase {
         }
 
         return {
-            compatible: incompatibleLayerIds.length === 0,
-            layerCount: layers.length,
-            referenceLayerId,
-            incompatibleLayerIds
+            compatible: incompatibleDrawingIds.length === 0,
+            drawingCount: drawings.length,
+            referenceDrawingId,
+            incompatibleDrawingIds
         };
     }
 
@@ -12190,7 +12230,7 @@ export class Glyph extends ArrayElementBase {
         filteredBooleanFingerprintInflight.set(glyphName, sourceKey);
         void fontCompilation
             .requestFilteredBooleanFingerprints(glyphName)
-            .then((layers) => {
+            .then((drawings) => {
                 if (
                     filteredBooleanFingerprintInflight.get(glyphName) !==
                     sourceKey
@@ -12200,7 +12240,7 @@ export class Glyph extends ArrayElementBase {
                 filteredBooleanFingerprintInflight.delete(glyphName);
                 filteredBooleanFingerprintCache.set(glyphName, {
                     sourceKey,
-                    layers: layers || {}
+                    layers: drawings || {}
                 });
                 const font = window.currentFontModel;
                 const dependents =
@@ -12222,15 +12262,15 @@ export class Glyph extends ArrayElementBase {
                     typeof font?.findGlyph === 'function'
                         ? font.findGlyph(glyphName)
                         : this;
-                for (const layer of glyph?.layers || []) {
-                    if (!layer?.id) {
+                for (const drawing of glyph?.drawings || []) {
+                    if (!drawing?.id) {
                         continue;
                     }
                     window.dispatchEvent(
-                        new CustomEvent('layerFingerprintChanged', {
+                        new CustomEvent('drawingFingerprintChanged', {
                             detail: {
                                 glyphName,
-                                layerId: layer.id
+                                layerId: drawing.id
                             }
                         })
                     );
@@ -12254,13 +12294,13 @@ export class Glyph extends ArrayElementBase {
                         `U+${cp.toString(16).toUpperCase().padStart(4, '0')}`
                 )
                 .join(', ') || 'none';
-        const layerCount = this.layers?.length || 0;
-        return `<Glyph "${this.name}" [${codepoints}] ${layerCount} layers>`;
+        const drawingCount = this.drawings?.length || 0;
+        return `<Glyph "${this.name}" [${codepoints}] ${drawingCount} drawings>`;
     }
 }
 
 /**
- * An authorable view over one conditional Glyphs feature-variation layer family.
+ * An authorable view over one conditional Glyphs feature-variation drawing family.
  */
 export class FeatureVariationGlyph {
     constructor(
@@ -12279,8 +12319,8 @@ export class FeatureVariationGlyph {
      * feature_variation.axisRules[0].min
      */
     get axisRules(): FeatureVariationAxisRule[] {
-        const layer = this.layers[0];
-        const attributes = layer?.format_specific?.[
+        const drawing = this.drawings[0];
+        const attributes = drawing?.format_specific?.[
             GLYPHS_FEATURE_VARIATION_ATTRIBUTES_KEY
         ] as Record<string, Unsafe> | undefined;
         return Array.isArray(attributes?.axisRules)
@@ -12291,7 +12331,7 @@ export class FeatureVariationGlyph {
     }
 
     /**
-     * Replace the shared Glyphs feature-variation rules on every raw family layer.
+     * Replace the shared Glyphs feature-variation rules on every raw family drawing.
      */
     setAxisRules(axisRules: FeatureVariationAxisRule[]): FeatureVariationGlyph {
         const template = {
@@ -12301,35 +12341,35 @@ export class FeatureVariationGlyph {
         } as unknown as Babelfont.Layer;
         const nextFamilyId = canonicalizeFeatureVariationAxisRules(template);
         if (!nextFamilyId) {
-            throw new Error('Feature variation axisRules must be an array.');
+            throw new Error('Variation axisRules must be an array.');
         }
         if (
             nextFamilyId !== this.id &&
-            this.sourceGlyph.getFeatureVariationLayerEntries(nextFamilyId)
+            this.sourceGlyph.getFeatureVariationDrawingEntries(nextFamilyId)
                 .length > 0
         ) {
             throw new Error(
-                'A feature variation with these axis rules already exists.'
+                'A variation with these axis rules already exists.'
             );
         }
 
-        const layers = [...this.layers];
-        if (layers.length === 0) {
-            throw new Error('Feature variation has no associated layers.');
+        const drawings = [...this.drawings];
+        if (drawings.length === 0) {
+            throw new Error('Variation has no associated drawings.');
         }
 
         return withBridgeTransaction(
-            'Update feature variation settings',
+            'Update variation settings',
             'feature-code',
             'feature',
             () => {
-                for (const layer of layers) {
+                for (const drawing of drawings) {
                     const attributes =
-                        layer.format_specific?.[
+                        drawing.format_specific?.[
                             GLYPHS_FEATURE_VARIATION_ATTRIBUTES_KEY
                         ];
-                    layer.format_specific = {
-                        ...(layer.format_specific || {}),
+                    drawing.format_specific = {
+                        ...(drawing.format_specific || {}),
                         [GLYPHS_FEATURE_VARIATION_ATTRIBUTES_KEY]: {
                             ...(attributes &&
                             typeof attributes === 'object' &&
@@ -12349,69 +12389,69 @@ export class FeatureVariationGlyph {
         );
     }
 
-    get layers(): Layer[] {
+    get drawings(): Drawing[] {
         return getReadOnlyCollectionValue(
             this.sourceGlyph
-                .getFeatureVariationLayerEntries(this.id)
-                .map((entry) => entry.layer),
-            'FeatureVariationGlyph.layers is a read-only collection view. Use addLayer() or removeLayer() for structural edits.'
+                .getFeatureVariationDrawingEntries(this.id)
+                .map((entry) => entry.drawing),
+            'FeatureVariationGlyph.drawings is a read-only collection view. Use addDrawing() or removeDrawing() for structural edits.'
         );
     }
 
-    findLayerById(id: string): Layer | undefined {
-        return this.layers.find((layer) => layer.id === id);
+    findDrawingById(id: string): Drawing | undefined {
+        return this.drawings.find((drawing) => drawing.id === id);
     }
 
-    findLayerByMasterId(masterId: string): Layer | undefined {
-        return this.layers.find((layer) => {
-            const master = layer.master as Unsafe;
-            return master?.master === masterId;
+    findDrawingByStationId(stationId: string): Drawing | undefined {
+        return this.drawings.find((drawing) => {
+            const station = drawing.station as Unsafe;
+            return station?.master === stationId;
         });
     }
 
-    addLayer(
+    addDrawing(
         width: number,
-        master?: Babelfont.LayerType,
-        requestedLayerId?: string | null
-    ): Layer {
+        station?: Babelfont.LayerType,
+        requestedDrawingId?: string | null
+    ): Drawing {
         assertModelMutationAllowed();
-        if (!master || master.type !== 'AssociatedWithMaster') {
+        if (!station || station.type !== 'AssociatedWithMaster') {
             throw new Error(
-                'Feature-variation layers must be associated with a master.'
+                'Variation drawings must be associated with a station.'
             );
         }
-        const layer = this.sourceGlyph.addLayer(
+        const drawing = this.sourceGlyph.addDrawing(
             width,
-            master,
-            requestedLayerId
+            station,
+            requestedDrawingId
         );
-        layer.format_specific = {
-            ...(layer.format_specific || {}),
+        drawing.format_specific = {
+            ...(drawing.format_specific || {}),
             [GLYPHS_FEATURE_VARIATION_ATTRIBUTES_KEY]: {
                 axisRules: this.axisRules
             }
         };
-        return layer;
+        return drawing;
     }
 
-    removeLayer(index: number): void {
+    removeDrawing(index: number): void {
         assertModelMutationAllowed();
-        const layer = this.layers[index];
-        if (layer?.id) {
-            this.sourceGlyph.removeLayerById(layer.id);
+        const drawing = this.drawings[index];
+        if (drawing?.id) {
+            this.sourceGlyph.removeDrawingById(drawing.id);
         }
     }
 
-    removeLayerById(id: string): void {
+    removeDrawingById(id: string): void {
         assertModelMutationAllowed();
-        const layer = this.findLayerById(id);
-        if (layer) {
-            this.sourceGlyph.removeLayerById(id);
+        const drawing = this.findDrawingById(id);
+        if (drawing) {
+            this.sourceGlyph.removeDrawingById(id);
         }
     }
 
     toString(): string {
-        return `<FeatureVariationGlyph "${this.name}" ${this.layers.length} layers>`;
+        return `<FeatureVariationGlyph "${this.name}" ${this.drawings.length} drawings>`;
     }
 }
 
@@ -12573,9 +12613,9 @@ export class Axis extends ArrayElementBase {
 }
 
 /**
- * Master/source in a design space
+ * A station: a font-wide named location in the designspace that carries metrics, kerning and guides
  */
-export class Master extends ArrayElementBase {
+export class Station extends ArrayElementBase {
     private _guideWrappers: Guide[] | null = null;
 
     getPathSegment(): (string | number)[] {
@@ -12583,8 +12623,8 @@ export class Master extends ArrayElementBase {
     }
 
     /**
-     * Localized master name. Access language tags as attributes
-     * (`master.name.dflt`). Do not use `.get()`.
+     * Localized station name. Access language tags as attributes
+     * (`station.name.dflt`). Do not use `.get()`.
      */
     get name(): Babelfont.I18NDictionary {
         return getLiveMutableValue(
@@ -12614,11 +12654,11 @@ export class Master extends ArrayElementBase {
     }
 
     /**
-     * Master location in designspace. Access axis tags as attributes
-     * (`master.location.wght`).
+     * Station location in designspace. Access axis tags as attributes
+     * (`station.location.wght`).
      * @example
-     * print(master.location)
-     * print(master.location.wght)
+     * print(station.location)
+     * print(station.location.wght)
      */
     get location(): DesignspaceLocation | undefined {
         return getLiveMutableValue(
@@ -12648,7 +12688,7 @@ export class Master extends ArrayElementBase {
         }
         return getReadOnlyCollectionValue(
             this._guideWrappers!,
-            'Master.guides is a read-only collection view. Use addGuide() or removeGuide() for structural edits.'
+            'Station.guides is a read-only collection view. Use addGuide() or removeGuide() for structural edits.'
         );
     }
 
@@ -12699,7 +12739,7 @@ export class Master extends ArrayElementBase {
     }
 
     /**
-     * Per-master vertical metrics. Access as attributes: `XHeight`, `CapHeight`,
+     * Per-station vertical metrics. Access as attributes: `XHeight`, `CapHeight`,
      * `Ascender`, `Descender`, `ItalicAngle`, `HheaAscender`, `HheaDescender`,
      * `HheaLineGap`, `WinAscent`, `WinDescent`, `TypoAscender`, `TypoDescender`,
      * `TypoLineGap`, `SubscriptXSize`, `SubscriptYSize`, `SubscriptXOffset`,
@@ -12708,10 +12748,10 @@ export class Master extends ArrayElementBase {
      * `StrikeoutPosition`, `UnderlinePosition`, `UnderlineThickness`,
      * `HheaCaretSlopeRise`, `HheaCaretSlopeRun`, `HheaCaretOffset`.
      * @example
-     * xh = master.metrics.XHeight
-     * master.metrics.Ascender = 800
+     * xh = station.metrics.XHeight
+     * station.metrics.Ascender = 800
      */
-    get metrics(): MasterMetrics {
+    get metrics(): StationMetrics {
         return getLiveMutableValue(
             this,
             'metrics',
@@ -12720,7 +12760,7 @@ export class Master extends ArrayElementBase {
         );
     }
 
-    set metrics(value: MasterMetrics) {
+    set metrics(value: StationMetrics) {
         assertModelMutationAllowed();
         const old = this.data.metrics;
         this.data.metrics = value;
@@ -12731,7 +12771,7 @@ export class Master extends ArrayElementBase {
      * LTR kerning: pair key `"left:right"` → value. Keys are glyph names or
      * `@groupName` (first vs second group from key position).
      * @example
-     * master.kerning["A:V"] = -80
+     * station.kerning["A:V"] = -80
      */
     get kerning(): Record<string, number> {
         return getLiveMutableValue(
@@ -12753,7 +12793,7 @@ export class Master extends ArrayElementBase {
      * RTL kerning: pair key `"first:second"` → value, same operand rules
      * as LTR.
      * @example
-     * master.kerning_rtl["reh-ar:alef-ar"] = -80
+     * station.kerning_rtl["reh-ar:alef-ar"] = -80
      */
     get kerning_rtl(): Record<string, number> {
         return getLiveMutableValue(
@@ -12772,8 +12812,8 @@ export class Master extends ArrayElementBase {
     }
 
     /**
-     * Per-master OpenType table overrides as a live dict (not a list).
-     * Same keys as `Font.custom_ot_values`. Master-varying vertical metrics
+     * Per-station OpenType table overrides as a live dict (not a list).
+     * Same keys as `Font.custom_ot_values`. Station-varying vertical metrics
      * belong on `metrics`, not here.
      */
     get custom_ot_values(): Babelfont.CustomOTValues | undefined {
@@ -12808,10 +12848,10 @@ export class Master extends ArrayElementBase {
         recordAndMarkDirty(this, 'format_specific', old, value);
     }
 
-    async reinterpolateLayers(): Promise<void> {
+    async reinterpolateDrawings(): Promise<void> {
         assertModelMutationAllowed();
         const parentFont = this.parent();
-        assertMasterTopologyChangeAllowed(
+        assertStationTopologyChangeAllowed(
             parentFont instanceof Font ? parentFont : null
         );
         const outlineEditor =
@@ -12820,9 +12860,10 @@ export class Master extends ArrayElementBase {
                 : null;
         if (
             outlineEditor &&
-            typeof outlineEditor.reinterpolateAllLayersForMaster === 'function'
+            typeof outlineEditor.reinterpolateAllDrawingsForStation ===
+                'function'
         ) {
-            await outlineEditor.reinterpolateAllLayersForMaster(this.id);
+            await outlineEditor.reinterpolateAllDrawingsForStation(this.id);
             return;
         }
 
@@ -12848,7 +12889,7 @@ export class Master extends ArrayElementBase {
         beginStartupInteractionLock();
         try {
             const batchResult =
-                await window.fontManager.buildWorkerReinterpolateMasterLayersBatch(
+                await window.fontManager.buildWorkerReinterpolateStationDrawingsBatch(
                     this.id
                 );
             if (!batchResult.update.length && !batchResult.updates?.length) {
@@ -12859,7 +12900,7 @@ export class Master extends ArrayElementBase {
                 bridge,
                 batchResult.update,
                 buildInterpolationRustBatchOperations(batchResult.metadata),
-                'Reinterpolate layer batch sync',
+                'Reinterpolate drawing batch sync',
                 batchResult.updates?.length ? batchResult.updates : undefined
             );
         } finally {
@@ -12874,7 +12915,7 @@ export class Master extends ArrayElementBase {
             return false;
         }
 
-        return font.removeMastersByIds([this.id]);
+        return font.removeStationsByIds([this.id]);
     }
 
     toString(): string {
@@ -12885,7 +12926,7 @@ export class Master extends ArrayElementBase {
                   Object.values(this.name || {})[0] ||
                   'Unsafe';
         const location = this.location ? JSON.stringify(this.location) : '{}';
-        return `<Master "${displayName}" id="${this.id}" location=${location}>`;
+        return `<Station "${displayName}" id="${this.id}" location=${location}>`;
     }
 }
 
@@ -13022,8 +13063,8 @@ export class Instance extends ArrayElementBase {
 /** Key under which Glyphs.app stores RTL kerning in Font.format_specific. */
 /**
  * Where Glyphs files keep RTL kerning, font-wide. Fonts read by the current
- * babelfont have it on each master's flat `kerning_rtl` instead; the key is
- * only left for master ids the font has no master of.
+ * babelfont have it on each station's flat `kerning_rtl` instead; the key is
+ * only left for station ids the font has no station of.
  */
 const KEY_KERNING_RTL = 'com.schriftgestalt.Glyphs.kerningRTL';
 
@@ -13047,19 +13088,19 @@ function remapFlatKerningPairKeys(
 export function normalizeLegacyGlyphsRtlKerning(
     data: Babelfont.Font
 ): Babelfont.Font {
-    const masters = Array.isArray(data.masters) ? data.masters : [];
+    const stations = Array.isArray(data.masters) ? data.masters : [];
 
     // Pair-key maps (`"left:right"`). Nested `{left: {right: n}}` is flattened.
-    for (const master of masters) {
-        master.kerning = flattenKerningMap(master.kerning) as Unsafe;
-        master.kerning_rtl = flattenKerningMap(master.kerning_rtl);
+    for (const station of stations) {
+        station.kerning = flattenKerningMap(station.kerning) as Unsafe;
+        station.kerning_rtl = flattenKerningMap(station.kerning_rtl);
     }
 
-    // Fonts saved before masters had `kerning_rtl` (and the editor's own
+    // Fonts saved before stations had `kerning_rtl` (and the editor's own
     // older saves, which kept both) still carry the Glyphs-style copy. Move
-    // what a master lacks onto it, and drop the copy for every master the
+    // what a station lacks onto it, and drop the copy for every station the
     // font has: the flat map is the only truth from now on. Kerning for a
-    // master id the font does not have stays, so nothing is lost.
+    // station id the font does not have stays, so nothing is lost.
     const formatSpecific = data.format_specific as
         Record<string, unknown> | undefined;
     const rawRtl = formatSpecific?.[KEY_KERNING_RTL] as
@@ -13070,15 +13111,15 @@ export function normalizeLegacyGlyphsRtlKerning(
     const leftover: Record<string, Record<string, Record<string, number>>> = {
         ...rawRtl
     };
-    for (const master of masters) {
-        const masterId = master.id || '';
-        const masterRawRtl = rawRtl[masterId];
-        if (!masterRawRtl) {
+    for (const station of stations) {
+        const stationId = station.id || '';
+        const stationRawRtl = rawRtl[stationId];
+        if (!stationRawRtl) {
             continue;
         }
-        delete leftover[masterId];
-        const kerningRtl = (master.kerning_rtl ||= {});
-        for (const [kern1, subtable] of Object.entries(masterRawRtl)) {
+        delete leftover[stationId];
+        const kerningRtl = (station.kerning_rtl ||= {});
+        for (const [kern1, subtable] of Object.entries(stationRawRtl)) {
             const firstKey = kern1.startsWith('@MMK_R_')
                 ? '@' + kern1.slice(7)
                 : kern1;
@@ -13177,14 +13218,14 @@ export class Font extends ModelBase {
     private _glyphNameIndex: Map<string, number> | null = null;
     private _glyphNameIndexSource: Unsafe[] | null = null;
     private _axisWrappers: Axis[] | null = null;
-    private _masterWrappers: Master[] | null = null;
+    private _stationWrappers: Station[] | null = null;
     private _instanceWrappers: Instance[] | null = null;
     private _isRecomputingMetricsKeys = false;
     /** Reverse index: componentGlyphName → Set of glyph names that use it */
     private _reverseComponentIndex: Map<string, Set<string>> | null = null;
     /**
      * Cached metrics-key dependency graph. Rebuilding it walks every
-     * glyph × layer × side and parses each key, which is O(font) — and
+     * glyph × drawing × side and parses each key, which is O(font) — and
      * `recomputeMetricsKeys` needs it on every call, i.e. once per pointer tick
      * during a live drag. Invalidated alongside `_reverseComponentIndex`.
      */
@@ -13279,30 +13320,30 @@ export class Font extends ModelBase {
         this._instanceWrappers = null;
     }
 
-    get masters(): Master[] | undefined {
+    get stations(): Station[] | undefined {
         if (!this._data.masters) return undefined;
         if (
-            !this._masterWrappers ||
-            this._masterWrappers.length !== this._data.masters.length ||
-            !this._masterWrappers.every((wrapper) =>
+            !this._stationWrappers ||
+            this._stationWrappers.length !== this._data.masters.length ||
+            !this._stationWrappers.every((wrapper) =>
                 wrapper.isBoundToArray(this._data.masters!)
             )
         ) {
-            this._masterWrappers = this._data.masters.map(
+            this._stationWrappers = this._data.masters.map(
                 (_: Unsafe, i: number) =>
-                    new Master(this._data.masters, i, this)
+                    new Station(this._data.masters, i, this)
             );
         }
         return getReadOnlyCollectionValue(
-            this._masterWrappers!,
-            'Font.masters is a read-only collection view. Direct structural mutation is not supported.'
+            this._stationWrappers!,
+            'Font.stations is a read-only collection view. Direct structural mutation is not supported.'
         );
     }
 
-    set masters(value: Babelfont.Master[] | Babelfont.Master) {
+    set stations(value: Babelfont.Master[] | Babelfont.Master) {
         assertModelMutationAllowed();
         this._data.masters = value;
-        this._masterWrappers = null;
+        this._stationWrappers = null;
     }
 
     get glyphs(): Glyph[] {
@@ -13328,7 +13369,7 @@ export class Font extends ModelBase {
         options?: {
             skipSelfGlyphNames?: Set<string>;
             allowedGlyphNames?: Set<string>;
-            preferredLayerId?: string | null;
+            preferredDrawingId?: string | null;
             preferredSourceGlyphName?: string | null;
         }
     ): Set<string> {
@@ -13339,16 +13380,16 @@ export class Font extends ModelBase {
                 ? new Set(changedGlyphNames)
                 : new Set(this.glyphs.map((glyph) => glyph.name));
         const visitedGlyphNames = new Set<string>();
-        const preferredLayerId = options?.preferredLayerId ?? null;
+        const preferredDrawingId = options?.preferredDrawingId ?? null;
         const preferredSourceGlyphName =
             options?.preferredSourceGlyphName ??
             (changedGlyphNames && changedGlyphNames.size > 0
                 ? (changedGlyphNames.values().next().value as string | null)
                 : null);
-        const preferredSourceLayer =
-            preferredLayerId && preferredSourceGlyphName
-                ? this.findGlyph(preferredSourceGlyphName)?.findLayerById(
-                      preferredLayerId
+        const preferredSourceDrawing =
+            preferredDrawingId && preferredSourceGlyphName
+                ? this.findGlyph(preferredSourceGlyphName)?.findDrawingById(
+                      preferredDrawingId
                   )
                 : null;
         const sourceDataCache = new WeakMap<
@@ -13390,24 +13431,24 @@ export class Font extends ModelBase {
                 }
 
                 let glyphChanged = false;
-                const changedLayers: Layer[] = [];
-                const layersToRebuild = preferredLayerId
+                const changedDrawings: Drawing[] = [];
+                const drawingsToRebuild = preferredDrawingId
                     ? [
                           candidateGlyphName === preferredSourceGlyphName
-                              ? preferredSourceLayer
-                              : preferredSourceLayer?.getMatchingLayerOnGlyph?.(
+                              ? preferredSourceDrawing
+                              : preferredSourceDrawing?.getMatchingDrawingOnGlyph?.(
                                     candidateGlyphName
-                                ) || glyph.findLayerById(preferredLayerId)
-                      ].filter((layer): layer is Layer => !!layer)
-                    : glyph.layers || [];
-                for (const layer of layersToRebuild) {
-                    if (layer.isAutomaticAlignedLayer()) {
-                        layer.invalidateLayoutCache();
+                                ) || glyph.findDrawingById(preferredDrawingId)
+                      ].filter((drawing): drawing is Drawing => !!drawing)
+                    : glyph.drawings || [];
+                for (const drawing of drawingsToRebuild) {
+                    if (drawing.isAutomaticAlignedDrawing()) {
+                        drawing.invalidateLayoutCache();
                         if (
-                            layer.rebuildAutomaticComposition(sourceDataCache)
+                            drawing.rebuildAutomaticComposition(sourceDataCache)
                         ) {
                             glyphChanged = true;
-                            changedLayers.push(layer);
+                            changedDrawings.push(drawing);
                         }
                     }
                 }
@@ -13416,9 +13457,9 @@ export class Font extends ModelBase {
                     continue;
                 }
 
-                for (const layer of changedLayers) {
+                for (const drawing of changedDrawings) {
                     sourceDataCache.delete(
-                        layer.getAutomaticCompositionSourceCacheKey()
+                        drawing.getAutomaticCompositionSourceCacheKey()
                     );
                 }
 
@@ -13465,17 +13506,19 @@ export class Font extends ModelBase {
                 return true;
             }
 
-            for (const layerData of glyphData?.layers || []) {
-                const layerFormatSpecific = layerData?.format_specific as
+            for (const drawingData of glyphData?.layers || []) {
+                const drawingFormatSpecific = drawingData?.format_specific as
                     Record<string, unknown> | undefined;
                 if (
                     normalizeMetricsKeyValue(
-                        layerFormatSpecific?.[GLYPHS_LAYER_METRIC_LEFT_KEY] as
-                            string | undefined
+                        drawingFormatSpecific?.[
+                            GLYPHS_LAYER_METRIC_LEFT_KEY
+                        ] as string | undefined
                     ) ||
                     normalizeMetricsKeyValue(
-                        layerFormatSpecific?.[GLYPHS_LAYER_METRIC_RIGHT_KEY] as
-                            string | undefined
+                        drawingFormatSpecific?.[
+                            GLYPHS_LAYER_METRIC_RIGHT_KEY
+                        ] as string | undefined
                     )
                 ) {
                     return true;
@@ -13489,29 +13532,29 @@ export class Font extends ModelBase {
     /**
      * Yjs / JSON merges can replace `glyph.data.layers` with new objects while
      * this font model (and its metrics-key dependency cache) stays alive.
-     * Cached Layer wrappers then point at orphaned records, so =| and other
+     * Cached Drawing wrappers then point at orphaned records, so =| and other
      * keys mutate the wrong objects until a key write rebuilds the cache
-     * (e.g. property-panel LSB set). Always rebind to the live layer by id.
+     * (e.g. property-panel LSB set). Always rebind to the live drawing by id.
      */
     private rebindMetricsKeyDependencyEntry(
         entry: MetricsKeyDependencyEntry
-    ): Layer | null {
+    ): Drawing | null {
         const glyph = this.findGlyph(entry.glyphName);
         if (!glyph) {
             return null;
         }
-        const layerId = entry.layerId || entry.layer?.id;
-        if (!layerId) {
+        const drawingId = entry.drawingId || entry.drawing?.id;
+        if (!drawingId) {
             return null;
         }
-        const liveLayer = glyph.findLayerById(layerId);
-        if (!liveLayer) {
+        const liveDrawing = glyph.findDrawingById(drawingId);
+        if (!liveDrawing) {
             return null;
         }
         entry.glyph = glyph;
-        entry.layer = liveLayer;
-        entry.layerId = layerId;
-        return liveLayer;
+        entry.drawing = liveDrawing;
+        entry.drawingId = drawingId;
+        return liveDrawing;
     }
 
     private collectMetricsKeyDependencyEntries(options?: {
@@ -13528,7 +13571,7 @@ export class Font extends ModelBase {
         if (cached === null || cacheIsStaleEmpty) {
             const built = this._buildMetricsKeyDependencyEntries();
             // Never permanently cache an empty graph while the font still
-            // declares metrics keys. That happens when the filtered layer view
+            // declares metrics keys. That happens when the filtered drawing view
             // is not ready yet; caching [] disables =| / keyed cascades until
             // a later key write invalidates the cache (e.g. property-panel
             // LSB set), which matches "handle drag only works after panel".
@@ -13557,12 +13600,12 @@ export class Font extends ModelBase {
         const entries: MetricsKeyDependencyEntry[] = [];
 
         for (const glyph of this.glyphs) {
-            for (const layer of glyph.layers || []) {
+            for (const drawing of glyph.drawings || []) {
                 for (const side of ['left', 'right'] as SidebearingSide[]) {
                     const key =
                         side === 'left'
-                            ? layer.leftMetricsKey || glyph.leftMetricsKey
-                            : layer.rightMetricsKey || glyph.rightMetricsKey;
+                            ? drawing.leftMetricsKey || glyph.leftMetricsKey
+                            : drawing.rightMetricsKey || glyph.rightMetricsKey;
                     if (!key) {
                         continue;
                     }
@@ -13572,14 +13615,14 @@ export class Font extends ModelBase {
                         continue;
                     }
 
-                    const layerId = layer.id;
-                    if (!layerId) {
+                    const drawingId = drawing.id;
+                    if (!drawingId) {
                         continue;
                     }
 
                     entries.push({
-                        layer,
-                        layerId,
+                        drawing: drawing,
+                        drawingId: drawingId,
                         glyph,
                         glyphName: glyph.name,
                         side,
@@ -13641,7 +13684,7 @@ export class Font extends ModelBase {
         changedGlyphNames?: Set<string>,
         options?: {
             allowedGlyphNames?: Set<string>;
-            preferredLayerId?: string | null;
+            preferredDrawingId?: string | null;
             preferredSourceGlyphName?: string | null;
         }
     ): Set<string> {
@@ -13658,9 +13701,12 @@ export class Font extends ModelBase {
     ): Set<string> {
         const seeds = new Set<string>();
         for (const glyph of this.glyphs) {
-            for (const layer of glyph.layers || []) {
+            for (const drawing of glyph.drawings || []) {
                 if (
-                    layer.usesAutomaticLigatureKerningPair(firstKey, secondKey)
+                    drawing.usesAutomaticLigatureKerningPair(
+                        firstKey,
+                        secondKey
+                    )
                 ) {
                     seeds.add(glyph.name);
                     break;
@@ -13689,9 +13735,9 @@ export class Font extends ModelBase {
     ): Set<string> {
         const seeds = new Set<string>();
         for (const glyph of this.glyphs) {
-            for (const layer of glyph.layers || []) {
+            for (const drawing of glyph.drawings || []) {
                 if (
-                    layer.usesAutomaticLigatureKerningGroupMembership(
+                    drawing.usesAutomaticLigatureKerningGroupMembership(
                         pairSide,
                         glyphNames
                     )
@@ -13715,11 +13761,11 @@ export class Font extends ModelBase {
 
     /**
      * Enable automatic alignment only on glyphs where every non-empty
-     * foreground layer preflights: the composition engine can place every
+     * foreground drawing preflights: the composition engine can place every
      * component (anchor attachment, unattached non-mark bases including
      * ligatures with LTR kerning, or a single non-mark component), and the
-     * result matches stored translations and width on all of those layers.
-     * Manual components that would move, or layers whose advance would
+     * result matches stored translations and width on all of those drawings.
+     * Manual components that would move, or drawings whose advance would
      * change, stay manual.
      *
      * `compositeGlyphCount` is how many glyphs have at least one component.
@@ -13736,21 +13782,25 @@ export class Font extends ModelBase {
         const convertibleGlyphNames: string[] = [];
         let compositeGlyphCount = 0;
         for (const glyph of this.glyphs) {
-            const layers = (glyph.layers || []).filter(
-                (layer) =>
-                    !layer.is_background && (layer.shapes?.length ?? 0) > 0
+            const drawings = (glyph.drawings || []).filter(
+                (drawing) =>
+                    !drawing.is_background && (drawing.shapes?.length ?? 0) > 0
             );
             if (
-                layers.length === 0 ||
-                !layers.some((layer) => layer.components.length > 0)
+                drawings.length === 0 ||
+                !drawings.some((drawing) => drawing.components.length > 0)
             ) {
                 continue;
             }
             compositeGlyphCount += 1;
             if (
-                layers.every((layer) => layer.isAutomaticAlignedLayer()) ||
-                !layers.every((layer) =>
-                    layer.matchesAutomaticCompositionPreflight(sourceDataCache)
+                drawings.every((drawing) =>
+                    drawing.isAutomaticAlignedDrawing()
+                ) ||
+                !drawings.every((drawing) =>
+                    drawing.matchesAutomaticCompositionPreflight(
+                        sourceDataCache
+                    )
                 )
             ) {
                 continue;
@@ -13774,17 +13824,17 @@ export class Font extends ModelBase {
             if (!eligible.has(glyph.name)) {
                 continue;
             }
-            const layers = (glyph.layers || []).filter(
-                (layer) =>
-                    !layer.is_background && (layer.shapes?.length ?? 0) > 0
+            const drawings = (glyph.drawings || []).filter(
+                (drawing) =>
+                    !drawing.is_background && (drawing.shapes?.length ?? 0) > 0
             );
 
             let changed = false;
-            for (const layer of layers) {
-                if (layer.isAutomaticAlignedLayer()) {
+            for (const drawing of drawings) {
+                if (drawing.isAutomaticAlignedDrawing()) {
                     continue;
                 }
-                for (const component of layer.components) {
+                for (const component of drawing.components) {
                     if (component.automaticAlignment) {
                         continue;
                     }
@@ -13827,8 +13877,8 @@ export class Font extends ModelBase {
         const dependencyEntries = this.collectMetricsKeyDependencyEntries();
         for (const entry of dependencyEntries) {
             if (entry.parsed.kind === 'automatic-offset') {
-                const liveLayer = this.rebindMetricsKeyDependencyEntry(entry);
-                if (!liveLayer?.isAutomaticAlignedLayer()) {
+                const liveDrawing = this.rebindMetricsKeyDependencyEntry(entry);
+                if (!liveDrawing?.isAutomaticAlignedDrawing()) {
                     continue;
                 }
                 let dependsOnSource = sources.has(entry.glyphName);
@@ -14079,9 +14129,9 @@ export class Font extends ModelBase {
                 >();
 
                 for (const entry of candidateEntries) {
-                    const liveLayer =
+                    const liveDrawing =
                         this.rebindMetricsKeyDependencyEntry(entry);
-                    if (!liveLayer) {
+                    if (!liveDrawing) {
                         continue;
                     }
 
@@ -14097,14 +14147,18 @@ export class Font extends ModelBase {
                         continue;
                     }
 
-                    const resolution = liveLayer.resolveMetricsKey(entry.side);
+                    const resolution = liveDrawing.resolveMetricsKey(
+                        entry.side
+                    );
                     const applied = getAppliedMetricsKeySidebearing(
-                        liveLayer,
+                        liveDrawing,
                         entry.side,
                         resolution
                     );
                     const currentValue =
-                        entry.side === 'left' ? liveLayer.lsb : liveLayer.rsb;
+                        entry.side === 'left'
+                            ? liveDrawing.lsb
+                            : liveDrawing.rsb;
                     if (
                         applied.error ||
                         applied.value === null ||
@@ -14114,13 +14168,13 @@ export class Font extends ModelBase {
                         continue;
                     }
 
-                    if (!liveLayer.isAutomaticAlignedLayer()) {
-                        liveLayer.setDirectSidebearing(
+                    if (!liveDrawing.isAutomaticAlignedDrawing()) {
+                        liveDrawing.setDirectSidebearing(
                             entry.side,
                             applied.value
                         );
                     } else {
-                        // Automatic layers are mutation-owned exclusively by
+                        // Automatic drawings are mutation-owned exclusively by
                         // rebuildAutomaticComposition. Never translate/bake
                         // their contents from the metrics fast path — that
                         // fights logical =+/- storage and live/commit parity.
@@ -14230,7 +14284,7 @@ export class Font extends ModelBase {
      * `os2_vendor_id`, `os2_fs_selection`, `os2_code_page_range1`/`2`,
      * `cff_blue_values`, `cff_other_blues`, `cff_family_blues`,
      * `cff_family_other_blues`, `cff_stem_snap_h`, `cff_stem_snap_v`.
-     * Master-varying metrics belong on `Master.metrics`, not here.
+     * Station-varying metrics belong on `Station.metrics`, not here.
      * @example
      * font.custom_ot_values.os2_us_weight_class = 400
      */
@@ -14615,23 +14669,23 @@ export class Font extends ModelBase {
                 if (rightMetricsKey !== glyph.rightMetricsKey) {
                     glyph.rightMetricsKey = rightMetricsKey;
                 }
-                // Glyph.layers hides backgrounds; Glyphs fonts often keep
+                // Glyph.drawings hides backgrounds; Glyphs fonts often keep
                 // composite refs only there (e.g. Fustat ae → a).
-                glyph._rewriteStoredLayerNameReferences(
+                glyph._rewriteStoredDrawingNameReferences(
                     replaceGlyphRef,
                     replaceGlyphMetricsKey
                 );
             }
 
-            for (const master of this.masters || []) {
-                master.kerning = remapFlatKerningPairKeys(
-                    flattenKerningMap(master.kerning),
+            for (const station of this.stations || []) {
+                station.kerning = remapFlatKerningPairKeys(
+                    flattenKerningMap(station.kerning),
                     replaceName
                 );
 
                 const rtlKerning: Record<string, number> = {};
                 for (const [pair, value] of Object.entries(
-                    master.kerning_rtl || {}
+                    station.kerning_rtl || {}
                 )) {
                     const separator = pair.indexOf(':');
                     const left =
@@ -14641,7 +14695,7 @@ export class Font extends ModelBase {
                     rtlKerning[`${replaceName(left)}:${replaceName(right)}`] =
                         value;
                 }
-                master.kerning_rtl = rtlKerning;
+                station.kerning_rtl = rtlKerning;
             }
 
             const renameGroups = (
@@ -14718,7 +14772,7 @@ export class Font extends ModelBase {
     }
 
     /**
-     * Resolve an editor glyph token to an authorable layer view. A literal glyph
+     * Resolve an editor glyph token to an authorable drawing view. A literal glyph
      * name resolves to its persisted Glyph; `base.feaVar.N` resolves to the
      * corresponding synthetic feature-variation family.
      */
@@ -14767,10 +14821,14 @@ export class Font extends ModelBase {
         for (const glyphData of this._data.glyphs) {
             if (!glyphData.layers) continue;
             const glyphName = glyphData.name;
-            for (const layer of glyphData.layers) {
-                if (!layer || !layer.shapes || !Array.isArray(layer.shapes))
+            for (const drawing of glyphData.layers) {
+                if (
+                    !drawing ||
+                    !drawing.shapes ||
+                    !Array.isArray(drawing.shapes)
+                )
                     continue;
-                for (const shape of layer.shapes) {
+                for (const shape of drawing.shapes) {
                     if (!shape || typeof shape !== 'object') continue;
                     const ref =
                         shape.reference ??
@@ -14922,17 +14980,17 @@ export class Font extends ModelBase {
     }
 
     /**
-     * Invalidate automatic composition layout caches for all layers
+     * Invalidate automatic composition layout caches for all drawings
      * of the specified glyphs. Call before recomputing compositions
      * so that stale cached layouts from a previous frame are not reused.
      */
     invalidateLayoutCachesForGlyphs(glyphNames: Iterable<string>): void {
         for (const glyphName of glyphNames) {
             const glyph = this.findGlyph(glyphName);
-            if (!glyph?.layers) continue;
-            for (const layer of glyph.layers) {
-                if (layer instanceof Layer) {
-                    layer.invalidateLayoutCache();
+            if (!glyph?.drawings) continue;
+            for (const drawing of glyph.drawings) {
+                if (drawing instanceof Drawing) {
+                    drawing.invalidateLayoutCache();
                 }
             }
         }
@@ -14985,29 +15043,29 @@ export class Font extends ModelBase {
         delete clonedData.codepoints;
         clonedData.id = generateStableId();
 
-        // Generate new unique IDs for all layers
+        // Generate new unique IDs for all drawings
         if (clonedData.layers) {
-            // Collect all layer IDs from the entire font to avoid duplicates
-            const allExistingLayerIds = new Set<string>();
+            // Collect all drawing IDs from the entire font to avoid duplicates
+            const allExistingDrawingIds = new Set<string>();
             for (const g of this.glyphs) {
-                if (g.layers) {
-                    for (const layer of g.layers) {
-                        if (layer.id) {
-                            allExistingLayerIds.add(layer.id);
+                if (g.drawings) {
+                    for (const drawing of g.drawings) {
+                        if (drawing.id) {
+                            allExistingDrawingIds.add(drawing.id);
                         }
                     }
                 }
             }
 
-            // Generate new unique IDs for each cloned layer
-            for (const layer of clonedData.layers) {
-                if (layer.id) {
+            // Generate new unique IDs for each cloned drawing
+            for (const drawing of clonedData.layers) {
+                if (drawing.id) {
                     let newId: string;
                     do {
                         newId = crypto.randomUUID();
-                    } while (allExistingLayerIds.has(newId));
-                    layer.id = newId;
-                    allExistingLayerIds.add(newId);
+                    } while (allExistingDrawingIds.has(newId));
+                    drawing.id = newId;
+                    allExistingDrawingIds.add(newId);
                 }
             }
         }
@@ -15051,7 +15109,7 @@ export class Font extends ModelBase {
     /**
      * Duplicate each named glyph under a unique .001-style name.
      * Each clone is inserted directly after its source, loses codepoints,
-     * regenerates layer IDs, and keeps master references.
+     * regenerates drawing IDs, and keeps station references.
      */
     duplicateGlyphs(names: Iterable<string>): Glyph[] {
         const uniqueNames = [
@@ -15115,21 +15173,21 @@ export class Font extends ModelBase {
     }
 
     /**
-     * Find a master by ID
+     * Find a station by ID
      */
-    findMaster(id: string): Master | undefined {
-        const masters = this.masters;
-        if (!masters) return undefined;
+    findStation(id: string): Station | undefined {
+        const stations = this.stations;
+        if (!stations) return undefined;
         const index = this._data.masters.findIndex((m: Unsafe) => m.id === id);
-        return index >= 0 ? masters[index] : undefined;
+        return index >= 0 ? stations[index] : undefined;
     }
 
     /**
-     * Whether masters may be added, removed, or reinterpolated now. Cloud
+     * Whether stations may be added, removed, or reinterpolated now. Cloud
      * fonts refuse while some glyphs are not downloaded.
      */
-    getMasterTopologyGate(): MasterTopologyGate {
-        return masterTopologyGateForFont(this);
+    getStationTopologyGate(): StationTopologyGate {
+        return stationTopologyGateForFont(this);
     }
 
     private createModelRecordId(prefix: string): string {
@@ -15151,38 +15209,38 @@ export class Font extends ModelBase {
         return JSON.parse(JSON.stringify(value)) as T;
     }
 
-    private getEffectiveDesignspaceLocationForLayer(
-        layer: Layer | null | undefined
+    private getEffectiveDesignspaceLocationForDrawing(
+        drawing: Drawing | null | undefined
     ): DesignspaceLocation | undefined {
-        if (!layer) {
+        if (!drawing) {
             return undefined;
         }
 
-        if (layer.location && Object.keys(layer.location).length > 0) {
-            return this.clonePlainValue(layer.location);
+        if (drawing.location && Object.keys(drawing.location).length > 0) {
+            return this.clonePlainValue(drawing.location);
         }
 
-        const masterId = layer.master?.master;
-        if (!masterId) {
+        const stationId = drawing.station?.master;
+        if (!stationId) {
             return undefined;
         }
 
-        const master = this.findMaster(masterId);
-        return master?.location
-            ? this.clonePlainValue(master.location)
+        const station = this.findStation(stationId);
+        return station?.location
+            ? this.clonePlainValue(station.location)
             : undefined;
     }
 
-    private getAddMasterInterpolationLocations(
+    private getAddStationInterpolationLocations(
         targetLocation: DesignspaceLocation | undefined
-    ): AddMasterInterpolationLocation[] {
-        const locations: AddMasterInterpolationLocation[] = [];
+    ): AddStationInterpolationLocation[] {
+        const locations: AddStationInterpolationLocation[] = [];
 
         if (!targetLocation || Object.keys(targetLocation).length === 0) {
             return locations;
         }
 
-        // Master locations are designspace. Pass them through directly — do not
+        // Station locations are designspace. Pass them through directly — do not
         // round-trip via userspace (that path previously risked feeding the
         // extrapolated userspace endpoint back as a design coordinate).
         const designLocation = this.clonePlainValue(targetLocation);
@@ -15197,15 +15255,15 @@ export class Font extends ModelBase {
         return locations;
     }
 
-    private getNextMasterLocation(): Record<string, number> | undefined {
+    private getNextStationLocation(): Record<string, number> | undefined {
         const axes = this.axes || [];
         if (axes.length === 0) {
             return undefined;
         }
 
         const existingByAxis: Record<string, Set<number>> = {};
-        for (const master of this.masters || []) {
-            const location = master.location || {};
+        for (const station of this.stations || []) {
+            const location = station.location || {};
             for (const axis of axes) {
                 const tag = axis.tag;
                 if (tag === undefined) {
@@ -15263,17 +15321,17 @@ export class Font extends ModelBase {
         return entries.length > 0 ? Object.fromEntries(entries) : undefined;
     }
 
-    private buildDefaultMasterRecord(
-        options?: AddMasterOptions
+    private buildDefaultStationRecord(
+        options?: AddStationOptions
     ): Babelfont.Master {
-        const nextIndex = (this.masters?.length ?? 0) + 1;
-        const templateMaster = options?.metricTemplateMasterId
-            ? this.findMaster(options.metricTemplateMasterId)
+        const nextIndex = (this.stations?.length ?? 0) + 1;
+        const templateStation = options?.metricTemplateStationId
+            ? this.findStation(options.metricTemplateStationId)
             : undefined;
         const metricTemplate =
-            templateMaster?.metrics ||
-            this.masters?.[this.masters.length - 1]?.metrics ||
-            this.masters?.[0]?.metrics ||
+            templateStation?.metrics ||
+            this.stations?.[this.stations.length - 1]?.metrics ||
+            this.stations?.[0]?.metrics ||
             {};
         const metrics = Object.fromEntries(
             Object.entries(metricTemplate).map(([key, value]) => [
@@ -15284,23 +15342,23 @@ export class Font extends ModelBase {
 
         return {
             id: this.createModelRecordId('master'),
-            name: { dflt: `Master ${nextIndex}` },
+            name: { dflt: `Station ${nextIndex}` },
             location: options?.location
                 ? this.clonePlainValue(options.location)
-                : this.getNextMasterLocation(),
+                : this.getNextStationLocation(),
             metrics,
             kerning: {} as Unsafe,
             kerning_rtl: {}
         };
     }
 
-    private setLocalMastersList(nextMasters: Babelfont.Master[]): void {
+    private setLocalStationsList(nextStations: Babelfont.Master[]): void {
         assertModelMutationAllowed();
-        this._data.masters = nextMasters;
-        this._masterWrappers = null;
+        this._data.masters = nextStations;
+        this._stationWrappers = null;
     }
 
-    private collectAutomaticNewLayerOverrides(
+    private collectAutomaticNewDrawingOverrides(
         metadata: InterpolationRustBatchMetadata
     ): Array<{
         glyphName: string;
@@ -15339,39 +15397,39 @@ export class Font extends ModelBase {
                 if (!Array.isArray(glyphData.layers)) {
                     glyphData.layers = [];
                 }
-                const nextLayer = this.clonePlainValue(
+                const nextDrawing = this.clonePlainValue(
                     operation.newValue
                 ) as Babelfont.Layer;
                 const existingIndex = glyphData.layers.findIndex(
-                    (layer) => layer.id === operation.layerId
+                    (drawing) => drawing.id === operation.layerId
                 );
                 if (existingIndex >= 0) {
-                    glyphData.layers[existingIndex] = nextLayer;
+                    glyphData.layers[existingIndex] = nextDrawing;
                 } else {
-                    glyphData.layers.push(nextLayer);
+                    glyphData.layers.push(nextDrawing);
                 }
             }
 
             const overlay = Font.fromData(overlayData);
             type AutoTarget = {
                 glyphName: string;
-                layerId: string;
-                layer: Layer;
+                drawingId: string;
+                drawing: Drawing;
                 componentRefs: string[];
             };
             const autoTargets: AutoTarget[] = [];
             for (const operation of metadata.layerOperations) {
-                const layer = overlay
+                const drawing = overlay
                     .findGlyph(operation.glyphName)
-                    ?.findLayerById(operation.layerId);
-                if (!layer?.isAutomaticAlignedLayer()) {
+                    ?.findDrawingById(operation.layerId);
+                if (!drawing?.isAutomaticAlignedDrawing()) {
                     continue;
                 }
                 autoTargets.push({
                     glyphName: operation.glyphName,
-                    layerId: operation.layerId,
-                    layer,
-                    componentRefs: layer.components
+                    drawingId: operation.layerId,
+                    drawing: drawing,
+                    componentRefs: drawing.components
                         .map((component) => component.reference)
                         .filter(
                             (reference): reference is string =>
@@ -15422,21 +15480,21 @@ export class Font extends ModelBase {
                 layer: Babelfont.Layer;
             }> = [];
             for (const target of ordered) {
-                const before = JSON.stringify(target.layer.toJSON());
+                const before = JSON.stringify(target.drawing.toJSON());
                 const changed =
-                    target.layer.rebuildAutomaticComposition(sourceDataCache);
+                    target.drawing.rebuildAutomaticComposition(sourceDataCache);
                 if (!changed) {
                     continue;
                 }
                 const afterData = this.clonePlainValue(
-                    target.layer.toJSON()
+                    target.drawing.toJSON()
                 ) as Babelfont.Layer;
                 if (JSON.stringify(afterData) === before) {
                     continue;
                 }
                 overrides.push({
                     glyphName: target.glyphName,
-                    layerId: target.layerId,
+                    layerId: target.drawingId,
                     layer: afterData
                 });
             }
@@ -15444,19 +15502,19 @@ export class Font extends ModelBase {
         });
     }
 
-    async addMaster(
-        master?: Babelfont.Master,
-        options?: AddMasterOptions
-    ): Promise<Master | null> {
+    async addStation(
+        station?: Babelfont.Master,
+        options?: AddStationOptions
+    ): Promise<Station | null> {
         assertModelMutationAllowed();
-        assertMasterTopologyChangeAllowed(this);
-        const clonedMaster = this.clonePlainValue(
-            master ?? this.buildDefaultMasterRecord(options)
+        assertStationTopologyChangeAllowed(this);
+        const clonedStation = this.clonePlainValue(
+            station ?? this.buildDefaultStationRecord(options)
         );
         const previousAxes = this.clonePlainValue(this._data.axes ?? []);
         const axisExtension = extendAxesForDesignspaceLocation(
             previousAxes,
-            clonedMaster.location
+            clonedStation.location
         );
         if (axisExtension.changed) {
             this._data.axes = axisExtension.axes;
@@ -15484,16 +15542,16 @@ export class Font extends ModelBase {
             beginStartupInteractionLock();
             try {
                 const batchResult =
-                    await window.fontManager.buildWorkerAddMasterWithInterpolatedLayersBatch(
-                        clonedMaster,
-                        this.getAddMasterInterpolationLocations(
-                            clonedMaster.location
+                    await window.fontManager.buildWorkerAddStationWithInterpolatedDrawingsBatch(
+                        clonedStation,
+                        this.getAddStationInterpolationLocations(
+                            clonedStation.location
                         ),
                         // Always send the axes snapshot used for interpolation.
                         // Even when min/max/map did not change, the worker
                         // FONT_CACHE can lag (e.g. prior structural sync
                         // quarantine); omitting axes then extrapolates with a
-                        // stale avar map and produces frankenstein layers.
+                        // stale avar map and produces frankenstein drawings.
                         this._data.axes ?? []
                     );
                 if (
@@ -15503,7 +15561,7 @@ export class Font extends ModelBase {
                     if (axisExtension.changed) {
                         this._data.axes = previousAxes;
                     }
-                    return this.findMaster(clonedMaster.id || '') || null;
+                    return this.findStation(clonedStation.id || '') || null;
                 }
 
                 let finalUpdate = batchResult.update;
@@ -15516,10 +15574,10 @@ export class Font extends ModelBase {
                     };
                 }
                 const overrides =
-                    this.collectAutomaticNewLayerOverrides(metadata);
+                    this.collectAutomaticNewDrawingOverrides(metadata);
                 if (overrides.length) {
                     const refined =
-                        await window.fontManager.buildWorkerRefineLayerSnapshotsBatch(
+                        await window.fontManager.buildWorkerRefineDrawingSnapshotsBatch(
                             batchResult.update,
                             overrides
                         );
@@ -15540,9 +15598,9 @@ export class Font extends ModelBase {
                     );
                     for (const operation of metadata.layerOperations) {
                         const key = `${operation.glyphName}::${operation.layerId}`;
-                        const overrideLayer = overrideByKey.get(key);
-                        if (overrideLayer !== undefined) {
-                            operation.newValue = overrideLayer;
+                        const overrideDrawing = overrideByKey.get(key);
+                        if (overrideDrawing !== undefined) {
+                            operation.newValue = overrideDrawing;
                         }
                     }
                 }
@@ -15553,40 +15611,41 @@ export class Font extends ModelBase {
                     buildInterpolationRustBatchOperations(metadata).map(
                         (operation) => ({
                             ...operation,
-                            compileChangeSource: 'master-topology',
-                            compileEditType: 'master-topology'
+                            compileChangeSource: 'station-topology',
+                            compileEditType: 'station-topology'
                         })
                     ),
-                    'Add master',
+                    'Add station',
                     documentUpdates?.length ? documentUpdates : undefined
                 );
             } finally {
                 endStartupInteractionLock();
                 endLoadingCursor();
             }
-            return this.findMaster(clonedMaster.id || '') || null;
+            return this.findStation(clonedStation.id || '') || null;
         }
 
-        const nextMasters = [
+        const nextStations = [
             ...this._data.masters.map((existing: Babelfont.Master) =>
                 this.clonePlainValue(existing)
             ),
-            clonedMaster
+            clonedStation
         ];
-        this.setLocalMastersList(nextMasters);
+        this.setLocalStationsList(nextStations);
 
-        const masterId = clonedMaster.id;
-        if (masterId) {
+        const stationId = clonedStation.id;
+        if (stationId) {
             for (const glyph of this.glyphs) {
-                const sourceLayer = glyph.layers?.[glyph.layers.length - 1];
-                const sourceWidth = sourceLayer?.width ?? 500;
-                glyph.addLayer(
+                const sourceDrawing =
+                    glyph.drawings?.[glyph.drawings.length - 1];
+                const sourceWidth = sourceDrawing?.width ?? 500;
+                glyph.addDrawing(
                     sourceWidth,
                     {
                         type: 'DefaultForMaster',
-                        master: masterId
+                        master: stationId
                     },
-                    masterId
+                    stationId
                 );
             }
         }
@@ -15595,23 +15654,23 @@ export class Font extends ModelBase {
             typeof window !== 'undefined'
                 ? (window as Unsafe).fontManager?.currentFont
                 : null;
-        currentFont?.markDirty?.('font-info-masters-list');
+        currentFont?.markDirty?.('font-info-stations-list');
 
-        return this.findMaster(clonedMaster.id || '') || null;
+        return this.findStation(clonedStation.id || '') || null;
     }
 
     /**
-     * Adds an axis and copies existing masters along it as one undo step.
-     * The worker writes the core document once and each glyph's new layers
+     * Adds an axis and copies existing stations along it as one undo step.
+     * The worker writes the core document once and each glyph's new drawings
      * in a single transaction per glyph.
      */
-    async addAxisWithMasterCopies(
-        plan: AxisMasterCopyPlan,
+    async addAxisWithStationCopies(
+        plan: AxisStationCopyPlan,
         label: string = 'Add axis'
     ): Promise<void> {
         assertModelMutationAllowed();
         if (plan.copies.length) {
-            assertMasterTopologyChangeAllowed(this);
+            assertStationTopologyChangeAllowed(this);
         }
         const bridge = getPatchSyncEngine() as
             | (PatchSyncEngine & {
@@ -15632,7 +15691,7 @@ export class Font extends ModelBase {
             !bridge?.applyLocalGeneratedYjsUpdate
         ) {
             throw new Error(
-                'Adding an axis with masters needs the font that is open in this window.'
+                'Adding an axis with stations needs the font that is open in this window.'
             );
         }
 
@@ -15640,7 +15699,7 @@ export class Font extends ModelBase {
         beginStartupInteractionLock();
         try {
             const batch =
-                await window.fontManager.buildWorkerAddAxisWithMasterCopiesBatch(
+                await window.fontManager.buildWorkerAddAxisWithStationCopiesBatch(
                     this.clonePlainValue(plan)
                 );
             applyWorkerGeneratedYjsUpdate(
@@ -15649,8 +15708,8 @@ export class Font extends ModelBase {
                 buildInterpolationRustBatchOperations(batch.metadata).map(
                     (operation) => ({
                         ...operation,
-                        compileChangeSource: 'master-topology',
-                        compileEditType: 'master-topology'
+                        compileChangeSource: 'station-topology',
+                        compileEditType: 'station-topology'
                     })
                 ),
                 label,
@@ -15662,53 +15721,53 @@ export class Font extends ModelBase {
         }
     }
 
-    async removeMastersByIds(masterIds: string[]): Promise<boolean> {
+    async removeStationsByIds(stationIds: string[]): Promise<boolean> {
         assertModelMutationAllowed();
-        assertMasterTopologyChangeAllowed(this);
-        const normalizedMasterIds = Array.from(
+        assertStationTopologyChangeAllowed(this);
+        const normalizedStationIds = Array.from(
             new Set(
-                masterIds.filter(
-                    (masterId): masterId is string =>
-                        typeof masterId === 'string' && masterId.length > 0
+                stationIds.filter(
+                    (stationId): stationId is string =>
+                        typeof stationId === 'string' && stationId.length > 0
                 )
             )
         );
-        if (!normalizedMasterIds.length) {
+        if (!normalizedStationIds.length) {
             return false;
         }
 
-        const previousMasters = this._data.masters.map(
-            (master: Babelfont.Master) => this.clonePlainValue(master)
+        const previousStations = this._data.masters.map(
+            (station: Babelfont.Master) => this.clonePlainValue(station)
         );
-        const nextMasters = previousMasters.filter(
-            (master: Babelfont.Master) =>
-                !normalizedMasterIds.includes(master.id || '')
+        const nextStations = previousStations.filter(
+            (station: Babelfont.Master) =>
+                !normalizedStationIds.includes(station.id || '')
         );
-        if (nextMasters.length === previousMasters.length) {
+        if (nextStations.length === previousStations.length) {
             return false;
         }
 
-        const removeMasterBoundLayers = () => {
+        const removeStationBoundDrawings = () => {
             for (const glyph of this.glyphs) {
-                const rawLayers = ((glyph as Unsafe).data?.layers ||
+                const rawDrawings = ((glyph as Unsafe).data?.layers ||
                     []) as Array<Babelfont.Layer & { id?: string }>;
-                const layerIdsToRemove = rawLayers
-                    .filter((layer) => {
-                        const layerMaster = layer.master as
+                const drawingIdsToRemove = rawDrawings
+                    .filter((drawing) => {
+                        const drawingStation = drawing.master as
                             { master?: string } | undefined;
                         return (
-                            typeof layer.id === 'string' &&
-                            typeof layerMaster?.master === 'string' &&
-                            normalizedMasterIds.includes(layerMaster.master)
+                            typeof drawing.id === 'string' &&
+                            typeof drawingStation?.master === 'string' &&
+                            normalizedStationIds.includes(drawingStation.master)
                         );
                     })
-                    .map((layer) => layer.id as string)
-                    .filter((layerId, index, values) => {
-                        return values.indexOf(layerId) === index;
+                    .map((drawing) => drawing.id as string)
+                    .filter((drawingId, index, values) => {
+                        return values.indexOf(drawingId) === index;
                     });
 
-                for (const layerId of layerIdsToRemove) {
-                    glyph.removeLayerById(layerId);
+                for (const drawingId of drawingIdsToRemove) {
+                    glyph.removeDrawingById(drawingId);
                 }
             }
         };
@@ -15736,8 +15795,8 @@ export class Font extends ModelBase {
             beginStartupInteractionLock();
             try {
                 const batchResult =
-                    await window.fontManager.buildWorkerRemoveMastersBatch(
-                        normalizedMasterIds
+                    await window.fontManager.buildWorkerRemoveStationsBatch(
+                        normalizedStationIds
                     );
                 if (
                     !batchResult.update.length &&
@@ -15752,10 +15811,10 @@ export class Font extends ModelBase {
                         batchResult.metadata
                     ).map((operation) => ({
                         ...operation,
-                        compileChangeSource: 'master-topology',
-                        compileEditType: 'master-topology'
+                        compileChangeSource: 'station-topology',
+                        compileEditType: 'station-topology'
                     })),
-                    'Remove master',
+                    'Remove station',
                     batchResult.updates?.length
                         ? batchResult.updates
                         : undefined
@@ -15767,11 +15826,11 @@ export class Font extends ModelBase {
             return true;
         }
 
-        this.setLocalMastersList(nextMasters);
-        removeMasterBoundLayers();
+        this.setLocalStationsList(nextStations);
+        removeStationBoundDrawings();
 
         const currentFont = (window as Unsafe).fontManager?.currentFont;
-        currentFont?.markDirty?.('font-info-masters-list');
+        currentFont?.markDirty?.('font-info-stations-list');
         return true;
     }
 
@@ -15810,8 +15869,8 @@ export class Font extends ModelBase {
     /**
      * Add a new glyph to the font.
      *
-     * Seeds one empty DefaultForMaster layer for every font master, using
-     * `Glyph.addLayer()` so Python and the UI share the same constructor.
+     * Seeds one empty DefaultForMaster drawing for every font station, using
+     * `Glyph.addDrawing()` so Python and the UI share the same constructor.
      * @example
      * glyph = font.addGlyph("myGlyph", "Base")
      */
@@ -15843,18 +15902,18 @@ export class Font extends ModelBase {
         this.invalidateReverseComponentIndex();
         const glyph = new Glyph(this._data.glyphs, insertIndex, this);
         withSuppressedModelRecording(() => {
-            for (const master of this._data.masters) {
-                const masterId = master?.id;
-                if (typeof masterId !== 'string' || !masterId.length) {
+            for (const station of this._data.masters) {
+                const stationId = station?.id;
+                if (typeof stationId !== 'string' || !stationId.length) {
                     continue;
                 }
-                glyph.addLayer(
+                glyph.addDrawing(
                     500,
                     {
                         type: 'DefaultForMaster',
-                        master: masterId
+                        master: stationId
                     },
-                    masterId
+                    stationId
                 );
             }
         });
@@ -15902,7 +15961,7 @@ export class Font extends ModelBase {
             featureHits: [],
             metricsHits: [],
             componentGlyphNames: [],
-            kerningMasters: [],
+            kerningStations: [],
             kerningLtrHits: [],
             kerningRtlHits: []
         };
@@ -15999,29 +16058,29 @@ export class Font extends ModelBase {
 
             if (Array.isArray(glyphData.layers)) {
                 for (
-                    let layerIndex = 0;
-                    layerIndex < glyphData.layers.length;
-                    layerIndex++
+                    let drawingIndex = 0;
+                    drawingIndex < glyphData.layers.length;
+                    drawingIndex++
                 ) {
-                    const layer = new Layer(
+                    const drawing = new Drawing(
                         glyphData.layers,
-                        layerIndex,
+                        drawingIndex,
                         glyph
                     );
-                    if (metricsKeyHits(layer.leftMetricsKey)) {
+                    if (metricsKeyHits(drawing.leftMetricsKey)) {
                         result.metricsKeyReferences += 1;
                         if (!leftKey) {
-                            leftKey = layer.leftMetricsKey || null;
+                            leftKey = drawing.leftMetricsKey || null;
                         }
                     }
-                    if (metricsKeyHits(layer.rightMetricsKey)) {
+                    if (metricsKeyHits(drawing.rightMetricsKey)) {
                         result.metricsKeyReferences += 1;
                         if (!rightKey) {
-                            rightKey = layer.rightMetricsKey || null;
+                            rightKey = drawing.rightMetricsKey || null;
                         }
                     }
-                    for (const shape of glyphData.layers[layerIndex]?.shapes ||
-                        []) {
+                    for (const shape of glyphData.layers[drawingIndex]
+                        ?.shapes || []) {
                         if (!shape || typeof shape !== 'object') continue;
                         const reference =
                             (shape as Unsafe).reference ??
@@ -16050,9 +16109,9 @@ export class Font extends ModelBase {
             a.localeCompare(b)
         );
 
-        const masters = this.masters || [];
-        result.kerningMasters = masters.map((master) => {
-            const name = master.name;
+        const stations = this.stations || [];
+        result.kerningStations = stations.map((station) => {
+            const name = station.name;
             const label =
                 typeof name === 'string'
                     ? name
@@ -16061,10 +16120,10 @@ export class Font extends ModelBase {
                             (name as { dflt?: string; en?: string }).dflt ||
                                 (name as { en?: string }).en ||
                                 Object.values(name)[0] ||
-                                master.id
+                                station.id
                         )
-                      : master.id;
-            return { id: master.id, label };
+                      : station.id;
+            return { id: station.id, label };
         });
 
         const {
@@ -16096,10 +16155,11 @@ export class Font extends ModelBase {
                 willRemove: boolean;
             }
         >();
-        const emptyValues = (): Array<number | null> => masters.map(() => null);
+        const emptyValues = (): Array<number | null> =>
+            stations.map(() => null);
 
-        masters.forEach((master, masterIndex) => {
-            forEachKerningPair(master.kerning, (left, right, value) => {
+        stations.forEach((station, stationIndex) => {
+            forEachKerningPair(station.kerning, (left, right, value) => {
                 if (
                     !kerningPairIsAffected(
                         left,
@@ -16126,9 +16186,9 @@ export class Font extends ModelBase {
                     };
                     ltrHits.set(key, hit);
                 }
-                hit.values[masterIndex] = value;
+                hit.values[stationIndex] = value;
             });
-            forEachKerningPair(master.kerning_rtl, (left, right, value) => {
+            forEachKerningPair(station.kerning_rtl, (left, right, value) => {
                 if (
                     !kerningPairIsAffected(
                         left,
@@ -16155,7 +16215,7 @@ export class Font extends ModelBase {
                     };
                     rtlHits.set(key, hit);
                 }
-                hit.values[masterIndex] = value;
+                hit.values[stationIndex] = value;
             });
         });
 
@@ -16254,11 +16314,11 @@ export class Font extends ModelBase {
                     if (shouldClearMetricsKey(glyph.rightMetricsKey)) {
                         glyph.rightMetricsKey = undefined;
                     }
-                    glyph._clearStoredLayerMetricsKeysReferencing(
+                    glyph._clearStoredDrawingMetricsKeysReferencing(
                         deletedNames,
                         this
                     );
-                    glyph._removeStoredLayerComponentReferences(deletedNames);
+                    glyph._removeStoredDrawingComponentReferences(deletedNames);
                 }
 
                 const { removedLeftKeys, removedRightKeys } =
@@ -16267,14 +16327,14 @@ export class Font extends ModelBase {
                         this.first_kern_groups,
                         this.second_kern_groups
                     );
-                for (const master of this.masters || []) {
-                    master.kerning = filterKerningMap(
-                        master.kerning,
+                for (const station of this.stations || []) {
+                    station.kerning = filterKerningMap(
+                        station.kerning,
                         removedLeftKeys,
                         removedRightKeys
                     );
-                    master.kerning_rtl = filterKerningMap(
-                        master.kerning_rtl,
+                    station.kerning_rtl = filterKerningMap(
+                        station.kerning_rtl,
                         removedLeftKeys,
                         removedRightKeys
                     );
@@ -16393,9 +16453,9 @@ export class Font extends ModelBase {
      * spaces for readable diffs.
      *
      * With `glyphBodies`, only those glyphs keep their outlines, anchors,
-     * guides and layer libs; every other glyph keeps its layer metadata
-     * (ids, masters, widths) as a cheap stub. Serializers that write some
-     * glyphs' files still see the whole glyph set and every master's layers.
+     * guides and drawing libs; every other glyph keeps its drawing metadata
+     * (ids, stations, widths) as a cheap stub. Serializers that write some
+     * glyphs' files still see the whole glyph set and every station's drawings.
      *
      * A large font's string can go over the engine's string length limit;
      * `toJSONParts` serializes glyph by glyph instead.
@@ -16462,14 +16522,14 @@ export class Font extends ModelBase {
                               : {
                                     ...glyph,
                                     layers: (glyph.layers || []).map(
-                                        (layer: Babelfont.Layer) => {
+                                        (drawing: Babelfont.Layer) => {
                                             const {
                                                 shapes: _shapes,
                                                 anchors: _anchors,
                                                 guides: _guides,
                                                 format_specific: _lib,
                                                 ...metadata
-                                            } = layer;
+                                            } = drawing;
                                             return metadata;
                                         }
                                     )
@@ -16485,16 +16545,16 @@ export class Font extends ModelBase {
                 const { id: _id, ...nodeWithoutId } = node as Unsafe;
                 return nodeWithoutId;
             });
-        const layerDataOverrides = new WeakMap<object, Unsafe>();
+        const drawingDataOverrides = new WeakMap<object, Unsafe>();
         if (compileFacing) {
             for (const glyph of this.glyphs) {
-                for (const layer of glyph.layers ?? []) {
-                    if (!layer.isAutomaticAlignedLayer()) continue;
-                    const adjustedData = layer.toCompileJSON() as Unsafe;
+                for (const drawing of glyph.drawings ?? []) {
+                    if (!drawing.isAutomaticAlignedDrawing()) continue;
+                    const adjustedData = drawing.toCompileJSON() as Unsafe;
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    const rawLayerData = (layer as any)._data as object;
-                    if ((adjustedData as object) !== rawLayerData) {
-                        layerDataOverrides.set(rawLayerData, adjustedData);
+                    const rawDrawingData = (drawing as any)._data as object;
+                    if ((adjustedData as object) !== rawDrawingData) {
+                        drawingDataOverrides.set(rawDrawingData, adjustedData);
                     }
                 }
             }
@@ -16502,14 +16562,14 @@ export class Font extends ModelBase {
 
         // Ignores `key`: `toJSONParts` serializes each glyph on its own.
         const replacer = (_key: string, value: Unsafe): Unsafe => {
-            // Substitute offset-applied layer data for automatic layers with sidebearing keys
+            // Substitute offset-applied drawing data for automatic drawings with sidebearing keys
             if (
                 value &&
                 typeof value === 'object' &&
                 !Array.isArray(value) &&
-                layerDataOverrides.has(value)
+                drawingDataOverrides.has(value)
             ) {
-                return layerDataOverrides.get(value);
+                return drawingDataOverrides.get(value);
             }
 
             // When serializing shape objects, normalize normalizer wrappers
@@ -16629,10 +16689,12 @@ export class Font extends ModelBase {
             Object.values(this.names?.family_name || {})[0] ||
             'Unnamed';
         const glyphCount = this.glyphs?.length || 0;
-        const masterCount = this.masters?.length || 0;
+        const stationCount = this.stations?.length || 0;
         const axisCount = this.axes?.length || 0;
         const info =
-            masterCount > 1 ? ` ${axisCount} axes, ${masterCount} masters` : '';
+            stationCount > 1
+                ? ` ${axisCount} axes, ${stationCount} stations`
+                : '';
         return `<Font "${familyName}" ${glyphCount} glyphs${info}>`;
     }
 
@@ -16869,7 +16931,7 @@ export class Font extends ModelBase {
 
 /**
  * Component bases and metrics-key glyph names stored on a glyph, including
- * background layers. Used by the Rename Glyph(s) dialog to plan rewires.
+ * background drawings. Used by the Rename Glyph(s) dialog to plan rewires.
  */
 export function collectGlyphRenameReferences(
     font: Font,

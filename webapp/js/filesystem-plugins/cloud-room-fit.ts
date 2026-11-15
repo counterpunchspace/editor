@@ -41,7 +41,7 @@ function describeRoom(
             return name ? `The glyph “${name}”` : 'One of its glyphs';
         }
         case 'core':
-            return 'Its general font data (font info, axes, masters, instances and glyph order)';
+            return 'Its general font data (font info, axes, stations, instances and glyph order)';
         case 'deps':
             return 'Its list of components and metrics keys';
         case 'features':

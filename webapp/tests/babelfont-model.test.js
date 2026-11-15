@@ -3,7 +3,7 @@ const path = require('path');
 const { Bezier } = require('bezier-js');
 const {
     Font,
-    Layer,
+    Drawing,
     mergeDocumentUpdatePackets,
     pathHasSubtractionFlag
 } = require('../js/babelfont-model');
@@ -108,8 +108,8 @@ describe('Babelfont Object Model', () => {
     let font;
     let metricsKeysData;
     let metricsKeysFont;
-    let intermediateLayerData;
-    let intermediateLayerFont;
+    let freeDrawingData;
+    let freeDrawingFont;
     let featureVariationsData;
     let featureVariationsFont;
 
@@ -131,13 +131,13 @@ describe('Babelfont Object Model', () => {
         );
         metricsKeysData = loadFontFile(metricsKeysFixturePath);
 
-        const intermediateLayerFixturePath = path.join(
+        const freeDrawingFixturePath = path.join(
             __dirname,
             '..',
             'examples',
             'intermediate_layer_on_a.glyphs'
         );
-        intermediateLayerData = loadFontFile(intermediateLayerFixturePath);
+        freeDrawingData = loadFontFile(freeDrawingFixturePath);
 
         const featureVariationsFixturePath = path.join(
             __dirname,
@@ -152,13 +152,13 @@ describe('Babelfont Object Model', () => {
         // Create a fresh font instance for each test
         font = Font.fromData(fontData);
         metricsKeysFont = Font.fromData(metricsKeysData);
-        intermediateLayerFont = Font.fromData(intermediateLayerData);
+        freeDrawingFont = Font.fromData(freeDrawingData);
         featureVariationsFont = Font.fromData(featureVariationsData);
         store_font.mockClear();
     });
 
-    test('Font.addMaster sends the new master location to Rust for all glyphs', async () => {
-        const addMasterFont = Font.fromData({
+    test('Font.addStation sends the new master location to Rust for all glyphs', async () => {
+        const addStationFont = Font.fromData({
             upm: 1000,
             version: [1, 0],
             axes: [
@@ -239,7 +239,7 @@ describe('Babelfont Object Model', () => {
         const workerBatchSpy = jest
             .spyOn(
                 fontManager,
-                'buildWorkerAddMasterWithInterpolatedLayersBatch'
+                'buildWorkerAddStationWithInterpolatedDrawingsBatch'
             )
             .mockResolvedValue({
                 update: new Uint8Array([1, 2, 3]),
@@ -251,14 +251,14 @@ describe('Babelfont Object Model', () => {
                 }
             });
 
-        window.currentFontModel = addMasterFont;
+        window.currentFontModel = addStationFont;
         window.fontManager = fontManager;
         window.patchSyncEngine = {
             applyLocalGeneratedYjsUpdate
         };
 
         try {
-            await addMasterFont.addMaster({
+            await addStationFont.addStation({
                 id: 'master-2',
                 name: { dflt: 'Bold' },
                 location: { wght: 900 },
@@ -268,9 +268,9 @@ describe('Babelfont Object Model', () => {
             });
 
             expect(workerBatchSpy).toHaveBeenCalledTimes(1);
-            const [masterPayload, interpolationLocations] =
+            const [stationPayload, interpolationLocations] =
                 workerBatchSpy.mock.calls[0];
-            expect(masterPayload.id).toBe('master-2');
+            expect(stationPayload.id).toBe('master-2');
             expect(interpolationLocations).toEqual(
                 expect.arrayContaining([
                     {
@@ -286,7 +286,7 @@ describe('Babelfont Object Model', () => {
             expect(applyLocalGeneratedYjsUpdate).toHaveBeenCalledWith(
                 expect.any(Uint8Array),
                 expect.any(Array),
-                'Add master'
+                'Add station'
             );
         } finally {
             window.currentFontModel = previousFontModel;
@@ -296,8 +296,8 @@ describe('Babelfont Object Model', () => {
         }
     });
 
-    test('Font.addMaster extends axis range when the new master is outside existing coverage', async () => {
-        const addMasterFont = Font.fromData({
+    test('Font.addStation extends axis range when the new master is outside existing coverage', async () => {
+        const addStationFont = Font.fromData({
             upm: 1000,
             version: [1, 0],
             axes: [
@@ -359,7 +359,7 @@ describe('Babelfont Object Model', () => {
         const workerBatchSpy = jest
             .spyOn(
                 fontManager,
-                'buildWorkerAddMasterWithInterpolatedLayersBatch'
+                'buildWorkerAddStationWithInterpolatedDrawingsBatch'
             )
             .mockResolvedValue({
                 update: new Uint8Array([1, 2, 3]),
@@ -368,17 +368,17 @@ describe('Babelfont Object Model', () => {
                     layerTargets: [],
                     layerOperations: [],
                     mastersOperation: {
-                        oldValue: addMasterFont._data.masters,
+                        oldValue: addStationFont._data.masters,
                         newValue: [
-                            ...addMasterFont._data.masters,
+                            ...addStationFont._data.masters,
                             { id: 'master-2' }
                         ]
                     },
                     axesOperation: {
-                        oldValue: addMasterFont._data.axes,
+                        oldValue: addStationFont._data.axes,
                         newValue: [
                             {
-                                ...addMasterFont._data.axes[0],
+                                ...addStationFont._data.axes[0],
                                 max: 900,
                                 map: [
                                     [200, 30],
@@ -392,14 +392,14 @@ describe('Babelfont Object Model', () => {
                 }
             });
 
-        window.currentFontModel = addMasterFont;
+        window.currentFontModel = addStationFont;
         window.fontManager = fontManager;
         window.patchSyncEngine = {
             applyLocalGeneratedYjsUpdate
         };
 
         try {
-            await addMasterFont.addMaster({
+            await addStationFont.addStation({
                 id: 'master-2',
                 name: { dflt: 'Black' },
                 location: { wght: 150 },
@@ -408,8 +408,8 @@ describe('Babelfont Object Model', () => {
                 kerning: {}
             });
 
-            expect(addMasterFont.axes[0].max).toBe(900);
-            expect(addMasterFont.axes[0].map).toEqual([
+            expect(addStationFont.axes[0].max).toBe(900);
+            expect(addStationFont.axes[0].map).toEqual([
                 [200, 30],
                 [400, 75],
                 [800, 135],
@@ -439,8 +439,8 @@ describe('Babelfont Object Model', () => {
         }
     });
 
-    test('Font.addMaster creates a default master when no explicit record is provided', async () => {
-        const defaultMasterFont = Font.fromData({
+    test('Font.addStation creates a default master when no explicit record is provided', async () => {
+        const defaultStationFont = Font.fromData({
             upm: 1000,
             version: [1, 0],
             axes: [
@@ -491,20 +491,20 @@ describe('Babelfont Object Model', () => {
             }
         });
 
-        const createdMaster = await defaultMasterFont.addMaster();
+        const createdStation = await defaultStationFont.addStation();
 
-        expect(createdMaster).toBeDefined();
-        expect(createdMaster?.name).toEqual({ dflt: 'Master 2' });
-        expect(createdMaster?.location).toEqual({ wght: 900 });
-        expect(createdMaster?.metrics).toEqual({ ascender: 820 });
-        expect(typeof createdMaster?.id).toBe('string');
+        expect(createdStation).toBeDefined();
+        expect(createdStation?.name).toEqual({ dflt: 'Station 2' });
+        expect(createdStation?.location).toEqual({ wght: 900 });
+        expect(createdStation?.metrics).toEqual({ ascender: 820 });
+        expect(typeof createdStation?.id).toBe('string');
         expect(
-            defaultMasterFont.findGlyph('A').findLayerById(createdMaster.id)
+            defaultStationFont.findGlyph('A').findDrawingById(createdStation.id)
         ).toBeDefined();
     });
 
-    test('Font.addMaster uses the requested template master metrics for default creation', async () => {
-        const templatedMasterFont = Font.fromData({
+    test('Font.addStation uses the requested template master metrics for default creation', async () => {
+        const templatedStationFont = Font.fromData({
             upm: 1000,
             version: [1, 0],
             axes: [
@@ -571,14 +571,17 @@ describe('Babelfont Object Model', () => {
             }
         });
 
-        const createdMaster = await templatedMasterFont.addMaster(undefined, {
-            metricTemplateMasterId: 'master-1'
-        });
+        const createdStation = await templatedStationFont.addStation(
+            undefined,
+            {
+                metricTemplateStationId: 'master-1'
+            }
+        );
 
-        expect(createdMaster?.metrics).toEqual({ ascender: 810 });
+        expect(createdStation?.metrics).toEqual({ ascender: 810 });
     });
 
-    test('Font.addMaster uses the requested location for default creation', async () => {
+    test('Font.addStation uses the requested location for default creation', async () => {
         const explicitLocationFont = Font.fromData({
             upm: 1000,
             version: [1, 0],
@@ -630,21 +633,24 @@ describe('Babelfont Object Model', () => {
             }
         });
 
-        const createdMaster = await explicitLocationFont.addMaster(undefined, {
-            location: { wght: 650 }
-        });
+        const createdStation = await explicitLocationFont.addStation(
+            undefined,
+            {
+                location: { wght: 650 }
+            }
+        );
 
-        expect(createdMaster?.location).toEqual({ wght: 650 });
+        expect(createdStation?.location).toEqual({ wght: 650 });
     });
 
-    test('Font.addMaster adds local fallback layers without main-thread Rust interpolation when no bridge is available', async () => {
-        const fallbackFont = Font.fromData(intermediateLayerData);
+    test('Font.addStation adds local fallback layers without main-thread Rust interpolation when no bridge is available', async () => {
+        const fallbackFont = Font.fromData(freeDrawingData);
         const targetGlyphName = fallbackFont.glyphs[0]?.name;
         const targetAxis = fallbackFont.axes[0];
         expect(targetGlyphName).toBeDefined();
         expect(targetAxis?.tag).toBeDefined();
 
-        const createdMaster = await fallbackFont.addMaster({
+        const createdStation = await fallbackFont.addStation({
             id: 'master-3',
             name: { dflt: 'Semibold' },
             location: {
@@ -656,23 +662,23 @@ describe('Babelfont Object Model', () => {
             kerning: {}
         });
 
-        const createdLayer = fallbackFont
+        const createdDrawing = fallbackFont
             .findGlyph(targetGlyphName)
-            .findLayerById(createdMaster.id)
+            .findDrawingById(createdStation.id)
             .toJSON();
 
-        expect(createdLayer.id).toBe(createdMaster.id);
-        expect(createdLayer.master?.master).toBe(createdMaster.id);
+        expect(createdDrawing.id).toBe(createdStation.id);
+        expect(createdDrawing.master?.master).toBe(createdStation.id);
     });
 
-    test('Font.addMaster local fallback does not require window', async () => {
-        const fallbackFont = Font.fromData(intermediateLayerData);
+    test('Font.addStation local fallback does not require window', async () => {
+        const fallbackFont = Font.fromData(freeDrawingData);
         const targetAxis = fallbackFont.axes[0];
         const previousWindow = global.window;
 
         global.window = undefined;
         try {
-            const createdMaster = await fallbackFont.addMaster({
+            const createdStation = await fallbackFont.addStation({
                 id: 'master-3',
                 name: { dflt: 'Semibold' },
                 location: {
@@ -687,33 +693,35 @@ describe('Babelfont Object Model', () => {
                 kerning: {}
             });
 
-            expect(createdMaster?.id).toBe('master-3');
-            expect(fallbackFont.findMaster('master-3')).toBeDefined();
+            expect(createdStation?.id).toBe('master-3');
+            expect(fallbackFont.findStation('master-3')).toBeDefined();
         } finally {
             global.window = previousWindow;
         }
     });
 
-    test('Master.reinterpolateLayers delegates to outline editor when available', async () => {
+    test('Master.reinterpolateDrawings delegates to outline editor when available', async () => {
         const previousGlyphCanvas = window.glyphCanvas;
-        const reinterpolateAllLayersForMaster = jest
+        const reinterpolateAllDrawingsForStation = jest
             .fn()
             .mockResolvedValue(undefined);
-        const masterId = font.masters[0].id;
+        const stationId = font.stations[0].id;
         window.glyphCanvas = {
             outlineEditor: {
-                reinterpolateAllLayersForMaster
+                reinterpolateAllDrawingsForStation
             }
         };
 
-        await font.findMaster(masterId)?.reinterpolateLayers();
+        await font.findStation(stationId)?.reinterpolateDrawings();
 
-        expect(reinterpolateAllLayersForMaster).toHaveBeenCalledWith(masterId);
+        expect(reinterpolateAllDrawingsForStation).toHaveBeenCalledWith(
+            stationId
+        );
 
         window.glyphCanvas = previousGlyphCanvas;
     });
 
-    test('Font.removeMastersByIds removes matching master-bound layers', async () => {
+    test('Font.removeStationsByIds removes matching master-bound layers', async () => {
         const removableFont = Font.fromData({
             upm: 1000,
             version: [1, 0],
@@ -782,18 +790,18 @@ describe('Babelfont Object Model', () => {
             }
         });
 
-        await removableFont.removeMastersByIds(['master-2']);
+        await removableFont.removeStationsByIds(['master-2']);
 
-        expect(removableFont.findMaster('master-2')).toBeUndefined();
+        expect(removableFont.findStation('master-2')).toBeUndefined();
         expect(
-            removableFont.findGlyph('A').findLayerById('master-2')
+            removableFont.findGlyph('A').findDrawingById('master-2')
         ).toBeUndefined();
         expect(
-            removableFont.findGlyph('A').findLayerById('master-1')
+            removableFont.findGlyph('A').findDrawingById('master-1')
         ).toBeDefined();
     });
 
-    test('Font.removeMastersByIds uses a lean worker Yjs update when the bridge is live', async () => {
+    test('Font.removeStationsByIds uses a lean worker Yjs update when the bridge is live', async () => {
         const removableFont = Font.fromData({
             upm: 1000,
             version: [1, 0],
@@ -857,7 +865,7 @@ describe('Babelfont Object Model', () => {
         const previousFontManager = window.fontManager;
         const applyLocalGeneratedYjsUpdate = jest.fn();
         const workerBatchSpy = jest
-            .spyOn(fontManager, 'buildWorkerRemoveMastersBatch')
+            .spyOn(fontManager, 'buildWorkerRemoveStationsBatch')
             .mockResolvedValue({
                 update: new Uint8Array([9, 8, 7]),
                 metadata: {
@@ -885,7 +893,7 @@ describe('Babelfont Object Model', () => {
         };
 
         try {
-            const removed = await removableFont.removeMastersByIds([
+            const removed = await removableFont.removeStationsByIds([
                 'master-2'
             ]);
             expect(removed).toBe(true);
@@ -898,7 +906,7 @@ describe('Babelfont Object Model', () => {
                         path: ['glyphs', 'A', 'layers', 'master-2']
                     })
                 ]),
-                'Remove master'
+                'Remove station'
             );
         } finally {
             window.currentFontModel = previousFontModel;
@@ -981,25 +989,25 @@ describe('Babelfont Object Model', () => {
         const previousGlyphCanvas = window.glyphCanvas;
         const reason =
             'This font is only partly downloaded. Reopen it with all glyphs to add, remove, or reinterpolate masters.';
-        const getMasterTopologyGate = jest.fn(() => ({
+        const getStationTopologyGate = jest.fn(() => ({
             allowed: false,
             reason
         }));
         const applyLocalGeneratedYjsUpdate = jest.fn();
         const addBatchSpy = jest.spyOn(
             fontManager,
-            'buildWorkerAddMasterWithInterpolatedLayersBatch'
+            'buildWorkerAddStationWithInterpolatedDrawingsBatch'
         );
         const removeBatchSpy = jest.spyOn(
             fontManager,
-            'buildWorkerRemoveMastersBatch'
+            'buildWorkerRemoveStationsBatch'
         );
         const reinterpolateBatchSpy = jest.spyOn(
             fontManager,
-            'buildWorkerReinterpolateMasterLayersBatch'
+            'buildWorkerReinterpolateStationDrawingsBatch'
         );
-        const reinterpolateAllLayersForMaster = jest.fn();
-        const mastersBefore = JSON.parse(
+        const reinterpolateAllDrawingsForStation = jest.fn();
+        const stationsBefore = JSON.parse(
             JSON.stringify(gatedFont._data.masters)
         );
         const axesBefore = JSON.parse(JSON.stringify(gatedFont._data.axes));
@@ -1013,39 +1021,41 @@ describe('Babelfont Object Model', () => {
                         'font-1',
                         {
                             fontModel: gatedFont,
-                            sourcePlugin: { getMasterTopologyGate }
+                            sourcePlugin: {
+                                getStationTopologyGate: getStationTopologyGate
+                            }
                         }
                     ]
                 ])
             }
         });
         window.glyphCanvas = {
-            outlineEditor: { reinterpolateAllLayersForMaster }
+            outlineEditor: { reinterpolateAllDrawingsForStation }
         };
 
         try {
             await expect(
-                gatedFont.addMaster(undefined, { location: { wght: 900 } })
+                gatedFont.addStation(undefined, { location: { wght: 900 } })
             ).rejects.toThrow(reason);
             await expect(
-                gatedFont.removeMastersByIds(['master-2'])
+                gatedFont.removeStationsByIds(['master-2'])
             ).rejects.toThrow(reason);
             await expect(
-                gatedFont.findMaster('master-2').delete()
+                gatedFont.findStation('master-2').delete()
             ).rejects.toThrow(reason);
             await expect(
-                gatedFont.findMaster('master-1').reinterpolateLayers()
+                gatedFont.findStation('master-1').reinterpolateDrawings()
             ).rejects.toThrow(reason);
 
             expect(addBatchSpy).not.toHaveBeenCalled();
             expect(removeBatchSpy).not.toHaveBeenCalled();
             expect(reinterpolateBatchSpy).not.toHaveBeenCalled();
-            expect(reinterpolateAllLayersForMaster).not.toHaveBeenCalled();
+            expect(reinterpolateAllDrawingsForStation).not.toHaveBeenCalled();
             expect(applyLocalGeneratedYjsUpdate).not.toHaveBeenCalled();
-            expect(gatedFont._data.masters).toEqual(mastersBefore);
+            expect(gatedFont._data.masters).toEqual(stationsBefore);
             expect(gatedFont._data.axes).toEqual(axesBefore);
             expect(
-                gatedFont.findGlyph('A').findLayerById('master-2')
+                gatedFont.findGlyph('A').findDrawingById('master-2')
             ).toBeDefined();
         } finally {
             window.currentFontModel = previousFontModel;
@@ -1119,7 +1129,7 @@ describe('Babelfont Object Model', () => {
         });
         const previousFontModel = window.currentFontModel;
         const previousFontManager = window.fontManager;
-        const getMasterTopologyGate = jest.fn(() => ({
+        const getStationTopologyGate = jest.fn(() => ({
             allowed: false,
             reason: 'blocked'
         }));
@@ -1130,7 +1140,9 @@ describe('Babelfont Object Model', () => {
                     'font-1',
                     {
                         fontModel: detachedFont,
-                        sourcePlugin: { getMasterTopologyGate }
+                        sourcePlugin: {
+                            getStationTopologyGate: getStationTopologyGate
+                        }
                     }
                 ]
             ])
@@ -1138,18 +1150,18 @@ describe('Babelfont Object Model', () => {
 
         try {
             await expect(
-                detachedFont.removeMastersByIds(['master-2'])
+                detachedFont.removeStationsByIds(['master-2'])
             ).resolves.toBe(true);
-            expect(getMasterTopologyGate).not.toHaveBeenCalled();
+            expect(getStationTopologyGate).not.toHaveBeenCalled();
         } finally {
             window.currentFontModel = previousFontModel;
             window.fontManager = previousFontManager;
         }
     });
 
-    test('Font.addMaster recomposes only new automatic layers before applying the Yjs update', async () => {
+    test('Font.addStation recomposes only new automatic layers before applying the Yjs update', async () => {
         const alignmentKey = 'com.schriftgestalt.Glyphs.alignment';
-        const addMasterFont = Font.fromData({
+        const addStationFont = Font.fromData({
             upm: 1000,
             version: [1, 0],
             axes: [
@@ -1254,7 +1266,7 @@ describe('Babelfont Object Model', () => {
         const previousBridge = window.patchSyncEngine;
         const previousFontManager = window.fontManager;
         const applyLocalGeneratedYjsUpdate = jest.fn();
-        const interpolatedAdieresisLayer = {
+        const interpolatedAdieresisDrawing = {
             id: 'master-2',
             width: 500,
             master: {
@@ -1271,7 +1283,7 @@ describe('Babelfont Object Model', () => {
                 }
             ]
         };
-        const interpolatedALayer = {
+        const interpolatedADrawing = {
             id: 'master-2',
             width: 520,
             master: {
@@ -1293,7 +1305,7 @@ describe('Babelfont Object Model', () => {
         const addBatchSpy = jest
             .spyOn(
                 fontManager,
-                'buildWorkerAddMasterWithInterpolatedLayersBatch'
+                'buildWorkerAddStationWithInterpolatedDrawingsBatch'
             )
             .mockResolvedValue({
                 update: new Uint8Array([1, 2, 3]),
@@ -1308,19 +1320,19 @@ describe('Babelfont Object Model', () => {
                             glyphName: 'a',
                             layerId: 'master-2',
                             oldValue: null,
-                            newValue: interpolatedALayer
+                            newValue: interpolatedADrawing
                         },
                         {
                             glyphName: 'adieresis',
                             layerId: 'master-2',
                             oldValue: null,
-                            newValue: interpolatedAdieresisLayer
+                            newValue: interpolatedAdieresisDrawing
                         }
                     ],
                     mastersOperation: {
-                        oldValue: addMasterFont._data.masters,
+                        oldValue: addStationFont._data.masters,
                         newValue: [
-                            ...addMasterFont._data.masters,
+                            ...addStationFont._data.masters,
                             {
                                 id: 'master-2',
                                 name: { dflt: 'Bold' },
@@ -1334,7 +1346,7 @@ describe('Babelfont Object Model', () => {
                 }
             });
         const refineSpy = jest
-            .spyOn(fontManager, 'buildWorkerRefineLayerSnapshotsBatch')
+            .spyOn(fontManager, 'buildWorkerRefineDrawingSnapshotsBatch')
             .mockResolvedValue({
                 update: new Uint8Array([4, 5, 6]),
                 metadata: {
@@ -1347,14 +1359,14 @@ describe('Babelfont Object Model', () => {
                 }
             });
 
-        window.currentFontModel = addMasterFont;
+        window.currentFontModel = addStationFont;
         window.fontManager = fontManager;
         window.patchSyncEngine = {
             applyLocalGeneratedYjsUpdate
         };
 
         try {
-            await addMasterFont.addMaster({
+            await addStationFont.addStation({
                 id: 'master-2',
                 name: { dflt: 'Bold' },
                 location: { wght: 900 },
@@ -1377,7 +1389,7 @@ describe('Babelfont Object Model', () => {
             expect(applyLocalGeneratedYjsUpdate).toHaveBeenCalledWith(
                 new Uint8Array([4, 5, 6]),
                 expect.any(Array),
-                'Add master'
+                'Add station'
             );
         } finally {
             window.currentFontModel = previousFontModel;
@@ -1388,8 +1400,8 @@ describe('Babelfont Object Model', () => {
         }
     });
 
-    test('Font.addMaster skips refine when no new automatic layers exist', async () => {
-        const addMasterFont = Font.fromData({
+    test('Font.addStation skips refine when no new automatic layers exist', async () => {
+        const addStationFont = Font.fromData({
             upm: 1000,
             version: [1, 0],
             axes: [
@@ -1446,7 +1458,7 @@ describe('Babelfont Object Model', () => {
         const addBatchSpy = jest
             .spyOn(
                 fontManager,
-                'buildWorkerAddMasterWithInterpolatedLayersBatch'
+                'buildWorkerAddStationWithInterpolatedDrawingsBatch'
             )
             .mockResolvedValue({
                 update: new Uint8Array([1, 2, 3]),
@@ -1482,9 +1494,9 @@ describe('Babelfont Object Model', () => {
                         }
                     ],
                     mastersOperation: {
-                        oldValue: addMasterFont._data.masters,
+                        oldValue: addStationFont._data.masters,
                         newValue: [
-                            ...addMasterFont._data.masters,
+                            ...addStationFont._data.masters,
                             {
                                 id: 'master-2',
                                 name: { dflt: 'Bold' },
@@ -1499,17 +1511,17 @@ describe('Babelfont Object Model', () => {
             });
         const refineSpy = jest.spyOn(
             fontManager,
-            'buildWorkerRefineLayerSnapshotsBatch'
+            'buildWorkerRefineDrawingSnapshotsBatch'
         );
 
-        window.currentFontModel = addMasterFont;
+        window.currentFontModel = addStationFont;
         window.fontManager = fontManager;
         window.patchSyncEngine = {
             applyLocalGeneratedYjsUpdate
         };
 
         try {
-            await addMasterFont.addMaster({
+            await addStationFont.addStation({
                 id: 'master-2',
                 name: { dflt: 'Bold' },
                 location: { wght: 900 },
@@ -1521,7 +1533,7 @@ describe('Babelfont Object Model', () => {
             expect(applyLocalGeneratedYjsUpdate).toHaveBeenCalledWith(
                 new Uint8Array([1, 2, 3]),
                 expect.any(Array),
-                'Add master'
+                'Add station'
             );
         } finally {
             window.currentFontModel = previousFontModel;
@@ -1544,28 +1556,28 @@ describe('Babelfont Object Model', () => {
 
         test('Layer.parent() should return Glyph', () => {
             const glyph = font.glyphs[0];
-            const layer = glyph.layers[0];
-            expect(layer.parent()).toBe(glyph);
+            const drawing = glyph.drawings[0];
+            expect(drawing.parent()).toBe(glyph);
         });
 
         test('Shape.parent() should return Layer', () => {
             const glyph = font.glyphs[0];
-            const layer = glyph.layers[0];
-            const shapes = layer.shapes;
+            const drawing = glyph.drawings[0];
+            const shapes = drawing.shapes;
 
             if (shapes && shapes.length > 0) {
                 const shape = shapes[0];
-                expect(shape.parent()).toBe(layer);
+                expect(shape.parent()).toBe(drawing);
             }
         });
 
         test('Path.parent() should return Shape', () => {
             // Find a glyph with a path
             for (const glyph of font.glyphs) {
-                const layer = glyph.layers[0];
-                if (!layer || !layer.shapes) continue;
+                const drawing = glyph.drawings[0];
+                if (!drawing || !drawing.shapes) continue;
 
-                for (const shape of layer.shapes) {
+                for (const shape of drawing.shapes) {
                     if (shape.isPath()) {
                         const path = shape.asPath();
                         expect(path.parent()).toBe(shape);
@@ -1578,10 +1590,10 @@ describe('Babelfont Object Model', () => {
         test('Node.parent() should return Path', () => {
             // Find a glyph with a path that has nodes
             for (const glyph of font.glyphs) {
-                const layer = glyph.layers[0];
-                if (!layer || !layer.shapes) continue;
+                const drawing = glyph.drawings[0];
+                if (!drawing || !drawing.shapes) continue;
 
-                for (const shape of layer.shapes) {
+                for (const shape of drawing.shapes) {
                     if (shape.isPath()) {
                         const path = shape.asPath();
                         if (path.nodes && path.nodes.length > 0) {
@@ -1597,10 +1609,10 @@ describe('Babelfont Object Model', () => {
         test('Component.parent() should return Shape', () => {
             // Find a glyph with a component
             for (const glyph of font.glyphs) {
-                const layer = glyph.layers[0];
-                if (!layer || !layer.shapes) continue;
+                const drawing = glyph.drawings[0];
+                if (!drawing || !drawing.shapes) continue;
 
-                for (const shape of layer.shapes) {
+                for (const shape of drawing.shapes) {
                     if (shape.isComponent()) {
                         const component = shape.asComponent();
                         expect(component.parent()).toBe(shape);
@@ -1613,12 +1625,16 @@ describe('Babelfont Object Model', () => {
         test('Anchor.parent() should return Layer', () => {
             // Find a glyph with anchors
             for (const glyph of font.glyphs) {
-                const layer = glyph.layers[0];
-                if (!layer || !layer.anchors || layer.anchors.length === 0)
+                const drawing = glyph.drawings[0];
+                if (
+                    !drawing ||
+                    !drawing.anchors ||
+                    drawing.anchors.length === 0
+                )
                     continue;
 
-                const anchor = layer.anchors[0];
-                expect(anchor.parent()).toBe(layer);
+                const anchor = drawing.anchors[0];
+                expect(anchor.parent()).toBe(drawing);
                 return; // Test passed
             }
         });
@@ -1626,12 +1642,12 @@ describe('Babelfont Object Model', () => {
         test('Guide.parent() should return Layer', () => {
             // Find a layer with guides
             for (const glyph of font.glyphs) {
-                const layer = glyph.layers[0];
-                if (!layer || !layer.guides || layer.guides.length === 0)
+                const drawing = glyph.drawings[0];
+                if (!drawing || !drawing.guides || drawing.guides.length === 0)
                     continue;
 
-                const guide = layer.guides[0];
-                expect(guide.parent()).toBe(layer);
+                const guide = drawing.guides[0];
+                expect(guide.parent()).toBe(drawing);
                 return; // Test passed
             }
         });
@@ -1644,9 +1660,9 @@ describe('Babelfont Object Model', () => {
         });
 
         test('Master.parent() should return Font', () => {
-            if (font.masters && font.masters.length > 0) {
-                const master = font.masters[0];
-                expect(master.parent()).toBe(font);
+            if (font.stations && font.stations.length > 0) {
+                const station = font.stations[0];
+                expect(station.parent()).toBe(font);
             }
         });
 
@@ -1660,10 +1676,10 @@ describe('Babelfont Object Model', () => {
         test('should navigate from Node up to Font', () => {
             // Find a complete path: Node → Path → Shape → Layer → Glyph → Font
             for (const glyph of font.glyphs) {
-                const layer = glyph.layers[0];
-                if (!layer || !layer.shapes) continue;
+                const drawing = glyph.drawings[0];
+                if (!drawing || !drawing.shapes) continue;
 
-                for (const shape of layer.shapes) {
+                for (const shape of drawing.shapes) {
                     if (shape.isPath()) {
                         const path = shape.asPath();
                         if (path.nodes && path.nodes.length > 0) {
@@ -1676,10 +1692,10 @@ describe('Babelfont Object Model', () => {
                             const parentShape = parentPath.parent();
                             expect(parentShape).toBe(shape);
 
-                            const parentLayer = parentShape.parent();
-                            expect(parentLayer).toBe(layer);
+                            const parentDrawing = parentShape.parent();
+                            expect(parentDrawing).toBe(drawing);
 
-                            const parentGlyph = parentLayer.parent();
+                            const parentGlyph = parentDrawing.parent();
                             expect(parentGlyph).toBe(glyph);
 
                             const parentFont = parentGlyph.parent();
@@ -1725,16 +1741,16 @@ describe('Babelfont Object Model', () => {
 
         test('layer width setter rounds fractional values', () => {
             const glyph = font.glyphs[0];
-            const layer = glyph.layers[0];
+            const drawing = glyph.drawings[0];
 
-            layer.width = 500.6;
+            drawing.width = 500.6;
 
-            expect(layer.width).toBe(501);
+            expect(drawing.width).toBe(501);
         });
 
         test('glyph should have layers', () => {
             const glyph = font.glyphs[0];
-            expect(glyph.layers).toBeDefined();
+            expect(glyph.drawings).toBeDefined();
         });
 
         test('feature variations expose and mutate their raw layer family', () => {
@@ -1849,36 +1865,35 @@ describe('Babelfont Object Model', () => {
             const glyph = featureFont.findGlyph('A');
             const featureVariation = glyph.featureVariations[0];
 
-            expect(glyph.layers.map((layer) => layer.id)).toEqual([
+            expect(glyph.drawings.map((drawing) => drawing.id)).toEqual([
                 'A-regular',
                 'A-bold'
             ]);
-            expect(featureVariation.layers.map((layer) => layer.id)).toEqual([
-                'A-feature-regular',
-                'A-feature-bold'
-            ]);
+            expect(
+                featureVariation.drawings.map((drawing) => drawing.id)
+            ).toEqual(['A-feature-regular', 'A-feature-bold']);
 
-            const intermediate = featureVariation.addLayer(575, {
+            const intermediate = featureVariation.addDrawing(575, {
                 type: 'AssociatedWithMaster',
                 master: 'regular'
             });
             intermediate.location = { wght: 500 };
             const intermediateId = intermediate.id;
 
-            expect(featureVariation.findLayerById(intermediateId)?.id).toBe(
+            expect(featureVariation.findDrawingById(intermediateId)?.id).toBe(
                 intermediateId
             );
             expect(
-                featureVariation.findLayerById(intermediateId)?.parent()
+                featureVariation.findDrawingById(intermediateId)?.parent()
             ).toBe(glyph);
-            expect(glyph.layers.map((layer) => layer.id)).toEqual([
+            expect(glyph.drawings.map((drawing) => drawing.id)).toEqual([
                 'A-regular',
                 'A-bold'
             ]);
 
-            featureVariation.removeLayerById(intermediateId);
+            featureVariation.removeDrawingById(intermediateId);
             expect(
-                featureVariation.findLayerById(intermediateId)
+                featureVariation.findDrawingById(intermediateId)
             ).toBeUndefined();
 
             const bridge = {
@@ -1891,28 +1906,28 @@ describe('Babelfont Object Model', () => {
             window.patchSyncEngine = bridge;
 
             const addedVariation = glyph.addFeatureVariation([{ max: 400 }]);
-            const baseRegular = glyph.findLayerById('A-regular');
-            const addedRegular = addedVariation.layers.find(
-                (layer) => layer.master.master === 'regular'
+            const baseRegular = glyph.findDrawingById('A-regular');
+            const addedRegular = addedVariation.drawings.find(
+                (drawing) => drawing.station.master === 'regular'
             );
-            const addedBackground = addedRegular.backgroundLayer;
-            expect(addedVariation.layers).toHaveLength(2);
+            const addedBackground = addedRegular.backgroundDrawing;
+            expect(addedVariation.drawings).toHaveLength(2);
             expect(addedRegular.id).not.toBe(baseRegular.id);
             expect(addedRegular.shapes).toHaveLength(1);
             expect(addedRegular.anchors).toHaveLength(1);
-            expect(addedRegular.background_layer_id).toBe(addedBackground.id);
-            expect(addedBackground.background_layer_id).toBe(addedRegular.id);
+            expect(addedRegular.background_drawing_id).toBe(addedBackground.id);
+            expect(addedBackground.background_drawing_id).toBe(addedRegular.id);
             expect(addedBackground.id).not.toBe('A-regular-background');
             expect(addedBackground.shapes).toHaveLength(1);
             expect(addedBackground.paths[0].nodes[0].x).toBe(10);
-            expect(addedVariation.layers.map((layer) => layer.id)).not.toEqual(
-                expect.arrayContaining([addedBackground.id])
-            );
+            expect(
+                addedVariation.drawings.map((drawing) => drawing.id)
+            ).not.toEqual(expect.arrayContaining([addedBackground.id]));
             addedRegular.paths[0].nodes[0].x = 100;
             expect(baseRegular.paths[0].nodes[0].x).toBe(0);
             expect(bridge.beginTransaction).toHaveBeenCalledTimes(1);
             expect(bridge.beginTransaction).toHaveBeenCalledWith(
-                'Add feature variation',
+                'Add variation',
                 null,
                 expect.objectContaining({
                     compileChangeSource: 'feature-code',
@@ -1922,10 +1937,10 @@ describe('Babelfont Object Model', () => {
             expect(bridge.endTransaction).toHaveBeenCalledTimes(1);
             expect(bridge.recordAdd).toHaveBeenCalledTimes(3);
             const addedForegroundSnapshot = bridge.recordAdd.mock.calls.find(
-                ([, layer]) => layer.id === addedRegular.id
+                ([, drawing]) => drawing.id === addedRegular.id
             )?.[1];
             const addedBackgroundSnapshot = bridge.recordAdd.mock.calls.find(
-                ([, layer]) => layer.id === addedBackground.id
+                ([, drawing]) => drawing.id === addedBackground.id
             )?.[1];
             expect(addedForegroundSnapshot.background_layer_id).toBe(
                 addedBackground.id
@@ -1937,7 +1952,7 @@ describe('Babelfont Object Model', () => {
             glyph.removeFeatureVariation(addedVariation);
             expect(bridge.beginTransaction).toHaveBeenCalledTimes(2);
             expect(bridge.beginTransaction).toHaveBeenLastCalledWith(
-                'Remove feature variation',
+                'Remove variation',
                 null,
                 expect.objectContaining({
                     compileChangeSource: 'feature-code',
@@ -1965,13 +1980,13 @@ describe('Babelfont Object Model', () => {
             expect(
                 featureVariationsFont
                     .resolveGlyphView('dollar.feaVar.0')
-                    ?.layers.map((layer) => layer.id)
-            ).toEqual(variation.layers.map((layer) => layer.id));
+                    ?.drawings.map((drawing) => drawing.id)
+            ).toEqual(variation.drawings.map((drawing) => drawing.id));
             expect(variation.axisRules).toEqual([{ min: 100 }]);
-            expect(variation.layers).toHaveLength(3);
-            expect(dollar.layers.map((layer) => layer.id)).not.toEqual(
+            expect(variation.drawings).toHaveLength(3);
+            expect(dollar.drawings.map((drawing) => drawing.id)).not.toEqual(
                 expect.arrayContaining(
-                    variation.layers.map((layer) => layer.id)
+                    variation.drawings.map((drawing) => drawing.id)
                 )
             );
         });
@@ -1985,11 +2000,11 @@ describe('Babelfont Object Model', () => {
                 recordChange: jest.fn()
             };
             window.patchSyncEngine = bridge;
-            const [firstLayer] = featureVariation.layers;
-            firstLayer.format_specific = {
-                ...firstLayer.format_specific,
+            const [firstDrawing] = featureVariation.drawings;
+            firstDrawing.format_specific = {
+                ...firstDrawing.format_specific,
                 'com.schriftgestalt.Glyphs.attr': {
-                    ...firstLayer.format_specific[
+                    ...firstDrawing.format_specific[
                         'com.schriftgestalt.Glyphs.attr'
                     ],
                     customGlyphsAttribute: 'preserved'
@@ -2009,7 +2024,7 @@ describe('Babelfont Object Model', () => {
             ]);
             expect(bridge.beginTransaction).toHaveBeenCalledTimes(1);
             expect(bridge.beginTransaction).toHaveBeenCalledWith(
-                'Update feature variation settings',
+                'Update variation settings',
                 null,
                 expect.objectContaining({
                     compileChangeSource: 'feature-code',
@@ -2018,16 +2033,16 @@ describe('Babelfont Object Model', () => {
             );
             expect(bridge.endTransaction).toHaveBeenCalledTimes(1);
             expect(bridge.recordChange).toHaveBeenCalledTimes(
-                updatedFeatureVariation.layers.length
+                updatedFeatureVariation.drawings.length
             );
-            for (const layer of updatedFeatureVariation.layers) {
+            for (const drawing of updatedFeatureVariation.drawings) {
                 expect(
-                    layer.format_specific['com.schriftgestalt.Glyphs.attr']
+                    drawing.format_specific['com.schriftgestalt.Glyphs.attr']
                         .axisRules
                 ).toEqual([{ min: 200, max: 700 }]);
             }
             expect(
-                updatedFeatureVariation.layers[0].format_specific[
+                updatedFeatureVariation.drawings[0].format_specific[
                     'com.schriftgestalt.Glyphs.attr'
                 ].customGlyphsAttribute
             ).toBe('preserved');
@@ -2042,24 +2057,24 @@ describe('Babelfont Object Model', () => {
 
                 if (rawGlyph.layers && rawGlyph.layers.length > 1) {
                     // Model layers should be filtered
-                    const modelLayers = modelGlyph.layers || [];
-                    const rawLayers = rawGlyph.layers;
+                    const modelDrawings = modelGlyph.drawings || [];
+                    const rawDrawings = rawGlyph.layers;
 
                     // Count foreground default layers in raw data
                     let expectedCount = 0;
-                    for (const layer of rawLayers) {
-                        if (layer.is_background) continue;
+                    for (const drawing of rawDrawings) {
+                        if (drawing.is_background) continue;
                         if (
-                            layer.master &&
-                            typeof layer.master === 'object' &&
-                            'DefaultForMaster' in layer.master
+                            drawing.master &&
+                            typeof drawing.master === 'object' &&
+                            'DefaultForMaster' in drawing.master
                         ) {
                             expectedCount++;
                         }
                     }
 
-                    expect(modelLayers.length).toBeLessThanOrEqual(
-                        rawLayers.length
+                    expect(modelDrawings.length).toBeLessThanOrEqual(
+                        rawDrawings.length
                     );
                     break;
                 }
@@ -2068,20 +2083,20 @@ describe('Babelfont Object Model', () => {
     });
 
     describe('Layer properties and methods', () => {
-        let layer;
+        let drawing;
 
         beforeEach(() => {
             const glyph = font.glyphs[0];
-            layer = glyph.layers[0];
+            drawing = glyph.drawings[0];
         });
 
         test('should have width property', () => {
-            expect(layer.width).toBeDefined();
-            expect(typeof layer.width).toBe('number');
+            expect(drawing.width).toBeDefined();
+            expect(typeof drawing.width).toBe('number');
         });
 
         test('measures array nodes instead of fabricating advance-shaped bounds', () => {
-            const layerData = {
+            const drawingData = {
                 width: 600,
                 shapes: [
                     {
@@ -2094,10 +2109,10 @@ describe('Babelfont Object Model', () => {
                 ]
             };
 
-            const bounds = Layer.calculateBoundingBox(layerData, false);
+            const bounds = Drawing.calculateBoundingBox(drawingData, false);
 
             expect(bounds).toMatchObject({ minX: 120, maxX: 520 });
-            expect(layerData.width - bounds.maxX).toBe(80);
+            expect(drawingData.width - bounds.maxX).toBe(80);
         });
 
         test('materializes a paired background only when it receives a path', () => {
@@ -2135,32 +2150,32 @@ describe('Babelfont Object Model', () => {
                 ]
             });
             const glyph = testFont.findGlyph('A');
-            const foreground = glyph.findLayerById('foreground');
-            const background = foreground.backgroundLayer;
+            const foreground = glyph.findDrawingById('foreground');
+            const background = foreground.backgroundDrawing;
 
             expect(glyph.toJSON().layers).toHaveLength(1);
             expect(background.is_background).toBe(true);
             expect(background.width).toBe(500);
             expect(background.id).not.toContain(':');
-            expect(background.master).toEqual(foreground.master);
+            expect(background.station).toEqual(foreground.station);
             expect(background.location).toEqual(foreground.location);
-            expect(background.backgroundLayer).toBe(foreground);
+            expect(background.backgroundDrawing).toBe(foreground);
             const virtualBackgroundId = background.id;
 
             background.addPath();
 
             expect(glyph.toJSON().layers).toHaveLength(2);
             expect(background.id).not.toBe(virtualBackgroundId);
-            expect(foreground.background_layer_id).toBe(background.id);
-            expect(background.background_layer_id).toBe(foreground.id);
-            expect(background.master).toEqual(foreground.master);
+            expect(foreground.background_drawing_id).toBe(background.id);
+            expect(background.background_drawing_id).toBe(foreground.id);
+            expect(background.station).toEqual(foreground.station);
             expect(background.location).toEqual(foreground.location);
             expect(background.paths).toHaveLength(1);
             expect(() => background.addAnchor(0, 0, 'top')).toThrow(
-                'Background layers cannot contain anchors'
+                'Background drawings cannot contain anchors'
             );
             expect(() => background.addGuide({ x: 0, y: 0 })).toThrow(
-                'Background layers cannot contain guides'
+                'Background drawings cannot contain guides'
             );
         });
 
@@ -2223,18 +2238,18 @@ describe('Babelfont Object Model', () => {
                 ]
             });
             const glyph = testFont.findGlyph('A');
-            const foreground = glyph.findLayerById('foreground');
-            const background = foreground.backgroundLayer;
+            const foreground = glyph.findDrawingById('foreground');
+            const background = foreground.backgroundDrawing;
             const virtualBackgroundId = background.id;
 
             const component = background.addComponent('B');
 
             expect(glyph.toJSON().layers).toHaveLength(2);
             expect(background.id).not.toBe(virtualBackgroundId);
-            expect(foreground.background_layer_id).toBe(background.id);
+            expect(foreground.background_drawing_id).toBe(background.id);
             expect(background.components).toHaveLength(1);
             expect(background.components[0].reference).toBe('B');
-            expect(background.getMatchingLayerOnGlyph('B').id).toBe(
+            expect(background.getMatchingDrawingOnGlyph('B').id).toBe(
                 'b-foreground'
             );
             expect(component.getTransformedPaths()[0].nodes[2].x).toBe(40);
@@ -2341,11 +2356,13 @@ describe('Babelfont Object Model', () => {
                 ]
             });
             const glyphA = testFont.findGlyph('A');
-            const brace = glyphA.findLayerById('a-brace');
-            const background = brace.backgroundLayer;
+            const brace = glyphA.findDrawingById('a-brace');
+            const background = brace.backgroundDrawing;
             const component = background.addComponent('B');
 
-            expect(background.getMatchingLayerOnGlyph('B').id).toBe('b-brace');
+            expect(background.getMatchingDrawingOnGlyph('B').id).toBe(
+                'b-brace'
+            );
             expect(component.getTransformedPaths()[0].nodes[2].x).toBe(200);
         });
 
@@ -2413,14 +2430,14 @@ describe('Babelfont Object Model', () => {
                     }
                 ]
             });
-            const layer = testFont.findGlyph('A').findLayerById('a-layer');
-            const component = layer.addComponent('B', [1, 0, 0, 1, 100, 50]);
+            const drawing = testFont.findGlyph('A').findDrawingById('a-layer');
+            const component = drawing.addComponent('B', [1, 0, 0, 1, 100, 50]);
 
             expect(component.decompose()).toBe(1);
-            expect(layer.components).toHaveLength(0);
-            expect(layer.paths).toHaveLength(2);
+            expect(drawing.components).toHaveLength(0);
+            expect(drawing.paths).toHaveLength(2);
             expect(
-                layer.paths[1].nodes.map((node) => [node.x, node.y])
+                drawing.paths[1].nodes.map((node) => [node.x, node.y])
             ).toEqual([
                 [100, 50],
                 [140, 50],
@@ -2495,11 +2512,11 @@ describe('Babelfont Object Model', () => {
                 ]
             });
             const glyph = testFont.findGlyph('A');
-            const foreground = glyph.findLayerById('foreground');
-            const background = foreground.backgroundLayer;
+            const foreground = glyph.findDrawingById('foreground');
+            const background = foreground.backgroundDrawing;
             const component = background.addComponent('B', [1, 0, 0, 1, 25, 0]);
 
-            expect(background._getLinkedLayers()).toEqual([]);
+            expect(background._getLinkedDrawings()).toEqual([]);
             expect(component.decompose()).toBe(1);
             expect(background.components).toHaveLength(0);
             expect(background.paths[0].nodes[0].x).toBe(25);
@@ -2507,7 +2524,7 @@ describe('Babelfont Object Model', () => {
             expect(foreground.paths).toHaveLength(0);
         });
 
-        test('getComputedName returns Intermediate Layer for intermediate layers', () => {
+        test('getComputedName returns Free drawing for free drawings', () => {
             const testFont = Font.fromData({
                 upm: 1000,
                 version: [1, 0],
@@ -2581,44 +2598,42 @@ describe('Babelfont Object Model', () => {
 
             const glyph = testFont.findGlyph('A');
 
-            expect(glyph.layers[0].getComputedName()).toBe('Regular');
-            expect(glyph.layers[1].getComputedName()).toBe(
-                'Intermediate Layer'
-            );
+            expect(glyph.drawings[0].getComputedName()).toBe('Regular');
+            expect(glyph.drawings[1].getComputedName()).toBe('Free drawing');
         });
 
         test('should have shapes array', () => {
-            if (layer.shapes) {
-                expect(Array.isArray(layer.shapes)).toBe(true);
+            if (drawing.shapes) {
+                expect(Array.isArray(drawing.shapes)).toBe(true);
             }
         });
 
         test('should expose filtered paths and components views', () => {
-            const pathLayer = font.findGlyph('A').layers[0];
-            expect(Array.isArray(pathLayer.paths)).toBe(true);
-            expect(pathLayer.paths.length).toBeGreaterThan(0);
-            expect(pathLayer.components).toEqual([]);
+            const pathDrawing = font.findGlyph('A').drawings[0];
+            expect(Array.isArray(pathDrawing.paths)).toBe(true);
+            expect(pathDrawing.paths.length).toBeGreaterThan(0);
+            expect(pathDrawing.components).toEqual([]);
             expect(
-                pathLayer.paths.every((path) => path.parent().isPath())
+                pathDrawing.paths.every((path) => path.parent().isPath())
             ).toBe(true);
 
-            let componentLayer = null;
+            let componentDrawing = null;
             for (const glyph of font.glyphs) {
-                const candidateLayer = glyph.layers?.[0];
-                if (candidateLayer?.components.length) {
-                    componentLayer = candidateLayer;
+                const candidateDrawing = glyph.drawings?.[0];
+                if (candidateDrawing?.components.length) {
+                    componentDrawing = candidateDrawing;
                     break;
                 }
             }
 
-            expect(componentLayer).not.toBeNull();
-            expect(Array.isArray(componentLayer.components)).toBe(true);
-            expect(componentLayer.components.length).toBeGreaterThan(0);
+            expect(componentDrawing).not.toBeNull();
+            expect(Array.isArray(componentDrawing.components)).toBe(true);
+            expect(componentDrawing.components.length).toBeGreaterThan(0);
             expect(
-                componentLayer.paths.every((path) => path.parent().isPath())
+                componentDrawing.paths.every((path) => path.parent().isPath())
             ).toBe(true);
             expect(
-                componentLayer.components.every((component) =>
+                componentDrawing.components.every((component) =>
                     component.parent().isComponent()
                 )
             ).toBe(true);
@@ -2626,91 +2641,91 @@ describe('Babelfont Object Model', () => {
 
         test('should return empty filtered views for layers without shapes', () => {
             const testGlyph = font.addGlyph('FilteredEmptyGlyph', 'Base');
-            const testLayer = testGlyph.addLayer(500);
+            const testDrawing = testGlyph.addDrawing(500);
 
-            expect(testLayer.shapes).toEqual([]);
-            expect(testLayer.paths).toEqual([]);
-            expect(testLayer.components).toEqual([]);
+            expect(testDrawing.shapes).toEqual([]);
+            expect(testDrawing.paths).toEqual([]);
+            expect(testDrawing.components).toEqual([]);
 
             font.removeGlyph('FilteredEmptyGlyph');
         });
 
         test('findAnchor returns the matching anchor by name', () => {
             const glyph = font.addGlyph('AnchorLookupGlyph', 'Base');
-            const testLayer = glyph.addLayer(500);
-            testLayer.addAnchor(250, 700, 'top');
-            testLayer.addAnchor(250, 0, 'bottom');
-            const foundAnchor = testLayer.findAnchor('top');
+            const testDrawing = glyph.addDrawing(500);
+            testDrawing.addAnchor(250, 700, 'top');
+            testDrawing.addAnchor(250, 0, 'bottom');
+            const foundAnchor = testDrawing.findAnchor('top');
 
             expect(foundAnchor?.name).toBe('top');
             expect(foundAnchor?.x).toBe(250);
             expect(foundAnchor?.y).toBe(700);
-            expect(testLayer.findAnchor('missing')).toBeUndefined();
+            expect(testDrawing.findAnchor('missing')).toBeUndefined();
 
             font.removeGlyph('AnchorLookupGlyph');
         });
 
         test('removeShape should accept a path object from layer.paths', () => {
-            const pathLayer = font.findGlyph('A').layers[0];
-            const initialShapeCount = pathLayer.shapes.length;
-            const initialPathCount = pathLayer.paths.length;
-            const path = pathLayer.paths[0];
+            const pathDrawing = font.findGlyph('A').drawings[0];
+            const initialShapeCount = pathDrawing.shapes.length;
+            const initialPathCount = pathDrawing.paths.length;
+            const path = pathDrawing.paths[0];
 
-            pathLayer.removeShape(path);
+            pathDrawing.removeShape(path);
 
-            expect(pathLayer.shapes.length).toBe(initialShapeCount - 1);
-            expect(pathLayer.paths.length).toBe(initialPathCount - 1);
+            expect(pathDrawing.shapes.length).toBe(initialShapeCount - 1);
+            expect(pathDrawing.paths.length).toBe(initialPathCount - 1);
         });
 
         test('removeShape should accept a component object from layer.components', () => {
-            let componentLayer = null;
+            let componentDrawing = null;
             for (const glyph of font.glyphs) {
-                const candidateLayer = glyph.layers?.[0];
-                if (candidateLayer?.components.length) {
-                    componentLayer = candidateLayer;
+                const candidateDrawing = glyph.drawings?.[0];
+                if (candidateDrawing?.components.length) {
+                    componentDrawing = candidateDrawing;
                     break;
                 }
             }
 
-            expect(componentLayer).not.toBeNull();
+            expect(componentDrawing).not.toBeNull();
 
-            const initialShapeCount = componentLayer.shapes.length;
-            const initialComponentCount = componentLayer.components.length;
-            const component = componentLayer.components[0];
+            const initialShapeCount = componentDrawing.shapes.length;
+            const initialComponentCount = componentDrawing.components.length;
+            const component = componentDrawing.components[0];
 
-            componentLayer.removeShape(component);
+            componentDrawing.removeShape(component);
 
-            expect(componentLayer.shapes.length).toBe(initialShapeCount - 1);
-            expect(componentLayer.components.length).toBe(
+            expect(componentDrawing.shapes.length).toBe(initialShapeCount - 1);
+            expect(componentDrawing.components.length).toBe(
                 initialComponentCount - 1
             );
         });
 
         test('should calculate lsb', () => {
-            const lsb = layer.lsb;
+            const lsb = drawing.lsb;
             expect(typeof lsb).toBe('number');
         });
 
         test('should calculate rsb', () => {
-            const rsb = layer.rsb;
+            const rsb = drawing.rsb;
             expect(typeof rsb).toBe('number');
         });
 
         test('lsb + bbox.width + rsb should equal width', () => {
-            const bbox = layer.getBoundingBox(false);
+            const bbox = drawing.getBoundingBox(false);
             if (bbox) {
-                const lsb = layer.lsb;
-                const rsb = layer.rsb;
+                const lsb = drawing.lsb;
+                const rsb = drawing.rsb;
                 const bboxWidth = bbox.maxX - bbox.minX;
                 const total = lsb + bboxWidth + rsb;
-                expect(Math.abs(total - layer.width)).toBeLessThan(0.01);
+                expect(Math.abs(total - drawing.width)).toBeLessThan(0.01);
             }
         });
     });
 
     describe('Layer signatures and glyph compatibility', () => {
-        function makeCompatibilityFont(includeIncompatibleLayer = true) {
-            const layers = [
+        function makeCompatibilityFont(includeIncompatibleDrawing = true) {
+            const drawings = [
                 {
                     id: 'default-layer',
                     width: 500,
@@ -2781,8 +2796,8 @@ describe('Babelfont Object Model', () => {
                 }
             ];
 
-            if (includeIncompatibleLayer) {
-                layers.push({
+            if (includeIncompatibleDrawing) {
+                drawings.push({
                     id: 'incompatible-layer',
                     name: '{75}',
                     width: 540,
@@ -2851,7 +2866,7 @@ describe('Babelfont Object Model', () => {
                         name: 'A',
                         category: 'Base',
                         exported: true,
-                        layers
+                        layers: drawings
                     }
                 ],
                 names: { family_name: { en: 'Compatibility Test' } },
@@ -2870,13 +2885,13 @@ describe('Babelfont Object Model', () => {
             const compatibilityFont = makeCompatibilityFont();
             const glyph = compatibilityFont.findGlyph('A');
 
-            expect(glyph.layers[0].fingerprint).toBe(
+            expect(glyph.drawings[0].fingerprint).toBe(
                 'components[C:acutecomb];paths[P:0:2:Line,Curve|P:1:2:Line,Line];anchors[A:bottom|A:top]'
             );
-            expect(glyph.layers[0].fingerprint).toBe(
-                glyph.layers[1].fingerprint
+            expect(glyph.drawings[0].fingerprint).toBe(
+                glyph.drawings[1].fingerprint
             );
-            expect(glyph.layers[0].fingerprint).not.toContain('guide');
+            expect(glyph.drawings[0].fingerprint).not.toContain('guide');
         });
 
         test('layer.fingerprint includes path subtraction flags', () => {
@@ -2889,9 +2904,9 @@ describe('Babelfont Object Model', () => {
                 ],
                 true
             );
-            const layer = testFont.glyphs[0].layers[0];
-            const path = layer.paths[0];
-            const before = layer.fingerprint;
+            const drawing = testFont.glyphs[0].drawings[0];
+            const path = drawing.paths[0];
+            const before = drawing.fingerprint;
 
             expect(path.isSubtraction).toBe(false);
             expect(before).not.toContain(':subtraction');
@@ -2905,7 +2920,7 @@ describe('Babelfont Object Model', () => {
                     'fip001-boolean'
                 ]
             ).toBe('subtraction');
-            expect(layer.fingerprint).toBe(
+            expect(drawing.fingerprint).toBe(
                 'components[];paths[P:1:4:Line,Line,Line,Line:subtraction];anchors[]'
             );
 
@@ -2935,30 +2950,30 @@ describe('Babelfont Object Model', () => {
                 ],
                 true
             );
-            const layer = testFont.glyphs[0].layers[0];
-            layer.addPath(true);
-            layer.addComponent('acutecomb');
+            const drawing = testFont.glyphs[0].drawings[0];
+            drawing.addPath(true);
+            drawing.addComponent('acutecomb');
 
-            expect(layer.shapes.map((shape) => shape.isPath())).toEqual([
+            expect(drawing.shapes.map((shape) => shape.isPath())).toEqual([
                 true,
                 true,
                 false
             ]);
 
-            const mapping = layer.moveShapes([0, 2], 'forward');
+            const mapping = drawing.moveShapes([0, 2], 'forward');
             expect(mapping.get(0)).toBe(1);
             expect(mapping.get(1)).toBe(0);
             expect(mapping.get(2)).toBe(2);
 
-            expect(layer.shapes.map((shape) => shape.isPath())).toEqual([
+            expect(drawing.shapes.map((shape) => shape.isPath())).toEqual([
                 true,
                 true,
                 false
             ]);
 
-            const front = layer.moveShapes([0], 'front');
+            const front = drawing.moveShapes([0], 'front');
             expect(front.get(0)).toBe(2);
-            expect(layer.shapes[2].isPath()).toBe(true);
+            expect(drawing.shapes[2].isPath()).toBe(true);
         });
 
         test('glyph.isCompatible returns true when all main layers share a signature', () => {
@@ -2968,9 +2983,9 @@ describe('Babelfont Object Model', () => {
             expect(glyph.isCompatible).toBe(true);
             expect(glyph.calculateOutlineCompatibility()).toEqual({
                 compatible: true,
-                layerCount: 2,
-                referenceLayerId: 'default-layer',
-                incompatibleLayerIds: []
+                drawingCount: 2,
+                referenceDrawingId: 'default-layer',
+                incompatibleDrawingIds: []
             });
         });
 
@@ -2981,9 +2996,9 @@ describe('Babelfont Object Model', () => {
             expect(glyph.isCompatible).toBe(false);
             expect(glyph.calculateOutlineCompatibility()).toEqual({
                 compatible: false,
-                layerCount: 3,
-                referenceLayerId: 'default-layer',
-                incompatibleLayerIds: ['incompatible-layer']
+                drawingCount: 3,
+                referenceDrawingId: 'default-layer',
+                incompatibleDrawingIds: ['incompatible-layer']
             });
         });
 
@@ -3078,14 +3093,14 @@ describe('Babelfont Object Model', () => {
 
             const glyph = compatibilityFont.findGlyph('A');
 
-            expect(glyph.layers[0].fingerprint).toBe(
-                glyph.layers[1].fingerprint
+            expect(glyph.drawings[0].fingerprint).toBe(
+                glyph.drawings[1].fingerprint
             );
             expect(glyph.calculateOutlineCompatibility()).toEqual({
                 compatible: true,
-                layerCount: 2,
-                referenceLayerId: 'line-open',
-                incompatibleLayerIds: []
+                drawingCount: 2,
+                referenceDrawingId: 'line-open',
+                incompatibleDrawingIds: []
             });
         });
     });
@@ -3101,14 +3116,14 @@ describe('Babelfont Object Model', () => {
                 ],
                 true
             );
-            const layer = testFont.glyphs[0].layers[0];
+            const drawing = testFont.glyphs[0].drawings[0];
 
-            layer.setDirectSidebearing('left', 25);
+            drawing.setDirectSidebearing('left', 25);
 
-            expect(layer.paths[0].nodes[0].x).toBe(25);
-            expect(layer.paths[0].nodes[1].x).toBe(125);
-            expect(layer.lsb).toBe(25);
-            layer.paths[0].data.nodes[0].id = 'editor-node-id';
+            expect(drawing.paths[0].nodes[0].x).toBe(25);
+            expect(drawing.paths[0].nodes[1].x).toBe(125);
+            expect(drawing.lsb).toBe(25);
+            drawing.paths[0].data.nodes[0].id = 'editor-node-id';
             const stored = JSON.parse(testFont.toJSONString());
             expect(
                 Array.isArray(stored.glyphs[0].layers[0].shapes[0].nodes)
@@ -3120,18 +3135,18 @@ describe('Babelfont Object Model', () => {
 
         test('lsb setter should adjust width for paths', () => {
             const glyph = font.glyphs.find((g) => g.name === 'A'); // paths only
-            const layer = glyph.layers[0];
+            const drawing = glyph.drawings[0];
 
             glyph.leftMetricsKey = undefined;
             glyph.rightMetricsKey = undefined;
-            layer.leftMetricsKey = undefined;
-            layer.rightMetricsKey = undefined;
+            drawing.leftMetricsKey = undefined;
+            drawing.rightMetricsKey = undefined;
 
-            const originalLsb = layer.lsb;
-            const originalWidth = layer.width;
+            const originalLsb = drawing.lsb;
+            const originalWidth = drawing.width;
 
-            layer.lsb = originalLsb + 50;
-            expect(layer.width).toBeCloseTo(originalWidth + 50, 1);
+            drawing.lsb = originalLsb + 50;
+            expect(drawing.width).toBeCloseTo(originalWidth + 50, 1);
         });
 
         test('lsb setter should adjust width for components', () => {
@@ -3250,133 +3265,134 @@ describe('Babelfont Object Model', () => {
             });
 
             const glyph = componentFont.findGlyph('componentGlyph');
-            const layer = glyph.layers[0];
+            const drawing = glyph.drawings[0];
 
-            const originalLsb = layer.lsb;
-            const originalWidth = layer.width;
+            const originalLsb = drawing.lsb;
+            const originalWidth = drawing.width;
 
-            layer.lsb = originalLsb - 30;
-            expect(layer.width).toBeCloseTo(originalWidth - 30, 1);
+            drawing.lsb = originalLsb - 30;
+            expect(drawing.width).toBeCloseTo(originalWidth - 30, 1);
         });
 
         test('lsb setter should adjust width for mixed shapes', () => {
             const glyph = font.glyphs.find((g) => g.name === 'AE'); // mixed paths + components
-            const layer = glyph.layers[0];
+            const drawing = glyph.drawings[0];
 
             glyph.leftMetricsKey = undefined;
             glyph.rightMetricsKey = undefined;
-            layer.leftMetricsKey = undefined;
-            layer.rightMetricsKey = undefined;
+            drawing.leftMetricsKey = undefined;
+            drawing.rightMetricsKey = undefined;
 
-            const originalLsb = layer.lsb;
-            const originalWidth = layer.width;
+            const originalLsb = drawing.lsb;
+            const originalWidth = drawing.width;
 
-            layer.lsb = originalLsb + 25;
-            expect(layer.width).toBeCloseTo(originalWidth + 25, 1);
+            drawing.lsb = originalLsb + 25;
+            expect(drawing.width).toBeCloseTo(originalWidth + 25, 1);
         });
 
         test('rsb setter should only adjust width without translating geometry', () => {
             const glyph = font.glyphs.find((g) => g.name === 'A');
-            const layer = glyph.layers[0];
+            const drawing = glyph.drawings[0];
 
             glyph.leftMetricsKey = undefined;
             glyph.rightMetricsKey = undefined;
-            layer.leftMetricsKey = undefined;
-            layer.rightMetricsKey = undefined;
+            drawing.leftMetricsKey = undefined;
+            drawing.rightMetricsKey = undefined;
 
-            const originalRsb = layer.rsb;
-            const originalBbox = layer.getBoundingBox(false);
-            const originalWidth = layer.width;
+            const originalRsb = drawing.rsb;
+            const originalBbox = drawing.getBoundingBox(false);
+            const originalWidth = drawing.width;
 
-            layer.rsb = originalRsb + 40;
+            drawing.rsb = originalRsb + 40;
 
-            const newBbox = layer.getBoundingBox(false);
+            const newBbox = drawing.getBoundingBox(false);
             expect(newBbox.minX).toBeCloseTo(originalBbox.minX, 1);
             expect(newBbox.maxX).toBeCloseTo(originalBbox.maxX, 1);
-            expect(layer.width).toBeCloseTo(originalWidth + 40, 1);
+            expect(drawing.width).toBeCloseTo(originalWidth + 40, 1);
         });
     });
 
     describe('Metrics key accessors and recomputation', () => {
         test('falls back to stored referenced glyph metrics for brace layers before load-time normalization', () => {
-            const glyphA = intermediateLayerFont.findGlyph('a');
-            const glyphN = intermediateLayerFont.findGlyph('n');
+            const glyphA = freeDrawingFont.findGlyph('a');
+            const glyphN = freeDrawingFont.findGlyph('n');
 
             expect(glyphA).toBeDefined();
             expect(glyphN).toBeDefined();
             expect(glyphA.rightMetricsKey).toBe('n');
 
-            const braceLayer = glyphA.layers.find(
-                (layer) => layer.location && Object.keys(layer.location).length
+            const freeDrawing = glyphA.drawings.find(
+                (drawing) =>
+                    drawing.location && Object.keys(drawing.location).length
             );
 
-            expect(braceLayer).toBeDefined();
-            expect(braceLayer.rsb).toBe(43);
-            expect(braceLayer.getMatchingLayerOnGlyph('n')).toBeUndefined();
+            expect(freeDrawing).toBeDefined();
+            expect(freeDrawing.rsb).toBe(43);
+            expect(freeDrawing.getMatchingDrawingOnGlyph('n')).toBeUndefined();
 
-            const resolution = braceLayer.resolveMetricsKey('right');
+            const resolution = freeDrawing.resolveMetricsKey('right');
             expect(resolution.error).toBeNull();
             expect(resolution.value).toBe(94);
 
-            intermediateLayerFont.recomputeMetricsKeys(new Set(['n']));
-            expect(braceLayer.rsb).toBe(94);
+            freeDrawingFont.recomputeMetricsKeys(new Set(['n']));
+            expect(freeDrawing.rsb).toBe(94);
         });
 
         test('keeps stored brace-layer metric fallback stable after path nodes are materialized', () => {
-            const glyphA = intermediateLayerFont.findGlyph('a');
-            const glyphN = intermediateLayerFont.findGlyph('n');
-            const braceLayer = glyphA.layers.find(
-                (layer) => layer.location && Object.keys(layer.location).length
+            const glyphA = freeDrawingFont.findGlyph('a');
+            const glyphN = freeDrawingFont.findGlyph('n');
+            const freeDrawing = glyphA.drawings.find(
+                (drawing) =>
+                    drawing.location && Object.keys(drawing.location).length
             );
 
             // Simulate edit-time path access on the live font model.
-            braceLayer.shapes[0].asPath().nodes;
-            glyphN.layers[0].shapes[0].asPath().nodes;
-            glyphN.layers[1].shapes[0].asPath().nodes;
-            glyphN.layers[2].shapes[0].asPath().nodes;
+            freeDrawing.shapes[0].asPath().nodes;
+            glyphN.drawings[0].shapes[0].asPath().nodes;
+            glyphN.drawings[1].shapes[0].asPath().nodes;
+            glyphN.drawings[2].shapes[0].asPath().nodes;
 
-            const resolution = braceLayer.resolveMetricsKey('right');
+            const resolution = freeDrawing.resolveMetricsKey('right');
             expect(resolution.error).toBeNull();
             expect(resolution.value).toBe(94);
 
-            intermediateLayerFont.recomputeMetricsKeys(new Set(['n']));
-            expect(braceLayer.rsb).toBe(94);
+            freeDrawingFont.recomputeMetricsKeys(new Set(['n']));
+            expect(freeDrawing.rsb).toBe(94);
         });
 
         test('keeps using the same stored brace-layer metric fallback after a local edit', () => {
-            const glyphA = intermediateLayerFont.findGlyph('a');
-            const braceLayer = glyphA.layers.find(
-                (layer) => layer.location && Object.keys(layer.location).length
+            const glyphA = freeDrawingFont.findGlyph('a');
+            const freeDrawing = glyphA.drawings.find(
+                (drawing) =>
+                    drawing.location && Object.keys(drawing.location).length
             );
-            const pathShape = braceLayer.shapes[0].asPath();
+            const pathShape = freeDrawing.shapes[0].asPath();
 
-            expect(braceLayer.resolveMetricsKey('right').value).toBe(94);
+            expect(freeDrawing.resolveMetricsKey('right').value).toBe(94);
 
             pathShape.nodes[0].x += 1;
 
-            const resolution = braceLayer.resolveMetricsKey('right');
+            const resolution = freeDrawing.resolveMetricsKey('right');
             expect(resolution.error).toBeNull();
             expect(resolution.value).toBe(94);
             expect(store_font).not.toHaveBeenCalled();
         });
 
         test('reuses the interpolation snapshot during an intermediate-layer =50 lsb edit', () => {
-            const glyphA = intermediateLayerFont.findGlyph('a');
-            const braceLayer = glyphA.layers.find(
-                (layer) => layer.location && Object.keys(layer.location).length
+            const glyphA = freeDrawingFont.findGlyph('a');
+            const freeDrawing = glyphA.drawings.find(
+                (drawing) =>
+                    drawing.location && Object.keys(drawing.location).length
             );
-            const serializeSpy = jest.spyOn(
-                intermediateLayerFont,
-                'toJSONString'
-            );
+            const serializeSpy = jest.spyOn(freeDrawingFont, 'toJSONString');
 
             store_font.mockClear();
 
-            const resolution = braceLayer.applySidebearingInput('left', '=50');
+            const resolution = freeDrawing.applySidebearingInput('left', '=50');
 
             expect(resolution.error).toBeNull();
             expect(resolution.value).toBe(50);
-            expect(Number.isInteger(braceLayer.width)).toBe(true);
+            expect(Number.isInteger(freeDrawing.width)).toBe(true);
             expect(store_font).not.toHaveBeenCalled();
             expect(serializeSpy).not.toHaveBeenCalled();
 
@@ -3384,9 +3400,9 @@ describe('Babelfont Object Model', () => {
         });
 
         test('refuses a typed metrics key that names no glyph in the font', () => {
-            const glyphA = intermediateLayerFont.findGlyph('a');
-            const layer = glyphA.layers[0];
-            const widthBefore = layer.width;
+            const glyphA = freeDrawingFont.findGlyph('a');
+            const drawing = glyphA.drawings[0];
+            const widthBefore = drawing.width;
 
             for (const input of [
                 '=ghost',
@@ -3394,35 +3410,38 @@ describe('Babelfont Object Model', () => {
                 '=|ghost@20',
                 '==ghost'
             ]) {
-                const resolution = layer.applySidebearingInput('right', input);
+                const resolution = drawing.applySidebearingInput(
+                    'right',
+                    input
+                );
                 expect(resolution.rejected).toBe(true);
                 expect(resolution.error).toBe(
                     'There is no glyph “ghost” in this font, so the metrics key was not changed.'
                 );
             }
-            const invalid = layer.applySidebearingInput('right', '=n+');
+            const invalid = drawing.applySidebearingInput('right', '=n+');
             expect(invalid.rejected).toBe(true);
             expect(invalid.error).toBe(
                 '“=n+” is not a valid metrics key, so it was not changed.'
             );
 
             expect(glyphA.rightMetricsKey).toBe('n');
-            expect(layer.rightMetricsKey ?? null).toBeNull();
-            expect(layer.width).toBe(widthBefore);
+            expect(drawing.rightMetricsKey ?? null).toBeNull();
+            expect(drawing.width).toBe(widthBefore);
         });
 
         test('keeps a faulty metrics key a font was opened with', () => {
-            const glyphA = intermediateLayerFont.findGlyph('a');
+            const glyphA = freeDrawingFont.findGlyph('a');
             const previous = glyphA.leftMetricsKey;
             glyphA.leftMetricsKey = 'ghost';
             try {
                 expect(glyphA.leftMetricsKey).toBe('ghost');
                 expect(
-                    glyphA.layers[0].resolveMetricsKey('left').error
+                    glyphA.drawings[0].resolveMetricsKey('left').error
                 ).toContain('Unknown glyph reference');
                 // A new key that names a missing glyph is still refused.
                 expect(
-                    glyphA.layers[0].applySidebearingInput('left', '=ghost2')
+                    glyphA.drawings[0].applySidebearingInput('left', '=ghost2')
                         .rejected
                 ).toBe(true);
                 expect(glyphA.leftMetricsKey).toBe('ghost');
@@ -3531,15 +3550,15 @@ describe('Babelfont Object Model', () => {
                 format_specific: {}
             });
 
-            const targetLayer = heightFont.findGlyph('target').layers[0];
-            const resolution = targetLayer.applySidebearingInput(
+            const targetDrawing = heightFont.findGlyph('target').drawings[0];
+            const resolution = targetDrawing.applySidebearingInput(
                 'right',
                 '=base@200'
             );
 
             expect(resolution.error).toBeNull();
-            expect(targetLayer.width).toBe(542);
-            expect(targetLayer.rsb).toBe(112);
+            expect(targetDrawing.width).toBe(542);
+            expect(targetDrawing.rsb).toBe(112);
         });
 
         test('keyed rsb recomputation rounds the opposite sidebearing before recomputing width', () => {
@@ -3614,9 +3633,9 @@ describe('Babelfont Object Model', () => {
                 format_specific: {}
             });
 
-            const targetLayer =
-                roundedMetricsFont.findGlyph('target').layers[0];
-            const rightmostNodes = targetLayer.shapes
+            const targetDrawing =
+                roundedMetricsFont.findGlyph('target').drawings[0];
+            const rightmostNodes = targetDrawing.shapes
                 .filter((shape) => shape.isPath())
                 .flatMap((shape) => shape.asPath().nodes)
                 .filter((node) => node.x === 420.4);
@@ -3627,19 +3646,22 @@ describe('Babelfont Object Model', () => {
 
             roundedMetricsFont.recomputeMetricsKeys(new Set(['target']));
 
-            expect(targetLayer.rsb).toBe(50);
-            expect(targetLayer.lsb).toBe(70);
-            expect(targetLayer.width).toBe(481);
+            expect(targetDrawing.rsb).toBe(50);
+            expect(targetDrawing.lsb).toBe(70);
+            expect(targetDrawing.width).toBe(481);
         });
 
         test('glyph-wide sidebearing keys store the shared key and report the resolved value', () => {
-            const glyphA = intermediateLayerFont.findGlyph('a');
-            const editableLayers = glyphA.layers.filter(
-                (layer) => !layer.isBackground?.() && !layer.isBackground
+            const glyphA = freeDrawingFont.findGlyph('a');
+            const editableDrawings = glyphA.drawings.filter(
+                (drawing) => !drawing.isBackground?.() && !drawing.isBackground
             );
-            const editedLayer = editableLayers[0];
+            const editedDrawing = editableDrawings[0];
 
-            const resolution = editedLayer.applySidebearingInput('left', '=50');
+            const resolution = editedDrawing.applySidebearingInput(
+                'left',
+                '=50'
+            );
 
             expect(resolution.error).toBeNull();
             expect(resolution.value).toBe(50);
@@ -3649,21 +3671,21 @@ describe('Babelfont Object Model', () => {
 
         test('Fustat o keyed sidebearing edits do not rebuild composites with omitted alignment', () => {
             const glyphO = font.findGlyph('o');
-            const layerO = glyphO.layers[0];
+            const drawingO = glyphO.drawings[0];
             const odieresis = font.findGlyph('odieresis');
             const oslash = font.findGlyph('oslash');
             const oslashacute = font.findGlyph('oslashacute');
-            const odieresisLayer = odieresis.layers[0];
-            const oslashLayer = oslash.layers[0];
-            const oslashacuteLayer = oslashacute.layers[0];
+            const odieresisDrawing = odieresis.drawings[0];
+            const oslashDrawing = oslash.drawings[0];
+            const oslashacuteDrawing = oslashacute.drawings[0];
             const originalWidths = {
-                o: layerO.width,
-                odieresis: odieresisLayer.width,
-                oslash: oslashLayer.width,
-                oslashacute: oslashacuteLayer.width
+                o: drawingO.width,
+                odieresis: odieresisDrawing.width,
+                oslash: oslashDrawing.width,
+                oslashacute: oslashacuteDrawing.width
             };
 
-            const fixedValueResolution = layerO.applySidebearingInput(
+            const fixedValueResolution = drawingO.applySidebearingInput(
                 'left',
                 '=50'
             );
@@ -3674,14 +3696,14 @@ describe('Babelfont Object Model', () => {
                 expect.arrayContaining(['odieresis', 'oslash', 'oslashacute'])
             );
             expect(glyphO.leftMetricsKey).toBe('=50');
-            expect(layerO.lsb).toBe(50);
-            expect(odieresisLayer.width).toBe(originalWidths.odieresis);
-            expect(oslashLayer.width).toBe(originalWidths.oslash);
-            expect(oslashacuteLayer.width).toBe(originalWidths.oslashacute);
+            expect(drawingO.lsb).toBe(50);
+            expect(odieresisDrawing.width).toBe(originalWidths.odieresis);
+            expect(oslashDrawing.width).toBe(originalWidths.oslash);
+            expect(oslashacuteDrawing.width).toBe(originalWidths.oslashacute);
 
             const glyphA = font.findGlyph('a');
-            const glyphAWidth = glyphA.layers[0].width;
-            const glyphRefResolution = layerO.applySidebearingInput(
+            const glyphAWidth = glyphA.drawings[0].width;
+            const glyphRefResolution = drawingO.applySidebearingInput(
                 'left',
                 '=a'
             );
@@ -3691,17 +3713,17 @@ describe('Babelfont Object Model', () => {
                 expect.arrayContaining(['odieresis', 'oslash', 'oslashacute'])
             );
             expect(glyphO.leftMetricsKey).toBe('=a');
-            expect(layerO.lsb).toBe(glyphA.layers[0].lsb);
-            expect(layerO.width).not.toBe(glyphAWidth);
-            expect(odieresisLayer.width).toBe(originalWidths.odieresis);
-            expect(oslashacuteLayer.width).toBe(originalWidths.oslashacute);
+            expect(drawingO.lsb).toBe(glyphA.drawings[0].lsb);
+            expect(drawingO.width).not.toBe(glyphAWidth);
+            expect(odieresisDrawing.width).toBe(originalWidths.odieresis);
+            expect(oslashacuteDrawing.width).toBe(originalWidths.oslashacute);
         });
 
         test('batches geometry history updates during a left-sidebearing translation', () => {
             const glyph = font.findGlyph('A');
-            const layer = glyph.layers[0];
+            const drawing = glyph.drawings[0];
 
-            for (const shape of layer.shapes || []) {
+            for (const shape of drawing.shapes || []) {
                 if (shape.isPath()) {
                     shape.asPath().nodes;
                 }
@@ -3717,9 +3739,9 @@ describe('Babelfont Object Model', () => {
             };
 
             try {
-                const resolution = layer.applySidebearingInput(
+                const resolution = drawing.applySidebearingInput(
                     'left',
-                    String(layer.lsb + 25)
+                    String(drawing.lsb + 25)
                 );
 
                 expect(resolution.error).toBeNull();
@@ -3744,8 +3766,8 @@ describe('Babelfont Object Model', () => {
             const glyphE = metricsKeysFont.findGlyph('e');
 
             expect(glyphA.rightMetricsKey).toBe('n');
-            expect(glyphAring.layers[0].rightMetricsKey).toBe('==+20');
-            expect(glyphAring.layers[1].rightMetricsKey).toBeUndefined();
+            expect(glyphAring.drawings[0].rightMetricsKey).toBe('==+20');
+            expect(glyphAring.drawings[1].rightMetricsKey).toBeUndefined();
             expect(glyphN.leftMetricsKey).toBe('=l-5');
             expect(glyphN.rightMetricsKey).toBe('=l-10');
             expect(glyphE.rightMetricsKey).toBe('=c@200');
@@ -3753,19 +3775,19 @@ describe('Babelfont Object Model', () => {
 
         test('imports Fustat dieresiscomb as a manual component layer when alignment is explicitly disabled', () => {
             const glyph = font.findGlyph('dieresiscomb');
-            const layer = glyph.layers[0];
+            const drawing = glyph.drawings[0];
 
-            expect(layer.components).toHaveLength(2);
+            expect(drawing.components).toHaveLength(2);
             expect(
-                layer.components.map((component) => component.reference)
+                drawing.components.map((component) => component.reference)
             ).toEqual(['dotaccentcomb', 'dotaccentcomb']);
             expect(
-                layer.components.map(
+                drawing.components.map(
                     (component) => component.transform?.translation[0] ?? 0
                 )
             ).toEqual([172, 0]);
             expect(
-                layer.components.map(
+                drawing.components.map(
                     (component) => component.toJSON().format_specific
                 )
             ).toEqual([
@@ -3776,31 +3798,31 @@ describe('Babelfont Object Model', () => {
                 }
             ]);
             expect(
-                layer.components.map((component) =>
+                drawing.components.map((component) =>
                     component.isAutomaticAligned()
                 )
             ).toEqual([false, false]);
-            expect(layer.isAutomaticAlignedLayer()).toBe(false);
+            expect(drawing.isAutomaticAlignedDrawing()).toBe(false);
         });
 
         test('imports Fustat adieresis as a manual component layer when alignment is omitted', () => {
             const glyph = font.findGlyph('adieresis');
-            const layer = glyph.layers[0];
+            const drawing = glyph.drawings[0];
 
             expect(
-                layer.components.map((component) => component.reference)
+                drawing.components.map((component) => component.reference)
             ).toEqual(['a', 'dieresiscomb']);
             expect(
-                layer.components.map((component) =>
+                drawing.components.map((component) =>
                     component.isAutomaticAligned()
                 )
             ).toEqual([false, false]);
-            expect(layer.isAutomaticAlignedLayer()).toBe(false);
+            expect(drawing.isAutomaticAlignedDrawing()).toBe(false);
         });
 
         test('requires every component to explicitly opt into automatic alignment', () => {
-            const layer = font.findGlyph('dieresiscomb').layers[0];
-            const [firstComponent, secondComponent] = layer.components;
+            const drawing = font.findGlyph('dieresiscomb').drawings[0];
+            const [firstComponent, secondComponent] = drawing.components;
 
             expect(firstComponent.isAutomaticAligned()).toBe(false);
             expect(secondComponent.isAutomaticAligned()).toBe(false);
@@ -3845,8 +3867,8 @@ describe('Babelfont Object Model', () => {
         });
 
         test('Component.automaticAlignment persists explicit numeric Glyphs alignment', () => {
-            const layer = font.findGlyph('dieresiscomb').layers[0];
-            const [firstComponent, secondComponent] = layer.components;
+            const drawing = font.findGlyph('dieresiscomb').drawings[0];
+            const [firstComponent, secondComponent] = drawing.components;
 
             firstComponent.format_specific = undefined;
             secondComponent.format_specific = undefined;
@@ -3858,11 +3880,11 @@ describe('Babelfont Object Model', () => {
                     'com.schriftgestalt.Glyphs.alignment'
                 ]
             ).toBe(1);
-            expect(layer.isAutomaticAlignedLayer()).toBe(false);
+            expect(drawing.isAutomaticAlignedDrawing()).toBe(false);
 
             secondComponent.automaticAlignment = true;
             expect(secondComponent.automaticAlignment).toBe(true);
-            expect(layer.isAutomaticAlignedLayer()).toBe(true);
+            expect(drawing.isAutomaticAlignedDrawing()).toBe(true);
 
             firstComponent.automaticAlignment = false;
             expect(firstComponent.automaticAlignment).toBe(false);
@@ -3871,7 +3893,7 @@ describe('Babelfont Object Model', () => {
                     'com.schriftgestalt.Glyphs.alignment'
                 ]
             ).toBe(-1);
-            expect(layer.isAutomaticAlignedLayer()).toBe(false);
+            expect(drawing.isAutomaticAlignedDrawing()).toBe(false);
         });
 
         test('changing l rsb recomputes dependent glyph metrics', () => {
@@ -3881,33 +3903,34 @@ describe('Babelfont Object Model', () => {
             const glyphAdieresis = metricsKeysFont.findGlyph('adieresis');
             const glyphAring = metricsKeysFont.findGlyph('aring');
 
-            const layerL = glyphL.layers[0];
-            const layerN = glyphN.layers[0];
-            const layerA = glyphA.layers[0];
-            const layerAdieresis = glyphAdieresis.layers[0];
-            const layerAring = glyphAring.layers[0];
+            const drawingL = glyphL.drawings[0];
+            const drawingN = glyphN.drawings[0];
+            const drawingA = glyphA.drawings[0];
+            const drawingAdieresis = glyphAdieresis.drawings[0];
+            const drawingAring = glyphAring.drawings[0];
 
-            layerL.rsb = layerL.rsb + 17;
+            drawingL.rsb = drawingL.rsb + 17;
 
-            expect(layerN.rsb).toBe(layerL.rsb - 10);
-            expect(layerA.rsb).toBe(layerN.rsb);
-            expect(layerAdieresis.rsb).toBe(10);
-            expect(layerAring.rsb).toBe(20);
+            expect(drawingN.rsb).toBe(drawingL.rsb - 10);
+            expect(drawingA.rsb).toBe(drawingN.rsb);
+            expect(drawingAdieresis.rsb).toBe(10);
+            expect(drawingAring.rsb).toBe(20);
         });
 
         test('changing c rsb recomputes baseline-offset dependent glyph metrics', () => {
             const glyphC = metricsKeysFont.findGlyph('c');
             const glyphE = metricsKeysFont.findGlyph('e');
-            const layerC = glyphC.layers[0];
-            const layerE = glyphE.layers[0];
-            const originalResolvedERsb = layerE.resolveMetricsKey('right');
-            const originalMeasuredERsb = layerE.getSidebearingsAtHeight(200);
-            const originalDirectERsb = layerE.rsb;
+            const drawingC = glyphC.drawings[0];
+            const drawingE = glyphE.drawings[0];
+            const originalResolvedERsb = drawingE.resolveMetricsKey('right');
+            const originalMeasuredERsb = drawingE.getSidebearingsAtHeight(200);
+            const originalDirectERsb = drawingE.rsb;
 
-            layerC.rsb = layerC.rsb + 19;
+            drawingC.rsb = drawingC.rsb + 19;
 
-            const recomputedResolvedERsb = layerE.resolveMetricsKey('right');
-            const recomputedMeasuredERsb = layerE.getSidebearingsAtHeight(200);
+            const recomputedResolvedERsb = drawingE.resolveMetricsKey('right');
+            const recomputedMeasuredERsb =
+                drawingE.getSidebearingsAtHeight(200);
 
             expect(originalResolvedERsb.error).toBeNull();
             expect(originalResolvedERsb.value).not.toBeNull();
@@ -3934,22 +3957,22 @@ describe('Babelfont Object Model', () => {
         test('glyph-wide reference arithmetic key keeps a non-automatic layer at the referenced sidebearing during local edits', () => {
             const glyphL = metricsKeysFont.findGlyph('l');
             const glyphN = metricsKeysFont.findGlyph('n');
-            const layerL = glyphL.layers[0];
-            const layerN = glyphN.layers[0];
-            const candidateNodes = (layerN.shapes || [])
+            const drawingL = glyphL.drawings[0];
+            const drawingN = glyphN.drawings[0];
+            const candidateNodes = (drawingN.shapes || [])
                 .filter((shape) => shape.isPath())
                 .flatMap((shape) => shape.asPath().nodes || []);
             const rightmostNode = candidateNodes.reduce((best, node) =>
                 !best || node.x > best.x ? node : best
             );
 
-            const originalResolved = layerN.resolveMetricsKey('right');
+            const originalResolved = drawingN.resolveMetricsKey('right');
 
             rightmostNode.x += 30;
 
             expect(originalResolved.error).toBeNull();
-            expect(layerN.rsb).toBeCloseTo(layerL.rsb - 10, 1);
-            expect(layerN.rsb).toBeCloseTo(originalResolved.value, 1);
+            expect(drawingN.rsb).toBeCloseTo(drawingL.rsb - 10, 1);
+            expect(drawingN.rsb).toBeCloseTo(originalResolved.value, 1);
         });
 
         test('mirrored reference keys keep sidebearings fixed during local edits', () => {
@@ -4047,10 +4070,10 @@ describe('Babelfont Object Model', () => {
                 variation_sequences: [],
                 format_specific: {}
             });
-            const baseLayer = mirrorFont.findGlyph('base').layers[0];
-            const targetLayer = mirrorFont.findGlyph('target').layers[0];
+            const baseDrawing = mirrorFont.findGlyph('base').drawings[0];
+            const targetDrawing = mirrorFont.findGlyph('target').drawings[0];
             mirrorFont.recomputeMetricsKeys(new Set(['target']));
-            const candidateNodes = (targetLayer.shapes || [])
+            const candidateNodes = (targetDrawing.shapes || [])
                 .filter((shape) => shape.isPath())
                 .flatMap((shape) => shape.asPath().nodes || []);
             const leftmostNode = candidateNodes.reduce((best, node) =>
@@ -4059,7 +4082,7 @@ describe('Babelfont Object Model', () => {
 
             leftmostNode.x -= 35;
 
-            expect(targetLayer.lsb).toBeCloseTo(baseLayer.rsb, 1);
+            expect(targetDrawing.lsb).toBeCloseTo(baseDrawing.rsb, 1);
         });
 
         test('height-offset reference keys keep measured sidebearings fixed during local edits', () => {
@@ -4157,25 +4180,25 @@ describe('Babelfont Object Model', () => {
                 variation_sequences: [],
                 format_specific: {}
             });
-            const baseLayer = heightFont.findGlyph('base').layers[0];
-            const targetLayer = heightFont.findGlyph('target').layers[0];
+            const baseDrawing = heightFont.findGlyph('base').drawings[0];
+            const targetDrawing = heightFont.findGlyph('target').drawings[0];
             heightFont.recomputeMetricsKeys(new Set(['target']));
-            const candidateNodes = (targetLayer.shapes || [])
+            const candidateNodes = (targetDrawing.shapes || [])
                 .filter((shape) => shape.isPath())
                 .flatMap((shape) => shape.asPath().nodes || []);
             const rightEdgeNodes = candidateNodes.filter(
                 (node) => node.x === Math.max(...candidateNodes.map((n) => n.x))
             );
             const targetMeasuredBefore =
-                targetLayer.getSidebearingsAtHeight(200);
-            const baseMeasured = baseLayer.getSidebearingsAtHeight(200);
+                targetDrawing.getSidebearingsAtHeight(200);
+            const baseMeasured = baseDrawing.getSidebearingsAtHeight(200);
 
             for (const node of rightEdgeNodes) {
                 node.x += 40;
             }
 
             const targetMeasuredAfter =
-                targetLayer.getSidebearingsAtHeight(200);
+                targetDrawing.getSidebearingsAtHeight(200);
 
             expect(baseMeasured).not.toBeNull();
             expect(targetMeasuredBefore).not.toBeNull();
@@ -4192,29 +4215,29 @@ describe('Babelfont Object Model', () => {
 
         test('glyph-wide =-20 keeps a non-automatic layer at a constant sidebearing', () => {
             const glyph = font.findGlyph('A');
-            const layer = glyph.layers[0];
-            const candidateNodes = (layer.shapes || [])
+            const drawing = glyph.drawings[0];
+            const candidateNodes = (drawing.shapes || [])
                 .filter((shape) => shape.isPath())
                 .flatMap((shape) => shape.asPath().nodes || []);
             const rightmostNode = candidateNodes.reduce((best, node) =>
                 !best || node.x > best.x ? node : best
             );
 
-            layer.applySidebearingInput('right', '=-20');
+            drawing.applySidebearingInput('right', '=-20');
 
             expect(glyph.rightMetricsKey).toBe('=-20');
-            expect(layer.rightMetricsKey).toBeUndefined();
-            expect(layer.rsb).toBeCloseTo(-20, 1);
+            expect(drawing.rightMetricsKey).toBeUndefined();
+            expect(drawing.rsb).toBeCloseTo(-20, 1);
 
             rightmostNode.x += 30;
 
-            expect(layer.rsb).toBeCloseTo(-20, 1);
+            expect(drawing.rsb).toBeCloseTo(-20, 1);
         });
 
         test('layer-local ==-20 keeps a non-automatic layer at a constant sidebearing', () => {
             const glyph = font.findGlyph('A');
-            const layer = glyph.layers[0];
-            const candidateNodes = (layer.shapes || [])
+            const drawing = glyph.drawings[0];
+            const candidateNodes = (drawing.shapes || [])
                 .filter((shape) => shape.isPath())
                 .flatMap((shape) => shape.asPath().nodes || []);
             const rightmostNode = candidateNodes.reduce((best, node) =>
@@ -4222,42 +4245,42 @@ describe('Babelfont Object Model', () => {
             );
 
             glyph.rightMetricsKey = undefined;
-            layer.applySidebearingInput('right', '==-20');
+            drawing.applySidebearingInput('right', '==-20');
 
             expect(glyph.rightMetricsKey).toBeUndefined();
-            expect(layer.rightMetricsKey).toBe('==-20');
-            expect(layer.rsb).toBeCloseTo(-20, 1);
+            expect(drawing.rightMetricsKey).toBe('==-20');
+            expect(drawing.rsb).toBeCloseTo(-20, 1);
 
             rightmostNode.x += 25;
 
-            expect(layer.rsb).toBeCloseTo(-20, 1);
+            expect(drawing.rsb).toBeCloseTo(-20, 1);
         });
 
         test('glyph-wide =20 keeps a non-automatic layer at a constant sidebearing', () => {
             const glyph = font.findGlyph('A');
-            const layer = glyph.layers[0];
-            const candidateNodes = (layer.shapes || [])
+            const drawing = glyph.drawings[0];
+            const candidateNodes = (drawing.shapes || [])
                 .filter((shape) => shape.isPath())
                 .flatMap((shape) => shape.asPath().nodes || []);
             const rightmostNode = candidateNodes.reduce((best, node) =>
                 !best || node.x > best.x ? node : best
             );
 
-            layer.applySidebearingInput('right', '=20');
+            drawing.applySidebearingInput('right', '=20');
 
             expect(glyph.rightMetricsKey).toBe('=20');
-            expect(layer.rightMetricsKey).toBeUndefined();
-            expect(layer.rsb).toBeCloseTo(20, 1);
+            expect(drawing.rightMetricsKey).toBeUndefined();
+            expect(drawing.rsb).toBeCloseTo(20, 1);
 
             rightmostNode.x += 30;
 
-            expect(layer.rsb).toBeCloseTo(20, 1);
+            expect(drawing.rsb).toBeCloseTo(20, 1);
         });
 
         test('layer-local ==20 keeps a non-automatic layer at a constant sidebearing', () => {
             const glyph = font.findGlyph('A');
-            const layer = glyph.layers[0];
-            const candidateNodes = (layer.shapes || [])
+            const drawing = glyph.drawings[0];
+            const candidateNodes = (drawing.shapes || [])
                 .filter((shape) => shape.isPath())
                 .flatMap((shape) => shape.asPath().nodes || []);
             const rightmostNode = candidateNodes.reduce((best, node) =>
@@ -4265,42 +4288,44 @@ describe('Babelfont Object Model', () => {
             );
 
             glyph.rightMetricsKey = undefined;
-            layer.applySidebearingInput('right', '==20');
+            drawing.applySidebearingInput('right', '==20');
 
             expect(glyph.rightMetricsKey).toBeUndefined();
-            expect(layer.rightMetricsKey).toBe('==20');
-            expect(layer.rsb).toBeCloseTo(20, 1);
+            expect(drawing.rightMetricsKey).toBe('==20');
+            expect(drawing.rsb).toBeCloseTo(20, 1);
 
             rightmostNode.x += 25;
 
-            expect(layer.rsb).toBeCloseTo(20, 1);
+            expect(drawing.rsb).toBeCloseTo(20, 1);
         });
 
-        test('findLayerById returns associated layers that are not in glyph.layers', () => {
+        test('findDrawingById returns associated layers that are not in glyph.layers', () => {
             const glyphA = metricsKeysFont.findGlyph('a');
 
-            const associatedLayer = glyphA.findLayerById(
+            const associatedDrawing = glyphA.findDrawingById(
                 'D42253C8-C2D4-4376-9630-735954ED741C'
             );
 
-            expect(associatedLayer).toBeDefined();
-            expect(associatedLayer.id).toBe(
+            expect(associatedDrawing).toBeDefined();
+            expect(associatedDrawing.id).toBe(
                 'D42253C8-C2D4-4376-9630-735954ED741C'
             );
             expect(
-                glyphA.layers.some((layer) => layer.id === associatedLayer.id)
+                glyphA.drawings.some(
+                    (drawing) => drawing.id === associatedDrawing.id
+                )
             ).toBe(false);
-            expect(associatedLayer.rsb).toBeDefined();
+            expect(associatedDrawing.rsb).toBeDefined();
         });
     });
 
     describe('Shape polymorphism', () => {
         test('Shape.isPath() and asPath() should work', () => {
             for (const glyph of font.glyphs) {
-                const layer = glyph.layers[0];
-                if (!layer || !layer.shapes) continue;
+                const drawing = glyph.drawings[0];
+                if (!drawing || !drawing.shapes) continue;
 
-                for (const shape of layer.shapes) {
+                for (const shape of drawing.shapes) {
                     if (shape.isPath()) {
                         expect(shape.isComponent()).toBe(false);
                         const path = shape.asPath();
@@ -4314,10 +4339,10 @@ describe('Babelfont Object Model', () => {
 
         test('Shape.isComponent() and asComponent() should work', () => {
             for (const glyph of font.glyphs) {
-                const layer = glyph.layers[0];
-                if (!layer || !layer.shapes) continue;
+                const drawing = glyph.drawings[0];
+                if (!drawing || !drawing.shapes) continue;
 
-                for (const shape of layer.shapes) {
+                for (const shape of drawing.shapes) {
                     if (shape.isComponent()) {
                         expect(shape.isPath()).toBe(false);
                         const component = shape.asComponent();
@@ -4333,10 +4358,10 @@ describe('Babelfont Object Model', () => {
     describe('Path and Node manipulation', () => {
         test('should access nodes in a path', () => {
             for (const glyph of font.glyphs) {
-                const layer = glyph.layers[0];
-                if (!layer || !layer.shapes) continue;
+                const drawing = glyph.drawings[0];
+                if (!drawing || !drawing.shapes) continue;
 
-                for (const shape of layer.shapes) {
+                for (const shape of drawing.shapes) {
                     if (shape.isPath()) {
                         const path = shape.asPath();
                         if (path.nodes && path.nodes.length > 0) {
@@ -4353,10 +4378,10 @@ describe('Babelfont Object Model', () => {
 
         test('node should have correct properties', () => {
             for (const glyph of font.glyphs) {
-                const layer = glyph.layers[0];
-                if (!layer || !layer.shapes) continue;
+                const drawing = glyph.drawings[0];
+                if (!drawing || !drawing.shapes) continue;
 
-                for (const shape of layer.shapes) {
+                for (const shape of drawing.shapes) {
                     if (shape.isPath()) {
                         const path = shape.asPath();
                         if (path.nodes && path.nodes.length > 0) {
@@ -4383,8 +4408,8 @@ describe('Babelfont Object Model', () => {
                 false
             );
             const glyph = testFont.glyphs[0];
-            const layer = glyph.layers[0];
-            const path = layer.shapes[0].asPath();
+            const drawing = glyph.drawings[0];
+            const path = drawing.shapes[0].asPath();
 
             expect(path.nodes.length).toBe(4);
 
@@ -4410,8 +4435,8 @@ describe('Babelfont Object Model', () => {
                 false
             );
             const glyph = testFont.glyphs[0];
-            const layer = glyph.layers[0];
-            const path = layer.shapes[0].asPath();
+            const drawing = glyph.drawings[0];
+            const path = drawing.shapes[0].asPath();
 
             expect(path.nodes.length).toBe(3);
 
@@ -4439,8 +4464,8 @@ describe('Babelfont Object Model', () => {
                 false
             );
             const glyph = testFont.glyphs[0];
-            const layer = glyph.layers[0];
-            const path = layer.shapes[0].asPath();
+            const drawing = glyph.drawings[0];
+            const path = drawing.shapes[0].asPath();
             const originalNodes = path.nodes.map((node) => ({
                 x: node.x,
                 y: node.y,
@@ -4502,7 +4527,7 @@ describe('Babelfont Object Model', () => {
                 { x: 100, y: 0, nodetype: 'Curve', smooth: true }
             ];
             const testFont = makeFontWithSinglePath(originalNodes, false);
-            const path = testFont.glyphs[0].layers[0].paths[0];
+            const path = testFont.glyphs[0].drawings[0].paths[0];
 
             const insertedNodeIndex = path._addPoint(0, 0.25);
 
@@ -4541,10 +4566,10 @@ describe('Babelfont Object Model', () => {
                 ],
                 true
             );
-            const path = testFont.glyphs[0].layers[0].paths[0];
+            const path = testFont.glyphs[0].drawings[0].paths[0];
 
             while (true) {
-                const lineDescriptor = Layer.getPathSegmentDescriptors({
+                const lineDescriptor = Drawing.getPathSegmentDescriptors({
                     nodes: path.nodes,
                     closed: true
                 }).find((descriptor) => descriptor.type === 'line');
@@ -4563,7 +4588,7 @@ describe('Babelfont Object Model', () => {
             );
             expect(path.nodes[0].nodetype).toBe('Curve');
 
-            const segmentTypes = Layer.processPathSegments({
+            const segmentTypes = Drawing.processPathSegments({
                 nodes: path.nodes,
                 closed: true
             }).map((segment) => segment.type);
@@ -4664,10 +4689,12 @@ describe('Babelfont Object Model', () => {
             });
 
             const glyph = font.findGlyph('n');
-            const [pathA, pathB] = glyph.layers.map((layer) => layer.paths[0]);
+            const [pathA, pathB] = glyph.drawings.map(
+                (drawing) => drawing.paths[0]
+            );
 
             while (true) {
-                const lineDescriptor = Layer.getPathSegmentDescriptors({
+                const lineDescriptor = Drawing.getPathSegmentDescriptors({
                     nodes: pathA.nodes,
                     closed: true
                 }).find((descriptor) => descriptor.type === 'line');
@@ -4686,7 +4713,7 @@ describe('Babelfont Object Model', () => {
 
             expect(glyph.isCompatible).toBe(true);
             expect(
-                glyph.calculateOutlineCompatibility().incompatibleLayerIds
+                glyph.calculateOutlineCompatibility().incompatibleDrawingIds
             ).toEqual([]);
         });
 
@@ -4701,7 +4728,7 @@ describe('Babelfont Object Model', () => {
                 { x: 200, y: 0, nodetype: 'Curve', smooth: true }
             ];
             const mergedFont = makeFontWithSinglePath(originalNodes, false);
-            const mergedPath = mergedFont.glyphs[0].layers[0].paths[0];
+            const mergedPath = mergedFont.glyphs[0].drawings[0].paths[0];
             expect(mergedPath._deleteNode(3)).toBe(true);
 
             const mergedCurve = new Bezier([
@@ -4714,7 +4741,7 @@ describe('Babelfont Object Model', () => {
             const projectedPoint = mergedCurve.project(requestedPoint);
 
             const testFont = makeFontWithSinglePath(originalNodes, false);
-            const path = testFont.glyphs[0].layers[0].paths[0];
+            const path = testFont.glyphs[0].drawings[0].paths[0];
 
             const result = path._slideSmoothOnCurve(3, requestedPoint);
 
@@ -4737,7 +4764,7 @@ describe('Babelfont Object Model', () => {
                 ...(node.smooth !== undefined ? { smooth: node.smooth } : {})
             }));
             const collapsedFont = makeFontWithSinglePath(movedNodes, false);
-            const collapsedPath = collapsedFont.glyphs[0].layers[0].paths[0];
+            const collapsedPath = collapsedFont.glyphs[0].drawings[0].paths[0];
             expect(collapsedPath._deleteNode(result.insertedNodeIndex)).toBe(
                 true
             );
@@ -4756,7 +4783,7 @@ describe('Babelfont Object Model', () => {
                 ],
                 false
             );
-            const path = testFont.glyphs[0].layers[0].paths[0];
+            const path = testFont.glyphs[0].drawings[0].paths[0];
 
             expect(path._closeOpenPathByMerge()).toBe(true);
             expect(path.closed).toBe(true);
@@ -4781,7 +4808,7 @@ describe('Babelfont Object Model', () => {
                 ],
                 true
             );
-            const path = testFont.glyphs[0].layers[0].paths[0];
+            const path = testFont.glyphs[0].drawings[0].paths[0];
 
             expect(path._openClosedPathAtNode(3)).toBe(true);
             expect(path.closed).toBe(false);
@@ -4814,7 +4841,7 @@ describe('Babelfont Object Model', () => {
                 ],
                 true
             );
-            const path = testFont.glyphs[0].layers[0].paths[0];
+            const path = testFont.glyphs[0].drawings[0].paths[0];
 
             expect(path._openClosedPathAtNode(0)).toBe(true);
             expect(path.closed).toBe(false);
@@ -4839,32 +4866,34 @@ describe('Babelfont Object Model', () => {
                 ],
                 false
             );
-            const layer = testFont.glyphs[0].layers[0];
+            const drawing = testFont.glyphs[0].drawings[0];
 
-            const result = layer.connectOpenPathEndpoints(0, 'end', 0, 'start');
+            const result = drawing.connectOpenPathEndpoints(
+                0,
+                'end',
+                0,
+                'start'
+            );
 
             expect(result).toEqual({
                 shapeIndex: 0,
                 boundaryNodeIndex: 0,
                 closed: true
             });
-            expect(layer.paths).toHaveLength(1);
-            expect(layer.paths[0].closed).toBe(true);
-            expect(layer.paths[0].nodes).toHaveLength(4);
+            expect(drawing.paths).toHaveLength(1);
+            expect(drawing.paths[0].closed).toBe(true);
+            expect(drawing.paths[0].nodes).toHaveLength(4);
             expect(
-                layer.paths[0].nodes.map((node) => [node.x, node.y])
+                drawing.paths[0].nodes.map((node) => [node.x, node.y])
             ).toEqual([
                 [0, 0],
                 [100, 0],
                 [100, 100],
                 [0, 100]
             ]);
-            expect(layer.paths[0].nodes.map((node) => node.nodetype)).toEqual([
-                'Line',
-                'Line',
-                'Line',
-                'Line'
-            ]);
+            expect(drawing.paths[0].nodes.map((node) => node.nodetype)).toEqual(
+                ['Line', 'Line', 'Line', 'Line']
+            );
         });
 
         test('Layer.connectOpenPathEndpoints does not leave a Move node after the first point when connecting reversed open paths', () => {
@@ -4960,14 +4989,19 @@ describe('Babelfont Object Model', () => {
                 }
             });
 
-            const layer = testFont.glyphs[0].layers[0];
-            const result = layer.connectOpenPathEndpoints(0, 'start', 1, 'end');
+            const drawing = testFont.glyphs[0].drawings[0];
+            const result = drawing.connectOpenPathEndpoints(
+                0,
+                'start',
+                1,
+                'end'
+            );
 
             expect(result).not.toBeNull();
-            expect(layer.paths).toHaveLength(1);
-            expect(layer.paths[0].nodes[0].nodetype).toBe('Move');
+            expect(drawing.paths).toHaveLength(1);
+            expect(drawing.paths[0].nodes[0].nodetype).toBe('Move');
             expect(
-                layer.paths[0].nodes.slice(1).map((node) => node.nodetype)
+                drawing.paths[0].nodes.slice(1).map((node) => node.nodetype)
             ).not.toContain('Move');
         });
 
@@ -4984,8 +5018,8 @@ describe('Babelfont Object Model', () => {
                 false
             );
             const glyph = testFont.glyphs[0];
-            const layer = glyph.layers[0];
-            const path = layer.shapes[0].asPath();
+            const drawing = glyph.drawings[0];
+            const path = drawing.shapes[0].asPath();
 
             expect(path.nodes.length).toBe(5);
 
@@ -5014,8 +5048,8 @@ describe('Babelfont Object Model', () => {
                 false
             );
             const glyph = testFont.glyphs[0];
-            const layer = glyph.layers[0];
-            const path = layer.shapes[0].asPath();
+            const drawing = glyph.drawings[0];
+            const path = drawing.shapes[0].asPath();
 
             expect(path.nodes.length).toBe(5);
 
@@ -5044,8 +5078,8 @@ describe('Babelfont Object Model', () => {
                 false
             );
             const glyph = testFont.glyphs[0];
-            const layer = glyph.layers[0];
-            const path = layer.shapes[0].asPath();
+            const drawing = glyph.drawings[0];
+            const path = drawing.shapes[0].asPath();
 
             expect(path.nodes.length).toBe(5);
 
@@ -5069,8 +5103,8 @@ describe('Babelfont Object Model', () => {
                 false
             );
             const glyph = testFont.glyphs[0];
-            const layer = glyph.layers[0];
-            const path = layer.shapes[0].asPath();
+            const drawing = glyph.drawings[0];
+            const path = drawing.shapes[0].asPath();
 
             // Test negative index
             expect(path._deleteNode(-1)).toBe(false);
@@ -5097,8 +5131,8 @@ describe('Babelfont Object Model', () => {
                 true
             );
             const glyph = testFont.glyphs[0];
-            const layer = glyph.layers[0];
-            const path = layer.shapes[0].asPath();
+            const drawing = glyph.drawings[0];
+            const path = drawing.shapes[0].asPath();
 
             expect(path.nodes.length).toBe(7);
             expect(path.closed).toBe(true);
@@ -5121,7 +5155,7 @@ describe('Babelfont Object Model', () => {
                 ],
                 false
             );
-            const path = testFont.glyphs[0].layers[0].paths[0];
+            const path = testFont.glyphs[0].drawings[0].paths[0];
 
             const result = path._deleteNodes([1, 2]);
 
@@ -5144,7 +5178,7 @@ describe('Babelfont Object Model', () => {
                 ],
                 false
             );
-            const path = testFont.glyphs[0].layers[0].paths[0];
+            const path = testFont.glyphs[0].drawings[0].paths[0];
 
             const result = path._deleteNodes([1, 3]);
 
@@ -5172,14 +5206,14 @@ describe('Babelfont Object Model', () => {
 
         test('Layer.toJSON() should return layer data', () => {
             const glyph = font.glyphs[0];
-            const layer = glyph.layers[0];
-            const json = layer.toJSON();
+            const drawing = glyph.drawings[0];
+            const json = drawing.toJSON();
             expect(json).toBeDefined();
             expect(json.width).toBeDefined();
         });
     });
 
-    describe('Layer.getMatchingLayerOnGlyph()', () => {
+    describe('Layer.getMatchingDrawingOnGlyph()', () => {
         test('should find matching layers across glyphs by master ID', () => {
             const glyphA = font.findGlyph('A');
             const glyphB = font.findGlyph('B');
@@ -5188,18 +5222,19 @@ describe('Babelfont Object Model', () => {
             expect(glyphB).toBeDefined();
 
             // Both glyphs should have layers
-            expect(glyphA.layers).toBeDefined();
-            expect(glyphB.layers).toBeDefined();
-            expect(glyphA.layers.length).toBeGreaterThan(0);
-            expect(glyphB.layers.length).toBeGreaterThan(0);
+            expect(glyphA.drawings).toBeDefined();
+            expect(glyphB.drawings).toBeDefined();
+            expect(glyphA.drawings.length).toBeGreaterThan(0);
+            expect(glyphB.drawings.length).toBeGreaterThan(0);
 
             // For each layer in A, find matching layer in B
-            for (const layerA of glyphA.layers) {
-                const matchingLayerB = layerA.getMatchingLayerOnGlyph('B');
-                expect(matchingLayerB).toBeDefined();
+            for (const drawingA of glyphA.drawings) {
+                const matchingDrawingB =
+                    drawingA.getMatchingDrawingOnGlyph('B');
+                expect(matchingDrawingB).toBeDefined();
 
                 // The matching layer should have the same master ID
-                expect(layerA.master).toEqual(matchingLayerB.master);
+                expect(drawingA.station).toEqual(matchingDrawingB.station);
             }
         });
 
@@ -5209,64 +5244,69 @@ describe('Babelfont Object Model', () => {
 
             expect(glyphA).toBeDefined();
             expect(glyphB).toBeDefined();
-            expect(glyphA.layers).toBeDefined();
-            expect(glyphB.layers).toBeDefined();
+            expect(glyphA.drawings).toBeDefined();
+            expect(glyphB.drawings).toBeDefined();
 
             // For each layer in A:
             // 1. Find matching layer in B
             // 2. From that B layer, find matching layer back in A
             // 3. Should get a layer with the same master as the original
-            const layersA = glyphA.layers; // Cache to avoid recreating wrappers
-            for (let i = 0; i < layersA.length; i++) {
-                const originalLayerA = layersA[i];
-                const matchingLayerB =
-                    originalLayerA.getMatchingLayerOnGlyph('B');
-                expect(matchingLayerB).toBeDefined();
+            const drawingsA = glyphA.drawings; // Cache to avoid recreating wrappers
+            for (let i = 0; i < drawingsA.length; i++) {
+                const originalDrawingA = drawingsA[i];
+                const matchingDrawingB =
+                    originalDrawingA.getMatchingDrawingOnGlyph('B');
+                expect(matchingDrawingB).toBeDefined();
 
                 const roundTripLayerA =
-                    matchingLayerB.getMatchingLayerOnGlyph('A');
+                    matchingDrawingB.getMatchingDrawingOnGlyph('A');
                 expect(roundTripLayerA).toBeDefined();
 
                 // Should have the same master (compare underlying data, not object identity)
-                expect(roundTripLayerA.master).toEqual(originalLayerA.master);
+                expect(roundTripLayerA.station).toEqual(
+                    originalDrawingA.station
+                );
 
                 // Should reference the same underlying layer data
-                expect(roundTripLayerA.toJSON()).toBe(originalLayerA.toJSON());
+                expect(roundTripLayerA.toJSON()).toBe(
+                    originalDrawingA.toJSON()
+                );
             }
         });
 
         test('should return undefined for non-existent glyph', () => {
             const glyphA = font.findGlyph('A');
             expect(glyphA).toBeDefined();
-            expect(glyphA.layers).toBeDefined();
+            expect(glyphA.drawings).toBeDefined();
 
-            const layer = glyphA.layers[0];
-            const matchingLayer =
-                layer.getMatchingLayerOnGlyph('NonExistentGlyph');
-            expect(matchingLayer).toBeUndefined();
+            const drawing = glyphA.drawings[0];
+            const matchingDrawing =
+                drawing.getMatchingDrawingOnGlyph('NonExistentGlyph');
+            expect(matchingDrawing).toBeUndefined();
         });
 
         test('should return undefined if target glyph has no matching designspace location', () => {
             const glyphA = font.findGlyph('A');
             expect(glyphA).toBeDefined();
-            expect(glyphA.layers).toBeDefined();
+            expect(glyphA.drawings).toBeDefined();
 
             // addGlyph() seeds a DefaultForMaster layer for every font master.
             // Strip those so the glyph only has a layer whose master cannot
             // resolve an effective designspace location.
             const testGlyph = font.addGlyph('TestGlyph', 'Base');
-            while (testGlyph.layers.length > 0) {
-                testGlyph.removeLayer(0);
+            while (testGlyph.drawings.length > 0) {
+                testGlyph.removeDrawing(0);
             }
-            const testLayer = testGlyph.addLayer(500);
-            testLayer.master = {
+            const testDrawing = testGlyph.addDrawing(500);
+            testDrawing.station = {
                 type: 'DefaultForMaster',
                 master: 'non-existent-master-id'
             };
 
-            const layer = glyphA.layers[0];
-            const matchingLayer = layer.getMatchingLayerOnGlyph('TestGlyph');
-            expect(matchingLayer).toBeUndefined();
+            const drawing = glyphA.drawings[0];
+            const matchingDrawing =
+                drawing.getMatchingDrawingOnGlyph('TestGlyph');
+            expect(matchingDrawing).toBeUndefined();
 
             // Clean up
             font.removeGlyph('TestGlyph');
@@ -5287,15 +5327,16 @@ describe('Babelfont Object Model', () => {
 
             const adieresis = nestedFont.findGlyph('adieresis');
             expect(adieresis).toBeDefined();
-            expect(adieresis.layers.length).toBe(3);
+            expect(adieresis.drawings.length).toBe(3);
 
             // Layer 0: a + dieresiscomb with [1,0,0,1,118,0]
-            const layer0 = adieresis.layers[0];
-            const layer0Bbox = layer0.getBoundingBox(false);
+            const drawing0 = adieresis.drawings[0];
+            const drawing0Bbox = drawing0.getBoundingBox(false);
 
             // Find matching layers in component glyphs
-            const a0 = layer0.getMatchingLayerOnGlyph('a');
-            const dieresis0 = layer0.getMatchingLayerOnGlyph('dieresiscomb');
+            const a0 = drawing0.getMatchingDrawingOnGlyph('a');
+            const dieresis0 =
+                drawing0.getMatchingDrawingOnGlyph('dieresiscomb');
             expect(a0).toBeDefined();
             expect(dieresis0).toBeDefined();
 
@@ -5317,14 +5358,14 @@ describe('Babelfont Object Model', () => {
                 maxY: Math.max(a0Bbox.maxY, dieresis0Transformed.maxY)
             };
 
-            expect(layer0Bbox.minX).toBeCloseTo(expectedBbox0.minX, 5);
-            expect(layer0Bbox.minY).toBeCloseTo(expectedBbox0.minY, 5);
-            expect(layer0Bbox.maxX).toBeCloseTo(expectedBbox0.maxX, 5);
-            expect(layer0Bbox.maxY).toBeCloseTo(expectedBbox0.maxY, 5);
+            expect(drawing0Bbox.minX).toBeCloseTo(expectedBbox0.minX, 5);
+            expect(drawing0Bbox.minY).toBeCloseTo(expectedBbox0.minY, 5);
+            expect(drawing0Bbox.maxX).toBeCloseTo(expectedBbox0.maxX, 5);
+            expect(drawing0Bbox.maxY).toBeCloseTo(expectedBbox0.maxY, 5);
 
             // Layer 1: a + dieresiscomb with [1,0,0,1,102,0]
-            const layer1 = adieresis.layers[1];
-            const layer1Bbox = layer1.getBoundingBox(false);
+            const drawing1 = adieresis.drawings[1];
+            const drawing1Bbox = drawing1.getBoundingBox(false);
 
             // Expected bbox values (computed from actual flattened components)
             const expectedBbox1 = {
@@ -5334,14 +5375,14 @@ describe('Babelfont Object Model', () => {
                 maxY: 708
             };
 
-            expect(layer1Bbox.minX).toBeCloseTo(expectedBbox1.minX, 5);
-            expect(layer1Bbox.minY).toBeCloseTo(expectedBbox1.minY, 5);
-            expect(layer1Bbox.maxX).toBeCloseTo(expectedBbox1.maxX, 5);
-            expect(layer1Bbox.maxY).toBeCloseTo(expectedBbox1.maxY, 5);
+            expect(drawing1Bbox.minX).toBeCloseTo(expectedBbox1.minX, 5);
+            expect(drawing1Bbox.minY).toBeCloseTo(expectedBbox1.minY, 5);
+            expect(drawing1Bbox.maxX).toBeCloseTo(expectedBbox1.maxX, 5);
+            expect(drawing1Bbox.maxY).toBeCloseTo(expectedBbox1.maxY, 5);
 
             // Layer 2: a + dieresiscomb with [1,0,0,0.6872,56,159] (SCALED)
-            const layer2 = adieresis.layers[2];
-            const layer2Bbox = layer2.getBoundingBox(false);
+            const drawing2 = adieresis.drawings[2];
+            const drawing2Bbox = drawing2.getBoundingBox(false);
 
             // Expected bbox values (computed from actual flattened components)
             const expectedBbox2 = {
@@ -5351,10 +5392,10 @@ describe('Babelfont Object Model', () => {
                 maxY: 664.092
             };
 
-            expect(layer2Bbox.minX).toBeCloseTo(expectedBbox2.minX, 4);
-            expect(layer2Bbox.minY).toBeCloseTo(expectedBbox2.minY, 4);
-            expect(layer2Bbox.maxX).toBeCloseTo(expectedBbox2.maxX, 4);
-            expect(layer2Bbox.maxY).toBeCloseTo(expectedBbox2.maxY, 4);
+            expect(drawing2Bbox.minX).toBeCloseTo(expectedBbox2.minX, 4);
+            expect(drawing2Bbox.minY).toBeCloseTo(expectedBbox2.minY, 4);
+            expect(drawing2Bbox.maxX).toBeCloseTo(expectedBbox2.maxX, 4);
+            expect(drawing2Bbox.maxY).toBeCloseTo(expectedBbox2.maxY, 4);
         });
 
         test('should handle nested components with accumulated transforms', () => {
@@ -5363,11 +5404,11 @@ describe('Babelfont Object Model', () => {
             const glyphA = font.findGlyph('A');
             expect(glyphA).toBeDefined();
 
-            const aLayer = glyphA.layers[0];
-            expect(aLayer).toBeDefined();
+            const aDrawing = glyphA.drawings[0];
+            expect(aDrawing).toBeDefined();
 
             // A should have paths (not components)
-            const aShapes = aLayer.shapes;
+            const aShapes = aDrawing.shapes;
             expect(aShapes).toBeDefined();
 
             let hasPath = false;
@@ -5380,7 +5421,7 @@ describe('Babelfont Object Model', () => {
             expect(hasPath).toBe(true);
 
             // Bounding box should work for a glyph with only paths
-            const bbox = aLayer.getBoundingBox(false);
+            const bbox = aDrawing.getBoundingBox(false);
             expect(bbox).not.toBeNull();
             expect(bbox.width).toBeGreaterThan(0);
             expect(bbox.height).toBeGreaterThan(0);
@@ -5389,13 +5430,13 @@ describe('Babelfont Object Model', () => {
         test('should return empty array for layer with no shapes', () => {
             // Create a test glyph with empty layer
             const testGlyph = font.addGlyph('EmptyGlyph', 'Base');
-            const testLayer = testGlyph.addLayer(500);
+            const testDrawing = testGlyph.addDrawing(500);
 
             // Layer has no shapes
-            expect(testLayer.shapes).toEqual([]);
+            expect(testDrawing.shapes).toEqual([]);
 
             // Bounding box should handle this gracefully
-            const bbox = testLayer.getBoundingBox(false);
+            const bbox = testDrawing.getBoundingBox(false);
             // Should return a fallback bbox based on width
             expect(bbox).not.toBeNull();
             expect(bbox.width).toBe(500); // Uses layer width as fallback
@@ -5418,15 +5459,15 @@ describe('Babelfont Object Model', () => {
             const nestedFont = Font.fromData(nestedFontData);
 
             const adieresis = nestedFont.findGlyph('adieresis');
-            const layer2 = adieresis.layers[2];
+            const drawing2 = adieresis.drawings[2];
 
-            expect(layer2).toBeDefined();
-            expect(layer2.width).toBe(558);
+            expect(drawing2).toBeDefined();
+            expect(drawing2.width).toBe(558);
 
             // Horizontal measurement at y=332 from x=0 to glyph width
-            const horizontalIntersections = layer2.getIntersectionsOnLine(
+            const horizontalIntersections = drawing2.getIntersectionsOnLine(
                 { x: 0, y: 332 },
-                { x: layer2.width, y: 332 },
+                { x: drawing2.width, y: 332 },
                 true // include components
             );
 
@@ -5454,7 +5495,7 @@ describe('Babelfont Object Model', () => {
             });
 
             // Vertical measurement at x=114 from y=-50 to y=750
-            const verticalIntersections = layer2.getIntersectionsOnLine(
+            const verticalIntersections = drawing2.getIntersectionsOnLine(
                 { x: 114, y: -50 },
                 { x: 114, y: 750 },
                 true // include components
@@ -5496,8 +5537,8 @@ describe('Babelfont Object Model', () => {
             const glyphA = bboxFont.findGlyph('A');
             expect(glyphA).toBeDefined();
 
-            const layer = glyphA.layers[0];
-            const bbox = layer.getBoundingBox(false);
+            const drawing = glyphA.drawings[0];
+            const bbox = drawing.getBoundingBox(false);
 
             expect(bbox).not.toBeNull();
             expect(bbox.minX).toBeCloseTo(0, 5);
@@ -5511,11 +5552,11 @@ describe('Babelfont Object Model', () => {
 
     describe('Layer selection accessors', () => {
         let selectionFont;
-        let selectionLayer;
-        let otherLayer;
+        let selectionDrawing;
+        let otherDrawing;
         let selectionGlyph;
         let outlineEditor;
-        let layerLinkStateByGlyph;
+        let drawingLinkStateByGlyph;
         let originalGlyphCanvas;
         let originalCurrentFontModel;
 
@@ -5678,44 +5719,44 @@ describe('Babelfont Object Model', () => {
         beforeEach(() => {
             selectionFont = makeSelectionTestFont();
             selectionGlyph = selectionFont.findGlyph('A');
-            selectionLayer = selectionGlyph.layers[0];
-            otherLayer = selectionFont.findGlyph('B').layers[0];
+            selectionDrawing = selectionGlyph.drawings[0];
+            otherDrawing = selectionFont.findGlyph('B').drawings[0];
 
             originalGlyphCanvas = window.glyphCanvas;
             originalCurrentFontModel = window.currentFontModel;
             window.currentFontModel = selectionFont;
 
-            layerLinkStateByGlyph = new Map();
+            drawingLinkStateByGlyph = new Map();
 
-            const isLayerLinked = (layerId, glyphName = null) => {
-                if (!layerId || !glyphName) {
+            const isDrawingLinked = (drawingId, glyphName = null) => {
+                if (!drawingId || !glyphName) {
                     return true;
                 }
 
-                return !layerLinkStateByGlyph.get(glyphName)?.has(layerId);
+                return !drawingLinkStateByGlyph.get(glyphName)?.has(drawingId);
             };
 
-            const setLayerLinked = (layerId, linked, glyphName = null) => {
-                if (!layerId || !glyphName) {
+            const setDrawingLinked = (drawingId, linked, glyphName = null) => {
+                if (!drawingId || !glyphName) {
                     return;
                 }
 
                 const nextUnlinked = new Set(
-                    layerLinkStateByGlyph.get(glyphName) || []
+                    drawingLinkStateByGlyph.get(glyphName) || []
                 );
 
                 if (linked) {
-                    nextUnlinked.delete(layerId);
+                    nextUnlinked.delete(drawingId);
                 } else {
-                    nextUnlinked.add(layerId);
+                    nextUnlinked.add(drawingId);
                 }
 
                 if (nextUnlinked.size === 0) {
-                    layerLinkStateByGlyph.delete(glyphName);
+                    drawingLinkStateByGlyph.delete(glyphName);
                     return;
                 }
 
-                layerLinkStateByGlyph.set(glyphName, nextUnlinked);
+                drawingLinkStateByGlyph.set(glyphName, nextUnlinked);
             };
 
             outlineEditor = {
@@ -5729,13 +5770,13 @@ describe('Babelfont Object Model', () => {
                     updatePropertyPanel: jest.fn(),
                     render: jest.fn()
                 },
-                isLayerLinked: jest.fn(isLayerLinked),
-                setLayerLinked: jest.fn(setLayerLinked),
-                getCurrentLayerModel: jest.fn(() => selectionLayer),
+                isDrawingLinked: jest.fn(isDrawingLinked),
+                setDrawingLinked: jest.fn(setDrawingLinked),
+                getCurrentDrawingModel: jest.fn(() => selectionDrawing),
                 getCurrentGlyphModel: jest.fn(() => selectionGlyph),
-                getCurrentLayerId: jest.fn(() => selectionLayer.id),
-                getRootMasterModel: jest.fn(() =>
-                    selectionFont.findMaster('master-1')
+                getCurrentDrawingId: jest.fn(() => selectionDrawing.id),
+                getRootStationModel: jest.fn(() =>
+                    selectionFont.findStation('master-1')
                 )
             };
 
@@ -5820,19 +5861,21 @@ describe('Babelfont Object Model', () => {
             const backgroundPairGlyph = backgroundPairFont.findGlyph(
                 'backgroundPairGlyph'
             );
-            const foreground = backgroundPairGlyph.findLayerById('foreground');
-            const background = backgroundPairGlyph.findLayerById('background');
+            const foreground =
+                backgroundPairGlyph.findDrawingById('foreground');
+            const background =
+                backgroundPairGlyph.findDrawingById('background');
 
-            expect(background._getLinkedLayers()).toEqual([]);
+            expect(background._getLinkedDrawings()).toEqual([]);
             expect(
-                foreground._getLinkedLayers().map((layer) => layer.id)
+                foreground._getLinkedDrawings().map((drawing) => drawing.id)
             ).toEqual(['foreground-sibling']);
         });
 
         test('reflects selected state for nodes, anchors, and components', () => {
-            const node = selectionLayer.paths[0].nodes[0];
-            const anchor = selectionLayer.anchors[0];
-            const component = selectionLayer.components[0];
+            const node = selectionDrawing.paths[0].nodes[0];
+            const anchor = selectionDrawing.anchors[0];
+            const component = selectionDrawing.components[0];
 
             expect(node.selected).toBe(true);
             expect(anchor.selected).toBe(true);
@@ -5841,12 +5884,12 @@ describe('Babelfont Object Model', () => {
             outlineEditor.selectedAnchors = [1];
 
             expect(anchor.selected).toBe(false);
-            expect(selectionLayer.anchors[1].selected).toBe(true);
+            expect(selectionDrawing.anchors[1].selected).toBe(true);
         });
 
         test('updates outline-editor selection arrays when toggling object.selected', () => {
-            const node = selectionLayer.paths[0].nodes[0];
-            const anchor = selectionLayer.anchors[1];
+            const node = selectionDrawing.paths[0].nodes[0];
+            const anchor = selectionDrawing.anchors[1];
 
             outlineEditor.selectedPoints = [];
             outlineEditor.selectedAnchors = [];
@@ -5879,7 +5922,7 @@ describe('Babelfont Object Model', () => {
         });
 
         test('maps guide selection through the outline editor and clears incompatible selection state', () => {
-            const guide = selectionLayer.guides[0];
+            const guide = selectionDrawing.guides[0];
 
             guide.selected = true;
 
@@ -5887,7 +5930,7 @@ describe('Babelfont Object Model', () => {
             expect(outlineEditor.selectedAnchors).toEqual([]);
             expect(outlineEditor.selectedComponents).toEqual([]);
             expect(outlineEditor.selectedGuideHandle).toEqual({
-                scope: 'layer',
+                scope: 'drawing',
                 index: 0
             });
             expect(guide.selected).toBe(true);
@@ -5897,25 +5940,25 @@ describe('Babelfont Object Model', () => {
         });
 
         test('exposes and replaces layer.selection as the current UI selection snapshot', () => {
-            const node = selectionLayer.paths[0].nodes[0];
-            const anchor = selectionLayer.anchors[1];
-            const component = selectionLayer.components[0];
+            const node = selectionDrawing.paths[0].nodes[0];
+            const anchor = selectionDrawing.anchors[1];
+            const component = selectionDrawing.components[0];
 
-            const initialSelection = selectionLayer.selection;
+            const initialSelection = selectionDrawing.selection;
             expect(initialSelection).toHaveLength(3);
             expect(initialSelection[0].selected).toBe(true);
-            expect(initialSelection[1]).toBe(selectionLayer.anchors[0]);
+            expect(initialSelection[1]).toBe(selectionDrawing.anchors[0]);
             expect(initialSelection[2].reference).toBe(component.reference);
             expect(initialSelection[2].selected).toBe(true);
 
-            selectionLayer.selection = [anchor, component];
+            selectionDrawing.selection = [anchor, component];
 
             expect(outlineEditor.selectedPoints).toEqual([]);
             expect(outlineEditor.selectedAnchors).toEqual([1]);
             expect(outlineEditor.selectedComponents).toEqual([0]);
             expect(outlineEditor.selectedGuideHandle).toBeNull();
 
-            selectionLayer.selection = node;
+            selectionDrawing.selection = node;
             expect(outlineEditor.selectedPoints).toEqual([
                 { contourIndex: 1, nodeIndex: 0 }
             ]);
@@ -5923,30 +5966,30 @@ describe('Babelfont Object Model', () => {
             expect(outlineEditor.selectedComponents).toEqual([]);
         });
 
-        test('rejects selection objects that do not belong to this layer', () => {
+        test('rejects selection objects that do not belong to this drawing', () => {
             expect(() => {
-                selectionLayer.selection = [otherLayer.anchors[0]];
-            }).toThrow(/belong to this layer/);
+                selectionDrawing.selection = [otherDrawing.anchors[0]];
+            }).toThrow(/belong to this drawing/);
         });
 
         test('rejects guide combinations that the UI cannot represent', () => {
-            const guide = selectionLayer.guides[0];
-            const anchor = selectionLayer.anchors[0];
+            const guide = selectionDrawing.guides[0];
+            const anchor = selectionDrawing.anchors[0];
 
             expect(() => {
-                selectionLayer.selection = [guide, anchor];
+                selectionDrawing.selection = [guide, anchor];
             }).toThrow(/Guide selection cannot be combined/);
         });
 
         test('exposes layer.linked as editor-only per-glyph runtime state', () => {
-            expect(selectionLayer.linked).toBe(true);
-            expect(otherLayer.linked).toBe(true);
+            expect(selectionDrawing.linked).toBe(true);
+            expect(otherDrawing.linked).toBe(true);
 
-            otherLayer.linked = false;
+            otherDrawing.linked = false;
 
-            expect(selectionLayer.linked).toBe(true);
-            expect(otherLayer.linked).toBe(false);
-            expect(outlineEditor.setLayerLinked).toHaveBeenCalledWith(
+            expect(selectionDrawing.linked).toBe(true);
+            expect(otherDrawing.linked).toBe(false);
+            expect(outlineEditor.setDrawingLinked).toHaveBeenCalledWith(
                 'layer-2',
                 false,
                 'B'
@@ -5956,13 +5999,13 @@ describe('Babelfont Object Model', () => {
         test('refreshes the layer UI when layer.linked is changed from the object model', () => {
             const dispatchSpy = jest.spyOn(window, 'dispatchEvent');
 
-            selectionLayer.linked = false;
+            selectionDrawing.linked = false;
 
             expect(window.glyphCanvas.updatePropertiesUI).toHaveBeenCalled();
             expect(window.glyphCanvas.render).toHaveBeenCalled();
             expect(dispatchSpy).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    type: 'layerLinkageChanged',
+                    type: 'drawingLinkageChanged',
                     detail: {
                         glyphName: 'A',
                         layerId: 'layer-1',
@@ -5975,22 +6018,26 @@ describe('Babelfont Object Model', () => {
         });
 
         test('returns linked sibling layers with matching fingerprints after link toggles', () => {
-            const siblingLayer = selectionGlyph.findLayerById('layer-1b');
+            const siblingDrawing = selectionGlyph.findDrawingById('layer-1b');
 
             expect(
-                selectionLayer._getLinkedLayers().map((layer) => layer.id)
+                selectionDrawing
+                    ._getLinkedDrawings()
+                    .map((drawing) => drawing.id)
             ).toEqual(['layer-1b']);
 
-            siblingLayer.linked = false;
-            expect(selectionLayer._getLinkedLayers()).toEqual([]);
+            siblingDrawing.linked = false;
+            expect(selectionDrawing._getLinkedDrawings()).toEqual([]);
 
-            siblingLayer.linked = true;
-            selectionLayer.linked = false;
-            expect(selectionLayer._getLinkedLayers()).toEqual([]);
+            siblingDrawing.linked = true;
+            selectionDrawing.linked = false;
+            expect(selectionDrawing._getLinkedDrawings()).toEqual([]);
 
-            selectionLayer.linked = true;
+            selectionDrawing.linked = true;
             expect(
-                selectionLayer._getLinkedLayers().map((layer) => layer.id)
+                selectionDrawing
+                    ._getLinkedDrawings()
+                    .map((drawing) => drawing.id)
             ).toEqual(['layer-1b']);
         });
     });
@@ -6001,9 +6048,9 @@ describe('Babelfont Object Model', () => {
                 { x: 0, y: 0, nodetype: 'Line' },
                 { x: 100, y: 0, nodetype: 'Line' }
             ]);
-            const layer = testFont.glyphs[0].layers[0];
+            const drawing = testFont.glyphs[0].drawings[0];
 
-            layer.syncFromEditorLayerData({
+            drawing.syncFromEditorDrawingData({
                 width: 500,
                 shapes: [
                     {
@@ -6016,7 +6063,7 @@ describe('Babelfont Object Model', () => {
                 ],
                 anchors: []
             });
-            const path = layer.paths[0];
+            const path = drawing.paths[0];
 
             expect(path._addPoint(0, 0.5)).toBe(1);
             expect(path.nodes.map((node) => node.x)).toEqual([0, 50, 100]);
@@ -6029,7 +6076,7 @@ describe('Babelfont Object Model', () => {
                 { x: 0, y: 0, nodetype: 'Line' },
                 { x: 100, y: 0, nodetype: 'Line' }
             ]);
-            const path = testFont.glyphs[0].layers[0].paths[0];
+            const path = testFont.glyphs[0].drawings[0].paths[0];
 
             const insertedNodeIndex = path._addPoint(0, 0.25);
 
@@ -6053,7 +6100,7 @@ describe('Babelfont Object Model', () => {
                 ],
                 true
             );
-            const path = testFont.glyphs[0].layers[0].paths[0];
+            const path = testFont.glyphs[0].drawings[0].paths[0];
 
             const insertedNodeIndex = path._addPoint(3, 0.5);
 
@@ -6071,23 +6118,23 @@ describe('Babelfont Object Model', () => {
             expect(path.nodes[0].y).toBe(0);
         });
 
-        test('dispatches layerFingerprintChanged when inserting a node changes the layer fingerprint', () => {
+        test('dispatches drawingFingerprintChanged when inserting a node changes the layer fingerprint', () => {
             const testFont = makeFontWithSinglePath([
                 { x: 0, y: 0, nodetype: 'Line' },
                 { x: 100, y: 0, nodetype: 'Line' }
             ]);
-            const layer = testFont.glyphs[0].layers[0];
-            const path = layer.paths[0];
+            const drawing = testFont.glyphs[0].drawings[0];
+            const path = drawing.paths[0];
             const dispatchSpy = jest.spyOn(window, 'dispatchEvent');
 
             path._addPoint(0, 0.25);
 
             expect(dispatchSpy).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    type: 'layerFingerprintChanged',
+                    type: 'drawingFingerprintChanged',
                     detail: {
                         glyphName: 'testGlyph',
-                        layerId: layer.id
+                        layerId: drawing.id
                     }
                 })
             );
@@ -6095,24 +6142,24 @@ describe('Babelfont Object Model', () => {
             dispatchSpy.mockRestore();
         });
 
-        test('dispatches layerFingerprintChanged when deleting a node changes the layer fingerprint', () => {
+        test('dispatches drawingFingerprintChanged when deleting a node changes the layer fingerprint', () => {
             const testFont = makeFontWithSinglePath([
                 { x: 0, y: 0, nodetype: 'Line' },
                 { x: 50, y: 0, nodetype: 'Line' },
                 { x: 100, y: 0, nodetype: 'Line' }
             ]);
-            const layer = testFont.glyphs[0].layers[0];
-            const path = layer.paths[0];
+            const drawing = testFont.glyphs[0].drawings[0];
+            const path = drawing.paths[0];
             const dispatchSpy = jest.spyOn(window, 'dispatchEvent');
 
             expect(path._deleteNode(1)).toBe(true);
 
             expect(dispatchSpy).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    type: 'layerFingerprintChanged',
+                    type: 'drawingFingerprintChanged',
                     detail: {
                         glyphName: 'testGlyph',
-                        layerId: layer.id
+                        layerId: drawing.id
                     }
                 })
             );
@@ -6127,7 +6174,7 @@ describe('Babelfont Object Model', () => {
                 { x: 70, y: 60, nodetype: 'OffCurve' },
                 { x: 100, y: 0, nodetype: 'Curve' }
             ]);
-            const path = testFont.glyphs[0].layers[0].paths[0];
+            const path = testFont.glyphs[0].drawings[0].paths[0];
 
             const insertedNodeIndex = path._addPoint(0, 0.5);
 
@@ -6153,7 +6200,7 @@ describe('Babelfont Object Model', () => {
                 { x: 100, y: 100, nodetype: 'OffCurve' },
                 { x: 150, y: 0, nodetype: 'QCurve' }
             ]);
-            const path = testFont.glyphs[0].layers[0].paths[0];
+            const path = testFont.glyphs[0].drawings[0].paths[0];
 
             const insertedNodeIndex = path._addPoint(0, 0.5);
 
@@ -6174,7 +6221,7 @@ describe('Babelfont Object Model', () => {
         });
 
         test('describes implied quadratic runs as separate segments', () => {
-            const descriptors = Layer.getPathSegmentDescriptors({
+            const descriptors = Drawing.getPathSegmentDescriptors({
                 nodes: [
                     { x: 0, y: 0, nodetype: 'QCurve' },
                     { x: 50, y: 100, nodetype: 'OffCurve' },
@@ -6198,22 +6245,22 @@ describe('Babelfont Object Model', () => {
     });
 
     describe('Layer shape structure changes', () => {
-        test('dispatches layerFingerprintChanged when adding a new path changes the layer fingerprint', () => {
+        test('dispatches drawingFingerprintChanged when adding a new path changes the layer fingerprint', () => {
             const testFont = makeFontWithSinglePath([
                 { x: 0, y: 0, nodetype: 'Line' },
                 { x: 100, y: 0, nodetype: 'Line' }
             ]);
-            const layer = testFont.glyphs[0].layers[0];
+            const drawing = testFont.glyphs[0].drawings[0];
             const dispatchSpy = jest.spyOn(window, 'dispatchEvent');
 
-            layer.addPath(true);
+            drawing.addPath(true);
 
             expect(dispatchSpy).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    type: 'layerFingerprintChanged',
+                    type: 'drawingFingerprintChanged',
                     detail: {
                         glyphName: 'testGlyph',
-                        layerId: layer.id
+                        layerId: drawing.id
                     }
                 })
             );
@@ -6233,20 +6280,20 @@ describe('Babelfont Object Model', () => {
             const fontSpy = jest.spyOn(metricsKeysFont, 'recomputeMetricsKeys');
 
             // Find a layer (or whose glyph) has a leftMetricsKey set
-            let targetLayer = null;
+            let targetDrawing = null;
             for (const glyph of metricsKeysFont.glyphs) {
-                for (const layer of glyph.layers || []) {
-                    if (layer.leftMetricsKey || glyph.leftMetricsKey) {
-                        targetLayer = layer;
+                for (const drawing of glyph.drawings || []) {
+                    if (drawing.leftMetricsKey || glyph.leftMetricsKey) {
+                        targetDrawing = drawing;
                         break;
                     }
                 }
-                if (targetLayer) break;
+                if (targetDrawing) break;
             }
-            expect(targetLayer).not.toBeNull();
+            expect(targetDrawing).not.toBeNull();
 
             // The fast-path method must NOT delegate to the font-level scan
-            targetLayer.recomputeOwnMetricsKeys();
+            targetDrawing.recomputeOwnMetricsKeys();
 
             expect(fontSpy).not.toHaveBeenCalled();
             fontSpy.mockRestore();
@@ -6255,19 +6302,19 @@ describe('Babelfont Object Model', () => {
         test('does not call Font.recomputeMetricsKeys for a layer with a right metrics key', () => {
             const fontSpy = jest.spyOn(metricsKeysFont, 'recomputeMetricsKeys');
 
-            let targetLayer = null;
+            let targetDrawing = null;
             for (const glyph of metricsKeysFont.glyphs) {
-                for (const layer of glyph.layers || []) {
-                    if (layer.rightMetricsKey || glyph.rightMetricsKey) {
-                        targetLayer = layer;
+                for (const drawing of glyph.drawings || []) {
+                    if (drawing.rightMetricsKey || glyph.rightMetricsKey) {
+                        targetDrawing = drawing;
                         break;
                     }
                 }
-                if (targetLayer) break;
+                if (targetDrawing) break;
             }
-            expect(targetLayer).not.toBeNull();
+            expect(targetDrawing).not.toBeNull();
 
-            targetLayer.recomputeOwnMetricsKeys();
+            targetDrawing.recomputeOwnMetricsKeys();
 
             expect(fontSpy).not.toHaveBeenCalled();
             fontSpy.mockRestore();
@@ -6278,28 +6325,28 @@ describe('Babelfont Object Model', () => {
             // that recomputeOwnMetricsKeys produces the same RSB as the
             // full Font.recomputeMetricsKeys path.
             let glyphWithKey = null;
-            let layerWithKey = null;
+            let drawingWithKey = null;
             for (const glyph of metricsKeysFont.glyphs) {
-                for (const layer of glyph.layers || []) {
-                    if (layer.rightMetricsKey || glyph.rightMetricsKey) {
+                for (const drawing of glyph.drawings || []) {
+                    if (drawing.rightMetricsKey || glyph.rightMetricsKey) {
                         glyphWithKey = glyph;
-                        layerWithKey = layer;
+                        drawingWithKey = drawing;
                         break;
                     }
                 }
-                if (layerWithKey) break;
+                if (drawingWithKey) break;
             }
-            expect(layerWithKey).not.toBeNull();
+            expect(drawingWithKey).not.toBeNull();
 
             // Full scan (reference result)
             metricsKeysFont.recomputeMetricsKeys(new Set([glyphWithKey.name]));
-            const expectedRsb = layerWithKey.rsb;
+            const expectedRsb = drawingWithKey.rsb;
 
             // Reset by nudging the width, then use the fast path
-            layerWithKey.width += 1;
-            layerWithKey.recomputeOwnMetricsKeys();
+            drawingWithKey.width += 1;
+            drawingWithKey.recomputeOwnMetricsKeys();
 
-            expect(layerWithKey.rsb).toBeCloseTo(expectedRsb, 1);
+            expect(drawingWithKey.rsb).toBeCloseTo(expectedRsb, 1);
         });
     });
 
@@ -6310,42 +6357,42 @@ describe('Babelfont Object Model', () => {
 
         test('removes a glyph-level left metrics key', () => {
             const glyph = metricsKeysFont.findGlyph('a');
-            const layer = glyph.layers[0];
+            const drawing = glyph.drawings[0];
 
             // Establish a glyph-level key via the public API.
-            layer.applySidebearingInput('left', '=50');
+            drawing.applySidebearingInput('left', '=50');
             expect(glyph.leftMetricsKey).toBe('=50');
-            expect(layer.leftMetricsKey).toBeUndefined();
+            expect(drawing.leftMetricsKey).toBeUndefined();
 
-            layer.clearEffectiveSidebearingKey('left');
+            drawing.clearEffectiveSidebearingKey('left');
 
             expect(glyph.leftMetricsKey).toBeUndefined();
-            expect(layer.leftMetricsKey).toBeUndefined();
+            expect(drawing.leftMetricsKey).toBeUndefined();
         });
 
         test('removes a glyph-level right metrics key', () => {
             const glyph = metricsKeysFont.findGlyph('a');
-            const layer = glyph.layers[0];
+            const drawing = glyph.drawings[0];
 
-            layer.applySidebearingInput('right', '=50');
+            drawing.applySidebearingInput('right', '=50');
             expect(glyph.rightMetricsKey).toBe('=50');
 
-            layer.clearEffectiveSidebearingKey('right');
+            drawing.clearEffectiveSidebearingKey('right');
 
             expect(glyph.rightMetricsKey).toBeUndefined();
         });
 
         test('removes a layer-local left metrics key (== prefix)', () => {
             const glyph = metricsKeysFont.findGlyph('a');
-            const layer = glyph.layers[0];
+            const drawing = glyph.drawings[0];
 
             // Force a layer-local key via the `==` prefix.
-            layer.applySidebearingInput('left', '==+10');
-            expect(layer.leftMetricsKey).toBe('==+10');
+            drawing.applySidebearingInput('left', '==+10');
+            expect(drawing.leftMetricsKey).toBe('==+10');
 
-            layer.clearEffectiveSidebearingKey('left');
+            drawing.clearEffectiveSidebearingKey('left');
 
-            expect(layer.leftMetricsKey).toBeUndefined();
+            expect(drawing.leftMetricsKey).toBeUndefined();
         });
 
         test('plain numeric setSidebearingValue no longer snaps back after a keyed value', () => {
@@ -6354,25 +6401,25 @@ describe('Babelfont Object Model', () => {
             // setDirectSidebearing, confirm recomputeMetricsKeys does not
             // restore the old keyed value.
             const glyph = font.findGlyph('A');
-            const layer = glyph.layers[0];
+            const drawing = glyph.drawings[0];
 
             // Clear any pre-existing key state so the test starts clean.
             glyph.leftMetricsKey = undefined;
-            layer.leftMetricsKey = undefined;
+            drawing.leftMetricsKey = undefined;
 
-            layer.applySidebearingInput('left', '=50');
+            drawing.applySidebearingInput('left', '=50');
             expect(glyph.leftMetricsKey).toBe('=50');
-            expect(layer.lsb).toBe(50);
+            expect(drawing.lsb).toBe(50);
 
             // Simulate what setSidebearingValue now does before applySidebearingDelta.
-            layer.clearEffectiveSidebearingKey('left');
-            layer.lsb = 60;
+            drawing.clearEffectiveSidebearingKey('left');
+            drawing.lsb = 60;
 
             // A subsequent recomputeMetricsKeys must NOT snap back to 50.
             font.recomputeMetricsKeys(new Set([glyph.name]));
 
             expect(glyph.leftMetricsKey).toBeUndefined();
-            expect(layer.lsb).toBe(60);
+            expect(drawing.lsb).toBe(60);
         });
     });
 
@@ -6649,12 +6696,13 @@ describe('Babelfont Object Model', () => {
             expect(renameFont.findGlyph('A')).toBeUndefined();
             expect(renameFont.findGlyph('A.alt')).toBeDefined();
             expect(
-                renameFont.findGlyph('B.alt').layers[0].components[0].reference
+                renameFont.findGlyph('B.alt').drawings[0].components[0]
+                    .reference
             ).toBe('A.alt');
-            expect(renameFont.masters[0].kerning).toEqual({
+            expect(renameFont.stations[0].kerning).toEqual({
                 'A.alt:B.alt': -40
             });
-            expect(renameFont.masters[0].kerning_rtl).toEqual({
+            expect(renameFont.stations[0].kerning_rtl).toEqual({
                 'A.alt:B.alt': -50
             });
             expect(renameFont.first_kern_groups).toEqual({ left: ['A.alt'] });
@@ -6768,14 +6816,14 @@ describe('Babelfont Object Model', () => {
 
             // Background layers are filtered from Glyph.layers.
             expect(
-                renameFont.findGlyph('ae').layers.map((layer) => layer.id)
+                renameFont.findGlyph('ae').drawings.map((drawing) => drawing.id)
             ).toEqual(['layer-ae']);
 
             renameFont.renameGlyphs(new Map([['a', 'aaa']]));
 
             const background = renameFont
                 .findGlyph('ae')
-                .findLayerById('layer-ae-bg');
+                .findDrawingById('layer-ae-bg');
             expect(background.components.map((c) => c.reference)).toEqual([
                 'aaa',
                 'e'
@@ -6960,8 +7008,8 @@ describe('Babelfont Object Model', () => {
         function prepareRewireMetrics(font) {
             const glyph = font.findGlyph('aDieresis.001');
             glyph.leftMetricsKey = '=a+10';
-            glyph.layers[0].leftMetricsKey = '=a';
-            glyph.findLayerById('layer-ad-bg').leftMetricsKey = '=a';
+            glyph.drawings[0].leftMetricsKey = '=a';
+            glyph.findDrawingById('layer-ad-bg').leftMetricsKey = '=a';
             return glyph;
         }
 
@@ -6982,18 +7030,18 @@ describe('Babelfont Object Model', () => {
 
             const glyph = font.findGlyph('aDieresis.sc');
             expect(
-                glyph.layers[0].components.map(
+                glyph.drawings[0].components.map(
                     (component) => component.reference
                 )
             ).toEqual(['a.sc', 'a.sc']);
             expect(
                 glyph
-                    .findLayerById('layer-ad-bg')
+                    .findDrawingById('layer-ad-bg')
                     .components.map((component) => component.reference)
             ).toEqual(['a.sc']);
             expect(glyph.leftMetricsKey).toBe('=a.sc+10');
-            expect(glyph.layers[0].leftMetricsKey).toBe('==a.sc');
-            expect(glyph.findLayerById('layer-ad-bg').leftMetricsKey).toBe(
+            expect(glyph.drawings[0].leftMetricsKey).toBe('==a.sc');
+            expect(glyph.findDrawingById('layer-ad-bg').leftMetricsKey).toBe(
                 '==a.sc'
             );
         });
@@ -7005,18 +7053,18 @@ describe('Babelfont Object Model', () => {
 
             const glyph = font.findGlyph('aDieresis.sc');
             expect(
-                glyph.layers[0].components.map(
+                glyph.drawings[0].components.map(
                     (component) => component.reference
                 )
             ).toEqual(['a', 'a.sc']);
             expect(
                 glyph
-                    .findLayerById('layer-ad-bg')
+                    .findDrawingById('layer-ad-bg')
                     .components.map((component) => component.reference)
             ).toEqual(['a']);
             expect(glyph.leftMetricsKey).toBe('=a+10');
-            expect(glyph.layers[0].leftMetricsKey).toBe('==a');
-            expect(glyph.findLayerById('layer-ad-bg').leftMetricsKey).toBe(
+            expect(glyph.drawings[0].leftMetricsKey).toBe('==a');
+            expect(glyph.findDrawingById('layer-ad-bg').leftMetricsKey).toBe(
                 '==a'
             );
         });
@@ -7041,20 +7089,20 @@ describe('Babelfont Object Model', () => {
                 expect(font.findGlyph('a.001')).toBeDefined();
                 expect(font.findGlyph('a.sc')).toBeUndefined();
                 expect(
-                    glyph.layers[0].components.map(
+                    glyph.drawings[0].components.map(
                         (component) => component.reference
                     )
                 ).toEqual(['a', 'a.001']);
                 expect(
                     glyph
-                        .findLayerById('layer-ad-bg')
+                        .findDrawingById('layer-ad-bg')
                         .components.map((component) => component.reference)
                 ).toEqual(['a']);
                 expect(glyph.leftMetricsKey).toBe('=a+10');
-                expect(glyph.layers[0].leftMetricsKey).toBe('==a');
-                expect(glyph.findLayerById('layer-ad-bg').leftMetricsKey).toBe(
-                    '==a'
-                );
+                expect(glyph.drawings[0].leftMetricsKey).toBe('==a');
+                expect(
+                    glyph.findDrawingById('layer-ad-bg').leftMetricsKey
+                ).toBe('==a');
             } finally {
                 window.patchSyncEngine = previousBridge;
                 bridge.destroy();
@@ -7158,7 +7206,7 @@ describe('Babelfont Object Model', () => {
             expect(preflight.featureReferences).toBeGreaterThan(0);
             expect(preflight.metricsKeyReferences).toBe(1);
             expect(preflight.kerningPairReferences).toBe(3);
-            expect(preflight.kerningMasters).toEqual([
+            expect(preflight.kerningStations).toEqual([
                 { id: 'master-1', label: 'Regular' }
             ]);
             expect(preflight.kerningLtrHits).toEqual([
@@ -7172,10 +7220,10 @@ describe('Babelfont Object Model', () => {
             font.deleteGlyphs(['A']);
 
             expect(font.findGlyph('A')).toBeUndefined();
-            expect(font.findGlyph('B').layers[0].components).toHaveLength(0);
+            expect(font.findGlyph('B').drawings[0].components).toHaveLength(0);
             expect(font.findGlyph('C').leftMetricsKey).toBeUndefined();
-            expect(font.masters[0].kerning).toEqual({ 'B:C': -5 });
-            expect(font.masters[0].kerning_rtl).toEqual({ 'B:C': -20 });
+            expect(font.stations[0].kerning).toEqual({ 'B:C': -5 });
+            expect(font.stations[0].kerning_rtl).toEqual({ 'B:C': -20 });
             expect(font.first_kern_groups).toEqual({});
             expect(font.second_kern_groups).toEqual({ right: ['B', 'C'] });
             expect(font._data.features.classes.letters.code).toBe('B C');
@@ -7257,8 +7305,8 @@ describe('Babelfont Object Model', () => {
             font.deleteGlyphs(['A']);
 
             expect(font.findGlyph('A')).toBeUndefined();
-            expect(font.findGlyph('B').layers[0].components).toHaveLength(0);
-            expect(font.masters[0].kerning).toEqual({});
+            expect(font.findGlyph('B').drawings[0].components).toHaveLength(0);
+            expect(font.stations[0].kerning).toEqual({});
         });
 
         test('preflight and delete include kerning class pairs across masters', () => {
@@ -7328,7 +7376,7 @@ describe('Babelfont Object Model', () => {
 
             const preflight = font.preflightDeleteGlyphs(['A']);
             expect(preflight.kerningPairReferences).toBe(3);
-            expect(preflight.kerningMasters.map((m) => m.label)).toEqual([
+            expect(preflight.kerningStations.map((m) => m.label)).toEqual([
                 'Regular',
                 'Bold'
             ]);
@@ -7356,9 +7404,9 @@ describe('Babelfont Object Model', () => {
             ]);
 
             font.deleteGlyphs(['A']);
-            expect(font.masters[0].kerning).toEqual({ 'B:C': -5 });
-            expect(font.masters[1].kerning).toEqual({ 'B:C': -5 });
-            expect(font.masters[0].kerning_rtl).toEqual({});
+            expect(font.stations[0].kerning).toEqual({ 'B:C': -5 });
+            expect(font.stations[1].kerning).toEqual({ 'B:C': -5 });
+            expect(font.stations[0].kerning_rtl).toEqual({});
             expect(font.first_kern_groups).toEqual({});
             expect(font.second_kern_groups).toEqual({ T: ['T'] });
         });
@@ -7434,7 +7482,7 @@ describe('Babelfont Object Model', () => {
             ]);
 
             font.deleteGlyphs(['A']);
-            expect(font.masters[0].kerning).toEqual({
+            expect(font.stations[0].kerning).toEqual({
                 '@shared:T': -20
             });
             expect(font.first_kern_groups).toEqual({ shared: ['Agrave'] });
@@ -7537,7 +7585,7 @@ describe('Babelfont Object Model', () => {
             expect(
                 font
                     .findGlyph('aacute')
-                    .layers[0].components.map((c) => c.reference)
+                    .drawings[0].components.map((c) => c.reference)
             ).toEqual(['acute']);
         });
     });

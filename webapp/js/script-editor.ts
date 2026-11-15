@@ -411,9 +411,10 @@ import {
             }
 
             // Method 2: Direct DOM manipulation
-            const cursorLayer = editor.renderer.$cursorLayer;
-            if (cursorLayer && cursorLayer.element) {
-                const cursor = cursorLayer.element.querySelector('.ace_cursor');
+            const cursorDrawing = editor.renderer.$cursorLayer;
+            if (cursorDrawing && cursorDrawing.element) {
+                const cursor =
+                    cursorDrawing.element.querySelector('.ace_cursor');
                 if (cursor) {
                     cursor.style.width = cursorWidth;
                     cursor.style.borderLeftWidth = cursorWidth;

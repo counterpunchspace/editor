@@ -1,5 +1,5 @@
 /**
- * Normalized layer outline storage for Y.Doc.
+ * Normalized drawing outline storage for Y.Doc.
  *
  * Coordinates live in `nodePositionsById` as one packed scalar per node.
  * Path grammar lives in one atomic `geometryTopology` string. Nested
@@ -27,9 +27,9 @@ function generateStableId(): string {
 }
 
 export const GEOMETRY_TOPOLOGY_VERSION = 1;
-export const LAYER_GEOMETRY_TOPOLOGY_KEY = 'geometryTopology';
-export const LAYER_NODE_POSITIONS_KEY = 'nodePositionsById';
-export const LAYER_SHAPE_DATA_KEY = 'shapeDataById';
+export const DRAWING_GEOMETRY_TOPOLOGY_KEY = 'geometryTopology';
+export const DRAWING_NODE_POSITIONS_KEY = 'nodePositionsById';
+export const DRAWING_SHAPE_DATA_KEY = 'shapeDataById';
 
 const PATH_KIND = 'P';
 const COMPONENT_KIND = 'C';
@@ -66,7 +66,7 @@ function innerShape(shape: unknown): Unsafe | null {
     }
     if ('Path' in shape || 'Component' in shape) {
         throw new TypeError(
-            'Wrapped shapes are not allowed in layer geometry.'
+            'Wrapped shapes are not allowed in drawing geometry.'
         );
     }
     return shape;
@@ -225,7 +225,7 @@ export function splitShapesForYDoc(shapes: unknown[]): {
     for (const rawShape of shapes) {
         const shape = innerShape(rawShape);
         if (!shape) {
-            throw new TypeError('Layer shapes must be objects.');
+            throw new TypeError('Drawing shapes must be objects.');
         }
         const id =
             typeof shape.id === 'string' && shape.id
@@ -341,39 +341,45 @@ function yValueToJson(value: unknown): unknown {
     return value;
 }
 
-function ensureChildMap(layerMap: Y.Map<unknown>, key: string): Y.Map<unknown> {
-    const existing = yMapGet(layerMap, key);
+function ensureChildMap(
+    drawingMap: Y.Map<unknown>,
+    key: string
+): Y.Map<unknown> {
+    const existing = yMapGet(drawingMap, key);
     if (isYMap(existing)) {
         return existing;
     }
     const created = new Y.Map<unknown>();
-    layerMap.set(key, created);
+    drawingMap.set(key, created);
     return created;
 }
 
-export function writeLayerGeometry(
-    layerMap: Y.Map<unknown>,
+export function writeDrawingGeometry(
+    drawingMap: Y.Map<unknown>,
     shapes: unknown[],
     toYType: (value: unknown) => unknown = (value) => value
 ): void {
     // Public callers (external imports, Python, tests) do not necessarily
     // hold a transaction. Nested transactions join an existing one in Yjs.
-    if (layerMap.doc) {
-        layerMap.doc.transact(() => {
-            writeLayerGeometryInTransaction(layerMap, shapes, toYType);
+    if (drawingMap.doc) {
+        drawingMap.doc.transact(() => {
+            writeDrawingGeometryInTransaction(drawingMap, shapes, toYType);
         });
         return;
     }
-    writeLayerGeometryInTransaction(layerMap, shapes, toYType);
+    writeDrawingGeometryInTransaction(drawingMap, shapes, toYType);
 }
 
-function writeLayerGeometryInTransaction(
-    layerMap: Y.Map<unknown>,
+function writeDrawingGeometryInTransaction(
+    drawingMap: Y.Map<unknown>,
     shapes: unknown[],
     toYType: (value: unknown) => unknown
 ): void {
     const { topology, positions, shapeData } = splitShapesForYDoc(shapes);
-    const previousTopologyRaw = yMapGet(layerMap, LAYER_GEOMETRY_TOPOLOGY_KEY);
+    const previousTopologyRaw = yMapGet(
+        drawingMap,
+        DRAWING_GEOMETRY_TOPOLOGY_KEY
+    );
     let previousTopology: GeometryTopology | null = null;
     if (previousTopologyRaw !== undefined) {
         previousTopology = decodeGeometryTopology(previousTopologyRaw);
@@ -388,15 +394,17 @@ function writeLayerGeometryInTransaction(
     topology.g = topologyChanged
         ? (previousTopology?.g ?? 0) + 1
         : previousTopology!.g;
-    if (layerMap.doc && yMapHas(layerMap, 'shapes')) {
-        layerMap.delete('shapes');
+    if (drawingMap.doc && yMapHas(drawingMap, 'shapes')) {
+        drawingMap.delete('shapes');
     }
     const encodedTopology = encodeGeometryTopology(topology);
-    if (yMapGet(layerMap, LAYER_GEOMETRY_TOPOLOGY_KEY) !== encodedTopology) {
-        layerMap.set(LAYER_GEOMETRY_TOPOLOGY_KEY, encodedTopology);
+    if (
+        yMapGet(drawingMap, DRAWING_GEOMETRY_TOPOLOGY_KEY) !== encodedTopology
+    ) {
+        drawingMap.set(DRAWING_GEOMETRY_TOPOLOGY_KEY, encodedTopology);
     }
 
-    const positionMap = ensureChildMap(layerMap, LAYER_NODE_POSITIONS_KEY);
+    const positionMap = ensureChildMap(drawingMap, DRAWING_NODE_POSITIONS_KEY);
     for (const [key, value] of Object.entries(positions)) {
         // Reintroducing a node must restore its coordinate after converged
         // orphan cleanup. Existing nodes retain a concurrent drag's LWW pair.
@@ -408,7 +416,7 @@ function writeLayerGeometryInTransaction(
         }
     }
 
-    const shapeDataMap = ensureChildMap(layerMap, LAYER_SHAPE_DATA_KEY);
+    const shapeDataMap = ensureChildMap(drawingMap, DRAWING_SHAPE_DATA_KEY);
     for (const [key, value] of Object.entries(shapeData)) {
         const current = yMapGet(shapeDataMap, key);
         if (JSON.stringify(yValueToJson(current)) === JSON.stringify(value)) {
@@ -422,15 +430,15 @@ function writeLayerGeometryInTransaction(
     // commits or converged snapshot refreshes.
 }
 
-export function repairLayerGeometryOrphans(layerMap: Y.Map<unknown>): void {
+export function repairDrawingGeometryOrphans(drawingMap: Y.Map<unknown>): void {
     // Geometry GC only runs during an explicit generation rebase
     // (topology.g increment), never on ordinary commits or converged
     // snapshot refreshes.
-    if (!yMapHas(layerMap, LAYER_GEOMETRY_TOPOLOGY_KEY)) {
+    if (!yMapHas(drawingMap, DRAWING_GEOMETRY_TOPOLOGY_KEY)) {
         return;
     }
     const topology = decodeGeometryTopology(
-        yMapGet(layerMap, LAYER_GEOMETRY_TOPOLOGY_KEY)
+        yMapGet(drawingMap, DRAWING_GEOMETRY_TOPOLOGY_KEY)
     );
     const referencedNodes = new Set<string>();
     const referencedShapes = new Set<string>();
@@ -440,7 +448,7 @@ export function repairLayerGeometryOrphans(layerMap: Y.Map<unknown>): void {
             referencedNodes.add(nodeId);
         }
     }
-    const positionMap = yMapGet(layerMap, LAYER_NODE_POSITIONS_KEY);
+    const positionMap = yMapGet(drawingMap, DRAWING_NODE_POSITIONS_KEY);
     if (isYMap(positionMap)) {
         for (const key of yMapKeys(positionMap)) {
             if (!referencedNodes.has(key)) {
@@ -448,7 +456,7 @@ export function repairLayerGeometryOrphans(layerMap: Y.Map<unknown>): void {
             }
         }
     }
-    const shapeDataMap = yMapGet(layerMap, LAYER_SHAPE_DATA_KEY);
+    const shapeDataMap = yMapGet(drawingMap, DRAWING_SHAPE_DATA_KEY);
     if (isYMap(shapeDataMap)) {
         for (const key of yMapKeys(shapeDataMap)) {
             if (!referencedShapes.has(key)) {
@@ -460,15 +468,17 @@ export function repairLayerGeometryOrphans(layerMap: Y.Map<unknown>): void {
 
 const lastGoodGeometryPreview = new WeakMap<Y.Map<unknown>, Unsafe[]>();
 
-export function readLayerGeometry(layerMap: Y.Map<unknown>): Unsafe[] | null {
-    const rawTopology = yMapGet(layerMap, LAYER_GEOMETRY_TOPOLOGY_KEY);
+export function readDrawingGeometry(
+    drawingMap: Y.Map<unknown>
+): Unsafe[] | null {
+    const rawTopology = yMapGet(drawingMap, DRAWING_GEOMETRY_TOPOLOGY_KEY);
     if (rawTopology === undefined) {
         return null;
     }
     try {
         const topology = decodeGeometryTopology(rawTopology);
-        const positionsRaw = yMapGet(layerMap, LAYER_NODE_POSITIONS_KEY);
-        const shapeDataRaw = yMapGet(layerMap, LAYER_SHAPE_DATA_KEY);
+        const positionsRaw = yMapGet(drawingMap, DRAWING_NODE_POSITIONS_KEY);
+        const shapeDataRaw = yMapGet(drawingMap, DRAWING_SHAPE_DATA_KEY);
         const positions: Record<string, unknown> = {};
         if (isYMap(positionsRaw)) {
             yMapForEach(positionsRaw, (value, key) => {
@@ -486,10 +496,10 @@ export function readLayerGeometry(layerMap: Y.Map<unknown>): Unsafe[] | null {
             positions,
             shapeData
         );
-        lastGoodGeometryPreview.set(layerMap, shapes);
+        lastGoodGeometryPreview.set(drawingMap, shapes);
         return shapes;
     } catch (error) {
-        const lastGood = lastGoodGeometryPreview.get(layerMap);
+        const lastGood = lastGoodGeometryPreview.get(drawingMap);
         if (lastGood) {
             const stale = lastGood.map((shape) => ({ ...shape }));
             (
@@ -501,7 +511,7 @@ export function readLayerGeometry(layerMap: Y.Map<unknown>): Unsafe[] | null {
     }
 }
 
-export function layerGeometryPreviewIsStale(shapes: unknown): boolean {
+export function drawingGeometryPreviewIsStale(shapes: unknown): boolean {
     return (
         !!shapes &&
         typeof shapes === 'object' &&
@@ -511,32 +521,34 @@ export function layerGeometryPreviewIsStale(shapes: unknown): boolean {
 }
 
 export function writeNodePosition(
-    layerMap: Y.Map<unknown>,
+    drawingMap: Y.Map<unknown>,
     nodeId: string,
     x: number,
     y: number
 ): void {
-    const positionMap = ensureChildMap(layerMap, LAYER_NODE_POSITIONS_KEY);
+    const positionMap = ensureChildMap(drawingMap, DRAWING_NODE_POSITIONS_KEY);
     positionMap.set(nodeId, encodePackedXY(x, y));
 }
 
 export function geometryHasNormalizedStorage(
-    layerMap: Y.Map<unknown>
+    drawingMap: Y.Map<unknown>
 ): boolean {
-    return yMapHas(layerMap, LAYER_GEOMETRY_TOPOLOGY_KEY);
+    return yMapHas(drawingMap, DRAWING_GEOMETRY_TOPOLOGY_KEY);
 }
 
-export function getLayerTopology(layerMap: Y.Map<unknown>): GeometryTopology {
+export function getDrawingTopology(
+    drawingMap: Y.Map<unknown>
+): GeometryTopology {
     return decodeGeometryTopology(
-        yMapGet(layerMap, LAYER_GEOMETRY_TOPOLOGY_KEY)
+        yMapGet(drawingMap, DRAWING_GEOMETRY_TOPOLOGY_KEY)
     );
 }
 
 export function getShapeIdAt(
-    layerMap: Y.Map<unknown>,
+    drawingMap: Y.Map<unknown>,
     shapeIndex: number
 ): string {
-    const shape = getLayerTopology(layerMap).shapes[shapeIndex];
+    const shape = getDrawingTopology(drawingMap).shapes[shapeIndex];
     if (!shape) {
         throw new RangeError(`Shape index ${shapeIndex} is out of range.`);
     }
@@ -544,11 +556,11 @@ export function getShapeIdAt(
 }
 
 export function getNodeIdAt(
-    layerMap: Y.Map<unknown>,
+    drawingMap: Y.Map<unknown>,
     shapeIndex: number,
     nodeIndex: number
 ): string {
-    const shape = getLayerTopology(layerMap).shapes[shapeIndex];
+    const shape = getDrawingTopology(drawingMap).shapes[shapeIndex];
     const nodeId = shape?.n?.[nodeIndex];
     if (!nodeId) {
         throw new RangeError(

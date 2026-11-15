@@ -34,8 +34,8 @@ async function fontParts(page: Page): Promise<FontParts> {
         return {
             layout: engine.roomLayout,
             features: JSON.parse(JSON.stringify(json.features ?? null)),
-            kerning: (json.masters ?? []).map((master: any) =>
-                JSON.parse(JSON.stringify(master.kerning ?? {}))
+            kerning: (json.masters ?? []).map((station: any) =>
+                JSON.parse(JSON.stringify(station.kerning ?? {}))
             )
         };
     });
@@ -139,11 +139,11 @@ test('a font saved before room layout 2 moves to its rooms when the owner opens 
             .toEqual(saved.kerning);
 
         // A kerning edit after the upgrade lands in a kerning room.
-        const masterIndex = saved.kerning.findIndex(
+        const stationIndex = saved.kerning.findIndex(
             (pairs) => Object.keys(pairs).length
         );
-        const [pair, value] = Object.entries(saved.kerning[masterIndex])[0];
-        const edited = { ...saved.kerning[masterIndex], [pair]: value + 7 };
+        const [pair, value] = Object.entries(saved.kerning[stationIndex])[0];
+        const edited = { ...saved.kerning[stationIndex], [pair]: value + 7 };
         await ownerAgain.evaluate(
             ({ index, kerning }) => {
                 const engine = (window as any).patchSyncEngine;
@@ -152,18 +152,19 @@ test('a font saved before room layout 2 moves to its rooms when the owner opens 
                     compileEditType: 'kerning-value'
                 });
                 try {
-                    (window as any).currentFontModel.masters[index].kerning =
+                    (window as any).currentFontModel.stations[index].kerning =
                         kerning;
                 } finally {
                     engine.endTransaction();
                 }
             },
-            { index: masterIndex, kerning: edited }
+            { index: stationIndex, kerning: edited }
         );
         await waitForCloudLiveIdle(ownerAgain);
         await expect
             .poll(
-                async () => (await fontParts(inviteePage)).kerning[masterIndex],
+                async () =>
+                    (await fontParts(inviteePage)).kerning[stationIndex],
                 { timeout: 60000 }
             )
             .toEqual(edited);
@@ -178,7 +179,7 @@ test('a font saved before room layout 2 moves to its rooms when the owner opens 
                     return {
                         layout: parts.layout,
                         features: parts.features,
-                        kerning: parts.kerning[masterIndex]
+                        kerning: parts.kerning[stationIndex]
                     };
                 },
                 { timeout: 60000 }
@@ -249,9 +250,9 @@ async function layoutState(page: Page) {
             layout: engine.roomLayout,
             features,
             classes: digest(JSON.stringify(json.features?.classes ?? {})),
-            kerning: (json.masters ?? []).map((master: any) =>
+            kerning: (json.masters ?? []).map((station: any) =>
                 Object.fromEntries(
-                    Object.entries(master.kerning ?? {}).sort(([a], [b]) =>
+                    Object.entries(station.kerning ?? {}).sort(([a], [b]) =>
                         a.localeCompare(b)
                     )
                 )
@@ -568,8 +569,8 @@ test('collaborators converge on every layout 2 room, across rooms and through a 
 
         // Pairs in two different kerning rooms, one pair both write, and one
         // the invitee deletes.
-        const masterKerning = saved.kerning[0] as Record<string, number>;
-        const pairs = Object.keys(masterKerning);
+        const stationKerning = saved.kerning[0] as Record<string, number>;
+        const pairs = Object.keys(stationKerning);
         const bucketOf = (pair: string) =>
             layoutBucket(firstSide(pair), FORCED_LAYOUT.kerningBuckets);
         const ownerPair = pairs[0];
@@ -591,12 +592,12 @@ test('collaborators converge on every layout 2 room, across rooms and through a 
                 (name: string) => !grouped.has(name) && /^[a-z]+$/.test(name)
             )!;
         expect(groupName && joiner, 'a group and a glyph to add').toBeTruthy();
-        const masterId = await ownerPage.evaluate(
-            () => (window as any).currentFontModel.masters[0].id
+        const stationId = await ownerPage.evaluate(
+            () => (window as any).currentFontModel.stations[0].id
         );
         const setPair = `
-            const master = font.masters.find((m) => m.id === arg.master);
-            master.kerning = { ...master.kerning, [arg.pair]: arg.value };`;
+            const station = font.stations.find((s) => s.id === arg.station);
+            station.kerning = { ...station.kerning, [arg.pair]: arg.value };`;
 
         // ── Both collaborators edit every kind of room at once ──────────
         await Promise.all([
@@ -607,7 +608,7 @@ test('collaborators converge on every layout 2 room, across rooms and through a 
                     'keyboard-kerning-value',
                     'kerning-value',
                     setPair,
-                    { master: masterId, pair: ownerPair, value: -111 }
+                    { station: stationId, pair: ownerPair, value: -111 }
                 );
                 await transact(
                     ownerPage,
@@ -615,7 +616,7 @@ test('collaborators converge on every layout 2 room, across rooms and through a 
                     'keyboard-kerning-value',
                     'kerning-value',
                     setPair,
-                    { master: masterId, pair: sharedPair, value: 11 }
+                    { station: stationId, pair: sharedPair, value: 11 }
                 );
                 await editFeatureCode(ownerPage, 'ss01', '# owner');
                 // The overview's Add Glyphs command: one transaction.
@@ -650,7 +651,7 @@ test('collaborators converge on every layout 2 room, across rooms and through a 
                     'keyboard-kerning-value',
                     'kerning-value',
                     setPair,
-                    { master: masterId, pair: inviteePair, value: -222 }
+                    { station: stationId, pair: inviteePair, value: -222 }
                 );
                 await transact(
                     inviteePage,
@@ -658,18 +659,18 @@ test('collaborators converge on every layout 2 room, across rooms and through a 
                     'keyboard-kerning-value',
                     'kerning-value',
                     setPair,
-                    { master: masterId, pair: sharedPair, value: 22 }
+                    { station: stationId, pair: sharedPair, value: 22 }
                 );
                 await transact(
                     inviteePage,
                     'Delete kerning pair',
                     'keyboard-kerning-value',
                     'kerning-value',
-                    `const master = font.masters.find((m) => m.id === arg.master);
-                     const next = { ...master.kerning };
+                    `const station = font.stations.find((s) => s.id === arg.station);
+                     const next = { ...station.kerning };
                      delete next[arg.pair];
-                     master.kerning = next;`,
-                    { master: masterId, pair: deletedPair }
+                     station.kerning = next;`,
+                    { station: stationId, pair: deletedPair }
                 );
                 await transact(
                     inviteePage,
@@ -731,21 +732,21 @@ test('collaborators converge on every layout 2 room, across rooms and through a 
             'keyboard-kerning-value',
             'kerning-value',
             setPair,
-            { master: masterId, pair: ownerPair, value: -150 }
+            { station: stationId, pair: ownerPair, value: -150 }
         );
         await expectSameLayoutState([ownerPage, inviteePage], 'kerning edit');
-        await ownerPage.evaluate(async (layerId) => {
+        await ownerPage.evaluate(async (drawingId) => {
             await (window as any).runBridgeUndoRedo(
                 'undo',
                 'a',
                 'a',
-                layerId,
+                drawingId,
                 null
             );
             await (
                 window as any
             ).patchSyncEngine.waitForPendingCloudCommits?.();
-        }, masterId);
+        }, stationId);
         const kerningUndone = await expectSameLayoutState(
             [ownerPage, inviteePage],
             'kerning undo'
@@ -867,7 +868,7 @@ test('collaborators converge on every layout 2 room, across rooms and through a 
             'keyboard-kerning-value',
             'kerning-value',
             setPair,
-            { master: masterId, pair: sharedPair, value: 33 }
+            { station: stationId, pair: sharedPair, value: 33 }
         );
         const edited = await expectSameLayoutState(
             [ownerAgain, inviteePage],
@@ -967,7 +968,7 @@ test('collaborators converge on every layout 2 room, across rooms and through a 
             'keyboard-kerning-value',
             'kerning-value',
             setPair,
-            { master: masterId, pair: inviteePair, value: -555 }
+            { station: stationId, pair: inviteePair, value: -555 }
         );
         await waitForCloudLiveIdle(inviteePage);
         await latePage.evaluate(() => {
@@ -1007,7 +1008,7 @@ test('collaborators converge on every layout 2 room, across rooms and through a 
             'keyboard-kerning-value',
             'kerning-value',
             setPair,
-            { master: masterId, pair: sharedPair, value: 44 }
+            { station: stationId, pair: sharedPair, value: 44 }
         );
         const editedAfterShrink = await expectSameLayoutState(
             [ownerAgain, inviteePage, late.page],

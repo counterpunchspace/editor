@@ -130,14 +130,14 @@ function collectGlyphComponentNames(glyph: Record<string, unknown>): string[] {
             visitShape(child);
         }
     };
-    const layers = Array.isArray(glyph.layers) ? glyph.layers : [];
-    for (const layer of layers) {
-        const layerRecord = asRecord(layer);
-        if (!layerRecord) {
+    const drawings = Array.isArray(glyph.layers) ? glyph.layers : [];
+    for (const drawing of drawings) {
+        const drawingRecord = asRecord(drawing);
+        if (!drawingRecord) {
             continue;
         }
-        const shapes = Array.isArray(layerRecord.shapes)
-            ? layerRecord.shapes
+        const shapes = Array.isArray(drawingRecord.shapes)
+            ? drawingRecord.shapes
             : [];
         for (const shape of shapes) {
             visitShape(shape);

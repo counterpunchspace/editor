@@ -2,7 +2,7 @@ import type { HistoryStackItem } from './change-log';
 
 export type SidebearingSide = 'left' | 'right';
 
-type SidebearingLayerSnapshot = {
+type SidebearingDrawingSnapshot = {
     width: number;
 };
 
@@ -20,8 +20,8 @@ type SidebearingVisualTarget = {
         panX: number;
         scale: number;
     } | null;
-    syncCurrentOutlineLayerDataFromModel?(
-        layer: SidebearingLayerSnapshot
+    syncCurrentOutlineDrawingDataFromModel?(
+        drawing: SidebearingDrawingSnapshot
     ): void;
 };
 
@@ -167,7 +167,7 @@ export function applyLiveSidebearingVisualSync(
 export function syncModelSidebearingEditToCanvas(
     target: SidebearingVisualTarget,
     options: {
-        layer: SidebearingLayerSnapshot;
+        layer: SidebearingDrawingSnapshot;
         glyphName?: string | null;
         side?: SidebearingSide;
         previousWidth: number;
@@ -177,7 +177,7 @@ export function syncModelSidebearingEditToCanvas(
     widthDelta: number;
     advancesRefreshed: boolean;
 } {
-    target.syncCurrentOutlineLayerDataFromModel?.(options.layer);
+    target.syncCurrentOutlineDrawingDataFromModel?.(options.layer);
 
     return applyLiveSidebearingVisualSync(target, {
         glyphName: options.glyphName,

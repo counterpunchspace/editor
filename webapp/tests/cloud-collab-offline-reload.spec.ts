@@ -17,7 +17,7 @@ import {
     installFontModelSyncTracker,
     installEditingFontCompileTracker,
     alignEditorCanvas,
-    waitUntilGlyphLayerDataMatches
+    waitUntilGlyphDrawingDataMatches
 } from './helpers/change-bridge-cross-window';
 import {
     LOCAL_ROOM_ORIGIN,
@@ -135,7 +135,9 @@ test.describe('cloud collab offline reload', () => {
             );
             inviteeContext = invitee.inviteeContext;
             const { inviteePage } = invitee;
-            await waitUntilGlyphLayerDataMatches(ownerPage, inviteePage, ['a']);
+            await waitUntilGlyphDrawingDataMatches(ownerPage, inviteePage, [
+                'a'
+            ]);
             const baselineX = await glyphNodeX(ownerPage, 'a');
 
             // Go offline before the edit so the WAL row cannot be ACKed.
@@ -201,7 +203,9 @@ test.describe('cloud collab offline reload', () => {
                     timeout: 120000
                 })
                 .toBe(baselineX + 23);
-            await waitUntilGlyphLayerDataMatches(ownerPage, inviteePage, ['a']);
+            await waitUntilGlyphDrawingDataMatches(ownerPage, inviteePage, [
+                'a'
+            ]);
 
             // Peer gone: an online edit must hydrate back from the room
             // alone after an owner reload.

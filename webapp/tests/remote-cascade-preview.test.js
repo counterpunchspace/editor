@@ -259,13 +259,15 @@ describe('recomposeCollaboratorCascade', () => {
         window.fontManager = {
             currentFont: { fontModel, markDirty: () => {} }
         };
-        const layerO = fontModel.findGlyph('o').layers[0];
+        const drawingO = fontModel.findGlyph('o').drawings[0];
         withSuppressedModelRecording(() => {
-            const top = layerO.anchors.find((anchor) => anchor.name === 'top');
+            const top = drawingO.anchors.find(
+                (anchor) => anchor.name === 'top'
+            );
             top.x += 40;
             top.y += 60;
         });
-        return { bridge, fontModel, layerO };
+        return { bridge, fontModel, layerO: drawingO };
     }
 
     /** Every document the bridge holds: font-core, font-deps and glyphs. */
@@ -281,7 +283,7 @@ describe('recomposeCollaboratorCascade', () => {
     }
 
     it('records the same rebuild when recording is on (control)', () => {
-        const { bridge, fontModel, layerO } = setUp();
+        const { bridge, fontModel, layerO: drawingO } = setUp();
         const before = documentsOf(bridge);
         bridge.beginTransaction('Control', null, {
             compileChangeSource: 'test',
@@ -289,7 +291,7 @@ describe('recomposeCollaboratorCascade', () => {
         });
         try {
             fontModel.rebuildAutomaticCompositesForGlyphs(new Set(['o']), {
-                preferredLayerId: layerO.id,
+                preferredDrawingId: drawingO.id,
                 preferredSourceGlyphName: 'o'
             });
         } finally {
@@ -315,8 +317,8 @@ describe('recomposeCollaboratorCascade', () => {
         // automatically so moving o’s top anchor recomposes it.
         const seed = Font.fromData(raw);
         withSuppressedModelRecording(() => {
-            for (const layer of seed.findGlyph('oacute').layers) {
-                for (const shape of layer.shapes) {
+            for (const drawing of seed.findGlyph('oacute').drawings) {
+                for (const shape of drawing.shapes) {
                     const component = shape.asComponent?.();
                     if (component) {
                         component.automaticAlignment = true;
@@ -328,17 +330,17 @@ describe('recomposeCollaboratorCascade', () => {
     }
 
     it('recomposes the dependents in the model and writes nothing', () => {
-        const { bridge, fontModel, layerO } = setUp();
-        const oacuteLayer = fontModel
+        const { bridge, fontModel, layerO: drawingO } = setUp();
+        const oacuteDrawing = fontModel
             .findGlyph('oacute')
-            .findLayerById(layerO.id);
-        expect(oacuteLayer.isAutomaticAlignedLayer()).toBe(true);
-        const oacuteBefore = JSON.stringify(oacuteLayer.toJSON());
+            .findDrawingById(drawingO.id);
+        expect(oacuteDrawing.isAutomaticAlignedDrawing()).toBe(true);
+        const oacuteBefore = JSON.stringify(oacuteDrawing.toJSON());
         const accentOffset = () =>
             JSON.stringify(
                 fontModel
                     .findGlyph('oacute')
-                    .findLayerById(layerO.id)
+                    .findDrawingById(drawingO.id)
                     .toJSON()
                     .shapes.find((shape) => shape.reference === 'acutecomb')
                     .transform?.translation
@@ -351,17 +353,17 @@ describe('recomposeCollaboratorCascade', () => {
         const changed = recomposeCollaboratorCascade(bridge, [
             {
                 glyphName: 'o',
-                layerId: layerO.id,
+                layerId: drawingO.id,
                 editKinds: new Set(['anchor'])
             }
         ]);
 
         expect(changed).toContainEqual({
             glyphName: 'oacute',
-            layerId: oacuteLayer.id
+            layerId: oacuteDrawing.id
         });
         expect(changed.some((target) => target.glyphName === 'o')).toBe(false);
-        expect(JSON.stringify(oacuteLayer.toJSON())).not.toBe(oacuteBefore);
+        expect(JSON.stringify(oacuteDrawing.toJSON())).not.toBe(oacuteBefore);
         // Nothing reached the documents or any committed-change listener.
         expect(documentsOf(bridge)).toBe(before);
         expect(committed).toEqual([]);
@@ -369,15 +371,15 @@ describe('recomposeCollaboratorCascade', () => {
         expect(accentOffset()).not.toBe(offsetBefore);
 
         // A revert puts the documents’ layer back into the model.
-        bridge.revertLivePreviewLayers(changed);
+        bridge.revertLivePreviewDrawings(changed);
         expect(accentOffset()).toBe(offsetBefore);
     });
 
     it('reports nothing when the dependents are already up to date', () => {
-        const { bridge, layerO } = setUp();
+        const { bridge, layerO: drawingO } = setUp();
         const source = {
             glyphName: 'o',
-            layerId: layerO.id,
+            layerId: drawingO.id,
             editKinds: new Set(['anchor'])
         };
 

@@ -6,11 +6,11 @@
 import { expect, type Page } from '@playwright/test';
 import { rectLineNodes } from './babelfont-test-data';
 
-export const FUZZ_MASTERS = [
+export const FUZZ_STATIONS = [
     { id: 'M1', wght: 100 },
     { id: 'M2', wght: 900 }
 ] as const;
-export type FuzzMasterId = (typeof FUZZ_MASTERS)[number]['id'];
+export type FuzzStationId = (typeof FUZZ_STATIONS)[number]['id'];
 
 /** Location the compiled outlines are compared at (between the masters). */
 export const FUZZ_COMPARE_LOCATION = { wght: 500 };
@@ -103,7 +103,7 @@ export const FUZZ_METRICS_KEYS: Array<
 ];
 
 type Rect = [number, number, number, number];
-type MasterShapes = { rects: Rect[]; width: number; anchors?: Anchor[] };
+type StationShapes = { rects: Rect[]; width: number; anchors?: Anchor[] };
 type Anchor = { name: string; x: number; y: number };
 
 function rectPath([x0, y0, x1, y1]: Rect) {
@@ -116,19 +116,19 @@ function rectPath([x0, y0, x1, y1]: Rect) {
 function outlineGlyph(
     name: string,
     codepoints: number[],
-    perMaster: Record<FuzzMasterId, MasterShapes>,
+    perStation: Record<FuzzStationId, StationShapes>,
     options: { category?: string; formatSpecific?: Record<string, string> } = {}
 ) {
     return {
         name,
         category: options.category ?? 'Base',
         ...(codepoints.length ? { codepoints } : {}),
-        layers: FUZZ_MASTERS.map(({ id }) => ({
-            width: perMaster[id].width,
+        layers: FUZZ_STATIONS.map(({ id }) => ({
+            width: perStation[id].width,
             id,
             master: { type: 'DefaultForMaster', master: id },
-            shapes: perMaster[id].rects.map(rectPath),
-            anchors: perMaster[id].anchors ?? [],
+            shapes: perStation[id].rects.map(rectPath),
+            anchors: perStation[id].anchors ?? [],
             guides: [],
             format_specific: {}
         })),
@@ -155,7 +155,7 @@ function component(reference: string, x: number, y: number) {
 
 /** Two-master font: line-only contours, so bounds equal node extremes. */
 export function makeFuzzFontJson(familyName: string): string {
-    const bases: Record<string, Record<FuzzMasterId, MasterShapes>> = {
+    const bases: Record<string, Record<FuzzStationId, StationShapes>> = {
         l: {
             M1: { rects: [[80, 0, 140, 700]], width: 220 },
             M2: { rects: [[80, 0, 220, 700]], width: 300 }
@@ -231,7 +231,7 @@ export function makeFuzzFontJson(familyName: string): string {
             }
         }
     };
-    const marks: Record<string, Record<FuzzMasterId, MasterShapes>> = {
+    const marks: Record<string, Record<FuzzStationId, StationShapes>> = {
         dieresiscomb: {
             M1: {
                 rects: [
@@ -318,7 +318,7 @@ export function makeFuzzFontJson(familyName: string): string {
         name,
         category: 'Base',
         codepoints: codepoints[name],
-        layers: FUZZ_MASTERS.map(({ id }) => {
+        layers: FUZZ_STATIONS.map(({ id }) => {
             const top = bases[base][id].anchors![0];
             return {
                 width: bases[base][id].width,
@@ -342,13 +342,13 @@ export function makeFuzzFontJson(familyName: string): string {
     });
     const glyphs = [
         notdef,
-        ...Object.entries(bases).map(([name, perMaster]) =>
-            outlineGlyph(name, codepoints[name], perMaster, {
+        ...Object.entries(bases).map(([name, perStation]) =>
+            outlineGlyph(name, codepoints[name], perStation, {
                 formatSpecific: metricsFormatSpecific(name)
             })
         ),
-        ...Object.entries(marks).map(([name, perMaster]) =>
-            outlineGlyph(name, codepoints[name], perMaster, {
+        ...Object.entries(marks).map(([name, perStation]) =>
+            outlineGlyph(name, codepoints[name], perStation, {
                 category: 'Mark'
             })
         ),
@@ -359,7 +359,7 @@ export function makeFuzzFontJson(familyName: string): string {
             name: 'adieresis.ss01',
             category: 'Base',
             codepoints: codepoints['adieresis.ss01'],
-            layers: FUZZ_MASTERS.map(({ id }) => ({
+            layers: FUZZ_STATIONS.map(({ id }) => ({
                 width: bases.a[id].width,
                 id,
                 master: { type: 'DefaultForMaster', master: id },
@@ -385,7 +385,7 @@ export function makeFuzzFontJson(familyName: string): string {
             }
         ],
         instances: [],
-        masters: FUZZ_MASTERS.map(({ id, wght }) => ({
+        masters: FUZZ_STATIONS.map(({ id, wght }) => ({
             name: { dflt: id === 'M1' ? 'Light' : 'Bold' },
             id,
             location: { wght },
@@ -457,7 +457,8 @@ export async function waitForAutomaticComposites(page: Page) {
             const font = (window as any).currentFontModel;
             return names.every((name: string) =>
                 (font?.findGlyph?.(name)?.layers ?? []).every(
-                    (layer: any) => layer?.isAutomaticAlignedLayer?.() === true
+                    (drawing: any) =>
+                        drawing?.isAutomaticAlignedDrawing?.() === true
                 )
             );
         },
@@ -507,7 +508,7 @@ export async function readFuzzSnapshot(page: Page): Promise<FuzzSnapshot> {
                     closed: path?.closed !== false
                 };
             };
-            const layer = (item: any) => ({
+            const drawing = (item: any) => ({
                 width: round(item.width),
                 shapes: (item.shapes ?? []).map(shape),
                 anchors: (item.anchors ?? [])
@@ -551,18 +552,18 @@ export async function readFuzzSnapshot(page: Page): Promise<FuzzSnapshot> {
                         ? Object.fromEntries(
                               (glyph.layers ?? []).map((item: any) => [
                                   item.id,
-                                  layer(item)
+                                  drawing(item)
                               ])
                           )
                         : null;
                 }
-                for (const master of font?.masters ?? []) {
-                    kerning[master.id] = { ...(master.kerning ?? {}) };
+                for (const station of font?.masters ?? []) {
+                    kerning[station.id] = { ...(station.kerning ?? {}) };
                 }
             }
-            for (const masterId of Object.keys(kerning)) {
-                kerning[masterId] = Object.fromEntries(
-                    Object.entries(kerning[masterId])
+            for (const stationId of Object.keys(kerning)) {
+                kerning[stationId] = Object.fromEntries(
+                    Object.entries(kerning[stationId])
                         .filter(([, value]) => value !== 0 && value != null)
                         .sort(([left], [right]) => left.localeCompare(right))
                         .map(([pair, value]) => [pair, round(value) as number])
@@ -582,9 +583,11 @@ export async function readFuzzSnapshot(page: Page): Promise<FuzzSnapshot> {
 export async function openFuzzGlyph(
     page: Page,
     glyphName: string,
-    masterId: FuzzMasterId
+    stationId: FuzzStationId
 ) {
-    const wght = FUZZ_MASTERS.find((master) => master.id === masterId)!.wght;
+    const wght = FUZZ_STATIONS.find(
+        (station) => station.id === stationId
+    )!.wght;
     await page.evaluate(
         async ({ text, name, location }) => {
             const w = window as any;
@@ -604,7 +607,7 @@ export async function openFuzzGlyph(
             axes?.setVariation?.('wght', location);
             axes?.call?.('onSliderChange', 'wght', location);
             await canvas.doUIUpdateAsync?.();
-            await canvas.outlineEditor.autoSelectMatchingLayer?.();
+            await canvas.outlineEditor.autoSelectMatchingDrawing?.();
             await canvas.doUIUpdateAsync?.();
         },
         { text: FUZZ_TEXT, name: glyphName, location: wght }
@@ -617,21 +620,21 @@ export async function openFuzzGlyph(
                         const editor = (window as any).glyphCanvas
                             ?.outlineEditor;
                         return editor?.currentGlyphName === name
-                            ? editor.selectedLayerId
+                            ? editor.selectedDrawingId
                             : null;
                     },
                     { name: glyphName }
                 ),
-            { timeout: 15000, message: `open ${glyphName} at ${masterId}` }
+            { timeout: 15000, message: `open ${glyphName} at ${stationId}` }
         )
-        .toBe(masterId);
+        .toBe(stationId);
 }
 
 export type FuzzEdit =
     | {
           kind: 'outline';
           glyph: string;
-          master: FuzzMasterId;
+          master: FuzzStationId;
           shape: number;
           node: number;
           dx: number;
@@ -640,30 +643,30 @@ export type FuzzEdit =
     | {
           kind: 'anchor';
           glyph: string;
-          master: FuzzMasterId;
+          master: FuzzStationId;
           anchor: string;
           dx: number;
           dy: number;
       }
-    | { kind: 'width'; glyph: string; master: FuzzMasterId; dw: number }
+    | { kind: 'width'; glyph: string; master: FuzzStationId; dw: number }
     | {
           kind: 'align';
           glyph: string;
-          master: FuzzMasterId;
+          master: FuzzStationId;
           automatic: boolean;
       }
-    | { kind: 'kern'; master: FuzzMasterId; pair: string; value: number }
-    | { kind: 'kern-delete'; master: FuzzMasterId; pair: string }
+    | { kind: 'kern'; master: FuzzStationId; pair: string; value: number }
+    | { kind: 'kern-delete'; master: FuzzStationId; pair: string }
     | {
           kind: 'kern-group';
-          master: FuzzMasterId;
+          master: FuzzStationId;
           glyph: string;
           group: string;
           include: boolean;
       }
-    | { kind: 'feature'; master: FuzzMasterId; value: number }
-    | { kind: 'unicode'; master: FuzzMasterId; glyph: string; add: boolean }
-    | { kind: 'undo' | 'redo'; glyph: string; master: FuzzMasterId };
+    | { kind: 'feature'; master: FuzzStationId; value: number }
+    | { kind: 'unicode'; master: FuzzStationId; glyph: string; add: boolean }
+    | { kind: 'undo' | 'redo'; glyph: string; master: FuzzStationId };
 
 export function describeFuzzEdit(edit: FuzzEdit): string {
     switch (edit.kind) {
@@ -752,7 +755,7 @@ export async function applyFuzzEdit(
                     );
                 }
             } else if (step.kind === 'kern-delete') {
-                const master = font.masters.find(
+                const station = font.masters.find(
                     (item: any) => item.id === step.master
                 );
                 transact(
@@ -760,9 +763,9 @@ export async function applyFuzzEdit(
                     'keyboard-kerning-value',
                     'kerning-value',
                     () => {
-                        const next = { ...master.kerning };
+                        const next = { ...station.kerning };
                         delete next[step.pair];
-                        master.kerning = next;
+                        station.kerning = next;
                     }
                 );
             } else if (step.kind === 'kern-group') {
@@ -849,7 +852,7 @@ export async function applyFuzzEdit(
                     glyph.codepoints = next.length ? next : undefined;
                 });
             } else if (step.kind === 'kern') {
-                const master = font.masters.find(
+                const station = font.masters.find(
                     (item: any) => item.id === step.master
                 );
                 transact(
@@ -857,25 +860,25 @@ export async function applyFuzzEdit(
                     'keyboard-kerning-value',
                     'kerning-value',
                     () => {
-                        master.kerning = {
-                            ...master.kerning,
+                        station.kerning = {
+                            ...station.kerning,
                             [step.pair]: step.value
                         };
                     }
                 );
             } else {
-                const layer = font
+                const drawing = font
                     .findGlyph(step.glyph)
-                    .findLayerById(step.master);
+                    .findDrawingById(step.master);
                 if (step.kind === 'outline') {
-                    const node = layer.paths[step.shape].nodes[step.node];
+                    const node = drawing.paths[step.shape].nodes[step.node];
                     transact('Move point', 'keyboard-outline', null, () => {
                         node.x = node.x + step.dx;
                         node.y = node.y + step.dy;
                     });
                 } else if (step.kind === 'width') {
                     transact('Set width', 'keyboard-sidebearing', null, () => {
-                        layer.width = layer.width + step.dw;
+                        drawing.width = drawing.width + step.dw;
                     });
                 } else if (step.kind === 'align') {
                     transact(
@@ -883,7 +886,7 @@ export async function applyFuzzEdit(
                         'component-property',
                         null,
                         () => {
-                            for (const shape of layer.shapes) {
+                            for (const shape of drawing.shapes) {
                                 const component = shape.asComponent?.();
                                 if (component) {
                                     component.automaticAlignment =
@@ -891,14 +894,14 @@ export async function applyFuzzEdit(
                                 }
                             }
                             if (step.automatic) {
-                                layer.rebuildAutomaticComposition();
+                                drawing.rebuildAutomaticComposition();
                             }
                         }
                     );
                 } else if (step.kind === 'anchor') {
                     // The canvas anchor drag: move, recompose the automatic
                     // composites built on it, then sync the changed layers.
-                    const anchor = layer.anchors.find(
+                    const anchor = drawing.anchors.find(
                         (item: any) => item.name === step.anchor
                     );
                     const affected = new Set<string>([step.glyph]);
@@ -920,7 +923,7 @@ export async function applyFuzzEdit(
                         glyphName,
                         layerId: step.master
                     }));
-                    w.changeBridge.syncLayersFromJson(
+                    w.changeBridge.syncDrawingsFromJson(
                         targets,
                         'Drag anchor',
                         undefined,
@@ -1036,16 +1039,16 @@ export async function readCompositionMismatches(page: Page): Promise<string[]> {
             const font = (window as any).currentFontModel;
             const mismatches: string[] = [];
             for (const name of names) {
-                for (const layer of font?.findGlyph?.(name)?.layers ?? []) {
-                    if (!layer.isAutomaticAlignedLayer?.()) {
+                for (const drawing of font?.findGlyph?.(name)?.layers ?? []) {
+                    if (!drawing.isAutomaticAlignedDrawing?.()) {
                         continue;
                     }
-                    layer.invalidateLayoutCache?.();
-                    const layout = layer.getAutomaticCompositionLayout?.();
+                    drawing.invalidateLayoutCache?.();
+                    const layout = drawing.getAutomaticCompositionLayout?.();
                     if (!layout) {
                         continue;
                     }
-                    layer.components.forEach(
+                    drawing.components.forEach(
                         (component: any, index: number) => {
                             const placement = layout.placements?.[index];
                             if (!placement) {
@@ -1059,19 +1062,19 @@ export async function readCompositionMismatches(page: Page): Promise<string[]> {
                                 Math.abs(y - placement.translationY) > 0.5
                             ) {
                                 mismatches.push(
-                                    `${name}/${layer.id} component ${index} at (${x}, ${y}), recomposes to (${placement.translationX}, ${placement.translationY})`
+                                    `${name}/${drawing.id} component ${index} at (${x}, ${y}), recomposes to (${placement.translationX}, ${placement.translationY})`
                                 );
                             }
                         }
                     );
                     const width =
-                        layer.getAutomaticCompositionDerivedWidth?.(layout);
+                        drawing.getAutomaticCompositionDerivedWidth?.(layout);
                     if (
                         typeof width === 'number' &&
-                        Math.abs(layer.width - width) > 0.5
+                        Math.abs(drawing.width - width) > 0.5
                     ) {
                         mismatches.push(
-                            `${name}/${layer.id} width ${layer.width}, recomposes to ${width}`
+                            `${name}/${drawing.id} width ${drawing.width}, recomposes to ${width}`
                         );
                     }
                 }
@@ -1084,9 +1087,9 @@ export async function readCompositionMismatches(page: Page): Promise<string[]> {
 
 /** Keyed sidebearings that no longer match their source glyph. */
 export function metricsKeyMismatches(snapshot: FuzzSnapshot): string[] {
-    const bounds = (glyph: string, master: string) => {
-        const layer = (snapshot.glyphs[glyph] as any)?.[master];
-        const xs = (layer?.shapes ?? []).flatMap((shape: any) =>
+    const bounds = (glyph: string, station: string) => {
+        const drawing = (snapshot.glyphs[glyph] as any)?.[station];
+        const xs = (drawing?.shapes ?? []).flatMap((shape: any) =>
             (shape.nodes ?? []).map((node: any) => node[0])
         );
         if (!xs.length) {
@@ -1094,11 +1097,11 @@ export function metricsKeyMismatches(snapshot: FuzzSnapshot): string[] {
         }
         return {
             left: Math.min(...xs),
-            right: layer.width - Math.max(...xs)
+            right: drawing.width - Math.max(...xs)
         };
     };
     const mismatches: string[] = [];
-    for (const { id } of FUZZ_MASTERS) {
+    for (const { id } of FUZZ_STATIONS) {
         for (const [glyph, side, source, offset] of FUZZ_METRICS_KEYS) {
             const keyed = bounds(glyph, id);
             const from = bounds(source, id);

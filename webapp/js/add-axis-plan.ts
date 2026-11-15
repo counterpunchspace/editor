@@ -1,18 +1,18 @@
 /**
  * State and rules behind the Add axis dialog: where copies of the existing
- * masters go on a new axis, how they are named, validation, and the plan the
+ * stations go on a new axis, how they are named, validation, and the plan the
  * worker turns into one batch. No DOM here, so it can be unit-tested.
  */
 
 import type { Babelfont } from './babelfont';
-import type { AxisMasterCopyPlan } from './babelfont-model';
+import type { AxisStationCopyPlan } from './babelfont-model';
 import { AXIS_REGISTRY, type RegisteredAxis } from './generated/axis-registry';
 
 export type Side = 'min' | 'max';
 export type Direction = 'below' | 'both' | 'above';
 export type DefaultChoice = 'existing' | Side;
 
-export type AxisDialogMaster = {
+export type AxisDialogStation = {
     id: string;
     name: string;
     location: Record<string, number>;
@@ -21,13 +21,13 @@ export type AxisDialogMaster = {
 /** What the dialog needs to know about the open font. */
 export type AxisDialogFont = {
     axes: Array<{ tag: string; name: string }>;
-    masters: AxisDialogMaster[];
-    defaultMasterId: string;
+    masters: AxisDialogStation[];
+    defaultStationId: string;
     glyphCount: number;
-    /** Glyphs with intermediate (brace) layers. */
+    /** Glyphs with free drawings (brace layers in Glyphs). */
     braceGlyphCount: number;
-    /** Intermediate layers in the whole font. */
-    braceLayerCount: number;
+    /** Free drawings in the whole font. */
+    freeDrawingCount: number;
     instanceCount: number;
 };
 
@@ -102,7 +102,7 @@ export function listShort(names: string[], max = 3): string {
         : `${names.slice(0, max).join(', ')} and ${names.length - max} more`;
 }
 
-/** A short list of names, otherwise a count: "Light and Bold" / "18 masters". */
+/** A short list of names, otherwise a count: "Light and Bold" / "18 stations". */
 export function namesOrCount(names: string[], noun: string, max = 5): string {
     return names.length <= max ? listNames(names) : `${names.length} ${noun}`;
 }
@@ -135,7 +135,7 @@ export function axisMenuEntries(): {
 
 export class AddAxisModel {
     readonly font: AxisDialogFont;
-    readonly defaultMaster: AxisDialogMaster;
+    readonly defaultStation: AxisDialogStation;
     key = CUSTOM_AXIS_KEY;
     registry: RegisteredAxis = CUSTOM_AXIS;
     direction: Direction = 'above';
@@ -149,17 +149,17 @@ export class AddAxisModel {
     newUser: Partial<Record<Side, number>> = {};
     suffixEdited: Partial<Record<Side, string>> = {};
     copyKerning = true;
-    copyIntermediateLayers = true;
+    copyFreeDrawings = true;
     copyInstances = false;
     private cells = new Map<string, Cell>();
     private readonly fontTags: Set<string>;
 
     constructor(font: AxisDialogFont) {
         this.font = font;
-        // A font without masters still gets a placeholder so names and
+        // A font without stations still gets a placeholder so names and
         // defaults resolve; the dialog then only offers the axis itself.
-        this.defaultMaster = font.masters.find(
-            (master) => master.id === font.defaultMasterId
+        this.defaultStation = font.masters.find(
+            (station) => station.id === font.defaultStationId
         ) ??
             font.masters[0] ?? { id: '', name: '', location: {} };
         this.fontTags = new Set(font.axes.map((axis) => axis.tag));
@@ -338,10 +338,10 @@ export class AddAxisModel {
         }
     }
 
-    // ---------- cells (one per existing master and side) ----------
+    // ---------- cells (one per existing station and side) ----------
 
-    cell(masterId: string, side: Side): Cell {
-        const key = `${masterId}:${side}`;
+    cell(stationId: string, side: Side): Cell {
+        const key = `${stationId}:${side}`;
         let cell = this.cells.get(key);
         if (!cell) {
             cell = { on: true, name: null, value: null, user: null };
@@ -350,13 +350,13 @@ export class AddAxisModel {
         return cell;
     }
 
-    cellValue(masterId: string, side: Side): number {
-        return this.cell(masterId, side).value ?? this.columnValue(side);
+    cellValue(stationId: string, side: Side): number {
+        return this.cell(stationId, side).value ?? this.columnValue(side);
     }
 
-    cellUser(masterId: string, side: Side): number {
-        const cell = this.cell(masterId, side);
-        const value = this.cellValue(masterId, side);
+    cellUser(stationId: string, side: Side): number {
+        const cell = this.cell(stationId, side);
+        const value = this.cellValue(stationId, side);
         if (!this.separate) {
             return value;
         }
@@ -367,7 +367,7 @@ export class AddAxisModel {
             return this.columnUser(side);
         }
         // A copy moved off its column sits on the line through the existing
-        // masters and the column.
+        // stations and the column.
         const e = this.existingAt;
         const eu = this.existingUserValue();
         const d = this.columnValue(side);
@@ -378,41 +378,41 @@ export class AddAxisModel {
                   100;
     }
 
-    isCustomValue(masterId: string, side: Side): boolean {
-        const cell = this.cell(masterId, side);
+    isCustomValue(stationId: string, side: Side): boolean {
+        const cell = this.cell(stationId, side);
         return cell.value !== null && cell.value !== this.columnValue(side);
     }
 
-    setCellValue(masterId: string, side: Side, value: number): void {
-        this.cell(masterId, side).value =
+    setCellValue(stationId: string, side: Side, value: number): void {
+        this.cell(stationId, side).value =
             value === this.columnValue(side) ? null : value;
     }
 
-    setCellName(masterId: string, side: Side, name: string): void {
-        const master = this.masterById(masterId);
-        this.cell(masterId, side).name =
-            master && name === this.autoName(master, side) ? null : name;
+    setCellName(stationId: string, side: Side, name: string): void {
+        const station = this.stationById(stationId);
+        this.cell(stationId, side).name =
+            station && name === this.autoName(station, side) ? null : name;
     }
 
-    resetCell(masterId: string, side: Side): void {
-        const cell = this.cell(masterId, side);
+    resetCell(stationId: string, side: Side): void {
+        const cell = this.cell(stationId, side);
         cell.value = null;
         cell.name = null;
         cell.user = null;
     }
 
     setColumnOn(side: Side, on: boolean): void {
-        for (const master of this.font.masters) {
-            this.cell(master.id, side).on = on;
+        for (const station of this.font.masters) {
+            this.cell(station.id, side).on = on;
         }
     }
 
-    masterById(id: string): AxisDialogMaster | undefined {
-        return this.font.masters.find((master) => master.id === id);
+    stationById(id: string): AxisDialogStation | undefined {
+        return this.font.masters.find((station) => station.id === id);
     }
 
-    /** Masters in designspace order: by the font's axes, in axis order. */
-    sortedMasters(): AxisDialogMaster[] {
+    /** Stations in designspace order: by the font's axes, in axis order. */
+    sortedStations(): AxisDialogStation[] {
         return [...this.font.masters].sort((a, b) => {
             for (const axis of this.font.axes) {
                 const delta =
@@ -425,12 +425,12 @@ export class AddAxisModel {
         });
     }
 
-    locationText(master: AxisDialogMaster): string {
+    locationText(station: AxisDialogStation): string {
         return this.font.axes.length
             ? this.font.axes
                   .map(
                       (axis) =>
-                          `${axis.tag} ${formatNumber(master.location[axis.tag] ?? 0)}`
+                          `${axis.tag} ${formatNumber(station.location[axis.tag] ?? 0)}`
                   )
                   .join(' · ')
             : 'No axes yet';
@@ -497,41 +497,41 @@ export class AddAxisModel {
     }
 
     /** "Light" → "Light Expanded"; "Regular" → "Expanded"; "Regular Text" → "Text Expanded". */
-    autoName(master: AxisDialogMaster, side: Side): string {
-        const words = master.name
+    autoName(station: AxisDialogStation, side: Side): string {
+        const words = station.name
             .split(/\s+/)
             .filter((word) => word && word !== 'Regular');
         return [...words, this.suffix(side)].join(' ').trim();
     }
 
-    cellName(master: AxisDialogMaster, side: Side): string {
-        return this.cell(master.id, side).name ?? this.autoName(master, side);
+    cellName(station: AxisDialogStation, side: Side): string {
+        return this.cell(station.id, side).name ?? this.autoName(station, side);
     }
 
-    newMasters(): Array<{
-        master: AxisDialogMaster;
+    newStations(): Array<{
+        master: AxisDialogStation;
         side: Side;
         name: string;
     }> {
-        const sorted = this.sortedMasters();
+        const sorted = this.sortedStations();
         return this.sides().flatMap((side) =>
             sorted
-                .filter((master) => this.cell(master.id, side).on)
-                .map((master) => ({
-                    master,
+                .filter((station) => this.cell(station.id, side).on)
+                .map((station) => ({
+                    master: station,
                     side,
-                    name: this.cellName(master, side)
+                    name: this.cellName(station, side)
                 }))
         );
     }
 
-    // ---------- default master and axis ----------
+    // ---------- default station and axis ----------
 
     defaultChoiceValid(choice: DefaultChoice): boolean {
         return (
             choice === 'existing' ||
             (this.sides().includes(choice) &&
-                this.cell(this.defaultMaster.id, choice).on)
+                this.cell(this.defaultStation.id, choice).on)
         );
     }
 
@@ -546,13 +546,13 @@ export class AddAxisModel {
             {
                 d: this.existingAt,
                 u: this.existingUserValue(),
-                name: 'Your masters'
+                name: 'Your stations'
             }
         ];
-        for (const { master, side, name } of this.newMasters()) {
+        for (const { master: station, side, name } of this.newStations()) {
             points.push({
-                d: this.cellValue(master.id, side),
-                u: this.cellUser(master.id, side),
+                d: this.cellValue(station.id, side),
+                u: this.cellUser(station.id, side),
                 name
             });
         }
@@ -574,7 +574,7 @@ export class AddAxisModel {
         const def =
             choice === 'existing'
                 ? this.existingUserValue()
-                : this.cellUser(this.defaultMaster.id, choice);
+                : this.cellUser(this.defaultStation.id, choice);
         const map: Array<{ d: number; u: number }> = [];
         for (const point of points) {
             if (!map.some((q) => q.d === point.d)) {
@@ -591,19 +591,19 @@ export class AddAxisModel {
 
     /** Userspace table rows: one per distinct position, listing who sits there. */
     mapRows(): MapRow[] {
-        const sorted = this.sortedMasters();
+        const sorted = this.sortedStations();
         const rows: MapRow[] = [
             {
                 key: 'existing',
                 position: this.existingAt,
                 user: this.existingUserValue(),
-                names: sorted.map((master) => master.name),
+                names: sorted.map((station) => station.name),
                 all: true
             }
         ];
         for (const side of this.sides()) {
-            const onColumn = sorted.filter((master) => {
-                const cell = this.cell(master.id, side);
+            const onColumn = sorted.filter((station) => {
+                const cell = this.cell(station.id, side);
                 return cell.on && cell.value === null && cell.user === null;
             });
             if (onColumn.length) {
@@ -611,20 +611,20 @@ export class AddAxisModel {
                     key: `col:${side}`,
                     position: this.columnValue(side),
                     user: this.columnUser(side),
-                    names: onColumn.map((master) =>
-                        this.cellName(master, side)
+                    names: onColumn.map((station) =>
+                        this.cellName(station, side)
                     ),
                     all: false
                 });
             }
-            for (const master of sorted) {
-                const cell = this.cell(master.id, side);
+            for (const station of sorted) {
+                const cell = this.cell(station.id, side);
                 if (cell.on && (cell.value !== null || cell.user !== null)) {
                     rows.push({
-                        key: `cell:${master.id}:${side}`,
-                        position: this.cellValue(master.id, side),
-                        user: this.cellUser(master.id, side),
-                        names: [this.cellName(master, side)],
+                        key: `cell:${station.id}:${side}`,
+                        position: this.cellValue(station.id, side),
+                        user: this.cellUser(station.id, side),
+                        names: [this.cellName(station, side)],
                         all: false
                     });
                 }
@@ -639,8 +639,8 @@ export class AddAxisModel {
         } else if (key.startsWith('col:')) {
             this.newUser[key.slice(4) as Side] = value;
         } else if (key.startsWith('cell:')) {
-            const [masterId, side] = key.slice(5).split(':');
-            this.cell(masterId, side as Side).user = value;
+            const [stationId, side] = key.slice(5).split(':');
+            this.cell(stationId, side as Side).user = value;
         }
     }
 
@@ -667,19 +667,19 @@ export class AddAxisModel {
             notes.errors[1].push('Give the axis a name.');
         }
         if (!Number.isFinite(existing)) {
-            notes.errors[2].push('Enter where your masters stay.');
+            notes.errors[2].push('Enter where your stations stay.');
         }
-        // Problems with many masters are grouped into one message per side.
+        // Problems with many stations are grouped into one message per side.
         const unnamed: string[] = [];
         for (const side of this.sides()) {
             const wrong: string[] = [];
-            for (const master of this.font.masters) {
-                const cell = this.cell(master.id, side);
+            for (const station of this.font.masters) {
+                const cell = this.cell(station.id, side);
                 if (!cell.on) {
                     continue;
                 }
-                const value = this.cellValue(master.id, side);
-                const key = `${master.id}:${side}`;
+                const value = this.cellValue(station.id, side);
+                const key = `${station.id}:${side}`;
                 const outOfSide =
                     !Number.isFinite(value) ||
                     (Number.isFinite(existing) &&
@@ -687,11 +687,11 @@ export class AddAxisModel {
                             ? value >= existing
                             : value <= existing));
                 if (outOfSide) {
-                    wrong.push(this.cellName(master, side) || master.name);
+                    wrong.push(this.cellName(station, side) || station.name);
                     notes.bad.add(key);
                 }
                 if (cell.name !== null && !cell.name.trim()) {
-                    unnamed.push(master.name);
+                    unnamed.push(station.name);
                     notes.bad.add(`n:${key}`);
                 }
             }
@@ -704,13 +704,13 @@ export class AddAxisModel {
                     `${listShort(wrong)}: ${this.sideWord(side).toLowerCase()} copies need a position ${limit}.`
                 );
             }
-            const skipped = this.sortedMasters().filter(
-                (master) => !this.cell(master.id, side).on
+            const skipped = this.sortedStations().filter(
+                (station) => !this.cell(station.id, side).on
             );
             if (skipped.length && skipped.length < this.font.masters.length) {
                 const several = skipped.length > 1;
                 notes.warnings[2].push(
-                    `${listShort(skipped.map((m) => m.name))} ${several ? 'get' : 'gets'} no ${this.sideWord(side).toLowerCase()} copy. ${several ? 'Those masters are' : 'That master is'} filled in there by interpolating the copies you do add.`
+                    `${listShort(skipped.map((m) => m.name))} ${several ? 'get' : 'gets'} no ${this.sideWord(side).toLowerCase()} copy. ${several ? 'Those stations are' : 'That station is'} filled in there by interpolating the copies you do add.`
                 );
             }
         }
@@ -722,7 +722,7 @@ export class AddAxisModel {
         if (this.separate) {
             if (!Number.isFinite(this.existingUserValue())) {
                 notes.errors[3].push(
-                    'Enter a userspace value for your masters.'
+                    'Enter a userspace value for your stations.'
                 );
             }
             const points = this.mapPoints();
@@ -756,13 +756,13 @@ export class AddAxisModel {
 
     // ---------- result ----------
 
-    /** The axis record. Without masters it spans the chosen positions anyway. */
-    axisRecord(withMasters: boolean): Babelfont.Axis {
+    /** The axis record. Without stations it spans the chosen positions anyway. */
+    axisRecord(withStations: boolean): Babelfont.Axis {
         // Every axis carries a map: Font info reads designspace min, default
         // and max from it. Without separate userspace values it is identity.
         let points = this.deriveAxis().map;
         let def = this.deriveAxis().default;
-        if (!withMasters) {
+        if (!withStations) {
             points = [
                 { d: this.existingAt, u: this.existingUserValue() },
                 ...this.sides().map((side) => ({
@@ -787,15 +787,15 @@ export class AddAxisModel {
 
     /**
      * Builds the batch plan from the font's own records. Copies take metrics,
-     * custom values and format data from their source master; kerning and
+     * custom values and format data from their source station; kerning and
      * guides only when asked.
      */
     buildPlan(
         axes: Babelfont.Axis[],
-        masters: Babelfont.Master[],
+        stations: Babelfont.Master[],
         instances: Babelfont.Instance[],
         newId: () => string
-    ): { plan: AxisMasterCopyPlan; masterCount: number } {
+    ): { plan: AxisStationCopyPlan; stationCount: number } {
         const tag = this.tag;
         const withTag = <T extends { location?: Babelfont.Master['location'] }>(
             record: T,
@@ -804,16 +804,16 @@ export class AddAxisModel {
             ...record,
             location: { ...(record.location ?? {}), [tag]: value }
         });
-        const copies: AxisMasterCopyPlan['copies'] = [];
-        const nextMasters = masters.map((master) =>
-            withTag(cloneJson(master), this.existingAt)
+        const copies: AxisStationCopyPlan['copies'] = [];
+        const nextStations = stations.map((station) =>
+            withTag(cloneJson(station), this.existingAt)
         );
-        for (const { master, side, name } of this.newMasters()) {
-            const source = masters.find((record) => record.id === master.id);
+        for (const { master: station, side, name } of this.newStations()) {
+            const source = stations.find((record) => record.id === station.id);
             if (!source) {
                 continue;
             }
-            const value = this.cellValue(master.id, side);
+            const value = this.cellValue(station.id, side);
             const copy = withTag(cloneJson(source), value);
             copy.id = newId();
             copy.name = { dflt: name };
@@ -823,7 +823,7 @@ export class AddAxisModel {
                     Object.assign(copy, { kerning_rtl: {} });
                 }
             }
-            nextMasters.push(copy);
+            nextStations.push(copy);
             copies.push({
                 sourceMasterId: source.id,
                 newMasterId: copy.id,
@@ -867,14 +867,14 @@ export class AddAxisModel {
                     ...axes.map((axis) => cloneJson(axis)),
                     this.axisRecord(true)
                 ],
-                masters: nextMasters,
+                masters: nextStations,
                 instances: nextInstances,
                 axisTag: tag,
                 existingValue: this.existingAt,
                 copies,
-                copyIntermediateLayers: this.copyIntermediateLayers
+                copyIntermediateLayers: this.copyFreeDrawings
             },
-            masterCount: copies.length
+            stationCount: copies.length
         };
     }
 }

@@ -57,7 +57,7 @@ export type TourStage =
     | {
           kind: 'text';
           ss04: boolean;
-          /** Master to preview, or a `wght` location between masters. */
+          /** Station to preview, or a `wght` location between stations. */
           master?: string;
           wght?: number;
       }
@@ -115,7 +115,7 @@ export type TourSlide = {
     /**
      * While this slide is up, clamp a range input. Values at or below
      * `latchMaxWhenAtOrBelow` latch the high end so you cannot return to
-     * the start master location.
+     * the start station location.
      */
     axisClamp?: {
         selector: string;
@@ -134,7 +134,7 @@ export type TourSlide = {
     advanceOnNodeDrag?: boolean;
     /**
      * Wait after the slide's action before switching. Defaults to the
-     * spotlight apply delay (feature / master clicks).
+     * spotlight apply delay (feature / station clicks).
      */
     advanceDelayMs?: number;
     /**
@@ -144,12 +144,12 @@ export type TourSlide = {
     previewTextBeforeApply?: boolean;
     /**
      * Let the original click reach the app instead of intercepting and
-     * replaying `click()`. Use for layer rows whose handlers must run.
+     * replaying `click()`. Use for drawing rows whose handlers must run.
      */
     advanceOnClickPassThrough?: boolean;
     /**
      * Keep painting this slide’s cutouts while advancing so holes follow
-     * interpolation / layer-switch animation.
+     * interpolation / drawing-switch animation.
      */
     trackCutoutsWhileAdvancing?: boolean;
     /** Unmodified letter keys the tour key lock still lets through (`p`). */
@@ -177,15 +177,15 @@ export type TourSlide = {
 
 export const TOUR_FUSTAT_PATH = '/user/Fustat.glyphs';
 export const TOUR_SAMPLE_TEXT = 'hëllo مَرْحَباً';
-export const TOUR_REGULAR_MASTER_NAME = 'Regular';
-export const TOUR_EXTRABOLD_MASTER_NAME = 'ExtraBold';
+export const TOUR_REGULAR_STATION_NAME = 'Regular';
+export const TOUR_EXTRABOLD_STATION_NAME = 'ExtraBold';
 export const TOUR_SS04_BUTTON_SELECTOR = 'button[data-feature-tag="ss04"]';
 export const TOUR_EXTRABOLD_ITEM_SELECTOR =
-    '.editor-layer-item[data-tour-master="ExtraBold"]';
+    '.editor-drawing-item[data-tour-station="ExtraBold"]';
 export const TOUR_WGHT_SLIDER_SELECTOR =
     '.editor-axis-slider[data-axis-tag="wght"]';
-export const TOUR_LAYERS_WIDGET_SELECTOR =
-    '#glyph-properties-section .editor-layers-widget:not(.editor-feature-variations-widget)';
+export const TOUR_DRAWINGS_WIDGET_SELECTOR =
+    '#glyph-properties-section .editor-drawings-widget:not(.editor-feature-variations-widget)';
 export const TOUR_SELECT_TOOL_SELECTOR = '#editor-tool-select';
 export const TOUR_DRAW_TOOL_SELECTOR = '#editor-tool-pen';
 export const TOUR_INSERT_TOOL_SELECTOR = '#editor-tool-insert';
@@ -290,10 +290,10 @@ function scrollTourTargetIntoView(element: HTMLElement): void {
     }
 }
 
-function getMasterDisplayName(master: {
+function getStationDisplayName(station: {
     name?: string | { dflt?: string; en?: string };
 }): string {
-    const name = master.name;
+    const name = station.name;
     if (typeof name === 'string') {
         return name;
     }
@@ -306,39 +306,41 @@ function getMasterDisplayName(master: {
     return '';
 }
 
-function getFontMasters(): Array<{
+function getFontStations(): Array<{
     id?: string;
     name?: string | { dflt?: string; en?: string };
     location?: Record<string, number>;
 }> {
     const fontModel =
         window.currentFontModel || window.fontManager?.currentFont?.fontModel;
-    return fontModel?.masters || [];
+    return fontModel?.stations || [];
 }
 
-export async function selectTourMasterByName(name: string): Promise<void> {
+export async function selectTourStationByName(name: string): Promise<void> {
     const canvas = window.glyphCanvas;
-    const master = getFontMasters().find(
-        (entry) => getMasterDisplayName(entry) === name
+    const station = getFontStations().find(
+        (entry) => getStationDisplayName(entry) === name
     );
-    if (!master?.id || !canvas?.selectMaster) {
+    if (!station?.id || !canvas?.selectStation) {
         return;
     }
-    await canvas.selectMaster(master.id, master.location || {});
+    await canvas.selectStation(station.id, station.location || {});
 }
 
-function markMasterListItem(
+function markStationListItem(
     name: string,
     root: ParentNode = document
 ): HTMLElement | null {
-    const items = root.querySelectorAll('.editor-layer-item[data-master-id]');
+    const items = root.querySelectorAll(
+        '.editor-drawing-item[data-station-id]'
+    );
     for (const item of items) {
         if (!(item instanceof HTMLElement)) {
             continue;
         }
-        const label = item.querySelector('.master-item-name');
+        const label = item.querySelector('.station-item-name');
         if (label?.textContent?.trim() === name) {
-            item.setAttribute('data-tour-master', name);
+            item.setAttribute('data-tour-station', name);
             return item;
         }
     }
@@ -361,20 +363,20 @@ async function prepareSs04FeatureSlide(): Promise<void> {
     await delay(50);
 }
 
-async function waitForExtraBoldLayerItem(
+async function waitForExtraBoldDrawingItem(
     root: ParentNode = document
 ): Promise<HTMLElement | null> {
     const started = Date.now();
-    let item = markMasterListItem(TOUR_EXTRABOLD_MASTER_NAME, root);
+    let item = markStationListItem(TOUR_EXTRABOLD_STATION_NAME, root);
     while (!item && Date.now() - started < 8000) {
         await delay(50);
-        item = markMasterListItem(TOUR_EXTRABOLD_MASTER_NAME, root);
+        item = markStationListItem(TOUR_EXTRABOLD_STATION_NAME, root);
     }
     return item;
 }
 
-async function prepareMastersListSlide(): Promise<void> {
-    const item = await waitForExtraBoldLayerItem();
+async function prepareStationsListSlide(): Promise<void> {
+    const item = await waitForExtraBoldDrawingItem();
     if (item) {
         scrollTourTargetIntoView(item);
     }
@@ -623,16 +625,16 @@ function getWghtSliderAreaCutout(): TourCutoutRect | null {
 }
 
 async function prepareCantEditInterpolationsSlide(): Promise<void> {
-    await waitForElement(TOUR_LAYERS_WIDGET_SELECTOR);
+    await waitForElement(TOUR_DRAWINGS_WIDGET_SELECTOR);
     const widget =
-        document.querySelector(TOUR_LAYERS_WIDGET_SELECTOR) || document;
-    let item = await waitForExtraBoldLayerItem(widget);
+        document.querySelector(TOUR_DRAWINGS_WIDGET_SELECTOR) || document;
+    let item = await waitForExtraBoldDrawingItem(widget);
     if (item) {
         scrollTourTargetIntoView(item);
     }
     window.glyphCanvas?.handleCmdZeroFit?.();
     await delay(200);
-    item = markMasterListItem(TOUR_EXTRABOLD_MASTER_NAME, widget);
+    item = markStationListItem(TOUR_EXTRABOLD_STATION_NAME, widget);
     if (item) {
         scrollTourTargetIntoView(item);
     }
@@ -661,7 +663,7 @@ function getElementCutout(selector: string): TourCutoutRect | null {
     return getElementCutoutFromElement(document.querySelector(selector));
 }
 
-function extraBoldLayerCutout(id: string, rootSelector?: string): TourCutout {
+function extraBoldDrawingCutout(id: string, rootSelector?: string): TourCutout {
     return {
         id,
         padding: 10,
@@ -672,7 +674,7 @@ function extraBoldLayerCutout(id: string, rootSelector?: string): TourCutout {
             const root = rootSelector
                 ? document.querySelector(rootSelector) || document
                 : document;
-            const item = markMasterListItem(TOUR_EXTRABOLD_MASTER_NAME, root);
+            const item = markStationListItem(TOUR_EXTRABOLD_STATION_NAME, root);
             return getElementCutoutFromElement(item);
         }
     };
@@ -856,12 +858,12 @@ function prepareHandlesSlide(): void {
     prepareBackgroundGuideSlide();
 }
 
-const EDIT_L_MASTER: TourStage = { kind: 'edit-l', layer: 'master' };
+const EDIT_L_STATION: TourStage = { kind: 'edit-l', layer: 'master' };
 
 export const TOUR_SLIDES: Record<string, TourSlide> = {
     'text-mode': {
         id: 'text-mode',
-        stage: { kind: 'text', ss04: false, master: TOUR_REGULAR_MASTER_NAME },
+        stage: { kind: 'text', ss04: false, master: TOUR_REGULAR_STATION_NAME },
         tooltip: {
             title: 'Text Mode',
             body: 'In **Text Mode** you type the letters and words you want to design.',
@@ -881,7 +883,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'ss04-features': {
         id: 'ss04-features',
-        stage: { kind: 'text', ss04: false, master: TOUR_REGULAR_MASTER_NAME },
+        stage: { kind: 'text', ss04: false, master: TOUR_REGULAR_STATION_NAME },
         tooltip: {
             title: 'Active OpenType features',
             body: tourBody(
@@ -913,25 +915,29 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
             }
         ]
     },
-    'masters-list': {
-        id: 'masters-list',
-        stage: { kind: 'text', ss04: true, master: TOUR_REGULAR_MASTER_NAME },
+    'stations-list': {
+        id: 'stations-list',
+        stage: { kind: 'text', ss04: true, master: TOUR_REGULAR_STATION_NAME },
         tooltip: {
-            title: 'Masters List',
+            title: 'Stations List',
             body: tourBody(
-                'Choosing another master in the **Masters List** will preview the font in that designspace location.',
-                'Click on the ExtraBold master.'
+                'Choosing another station in the **Stations List** will preview the font at that designspace location.',
+                'Click on the ExtraBold station.'
             ),
-            targetCutoutId: 'extrabold-master',
+            targetCutoutId: 'extrabold-station',
             placement: 'right'
         },
         advanceOnClick: TOUR_EXTRABOLD_ITEM_SELECTOR,
-        prepare: prepareMastersListSlide,
-        cutouts: [extraBoldLayerCutout('extrabold-master')]
+        prepare: prepareStationsListSlide,
+        cutouts: [extraBoldDrawingCutout('extrabold-station')]
     },
     'axis-sliders': {
         id: 'axis-sliders',
-        stage: { kind: 'text', ss04: true, master: TOUR_EXTRABOLD_MASTER_NAME },
+        stage: {
+            kind: 'text',
+            ss04: true,
+            master: TOUR_EXTRABOLD_STATION_NAME
+        },
         tooltip: {
             title: 'Axis Sliders',
             body: tourBody(
@@ -987,8 +993,8 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
         tooltip: {
             title: 'Can’t Edit Interpolations',
             body: tourBody(
-                'Gray nodes mean that this is an **interpolation**, not a master layer, so you **can’t edit** this here. You need to return to a real master-bound layer to edit.',
-                'Click on the ExtraBold layer.'
+                'Gray nodes mean that this is an **interpolation**, not a drawing, so you **can’t edit** this here. You need to return to a real drawing to edit.',
+                'Click on the ExtraBold drawing.'
             ),
             targetCutoutId: 'letter-l',
             placement: 'right'
@@ -1001,12 +1007,15 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
         advanceDelayMs: 500,
         cutouts: [
             letterLCutout(false),
-            extraBoldLayerCutout('extrabold-layer', TOUR_LAYERS_WIDGET_SELECTOR)
+            extraBoldDrawingCutout(
+                'extrabold-drawing',
+                TOUR_DRAWINGS_WIDGET_SELECTOR
+            )
         ]
     },
     'select-tool': {
         id: 'select-tool',
-        stage: EDIT_L_MASTER,
+        stage: EDIT_L_STATION,
         tooltip: {
             title: 'Select Tool',
             body: tourBody(
@@ -1027,7 +1036,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'select-contour': {
         id: 'select-contour',
-        stage: EDIT_L_MASTER,
+        stage: EDIT_L_STATION,
         tooltip: {
             title: 'Select Contour',
             body: tourBody(
@@ -1071,7 +1080,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'draw-tool': {
         id: 'draw-tool',
-        stage: EDIT_L_MASTER,
+        stage: EDIT_L_STATION,
         tooltip: {
             title: 'Draw Tool',
             body: tourBody(
@@ -1094,7 +1103,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'convert-tool': {
         id: 'convert-tool',
-        stage: EDIT_L_MASTER,
+        stage: EDIT_L_STATION,
         tooltip: {
             title: 'Convert Tool',
             body: tourBody(
@@ -1117,7 +1126,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'smooth-curve-toggle': {
         id: 'smooth-curve-toggle',
-        stage: EDIT_L_MASTER,
+        stage: EDIT_L_STATION,
         tooltip: {
             title: 'Smooth Curve Toggle',
             body: tourBody(
@@ -1140,7 +1149,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'place-handles': {
         id: 'place-handles',
-        stage: EDIT_L_MASTER,
+        stage: EDIT_L_STATION,
         tooltip: {
             title: 'Curve Handles',
             body: tourBody(
@@ -1163,7 +1172,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
     },
     'component-glyphs': {
         id: 'component-glyphs',
-        stage: EDIT_L_MASTER,
+        stage: EDIT_L_STATION,
         tooltip: {
             title: 'Component Glyphs',
             body: tourAction('Double-click a component glyph to edit it.'),
@@ -1370,7 +1379,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
         tooltip: {
             title: 'Font Info Panel',
             body: tourBody(
-                'The **Font Info** panel contains the OpenType features, names, masters and axes and other metadata that are important for a font.',
+                'The **Font Info** panel contains the OpenType features, names, stations and axes and other metadata that are important for a font.',
                 'Press `Cmd/Ctrl+Shift+I` to open it.'
             ),
             targetCutoutId: 'fontinfo-title',
@@ -1497,7 +1506,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
         stage: { kind: 'panels' },
         tooltip: {
             title: 'History',
-            body: 'The **History** panel contains a timeline of all edits. You can undo them with `Cmd/Ctrl+Z`. Each edit has a context, called **undo surface**, and you can undo edits only from within the same undo surface. Example: Edits to a layer can only be undone when you’re back in the same layer.',
+            body: 'The **History** panel contains a timeline of all edits. You can undo them with `Cmd/Ctrl+Z`. Each edit has a context, called **undo surface**, and you can undo edits only from within the same undo surface. Example: Edits to a drawing can only be undone when you’re back in the same drawing.',
             targetCutoutId: 'history-panel',
             continueLabel: 'Continue',
             placement: 'top'
@@ -1529,7 +1538,7 @@ export const TOUR_SLIDES: Record<string, TourSlide> = {
 export const TOUR_SLIDE_ORDER: string[] = [
     'text-mode',
     'ss04-features',
-    'masters-list',
+    'stations-list',
     'axis-sliders',
     'enter-edit-mode',
     'cant-edit-interpolations',

@@ -160,7 +160,7 @@ json.dumps(found)
     async anchorPositions(requests: unknown[]): Promise<
         Array<{
             glyph_name: string;
-            master_id: string;
+            station_id: string;
             positions: Record<string, [number, number]>;
         }>
     > {
@@ -187,7 +187,7 @@ if missing and latin:
 json.dumps([
     {
         "glyph_name": row.get("glyph_name"),
-        "master_id": row.get("master_id"),
+        "station_id": row.get("station_id"),
         "positions": row.get("positions") or {},
     }
     for row in rows

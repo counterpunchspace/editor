@@ -253,11 +253,11 @@ async function compileFullFont(): Promise<{
             'Binary font export could not snapshot the committed font state.'
     });
     const compileFilters = await prepareCompileFilters(null);
-    if (compileFilters.layerUpdates.length > 0) {
+    if (compileFilters.drawingUpdates.length > 0) {
         await fullFontCompilation.sendMessage({
-            type: 'applyPreviewLayerOverlay',
-            layerUpdates: compileFilters.layerUpdates,
-            changedGlyphs: compileFilters.layerUpdates.map(
+            type: 'applyPreviewDrawingOverlay',
+            drawingUpdates: compileFilters.drawingUpdates,
+            changedGlyphs: compileFilters.drawingUpdates.map(
                 (update) => update.glyphName
             ),
             nonGlyphChangeHints: [],

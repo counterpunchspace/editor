@@ -284,7 +284,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
     test('local outline edits carry the glyph revision and write nothing to font-core', () => {
         const { bridge, font } = createEngine('writer');
         const packets = capturePackets(bridge);
-        font.findGlyph('B').layers[0].width = 777;
+        font.findGlyph('B').drawings[0].width = 777;
 
         const corePackets = packets.filter(
             (packet) => packet.documentId === FONT_CORE_DOCUMENT_ID
@@ -306,7 +306,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         const packets = capturePackets(writer.bridge);
 
         window.changeBridge = writer.bridge;
-        writer.font.findGlyph('B').layers[0].width = 777;
+        writer.font.findGlyph('B').drawings[0].width = 777;
 
         const glyphPackets = packets.filter(
             (packet) => packet.documentId === glyphDocumentId('id-b')
@@ -359,7 +359,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         const receiver = hydrateReceiverFromWriter(writer.bridge);
         const packets = capturePackets(writer.bridge);
         window.changeBridge = writer.bridge;
-        writer.font.findGlyph('B').layers[0].width = 777;
+        writer.font.findGlyph('B').drawings[0].width = 777;
         const glyphPacket = packets.filter(
             (packet) => packet.documentId === glyphDocumentId('id-b')
         )[0];
@@ -404,9 +404,9 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
     test('the feed echo of an older own revision changes nothing', () => {
         const { bridge, font } = createEngine('writer');
         const packets = capturePackets(bridge);
-        font.findGlyph('B').layers[0].width = 600;
+        font.findGlyph('B').drawings[0].width = 600;
         const first = revisionFor(bridge, 'id-b');
-        font.findGlyph('B').layers[0].width = 700;
+        font.findGlyph('B').drawings[0].width = 700;
         const second = revisionFor(bridge, 'id-b');
         expect(second).not.toBe(first);
         expect(packets.length).toBeGreaterThan(0);
@@ -441,7 +441,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         const { bridge, font } = createEngine('writer');
         const receiver = hydrateReceiverFromWriter(bridge);
         const packets = capturePackets(bridge);
-        font.findGlyph('B').layers[0].width = 777;
+        font.findGlyph('B').drawings[0].width = 777;
 
         const glyphIndex = packets.findIndex(
             (packet) => packet.documentId === glyphDocumentId('id-b')
@@ -481,8 +481,8 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
             compileChangeSource: 'test-sync',
             compileEditType: null
         });
-        font.findGlyph('A').layers[0].width = 111;
-        font.findGlyph('B').layers[0].width = 222;
+        font.findGlyph('A').drawings[0].width = 111;
+        font.findGlyph('B').drawings[0].width = 222;
         bridge.endTransaction();
 
         for (const glyphId of ['id-a', 'id-b']) {
@@ -510,8 +510,8 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
             compileChangeSource: 'test-sync',
             compileEditType: null
         });
-        font.findGlyph('A').layers[0].width = 111;
-        font.findGlyph('B').layers[0].width = 222;
+        font.findGlyph('A').drawings[0].width = 111;
+        font.findGlyph('B').drawings[0].width = 222;
         bridge.endTransaction();
         const revisionA = revisionFor(bridge, 'id-a');
         const revisionB = revisionFor(bridge, 'id-b');
@@ -599,7 +599,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         const writer = createEngine('writer');
         const receiver = hydrateReceiverFromWriter(writer.bridge);
         window.changeBridge = writer.bridge;
-        writer.font.findGlyph('B').layers[0].width = 777;
+        writer.font.findGlyph('B').drawings[0].width = 777;
         const liveTail = writer.bridge.encodeDocumentState(
             glyphDocumentId('id-b')
         );
@@ -632,7 +632,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
             committed.push({ entries, context })
         );
         window.changeBridge = writer.bridge;
-        writer.font.findGlyph('B').layers[0].width = 777;
+        writer.font.findGlyph('B').drawings[0].width = 777;
         const liveTail = writer.bridge.encodeDocumentState(
             glyphDocumentId('id-b')
         );
@@ -695,7 +695,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
             committed.push({ entries, context })
         );
         window.changeBridge = writer.bridge;
-        writer.font.masters[0].name = 'Bold';
+        writer.font.stations[0].name = 'Bold';
 
         receiver.applyDocumentCatchUp(
             FONT_CORE_DOCUMENT_ID,
@@ -726,7 +726,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
             glyphDocumentId('id-b')
         );
         window.changeBridge = writer.bridge;
-        writer.font.findGlyph('B').layers[0].width = 777;
+        writer.font.findGlyph('B').drawings[0].width = 777;
         const liveTail = writer.bridge.encodeDocumentState(
             glyphDocumentId('id-b')
         );
@@ -765,7 +765,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         const writer = createEngine('writer');
         const receiver = hydrateReceiverFromWriter(writer.bridge);
         window.changeBridge = writer.bridge;
-        writer.font.findGlyph('B').layers[0].width = 777;
+        writer.font.findGlyph('B').drawings[0].width = 777;
         const liveTail = writer.bridge.encodeDocumentState(
             glyphDocumentId('id-b')
         );
@@ -824,7 +824,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         );
         const seedShards = writer.bridge.encodeDocumentSet();
         window.changeBridge = writer.bridge;
-        writer.font.findGlyph('B').layers[0].width = 777;
+        writer.font.findGlyph('B').drawings[0].width = 777;
 
         const receiver = new PatchSyncEngine('late-opener');
         receiver.setFontJson(seedJson);
@@ -868,7 +868,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
     test('undo catch-up retries until the undone outline is durable on the glyph room', async () => {
         const writer = createEngine('writer');
         window.changeBridge = writer.bridge;
-        writer.font.findGlyph('B').layers[0].width = 777;
+        writer.font.findGlyph('B').drawings[0].width = 777;
         const receiver = hydrateReceiverFromWriter(writer.bridge);
         const staleTail = writer.bridge.encodeDocumentState(
             glyphDocumentId('id-b')
@@ -908,7 +908,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         const writer = createEngine('writer');
         const receiver = hydrateReceiverFromWriter(writer.bridge);
         window.changeBridge = writer.bridge;
-        writer.font.findGlyph('B').layers[0].width = 777;
+        writer.font.findGlyph('B').drawings[0].width = 777;
         const refresh = jest.fn().mockResolvedValue();
         const previousRefresh = window.syncRustCacheAndRefreshCanvas;
         const previousCanvas = window.glyphCanvas;
@@ -917,7 +917,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
             getCurrentGlyphName: () => 'B',
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: () => [{ glyphName: 'B' }]
             }
         };
@@ -941,7 +941,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
                 wait: async () => {}
             });
             expect(refresh).toHaveBeenCalledWith('B', 'B', {
-                allowSelectedLayerFallback: true
+                allowSelectedDrawingFallback: true
             });
             refresh.mockClear();
             refreshEditorAfterGlyphDocumentCatchUp(glyphDocumentId('id-a'));
@@ -957,7 +957,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         const writer = createEngine('writer');
         const receiver = hydrateReceiverFromWriter(writer.bridge);
         window.changeBridge = writer.bridge;
-        writer.font.findGlyph('B').layers[0].width = 777;
+        writer.font.findGlyph('B').drawings[0].width = 777;
         const liveTail = writer.bridge.encodeDocumentState(
             glyphDocumentId('id-b')
         );
@@ -993,7 +993,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
             glyphDocumentId('id-b')
         );
         window.changeBridge = writer.bridge;
-        writer.font.findGlyph('B').layers[0].width = 777;
+        writer.font.findGlyph('B').drawings[0].width = 777;
         const liveTail = writer.bridge.encodeDocumentState(
             glyphDocumentId('id-b')
         );
@@ -1105,7 +1105,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         const writer = createEngine('writer');
         const receiver = hydrateReceiverFromWriter(writer.bridge);
         window.changeBridge = writer.bridge;
-        writer.font.findGlyph('B').layers[0].width = 777;
+        writer.font.findGlyph('B').drawings[0].width = 777;
         const liveTail = writer.bridge.encodeDocumentState(
             glyphDocumentId('id-b')
         );
@@ -1153,7 +1153,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
                 wait: async () => {}
             });
         try {
-            writer.font.findGlyph('B').layers[0].width = 701;
+            writer.font.findGlyph('B').drawings[0].width = 701;
             let state = writer.bridge.encodeDocumentState(
                 glyphDocumentId('id-b')
             );
@@ -1162,7 +1162,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
                 return framedLiveResponse(state);
             });
             await catchUp();
-            writer.font.findGlyph('B').layers[0].width = 702;
+            writer.font.findGlyph('B').drawings[0].width = 702;
             state = writer.bridge.encodeDocumentState(glyphDocumentId('id-b'));
             await catchUp();
             expect(glyphWidth(receiver, 'B')).toBe(702);
@@ -1178,7 +1178,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         const writer = createEngine('writer');
         const receiver = hydrateReceiverFromWriter(writer.bridge);
         window.changeBridge = writer.bridge;
-        writer.font.findGlyph('B').layers[0].width = 733;
+        writer.font.findGlyph('B').drawings[0].width = 733;
         const state = writer.bridge.encodeDocumentState(
             glyphDocumentId('id-b')
         );
@@ -1237,7 +1237,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         const writer = createEngine('writer');
         const receiver = hydrateReceiverFromWriter(writer.bridge);
         window.changeBridge = writer.bridge;
-        writer.font.findGlyph('B').layers[0].width = 744;
+        writer.font.findGlyph('B').drawings[0].width = 744;
         const state = writer.bridge.encodeDocumentState(
             glyphDocumentId('id-b')
         );

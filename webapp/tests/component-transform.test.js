@@ -1,5 +1,5 @@
 const { OutlineEditor } = require('../js/glyph-canvas/outline-editor');
-const { Layer } = require('../js/babelfont-model');
+const { Drawing } = require('../js/babelfont-model');
 const {
     flattenShapesToPaths,
     invertAffine,
@@ -47,7 +47,7 @@ function nestedShapes() {
 
 function editorAtDepth() {
     const editor = Object.create(OutlineEditor.prototype);
-    editor.layerData = { shapes: nestedShapes() };
+    editor.drawingData = { shapes: nestedShapes() };
     editor.glyphStack = 'A@L1>0:B@Lb>0:C@Lc';
     return editor;
 }
@@ -98,10 +98,10 @@ describe('component transforms', () => {
         expect(local.y).toBeCloseTo(0);
 
         const paths = flattenShapesToPaths(
-            editor.getCurrentLayerDataFromStack().shapes,
+            editor.getCurrentDrawingDataFromStack().shapes,
             editor.getAccumulatedTransform()
         );
-        const hits = Layer.intersectPathsWithLine(
+        const hits = Drawing.intersectPathsWithLine(
             paths,
             { x: -1000, y: 200 },
             { x: 1000, y: 200 }

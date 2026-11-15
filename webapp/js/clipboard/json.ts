@@ -4,8 +4,8 @@
  *
  * Wire JSON is a font-editor envelope: clipboardItems.<vendor> holds each
  * editor's private document. Counterpunch lives under "counterpunch".
- * Whole-glyph documents carry source masters and per-layer masterIndex
- * association so paste can match across fonts by master order.
+ * Whole-glyph documents carry source stations and per-drawing masterIndex
+ * association so paste can match across fonts by station order.
  */
 
 import type {
@@ -40,16 +40,16 @@ export const COUNTERPUNCH_CLIPBOARD_METADATA_ID = 'counterpunch-clipboard';
 export const COUNTERPUNCH_CLIPBOARD_MIME =
     'application/x-counterpunch-clipboard';
 
-export type PasteLayerMaster =
+export type PasteDrawingStation =
     | { type: 'DefaultForMaster'; masterIndex: number }
     | { type: 'AssociatedWithMaster'; masterIndex: number }
     | { type: 'FreeFloating' };
 
-export type PasteGlyphLayer = {
+export type PasteGlyphDrawing = {
     layerId?: string;
     name?: string;
-    master: PasteLayerMaster;
-    /** Designspace location for brace/intermediate layers (axis id or tag keys). */
+    master: PasteDrawingStation;
+    /** Designspace location for free drawings (axis id or tag keys). */
     location?: Record<string, number>;
     width?: number;
     leftMetricsKey?: string | null;
@@ -62,10 +62,10 @@ export type PasteGlyphLayer = {
 
 export type PasteFeatureVariation = {
     axisRules: unknown[];
-    layers: PasteGlyphLayer[];
+    layers: PasteGlyphDrawing[];
 };
 
-export type PasteClipboardMaster = {
+export type PasteClipboardStation = {
     id: string;
     name: string;
     location?: Record<string, number>;
@@ -75,7 +75,7 @@ export type PasteGlyph = {
     name: string;
     leftMetricsKey?: string | null;
     rightMetricsKey?: string | null;
-    layers: PasteGlyphLayer[];
+    layers: PasteGlyphDrawing[];
     featureVariations?: PasteFeatureVariation[];
 };
 
@@ -83,7 +83,7 @@ export type PasteGlyphsDocument = {
     format: 'counterpunch-json';
     kind: 'glyphs';
     version: number;
-    masters: PasteClipboardMaster[];
+    masters: PasteClipboardStation[];
     glyphs: PasteGlyph[];
     /**
      * `glyphs`: closed paths store the start node last (Glyphs native order).
@@ -208,12 +208,12 @@ function parseGlyphsDocument(
         return null;
     }
 
-    const masters = parseMasters(raw.masters);
-    if (!masters || masters.length === 0) {
+    const stations = parseStations(raw.masters);
+    if (!stations || stations.length === 0) {
         return null;
     }
 
-    const glyphs = parseGlyphs(raw.glyphs, nodeOrder, masters.length);
+    const glyphs = parseGlyphs(raw.glyphs, nodeOrder, stations.length);
     if (!glyphs || glyphs.length === 0) {
         return null;
     }
@@ -222,17 +222,17 @@ function parseGlyphsDocument(
         format: 'counterpunch-json',
         kind: 'glyphs',
         version,
-        masters,
+        masters: stations,
         glyphs,
         nodeOrder
     };
 }
 
-function parseMasters(value: unknown): PasteClipboardMaster[] | null {
+function parseStations(value: unknown): PasteClipboardStation[] | null {
     if (!Array.isArray(value) || value.length === 0) {
         return null;
     }
-    const masters: PasteClipboardMaster[] = [];
+    const stations: PasteClipboardStation[] = [];
     for (const entry of value) {
         if (!isRecord(entry) || typeof entry.id !== 'string' || !entry.id) {
             return null;
@@ -241,19 +241,19 @@ function parseMasters(value: unknown): PasteClipboardMaster[] | null {
             typeof entry.name === 'string' && entry.name
                 ? entry.name
                 : entry.id;
-        masters.push({
+        stations.push({
             id: entry.id,
             name,
             location: parseLocation(entry.location) ?? undefined
         });
     }
-    return masters;
+    return stations;
 }
 
 function parseGlyphs(
     value: unknown,
     nodeOrder: CounterpunchNodeOrder,
-    masterCount: number
+    stationCount: number
 ): PasteGlyph[] | null {
     if (!Array.isArray(value)) {
         return null;
@@ -263,32 +263,36 @@ function parseGlyphs(
         if (!isRecord(entry) || typeof entry.name !== 'string') {
             continue;
         }
-        const layersRaw = entry.layers;
-        if (!Array.isArray(layersRaw) || layersRaw.length === 0) {
+        const drawingsRaw = entry.layers;
+        if (!Array.isArray(drawingsRaw) || drawingsRaw.length === 0) {
             continue;
         }
-        const layers: PasteGlyphLayer[] = [];
-        for (const layerEntry of layersRaw) {
-            const layer = parseGlyphLayer(layerEntry, nodeOrder, masterCount);
-            if (layer) {
-                layers.push(layer);
+        const drawings: PasteGlyphDrawing[] = [];
+        for (const drawingEntry of drawingsRaw) {
+            const drawing = parseGlyphDrawing(
+                drawingEntry,
+                nodeOrder,
+                stationCount
+            );
+            if (drawing) {
+                drawings.push(drawing);
             }
         }
-        if (layers.length === 0) {
+        if (drawings.length === 0) {
             continue;
         }
 
         const featureVariations = parseFeatureVariations(
             entry.featureVariations,
             nodeOrder,
-            masterCount
+            stationCount
         );
 
         glyphs.push({
             name: entry.name,
             leftMetricsKey: optionalString(entry.leftMetricsKey),
             rightMetricsKey: optionalString(entry.rightMetricsKey),
-            layers,
+            layers: drawings,
             ...(featureVariations.length > 0 ? { featureVariations } : {})
         });
     }
@@ -298,7 +302,7 @@ function parseGlyphs(
 function parseFeatureVariations(
     value: unknown,
     nodeOrder: CounterpunchNodeOrder,
-    masterCount: number
+    stationCount: number
 ): PasteFeatureVariation[] {
     if (!Array.isArray(value)) {
         return [];
@@ -311,40 +315,44 @@ function parseFeatureVariations(
         if (!Array.isArray(entry.layers) || entry.layers.length === 0) {
             continue;
         }
-        const layers: PasteGlyphLayer[] = [];
-        for (const layerEntry of entry.layers) {
-            const layer = parseGlyphLayer(layerEntry, nodeOrder, masterCount);
-            if (layer) {
-                layers.push(layer);
+        const drawings: PasteGlyphDrawing[] = [];
+        for (const drawingEntry of entry.layers) {
+            const drawing = parseGlyphDrawing(
+                drawingEntry,
+                nodeOrder,
+                stationCount
+            );
+            if (drawing) {
+                drawings.push(drawing);
             }
         }
-        if (layers.length === 0) {
+        if (drawings.length === 0) {
             continue;
         }
         result.push({
             axisRules: entry.axisRules,
-            layers
+            layers: drawings
         });
     }
     return result;
 }
 
-function parseGlyphLayer(
+function parseGlyphDrawing(
     value: unknown,
     nodeOrder: CounterpunchNodeOrder,
-    masterCount: number
-): PasteGlyphLayer | null {
+    stationCount: number
+): PasteGlyphDrawing | null {
     if (!isRecord(value)) {
         return null;
     }
-    const master = parseLayerMaster(value.master, masterCount);
-    if (!master) {
+    const station = parseDrawingStation(value.master, stationCount);
+    if (!station) {
         return null;
     }
     return {
         layerId: optionalString(value.layerId) ?? undefined,
         name: optionalString(value.name) ?? undefined,
-        master,
+        master: station,
         location: parseLocation(value.location) ?? undefined,
         width: optionalNumber(value.width) ?? undefined,
         leftMetricsKey: optionalString(value.leftMetricsKey),
@@ -356,30 +364,30 @@ function parseGlyphLayer(
     };
 }
 
-function parseLayerMaster(
+function parseDrawingStation(
     value: unknown,
-    masterCount: number
-): PasteLayerMaster | null {
+    stationCount: number
+): PasteDrawingStation | null {
     if (!isRecord(value) || typeof value.type !== 'string') {
         return null;
     }
     if (value.type === 'FreeFloating') {
         return { type: 'FreeFloating' };
     }
-    const masterIndex = optionalNumber(value.masterIndex);
+    const stationIndex = optionalNumber(value.masterIndex);
     if (
-        masterIndex === null ||
-        !Number.isInteger(masterIndex) ||
-        masterIndex < 0 ||
-        masterIndex >= masterCount
+        stationIndex === null ||
+        !Number.isInteger(stationIndex) ||
+        stationIndex < 0 ||
+        stationIndex >= stationCount
     ) {
         return null;
     }
     if (value.type === 'DefaultForMaster') {
-        return { type: 'DefaultForMaster', masterIndex };
+        return { type: 'DefaultForMaster', masterIndex: stationIndex };
     }
     if (value.type === 'AssociatedWithMaster') {
-        return { type: 'AssociatedWithMaster', masterIndex };
+        return { type: 'AssociatedWithMaster', masterIndex: stationIndex };
     }
     return null;
 }

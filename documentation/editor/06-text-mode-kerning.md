@@ -1,6 +1,6 @@
 # Text-mode kerning
 
-Counterpunch edits kerning in text mode, with the caret between two glyphs, so pair work stays next to the shaped text. Group membership is visible, and you can switch between glyph-level and group-level kerning. Edits apply to the currently selected exact master.
+Counterpunch edits kerning in text mode, with the caret between two glyphs, so pair work stays next to the shaped text. Group membership is visible, and you can switch between glyph-level and group-level kerning. Edits apply to the currently selected station; the current location must be exactly at that station.
 
 ## Where to edit
 
@@ -13,7 +13,7 @@ Switch the Editor to text mode and put the caret between two glyphs. The propert
 
 The same kerning groups appear in edit mode for the current glyph's LKG and RKG. In RTL text, First/Second colors swap so First stays LSB orange.
 
-Without an exact master the operands still show, but kerning is read-only until you choose a real master.
+When the current location is not at a station the operands still show, but kerning is read-only until you choose a station.
 
 ## Property Panel for LTR and RTL kerning
 
@@ -23,7 +23,7 @@ LTR text is naturally defined as left glyph first, right glyph second.
 
 Kerning for RTL text is also defined as first glyph -> second glyph in logical order, which means that the first glyph is the visually right glyph and the second glyph is the visually left glyph of the kerning pair, while the property panel still defined them as first on the left, second on the right, as defined in the data.
 
-**Font → Kerning Editor…** opens a table of all defined pairs (LTR or RTL) with values per master. Opening it from text mode selects the active First/Second chips from the panel and scrolls that row into view. Select a row to delete it from every master, or edit individual cells. Undo restores previous values and the table UI state.
+**Font → Kerning Editor…** opens a table of all defined pairs (LTR or RTL) with values per station. Opening it from text mode selects the active First/Second chips from the panel and scrolls that row into view. Select a row to delete it from every station, or edit individual cells. Undo restores previous values and the table UI state.
 
 ## Pair choice and groups
 

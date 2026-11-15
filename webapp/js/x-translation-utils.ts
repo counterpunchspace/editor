@@ -10,7 +10,7 @@ type HorizontalTranslationAdapter<TShape, TAnchor> = {
     shiftAnchor(anchor: TAnchor, deltaX: number): void;
 };
 
-export function translateLayerContentsX<TShape, TAnchor>(
+export function translateDrawingContentsX<TShape, TAnchor>(
     adapter: HorizontalTranslationAdapter<TShape, TAnchor>,
     deltaX: number
 ): void {

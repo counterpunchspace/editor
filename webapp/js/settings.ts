@@ -154,7 +154,7 @@ const APP_SETTINGS = {
         // distance r have area 2r². √2 equalizes the filled/stroked surface.
         NODE_DIAMOND_SIZE_RATIO: Math.sqrt(2),
         // On-curve points within this many font units of LSB/RSB, a visible
-        // guideline, or a master vertical-metric line (baseline, ascender, …;
+        // guideline, or a station vertical-metric line (baseline, ascender, …;
         // overshoots ignored) become diamonds. Anchors use diamonds only on
         // vertical metrics; otherwise they are squares of equal area.
         NODE_ON_DELIMITER_TOLERANCE: 0.25,
@@ -241,7 +241,7 @@ const APP_SETTINGS = {
 
         // Debug/development
         INTERPOLATION_ANIMATION_DELAY: 0, // ms - delay between animation frames for debugging (0 = no delay)
-        SHOW_BBOX_CENTER_CROSSHAIR: false, // Draw the active layer bounding-box center in development
+        SHOW_BBOX_CENTER_CROSSHAIR: false, // Draw the active drawing bounding-box center in development
 
         // Node snapping
         SNAP_DISTANCE_PX: 3, // Snapping distance in screen pixels

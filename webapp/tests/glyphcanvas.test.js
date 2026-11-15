@@ -2,12 +2,12 @@ const fs = require('fs');
 const path = require('path');
 const {
     Font,
-    Layer,
+    Drawing,
     DecomposedAffineTransform
 } = require('../js/babelfont-model');
 const { PatchSyncEngine } = require('../js/patch-sync-engine');
 const { yDocToJson } = require('../js/change-bridge-ydoc');
-const { LayerDataNormalizer } = require('../js/layer-data-normalizer');
+const { DrawingDataNormalizer } = require('../js/drawing-data-normalizer');
 const fontManager = require('../js/font-manager').default;
 const { fontInterpolation } = require('../js/font-interpolation');
 const {
@@ -23,15 +23,15 @@ function loadFontFixture(fileName) {
     return JSON.parse(open_font_file(fileName, fileContents));
 }
 
-function canonicalizeLayerDataForComparison(layerData) {
-    if (!layerData || typeof layerData !== 'object') {
-        return layerData;
+function canonicalizeDrawingDataForComparison(drawingData) {
+    if (!drawingData || typeof drawingData !== 'object') {
+        return drawingData;
     }
 
-    const canonical = { ...layerData };
+    const canonical = { ...drawingData };
 
-    if (Array.isArray(layerData.anchors)) {
-        canonical.anchors = layerData.anchors
+    if (Array.isArray(drawingData.anchors)) {
+        canonical.anchors = drawingData.anchors
             .map((anchor) => ({
                 name: anchor.name,
                 x: anchor.x,
@@ -44,8 +44,8 @@ function canonicalizeLayerDataForComparison(layerData) {
             });
     }
 
-    if (Array.isArray(layerData.shapes)) {
-        canonical.shapes = layerData.shapes.map((shape) => {
+    if (Array.isArray(drawingData.shapes)) {
+        canonical.shapes = drawingData.shapes.map((shape) => {
             if (!shape || typeof shape !== 'object') {
                 return shape;
             }
@@ -54,7 +54,7 @@ function canonicalizeLayerDataForComparison(layerData) {
                 const canonicalShape = {
                     ...shape,
                     layerData: shape.layerData
-                        ? canonicalizeLayerDataForComparison(shape.layerData)
+                        ? canonicalizeDrawingDataForComparison(shape.layerData)
                         : shape.layerData
                 };
 
@@ -74,7 +74,7 @@ function canonicalizeLayerDataForComparison(layerData) {
     return canonical;
 }
 
-function createDefaultInterpolatedLayer(location = {}) {
+function createDefaultInterpolatedDrawing(location = {}) {
     return {
         width: 0,
         shapes: [],
@@ -85,7 +85,7 @@ function createDefaultInterpolatedLayer(location = {}) {
     };
 }
 
-function createBoxLayer({ minX, minY, maxX, maxY, width }) {
+function createBoxDrawing({ minX, minY, maxX, maxY, width }) {
     return {
         width,
         shapes: [
@@ -104,16 +104,16 @@ function createBoxLayer({ minX, minY, maxX, maxY, width }) {
     };
 }
 
-describe('LayerDataNormalizer', () => {
+describe('DrawingDataNormalizer', () => {
     test('preserves complete editable object records', () => {
-        const normalized = LayerDataNormalizer.normalize(
+        const normalized = DrawingDataNormalizer.normalize(
             {
                 id: 'layer-1',
                 width: 500,
                 master: { type: 'AssociatedWithMaster', master: 'master-1' },
                 location: { wght: 0 },
                 color: 3,
-                customLayerData: { retained: true },
+                customDrawingData: { retained: true },
                 shapes: [
                     {
                         id: 'component-1',
@@ -143,7 +143,7 @@ describe('LayerDataNormalizer', () => {
             master: { type: 'AssociatedWithMaster', master: 'master-1' },
             location: { wght: 0 },
             color: 3,
-            customLayerData: { retained: true }
+            customDrawingData: { retained: true }
         });
         expect(normalized.shapes[0]).toMatchObject({
             id: 'component-1',
@@ -300,13 +300,13 @@ function makeAutomaticAnchorCascadeFont() {
     };
 }
 
-function getLayerFromFontJson(fontJson, glyphName, layerId = 'layer-1') {
+function getDrawingFromFontJson(fontJson, glyphName, drawingId = 'layer-1') {
     const glyph = fontJson.glyphs.find((entry) => entry.name === glyphName);
-    return glyph?.layers.find((layer) => layer.id === layerId);
+    return glyph?.layers.find((drawing) => drawing.id === drawingId);
 }
 
-function getComponentTranslation(layer, reference) {
-    const component = layer.shapes.find(
+function getComponentTranslation(drawing, reference) {
+    const component = drawing.shapes.find(
         (shape) => shape.reference === reference
     );
     const transform = component?.transform;
@@ -321,7 +321,7 @@ beforeEach(() => {
     defaultInterpolateGlyphSpy = jest
         .spyOn(fontInterpolation, 'interpolateGlyph')
         .mockImplementation(async (_glyphName, location) =>
-            createDefaultInterpolatedLayer(location)
+            createDefaultInterpolatedDrawing(location)
         );
 });
 
@@ -342,7 +342,7 @@ describe('Outline interpolation bbox anchoring', () => {
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.currentGlyphName = 'A';
         canvas.outlineEditor.glyphStack = '';
-        canvas.outlineEditor.layerData = createBoxLayer({
+        canvas.outlineEditor.drawingData = createBoxDrawing({
             minX: 100,
             minY: 0,
             maxX: 300,
@@ -376,7 +376,7 @@ describe('Outline interpolation bbox anchoring', () => {
         ).mockReturnValue('A');
         jest.spyOn(
             canvas.outlineEditor,
-            'getRootFeatureVariationLayerIds'
+            'getRootFeatureVariationDrawingIds'
         ).mockReturnValue(undefined);
     });
 
@@ -386,20 +386,20 @@ describe('Outline interpolation bbox anchoring', () => {
 
     test('keeps the bbox center stationary through interpolated bounds and preceding-advance changes', async () => {
         const before = getActiveBboxCenterScreen();
-        const interpolatedLayer = createBoxLayer({
+        const interpolatedDrawing = createBoxDrawing({
             minX: 220,
             minY: 80,
             maxX: 620,
             maxY: 680,
             width: 700
         });
-        defaultInterpolateGlyphSpy.mockResolvedValue(interpolatedLayer);
+        defaultInterpolateGlyphSpy.mockResolvedValue(interpolatedDrawing);
         jest.spyOn(
             canvas.outlineEditor,
-            'applyRustLayerData'
-        ).mockImplementation((layerData) => {
-            canvas.outlineEditor.layerData = {
-                ...layerData,
+            'applyRustDrawingData'
+        ).mockImplementation((drawingData) => {
+            canvas.outlineEditor.drawingData = {
+                ...drawingData,
                 isInterpolated: true
             };
         });
@@ -419,7 +419,7 @@ describe('Outline interpolation bbox anchoring', () => {
 
     test('shapes HarfBuzz at the response location rather than a newer slider value', async () => {
         defaultInterpolateGlyphSpy.mockResolvedValue(
-            createBoxLayer({
+            createBoxDrawing({
                 minX: 160,
                 minY: 20,
                 maxX: 460,
@@ -429,10 +429,10 @@ describe('Outline interpolation bbox anchoring', () => {
         );
         jest.spyOn(
             canvas.outlineEditor,
-            'applyRustLayerData'
-        ).mockImplementation((layerData) => {
-            canvas.outlineEditor.layerData = {
-                ...layerData,
+            'applyRustDrawingData'
+        ).mockImplementation((drawingData) => {
+            canvas.outlineEditor.drawingData = {
+                ...drawingData,
                 isInterpolated: true
             };
         });
@@ -450,12 +450,12 @@ describe('Outline interpolation bbox anchoring', () => {
 
     test('keeps the final between-layer request alive after slider release', async () => {
         canvas.outlineEditor.isInterpolating = true;
-        canvas.outlineEditor.selectedLayerId = null;
-        canvas.outlineEditor.layerData.isInterpolated = true;
+        canvas.outlineEditor.selectedDrawingId = null;
+        canvas.outlineEditor.drawingData.isInterpolated = true;
         canvas.axesManager.isAnimating = true;
         jest.spyOn(
             canvas.outlineEditor,
-            'autoSelectMatchingLayer'
+            'autoSelectMatchingDrawing'
         ).mockResolvedValue();
         const resetTrackingSpy = jest
             .spyOn(fontInterpolation, 'resetRequestTracking')
@@ -485,29 +485,29 @@ describe('Outline interpolation bbox anchoring', () => {
     test('keeps the bbox center stationary when the exact target layer replaces the final interpolation frame', async () => {
         const before = getActiveBboxCenterScreen();
         canvas.outlineEditor['captureInterpolationBboxCenterAnchor']();
-        canvas.outlineEditor.targetLayerData = createBoxLayer({
+        canvas.outlineEditor.targetDrawingData = createBoxDrawing({
             minX: 180,
             minY: 40,
             maxX: 580,
             maxY: 640,
             width: 650
         });
-        canvas.outlineEditor.selectedLayerId = 'target-layer';
+        canvas.outlineEditor.selectedDrawingId = 'target-layer';
         jest.spyOn(
             canvas.outlineEditor,
-            'getCurrentLayerModel'
+            'getCurrentDrawingModel'
         ).mockReturnValue(null);
         jest.spyOn(
             canvas.outlineEditor,
-            'updateLayerSelection'
+            'updateDrawingSelection'
         ).mockImplementation(() => {});
         jest.spyOn(
             canvas.outlineEditor,
-            'syncAddLayerButtonForExplicitSelection'
+            'syncAddDrawingButtonForExplicitSelection'
         ).mockImplementation(() => {});
         jest.spyOn(canvas, 'updatePropertyPanel').mockImplementation(() => {});
 
-        await canvas.outlineEditor.restoreTargetLayerDataAfterAnimating();
+        await canvas.outlineEditor.restoreTargetDrawingDataAfterAnimating();
 
         expect(getActiveBboxCenterScreen()).toEqual(before);
         expect(
@@ -847,9 +847,9 @@ describe('GlyphCanvas renderer anchor-only layers', () => {
     beforeEach(() => {
         document.body.innerHTML = '<div id="test-container"></div>';
         canvas = new GlyphCanvas('test-container');
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.glyphStack = 'n@layer-1';
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             id: 'layer-1',
             width: 578,
             shapes: [],
@@ -894,8 +894,8 @@ describe('GlyphCanvas renderer anchor-only layers', () => {
             xPosition: 10,
             xOffset: 5
         }));
-        canvas.outlineEditor.isEditingBackgroundLayer = jest.fn(() => true);
-        canvas.outlineEditor.getPairedLayerModel = jest.fn(() => ({
+        canvas.outlineEditor.isEditingBackgroundDrawing = jest.fn(() => true);
+        canvas.outlineEditor.getPairedDrawingModel = jest.fn(() => ({
             width: 640
         }));
         canvas.renderer.ctx.fillRect.mockClear();
@@ -913,8 +913,8 @@ describe('GlyphCanvas renderer anchor-only layers', () => {
     test('hides and disables sidebearing editing while editing a background', () => {
         const editor = canvas.outlineEditor;
         editor.active = true;
-        editor.selectedLayerId = 'background-layer';
-        editor.isEditingBackgroundLayer = jest.fn(() => true);
+        editor.selectedDrawingId = 'background-layer';
+        editor.isEditingBackgroundDrawing = jest.fn(() => true);
         canvas.propertyPanel = document.createElement('div');
         canvas.propertyPanel.innerHTML =
             '<input data-sidebearing-side="left"><input data-sidebearing-side="right">';
@@ -935,18 +935,18 @@ describe('GlyphCanvas renderer anchor-only layers', () => {
 
     test('keeps paired foreground vertical metrics while editing a background', () => {
         const editor = canvas.outlineEditor;
-        jest.spyOn(editor, 'getCurrentLayerModel').mockReturnValue({
+        jest.spyOn(editor, 'getCurrentDrawingModel').mockReturnValue({
             is_background: true
         });
-        jest.spyOn(editor, 'getPairedLayerModel').mockReturnValue({
+        jest.spyOn(editor, 'getPairedDrawingModel').mockReturnValue({
             width: 640
         });
-        jest.spyOn(editor, 'getVerticalMetricsForLayer').mockReturnValue({
+        jest.spyOn(editor, 'getVerticalMetricsForDrawing').mockReturnValue({
             Ascender: 800,
             Descender: -200
         });
 
-        editor['applyExactSelectedLayerData']({
+        editor['applyExactSelectedDrawingData']({
             width: 640,
             shapes: [],
             anchors: [],
@@ -961,7 +961,7 @@ describe('GlyphCanvas renderer anchor-only layers', () => {
 
     test('uses the paired foreground width for background metric boundaries', () => {
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.layerData.width = 120;
+        canvas.outlineEditor.drawingData.width = 120;
         canvas.outlineEditor.renderVerticalMetrics = {
             Ascender: 800,
             Descender: -200
@@ -970,8 +970,8 @@ describe('GlyphCanvas renderer anchor-only layers', () => {
             xPosition: 10,
             xOffset: 5
         }));
-        canvas.outlineEditor.isEditingBackgroundLayer = jest.fn(() => true);
-        canvas.outlineEditor.getPairedLayerModel = jest.fn(() => ({
+        canvas.outlineEditor.isEditingBackgroundDrawing = jest.fn(() => true);
+        canvas.outlineEditor.getPairedDrawingModel = jest.fn(() => ({
             width: 640
         }));
         canvas.renderer.ctx.lineTo.mockClear();
@@ -983,35 +983,35 @@ describe('GlyphCanvas renderer anchor-only layers', () => {
 
     test('uses paired foreground layer guides while editing a background', () => {
         const guide = { pos: { x: 80, y: 120, angle: 0 } };
-        const masterGuide = { pos: { x: 0, y: 700, angle: 0 } };
+        const stationGuide = { pos: { x: 0, y: 700, angle: 0 } };
         canvas.outlineEditor.guidelinesVisible = true;
-        canvas.outlineEditor.layerData.isInterpolated = true;
-        canvas.outlineEditor.getCurrentLayerDataFromStack = jest.fn(
-            () => canvas.outlineEditor.layerData
+        canvas.outlineEditor.drawingData.isInterpolated = true;
+        canvas.outlineEditor.getCurrentDrawingDataFromStack = jest.fn(
+            () => canvas.outlineEditor.drawingData
         );
-        canvas.outlineEditor.getCurrentLayerModel = jest.fn(() => ({
+        canvas.outlineEditor.getCurrentDrawingModel = jest.fn(() => ({
             is_background: true,
-            backgroundLayer: { guides: [guide] }
+            backgroundDrawing: { guides: [guide] }
         }));
         canvas.outlineEditor.getAccumulatedTransform = jest.fn(() => [
             1, 0, 0, 1, 0, 0
         ]);
-        canvas.outlineEditor.getRootMasterModel = jest.fn(() => ({
-            guides: [masterGuide]
+        canvas.outlineEditor.getRootStationModel = jest.fn(() => ({
+            guides: [stationGuide]
         }));
 
         expect(canvas.outlineEditor.getVisibleGuides()).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({
-                    scope: 'layer',
+                    scope: 'drawing',
                     guide,
                     rootX: 80,
                     rootY: 120,
                     rootAngle: 0
                 }),
                 expect.objectContaining({
-                    scope: 'master',
-                    guide: masterGuide,
+                    scope: 'station',
+                    guide: stationGuide,
                     rootX: 0,
                     rootY: 700,
                     rootAngle: 0
@@ -1021,85 +1021,92 @@ describe('GlyphCanvas renderer anchor-only layers', () => {
     });
 
     test('keeps layer selection in the paired background while background mode is active', () => {
-        const foregroundLayer = {
+        const foregroundDrawing = {
             id: 'foreground-layer',
             is_background: false
         };
-        const backgroundLayer = { id: 'background-layer', is_background: true };
-        foregroundLayer.backgroundLayer = backgroundLayer;
-        canvas.outlineEditor.isEditingBackgroundLayer = jest.fn(() => true);
-        canvas.outlineEditor.resolveLayerModel = jest.fn(() => foregroundLayer);
+        const backgroundDrawing = {
+            id: 'background-layer',
+            is_background: true
+        };
+        foregroundDrawing.backgroundDrawing = backgroundDrawing;
+        canvas.outlineEditor.isEditingBackgroundDrawing = jest.fn(() => true);
+        canvas.outlineEditor.resolveDrawingModel = jest.fn(
+            () => foregroundDrawing
+        );
 
         expect(
-            canvas.outlineEditor['resolveLayerForSelection']({
-                id: foregroundLayer.id
+            canvas.outlineEditor['resolveDrawingForSelection']({
+                id: foregroundDrawing.id
             })
-        ).toBe(backgroundLayer);
+        ).toBe(backgroundDrawing);
     });
 
     test('uses the paired foreground as the background layer location source', () => {
-        const foregroundLayer = {
+        const foregroundDrawing = {
             id: 'foreground-layer',
             master: { master: 'master-1' },
             location: { wght: 700 }
         };
-        const backgroundLayer = {
+        const backgroundDrawing = {
             id: 'foreground-layer.bg',
             is_background: true,
-            backgroundLayer: foregroundLayer
+            backgroundDrawing: foregroundDrawing
         };
 
         expect(
-            canvas.outlineEditor['getLayerLocationSource'](backgroundLayer)
-        ).toBe(foregroundLayer);
+            canvas.outlineEditor['getDrawingLocationSource'](backgroundDrawing)
+        ).toBe(foregroundDrawing);
     });
 
     test('cycles from the paired foreground row while editing a background', async () => {
         const editor = canvas.outlineEditor;
-        canvas.getSortedLayers = jest.fn(() => [
+        canvas.getSortedDrawings = jest.fn(() => [
             { id: 'foreground-one' },
             { id: 'foreground-two' }
         ]);
-        editor.selectedLayerId = 'foreground-one.bg';
-        editor.isEditingBackgroundLayer = jest.fn(() => true);
-        editor.getPairedLayerModel = jest.fn(() => ({
+        editor.selectedDrawingId = 'foreground-one.bg';
+        editor.isEditingBackgroundDrawing = jest.fn(() => true);
+        editor.getPairedDrawingModel = jest.fn(() => ({
             id: 'foreground-one'
         }));
-        editor.getFullLayerData = jest.fn((layerId) => ({ id: layerId }));
-        editor.selectLayer = jest.fn().mockResolvedValue(undefined);
+        editor.getFullDrawingData = jest.fn((drawingId) => ({ id: drawingId }));
+        editor.selectDrawing = jest.fn().mockResolvedValue(undefined);
 
-        await editor.cycleLayers(false);
+        await editor.cycleDrawings(false);
 
-        expect(editor.getFullLayerData).toHaveBeenCalledWith('foreground-two');
-        expect(editor.selectLayer).toHaveBeenCalledWith({
+        expect(editor.getFullDrawingData).toHaveBeenCalledWith(
+            'foreground-two'
+        );
+        expect(editor.selectDrawing).toHaveBeenCalledWith({
             id: 'foreground-two'
         });
     });
 
     test('highlights the paired foreground list row while editing a background', () => {
         const foregroundItem = document.createElement('div');
-        foregroundItem.setAttribute('data-master-id', 'master-1');
-        foregroundItem.setAttribute('data-layer-id', 'foreground-layer');
+        foregroundItem.setAttribute('data-station-id', 'master-1');
+        foregroundItem.setAttribute('data-drawing-id', 'foreground-layer');
         const otherItem = document.createElement('div');
-        otherItem.setAttribute('data-master-id', 'master-2');
-        otherItem.setAttribute('data-layer-id', 'other-layer');
+        otherItem.setAttribute('data-station-id', 'master-2');
+        otherItem.setAttribute('data-drawing-id', 'other-layer');
         const propertiesSection = document.createElement('div');
         canvas.propertiesSection = propertiesSection;
         propertiesSection.append(foregroundItem, otherItem);
-        canvas.outlineEditor.selectedLayerId = 'background-layer';
-        canvas.outlineEditor.isEditingBackgroundLayer = jest.fn(() => true);
-        canvas.outlineEditor.getPairedLayerModel = jest.fn(() => ({
+        canvas.outlineEditor.selectedDrawingId = 'background-layer';
+        canvas.outlineEditor.isEditingBackgroundDrawing = jest.fn(() => true);
+        canvas.outlineEditor.getPairedDrawingModel = jest.fn(() => ({
             id: 'foreground-layer'
         }));
 
-        canvas.outlineEditor.updateLayerSelection();
+        canvas.outlineEditor.updateDrawingSelection();
 
         expect(foregroundItem.classList.contains('selected')).toBe(true);
         expect(otherItem.classList.contains('selected')).toBe(false);
     });
 
     test('drawOutlineEditor renders a paired ghost from serialized path nodes', () => {
-        canvas.outlineEditor.layerData.shapes = [
+        canvas.outlineEditor.drawingData.shapes = [
             {
                 nodes: [
                     { x: 200, y: 0, nodetype: 'Line' },
@@ -1110,9 +1117,9 @@ describe('GlyphCanvas renderer anchor-only layers', () => {
                 closed: true
             }
         ];
-        canvas.outlineEditor.setPairedLayerVisible(true);
-        const getPairedLayerModelSpy = jest
-            .spyOn(canvas.outlineEditor, 'getPairedLayerModel')
+        canvas.outlineEditor.setPairedDrawingVisible(true);
+        const getPairedDrawingModelSpy = jest
+            .spyOn(canvas.outlineEditor, 'getPairedDrawingModel')
             .mockReturnValue({
                 toJSON: () => ({
                     shapes: [
@@ -1132,15 +1139,15 @@ describe('GlyphCanvas renderer anchor-only layers', () => {
         canvas.renderer.ctx.lineTo.mockClear();
         canvas.renderer.ctx.stroke.mockClear();
         const buildPathSpy = jest.spyOn(canvas.renderer, 'buildPathFromNodes');
-        const drawPairedLayerGhostSpy = jest.spyOn(
+        const drawPairedDrawingGhostSpy = jest.spyOn(
             canvas.renderer,
-            'drawPairedLayerGhost'
+            'drawPairedDrawingGhost'
         );
 
         canvas.renderer.drawOutlineEditor();
 
-        expect(drawPairedLayerGhostSpy).toHaveBeenCalled();
-        expect(getPairedLayerModelSpy).toHaveBeenCalled();
+        expect(drawPairedDrawingGhostSpy).toHaveBeenCalled();
+        expect(getPairedDrawingModelSpy).toHaveBeenCalled();
         expect(canvas.renderer.ctx.moveTo).toHaveBeenCalledWith(100, 0);
         expect(canvas.renderer.ctx.lineTo).toHaveBeenCalledWith(400, 0);
         expect(canvas.renderer.ctx.stroke).toHaveBeenCalled();
@@ -1154,10 +1161,10 @@ describe('GlyphCanvas renderer anchor-only layers', () => {
     });
 
     test('drawOutlineEditor renders a paired ghost for background component outlines', () => {
-        canvas.outlineEditor.layerData.shapes = [];
-        canvas.outlineEditor.setPairedLayerVisible(true);
-        const getPairedLayerModelSpy = jest
-            .spyOn(canvas.outlineEditor, 'getPairedLayerModel')
+        canvas.outlineEditor.drawingData.shapes = [];
+        canvas.outlineEditor.setPairedDrawingVisible(true);
+        const getPairedDrawingModelSpy = jest
+            .spyOn(canvas.outlineEditor, 'getPairedDrawingModel')
             .mockReturnValue({
                 shapes: [
                     {
@@ -1185,7 +1192,7 @@ describe('GlyphCanvas renderer anchor-only layers', () => {
 
         canvas.renderer.drawOutlineEditor();
 
-        expect(getPairedLayerModelSpy).toHaveBeenCalled();
+        expect(getPairedDrawingModelSpy).toHaveBeenCalled();
         expect(canvas.renderer.ctx.moveTo).toHaveBeenCalledWith(50, 10);
         expect(canvas.renderer.ctx.lineTo).toHaveBeenCalledWith(150, 10);
         expect(
@@ -1194,11 +1201,11 @@ describe('GlyphCanvas renderer anchor-only layers', () => {
     });
 
     test('drawOutlineEditor renders a paired ghost for an otherwise empty selected layer', () => {
-        canvas.outlineEditor.layerData.anchors = [];
-        canvas.outlineEditor.layerData.guides = [];
-        canvas.outlineEditor.setPairedLayerVisible(true);
-        const getPairedLayerModelSpy = jest
-            .spyOn(canvas.outlineEditor, 'getPairedLayerModel')
+        canvas.outlineEditor.drawingData.anchors = [];
+        canvas.outlineEditor.drawingData.guides = [];
+        canvas.outlineEditor.setPairedDrawingVisible(true);
+        const getPairedDrawingModelSpy = jest
+            .spyOn(canvas.outlineEditor, 'getPairedDrawingModel')
             .mockReturnValue({
                 toJSON: () => ({
                     shapes: [
@@ -1214,17 +1221,17 @@ describe('GlyphCanvas renderer anchor-only layers', () => {
                     ]
                 })
             });
-        const drawPairedLayerGhostSpy = jest.spyOn(
+        const drawPairedDrawingGhostSpy = jest.spyOn(
             canvas.renderer,
-            'drawPairedLayerGhost'
+            'drawPairedDrawingGhost'
         );
         canvas.renderer.ctx.moveTo.mockClear();
         canvas.renderer.ctx.lineTo.mockClear();
 
         canvas.renderer.drawOutlineEditor();
 
-        expect(drawPairedLayerGhostSpy).toHaveBeenCalled();
-        expect(getPairedLayerModelSpy).toHaveBeenCalled();
+        expect(drawPairedDrawingGhostSpy).toHaveBeenCalled();
+        expect(getPairedDrawingModelSpy).toHaveBeenCalled();
         expect(canvas.renderer.ctx.moveTo).toHaveBeenCalledWith(100, 0);
         expect(canvas.renderer.ctx.lineTo).toHaveBeenCalledWith(400, 0);
     });
@@ -1233,21 +1240,21 @@ describe('GlyphCanvas renderer anchor-only layers', () => {
         const storageKey = 'editorPairedLayerVisible';
         localStorage.removeItem(storageKey);
 
-        canvas.outlineEditor.setPairedLayerVisible(true);
+        canvas.outlineEditor.setPairedDrawingVisible(true);
 
         expect(localStorage.getItem(storageKey)).toBe('true');
 
         canvas.destroy();
         canvas = new GlyphCanvas('test-container');
 
-        expect(canvas.outlineEditor.isPairedLayerVisible()).toBe(true);
+        expect(canvas.outlineEditor.isPairedDrawingVisible()).toBe(true);
 
         localStorage.removeItem(storageKey);
     });
 
     test('anchor-only selection resize does not save during active drag', () => {
         const editor = canvas.outlineEditor;
-        const layerData = {
+        const drawingData = {
             width: 600,
             shapes: [],
             anchors: [{ name: 'top', x: 110, y: 220 }]
@@ -1277,13 +1284,13 @@ describe('GlyphCanvas renderer anchor-only layers', () => {
             includesAnchors: true,
             includesGeometry: false
         };
-        editor.getCurrentLayerDataFromStack = jest.fn(() => layerData);
-        editor.getCurrentLayerModel = jest.fn(() => null);
+        editor.getCurrentDrawingDataFromStack = jest.fn(() => drawingData);
+        editor.getCurrentDrawingModel = jest.fn(() => null);
         editor.transformMouseToComponentSpace = jest.fn(() => ({
             glyphX: 130,
             glyphY: 250
         }));
-        editor.saveLayerData = jest.fn();
+        editor.saveDrawingData = jest.fn();
         canvas.updatePropertyPanel = jest.fn();
         canvas.render = jest.fn();
         canvas.canvas.getBoundingClientRect = jest.fn(() => ({
@@ -1304,8 +1311,8 @@ describe('GlyphCanvas renderer anchor-only layers', () => {
             nowSpy.mockRestore();
         }
 
-        expect(layerData.anchors[0]).toEqual({ name: 'top', x: 115, y: 225 });
-        expect(editor.saveLayerData).not.toHaveBeenCalled();
+        expect(drawingData.anchors[0]).toEqual({ name: 'top', x: 115, y: 225 });
+        expect(editor.saveDrawingData).not.toHaveBeenCalled();
     });
 });
 
@@ -1421,7 +1428,7 @@ describe('GlyphCanvas renderer snap visualization', () => {
         canvas = new GlyphCanvas('test-container');
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.isPreviewMode = false;
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             width: 578,
             shapes: [],
             anchors: [],
@@ -1560,7 +1567,7 @@ describe('GlyphCanvas onMouseMove', () => {
         // Set up mock state
         canvas.textRunEditor.selectedGlyphIndex = 0;
         canvas.textRunEditor.shapedGlyphs = [{ ax: 1000, dx: 0, dy: 0, g: 0 }];
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             shapes: [
                 { reference: 'A', transform: [1, 0, 0, 1, 0, 0] },
                 { nodes: [{ x: 0, y: 0, type: 'l' }] }
@@ -1585,31 +1592,33 @@ describe('GlyphCanvas onMouseMove', () => {
         canvas.outlineEditor.isDraggingComponent = true;
         // First move sets the initial position, delta is 0
         canvas.onMouseMove({ clientX: 10, clientY: 20 });
-        expect(canvas.outlineEditor.layerData.shapes[0].transform[4]).toBe(0);
-        expect(canvas.outlineEditor.layerData.shapes[0].transform[5]).toBe(0);
+        expect(canvas.outlineEditor.drawingData.shapes[0].transform[4]).toBe(0);
+        expect(canvas.outlineEditor.drawingData.shapes[0].transform[5]).toBe(0);
 
         // Second move performs the drag
         canvas.onMouseMove({ clientX: 25, clientY: 15 });
         // deltaX = 25 - 10 = 15
         // deltaY = -15 - (-20) = 5
-        expect(canvas.outlineEditor.layerData.shapes[0].transform[4]).toBe(15);
-        expect(canvas.outlineEditor.layerData.shapes[0].transform[5]).toBe(5);
+        expect(canvas.outlineEditor.drawingData.shapes[0].transform[4]).toBe(
+            15
+        );
+        expect(canvas.outlineEditor.drawingData.shapes[0].transform[5]).toBe(5);
     });
 
     test('handles anchor dragging correctly', () => {
         canvas.outlineEditor.isDraggingAnchor = true;
         canvas.onMouseMove({ clientX: 10, clientY: 20 });
         canvas.onMouseMove({ clientX: 25, clientY: 15 });
-        expect(canvas.outlineEditor.layerData.anchors[0].x).toBe(15);
-        expect(canvas.outlineEditor.layerData.anchors[0].y).toBe(5);
+        expect(canvas.outlineEditor.drawingData.anchors[0].x).toBe(15);
+        expect(canvas.outlineEditor.drawingData.anchors[0].y).toBe(5);
     });
 
     test('handles point dragging correctly', () => {
         canvas.outlineEditor.isDraggingPoint = true;
         canvas.onMouseMove({ clientX: 10, clientY: 20 });
         canvas.onMouseMove({ clientX: 25, clientY: 15 });
-        expect(canvas.outlineEditor.layerData.shapes[1].nodes[0].x).toBe(15);
-        expect(canvas.outlineEditor.layerData.shapes[1].nodes[0].y).toBe(5);
+        expect(canvas.outlineEditor.drawingData.shapes[1].nodes[0].x).toBe(15);
+        expect(canvas.outlineEditor.drawingData.shapes[1].nodes[0].y).toBe(5);
     });
 
     test('point dragging cancels stale canvas panning', () => {
@@ -1622,8 +1631,8 @@ describe('GlyphCanvas onMouseMove', () => {
         canvas.onMouseMove({ clientX: 10, clientY: 20 });
         canvas.onMouseMove({ clientX: 25, clientY: 15 });
 
-        expect(canvas.outlineEditor.layerData.shapes[1].nodes[0].x).toBe(15);
-        expect(canvas.outlineEditor.layerData.shapes[1].nodes[0].y).toBe(5);
+        expect(canvas.outlineEditor.drawingData.shapes[1].nodes[0].x).toBe(15);
+        expect(canvas.outlineEditor.drawingData.shapes[1].nodes[0].y).toBe(5);
         expect(canvas.viewportManager.panX).toBe(0);
         expect(canvas.viewportManager.panY).toBe(0);
         expect(canvas.isDraggingCanvas).toBe(false);
@@ -1649,11 +1658,11 @@ describe('GlyphCanvas onMouseMove', () => {
         canvas.isDraggingCanvas = false;
 
         const initialTransform = [
-            ...canvas.outlineEditor.layerData.shapes[0].transform
+            ...canvas.outlineEditor.drawingData.shapes[0].transform
         ];
         canvas.onMouseMove({ clientX: 10, clientY: 20 });
 
-        expect(canvas.outlineEditor.layerData.shapes[0].transform).toEqual(
+        expect(canvas.outlineEditor.drawingData.shapes[0].transform).toEqual(
             initialTransform
         );
     });
@@ -1726,8 +1735,8 @@ describe('GlyphCanvas onMouseDown', () => {
 
     test('measurement drag takes precedence over marquee selection', () => {
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
+        canvas.outlineEditor.drawingData = {
             id: 'layer-1',
             width: 500,
             shapes: [],
@@ -1851,12 +1860,12 @@ describe('GlyphCanvas onMouseUp', () => {
             fontManager.flushPendingDebugEditingFontSaveAfterDrag = jest.fn();
 
             canvas.outlineEditor.active = true;
-            canvas.outlineEditor.selectedLayerId = 'layer-1';
+            canvas.outlineEditor.selectedDrawingId = 'layer-1';
             canvas.outlineEditor.hoveredSidebearingHandle = {
                 side: 'left',
                 editable: true
             };
-            canvas.outlineEditor.layerData = {
+            canvas.outlineEditor.drawingData = {
                 width: 520,
                 shapes: [{ nodes: [{ x: 40, y: 0, type: 'l' }] }],
                 anchors: []
@@ -1906,14 +1915,17 @@ describe('GlyphCanvas onMouseUp', () => {
             { glyphName: 'n', layerId: 'layer-1' },
             { glyphName: 'a', layerId: 'layer-1' }
         ];
-        const saveLayerDataSpy = jest
-            .spyOn(canvas.outlineEditor, 'saveLayerData')
+        const saveDrawingDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'saveDrawingData')
             .mockImplementation(() => {});
         const updatePropertyPanelSpy = jest
             .spyOn(canvas, 'updatePropertyPanel')
             .mockImplementation(() => {});
         const applyMetricsSpy = jest
-            .spyOn(canvas.outlineEditor, 'applyMetricsKeysToCurrentEditedLayer')
+            .spyOn(
+                canvas.outlineEditor,
+                'applyMetricsKeysToCurrentEditedDrawing'
+            )
             .mockReturnValue({
                 glyphName: 'l',
                 nextWidth: 540,
@@ -1977,12 +1989,12 @@ describe('GlyphCanvas onMouseUp', () => {
             fontManager.flushPendingDebugEditingFontSaveAfterDrag = jest.fn();
 
             canvas.outlineEditor.active = true;
-            canvas.outlineEditor.selectedLayerId = 'layer-1';
+            canvas.outlineEditor.selectedDrawingId = 'layer-1';
             canvas.outlineEditor.selectedSidebearingHandle = {
                 side: 'right',
                 editable: true
             };
-            canvas.outlineEditor.layerData = {
+            canvas.outlineEditor.drawingData = {
                 width: 540,
                 shapes: [],
                 anchors: []
@@ -2017,12 +2029,12 @@ describe('GlyphCanvas onMouseUp', () => {
                 'RIGHT RIGHT 20',
                 'right',
                 {
-                    changedLayerTargets: [
+                    changedDrawingTargets: [
                         { glyphName: 'l', layerId: 'layer-1' },
                         { glyphName: 'n', layerId: 'layer-1' },
                         { glyphName: 'a', layerId: 'layer-1' }
                     ],
-                    sourceLayerIsRecomposed: false,
+                    sourceDrawingIsRecomposed: false,
                     workerReplayTargets: [
                         { glyphName: 'l', layerId: 'layer-1' },
                         { glyphName: 'n', layerId: 'layer-1' },
@@ -2048,7 +2060,7 @@ describe('GlyphCanvas onMouseUp', () => {
             refreshFinalSpy.mockRestore();
             computeClosureSpy.mockRestore();
             updatePropertyPanelSpy.mockRestore();
-            saveLayerDataSpy.mockRestore();
+            saveDrawingDataSpy.mockRestore();
         }
     });
 
@@ -2061,8 +2073,8 @@ describe('GlyphCanvas onMouseUp', () => {
         const liveRefresh = new Promise((resolve) => {
             resolveLiveRefresh = resolve;
         });
-        const saveLayerDataSpy = jest
-            .spyOn(canvas.outlineEditor, 'saveLayerData')
+        const saveDrawingDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'saveDrawingData')
             .mockImplementation(() => {});
         const refreshFinalSidebearingSpy = jest
             .spyOn(
@@ -2077,7 +2089,10 @@ describe('GlyphCanvas onMouseUp', () => {
             )
             .mockReturnValue(liveRefresh);
         const applyMetricsSpy = jest
-            .spyOn(canvas.outlineEditor, 'applyMetricsKeysToCurrentEditedLayer')
+            .spyOn(
+                canvas.outlineEditor,
+                'applyMetricsKeysToCurrentEditedDrawing'
+            )
             .mockReturnValue({
                 glyphName: 'l',
                 nextWidth: 540,
@@ -2088,7 +2103,7 @@ describe('GlyphCanvas onMouseUp', () => {
         const collectTargetsSpy = jest
             .spyOn(
                 canvas.outlineEditor,
-                'collectMatchingLayerWorkerReplayTargets'
+                'collectMatchingDrawingWorkerReplayTargets'
             )
             .mockReturnValue([{ glyphName: 'l', layerId: 'layer-1' }]);
         const syncSpy = jest
@@ -2111,12 +2126,12 @@ describe('GlyphCanvas onMouseUp', () => {
             fontManager.flushPendingDebugEditingFontSaveAfterDrag = jest.fn();
 
             canvas.outlineEditor.active = true;
-            canvas.outlineEditor.selectedLayerId = 'layer-1';
+            canvas.outlineEditor.selectedDrawingId = 'layer-1';
             canvas.outlineEditor.selectedSidebearingHandle = {
                 side: 'right',
                 editable: true
             };
-            canvas.outlineEditor.layerData = {
+            canvas.outlineEditor.drawingData = {
                 width: 540,
                 shapes: [],
                 anchors: []
@@ -2136,7 +2151,7 @@ describe('GlyphCanvas onMouseUp', () => {
             });
             await Promise.resolve();
 
-            expect(saveLayerDataSpy).not.toHaveBeenCalled();
+            expect(saveDrawingDataSpy).not.toHaveBeenCalled();
             expect(syncSpy).not.toHaveBeenCalled();
             expect(drainLiveRefreshSpy).toHaveBeenCalledTimes(1);
 
@@ -2145,8 +2160,8 @@ describe('GlyphCanvas onMouseUp', () => {
 
             expect(
                 refreshFinalSidebearingSpy.mock.invocationCallOrder[0]
-            ).toBeLessThan(saveLayerDataSpy.mock.invocationCallOrder[0]);
-            expect(saveLayerDataSpy).toHaveBeenCalledWith(
+            ).toBeLessThan(saveDrawingDataSpy.mock.invocationCallOrder[0]);
+            expect(saveDrawingDataSpy).toHaveBeenCalledWith(
                 'mouse-drag-sidebearing'
             );
             expect(syncSpy).toHaveBeenCalledWith(
@@ -2155,10 +2170,10 @@ describe('GlyphCanvas onMouseUp', () => {
                 'RIGHT 20',
                 null,
                 {
-                    changedLayerTargets: [
+                    changedDrawingTargets: [
                         { glyphName: 'l', layerId: 'layer-1' }
                     ],
-                    sourceLayerIsRecomposed: false,
+                    sourceDrawingIsRecomposed: false,
                     workerReplayTargets: [
                         { glyphName: 'l', layerId: 'layer-1' }
                     ]
@@ -2180,7 +2195,7 @@ describe('GlyphCanvas onMouseUp', () => {
             syncSpy.mockRestore();
             collectTargetsSpy.mockRestore();
             applyMetricsSpy.mockRestore();
-            saveLayerDataSpy.mockRestore();
+            saveDrawingDataSpy.mockRestore();
         }
     });
 
@@ -2207,8 +2222,8 @@ describe('GlyphCanvas onMouseUp', () => {
                 'refreshFinalSidebearingWorkerStateBeforeCommit'
             )
             .mockResolvedValue(undefined);
-        const saveLayerDataSpy = jest
-            .spyOn(canvas.outlineEditor, 'saveLayerData')
+        const saveDrawingDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'saveDrawingData')
             .mockImplementation(() => {});
         const syncSpy = jest
             .spyOn(canvas.outlineEditor, '_syncCurrentGlyphToYDoc')
@@ -2237,12 +2252,12 @@ describe('GlyphCanvas onMouseUp', () => {
             fontManager.clearLiveDragPreview = clearLiveDragPreviewSpy;
 
             canvas.outlineEditor.active = true;
-            canvas.outlineEditor.selectedLayerId = 'layer-1';
+            canvas.outlineEditor.selectedDrawingId = 'layer-1';
             canvas.outlineEditor.selectedSidebearingHandle = {
                 side: 'right',
                 editable: true
             };
-            canvas.outlineEditor.layerData = {
+            canvas.outlineEditor.drawingData = {
                 width: 540,
                 shapes: [],
                 anchors: []
@@ -2256,7 +2271,7 @@ describe('GlyphCanvas onMouseUp', () => {
             canvas.outlineEditor._hasMoved = true;
             canvas.outlineEditor._preDragDesc = 'RSB: 10';
             canvas.outlineEditor._pendingSidebearingCommitSync = {
-                changedLayerTargets: [{ glyphName: 'l', layerId: 'layer-1' }],
+                changedDrawingTargets: [{ glyphName: 'l', layerId: 'layer-1' }],
                 workerReplayTargets: [{ glyphName: 'l', layerId: 'layer-1' }],
                 affectedGlyphNames: new Set(['l']),
                 recomposeTargets: []
@@ -2277,7 +2292,7 @@ describe('GlyphCanvas onMouseUp', () => {
             fontManager.clearLiveDragPreview = originalClearLiveDragPreview;
             drainLiveRefreshSpy.mockRestore();
             refreshFinalSpy.mockRestore();
-            saveLayerDataSpy.mockRestore();
+            saveDrawingDataSpy.mockRestore();
             syncSpy.mockRestore();
             getSidebearingSpy.mockRestore();
             updatePropertyPanelSpy.mockRestore();
@@ -2301,8 +2316,8 @@ describe('GlyphCanvas onMouseUp', () => {
             .mockImplementation(async () => {
                 sawDraggingDuringDrain = canvas.outlineEditor.isDraggingAnchor;
             });
-        const saveLayerDataSpy = jest
-            .spyOn(canvas.outlineEditor, 'saveLayerData')
+        const saveDrawingDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'saveDrawingData')
             .mockImplementation(() => {});
         const syncSpy = jest
             .spyOn(canvas.outlineEditor, '_syncCurrentGlyphToYDoc')
@@ -2338,9 +2353,9 @@ describe('GlyphCanvas onMouseUp', () => {
             fontManager.clearLiveDragPreview = clearLiveDragPreviewSpy;
 
             canvas.outlineEditor.active = true;
-            canvas.outlineEditor.selectedLayerId = 'layer-1';
+            canvas.outlineEditor.selectedDrawingId = 'layer-1';
             canvas.outlineEditor.selectedAnchors = [0];
-            canvas.outlineEditor.layerData = {
+            canvas.outlineEditor.drawingData = {
                 width: 617,
                 shapes: [],
                 anchors: [{ name: 'top', x: 205, y: 805 }]
@@ -2367,7 +2382,7 @@ describe('GlyphCanvas onMouseUp', () => {
                 originalFlushPendingDebugEditingFontSaveAfterDrag;
             fontManager.clearLiveDragPreview = originalClearLiveDragPreview;
             drainLiveRefreshSpy.mockRestore();
-            saveLayerDataSpy.mockRestore();
+            saveDrawingDataSpy.mockRestore();
             syncSpy.mockRestore();
             closureSpy.mockRestore();
             updatePropertyPanelSpy.mockRestore();
@@ -2386,11 +2401,14 @@ describe('GlyphCanvas onMouseUp', () => {
         const liveRefresh = new Promise((resolve) => {
             resolveLiveRefresh = resolve;
         });
-        const saveLayerDataSpy = jest
-            .spyOn(canvas.outlineEditor, 'saveLayerData')
+        const saveDrawingDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'saveDrawingData')
             .mockImplementation(() => {});
         const applyMetricsSpy = jest
-            .spyOn(canvas.outlineEditor, 'applyMetricsKeysToCurrentEditedLayer')
+            .spyOn(
+                canvas.outlineEditor,
+                'applyMetricsKeysToCurrentEditedDrawing'
+            )
             .mockReturnValue({
                 glyphName: 'l',
                 nextWidth: 540,
@@ -2401,7 +2419,7 @@ describe('GlyphCanvas onMouseUp', () => {
         const collectTargetsSpy = jest
             .spyOn(
                 canvas.outlineEditor,
-                'collectMatchingLayerWorkerReplayTargets'
+                'collectMatchingDrawingWorkerReplayTargets'
             )
             .mockReturnValue([{ glyphName: 'l', layerId: 'layer-1' }]);
         const syncSpy = jest
@@ -2413,10 +2431,10 @@ describe('GlyphCanvas onMouseUp', () => {
                 'syncDependentGlyphsAfterSidebearingEdit'
             )
             .mockImplementation(() => liveRefresh);
-        const syncEditorLayerSpy = jest
+        const syncEditorDrawingSpy = jest
             .spyOn(
                 canvas.outlineEditor,
-                'syncEditorLayerIntoModelForRecomposition'
+                'syncEditorDrawingIntoModelForRecomposition'
             )
             .mockImplementation(() => {});
         const previewSpy = jest
@@ -2440,7 +2458,7 @@ describe('GlyphCanvas onMouseUp', () => {
             )
             .mockImplementation(async () => {
                 canvas.outlineEditor._pendingSidebearingCommitSync = {
-                    changedLayerTargets: [
+                    changedDrawingTargets: [
                         { glyphName: 'l', layerId: 'layer-1' }
                     ],
                     workerReplayTargets: [
@@ -2460,8 +2478,8 @@ describe('GlyphCanvas onMouseUp', () => {
         const glyphModelSpy = jest
             .spyOn(canvas.outlineEditor, 'getCurrentGlyphModel')
             .mockReturnValue({ name: 'l' });
-        const explicitLayerSpy = jest
-            .spyOn(canvas.outlineEditor, 'getCurrentExplicitLayerCacheInput')
+        const explicitDrawingSpy = jest
+            .spyOn(canvas.outlineEditor, 'getCurrentExplicitDrawingCacheInput')
             .mockReturnValue(null);
         const updatePropertyPanelSpy = jest
             .spyOn(canvas, 'updatePropertyPanel')
@@ -2473,7 +2491,7 @@ describe('GlyphCanvas onMouseUp', () => {
                 fontModel: {
                     ...(originalCurrentFont?.fontModel || {}),
                     findGlyph: jest.fn(() => ({
-                        findLayerById: jest.fn(() => null)
+                        findDrawingById: jest.fn(() => null)
                     }))
                 }
             });
@@ -2491,12 +2509,12 @@ describe('GlyphCanvas onMouseUp', () => {
             fontManager.flushPendingDebugEditingFontSaveAfterDrag = jest.fn();
 
             canvas.outlineEditor.active = true;
-            canvas.outlineEditor.selectedLayerId = 'layer-1';
+            canvas.outlineEditor.selectedDrawingId = 'layer-1';
             canvas.outlineEditor.selectedSidebearingHandle = {
                 side: 'right',
                 editable: true
             };
-            canvas.outlineEditor.layerData = {
+            canvas.outlineEditor.drawingData = {
                 width: 540,
                 shapes: [],
                 anchors: []
@@ -2528,7 +2546,7 @@ describe('GlyphCanvas onMouseUp', () => {
             });
             await Promise.resolve();
 
-            expect(saveLayerDataSpy).not.toHaveBeenCalled();
+            expect(saveDrawingDataSpy).not.toHaveBeenCalled();
             expect(drainLiveRefreshSpy).toHaveBeenCalledTimes(1);
 
             resolveLiveRefresh();
@@ -2545,18 +2563,18 @@ describe('GlyphCanvas onMouseUp', () => {
             drainLiveRefreshSpy.mockRestore();
             currentFontSpy.mockRestore();
             updatePropertyPanelSpy.mockRestore();
-            explicitLayerSpy.mockRestore();
+            explicitDrawingSpy.mockRestore();
             glyphModelSpy.mockRestore();
             getSidebearingSpy.mockRestore();
             syncDependentsSpy.mockRestore();
-            syncEditorLayerSpy.mockRestore();
+            syncEditorDrawingSpy.mockRestore();
             previewSpy.mockRestore();
             computeClosureSpy.mockRestore();
             refreshFinalSpy.mockRestore();
             syncSpy.mockRestore();
             collectTargetsSpy.mockRestore();
             applyMetricsSpy.mockRestore();
-            saveLayerDataSpy.mockRestore();
+            saveDrawingDataSpy.mockRestore();
         }
     });
 
@@ -2569,7 +2587,7 @@ describe('GlyphCanvas onMouseUp', () => {
                 fontModel: {
                     ...(originalCurrentFont?.fontModel || {}),
                     findGlyph: jest.fn(() => ({
-                        findLayerById: jest.fn(() => null)
+                        findDrawingById: jest.fn(() => null)
                     }))
                 }
             });
@@ -2582,10 +2600,10 @@ describe('GlyphCanvas onMouseUp', () => {
                 'rebuildAutomaticCompositesForCurrentEditedGlyph'
             )
             .mockReturnValue(new Set(['a', 'adieresis']));
-        const syncEditorLayerSpy = jest
+        const syncEditorDrawingSpy = jest
             .spyOn(
                 canvas.outlineEditor,
-                'syncEditorLayerIntoModelForRecomposition'
+                'syncEditorDrawingIntoModelForRecomposition'
             )
             .mockImplementation(() => {});
         const computeClosureSpy = jest
@@ -2616,8 +2634,8 @@ describe('GlyphCanvas onMouseUp', () => {
         try {
             canvas.outlineEditor.active = true;
             canvas.outlineEditor.isDraggingAnchor = true;
-            canvas.outlineEditor.selectedLayerId = 'layer-1';
-            canvas.outlineEditor.layerData = {
+            canvas.outlineEditor.selectedDrawingId = 'layer-1';
+            canvas.outlineEditor.drawingData = {
                 width: 500,
                 shapes: [],
                 anchors: []
@@ -2646,7 +2664,7 @@ describe('GlyphCanvas onMouseUp', () => {
             currentFontSpy.mockRestore();
             scopeSpy.mockRestore();
             rebuildSpy.mockRestore();
-            syncEditorLayerSpy.mockRestore();
+            syncEditorDrawingSpy.mockRestore();
             computeClosureSpy.mockRestore();
             previewSpy.mockRestore();
             glyphModelSpy.mockRestore();
@@ -2664,8 +2682,8 @@ describe('GlyphCanvas onMouseUp', () => {
         const previewSpy = jest
             .spyOn(fontManager, 'stageLiveDragPreviewFromModel')
             .mockResolvedValue();
-        const explicitLayerSpy = jest
-            .spyOn(canvas.outlineEditor, 'getCurrentExplicitLayerCacheInput')
+        const explicitDrawingSpy = jest
+            .spyOn(canvas.outlineEditor, 'getCurrentExplicitDrawingCacheInput')
             .mockReturnValue({
                 glyphName: 'a',
                 layerId: 'layer-1',
@@ -2680,7 +2698,7 @@ describe('GlyphCanvas onMouseUp', () => {
         const collectTargetsSpy = jest
             .spyOn(
                 canvas.outlineEditor,
-                'collectMatchingLayerWorkerReplayTargets'
+                'collectMatchingDrawingWorkerReplayTargets'
             )
             .mockReturnValue([
                 { glyphName: 'a', layerId: 'layer-1' },
@@ -2690,7 +2708,7 @@ describe('GlyphCanvas onMouseUp', () => {
         try {
             canvas.outlineEditor.active = true;
             canvas.outlineEditor.isDraggingPoint = true;
-            canvas.outlineEditor.selectedLayerId = 'layer-1';
+            canvas.outlineEditor.selectedDrawingId = 'layer-1';
             canvas.outlineEditor.queueLiveVisibleOutlineDependentRefresh(
                 'mouse-drag-outline',
                 new Set(['a', 'adieresis'])
@@ -2709,7 +2727,7 @@ describe('GlyphCanvas onMouseUp', () => {
                         { glyphName: 'a', layerId: 'layer-1' },
                         { glyphName: 'adieresis', layerId: 'layer-1' }
                     ],
-                    explicitLayerData: [
+                    explicitDrawingData: [
                         {
                             glyphName: 'a',
                             layerId: 'layer-1',
@@ -2726,7 +2744,7 @@ describe('GlyphCanvas onMouseUp', () => {
             );
         } finally {
             collectTargetsSpy.mockRestore();
-            explicitLayerSpy.mockRestore();
+            explicitDrawingSpy.mockRestore();
             previewSpy.mockRestore();
             currentFontSpy.mockRestore();
         }
@@ -2742,8 +2760,8 @@ describe('GlyphCanvas onMouseUp', () => {
                 order: 'RestOfTheWorld'
             }
         };
-        const layerModelSpy = jest
-            .spyOn(canvas.outlineEditor, 'getCurrentLayerModel')
+        const drawingModelSpy = jest
+            .spyOn(canvas.outlineEditor, 'getCurrentDrawingModel')
             .mockReturnValue({
                 shapes: [
                     {
@@ -2767,7 +2785,7 @@ describe('GlyphCanvas onMouseUp', () => {
         );
 
         try {
-            canvas.outlineEditor.layerData = {
+            canvas.outlineEditor.drawingData = {
                 id: 'layer-1',
                 width: 500,
                 shapes: [
@@ -2823,7 +2841,7 @@ describe('GlyphCanvas onMouseUp', () => {
 
             expect(modelComponent.transform.scale).toEqual([2, 2]);
             expect(
-                canvas.outlineEditor.layerData.shapes[0].transform.scale
+                canvas.outlineEditor.drawingData.shapes[0].transform.scale
             ).toEqual([2, 2]);
             expect(updatePropertyPanelSpy).toHaveBeenCalled();
             expect(syncSpy).not.toHaveBeenCalled();
@@ -2832,7 +2850,7 @@ describe('GlyphCanvas onMouseUp', () => {
             renderSpy.mockRestore();
             updatePropertyPanelSpy.mockRestore();
             pointerSpy.mockRestore();
-            layerModelSpy.mockRestore();
+            drawingModelSpy.mockRestore();
         }
     });
 
@@ -2860,9 +2878,9 @@ describe('GlyphCanvas onMouseUp', () => {
 
             canvas.outlineEditor.active = true;
             canvas.outlineEditor.currentGlyphName = 'A';
-            canvas.outlineEditor.selectedLayerId = 'layer-1';
+            canvas.outlineEditor.selectedDrawingId = 'layer-1';
             canvas.outlineEditor.glyphStack = 'A@layer-1';
-            canvas.outlineEditor.layerData = {
+            canvas.outlineEditor.drawingData = {
                 id: 'layer-1',
                 width: 520,
                 shapes: [
@@ -2952,9 +2970,9 @@ describe('GlyphCanvas onMouseUp', () => {
     test('shift-click on an on-curve point still toggles selection instead of starting a drag', () => {
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.glyphStack = 'A@layer-1';
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             id: 'layer-1',
             width: 520,
             shapes: [
@@ -2993,9 +3011,9 @@ describe('GlyphCanvas onMouseUp', () => {
     test('cmd-click on a point cuts instead of toggling selection when something is already selected', () => {
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.glyphStack = 'A@layer-1';
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             id: 'layer-1',
             width: 520,
             shapes: [
@@ -3057,8 +3075,8 @@ describe('GlyphCanvas onMouseUp', () => {
         const buildNodeDescSpy = jest
             .spyOn(canvas.outlineEditor, '_buildNodeDesc')
             .mockReturnValue('(105, 282)');
-        const saveLayerDataSpy = jest
-            .spyOn(canvas.outlineEditor, 'saveLayerData')
+        const saveDrawingDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'saveDrawingData')
             .mockResolvedValue(undefined);
 
         try {
@@ -3075,7 +3093,7 @@ describe('GlyphCanvas onMouseUp', () => {
 
             canvas.outlineEditor.active = true;
             canvas.outlineEditor.currentGlyphName = 'A';
-            canvas.outlineEditor.selectedLayerId = 'layer-1';
+            canvas.outlineEditor.selectedDrawingId = 'layer-1';
             canvas.outlineEditor.glyphStack = 'A@layer-1';
             canvas.outlineEditor.isDraggingPoint = true;
             canvas.outlineEditor._dragType = 'point';
@@ -3085,17 +3103,19 @@ describe('GlyphCanvas onMouseUp', () => {
 
             await canvas.outlineEditor.onMouseUp({ clientX: 13, clientY: 23 });
 
-            expect(saveLayerDataSpy).toHaveBeenCalledWith('mouse-drag-outline');
+            expect(saveDrawingDataSpy).toHaveBeenCalledWith(
+                'mouse-drag-outline'
+            );
             expect(syncSpy).toHaveBeenCalledWith(
                 'Drag point',
                 "node '(105, 282)'",
                 'LEFT (105, 282)',
                 'left',
                 {
-                    changedLayerTargets: [
+                    changedDrawingTargets: [
                         { glyphName: 'A', layerId: 'layer-1' }
                     ],
-                    sourceLayerIsRecomposed: false,
+                    sourceDrawingIsRecomposed: false,
                     workerReplayTargets: [
                         { glyphName: 'A', layerId: 'layer-1' }
                     ]
@@ -3113,7 +3133,7 @@ describe('GlyphCanvas onMouseUp', () => {
             fontManager.flushPendingDebugEditingFontSaveAfterDrag =
                 originalFlushPendingDebugEditingFontSaveAfterDrag;
             buildNodeDescSpy.mockRestore();
-            saveLayerDataSpy.mockRestore();
+            saveDrawingDataSpy.mockRestore();
         }
     });
 
@@ -3132,8 +3152,8 @@ describe('GlyphCanvas onMouseUp', () => {
         const savePromise = new Promise((resolve) => {
             resolveSave = resolve;
         });
-        const saveLayerDataSpy = jest
-            .spyOn(canvas.outlineEditor, 'saveLayerData')
+        const saveDrawingDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'saveDrawingData')
             .mockReturnValue(savePromise);
 
         try {
@@ -3150,7 +3170,7 @@ describe('GlyphCanvas onMouseUp', () => {
 
             canvas.outlineEditor.active = true;
             canvas.outlineEditor.currentGlyphName = 'A';
-            canvas.outlineEditor.selectedLayerId = 'layer-1';
+            canvas.outlineEditor.selectedDrawingId = 'layer-1';
             canvas.outlineEditor.glyphStack = 'A@layer-1';
             canvas.outlineEditor.isDraggingPoint = true;
             canvas.outlineEditor._dragType = 'point';
@@ -3173,10 +3193,10 @@ describe('GlyphCanvas onMouseUp', () => {
                 '(105, 282)',
                 null,
                 {
-                    changedLayerTargets: [
+                    changedDrawingTargets: [
                         { glyphName: 'A', layerId: 'layer-1' }
                     ],
-                    sourceLayerIsRecomposed: false,
+                    sourceDrawingIsRecomposed: false,
                     workerReplayTargets: [
                         { glyphName: 'A', layerId: 'layer-1' }
                     ]
@@ -3195,7 +3215,7 @@ describe('GlyphCanvas onMouseUp', () => {
                 originalFlushPendingDebugEditingFontSaveAfterDrag;
             syncSpy.mockRestore();
             buildNodeDescSpy.mockRestore();
-            saveLayerDataSpy.mockRestore();
+            saveDrawingDataSpy.mockRestore();
         }
     });
 
@@ -3213,8 +3233,8 @@ describe('GlyphCanvas onMouseUp', () => {
             .spyOn(canvas.outlineEditor, '_syncCurrentGlyphToYDoc')
             .mockImplementation(() => {});
         const saveError = new Error('invalid width');
-        const saveLayerDataSpy = jest
-            .spyOn(canvas.outlineEditor, 'saveLayerData')
+        const saveDrawingDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'saveDrawingData')
             .mockRejectedValue(saveError);
 
         try {
@@ -3231,7 +3251,7 @@ describe('GlyphCanvas onMouseUp', () => {
 
             canvas.outlineEditor.active = true;
             canvas.outlineEditor.currentGlyphName = 'A';
-            canvas.outlineEditor.selectedLayerId = 'layer-1';
+            canvas.outlineEditor.selectedDrawingId = 'layer-1';
             canvas.outlineEditor.glyphStack = 'A@layer-1';
             canvas.outlineEditor.isDraggingPoint = true;
             canvas.outlineEditor._dragType = 'point';
@@ -3247,7 +3267,9 @@ describe('GlyphCanvas onMouseUp', () => {
                 canvas.outlineEditor.onMouseUp({ clientX: 13, clientY: 23 })
             ).rejects.toBe(saveError);
 
-            expect(saveLayerDataSpy).toHaveBeenCalledWith('mouse-drag-outline');
+            expect(saveDrawingDataSpy).toHaveBeenCalledWith(
+                'mouse-drag-outline'
+            );
             expect(syncSpy).not.toHaveBeenCalled();
             expect(window.changeBridge.endTransaction).toHaveBeenCalled();
             expect(canvas.outlineEditor._hasMoved).toBe(false);
@@ -3267,7 +3289,7 @@ describe('GlyphCanvas onMouseUp', () => {
             fontManager.flushPendingDebugEditingFontSaveAfterDrag =
                 originalFlushPendingDebugEditingFontSaveAfterDrag;
             syncSpy.mockRestore();
-            saveLayerDataSpy.mockRestore();
+            saveDrawingDataSpy.mockRestore();
             queueCanvasRefreshSpy.mockRestore();
         }
     });
@@ -3284,11 +3306,11 @@ describe('GlyphCanvas onMouseUp', () => {
         const buildNodeDescSpy = jest
             .spyOn(canvas.outlineEditor, '_buildNodeDesc')
             .mockReturnValue('(105, 282)');
-        const saveLayerDataSpy = jest
-            .spyOn(canvas.outlineEditor, 'saveLayerData')
+        const saveDrawingDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'saveDrawingData')
             .mockResolvedValue(undefined);
-        const getCurrentLayerModelSpy = jest
-            .spyOn(canvas.outlineEditor, 'getCurrentLayerModel')
+        const getCurrentDrawingModelSpy = jest
+            .spyOn(canvas.outlineEditor, 'getCurrentDrawingModel')
             .mockReturnValue({
                 resolveMetricsKey: jest.fn((side) =>
                     side === 'left'
@@ -3311,7 +3333,7 @@ describe('GlyphCanvas onMouseUp', () => {
 
             canvas.outlineEditor.active = true;
             canvas.outlineEditor.currentGlyphName = 'A';
-            canvas.outlineEditor.selectedLayerId = 'layer-1';
+            canvas.outlineEditor.selectedDrawingId = 'layer-1';
             canvas.outlineEditor.glyphStack = 'A@layer-1';
             canvas.outlineEditor.isDraggingPoint = true;
             canvas.outlineEditor._dragType = 'point';
@@ -3322,17 +3344,19 @@ describe('GlyphCanvas onMouseUp', () => {
 
             await canvas.outlineEditor.onMouseUp({ clientX: 13, clientY: 23 });
 
-            expect(saveLayerDataSpy).toHaveBeenCalledWith('mouse-drag-outline');
+            expect(saveDrawingDataSpy).toHaveBeenCalledWith(
+                'mouse-drag-outline'
+            );
             expect(syncSpy).toHaveBeenCalledWith(
                 'Drag point',
                 "node '(105, 282)'",
                 'LEFT (105, 282)',
                 'left',
                 {
-                    changedLayerTargets: [
+                    changedDrawingTargets: [
                         { glyphName: 'A', layerId: 'layer-1' }
                     ],
-                    sourceLayerIsRecomposed: false,
+                    sourceDrawingIsRecomposed: false,
                     workerReplayTargets: [
                         { glyphName: 'A', layerId: 'layer-1' }
                     ]
@@ -3350,13 +3374,13 @@ describe('GlyphCanvas onMouseUp', () => {
             fontManager.flushPendingDebugEditingFontSaveAfterDrag =
                 originalFlushPendingDebugEditingFontSaveAfterDrag;
             buildNodeDescSpy.mockRestore();
-            saveLayerDataSpy.mockRestore();
-            getCurrentLayerModelSpy.mockRestore();
+            saveDrawingDataSpy.mockRestore();
+            getCurrentDrawingModelSpy.mockRestore();
         }
     });
 
-    test('syncCurrentExactLayerDataFromModel preserves working-copy geometry when the exact model snapshot omits it', () => {
-        const currentLayerData = {
+    test('syncCurrentExactDrawingDataFromModel preserves working-copy geometry when the exact model snapshot omits it', () => {
+        const currentDrawingData = {
             id: 'layer-1',
             width: 520,
             shapes: [
@@ -3372,11 +3396,11 @@ describe('GlyphCanvas onMouseUp', () => {
             guides: [],
             format_specific: { test: true }
         };
-        const getCurrentLayerDataSpy = jest
-            .spyOn(canvas.outlineEditor, 'getCurrentLayerDataFromStack')
-            .mockReturnValue(currentLayerData);
-        const getCurrentLayerModelSpy = jest
-            .spyOn(canvas.outlineEditor, 'getCurrentLayerModel')
+        const getCurrentDrawingDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'getCurrentDrawingDataFromStack')
+            .mockReturnValue(currentDrawingData);
+        const getCurrentDrawingModelSpy = jest
+            .spyOn(canvas.outlineEditor, 'getCurrentDrawingModel')
             .mockReturnValue({
                 toJSON: jest.fn(() => ({
                     id: 'layer-1'
@@ -3384,10 +3408,10 @@ describe('GlyphCanvas onMouseUp', () => {
             });
 
         try {
-            canvas.outlineEditor.syncCurrentExactLayerDataFromModel();
+            canvas.outlineEditor.syncCurrentExactDrawingDataFromModel();
 
-            expect(currentLayerData.width).toBe(520);
-            expect(currentLayerData.shapes).toEqual([
+            expect(currentDrawingData.width).toBe(520);
+            expect(currentDrawingData.shapes).toEqual([
                 {
                     nodes: [
                         { x: 0, y: 0, type: 'l' },
@@ -3396,19 +3420,19 @@ describe('GlyphCanvas onMouseUp', () => {
                     closed: false
                 }
             ]);
-            expect(currentLayerData.anchors).toEqual([
+            expect(currentDrawingData.anchors).toEqual([
                 { name: 'top', x: 50, y: 700 }
             ]);
-            expect(currentLayerData.format_specific).toEqual({ test: true });
+            expect(currentDrawingData.format_specific).toEqual({ test: true });
         } finally {
-            getCurrentLayerDataSpy.mockRestore();
-            getCurrentLayerModelSpy.mockRestore();
+            getCurrentDrawingDataSpy.mockRestore();
+            getCurrentDrawingModelSpy.mockRestore();
         }
     });
 
-    test('syncCurrentExactLayerDataFromModel keeps vertical metrics across repeated model merges', () => {
+    test('syncCurrentExactDrawingDataFromModel keeps vertical metrics across repeated model merges', () => {
         const verticalMetrics = { Ascender: 800, Descender: -200 };
-        const currentLayerData = {
+        const currentDrawingData = {
             id: 'layer-1',
             width: 520,
             shapes: [],
@@ -3417,11 +3441,11 @@ describe('GlyphCanvas onMouseUp', () => {
             _verticalMetrics: { ...verticalMetrics }
         };
         canvas.outlineEditor.renderVerticalMetrics = { ...verticalMetrics };
-        const getCurrentLayerDataSpy = jest
-            .spyOn(canvas.outlineEditor, 'getCurrentLayerDataFromStack')
-            .mockReturnValue(currentLayerData);
-        const getCurrentLayerModelSpy = jest
-            .spyOn(canvas.outlineEditor, 'getCurrentLayerModel')
+        const getCurrentDrawingDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'getCurrentDrawingDataFromStack')
+            .mockReturnValue(currentDrawingData);
+        const getCurrentDrawingModelSpy = jest
+            .spyOn(canvas.outlineEditor, 'getCurrentDrawingModel')
             .mockReturnValue({
                 toJSON: jest.fn(() => ({
                     id: 'layer-1',
@@ -3430,21 +3454,23 @@ describe('GlyphCanvas onMouseUp', () => {
             });
 
         try {
-            canvas.outlineEditor.syncCurrentExactLayerDataFromModel();
-            canvas.outlineEditor.syncCurrentExactLayerDataFromModel();
+            canvas.outlineEditor.syncCurrentExactDrawingDataFromModel();
+            canvas.outlineEditor.syncCurrentExactDrawingDataFromModel();
 
-            expect(currentLayerData._verticalMetrics).toEqual(verticalMetrics);
+            expect(currentDrawingData._verticalMetrics).toEqual(
+                verticalMetrics
+            );
             expect(canvas.outlineEditor.renderVerticalMetrics).toEqual(
                 verticalMetrics
             );
         } finally {
-            getCurrentLayerDataSpy.mockRestore();
-            getCurrentLayerModelSpy.mockRestore();
+            getCurrentDrawingDataSpy.mockRestore();
+            getCurrentDrawingModelSpy.mockRestore();
         }
     });
 
-    test('applyExactSelectedLayerData preserves existing exact-layer geometry when the incoming exact snapshot omits it', () => {
-        canvas.outlineEditor.layerData = {
+    test('applyExactSelectedDrawingData preserves existing exact-layer geometry when the incoming exact snapshot omits it', () => {
+        canvas.outlineEditor.drawingData = {
             id: 'layer-1',
             width: 520,
             shapes: [
@@ -3466,13 +3492,13 @@ describe('GlyphCanvas onMouseUp', () => {
             .mockReturnValue(false);
 
         try {
-            canvas.outlineEditor.applyExactSelectedLayerData(
+            canvas.outlineEditor.applyExactSelectedDrawingData(
                 { id: 'layer-1' },
                 null
             );
 
-            expect(canvas.outlineEditor.layerData.width).toBe(520);
-            expect(canvas.outlineEditor.layerData.shapes).toEqual([
+            expect(canvas.outlineEditor.drawingData.width).toBe(520);
+            expect(canvas.outlineEditor.drawingData.shapes).toEqual([
                 {
                     nodes: [
                         { x: 0, y: 0, type: 'l' },
@@ -3481,10 +3507,10 @@ describe('GlyphCanvas onMouseUp', () => {
                     closed: false
                 }
             ]);
-            expect(canvas.outlineEditor.layerData.anchors).toEqual([
+            expect(canvas.outlineEditor.drawingData.anchors).toEqual([
                 { name: 'top', x: 50, y: 700 }
             ]);
-            expect(canvas.outlineEditor.layerData.format_specific).toEqual({
+            expect(canvas.outlineEditor.drawingData.format_specific).toEqual({
                 test: true
             });
         } finally {
@@ -3492,33 +3518,35 @@ describe('GlyphCanvas onMouseUp', () => {
         }
     });
 
-    test('applyExactSelectedLayerData keeps a background root when entering a nested component', () => {
+    test('applyExactSelectedDrawingData keeps a background root when entering a nested component', () => {
         const backgroundShapes = [
             {
                 reference: 'a'
             }
         ];
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             id: 'master-layer.bg',
             width: 500,
             shapes: backgroundShapes,
             isInterpolated: false
         };
         canvas.outlineEditor.glyphStack = 'b@master-layer.bg>0:a@master-layer';
-        canvas.outlineEditor.selectedLayerId = 'master-layer';
-        jest.spyOn(canvas.outlineEditor, 'getRootLayerModel').mockReturnValue({
-            id: 'master-layer.bg',
-            is_background: true
-        });
+        canvas.outlineEditor.selectedDrawingId = 'master-layer';
+        jest.spyOn(canvas.outlineEditor, 'getRootDrawingModel').mockReturnValue(
+            {
+                id: 'master-layer.bg',
+                is_background: true
+            }
+        );
         jest.spyOn(
             canvas.outlineEditor,
-            'getCurrentLayerModel'
+            'getCurrentDrawingModel'
         ).mockReturnValue({
             id: 'master-layer',
             is_background: false
         });
 
-        canvas.outlineEditor.applyExactSelectedLayerData(
+        canvas.outlineEditor.applyExactSelectedDrawingData(
             {
                 id: 'master-layer',
                 width: 400,
@@ -3540,10 +3568,10 @@ describe('GlyphCanvas onMouseUp', () => {
             }
         );
 
-        expect(canvas.outlineEditor.layerData.id).toBe('master-layer.bg');
-        expect(canvas.outlineEditor.layerData.shapes[0].reference).toBe('a');
+        expect(canvas.outlineEditor.drawingData.id).toBe('master-layer.bg');
+        expect(canvas.outlineEditor.drawingData.shapes[0].reference).toBe('a');
         const nestedShapes =
-            canvas.outlineEditor.getCurrentLayerDataFromStack().shapes;
+            canvas.outlineEditor.getCurrentDrawingDataFromStack().shapes;
         expect(nestedShapes).toHaveLength(1);
         expect(nestedShapes[0].closed).toBe(true);
         expect(nestedShapes[0].nodes).toEqual([
@@ -3553,9 +3581,9 @@ describe('GlyphCanvas onMouseUp', () => {
         ]);
     });
 
-    test('serializeLayerDataAsInterpolationPayload preserves omitted nested component layer fields', () => {
+    test('serializeDrawingDataAsInterpolationPayload preserves omitted nested component layer fields', () => {
         const serialized =
-            canvas.outlineEditor.serializeLayerDataAsInterpolationPayload({
+            canvas.outlineEditor.serializeDrawingDataAsInterpolationPayload({
                 width: 520,
                 shapes: [
                     {
@@ -3573,8 +3601,8 @@ describe('GlyphCanvas onMouseUp', () => {
         expect(serialized.shapes[0].layerData.format_specific).toBeUndefined();
     });
 
-    test('preserveMissingLayerFields strips synthesized nested component layer empties', () => {
-        const preserved = canvas.outlineEditor.preserveMissingLayerFields(
+    test('preserveMissingDrawingFields strips synthesized nested component layer empties', () => {
+        const preserved = canvas.outlineEditor.preserveMissingDrawingFields(
             {
                 width: 520,
                 shapes: [
@@ -3622,11 +3650,11 @@ describe('GlyphCanvas onMouseUp', () => {
         const buildNodeDescSpy = jest
             .spyOn(canvas.outlineEditor, '_buildNodeDesc')
             .mockReturnValue('(105, 282)');
-        const saveLayerDataSpy = jest
-            .spyOn(canvas.outlineEditor, 'saveLayerData')
+        const saveDrawingDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'saveDrawingData')
             .mockResolvedValue(undefined);
-        const getCurrentLayerModelSpy = jest
-            .spyOn(canvas.outlineEditor, 'getCurrentLayerModel')
+        const getCurrentDrawingModelSpy = jest
+            .spyOn(canvas.outlineEditor, 'getCurrentDrawingModel')
             .mockReturnValue({
                 resolveMetricsKey: jest.fn((side) =>
                     side === 'left'
@@ -3635,9 +3663,13 @@ describe('GlyphCanvas onMouseUp', () => {
                 )
             });
         const applyMetricsKeysSpy = jest
-            .spyOn(canvas.outlineEditor, 'applyMetricsKeysToCurrentEditedLayer')
+            .spyOn(
+                canvas.outlineEditor,
+                'applyMetricsKeysToCurrentEditedDrawing'
+            )
             .mockImplementation(() => {
-                const node = canvas.outlineEditor.layerData.shapes[0].nodes[1];
+                const node =
+                    canvas.outlineEditor.drawingData.shapes[0].nodes[1];
                 node.x = 105;
                 node.y = 282;
                 canvas.outlineEditor._metricsKeyEditedSide = null;
@@ -3658,9 +3690,9 @@ describe('GlyphCanvas onMouseUp', () => {
 
             canvas.outlineEditor.active = true;
             canvas.outlineEditor.currentGlyphName = 'A';
-            canvas.outlineEditor.selectedLayerId = 'layer-1';
+            canvas.outlineEditor.selectedDrawingId = 'layer-1';
             canvas.outlineEditor.glyphStack = 'A@layer-1';
-            canvas.outlineEditor.layerData = {
+            canvas.outlineEditor.drawingData = {
                 id: 'layer-1',
                 width: 520,
                 shapes: [
@@ -3725,17 +3757,19 @@ describe('GlyphCanvas onMouseUp', () => {
 
             await canvas.outlineEditor.onMouseUp({ clientX: 13, clientY: 23 });
 
-            expect(saveLayerDataSpy).toHaveBeenCalledWith('mouse-drag-outline');
+            expect(saveDrawingDataSpy).toHaveBeenCalledWith(
+                'mouse-drag-outline'
+            );
             expect(syncSpy).toHaveBeenCalledWith(
                 'Drag point',
                 "node '(105, 282)'",
                 'LEFT (105, 282)',
                 'left',
                 {
-                    changedLayerTargets: [
+                    changedDrawingTargets: [
                         { glyphName: 'A', layerId: 'layer-1' }
                     ],
-                    sourceLayerIsRecomposed: false,
+                    sourceDrawingIsRecomposed: false,
                     workerReplayTargets: [
                         { glyphName: 'A', layerId: 'layer-1' }
                     ]
@@ -3755,8 +3789,8 @@ describe('GlyphCanvas onMouseUp', () => {
             fontManager.flushPendingDebugEditingFontSaveAfterDrag =
                 originalFlushPendingDebugEditingFontSaveAfterDrag;
             buildNodeDescSpy.mockRestore();
-            saveLayerDataSpy.mockRestore();
-            getCurrentLayerModelSpy.mockRestore();
+            saveDrawingDataSpy.mockRestore();
+            getCurrentDrawingModelSpy.mockRestore();
             applyMetricsKeysSpy.mockRestore();
         }
     });
@@ -3773,7 +3807,10 @@ describe('GlyphCanvas onMouseUp', () => {
             fontManager.stageLiveDragPreviewFromModel;
         const originalClearLiveDragPreview = fontManager.clearLiveDragPreview;
         const applyMetricsKeysSpy = jest
-            .spyOn(canvas.outlineEditor, 'applyMetricsKeysToCurrentEditedLayer')
+            .spyOn(
+                canvas.outlineEditor,
+                'applyMetricsKeysToCurrentEditedDrawing'
+            )
             .mockReturnValue({
                 glyphName: 'A',
                 nextWidth: 520,
@@ -3781,8 +3818,8 @@ describe('GlyphCanvas onMouseUp', () => {
                 advancesRefreshed: true,
                 affectedGlyphNames: new Set(['A'])
             });
-        const saveLayerDataSpy = jest
-            .spyOn(canvas.outlineEditor, 'saveLayerData')
+        const saveDrawingDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'saveDrawingData')
             .mockResolvedValue(undefined);
         const syncSpy = jest
             .spyOn(canvas.outlineEditor, '_syncCurrentGlyphToYDoc')
@@ -3853,9 +3890,9 @@ describe('GlyphCanvas onMouseUp', () => {
 
             canvas.outlineEditor.active = true;
             canvas.outlineEditor.currentGlyphName = 'A';
-            canvas.outlineEditor.selectedLayerId = 'layer-1';
+            canvas.outlineEditor.selectedDrawingId = 'layer-1';
             canvas.outlineEditor.glyphStack = 'A@layer-1';
-            canvas.outlineEditor.layerData = {
+            canvas.outlineEditor.drawingData = {
                 id: 'layer-1',
                 width: 520,
                 shapes: [
@@ -3902,7 +3939,7 @@ describe('GlyphCanvas onMouseUp', () => {
             });
 
             expect(applyMetricsKeysSpy).toHaveBeenCalledTimes(0);
-            expect(saveLayerDataSpy).toHaveBeenCalledTimes(0);
+            expect(saveDrawingDataSpy).toHaveBeenCalledTimes(0);
             expect(scheduledFlushes).toHaveLength(1);
             expect(canvas.viewportManager.panX).toBe(100);
 
@@ -3911,14 +3948,14 @@ describe('GlyphCanvas onMouseUp', () => {
             await canvas.outlineEditor.liveDragEditFunnel.drainAndClearQueued();
 
             expect(applyMetricsKeysSpy).toHaveBeenCalledTimes(1);
-            expect(saveLayerDataSpy).toHaveBeenCalledTimes(0);
+            expect(saveDrawingDataSpy).toHaveBeenCalledTimes(0);
             expect(stageLiveDragPreviewFromModelSpy).toHaveBeenCalledTimes(1);
             expect(stageLiveDragPreviewFromModelSpy).toHaveBeenCalledWith(
                 ['A'],
                 'layer-1',
                 expect.objectContaining({
                     dispatchGlyphChanged: false,
-                    explicitLayerData: [
+                    explicitDrawingData: [
                         expect.objectContaining({
                             glyphName: 'A',
                             layerId: 'layer-1',
@@ -3935,9 +3972,9 @@ describe('GlyphCanvas onMouseUp', () => {
             await canvas.outlineEditor.onMouseUp({ clientX: 13, clientY: 23 });
 
             expect(applyMetricsKeysSpy).toHaveBeenCalledTimes(2);
-            expect(saveLayerDataSpy).toHaveBeenCalledTimes(1);
+            expect(saveDrawingDataSpy).toHaveBeenCalledTimes(1);
             expect(clearLiveDragPreviewSpy).toHaveBeenCalledTimes(1);
-            expect(saveLayerDataSpy).toHaveBeenNthCalledWith(
+            expect(saveDrawingDataSpy).toHaveBeenNthCalledWith(
                 1,
                 'mouse-drag-outline'
             );
@@ -3954,7 +3991,7 @@ describe('GlyphCanvas onMouseUp', () => {
                 originalStageLiveDragPreviewFromModel;
             fontManager.clearLiveDragPreview = originalClearLiveDragPreview;
             applyMetricsKeysSpy.mockRestore();
-            saveLayerDataSpy.mockRestore();
+            saveDrawingDataSpy.mockRestore();
             syncSpy.mockRestore();
             buildNodeDescSpy.mockRestore();
             renderSpy.mockRestore();
@@ -3978,8 +4015,8 @@ describe('GlyphCanvas onMouseUp', () => {
         const buildNodeDescSpy = jest
             .spyOn(canvas.outlineEditor, '_buildNodeDesc')
             .mockReturnValue('(205, 182)');
-        const saveLayerDataSpy = jest
-            .spyOn(canvas.outlineEditor, 'saveLayerData')
+        const saveDrawingDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'saveDrawingData')
             .mockResolvedValue(undefined);
 
         try {
@@ -3996,7 +4033,7 @@ describe('GlyphCanvas onMouseUp', () => {
 
             canvas.outlineEditor.active = true;
             canvas.outlineEditor.currentGlyphName = 'A';
-            canvas.outlineEditor.selectedLayerId = 'layer-1';
+            canvas.outlineEditor.selectedDrawingId = 'layer-1';
             canvas.outlineEditor.glyphStack = 'A@layer-1';
             canvas.outlineEditor.isDraggingPoint = true;
             canvas.outlineEditor._dragType = 'point';
@@ -4008,17 +4045,19 @@ describe('GlyphCanvas onMouseUp', () => {
 
             await canvas.outlineEditor.onMouseUp({ clientX: 13, clientY: 23 });
 
-            expect(saveLayerDataSpy).toHaveBeenCalledWith('mouse-drag-outline');
+            expect(saveDrawingDataSpy).toHaveBeenCalledWith(
+                'mouse-drag-outline'
+            );
             expect(syncSpy).toHaveBeenCalledWith(
                 'Drag point',
                 "node '(205, 182)'",
                 'RIGHT (205, 182)',
                 'right',
                 {
-                    changedLayerTargets: [
+                    changedDrawingTargets: [
                         { glyphName: 'A', layerId: 'layer-1' }
                     ],
-                    sourceLayerIsRecomposed: false,
+                    sourceDrawingIsRecomposed: false,
                     workerReplayTargets: [
                         { glyphName: 'A', layerId: 'layer-1' }
                     ]
@@ -4036,7 +4075,7 @@ describe('GlyphCanvas onMouseUp', () => {
             fontManager.flushPendingDebugEditingFontSaveAfterDrag =
                 originalFlushPendingDebugEditingFontSaveAfterDrag;
             buildNodeDescSpy.mockRestore();
-            saveLayerDataSpy.mockRestore();
+            saveDrawingDataSpy.mockRestore();
         }
     });
 });
@@ -4050,8 +4089,8 @@ describe('OutlineEditor marquee selection', () => {
         canvas.textRunEditor.selectedGlyphIndex = 0;
         canvas.textRunEditor.shapedGlyphs = [{ ax: 500, dx: 0, dy: 0, g: 0 }];
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
+        canvas.outlineEditor.drawingData = {
             id: 'layer-1',
             width: 500,
             master: {
@@ -4093,7 +4132,7 @@ describe('OutlineEditor marquee selection', () => {
         canvas.outlineEditor.selectedAnchors = [0];
         canvas.outlineEditor.selectedComponents = [1];
         canvas.outlineEditor.selectedGuideHandle = {
-            scope: 'layer',
+            scope: 'drawing',
             index: 0
         };
         canvas.outlineEditor.selectedSidebearingHandle = {
@@ -4125,7 +4164,7 @@ describe('OutlineEditor marquee selection', () => {
         canvas.outlineEditor.selectedAnchors = [0];
         canvas.outlineEditor.selectedComponents = [1];
         canvas.outlineEditor.selectedGuideHandle = {
-            scope: 'layer',
+            scope: 'drawing',
             index: 0
         };
 
@@ -4151,7 +4190,7 @@ describe('OutlineEditor marquee selection', () => {
         expect(canvas.outlineEditor.selectedAnchors).toEqual([0]);
         expect(canvas.outlineEditor.selectedComponents).toEqual([1]);
         expect(canvas.outlineEditor.selectedGuideHandle).toEqual({
-            scope: 'layer',
+            scope: 'drawing',
             index: 0
         });
     });
@@ -4235,12 +4274,12 @@ describe('GlyphCanvas property panel metrics edits', () => {
 
     test('commitPropertyPanelValue keeps layer-local sidebearing keys on the incremental layer path', async () => {
         const requestRecompileWithoutDataChange = jest.fn();
-        const layer = {
+        const drawing = {
             width: 500,
-            isAutomaticAlignedLayer: jest.fn(() => false),
+            isAutomaticAlignedDrawing: jest.fn(() => false),
             applySidebearingInput: jest.fn(() => {
                 fontManager.currentFont.changeVersion = 2;
-                layer.width = 640;
+                drawing.width = 640;
                 return {
                     affectedGlyphNames: ['a'],
                     error: null,
@@ -4266,10 +4305,10 @@ describe('GlyphCanvas property panel metrics edits', () => {
             .mockResolvedValue();
         fontManager.scheduleFullCompileDebounce = jest.fn();
 
-        canvas.getCurrentEditingLayerModel = jest.fn(() => layer);
+        canvas.getCurrentEditingDrawingModel = jest.fn(() => drawing);
         canvas.getCurrentGlyphName = jest.fn(() => 'a');
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
-        canvas.outlineEditor.fetchLayerData = jest.fn().mockResolvedValue();
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
+        canvas.outlineEditor.fetchDrawingData = jest.fn().mockResolvedValue();
         canvas.outlineEditor.performHitDetection = jest.fn();
         canvas.updatePropertyPanel = jest.fn();
         canvas.render = jest.fn();
@@ -4300,18 +4339,20 @@ describe('GlyphCanvas property panel metrics edits', () => {
         expect(
             window.autoCompileManager.checkAndSchedule
         ).toHaveBeenCalledTimes(1);
-        expect(canvas.outlineEditor.fetchLayerData).toHaveBeenCalledWith(true);
+        expect(canvas.outlineEditor.fetchDrawingData).toHaveBeenCalledWith(
+            true
+        );
     });
 
     test('commitPropertyPanelValue leaves sidebearing-key compile wakeup to the bridge funnel', async () => {
         const originalPatchSyncEngine = window.patchSyncEngine;
         const requestRecompileWithoutDataChange = jest.fn();
-        const layer = {
+        const drawing = {
             width: 500,
-            isAutomaticAlignedLayer: jest.fn(() => false),
+            isAutomaticAlignedDrawing: jest.fn(() => false),
             applySidebearingInput: jest.fn(() => {
                 fontManager.currentFont.changeVersion = 2;
-                layer.width = 640;
+                drawing.width = 640;
                 return {
                     affectedGlyphNames: ['a'],
                     error: null,
@@ -4340,10 +4381,10 @@ describe('GlyphCanvas property panel metrics edits', () => {
             syncGlyphFromJson: jest.fn()
         };
 
-        canvas.getCurrentEditingLayerModel = jest.fn(() => layer);
+        canvas.getCurrentEditingDrawingModel = jest.fn(() => drawing);
         canvas.getCurrentGlyphName = jest.fn(() => 'a');
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
-        canvas.outlineEditor.fetchLayerData = jest.fn().mockResolvedValue();
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
+        canvas.outlineEditor.fetchDrawingData = jest.fn().mockResolvedValue();
         canvas.outlineEditor.performHitDetection = jest.fn();
         canvas.updatePropertyPanel = jest.fn();
         canvas.render = jest.fn();
@@ -4368,15 +4409,17 @@ describe('GlyphCanvas property panel metrics edits', () => {
         expect(
             window.autoCompileManager.checkAndSchedule
         ).not.toHaveBeenCalled();
-        expect(canvas.outlineEditor.fetchLayerData).toHaveBeenCalledWith(true);
+        expect(canvas.outlineEditor.fetchDrawingData).toHaveBeenCalledWith(
+            true
+        );
     });
 
     test('commitPropertyPanelValue does not schedule compile for invalid sidebearing-key input', async () => {
         const originalPatchSyncEngine = window.patchSyncEngine;
         const requestRecompileWithoutDataChange = jest.fn();
-        const layer = {
+        const drawing = {
             width: 500,
-            isAutomaticAlignedLayer: jest.fn(() => false),
+            isAutomaticAlignedDrawing: jest.fn(() => false),
             applySidebearingInput: jest.fn(() => ({
                 affectedGlyphNames: ['a'],
                 error: 'Invalid metrics-key calculation',
@@ -4406,10 +4449,10 @@ describe('GlyphCanvas property panel metrics edits', () => {
             syncGlyphFromJson: jest.fn()
         };
 
-        canvas.getCurrentEditingLayerModel = jest.fn(() => layer);
+        canvas.getCurrentEditingDrawingModel = jest.fn(() => drawing);
         canvas.getCurrentGlyphName = jest.fn(() => 'a');
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
-        canvas.outlineEditor.fetchLayerData = jest.fn().mockResolvedValue();
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
+        canvas.outlineEditor.fetchDrawingData = jest.fn().mockResolvedValue();
         canvas.outlineEditor.performHitDetection = jest.fn();
         canvas.updatePropertyPanel = jest.fn();
         canvas.render = jest.fn();
@@ -4465,7 +4508,7 @@ describe('GlyphCanvas property panel metrics edits', () => {
             await canvas.commitTextModeKerningValue(
                 '-90',
                 {
-                    master: {
+                    station: {
                         id: 'master-1',
                         kerning: {}
                     },
@@ -4494,12 +4537,12 @@ describe('GlyphCanvas property panel metrics edits', () => {
 
     test('commitPropertyPanelValue uses full-font refresh for glyph-wide sidebearing keys', async () => {
         const requestRecompileWithoutDataChange = jest.fn();
-        const layer = {
+        const drawing = {
             width: 500,
-            isAutomaticAlignedLayer: jest.fn(() => false),
+            isAutomaticAlignedDrawing: jest.fn(() => false),
             applySidebearingInput: jest.fn(() => {
                 fontManager.currentFont.changeVersion = 2;
-                layer.width = 640;
+                drawing.width = 640;
                 return {
                     affectedGlyphNames: ['a', 'adieresis'],
                     error: null,
@@ -4525,10 +4568,10 @@ describe('GlyphCanvas property panel metrics edits', () => {
             .mockResolvedValue();
         fontManager.scheduleFullCompileDebounce = jest.fn();
 
-        canvas.getCurrentEditingLayerModel = jest.fn(() => layer);
+        canvas.getCurrentEditingDrawingModel = jest.fn(() => drawing);
         canvas.getCurrentGlyphName = jest.fn(() => 'a');
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
-        canvas.outlineEditor.fetchLayerData = jest.fn().mockResolvedValue();
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
+        canvas.outlineEditor.fetchDrawingData = jest.fn().mockResolvedValue();
         canvas.outlineEditor.performHitDetection = jest.fn();
         canvas.updatePropertyPanel = jest.fn();
         canvas.render = jest.fn();
@@ -4555,17 +4598,17 @@ describe('GlyphCanvas property panel metrics edits', () => {
         expect(
             window.fontManager.refreshGlyphsAfterModelBatch
         ).toHaveBeenCalledWith(['a', 'adieresis'], undefined);
-        expect(canvas.outlineEditor.fetchLayerData).not.toHaveBeenCalled();
+        expect(canvas.outlineEditor.fetchDrawingData).not.toHaveBeenCalled();
     });
 
     test('commitPropertyPanelValue refreshes the active nested glyph instead of the root glyph', async () => {
-        const layer = {
+        const drawing = {
             width: 500,
             parent: jest.fn(() => ({ name: 'baseComponent' })),
-            isAutomaticAlignedLayer: jest.fn(() => false),
+            isAutomaticAlignedDrawing: jest.fn(() => false),
             applySidebearingInput: jest.fn(() => {
                 fontManager.currentFont.changeVersion = 2;
-                layer.width = 640;
+                drawing.width = 640;
                 return {
                     affectedGlyphNames: [],
                     error: null,
@@ -4590,10 +4633,10 @@ describe('GlyphCanvas property panel metrics edits', () => {
             .mockResolvedValue();
         fontManager.scheduleFullCompileDebounce = jest.fn();
 
-        canvas.getCurrentEditingLayerModel = jest.fn(() => layer);
+        canvas.getCurrentEditingDrawingModel = jest.fn(() => drawing);
         canvas.getCurrentGlyphName = jest.fn(() => 'panelGlyph');
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
-        canvas.outlineEditor.fetchLayerData = jest.fn().mockResolvedValue();
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
+        canvas.outlineEditor.fetchDrawingData = jest.fn().mockResolvedValue();
         canvas.outlineEditor.performHitDetection = jest.fn();
         canvas.updatePropertyPanel = jest.fn();
         canvas.render = jest.fn();
@@ -4604,7 +4647,10 @@ describe('GlyphCanvas property panel metrics edits', () => {
 
         await canvas.commitPropertyPanelValue('left', '=50');
 
-        expect(layer.applySidebearingInput).toHaveBeenCalledWith('left', '=50');
+        expect(drawing.applySidebearingInput).toHaveBeenCalledWith(
+            'left',
+            '=50'
+        );
         expect(
             canvas.textRunEditor.refreshGlyphAdvanceDeltasLive
         ).toHaveBeenCalledWith({ baseComponent: 140 }, { render: false });
@@ -4615,9 +4661,9 @@ describe('GlyphCanvas property panel metrics edits', () => {
 
     test('commitPropertyPanelValue allows deleting automatic sidebearing override keys', async () => {
         const requestRecompileWithoutDataChange = jest.fn();
-        const layer = {
+        const drawing = {
             width: 500,
-            isAutomaticAlignedLayer: jest.fn(() => true),
+            isAutomaticAlignedDrawing: jest.fn(() => true),
             applySidebearingInput: jest.fn(() => {
                 fontManager.currentFont.changeVersion = 2;
                 return {
@@ -4647,10 +4693,10 @@ describe('GlyphCanvas property panel metrics edits', () => {
             .mockResolvedValue();
         fontManager.scheduleFullCompileDebounce = jest.fn();
 
-        canvas.getCurrentEditingLayerModel = jest.fn(() => layer);
+        canvas.getCurrentEditingDrawingModel = jest.fn(() => drawing);
         canvas.getCurrentGlyphName = jest.fn(() => 'a');
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
-        canvas.outlineEditor.fetchLayerData = jest.fn().mockResolvedValue();
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
+        canvas.outlineEditor.fetchDrawingData = jest.fn().mockResolvedValue();
         canvas.outlineEditor.performHitDetection = jest.fn();
         canvas.updatePropertyPanel = jest.fn();
         canvas.render = jest.fn();
@@ -4658,7 +4704,7 @@ describe('GlyphCanvas property panel metrics edits', () => {
 
         await canvas.commitPropertyPanelValue('left', '');
 
-        expect(layer.applySidebearingInput).toHaveBeenCalledWith('left', '');
+        expect(drawing.applySidebearingInput).toHaveBeenCalledWith('left', '');
         expect(fontManager.lastChangeSource).toBe('keyboard-sidebearing');
         expect(fontManager.lastEditType).toBe(null);
         expect(
@@ -4675,17 +4721,19 @@ describe('GlyphCanvas property panel metrics edits', () => {
         expect(
             window.autoCompileManager.checkAndSchedule
         ).toHaveBeenCalledTimes(1);
-        expect(canvas.outlineEditor.fetchLayerData).toHaveBeenCalledWith(true);
+        expect(canvas.outlineEditor.fetchDrawingData).toHaveBeenCalledWith(
+            true
+        );
     });
 
     test('commitPropertyPanelValue skips selected-layer refetch for non-automatic glyph-wide sidebearing keys', async () => {
         const requestRecompileWithoutDataChange = jest.fn();
-        const layer = {
+        const drawing = {
             width: 500,
-            isAutomaticAlignedLayer: jest.fn(() => false),
+            isAutomaticAlignedDrawing: jest.fn(() => false),
             applySidebearingInput: jest.fn(() => {
                 fontManager.currentFont.changeVersion = 2;
-                layer.width = 640;
+                drawing.width = 640;
                 return {
                     affectedGlyphNames: ['o', 'odieresis', 'oslashacute'],
                     error: null,
@@ -4708,10 +4756,10 @@ describe('GlyphCanvas property panel metrics edits', () => {
             .fn()
             .mockResolvedValue();
 
-        canvas.getCurrentEditingLayerModel = jest.fn(() => layer);
+        canvas.getCurrentEditingDrawingModel = jest.fn(() => drawing);
         canvas.getCurrentGlyphName = jest.fn(() => 'o');
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
-        canvas.outlineEditor.fetchLayerData = jest.fn().mockResolvedValue();
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
+        canvas.outlineEditor.fetchDrawingData = jest.fn().mockResolvedValue();
         canvas.outlineEditor.performHitDetection = jest.fn();
         canvas.updatePropertyPanel = jest.fn();
         canvas.render = jest.fn();
@@ -4719,7 +4767,7 @@ describe('GlyphCanvas property panel metrics edits', () => {
 
         await canvas.commitPropertyPanelValue('left', '=50');
 
-        expect(canvas.outlineEditor.fetchLayerData).not.toHaveBeenCalled();
+        expect(canvas.outlineEditor.fetchDrawingData).not.toHaveBeenCalled();
         expect(canvas.updatePropertyPanel).toHaveBeenCalledTimes(1);
         expect(canvas.render).toHaveBeenCalledTimes(1);
         expect(requestRecompileWithoutDataChange).toHaveBeenCalledTimes(1);
@@ -4731,9 +4779,9 @@ describe('GlyphCanvas property panel metrics edits', () => {
             resolveRefresh = resolve;
         });
         const requestRecompileWithoutDataChange = jest.fn();
-        const layer = {
+        const drawing = {
             width: 500,
-            isAutomaticAlignedLayer: jest.fn(() => false),
+            isAutomaticAlignedDrawing: jest.fn(() => false),
             applySidebearingInput: jest.fn(() => {
                 fontManager.currentFont.changeVersion = 2;
                 return {
@@ -4759,10 +4807,10 @@ describe('GlyphCanvas property panel metrics edits', () => {
             .mockReturnValue(refreshPromise);
         fontManager.scheduleFullCompileDebounce = jest.fn();
 
-        canvas.getCurrentEditingLayerModel = jest.fn(() => layer);
+        canvas.getCurrentEditingDrawingModel = jest.fn(() => drawing);
         canvas.getCurrentGlyphName = jest.fn(() => 'a');
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
-        canvas.outlineEditor.fetchLayerData = jest.fn().mockResolvedValue();
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
+        canvas.outlineEditor.fetchDrawingData = jest.fn().mockResolvedValue();
         canvas.outlineEditor.performHitDetection = jest.fn();
         canvas.updatePropertyPanel = jest.fn();
         canvas.render = jest.fn();
@@ -4790,10 +4838,10 @@ describe('GlyphCanvas property panel metrics edits', () => {
             resolveRefresh = resolve;
         });
         const requestRecompileWithoutDataChange = jest.fn();
-        const layer = {
+        const drawing = {
             id: 'layer-1',
             width: 500,
-            isAutomaticAlignedLayer: jest.fn(() => true),
+            isAutomaticAlignedDrawing: jest.fn(() => true),
             applySidebearingInput: jest.fn(() => ({
                 affectedGlyphNames: ['adieresis'],
                 error: null,
@@ -4819,10 +4867,10 @@ describe('GlyphCanvas property panel metrics edits', () => {
             .mockReturnValue(refreshPromise);
         fontManager.scheduleFullCompileDebounce = jest.fn();
 
-        canvas.getCurrentEditingLayerModel = jest.fn(() => layer);
+        canvas.getCurrentEditingDrawingModel = jest.fn(() => drawing);
         canvas.getCurrentGlyphName = jest.fn(() => 'adieresis');
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
-        canvas.outlineEditor.fetchLayerData = jest.fn().mockResolvedValue();
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
+        canvas.outlineEditor.fetchDrawingData = jest.fn().mockResolvedValue();
         canvas.outlineEditor.performHitDetection = jest.fn();
         canvas.updatePropertyPanel = jest.fn();
         canvas.render = jest.fn();
@@ -4876,12 +4924,12 @@ describe('GlyphCanvas property panel metrics edits', () => {
     });
 
     test('commitPropertyPanelValue leaves the viewport unchanged for left sidebearing edits', async () => {
-        const layer = {
+        const drawing = {
             width: 500,
-            isAutomaticAlignedLayer: jest.fn(() => false),
+            isAutomaticAlignedDrawing: jest.fn(() => false),
             applySidebearingInput: jest.fn(() => {
                 fontManager.currentFont.changeVersion = 2;
-                layer.width = 520;
+                drawing.width = 520;
                 return {
                     affectedGlyphNames: ['a'],
                     error: null,
@@ -4906,10 +4954,10 @@ describe('GlyphCanvas property panel metrics edits', () => {
 
         canvas.viewportManager.scale = 2;
         canvas.viewportManager.panX = 100;
-        canvas.getCurrentEditingLayerModel = jest.fn(() => layer);
+        canvas.getCurrentEditingDrawingModel = jest.fn(() => drawing);
         canvas.getCurrentGlyphName = jest.fn(() => 'a');
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
-        canvas.outlineEditor.fetchLayerData = jest.fn().mockResolvedValue();
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
+        canvas.outlineEditor.fetchDrawingData = jest.fn().mockResolvedValue();
         canvas.outlineEditor.performHitDetection = jest.fn();
         canvas.updatePropertyPanel = jest.fn();
         canvas.render = jest.fn();
@@ -4925,10 +4973,10 @@ describe('GlyphCanvas property panel metrics edits', () => {
         const refreshPromise = new Promise((resolve) => {
             resolveRefresh = resolve;
         });
-        const layer = {
+        const drawing = {
             id: 'layer-1',
             width: 500,
-            isAutomaticAlignedLayer: jest.fn(() => false),
+            isAutomaticAlignedDrawing: jest.fn(() => false),
             toJSON: jest.fn(() => ({
                 id: 'layer-1',
                 width: 520,
@@ -4938,7 +4986,7 @@ describe('GlyphCanvas property panel metrics edits', () => {
             })),
             applySidebearingInput: jest.fn(() => {
                 fontManager.currentFont.changeVersion = 2;
-                layer.width = 520;
+                drawing.width = 520;
                 return {
                     affectedGlyphNames: ['a'],
                     error: null,
@@ -4963,8 +5011,8 @@ describe('GlyphCanvas property panel metrics edits', () => {
 
         canvas.viewportManager.scale = 2;
         canvas.viewportManager.panX = 100;
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
+        canvas.outlineEditor.drawingData = {
             id: 'layer-1',
             width: 500,
             shapes: [],
@@ -4972,9 +5020,9 @@ describe('GlyphCanvas property panel metrics edits', () => {
             guides: [],
             isInterpolated: false
         };
-        canvas.getCurrentEditingLayerModel = jest.fn(() => layer);
+        canvas.getCurrentEditingDrawingModel = jest.fn(() => drawing);
         canvas.getCurrentGlyphName = jest.fn(() => 'a');
-        canvas.outlineEditor.fetchLayerData = jest.fn().mockResolvedValue();
+        canvas.outlineEditor.fetchDrawingData = jest.fn().mockResolvedValue();
         canvas.outlineEditor.performHitDetection = jest.fn();
         canvas.updatePropertyPanel = jest.fn();
         canvas.render = jest.fn();
@@ -4983,7 +5031,7 @@ describe('GlyphCanvas property panel metrics edits', () => {
         const commitPromise = canvas.commitPropertyPanelValue('left', '==20');
 
         expect(canvas.viewportManager.panX).toBe(100);
-        expect(canvas.outlineEditor.layerData.width).toBe(520);
+        expect(canvas.outlineEditor.drawingData.width).toBe(520);
         expect(canvas.render).toHaveBeenCalled();
 
         resolveRefresh();
@@ -4996,10 +5044,10 @@ describe('GlyphCanvas property panel metrics edits', () => {
             resolveRefresh = resolve;
         });
         const requestRecompileWithoutDataChange = jest.fn();
-        const layer = {
+        const drawing = {
             id: 'layer-1',
             width: 500,
-            isAutomaticAlignedLayer: jest.fn(() => true),
+            isAutomaticAlignedDrawing: jest.fn(() => true),
             toJSON: jest.fn(() => ({
                 id: 'layer-1',
                 width: 500,
@@ -5038,8 +5086,8 @@ describe('GlyphCanvas property panel metrics edits', () => {
             .mockReturnValue(refreshPromise);
         fontManager.scheduleFullCompileDebounce = jest.fn();
 
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
+        canvas.outlineEditor.drawingData = {
             id: 'layer-1',
             width: 500,
             shapes: [
@@ -5052,10 +5100,10 @@ describe('GlyphCanvas property panel metrics edits', () => {
             guides: [],
             isInterpolated: false
         };
-        canvas.getCurrentEditingLayerModel = jest.fn(() => layer);
+        canvas.getCurrentEditingDrawingModel = jest.fn(() => drawing);
         canvas.getCurrentGlyphName = jest.fn(() => 'adieresis');
-        canvas.outlineEditor.fetchLayerData = jest.fn(async () => {
-            canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.fetchDrawingData = jest.fn(async () => {
+            canvas.outlineEditor.drawingData = {
                 id: 'layer-1',
                 width: 520,
                 shapes: [
@@ -5076,16 +5124,18 @@ describe('GlyphCanvas property panel metrics edits', () => {
 
         const commitPromise = canvas.commitPropertyPanelValue('left', '=+20');
 
-        expect(canvas.outlineEditor.layerData.width).toBe(500);
-        expect(canvas.outlineEditor.layerData.shapes[0].transform[4]).toBe(0);
+        expect(canvas.outlineEditor.drawingData.width).toBe(500);
+        expect(canvas.outlineEditor.drawingData.shapes[0].transform[4]).toBe(0);
         expect(canvas.render).toHaveBeenCalledTimes(1);
 
         resolveRefresh();
         await commitPromise;
 
         expect(requestRecompileWithoutDataChange).toHaveBeenCalledTimes(1);
-        expect(canvas.outlineEditor.layerData.width).toBe(520);
-        expect(canvas.outlineEditor.layerData.shapes[0].transform[4]).toBe(20);
+        expect(canvas.outlineEditor.drawingData.width).toBe(520);
+        expect(canvas.outlineEditor.drawingData.shapes[0].transform[4]).toBe(
+            20
+        );
         expect(canvas.render).toHaveBeenCalledTimes(2);
     });
 
@@ -5094,13 +5144,13 @@ describe('GlyphCanvas property panel metrics edits', () => {
             .spyOn(canvas.outlineEditor, 'setSidebearingValue')
             .mockReturnValue(true);
 
-        canvas.getCurrentEditingLayerModel = jest.fn(() => ({
-            isAutomaticAlignedLayer: jest.fn(() => false)
+        canvas.getCurrentEditingDrawingModel = jest.fn(() => ({
+            isAutomaticAlignedDrawing: jest.fn(() => false)
         }));
         window.fontManager.refreshGlyphsAfterModelBatch = jest
             .fn()
             .mockResolvedValue();
-        canvas.outlineEditor.fetchLayerData = jest.fn().mockResolvedValue();
+        canvas.outlineEditor.fetchDrawingData = jest.fn().mockResolvedValue();
         canvas.outlineEditor.performHitDetection = jest.fn();
         canvas.updatePropertyPanel = jest.fn();
         canvas.render = jest.fn();
@@ -5108,11 +5158,11 @@ describe('GlyphCanvas property panel metrics edits', () => {
         await canvas.commitPropertyPanelValue('left', '20');
 
         expect(setSidebearingValueSpy).toHaveBeenCalledWith('left', 20);
-        expect(canvas.getCurrentEditingLayerModel).toHaveBeenCalledTimes(1);
+        expect(canvas.getCurrentEditingDrawingModel).toHaveBeenCalledTimes(1);
         expect(
             window.fontManager.refreshGlyphsAfterModelBatch
         ).not.toHaveBeenCalled();
-        expect(canvas.outlineEditor.fetchLayerData).not.toHaveBeenCalled();
+        expect(canvas.outlineEditor.fetchDrawingData).not.toHaveBeenCalled();
         expect(canvas.updatePropertyPanel).toHaveBeenCalledTimes(1);
         expect(canvas.render).toHaveBeenCalledTimes(1);
 
@@ -5126,8 +5176,8 @@ describe('GlyphCanvas property panel metrics edits', () => {
         const originalPatchSyncEngine = window.patchSyncEngine;
         window.patchSyncEngine = {};
 
-        canvas.getCurrentEditingLayerModel = jest.fn(() => ({
-            isAutomaticAlignedLayer: jest.fn(() => false)
+        canvas.getCurrentEditingDrawingModel = jest.fn(() => ({
+            isAutomaticAlignedDrawing: jest.fn(() => false)
         }));
         canvas.outlineEditor.performHitDetection = jest.fn();
         canvas.updatePropertyPanel = jest.fn();
@@ -5153,8 +5203,8 @@ describe('GlyphCanvas property panel metrics edits', () => {
         const originalChangeBridge = window.changeBridge;
         const originalPatchSyncEngine = window.patchSyncEngine;
         const callOrder = [];
-        const saveLayerDataSpy = jest
-            .spyOn(canvas.outlineEditor, 'saveLayerData')
+        const saveDrawingDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'saveDrawingData')
             .mockImplementation(() => {
                 callOrder.push('save');
             });
@@ -5164,8 +5214,8 @@ describe('GlyphCanvas property panel metrics edits', () => {
         const clearEffectiveSidebearingKeySpy = jest.fn(() => {
             callOrder.push('clear-key');
         });
-        const getSelectionScopeLayerModelSpy = jest
-            .spyOn(canvas.outlineEditor, 'getSelectionScopeLayerModel')
+        const getSelectionScopeDrawingModelSpy = jest
+            .spyOn(canvas.outlineEditor, 'getSelectionScopeDrawingModel')
             .mockReturnValue({
                 clearEffectiveSidebearingKey: clearEffectiveSidebearingKeySpy
             });
@@ -5197,8 +5247,8 @@ describe('GlyphCanvas property panel metrics edits', () => {
         const glyphModelSpy = jest
             .spyOn(canvas.outlineEditor, 'getCurrentGlyphModel')
             .mockReturnValue({ name: 'l' });
-        const currentLayerIdSpy = jest
-            .spyOn(canvas.outlineEditor, 'getCurrentLayerId')
+        const currentDrawingIdSpy = jest
+            .spyOn(canvas.outlineEditor, 'getCurrentDrawingId')
             .mockReturnValue('master-layer');
         const parseGlyphStackSpy = jest
             .spyOn(canvas.outlineEditor, 'parseGlyphStack')
@@ -5206,7 +5256,7 @@ describe('GlyphCanvas property panel metrics edits', () => {
         const collectTargetsSpy = jest
             .spyOn(
                 canvas.outlineEditor,
-                'collectMatchingLayerWorkerReplayTargets'
+                'collectMatchingDrawingWorkerReplayTargets'
             )
             .mockReturnValue(targets);
         const syncCurrentGlyphToYDocSpy = jest
@@ -5222,7 +5272,7 @@ describe('GlyphCanvas property panel metrics edits', () => {
             endTransaction: jest.fn(() => {
                 callOrder.push('end');
             }),
-            syncLayersFromJson: jest.fn(() => {
+            syncDrawingsFromJson: jest.fn(() => {
                 callOrder.push('sync-layers');
             }),
             syncGlyphFromJson: jest.fn(),
@@ -5243,11 +5293,11 @@ describe('GlyphCanvas property panel metrics edits', () => {
                 expect.any(String),
                 'left',
                 {
-                    changedLayerTargets: [
+                    changedDrawingTargets: [
                         { glyphName: 'l', layerId: 'master-layer' },
                         { glyphName: 'n', layerId: 'master-layer' }
                     ],
-                    sourceLayerIsRecomposed: true,
+                    sourceDrawingIsRecomposed: true,
                     workerReplayTargets: targets
                 },
                 {
@@ -5284,13 +5334,13 @@ describe('GlyphCanvas property panel metrics edits', () => {
             syncCurrentGlyphToYDocSpy.mockRestore();
             collectTargetsSpy.mockRestore();
             parseGlyphStackSpy.mockRestore();
-            currentLayerIdSpy.mockRestore();
+            currentDrawingIdSpy.mockRestore();
             glyphModelSpy.mockRestore();
             syncDependentsSpy.mockRestore();
             applySidebearingDeltaSpy.mockRestore();
-            getSelectionScopeLayerModelSpy.mockRestore();
+            getSelectionScopeDrawingModelSpy.mockRestore();
             getCurrentDirectSidebearingSpy.mockRestore();
-            saveLayerDataSpy.mockRestore();
+            saveDrawingDataSpy.mockRestore();
         }
     });
 
@@ -5302,8 +5352,8 @@ describe('GlyphCanvas property panel metrics edits', () => {
         const syncCurrentGlyphToYDocSpy = jest
             .spyOn(canvas.outlineEditor, '_syncCurrentGlyphToYDoc')
             .mockImplementation(() => {});
-        const saveLayerDataSpy = jest
-            .spyOn(canvas.outlineEditor, 'saveLayerData')
+        const saveDrawingDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'saveDrawingData')
             .mockResolvedValue();
         const moveSelectedSidebearingSpy = jest
             .spyOn(canvas.outlineEditor, 'moveSelectedSidebearing')
@@ -5342,7 +5392,7 @@ describe('GlyphCanvas property panel metrics edits', () => {
         const patchSyncEngine = {
             beginTransaction: jest.fn(),
             endTransaction: jest.fn(),
-            syncLayersFromJson: jest.fn(),
+            syncDrawingsFromJson: jest.fn(),
             syncGlyphFromJson: jest.fn(),
             recordChange: jest.fn(),
             recordAdd: jest.fn(),
@@ -5353,7 +5403,7 @@ describe('GlyphCanvas property panel metrics edits', () => {
         canvas.outlineEditor.active = true;
         canvas.getCurrentGlyphName = jest.fn(() => 'l');
         canvas.outlineEditor.currentGlyphName = 'l';
-        canvas.outlineEditor.selectedLayerId = 'master-layer';
+        canvas.outlineEditor.selectedDrawingId = 'master-layer';
         canvas.outlineEditor.selectedSidebearingHandle = {
             side: 'right',
             editable: true
@@ -5397,11 +5447,11 @@ describe('GlyphCanvas property panel metrics edits', () => {
                 'RIGHT',
                 'right',
                 {
-                    changedLayerTargets: [
+                    changedDrawingTargets: [
                         { glyphName: 'l', layerId: 'master-layer' },
                         { glyphName: 'n', layerId: 'master-layer' }
                     ],
-                    sourceLayerIsRecomposed: false,
+                    sourceDrawingIsRecomposed: false,
                     workerReplayTargets: [
                         { glyphName: 'l', layerId: 'master-layer' },
                         { glyphName: 'n', layerId: 'master-layer' }
@@ -5413,7 +5463,7 @@ describe('GlyphCanvas property panel metrics edits', () => {
                     editType: null
                 }
             );
-            expect(saveLayerDataSpy).toHaveBeenCalledWith(
+            expect(saveDrawingDataSpy).toHaveBeenCalledWith(
                 'keyboard-sidebearing'
             );
         } finally {
@@ -5425,7 +5475,7 @@ describe('GlyphCanvas property panel metrics edits', () => {
             computeClosureSpy.mockRestore();
             queueKeyboardPreviewMovementSpy.mockRestore();
             syncDependentGlyphsAfterSidebearingEditSpy.mockRestore();
-            saveLayerDataSpy.mockRestore();
+            saveDrawingDataSpy.mockRestore();
             syncCurrentGlyphToYDocSpy.mockRestore();
             moveSelectedSidebearingSpy.mockRestore();
         }
@@ -5442,7 +5492,7 @@ describe('GlyphCanvas property panel metrics edits', () => {
         });
 
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.selectedLayerId = 'master-layer';
+        canvas.outlineEditor.selectedDrawingId = 'master-layer';
         canvas.outlineEditor.selectedSidebearingHandle = {
             side: 'right',
             editable: true
@@ -5482,7 +5532,7 @@ describe('GlyphCanvas property panel metrics edits', () => {
         );
 
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.selectedLayerId = 'master-layer';
+        canvas.outlineEditor.selectedDrawingId = 'master-layer';
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 0 }
         ];
@@ -5524,7 +5574,7 @@ describe('GlyphCanvas property panel metrics edits', () => {
             .mockImplementation(() => new Set(['a']));
 
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.selectedLayerId = 'master-layer';
+        canvas.outlineEditor.selectedDrawingId = 'master-layer';
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 0 }
         ];
@@ -5570,7 +5620,7 @@ describe('GlyphCanvas property panel metrics edits', () => {
         );
 
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.selectedLayerId = 'master-layer';
+        canvas.outlineEditor.selectedDrawingId = 'master-layer';
         canvas.outlineEditor.selectedSidebearingHandle = {
             side: 'right',
             editable: true
@@ -5609,20 +5659,21 @@ describe('GlyphCanvas property panel metrics edits', () => {
     });
 
     test('reapplyActiveEditedGlyphAdvanceAfterShape preserves HarfBuzz advances', () => {
-        const layer = { width: 494 };
+        const drawing = { width: 494 };
 
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.parseGlyphStack = jest.fn(() => [
             { glyphName: 'a' }
         ]);
-        canvas.getCurrentLayerModel = jest.fn(() => layer);
+        canvas.getCurrentDrawingModel = jest.fn(() => drawing);
         canvas.getCurrentGlyphName = jest.fn(() => 'a');
         canvas.textRunEditor.intrinsicGlyphAdvances = new Map(
             canvas.textRunEditor.glyphNameBuffer.map((visibleGlyphName) => [
                 visibleGlyphName,
-                font.findGlyph(visibleGlyphName).findLayerByMasterId(masterId)
-                    .width
+                font
+                    .findGlyph(visibleGlyphName)
+                    .findDrawingByStationId(masterId).width
             ])
         );
         canvas.textRunEditor.refreshGlyphAdvanceDeltasLive = jest.fn(
@@ -5640,11 +5691,11 @@ describe('GlyphCanvas property panel metrics edits', () => {
 
         try {
             canvas.outlineEditor.active = true;
-            canvas.outlineEditor.selectedLayerId = 'layer-1';
+            canvas.outlineEditor.selectedDrawingId = 'layer-1';
             canvas.outlineEditor.parseGlyphStack = jest.fn(() => [
                 { glyphName: 'a' }
             ]);
-            canvas.getCurrentLayerModel = jest.fn(() => ({
+            canvas.getCurrentDrawingModel = jest.fn(() => ({
                 width: 494,
                 master: { master: 'M0' }
             }));
@@ -5673,10 +5724,10 @@ describe('GlyphCanvas property panel metrics edits', () => {
                 }
             });
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.currentGlyphName = 'f';
         canvas.outlineEditor.glyphStack = 'f@layer-1';
-        canvas.outlineEditor.layerData = { width: 400, shapes: [] };
+        canvas.outlineEditor.drawingData = { width: 400, shapes: [] };
         canvas.outlineEditor.onGlyphSelected = jest.fn();
         canvas.outlineEditor.performHitDetection = jest.fn();
         const prepareForGlyphSwitchSpy = jest.spyOn(
@@ -5703,7 +5754,7 @@ describe('GlyphCanvas property panel metrics edits', () => {
             expect(prepareForGlyphSwitchSpy).toHaveBeenCalledWith('fi');
             expect(canvas.outlineEditor.currentGlyphName).toBe('fi');
             expect(canvas.outlineEditor.glyphStack).toBe('');
-            expect(canvas.outlineEditor.layerData).toBeNull();
+            expect(canvas.outlineEditor.drawingData).toBeNull();
             expect(canvas.updatePropertiesUI).toHaveBeenCalled();
         } finally {
             prepareForGlyphSwitchSpy.mockRestore();
@@ -5720,10 +5771,10 @@ describe('GlyphCanvas property panel metrics edits', () => {
                 }
             });
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.currentGlyphName = 'a';
         canvas.outlineEditor.glyphStack = 'a@layer-1';
-        canvas.outlineEditor.layerData = { width: 500, shapes: [] };
+        canvas.outlineEditor.drawingData = { width: 500, shapes: [] };
         canvas.updatePropertiesUI = jest.fn().mockResolvedValue(undefined);
         canvas.render = jest.fn();
         canvas.textRunEditor.selectedGlyphIndex = 0;
@@ -5826,7 +5877,7 @@ describe('GlyphCanvas property panel metrics edits', () => {
             canvas.outlineEditor.reapplyPendingSidebearingBboxCenterAnchor
         ).toHaveBeenCalledTimes(1);
         expect(canvas.updatePropertiesUI).toHaveBeenCalledWith({
-            skipAutoSelectMatchingLayer: true
+            skipAutoSelectMatchingDrawing: true
         });
         expect(canvas.render).toHaveBeenCalledTimes(1);
 
@@ -6196,7 +6247,7 @@ describe('GlyphCanvas property panel metrics edits', () => {
         });
         canvas.axesManager.updateAxesUI = jest.fn().mockResolvedValue();
         canvas.updatePropertiesUI = jest.fn().mockResolvedValue();
-        canvas.selectMaster = jest.fn().mockResolvedValue();
+        canvas.selectStation = jest.fn().mockResolvedValue();
         canvas.viewportManager.zoomToFitText = jest.fn(() => 0.4);
 
         try {
@@ -6230,7 +6281,7 @@ describe('GlyphCanvas property panel metrics edits', () => {
         });
         canvas.axesManager.updateAxesUI = jest.fn().mockResolvedValue();
         canvas.updatePropertiesUI = jest.fn().mockResolvedValue();
-        canvas.selectMaster = jest.fn().mockResolvedValue();
+        canvas.selectStation = jest.fn().mockResolvedValue();
         canvas.viewportManager.zoomToFitText = jest.fn(() => undefined);
 
         window.dispatchEvent(
@@ -6341,7 +6392,7 @@ describe('GlyphCanvas hit testing', () => {
         canvas = new GlyphCanvas('test-container');
         canvas.textRunEditor.selectedGlyphIndex = 0;
         canvas.textRunEditor.shapedGlyphs = [{ ax: 1000, dx: 0, dy: 0, g: 0 }];
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             shapes: [
                 {
                     Component: {
@@ -6484,7 +6535,7 @@ describe('GlyphCanvas hit testing', () => {
     test('onSingleClick selects a hovered anchor even if a component is also hovered', async () => {
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.isPreviewMode = false;
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.hoveredComponentIndex = 0;
         canvas.outlineEditor.hoveredAnchorIndex = 0;
         canvas.outlineEditor.hoveredPointIndex = null;
@@ -6508,7 +6559,7 @@ describe('GlyphCanvas hit testing', () => {
     });
 
     test('updateHoveredPointAndAnchor prefers a stacked anchor just outside the node pick radius', () => {
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             shapes: [
                 {
                     Path: {
@@ -6610,9 +6661,9 @@ describe('GlyphCanvas sidebearing handle movement', () => {
             .mockReturnValue({ fontModel: font });
 
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.renderVerticalMetrics = { Descender: -200 };
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             id: 'layer-1',
             width: 500,
             master: {
@@ -6637,7 +6688,7 @@ describe('GlyphCanvas sidebearing handle movement', () => {
         canvas.textRunEditor.selectedGlyphIndex = 0;
         canvas.textRunEditor.shapedGlyphs = [{ ax: 500, dx: 0, dy: 0, g: 0 }];
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
-        canvas.outlineEditor.saveLayerData = jest.fn();
+        canvas.outlineEditor.saveDrawingData = jest.fn();
     });
 
     afterEach(() => {
@@ -6648,7 +6699,9 @@ describe('GlyphCanvas sidebearing handle movement', () => {
     test('normalizes legacy format_specific RTL kerning into master kerning_rtl on load', () => {
         const fontModel = fontManager.currentFont.fontModel;
 
-        expect(fontModel.masters[0].kerning_rtl['@AFirst:@VSecond']).toBe(-120);
+        expect(fontModel.stations[0].kerning_rtl['@AFirst:@VSecond']).toBe(
+            -120
+        );
         // The flat map is the only truth: the Glyphs-style copy is gone for
         // every master the font has.
         expect(
@@ -6921,18 +6974,18 @@ describe('GlyphCanvas sidebearing handle movement', () => {
     test('Fustat glyph a manual LSB handle stays selectable for dragging', () => {
         const font = Font.fromData(loadFontFixture('Fustat.glyphs'));
         const glyph = font.findGlyph('a');
-        const layer = glyph.layers[0];
+        const drawing = glyph.drawings[0];
 
         currentFontSpy.mockRestore();
         currentFontSpy = jest
             .spyOn(fontManager, 'currentFont', 'get')
             .mockReturnValue({ fontModel: font });
 
-        canvas.outlineEditor.layerData = {
-            ...layer.toJSON(),
+        canvas.outlineEditor.drawingData = {
+            ...drawing.toJSON(),
             isInterpolated: false
         };
-        canvas.outlineEditor.selectedLayerId = layer.id;
+        canvas.outlineEditor.selectedDrawingId = drawing.id;
         canvas.outlineEditor.parseGlyphStack = jest.fn(() => [
             { glyphName: glyph.name }
         ]);
@@ -6999,8 +7052,8 @@ describe('GlyphCanvas sidebearing handle movement', () => {
             expect(pendingFrames).toHaveLength(1);
             pendingFrames.splice(0).forEach((callback) => callback());
 
-            expect(canvas.outlineEditor.layerData.width).toBe(485);
-            expect(canvas.outlineEditor.layerData.shapes[0].nodes[0].x).toBe(
+            expect(canvas.outlineEditor.drawingData.width).toBe(485);
+            expect(canvas.outlineEditor.drawingData.shapes[0].nodes[0].x).toBe(
                 85
             );
             expect(canvas.viewportManager.panX).toBe(130);
@@ -7040,7 +7093,7 @@ describe('GlyphCanvas sidebearing handle movement', () => {
             canvas.onMouseMove({ clientX: 30, clientY: 20 });
             pendingFrames.splice(0).forEach((callback) => callback());
 
-            const widthAfterFirst = canvas.outlineEditor.layerData.width;
+            const widthAfterFirst = canvas.outlineEditor.drawingData.width;
             const lastGlyphX = canvas.outlineEditor.lastGlyphX;
 
             // Stationary pointer: next coalesced frame must apply zero delta.
@@ -7048,7 +7101,9 @@ describe('GlyphCanvas sidebearing handle movement', () => {
             expect(pendingFrames).toHaveLength(1);
             pendingFrames.splice(0).forEach((callback) => callback());
 
-            expect(canvas.outlineEditor.layerData.width).toBe(widthAfterFirst);
+            expect(canvas.outlineEditor.drawingData.width).toBe(
+                widthAfterFirst
+            );
             expect(canvas.outlineEditor.lastGlyphX).toBe(lastGlyphX);
         } finally {
             global.requestAnimationFrame = originalRequestAnimationFrame;
@@ -7194,18 +7249,18 @@ describe('GlyphCanvas sidebearing handle movement', () => {
     test('sidebearing drags refresh live advances for keyed dependent glyphs', () => {
         const font = Font.fromData(loadFontFixture('metricskeys.glyphs'));
         const glyphName = 'l';
-        const layer = font.findGlyph(glyphName).layers[0];
-        const masterId = layer.master.master;
+        const drawing = font.findGlyph(glyphName).drawings[0];
+        const stationId = drawing.station.master;
         currentFontSpy.mockRestore();
         currentFontSpy = jest
             .spyOn(fontManager, 'currentFont', 'get')
             .mockReturnValue({ fontModel: font });
 
-        canvas.outlineEditor.layerData = {
-            ...layer.toJSON(),
+        canvas.outlineEditor.drawingData = {
+            ...drawing.toJSON(),
             isInterpolated: false
         };
-        canvas.outlineEditor.selectedLayerId = layer.id;
+        canvas.outlineEditor.selectedDrawingId = drawing.id;
         canvas.outlineEditor.parseGlyphStack = jest.fn(() => [{ glyphName }]);
         canvas.getCurrentGlyphName = jest.fn(() => glyphName);
         canvas.textRunEditor.selectedGlyphIndex = 0;
@@ -7221,7 +7276,7 @@ describe('GlyphCanvas sidebearing handle movement', () => {
                 (visibleGlyphName, index) => ({
                     ax: font
                         .findGlyph(visibleGlyphName)
-                        .findLayerByMasterId(masterId).width,
+                        .findDrawingByStationId(stationId).width,
                     dx: 0,
                     dy: 0,
                     g: index,
@@ -7231,8 +7286,9 @@ describe('GlyphCanvas sidebearing handle movement', () => {
         canvas.textRunEditor.intrinsicGlyphAdvances = new Map(
             canvas.textRunEditor.glyphNameBuffer.map((visibleGlyphName) => [
                 visibleGlyphName,
-                font.findGlyph(visibleGlyphName).findLayerByMasterId(masterId)
-                    .width
+                font
+                    .findGlyph(visibleGlyphName)
+                    .findDrawingByStationId(stationId).width
             ])
         );
         canvas.textRunEditor.refreshGlyphAdvanceDeltasLive = jest.fn(
@@ -7253,10 +7309,10 @@ describe('GlyphCanvas sidebearing handle movement', () => {
     });
 
     test('sidebearing drag resolves visible dependent advances through matching layer ids', () => {
-        const dependentLayer = {
+        const dependentDrawing = {
             width: 777
         };
-        const sourceLayer = {
+        const sourceDrawing = {
             width: 520,
             master: { master: 'master-1' },
             toJSON: jest.fn(() => ({
@@ -7268,25 +7324,25 @@ describe('GlyphCanvas sidebearing handle movement', () => {
                 guides: []
             })),
             invalidateShapeCache: jest.fn(),
-            syncFromEditorLayerData: jest.fn((data) => {
+            syncFromEditorDrawingData: jest.fn((data) => {
                 if (typeof data?.width === 'number') {
-                    sourceLayer.width = data.width;
+                    sourceDrawing.width = data.width;
                 }
             }),
-            getMatchingLayerOnGlyph: jest.fn((glyphName) =>
-                glyphName === 'dependent' ? dependentLayer : undefined
+            getMatchingDrawingOnGlyph: jest.fn((glyphName) =>
+                glyphName === 'dependent' ? dependentDrawing : undefined
             )
         };
         const sourceGlyph = {
             name: 'active',
-            findLayerById: jest.fn((layerId) =>
-                layerId === 'active-brace-layer' ? sourceLayer : undefined
+            findDrawingById: jest.fn((drawingId) =>
+                drawingId === 'active-brace-layer' ? sourceDrawing : undefined
             )
         };
         const dependentGlyph = {
             name: 'dependent',
-            findLayerById: jest.fn(() => undefined),
-            findLayerByMasterId: jest.fn(() => undefined)
+            findDrawingById: jest.fn(() => undefined),
+            findDrawingByStationId: jest.fn(() => undefined)
         };
         const fontModel = {
             glyphs: [sourceGlyph, dependentGlyph],
@@ -7307,7 +7363,7 @@ describe('GlyphCanvas sidebearing handle movement', () => {
             .spyOn(fontManager, 'currentFont', 'get')
             .mockReturnValue({ fontModel });
 
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             width: 520,
             height: 0,
             vertWidth: 0,
@@ -7316,8 +7372,8 @@ describe('GlyphCanvas sidebearing handle movement', () => {
             guides: [],
             isInterpolated: false
         };
-        canvas.outlineEditor.selectedLayerId = 'active-brace-layer';
-        canvas.outlineEditor.isEditingBackgroundLayer = jest.fn(() => false);
+        canvas.outlineEditor.selectedDrawingId = 'active-brace-layer';
+        canvas.outlineEditor.isEditingBackgroundDrawing = jest.fn(() => false);
         canvas.outlineEditor.parseGlyphStack = jest.fn(() => [
             { glyphName: 'active' }
         ]);
@@ -7364,9 +7420,9 @@ describe('GlyphCanvas sidebearing handle movement', () => {
         try {
             canvas.outlineEditor._updateDraggedSidebearing(20);
 
-            expect(sourceLayer.getMatchingLayerOnGlyph).toHaveBeenCalledWith(
-                'dependent'
-            );
+            expect(
+                sourceDrawing.getMatchingDrawingOnGlyph
+            ).toHaveBeenCalledWith('dependent');
             expect(
                 canvas.textRunEditor.refreshGlyphAdvanceDeltasLive
             ).toHaveBeenCalledWith(
@@ -7382,7 +7438,10 @@ describe('GlyphCanvas sidebearing handle movement', () => {
 
     test('point drags schedule keyed sidebearing recompute before mouseup', () => {
         const applyMetricsSpy = jest
-            .spyOn(canvas.outlineEditor, 'applyMetricsKeysToCurrentEditedLayer')
+            .spyOn(
+                canvas.outlineEditor,
+                'applyMetricsKeysToCurrentEditedDrawing'
+            )
             .mockReturnValue(null);
         const scheduledFlushes = [];
         const setTimeoutSpy = jest
@@ -7519,9 +7578,9 @@ describe('GlyphCanvas sidebearing handle movement', () => {
             .spyOn(fontManager, 'updateDirtyIndicator')
             .mockResolvedValue();
 
-        const getLayerBoundingBoxCenterScreen = () => {
-            const bbox = Layer.calculateBoundingBox(
-                canvas.outlineEditor.layerData,
+        const getDrawingBoundingBoxCenterScreen = () => {
+            const bbox = Drawing.calculateBoundingBox(
+                canvas.outlineEditor.drawingData,
                 true
             );
             if (!bbox) {
@@ -7547,15 +7606,15 @@ describe('GlyphCanvas sidebearing handle movement', () => {
                 .mockReturnValue(currentFont);
 
             const glyph = font.findGlyph('A');
-            const activeLayer = glyph.findLayerById('layer-1');
-            const siblingLayer = glyph.findLayerById('layer-2');
-            const addedPath = activeLayer.addPath(false);
+            const activeDrawing = glyph.findDrawingById('layer-1');
+            const siblingDrawing = glyph.findDrawingById('layer-2');
+            const addedPath = activeDrawing.addPath(false);
             addedPath._appendLine({ x: 70, y: 0 });
             addedPath._appendLine({ x: 90, y: 0 });
             addedPath._appendLine({ x: 90, y: 120 });
             addedPath._closeOpenPath();
 
-            canvas.outlineEditor.selectedLayerId = 'layer-1';
+            canvas.outlineEditor.selectedDrawingId = 'layer-1';
             canvas.outlineEditor.glyphStack = 'A@layer-1';
             canvas.outlineEditor.parseGlyphStack = jest.fn(() => [
                 { glyphName: 'A' }
@@ -7577,8 +7636,8 @@ describe('GlyphCanvas sidebearing handle movement', () => {
                     return true;
                 }
             );
-            canvas.outlineEditor.layerData = {
-                ...glyph.findLayerById('layer-1').toJSON(),
+            canvas.outlineEditor.drawingData = {
+                ...glyph.findDrawingById('layer-1').toJSON(),
                 isInterpolated: false
             };
             const beforePanX = canvas.viewportManager.panX;
@@ -7590,10 +7649,10 @@ describe('GlyphCanvas sidebearing handle movement', () => {
 
             canvas.outlineEditor.finalizePendingCommandPathEdit();
 
-            expect(activeLayer.lsb).toBe(50);
-            expect(siblingLayer.lsb).toBe(50);
-            expect(canvas.outlineEditor.layerData.width).toBe(
-                activeLayer.width
+            expect(activeDrawing.lsb).toBe(50);
+            expect(siblingDrawing.lsb).toBe(50);
+            expect(canvas.outlineEditor.drawingData.width).toBe(
+                activeDrawing.width
             );
             expect(canvas.viewportManager.panX).toBe(beforePanX + 40);
         } finally {
@@ -7736,15 +7795,15 @@ describe('GlyphCanvas sidebearing handle movement', () => {
         };
         window.currentFontModel = font;
 
-        const currentLayer = font.findGlyph('A').findLayerById('layer-1');
-        const dependentLayer = font.findGlyph('B').findLayerById('layer-2');
+        const currentDrawing = font.findGlyph('A').findDrawingById('layer-1');
+        const dependentDrawing = font.findGlyph('B').findDrawingById('layer-2');
 
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.viewportManager.panX = 100;
-        canvas.outlineEditor.layerData = {
-            ...JSON.parse(JSON.stringify(currentLayer.toJSON())),
+        canvas.outlineEditor.drawingData = {
+            ...JSON.parse(JSON.stringify(currentDrawing.toJSON())),
             isInterpolated: false
         };
         canvas.textRunEditor.selectedGlyphIndex = 0;
@@ -7769,9 +7828,9 @@ describe('GlyphCanvas sidebearing handle movement', () => {
         try {
             await canvas.outlineEditor.deleteSelectedNodes();
 
-            expect(currentLayer.shapes).toHaveLength(1);
-            expect(currentLayer.width).toBe(160);
-            expect(dependentLayer.width).toBe(140);
+            expect(currentDrawing.shapes).toHaveLength(1);
+            expect(currentDrawing.width).toBe(160);
+            expect(dependentDrawing.width).toBe(140);
             expect(refreshMetricsSpy).toHaveBeenCalledWith(
                 expect.any(Set),
                 expect.objectContaining({
@@ -7823,13 +7882,13 @@ describe('GlyphCanvas sidebearing handle movement', () => {
         canvas.outlineEditor.onKeyDown(event);
 
         expect(event.preventDefault).toHaveBeenCalled();
-        expect(canvas.outlineEditor.layerData.shapes[0].nodes[0].x).toBe(99);
-        expect(canvas.outlineEditor.layerData.width).toBe(499);
+        expect(canvas.outlineEditor.drawingData.shapes[0].nodes[0].x).toBe(99);
+        expect(canvas.outlineEditor.drawingData.width).toBe(499);
         expect(canvas.viewportManager.panX).toBe(102);
     });
 
     test('Cmd+A selects all points, anchors, and components in the active layer', () => {
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             id: 'layer-1',
             width: 500,
             master: {
@@ -7854,7 +7913,7 @@ describe('GlyphCanvas sidebearing handle movement', () => {
             isInterpolated: false
         };
         canvas.outlineEditor.selectedGuideHandle = {
-            scope: 'layer',
+            scope: 'drawing',
             index: 0
         };
         canvas.outlineEditor.selectedSidebearingHandle = {
@@ -7974,7 +8033,7 @@ describe('GlyphCanvas sidebearing handle movement', () => {
 
         canvas.viewportManager.scale = 2;
         canvas.viewportManager.panX = 100;
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             id: 'layer-1',
             width: 500,
             master: {
@@ -7994,10 +8053,10 @@ describe('GlyphCanvas sidebearing handle movement', () => {
 
         expect(canvas.outlineEditor.setSidebearingValue('left', 80)).toBe(true);
         expect(
-            canvas.outlineEditor.layerData.shapes[0].transform.translation[0]
+            canvas.outlineEditor.drawingData.shapes[0].transform.translation[0]
         ).toBe(80);
-        expect(canvas.outlineEditor.layerData.anchors[0].x).toBe(100);
-        expect(canvas.outlineEditor.layerData.width).toBe(480);
+        expect(canvas.outlineEditor.drawingData.anchors[0].x).toBe(100);
+        expect(canvas.outlineEditor.drawingData.width).toBe(480);
         expect(canvas.viewportManager.panX).toBe(140);
     });
 });
@@ -8011,7 +8070,7 @@ describe('GlyphCanvas selection handling', () => {
         document.body.innerHTML = '<div id="test-container"></div>';
         canvas = new GlyphCanvas('test-container');
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             shapes: [
                 { Component: { transform: [1, 0, 0, 1, 100, 100] } },
                 {
@@ -8078,7 +8137,7 @@ describe('GlyphCanvas point movement', () => {
         document.body.innerHTML = '<div id="test-container"></div>';
         canvas = new GlyphCanvas('test-container');
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             shapes: [
                 {
                     nodes: [
@@ -8092,8 +8151,8 @@ describe('GlyphCanvas point movement', () => {
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 0 }
         ];
-        // Mock saveLayerData to prevent errors
-        canvas.outlineEditor.saveLayerData = jest.fn();
+        // Mock saveDrawingData to prevent errors
+        canvas.outlineEditor.saveDrawingData = jest.fn();
     });
 
     afterEach(() => {
@@ -8102,8 +8161,8 @@ describe('GlyphCanvas point movement', () => {
 
     test('should move selected points by delta', () => {
         canvas.outlineEditor.moveSelectedPoints(10, 20);
-        expect(canvas.outlineEditor.layerData.shapes[0].nodes[0].x).toBe(110);
-        expect(canvas.outlineEditor.layerData.shapes[0].nodes[0].y).toBe(120);
+        expect(canvas.outlineEditor.drawingData.shapes[0].nodes[0].x).toBe(110);
+        expect(canvas.outlineEditor.drawingData.shapes[0].nodes[0].y).toBe(120);
     });
 
     test('should move multiple selected points', () => {
@@ -8112,17 +8171,17 @@ describe('GlyphCanvas point movement', () => {
             { contourIndex: 0, nodeIndex: 1 }
         ];
         canvas.outlineEditor.moveSelectedPoints(10, 20);
-        expect(canvas.outlineEditor.layerData.shapes[0].nodes[0].x).toBe(110);
-        expect(canvas.outlineEditor.layerData.shapes[0].nodes[0].y).toBe(120);
-        expect(canvas.outlineEditor.layerData.shapes[0].nodes[1].x).toBe(210);
-        expect(canvas.outlineEditor.layerData.shapes[0].nodes[1].y).toBe(220);
+        expect(canvas.outlineEditor.drawingData.shapes[0].nodes[0].x).toBe(110);
+        expect(canvas.outlineEditor.drawingData.shapes[0].nodes[0].y).toBe(120);
+        expect(canvas.outlineEditor.drawingData.shapes[0].nodes[1].x).toBe(210);
+        expect(canvas.outlineEditor.drawingData.shapes[0].nodes[1].y).toBe(220);
     });
 
     test('should not move points when none are selected', () => {
         canvas.outlineEditor.selectedPoints = [];
         canvas.outlineEditor.moveSelectedPoints(10, 20);
-        expect(canvas.outlineEditor.layerData.shapes[0].nodes[0].x).toBe(100);
-        expect(canvas.outlineEditor.layerData.shapes[0].nodes[0].y).toBe(100);
+        expect(canvas.outlineEditor.drawingData.shapes[0].nodes[0].x).toBe(100);
+        expect(canvas.outlineEditor.drawingData.shapes[0].nodes[0].y).toBe(100);
     });
 
     test('keyboard point nudges update geometry without immediately syncing', () => {
@@ -8136,7 +8195,7 @@ describe('GlyphCanvas point movement', () => {
                 20
             );
 
-            expect(canvas.outlineEditor.saveLayerData).not.toHaveBeenCalled();
+            expect(canvas.outlineEditor.saveDrawingData).not.toHaveBeenCalled();
             expect(syncCurrentGlyphToYDocSpy).not.toHaveBeenCalled();
             expect(Array.from(affectedGlyphNames || [])).toEqual([]);
         } finally {
@@ -8229,8 +8288,8 @@ describe('GlyphCanvas point movement', () => {
             });
 
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
+        canvas.outlineEditor.drawingData = {
             id: 'layer-1',
             width: 500,
             shapes: [
@@ -8257,9 +8316,11 @@ describe('GlyphCanvas point movement', () => {
             canvas.outlineEditor.moveSelectedPoints(10, 0);
 
             const glyph = font.findGlyph('A');
-            expect(canvas.outlineEditor.layerData.width).toBe(430);
-            expect(glyph.layers.map((layer) => layer.id)).toEqual(['layer-1']);
-            expect(glyph.findLayerById('layer-1').master).toEqual({
+            expect(canvas.outlineEditor.drawingData.width).toBe(430);
+            expect(glyph.drawings.map((drawing) => drawing.id)).toEqual([
+                'layer-1'
+            ]);
+            expect(glyph.findDrawingById('layer-1').station).toEqual({
                 type: 'DefaultForMaster',
                 master: 'master-1'
             });
@@ -8363,14 +8424,14 @@ describe('GlyphCanvas measurement overlay', () => {
         canvas.measurementTool.visible = true;
         canvas.measurementTool.isDragging = false;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.textRunEditor.selectedGlyphIndex = 0;
         canvas.textRunEditor.shapedGlyphs = [{ ax: 500, dx: 0, dy: 0, g: 0 }];
         canvas.outlineEditor.transformMouseToComponentSpace = jest.fn(() => ({
             glyphX: 0,
             glyphY: 0
         }));
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             id: 'layer-1',
             width: 530,
             master: {
@@ -8394,7 +8455,7 @@ describe('GlyphCanvas measurement overlay', () => {
         };
 
         const intersectionSpy = jest
-            .spyOn(Layer, 'intersectPathsWithLine')
+            .spyOn(Drawing, 'intersectPathsWithLine')
             .mockImplementation((paths) => {
                 expect(paths[0].nodes[1].x).toBe(430);
                 return [];
@@ -8411,7 +8472,7 @@ describe('GlyphCanvas measurement overlay', () => {
 
     test('editing metrics underlay uses live selected layer width for horizontal extents', () => {
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             id: 'layer-1',
             width: 640,
             shapes: [],
@@ -8588,7 +8649,7 @@ describe('GlyphCanvas snap debug candidates', () => {
     });
 
     function setupTextRun(options = {}) {
-        canvas.outlineEditor.layerData = options.layerData || {
+        canvas.outlineEditor.drawingData = options.layerData || {
             id: 'active-layer',
             width: 400,
             master: {
@@ -8609,12 +8670,12 @@ describe('GlyphCanvas snap debug candidates', () => {
             anchors: [],
             guides: []
         };
-        canvas.outlineEditor.selectedLayerId =
-            options.selectedLayerId || 'active-layer';
+        canvas.outlineEditor.selectedDrawingId =
+            options.selectedDrawingId || 'active-layer';
         canvas.outlineEditor.glyphStack =
             options.glyphStack ||
-            `activeGlyph@${canvas.outlineEditor.selectedLayerId}`;
-        canvas.textRunEditor.selectedMasterId = 'master-1';
+            `activeGlyph@${canvas.outlineEditor.selectedDrawingId}`;
+        canvas.textRunEditor.selectedStationId = 'master-1';
         canvas.textRunEditor.glyphNameBuffer = [
             'leftGlyph',
             'activeGlyph',
@@ -8902,7 +8963,7 @@ describe('GlyphCanvas snap debug candidates', () => {
                 anchors: [],
                 guides: []
             },
-            selectedLayerId: 'active-brace-layer',
+            selectedDrawingId: 'active-brace-layer',
             glyphStack: 'activeGlyph@active-brace-layer',
             variationSettings: { wght: 500 }
         });
@@ -8964,29 +9025,30 @@ describe('GlyphCanvas snap debug candidates', () => {
 
     test('snap cache includes on-curve nodes from paired background components', () => {
         setupTextRun();
-        canvas.outlineEditor.setPairedLayerVisible(true);
-        jest.spyOn(canvas.outlineEditor, 'getPairedLayerModel').mockReturnValue(
-            {
-                shapes: [
-                    {
-                        isComponent: () => true,
-                        isPath: () => false,
-                        asComponent: () => ({
-                            getTransformedPaths: () => [
-                                {
-                                    nodes: [
-                                        { x: 40, y: 25, nodetype: 'Line' },
-                                        { x: 90, y: 25, nodetype: 'OffCurve' },
-                                        { x: 140, y: 25, nodetype: 'Line' }
-                                    ],
-                                    closed: false
-                                }
-                            ]
-                        })
-                    }
-                ]
-            }
-        );
+        canvas.outlineEditor.setPairedDrawingVisible(true);
+        jest.spyOn(
+            canvas.outlineEditor,
+            'getPairedDrawingModel'
+        ).mockReturnValue({
+            shapes: [
+                {
+                    isComponent: () => true,
+                    isPath: () => false,
+                    asComponent: () => ({
+                        getTransformedPaths: () => [
+                            {
+                                nodes: [
+                                    { x: 40, y: 25, nodetype: 'Line' },
+                                    { x: 90, y: 25, nodetype: 'OffCurve' },
+                                    { x: 140, y: 25, nodetype: 'Line' }
+                                ],
+                                closed: false
+                            }
+                        ]
+                    })
+                }
+            ]
+        });
 
         simulateDragStart(0, 0);
 
@@ -9041,7 +9103,7 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         window.currentFontModel = null;
     });
 
-    test('propagates point deletion to linked sibling layers via _getLinkedLayers', async () => {
+    test('propagates point deletion to linked sibling layers via _getLinkedDrawings', async () => {
         const font = Font.fromData({
             upm: 1000,
             version: [1, 0],
@@ -9154,15 +9216,18 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         window.currentFontModel = font;
 
         const glyph = font.findGlyph('A');
-        const currentLayer = glyph.findLayerById('layer-1');
-        const linkedLayer = glyph.findLayerById('layer-2');
-        const linkedLayersSpy = jest.spyOn(Layer.prototype, '_getLinkedLayers');
+        const currentDrawing = glyph.findDrawingById('layer-1');
+        const linkedDrawing = glyph.findDrawingById('layer-2');
+        const linkedDrawingsSpy = jest.spyOn(
+            Drawing.prototype,
+            '_getLinkedDrawings'
+        );
 
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
-        canvas.outlineEditor.layerData = JSON.parse(
-            JSON.stringify(currentLayer.toJSON())
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
+        canvas.outlineEditor.drawingData = JSON.parse(
+            JSON.stringify(currentDrawing.toJSON())
         );
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 1 }
@@ -9171,17 +9236,17 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         try {
             await canvas.outlineEditor.deleteSelectedNodes();
 
-            expect(linkedLayersSpy).toHaveBeenCalled();
+            expect(linkedDrawingsSpy).toHaveBeenCalled();
             expect(
-                currentLayer.paths[0].nodes.map((node) => node.nodetype)
+                currentDrawing.paths[0].nodes.map((node) => node.nodetype)
             ).toEqual(['Move', 'Line']);
             expect(
-                linkedLayer.paths[0].nodes.map((node) => node.nodetype)
+                linkedDrawing.paths[0].nodes.map((node) => node.nodetype)
             ).toEqual(['Move', 'Line']);
         } finally {
             workerCacheSpy.mockRestore();
             dirtyIndicatorSpy.mockRestore();
-            linkedLayersSpy.mockRestore();
+            linkedDrawingsSpy.mockRestore();
             currentFontSpy.mockRestore();
         }
     });
@@ -9340,19 +9405,22 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         const workerCacheSpy = jest
             .spyOn(fontManager, 'updateWorkerFontCache')
             .mockResolvedValue();
-        const linkedLayersSpy = jest.spyOn(Layer.prototype, '_getLinkedLayers');
+        const linkedDrawingsSpy = jest.spyOn(
+            Drawing.prototype,
+            '_getLinkedDrawings'
+        );
         window.currentFontModel = font;
 
         const glyph = font.findGlyph('A');
-        const currentLayer = glyph.findLayerById('layer-1');
-        const siblingLayerA = glyph.findLayerById('layer-2');
-        const siblingLayerB = glyph.findLayerById('layer-3');
+        const currentDrawing = glyph.findDrawingById('layer-1');
+        const siblingDrawingA = glyph.findDrawingById('layer-2');
+        const siblingDrawingB = glyph.findDrawingById('layer-3');
 
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
-        canvas.outlineEditor.layerData = JSON.parse(
-            JSON.stringify(currentLayer.toJSON())
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
+        canvas.outlineEditor.drawingData = JSON.parse(
+            JSON.stringify(currentDrawing.toJSON())
         );
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 1 },
@@ -9362,19 +9430,27 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         try {
             await canvas.outlineEditor.deleteSelectedNodes();
 
-            expect(linkedLayersSpy).toHaveBeenCalled();
-            for (const layer of [currentLayer, siblingLayerA, siblingLayerB]) {
+            expect(linkedDrawingsSpy).toHaveBeenCalled();
+            for (const drawing of [
+                currentDrawing,
+                siblingDrawingA,
+                siblingDrawingB
+            ]) {
                 expect(
-                    layer.paths[0].nodes.map((node) => node.nodetype)
+                    drawing.paths[0].nodes.map((node) => node.nodetype)
                 ).toEqual(['Move', 'Line']);
-                expect(layer.paths[0].nodes[0].smooth).toBe(false);
-                expect(layer.paths[0].nodes[1].smooth).toBe(false);
+                expect(drawing.paths[0].nodes[0].smooth).toBe(false);
+                expect(drawing.paths[0].nodes[1].smooth).toBe(false);
             }
 
-            expect(currentLayer.fingerprint).toBe(siblingLayerA.fingerprint);
-            expect(currentLayer.fingerprint).toBe(siblingLayerB.fingerprint);
+            expect(currentDrawing.fingerprint).toBe(
+                siblingDrawingA.fingerprint
+            );
+            expect(currentDrawing.fingerprint).toBe(
+                siblingDrawingB.fingerprint
+            );
         } finally {
-            linkedLayersSpy.mockRestore();
+            linkedDrawingsSpy.mockRestore();
             workerCacheSpy.mockRestore();
             dirtyIndicatorSpy.mockRestore();
             currentFontSpy.mockRestore();
@@ -9503,14 +9579,14 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         window.currentFontModel = font;
 
         const glyph = font.findGlyph('A');
-        const currentLayer = glyph.findLayerById('layer-1');
-        const linkedLayer = glyph.findLayerById('layer-2');
+        const currentDrawing = glyph.findDrawingById('layer-1');
+        const linkedDrawing = glyph.findDrawingById('layer-2');
 
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
-        canvas.outlineEditor.layerData = {
-            ...JSON.parse(JSON.stringify(currentLayer.toJSON())),
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
+        canvas.outlineEditor.drawingData = {
+            ...JSON.parse(JSON.stringify(currentDrawing.toJSON())),
             anchors: [
                 {
                     name: 'top',
@@ -9529,9 +9605,9 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         try {
             await canvas.outlineEditor.deleteSelectedNodes();
 
-            expect(currentLayer.shapes).toHaveLength(1);
-            expect(currentLayer.shapes[0].isComponent()).toBe(true);
-            expect(currentLayer.toJSON().anchors).toEqual([
+            expect(currentDrawing.shapes).toHaveLength(1);
+            expect(currentDrawing.shapes[0].isComponent()).toBe(true);
+            expect(currentDrawing.toJSON().anchors).toEqual([
                 {
                     name: 'top',
                     x: 25,
@@ -9539,13 +9615,13 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
                     format_specific: { 'com.example.anchor': 'preserve-me' }
                 }
             ]);
-            expect(linkedLayer.shapes).toHaveLength(1);
-            expect(linkedLayer.shapes[0].isComponent()).toBe(true);
-            expect(canvas.outlineEditor.layerData.shapes).toHaveLength(1);
-            expect(canvas.outlineEditor.layerData.shapes[0].reference).toBe(
+            expect(linkedDrawing.shapes).toHaveLength(1);
+            expect(linkedDrawing.shapes[0].isComponent()).toBe(true);
+            expect(canvas.outlineEditor.drawingData.shapes).toHaveLength(1);
+            expect(canvas.outlineEditor.drawingData.shapes[0].reference).toBe(
                 'acute'
             );
-            expect(canvas.outlineEditor.layerData.anchors).toEqual([
+            expect(canvas.outlineEditor.drawingData.anchors).toEqual([
                 {
                     name: 'top',
                     x: 25,
@@ -9688,13 +9764,13 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         window.currentFontModel = font;
 
         const glyph = font.findGlyph('A');
-        const currentLayer = glyph.findLayerById('layer-1');
+        const currentDrawing = glyph.findDrawingById('layer-1');
 
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
-        canvas.outlineEditor.layerData = JSON.parse(
-            JSON.stringify(currentLayer.toJSON())
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
+        canvas.outlineEditor.drawingData = JSON.parse(
+            JSON.stringify(currentDrawing.toJSON())
         );
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 0 },
@@ -9705,15 +9781,15 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         try {
             await canvas.outlineEditor.deleteSelectedNodes();
 
-            expect(canvas.outlineEditor.layerData.shapes).toHaveLength(1);
-            expect(canvas.outlineEditor.layerData.shapes[0].reference).toBe(
+            expect(canvas.outlineEditor.drawingData.shapes).toHaveLength(1);
+            expect(canvas.outlineEditor.drawingData.shapes[0].reference).toBe(
                 'acute'
             );
             expect(
-                canvas.outlineEditor.layerData.shapes[0].layerData?.shapes?.[0]
-                    ?.nodes?.[0]?.x
+                canvas.outlineEditor.drawingData.shapes[0].layerData
+                    ?.shapes?.[0]?.nodes?.[0]?.x
             ).toBe(1);
-            expect(canvas.outlineEditor.layerData.anchors).toEqual([
+            expect(canvas.outlineEditor.drawingData.anchors).toEqual([
                 {
                     name: 'top',
                     x: 25,
@@ -9851,14 +9927,14 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         window.currentFontModel = font;
 
         const glyph = font.findGlyph('A');
-        const currentLayer = glyph.findLayerById('layer-1');
-        const linkedLayer = glyph.findLayerById('layer-2');
+        const currentDrawing = glyph.findDrawingById('layer-1');
+        const linkedDrawing = glyph.findDrawingById('layer-2');
 
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
-        canvas.outlineEditor.layerData = JSON.parse(
-            JSON.stringify(currentLayer.toJSON())
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
+        canvas.outlineEditor.drawingData = JSON.parse(
+            JSON.stringify(currentDrawing.toJSON())
         );
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 0 },
@@ -9867,26 +9943,26 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         ];
         canvas.outlineEditor.selectedAnchors = [1];
         canvas.outlineEditor.selectedGuideHandle = {
-            scope: 'layer',
+            scope: 'drawing',
             index: 0
         };
 
         try {
             await canvas.outlineEditor.deleteSelectedNodes();
 
-            for (const layer of [currentLayer, linkedLayer]) {
-                expect(layer.shapes).toHaveLength(0);
+            for (const drawing of [currentDrawing, linkedDrawing]) {
+                expect(drawing.shapes).toHaveLength(0);
             }
 
-            expect(currentLayer.toJSON().anchors).toEqual([
+            expect(currentDrawing.toJSON().anchors).toEqual([
                 { name: 'keep', x: 5, y: 5 }
             ]);
-            expect(linkedLayer.toJSON().anchors).toEqual([
+            expect(linkedDrawing.toJSON().anchors).toEqual([
                 { name: 'keep', x: 10, y: 10 }
             ]);
 
-            expect(currentLayer.toJSON().guides || []).toEqual([]);
-            expect(linkedLayer.toJSON().guides || []).toEqual([
+            expect(currentDrawing.toJSON().guides || []).toEqual([]);
+            expect(linkedDrawing.toJSON().guides || []).toEqual([
                 {
                     name: 'keep-guide',
                     pos: { x: 0, y: 580 },
@@ -10005,24 +10081,24 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
             .spyOn(fontManager, 'updateWorkerFontCache')
             .mockResolvedValue();
         const previousPatchSyncEngine = window.patchSyncEngine;
-        const syncLayerSnapshotsFromJson = jest.fn();
+        const syncDrawingSnapshotsFromJson = jest.fn();
         window.patchSyncEngine = {
             beginTransaction: jest.fn(),
             endTransaction: jest.fn(),
-            syncLayerSnapshotsFromJson,
+            syncDrawingSnapshotsFromJson,
             syncGlyphFromJson: jest.fn()
         };
         window.currentFontModel = font;
 
         const glyph = font.findGlyph('A');
-        const currentLayer = glyph.findLayerById('layer-bold');
-        const linkedLayer = glyph.findLayerById('layer-regular');
+        const currentDrawing = glyph.findDrawingById('layer-bold');
+        const linkedDrawing = glyph.findDrawingById('layer-regular');
 
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-bold';
-        canvas.outlineEditor.layerData = JSON.parse(
-            JSON.stringify(currentLayer.toJSON())
+        canvas.outlineEditor.selectedDrawingId = 'layer-bold';
+        canvas.outlineEditor.drawingData = JSON.parse(
+            JSON.stringify(currentDrawing.toJSON())
         );
         canvas.outlineEditor.selectedAnchors = [1];
         canvas.outlineEditor.selectedPoints = [];
@@ -10032,30 +10108,31 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         try {
             await canvas.outlineEditor.deleteSelectedNodes();
 
-            expect(currentLayer.toJSON().anchors).toEqual([
+            expect(currentDrawing.toJSON().anchors).toEqual([
                 { name: 'keep', x: 8, y: 8 }
             ]);
-            expect(linkedLayer.toJSON().anchors).toEqual([
+            expect(linkedDrawing.toJSON().anchors).toEqual([
                 { name: 'keep', x: 5, y: 5 }
             ]);
-            expect(canvas.outlineEditor.layerData.anchors).toEqual([
+            expect(canvas.outlineEditor.drawingData.anchors).toEqual([
                 { name: 'keep', x: 8, y: 8 }
             ]);
-            expect(syncLayerSnapshotsFromJson).toHaveBeenCalled();
-            const snapshotLayers = syncLayerSnapshotsFromJson.mock.calls[0][0];
-            expect(snapshotLayers).toEqual(
+            expect(syncDrawingSnapshotsFromJson).toHaveBeenCalled();
+            const snapshotDrawings =
+                syncDrawingSnapshotsFromJson.mock.calls[0][0];
+            expect(snapshotDrawings).toEqual(
                 expect.arrayContaining([
                     expect.objectContaining({
                         glyphName: 'A',
                         layerId: 'layer-bold',
-                        layerJson: expect.objectContaining({
+                        drawingJson: expect.objectContaining({
                             anchors: [{ name: 'keep', x: 8, y: 8 }]
                         })
                     }),
                     expect.objectContaining({
                         glyphName: 'A',
                         layerId: 'layer-regular',
-                        layerJson: expect.objectContaining({
+                        drawingJson: expect.objectContaining({
                             anchors: [{ name: 'keep', x: 5, y: 5 }]
                         })
                     })
@@ -10186,14 +10263,14 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         window.currentFontModel = font;
 
         const glyph = font.findGlyph('A');
-        const currentLayer = glyph.findLayerById('layer-1');
-        const linkedLayer = glyph.findLayerById('layer-2');
+        const currentDrawing = glyph.findDrawingById('layer-1');
+        const linkedDrawing = glyph.findDrawingById('layer-2');
 
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
-        canvas.outlineEditor.layerData = JSON.parse(
-            JSON.stringify(currentLayer.toJSON())
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
+        canvas.outlineEditor.drawingData = JSON.parse(
+            JSON.stringify(currentDrawing.toJSON())
         );
         // Select only on-curve nodes (Move + Curve), not off-curve handles.
         canvas.outlineEditor.selectedPoints = [
@@ -10204,8 +10281,8 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         try {
             await canvas.outlineEditor.deleteSelectedNodes();
 
-            expect(currentLayer.shapes).toHaveLength(0);
-            expect(linkedLayer.shapes).toHaveLength(0);
+            expect(currentDrawing.shapes).toHaveLength(0);
+            expect(linkedDrawing.shapes).toHaveLength(0);
         } finally {
             workerCacheSpy.mockRestore();
             dirtyIndicatorSpy.mockRestore();
@@ -10214,9 +10291,9 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
     });
 
     test('prefers exact nested component layer data over stale interpolated payloads', () => {
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
 
-        canvas.outlineEditor.applyExactSelectedLayerData(
+        canvas.outlineEditor.applyExactSelectedDrawingData(
             {
                 id: 'layer-1',
                 width: 500,
@@ -10282,11 +10359,11 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
             }
         );
 
-        expect(canvas.outlineEditor.layerData.shapes[0].transform).toEqual([
+        expect(canvas.outlineEditor.drawingData.shapes[0].transform).toEqual([
             1, 0, 0, 1, 99, 111
         ]);
         expect(
-            canvas.outlineEditor.layerData.shapes[0].layerData.anchors
+            canvas.outlineEditor.drawingData.shapes[0].layerData.anchors
         ).toEqual([
             {
                 name: 'top',
@@ -10296,7 +10373,7 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
             }
         ]);
         expect(
-            canvas.outlineEditor.layerData.shapes[0].layerData.shapes[0].nodes
+            canvas.outlineEditor.drawingData.shapes[0].layerData.shapes[0].nodes
         ).toEqual([
             { x: 10, y: 20, nodetype: 'Move' },
             { x: 30, y: 40, nodetype: 'Line' }
@@ -10306,7 +10383,7 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
     test('restores a component transform from the model during exact refresh', () => {
         const editor = canvas.outlineEditor;
         editor.active = true;
-        editor.layerData = {
+        editor.drawingData = {
             id: 'layer-1',
             width: 500,
             shapes: [
@@ -10318,14 +10395,14 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
             anchors: [],
             guides: []
         };
-        const getCurrentLayerIdSpy = jest
-            .spyOn(editor, 'getCurrentLayerId')
+        const getCurrentDrawingIdSpy = jest
+            .spyOn(editor, 'getCurrentDrawingId')
             .mockReturnValue('layer-1');
         const getAuthoringRootGlyphNameSpy = jest
             .spyOn(editor, 'getAuthoringRootGlyphName')
             .mockReturnValue('A');
-        const getExactLayerDataForSelectionSpy = jest
-            .spyOn(editor, 'getExactLayerDataForSelection')
+        const getExactDrawingDataForSelectionSpy = jest
+            .spyOn(editor, 'getExactDrawingDataForSelection')
             .mockReturnValue({
                 id: 'layer-1',
                 width: 500,
@@ -10340,55 +10417,57 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
             });
 
         try {
-            expect(editor.refreshSelectedLayerFromModel()).toBe(true);
-            expect(editor.layerData.shapes[0].transform).toEqual([
+            expect(editor.refreshSelectedDrawingFromModel()).toBe(true);
+            expect(editor.drawingData.shapes[0].transform).toEqual([
                 1, 0, 0, 1, 10, 20
             ]);
         } finally {
-            getCurrentLayerIdSpy.mockRestore();
+            getCurrentDrawingIdSpy.mockRestore();
             getAuthoringRootGlyphNameSpy.mockRestore();
-            getExactLayerDataForSelectionSpy.mockRestore();
+            getExactDrawingDataForSelectionSpy.mockRestore();
         }
     });
 
     test('allows exact model refresh only for unlocated default master layers', () => {
         const editor = canvas.outlineEditor;
-        const getCurrentLayerModelSpy = jest.spyOn(
+        const getCurrentDrawingModelSpy = jest.spyOn(
             editor,
-            'getCurrentLayerModel'
+            'getCurrentDrawingModel'
         );
 
         try {
-            getCurrentLayerModelSpy.mockReturnValue({
-                master: { type: 'DefaultForMaster' }
+            getCurrentDrawingModelSpy.mockReturnValue({
+                station: { type: 'DefaultForMaster' }
             });
-            expect(editor.canRefreshSelectedLayerFromModelExactly()).toBe(true);
+            expect(editor.canRefreshSelectedDrawingFromModelExactly()).toBe(
+                true
+            );
 
-            getCurrentLayerModelSpy.mockReturnValue({
-                master: { type: 'DefaultForMaster' },
+            getCurrentDrawingModelSpy.mockReturnValue({
+                station: { type: 'DefaultForMaster' },
                 location: { wght: 700 }
             });
-            expect(editor.canRefreshSelectedLayerFromModelExactly()).toBe(
+            expect(editor.canRefreshSelectedDrawingFromModelExactly()).toBe(
                 false
             );
 
-            getCurrentLayerModelSpy.mockReturnValue({
-                master: { type: 'DefaultForMaster' },
+            getCurrentDrawingModelSpy.mockReturnValue({
+                station: { type: 'DefaultForMaster' },
                 smart_component_location: { Width: 1 }
             });
-            expect(editor.canRefreshSelectedLayerFromModelExactly()).toBe(
+            expect(editor.canRefreshSelectedDrawingFromModelExactly()).toBe(
                 false
             );
 
-            getCurrentLayerModelSpy.mockReturnValue({
+            getCurrentDrawingModelSpy.mockReturnValue({
                 is_background: true,
-                master: { type: 'DefaultForMaster' }
+                station: { type: 'DefaultForMaster' }
             });
-            expect(editor.canRefreshSelectedLayerFromModelExactly()).toBe(
+            expect(editor.canRefreshSelectedDrawingFromModelExactly()).toBe(
                 false
             );
         } finally {
-            getCurrentLayerModelSpy.mockRestore();
+            getCurrentDrawingModelSpy.mockRestore();
         }
     });
 
@@ -10555,7 +10634,10 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         const workerCacheSpy = jest
             .spyOn(fontManager, 'updateWorkerFontCache')
             .mockResolvedValue();
-        const linkedLayersSpy = jest.spyOn(Layer.prototype, '_getLinkedLayers');
+        const linkedDrawingsSpy = jest.spyOn(
+            Drawing.prototype,
+            '_getLinkedDrawings'
+        );
         const originalBridge = window.changeBridge;
         const originalFontModel = window.currentFontModel;
 
@@ -10563,28 +10645,32 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         window.currentFontModel = font;
 
         const glyph = font.findGlyph('A');
-        const currentLayer = glyph.findLayerById('layer-1');
-        const linkedLayer = glyph.findLayerById('layer-2');
-        const originalActiveNodes = currentLayer.paths[0].nodes.map((node) => ({
-            x: node.x,
-            y: node.y,
-            nodetype: node.nodetype,
-            smooth: Boolean(node.smooth)
-        }));
-        const originalLinkedNodes = linkedLayer.paths[0].nodes.map((node) => ({
-            x: node.x,
-            y: node.y,
-            nodetype: node.nodetype,
-            smooth: Boolean(node.smooth)
-        }));
+        const currentDrawing = glyph.findDrawingById('layer-1');
+        const linkedDrawing = glyph.findDrawingById('layer-2');
+        const originalActiveNodes = currentDrawing.paths[0].nodes.map(
+            (node) => ({
+                x: node.x,
+                y: node.y,
+                nodetype: node.nodetype,
+                smooth: Boolean(node.smooth)
+            })
+        );
+        const originalLinkedNodes = linkedDrawing.paths[0].nodes.map(
+            (node) => ({
+                x: node.x,
+                y: node.y,
+                nodetype: node.nodetype,
+                smooth: Boolean(node.smooth)
+            })
+        );
 
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.glyphStack = 'A@layer-1';
-        canvas.outlineEditor.layerData = JSON.parse(
-            JSON.stringify(currentLayer.toJSON())
+        canvas.outlineEditor.drawingData = JSON.parse(
+            JSON.stringify(currentDrawing.toJSON())
         );
         canvas.outlineEditor.setActiveEditTool('cut');
         canvas.outlineEditor.hoveredPointIndex = {
@@ -10616,7 +10702,7 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
             });
             await canvas.outlineEditor.onMouseUp({ clientX: 30, clientY: 40 });
 
-            expect(linkedLayersSpy).toHaveBeenCalled();
+            expect(linkedDrawingsSpy).toHaveBeenCalled();
             expect(bridge.beginTransaction).toHaveBeenCalledWith(
                 'Split path',
                 null,
@@ -10628,7 +10714,7 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
             expect(bridge.syncGlyphFromJson).toHaveBeenCalledTimes(1);
             expect(bridge.endTransaction).toHaveBeenCalled();
             expect(
-                currentLayer.paths[0].nodes.map((node) => ({
+                currentDrawing.paths[0].nodes.map((node) => ({
                     x: node.x,
                     y: node.y,
                     nodetype: node.nodetype,
@@ -10636,7 +10722,7 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
                 }))
             ).not.toEqual(originalActiveNodes);
             expect(
-                linkedLayer.paths[0].nodes.map((node) => ({
+                linkedDrawing.paths[0].nodes.map((node) => ({
                     x: node.x,
                     y: node.y,
                     nodetype: node.nodetype,
@@ -10649,7 +10735,7 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         } finally {
             window.changeBridge = originalBridge;
             window.currentFontModel = originalFontModel;
-            linkedLayersSpy.mockRestore();
+            linkedDrawingsSpy.mockRestore();
             workerCacheSpy.mockRestore();
             dirtyIndicatorSpy.mockRestore();
             currentFontSpy.mockRestore();
@@ -10739,7 +10825,10 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         const workerCacheSpy = jest
             .spyOn(fontManager, 'updateWorkerFontCache')
             .mockResolvedValue();
-        const linkedLayersSpy = jest.spyOn(Layer.prototype, '_getLinkedLayers');
+        const linkedDrawingsSpy = jest.spyOn(
+            Drawing.prototype,
+            '_getLinkedDrawings'
+        );
         const originalBridge = window.changeBridge;
         const originalFontModel = window.currentFontModel;
 
@@ -10747,16 +10836,16 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         window.currentFontModel = font;
 
         const glyph = font.findGlyph('A');
-        const currentLayer = glyph.findLayerById('layer-1');
-        const linkedLayer = glyph.findLayerById('layer-2');
+        const currentDrawing = glyph.findDrawingById('layer-1');
+        const linkedDrawing = glyph.findDrawingById('layer-2');
 
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.glyphStack = 'A@layer-1';
-        canvas.outlineEditor.layerData = JSON.parse(
-            JSON.stringify(currentLayer.toJSON())
+        canvas.outlineEditor.drawingData = JSON.parse(
+            JSON.stringify(currentDrawing.toJSON())
         );
 
         const transformSpy = jest
@@ -10813,7 +10902,7 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
                 ctrlKey: false
             });
 
-            expect(linkedLayersSpy).toHaveBeenCalled();
+            expect(linkedDrawingsSpy).toHaveBeenCalled();
             expect(bridge.beginTransaction).toHaveBeenCalledWith(
                 'Draw path',
                 null,
@@ -10831,21 +10920,21 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
 
             expect(bridge.beginTransaction).toHaveBeenCalledTimes(1);
             expect(bridge.endTransaction).toHaveBeenCalledTimes(1);
-            expect(currentLayer.paths).toHaveLength(1);
-            expect(linkedLayer.paths).toHaveLength(1);
-            expect(currentLayer.paths[0].closed).toBe(true);
-            expect(linkedLayer.paths[0].closed).toBe(true);
+            expect(currentDrawing.paths).toHaveLength(1);
+            expect(linkedDrawing.paths).toHaveLength(1);
+            expect(currentDrawing.paths[0].closed).toBe(true);
+            expect(linkedDrawing.paths[0].closed).toBe(true);
             expect(
-                currentLayer.paths[0].nodes.map((node) => node.nodetype)
+                currentDrawing.paths[0].nodes.map((node) => node.nodetype)
             ).toEqual(['Line', 'Line', 'Line']);
             expect(
-                linkedLayer.paths[0].nodes.map((node) => node.nodetype)
+                linkedDrawing.paths[0].nodes.map((node) => node.nodetype)
             ).toEqual(['Line', 'Line', 'Line']);
         } finally {
             transformSpy.mockRestore();
             window.changeBridge = originalBridge;
             window.currentFontModel = originalFontModel;
-            linkedLayersSpy.mockRestore();
+            linkedDrawingsSpy.mockRestore();
             workerCacheSpy.mockRestore();
             dirtyIndicatorSpy.mockRestore();
             currentFontSpy.mockRestore();
@@ -10935,7 +11024,10 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         const workerCacheSpy = jest
             .spyOn(fontManager, 'updateWorkerFontCache')
             .mockResolvedValue();
-        const linkedLayersSpy = jest.spyOn(Layer.prototype, '_getLinkedLayers');
+        const linkedDrawingsSpy = jest.spyOn(
+            Drawing.prototype,
+            '_getLinkedDrawings'
+        );
         const originalBridge = window.changeBridge;
         const originalFontModel = window.currentFontModel;
 
@@ -10943,16 +11035,16 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         window.currentFontModel = font;
 
         const glyph = font.findGlyph('A');
-        const currentLayer = glyph.findLayerById('layer-1');
-        const linkedLayer = glyph.findLayerById('layer-2');
+        const currentDrawing = glyph.findDrawingById('layer-1');
+        const linkedDrawing = glyph.findDrawingById('layer-2');
 
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.glyphStack = 'A@layer-1';
-        canvas.outlineEditor.layerData = JSON.parse(
-            JSON.stringify(currentLayer.toJSON())
+        canvas.outlineEditor.drawingData = JSON.parse(
+            JSON.stringify(currentDrawing.toJSON())
         );
 
         let pointerPosition = { glyphX: 10, glyphY: 20 };
@@ -11005,10 +11097,10 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
                 ctrlKey: false
             });
 
-            expect(currentLayer.paths[0].closed).toBe(false);
-            expect(currentLayer.paths[0].nodes).toHaveLength(4);
+            expect(currentDrawing.paths[0].closed).toBe(false);
+            expect(currentDrawing.paths[0].nodes).toHaveLength(4);
             expect(
-                currentLayer.paths[0].nodes.map((node) => [node.x, node.y])
+                currentDrawing.paths[0].nodes.map((node) => [node.x, node.y])
             ).toEqual([
                 [10, 20],
                 [80, 20],
@@ -11054,17 +11146,17 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
             canvas.outlineEditor.setCommandKeyPressed(false);
             await new Promise((resolve) => setTimeout(resolve, 0));
 
-            expect(linkedLayersSpy).toHaveBeenCalled();
+            expect(linkedDrawingsSpy).toHaveBeenCalled();
             expect(bridge.beginTransaction).toHaveBeenCalledTimes(1);
             expect(bridge.endTransaction).toHaveBeenCalledTimes(1);
-            expect(currentLayer.paths).toHaveLength(1);
-            expect(linkedLayer.paths).toHaveLength(1);
-            expect(currentLayer.paths[0].closed).toBe(true);
-            expect(linkedLayer.paths[0].closed).toBe(true);
-            expect(currentLayer.paths[0].nodes).toHaveLength(4);
-            expect(linkedLayer.paths[0].nodes).toHaveLength(4);
+            expect(currentDrawing.paths).toHaveLength(1);
+            expect(linkedDrawing.paths).toHaveLength(1);
+            expect(currentDrawing.paths[0].closed).toBe(true);
+            expect(linkedDrawing.paths[0].closed).toBe(true);
+            expect(currentDrawing.paths[0].nodes).toHaveLength(4);
+            expect(linkedDrawing.paths[0].nodes).toHaveLength(4);
             expect(
-                currentLayer.paths[0].nodes.map((node) => [node.x, node.y])
+                currentDrawing.paths[0].nodes.map((node) => [node.x, node.y])
             ).toEqual([
                 [10, 20],
                 [80, 20],
@@ -11072,7 +11164,7 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
                 [10, 90]
             ]);
             expect(
-                linkedLayer.paths[0].nodes.map((node) => [node.x, node.y])
+                linkedDrawing.paths[0].nodes.map((node) => [node.x, node.y])
             ).toEqual([
                 [10, 20],
                 [80, 20],
@@ -11080,16 +11172,16 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
                 [10, 90]
             ]);
             expect(
-                currentLayer.paths[0].nodes.map((node) => node.nodetype)
+                currentDrawing.paths[0].nodes.map((node) => node.nodetype)
             ).toEqual(['Line', 'Line', 'Line', 'Line']);
             expect(
-                linkedLayer.paths[0].nodes.map((node) => node.nodetype)
+                linkedDrawing.paths[0].nodes.map((node) => node.nodetype)
             ).toEqual(['Line', 'Line', 'Line', 'Line']);
         } finally {
             transformSpy.mockRestore();
             window.changeBridge = originalBridge;
             window.currentFontModel = originalFontModel;
-            linkedLayersSpy.mockRestore();
+            linkedDrawingsSpy.mockRestore();
             workerCacheSpy.mockRestore();
             dirtyIndicatorSpy.mockRestore();
             currentFontSpy.mockRestore();
@@ -11195,10 +11287,13 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         const workerCacheSpy = jest
             .spyOn(fontManager, 'updateWorkerFontCache')
             .mockResolvedValue();
-        const structuralLayerSyncSpy = jest
-            .spyOn(fontManager, 'syncLayerFromModelToStorage')
+        const structuralDrawingSyncSpy = jest
+            .spyOn(fontManager, 'syncDrawingFromModelToStorage')
             .mockReturnValue(true);
-        const linkedLayersSpy = jest.spyOn(Layer.prototype, '_getLinkedLayers');
+        const linkedDrawingsSpy = jest.spyOn(
+            Drawing.prototype,
+            '_getLinkedDrawings'
+        );
         const segmentHitSpy = jest
             .spyOn(canvas.outlineEditor, 'findClosestPathSegmentHit')
             .mockReturnValue(null);
@@ -11215,16 +11310,16 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         };
 
         const glyph = font.findGlyph('A');
-        const currentLayer = glyph.findLayerById('layer-1');
-        const linkedLayer = glyph.findLayerById('layer-2');
+        const currentDrawing = glyph.findDrawingById('layer-1');
+        const linkedDrawing = glyph.findDrawingById('layer-2');
 
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.glyphStack = 'A@layer-1';
-        canvas.outlineEditor.layerData = JSON.parse(
-            JSON.stringify(currentLayer.toJSON())
+        canvas.outlineEditor.drawingData = JSON.parse(
+            JSON.stringify(currentDrawing.toJSON())
         );
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 0 }
@@ -11252,10 +11347,10 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
             canvas.outlineEditor.setCommandKeyPressed(false);
             await new Promise((resolve) => setTimeout(resolve, 0));
 
-            expect(linkedLayersSpy).toHaveBeenCalled();
+            expect(linkedDrawingsSpy).toHaveBeenCalled();
             expect(bridge.syncGlyphFromJson).toHaveBeenCalledTimes(1);
             expect(
-                currentLayer.paths[0].nodes.map((node) => ({
+                currentDrawing.paths[0].nodes.map((node) => ({
                     x: node.x,
                     y: node.y,
                     nodetype: node.nodetype
@@ -11266,7 +11361,7 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
                 { x: 100, y: 40, nodetype: 'Line' }
             ]);
             expect(
-                linkedLayer.paths[0].nodes.map((node) => ({
+                linkedDrawing.paths[0].nodes.map((node) => ({
                     x: node.x,
                     y: node.y,
                     nodetype: node.nodetype
@@ -11284,7 +11379,7 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
             segmentHitSpy.mockRestore();
             window.changeBridge = originalBridge;
             window.currentFontModel = originalFontModel;
-            linkedLayersSpy.mockRestore();
+            linkedDrawingsSpy.mockRestore();
             workerCacheSpy.mockRestore();
             dirtyIndicatorSpy.mockRestore();
             currentFontSpy.mockRestore();
@@ -11392,7 +11487,10 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         const workerCacheSpy = jest
             .spyOn(fontManager, 'updateWorkerFontCache')
             .mockResolvedValue();
-        const linkedLayersSpy = jest.spyOn(Layer.prototype, '_getLinkedLayers');
+        const linkedDrawingsSpy = jest.spyOn(
+            Drawing.prototype,
+            '_getLinkedDrawings'
+        );
         const segmentHitSpy = jest
             .spyOn(canvas.outlineEditor, 'findClosestPathSegmentHit')
             .mockReturnValue(null);
@@ -11409,16 +11507,16 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         };
 
         const glyph = font.findGlyph('A');
-        const currentLayer = glyph.findLayerById('layer-1');
-        const linkedLayer = glyph.findLayerById('layer-2');
+        const currentDrawing = glyph.findDrawingById('layer-1');
+        const linkedDrawing = glyph.findDrawingById('layer-2');
 
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.glyphStack = 'A@layer-1';
-        canvas.outlineEditor.layerData = JSON.parse(
-            JSON.stringify(currentLayer.toJSON())
+        canvas.outlineEditor.drawingData = JSON.parse(
+            JSON.stringify(currentDrawing.toJSON())
         );
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 0 }
@@ -11439,7 +11537,7 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
                 ctrlKey: false
             });
 
-            expect(linkedLayersSpy).toHaveBeenCalled();
+            expect(linkedDrawingsSpy).toHaveBeenCalled();
             expect(bridge.beginTransaction).toHaveBeenCalledWith(
                 'Draw path',
                 null,
@@ -11462,13 +11560,13 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
 
             expect(bridge.beginTransaction).toHaveBeenCalledTimes(1);
             expect(bridge.endTransaction).toHaveBeenCalledTimes(1);
-            expect(currentLayer.paths[0].closed).toBe(true);
-            expect(linkedLayer.paths[0].closed).toBe(true);
+            expect(currentDrawing.paths[0].closed).toBe(true);
+            expect(linkedDrawing.paths[0].closed).toBe(true);
             expect(
-                currentLayer.paths[0].nodes.map((node) => node.nodetype)
+                currentDrawing.paths[0].nodes.map((node) => node.nodetype)
             ).toEqual(['Line', 'Line', 'Line']);
             expect(
-                linkedLayer.paths[0].nodes.map((node) => node.nodetype)
+                linkedDrawing.paths[0].nodes.map((node) => node.nodetype)
             ).toEqual(['Line', 'Line', 'Line']);
         } finally {
             segmentHitSpy.mockRestore();
@@ -11477,7 +11575,7 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
             window.autoCompileManager = originalAutoCompileManager;
             fontManager.lastChangeSource = originalLastChangeSource;
             fontManager.lastEditType = originalLastEditType;
-            linkedLayersSpy.mockRestore();
+            linkedDrawingsSpy.mockRestore();
             workerCacheSpy.mockRestore();
             dirtyIndicatorSpy.mockRestore();
             currentFontSpy.mockRestore();
@@ -11585,7 +11683,10 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         const workerCacheSpy = jest
             .spyOn(fontManager, 'updateWorkerFontCache')
             .mockResolvedValue();
-        const linkedLayersSpy = jest.spyOn(Layer.prototype, '_getLinkedLayers');
+        const linkedDrawingsSpy = jest.spyOn(
+            Drawing.prototype,
+            '_getLinkedDrawings'
+        );
         const segmentHitSpy = jest
             .spyOn(canvas.outlineEditor, 'findClosestPathSegmentHit')
             .mockReturnValue(null);
@@ -11596,16 +11697,16 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         window.currentFontModel = font;
 
         const glyph = font.findGlyph('A');
-        const currentLayer = glyph.findLayerById('layer-1');
-        const linkedLayer = glyph.findLayerById('layer-2');
+        const currentDrawing = glyph.findDrawingById('layer-1');
+        const linkedDrawing = glyph.findDrawingById('layer-2');
 
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.glyphStack = 'A@layer-1';
-        canvas.outlineEditor.layerData = JSON.parse(
-            JSON.stringify(currentLayer.toJSON())
+        canvas.outlineEditor.drawingData = JSON.parse(
+            JSON.stringify(currentDrawing.toJSON())
         );
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 2 }
@@ -11626,7 +11727,7 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
                 ctrlKey: false
             });
 
-            expect(linkedLayersSpy).toHaveBeenCalled();
+            expect(linkedDrawingsSpy).toHaveBeenCalled();
             expect(bridge.beginTransaction).toHaveBeenCalledWith(
                 'Draw path',
                 null,
@@ -11644,19 +11745,19 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
 
             expect(bridge.beginTransaction).toHaveBeenCalledTimes(1);
             expect(bridge.endTransaction).toHaveBeenCalledTimes(1);
-            expect(currentLayer.paths[0].closed).toBe(true);
-            expect(linkedLayer.paths[0].closed).toBe(true);
+            expect(currentDrawing.paths[0].closed).toBe(true);
+            expect(linkedDrawing.paths[0].closed).toBe(true);
             expect(
-                currentLayer.paths[0].nodes.map((node) => node.nodetype)
+                currentDrawing.paths[0].nodes.map((node) => node.nodetype)
             ).toEqual(['Line', 'Line', 'Line']);
             expect(
-                linkedLayer.paths[0].nodes.map((node) => node.nodetype)
+                linkedDrawing.paths[0].nodes.map((node) => node.nodetype)
             ).toEqual(['Line', 'Line', 'Line']);
         } finally {
             segmentHitSpy.mockRestore();
             window.changeBridge = originalBridge;
             window.currentFontModel = originalFontModel;
-            linkedLayersSpy.mockRestore();
+            linkedDrawingsSpy.mockRestore();
             workerCacheSpy.mockRestore();
             dirtyIndicatorSpy.mockRestore();
             currentFontSpy.mockRestore();
@@ -11743,7 +11844,7 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
             beginTransaction: jest.fn(),
             endTransaction: jest.fn(),
             syncGlyphFromJson: jest.fn(),
-            syncLayersFromJson: jest.fn(),
+            syncDrawingsFromJson: jest.fn(),
             recordChange: jest.fn(),
             recordAdd: jest.fn(),
             recordRemove: jest.fn()
@@ -11763,7 +11864,10 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         const workerCacheSpy = jest
             .spyOn(fontManager, 'updateWorkerFontCache')
             .mockResolvedValue();
-        const linkedLayersSpy = jest.spyOn(Layer.prototype, '_getLinkedLayers');
+        const linkedDrawingsSpy = jest.spyOn(
+            Drawing.prototype,
+            '_getLinkedDrawings'
+        );
         const originalBridge = window.changeBridge;
         const originalFontModel = window.currentFontModel;
 
@@ -11771,10 +11875,10 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         window.currentFontModel = font;
 
         const glyph = font.findGlyph('A');
-        const currentLayer = glyph.findLayerById('layer-1');
-        const linkedLayer = glyph.findLayerById('layer-2');
-        const descriptor = Layer.getPathSegmentDescriptors({
-            nodes: currentLayer.toJSON().shapes[0].nodes,
+        const currentDrawing = glyph.findDrawingById('layer-1');
+        const linkedDrawing = glyph.findDrawingById('layer-2');
+        const descriptor = Drawing.getPathSegmentDescriptors({
+            nodes: currentDrawing.toJSON().shapes[0].nodes,
             closed: false
         })[0];
         const segmentHitSpy = jest
@@ -11794,10 +11898,10 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.glyphStack = 'A@layer-1';
-        canvas.outlineEditor.layerData = JSON.parse(
-            JSON.stringify(currentLayer.toJSON())
+        canvas.outlineEditor.drawingData = JSON.parse(
+            JSON.stringify(currentDrawing.toJSON())
         );
 
         try {
@@ -11817,7 +11921,7 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
             canvas.outlineEditor.setAltKeyPressed(false);
             await new Promise((resolve) => setTimeout(resolve, 0));
 
-            expect(linkedLayersSpy).toHaveBeenCalled();
+            expect(linkedDrawingsSpy).toHaveBeenCalled();
             expect(bridge.beginTransaction).toHaveBeenCalledWith(
                 'Convert',
                 null,
@@ -11827,25 +11931,25 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
                 })
             );
             expect(bridge.syncGlyphFromJson).toHaveBeenCalledTimes(1);
-            expect(bridge.syncLayersFromJson).not.toHaveBeenCalled();
+            expect(bridge.syncDrawingsFromJson).not.toHaveBeenCalled();
             expect(
-                currentLayer.paths[0].nodes.map((node) => node.nodetype)
+                currentDrawing.paths[0].nodes.map((node) => node.nodetype)
             ).toEqual(['Move', 'OffCurve', 'OffCurve', 'Curve']);
             expect(
-                linkedLayer.paths[0].nodes.map((node) => node.nodetype)
+                linkedDrawing.paths[0].nodes.map((node) => node.nodetype)
             ).toEqual(['Move', 'OffCurve', 'OffCurve', 'Curve']);
-            expect(currentLayer.paths[0].nodes[1].x).toBe(33);
-            expect(currentLayer.paths[0].nodes[2].x).toBe(67);
-            expect(linkedLayer.paths[0].nodes[1].x).toBe(43);
-            expect(linkedLayer.paths[0].nodes[2].x).toBe(77);
+            expect(currentDrawing.paths[0].nodes[1].x).toBe(33);
+            expect(currentDrawing.paths[0].nodes[2].x).toBe(67);
+            expect(linkedDrawing.paths[0].nodes[1].x).toBe(43);
+            expect(linkedDrawing.paths[0].nodes[2].x).toBe(77);
             expect(
-                currentLayer.paths[0].nodes.every(
+                currentDrawing.paths[0].nodes.every(
                     (node) =>
                         Number.isInteger(node.x) && Number.isInteger(node.y)
                 )
             ).toBe(true);
             expect(
-                linkedLayer.paths[0].nodes.every(
+                linkedDrawing.paths[0].nodes.every(
                     (node) =>
                         Number.isInteger(node.x) && Number.isInteger(node.y)
                 )
@@ -11854,7 +11958,7 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
             segmentHitSpy.mockRestore();
             window.changeBridge = originalBridge;
             window.currentFontModel = originalFontModel;
-            linkedLayersSpy.mockRestore();
+            linkedDrawingsSpy.mockRestore();
             workerCacheSpy.mockRestore();
             dirtyIndicatorSpy.mockRestore();
             currentFontSpy.mockRestore();
@@ -11962,7 +12066,10 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         const workerCacheSpy = jest
             .spyOn(fontManager, 'updateWorkerFontCache')
             .mockResolvedValue();
-        const linkedLayersSpy = jest.spyOn(Layer.prototype, '_getLinkedLayers');
+        const linkedDrawingsSpy = jest.spyOn(
+            Drawing.prototype,
+            '_getLinkedDrawings'
+        );
         const originalBridge = window.changeBridge;
         const originalFontModel = window.currentFontModel;
 
@@ -11970,16 +12077,16 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         window.currentFontModel = font;
 
         const glyph = font.findGlyph('A');
-        const currentLayer = glyph.findLayerById('layer-1');
-        const linkedLayer = glyph.findLayerById('layer-2');
+        const currentDrawing = glyph.findDrawingById('layer-1');
+        const linkedDrawing = glyph.findDrawingById('layer-2');
 
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.glyphStack = 'A@layer-1';
-        canvas.outlineEditor.layerData = JSON.parse(
-            JSON.stringify(currentLayer.toJSON())
+        canvas.outlineEditor.drawingData = JSON.parse(
+            JSON.stringify(currentDrawing.toJSON())
         );
 
         const transformSpy = jest
@@ -12038,19 +12145,19 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
             canvas.outlineEditor.setAltKeyPressed(false);
             await new Promise((resolve) => setTimeout(resolve, 0));
 
-            expect(linkedLayersSpy).toHaveBeenCalled();
+            expect(linkedDrawingsSpy).toHaveBeenCalled();
             expect(bridge.syncGlyphFromJson).toHaveBeenCalledTimes(1);
             expect(
-                currentLayer.paths[0].nodes.map((node) => node.nodetype)
+                currentDrawing.paths[0].nodes.map((node) => node.nodetype)
             ).toContain('Curve');
             expect(
-                linkedLayer.paths[0].nodes.map((node) => node.nodetype)
+                linkedDrawing.paths[0].nodes.map((node) => node.nodetype)
             ).toContain('Curve');
         } finally {
             transformSpy.mockRestore();
             window.changeBridge = originalBridge;
             window.currentFontModel = originalFontModel;
-            linkedLayersSpy.mockRestore();
+            linkedDrawingsSpy.mockRestore();
             workerCacheSpy.mockRestore();
             dirtyIndicatorSpy.mockRestore();
             currentFontSpy.mockRestore();
@@ -12176,7 +12283,10 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         const workerCacheSpy = jest
             .spyOn(fontManager, 'updateWorkerFontCache')
             .mockResolvedValue();
-        const linkedLayersSpy = jest.spyOn(Layer.prototype, '_getLinkedLayers');
+        const linkedDrawingsSpy = jest.spyOn(
+            Drawing.prototype,
+            '_getLinkedDrawings'
+        );
         const originalBridge = window.changeBridge;
         const originalFontModel = window.currentFontModel;
 
@@ -12184,16 +12294,16 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         window.currentFontModel = font;
 
         const glyph = font.findGlyph('A');
-        const currentLayer = glyph.findLayerById('layer-1');
-        const linkedLayer = glyph.findLayerById('layer-2');
+        const currentDrawing = glyph.findDrawingById('layer-1');
+        const linkedDrawing = glyph.findDrawingById('layer-2');
 
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.glyphStack = 'A@layer-1';
-        canvas.outlineEditor.layerData = JSON.parse(
-            JSON.stringify(currentLayer.toJSON())
+        canvas.outlineEditor.drawingData = JSON.parse(
+            JSON.stringify(currentDrawing.toJSON())
         );
         canvas.outlineEditor.hoveredAddPointPreview = {
             shapeIndex: 0,
@@ -12217,25 +12327,25 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
 
             await new Promise((resolve) => setTimeout(resolve, 0));
 
-            expect(linkedLayersSpy).toHaveBeenCalled();
+            expect(linkedDrawingsSpy).toHaveBeenCalled();
             expect(bridge.recordChange).not.toHaveBeenCalled();
             expect(
-                currentLayer.paths[0].nodes.every(
+                currentDrawing.paths[0].nodes.every(
                     (node) =>
                         Number.isInteger(node.x) && Number.isInteger(node.y)
                 )
             ).toBe(true);
             expect(
-                linkedLayer.paths[0].nodes.every(
+                linkedDrawing.paths[0].nodes.every(
                     (node) =>
                         Number.isInteger(node.x) && Number.isInteger(node.y)
                 )
             ).toBe(true);
-            expect(currentLayer.paths[0].nodes.length).toBeGreaterThan(4);
-            expect(linkedLayer.paths[0].nodes.length).toBeGreaterThan(4);
+            expect(currentDrawing.paths[0].nodes.length).toBeGreaterThan(4);
+            expect(linkedDrawing.paths[0].nodes.length).toBeGreaterThan(4);
 
             const linkedAddPointSpy = jest.spyOn(
-                linkedLayer.paths[0],
+                linkedDrawing.paths[0],
                 '_addPoint'
             );
             bridge.recordChange.mockClear();
@@ -12266,7 +12376,7 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         } finally {
             window.changeBridge = originalBridge;
             window.currentFontModel = originalFontModel;
-            linkedLayersSpy.mockRestore();
+            linkedDrawingsSpy.mockRestore();
             workerCacheSpy.mockRestore();
             dirtyIndicatorSpy.mockRestore();
             currentFontSpy.mockRestore();
@@ -12304,10 +12414,13 @@ describe('OutlineEditor structural outline compile scheduling', () => {
         const workerCacheSpy = jest
             .spyOn(fontManager, 'updateWorkerFontCache')
             .mockResolvedValue();
-        const structuralLayerSyncSpy = jest
-            .spyOn(fontManager, 'syncLayerFromModelToStorage')
+        const structuralDrawingSyncSpy = jest
+            .spyOn(fontManager, 'syncDrawingFromModelToStorage')
             .mockReturnValue(true);
-        const linkedLayersSpy = jest.spyOn(Layer.prototype, '_getLinkedLayers');
+        const linkedDrawingsSpy = jest.spyOn(
+            Drawing.prototype,
+            '_getLinkedDrawings'
+        );
         const originalBridge = window.changeBridge;
         const originalFontModel = window.currentFontModel;
         const originalAutoCompileManager = window.autoCompileManager;
@@ -12332,8 +12445,8 @@ describe('OutlineEditor structural outline compile scheduling', () => {
             currentFontSpy,
             dirtyIndicatorSpy,
             workerCacheSpy,
-            structuralLayerSyncSpy,
-            linkedLayersSpy,
+            structuralDrawingSyncSpy,
+            linkedDrawingsSpy,
             bridge: window.changeBridge,
             restore() {
                 window.changeBridge = originalBridge;
@@ -12341,8 +12454,8 @@ describe('OutlineEditor structural outline compile scheduling', () => {
                 window.autoCompileManager = originalAutoCompileManager;
                 fontManager.lastChangeSource = originalLastChangeSource;
                 fontManager.lastEditType = originalLastEditType;
-                linkedLayersSpy.mockRestore();
-                structuralLayerSyncSpy.mockRestore();
+                linkedDrawingsSpy.mockRestore();
+                structuralDrawingSyncSpy.mockRestore();
                 workerCacheSpy.mockRestore();
                 dirtyIndicatorSpy.mockRestore();
                 currentFontSpy.mockRestore();
@@ -12432,14 +12545,14 @@ describe('OutlineEditor structural outline compile scheduling', () => {
 
         const env = mockStructuralCompileEnvironment(font);
         const glyph = font.findGlyph('A');
-        const currentLayer = glyph.findLayerById('layer-1');
+        const currentDrawing = glyph.findDrawingById('layer-1');
 
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.glyphStack = 'A@layer-1';
-        canvas.outlineEditor.layerData = JSON.parse(
-            JSON.stringify(currentLayer.toJSON())
+        canvas.outlineEditor.drawingData = JSON.parse(
+            JSON.stringify(currentDrawing.toJSON())
         );
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 0 }
@@ -12472,7 +12585,7 @@ describe('OutlineEditor structural outline compile scheduling', () => {
             );
             expect(env.bridge.endTransaction).toHaveBeenCalledTimes(1);
             expect(canvas.outlineEditor.pendingCommandPathEdit).toBeNull();
-            expect(currentLayer.paths[0].closed).toBe(true);
+            expect(currentDrawing.paths[0].closed).toBe(true);
             expect(fontManager.lastChangeSource).toBeNull();
             expect(fontManager.lastEditType).toBeNull();
             expect(
@@ -12545,14 +12658,14 @@ describe('OutlineEditor structural outline compile scheduling', () => {
 
         const env = mockStructuralCompileEnvironment(font);
         const glyph = font.findGlyph('A');
-        const currentLayer = glyph.findLayerById('layer-1');
+        const currentDrawing = glyph.findDrawingById('layer-1');
 
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.glyphStack = 'A@layer-1';
-        canvas.outlineEditor.layerData = JSON.parse(
-            JSON.stringify(currentLayer.toJSON())
+        canvas.outlineEditor.drawingData = JSON.parse(
+            JSON.stringify(currentDrawing.toJSON())
         );
 
         try {
@@ -12565,7 +12678,7 @@ describe('OutlineEditor structural outline compile scheduling', () => {
 
             await flushStructuralCompileTick();
 
-            expect(currentLayer.paths[0].closed).toBe(false);
+            expect(currentDrawing.paths[0].closed).toBe(false);
             expect(fontManager.lastChangeSource).toBeNull();
             expect(fontManager.lastEditType).toBeNull();
             expect(
@@ -12633,9 +12746,9 @@ describe('OutlineEditor structural outline compile scheduling', () => {
 
         const env = mockStructuralCompileEnvironment(font);
         const glyph = font.findGlyph('A');
-        const currentLayer = glyph.findLayerById('layer-1');
-        const descriptor = Layer.getPathSegmentDescriptors({
-            nodes: currentLayer.toJSON().shapes[0].nodes,
+        const currentDrawing = glyph.findDrawingById('layer-1');
+        const descriptor = Drawing.getPathSegmentDescriptors({
+            nodes: currentDrawing.toJSON().shapes[0].nodes,
             closed: false
         })[0];
         const segmentHitSpy = jest
@@ -12649,10 +12762,10 @@ describe('OutlineEditor structural outline compile scheduling', () => {
 
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.glyphStack = 'A@layer-1';
-        canvas.outlineEditor.layerData = JSON.parse(
-            JSON.stringify(currentLayer.toJSON())
+        canvas.outlineEditor.drawingData = JSON.parse(
+            JSON.stringify(currentDrawing.toJSON())
         );
 
         try {
@@ -12675,7 +12788,7 @@ describe('OutlineEditor structural outline compile scheduling', () => {
                 window.autoCompileManager.checkAndSchedule
             ).not.toHaveBeenCalled();
             expect(env.currentFont.syncJsonFromModel).not.toHaveBeenCalled();
-            expect(env.structuralLayerSyncSpy).toHaveBeenCalledWith(
+            expect(env.structuralDrawingSyncSpy).toHaveBeenCalledWith(
                 'A',
                 'layer-1'
             );
@@ -12744,14 +12857,14 @@ describe('OutlineEditor structural outline compile scheduling', () => {
 
         const env = mockStructuralCompileEnvironment(font);
         const glyph = font.findGlyph('A');
-        const currentLayer = glyph.findLayerById('layer-1');
+        const currentDrawing = glyph.findDrawingById('layer-1');
 
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.glyphStack = 'A@layer-1';
-        canvas.outlineEditor.layerData = JSON.parse(
-            JSON.stringify(currentLayer.toJSON())
+        canvas.outlineEditor.drawingData = JSON.parse(
+            JSON.stringify(currentDrawing.toJSON())
         );
         canvas.outlineEditor.hoveredAddPointPreview = {
             shapeIndex: 0,
@@ -12843,13 +12956,13 @@ describe('OutlineEditor structural outline compile scheduling', () => {
 
         const env = mockStructuralCompileEnvironment(font);
         const glyph = font.findGlyph('A');
-        const currentLayer = glyph.findLayerById('layer-1');
+        const currentDrawing = glyph.findDrawingById('layer-1');
 
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
-        canvas.outlineEditor.layerData = JSON.parse(
-            JSON.stringify(currentLayer.toJSON())
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
+        canvas.outlineEditor.drawingData = JSON.parse(
+            JSON.stringify(currentDrawing.toJSON())
         );
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 1 }
@@ -12997,9 +13110,12 @@ describe('GlyphCanvas decompose component', () => {
         jest.spyOn(fontManager, 'updateDirtyIndicator').mockResolvedValue();
         window.currentFontModel = font;
         const glyph = font.findGlyph('A');
-        const currentLayer = glyph.findLayerById('layer-1');
-        const linkedLayer = glyph.findLayerById('layer-2');
-        const linkedLayersSpy = jest.spyOn(Layer.prototype, '_getLinkedLayers');
+        const currentDrawing = glyph.findDrawingById('layer-1');
+        const linkedDrawing = glyph.findDrawingById('layer-2');
+        const linkedDrawingsSpy = jest.spyOn(
+            Drawing.prototype,
+            '_getLinkedDrawings'
+        );
         jest.spyOn(
             canvas.outlineEditor,
             'commitStructuralOutlineChange'
@@ -13015,9 +13131,9 @@ describe('GlyphCanvas decompose component', () => {
 
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
-        canvas.outlineEditor.layerData = JSON.parse(
-            JSON.stringify(currentLayer.toJSON())
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
+        canvas.outlineEditor.drawingData = JSON.parse(
+            JSON.stringify(currentDrawing.toJSON())
         );
         canvas.outlineEditor.canvasContextMenuTarget = {
             shapeIndex: 0,
@@ -13034,13 +13150,13 @@ describe('GlyphCanvas decompose component', () => {
             expect(canvas.outlineEditor.decomposeContextMenuComponents()).toBe(
                 true
             );
-            expect(linkedLayersSpy).toHaveBeenCalled();
-            expect(currentLayer.components).toHaveLength(0);
-            expect(linkedLayer.components).toHaveLength(0);
-            expect(currentLayer.paths[0].nodes[0].x).toBe(10);
-            expect(linkedLayer.paths[0].nodes[0].x).toBe(30);
+            expect(linkedDrawingsSpy).toHaveBeenCalled();
+            expect(currentDrawing.components).toHaveLength(0);
+            expect(linkedDrawing.components).toHaveLength(0);
+            expect(currentDrawing.paths[0].nodes[0].x).toBe(10);
+            expect(linkedDrawing.paths[0].nodes[0].x).toBe(30);
         } finally {
-            linkedLayersSpy.mockRestore();
+            linkedDrawingsSpy.mockRestore();
             currentFontSpy.mockRestore();
         }
     });
@@ -13058,11 +13174,14 @@ describe('GlyphCanvas decompose component', () => {
         jest.spyOn(fontManager, 'updateDirtyIndicator').mockResolvedValue();
         window.currentFontModel = font;
         const glyph = font.findGlyph('A');
-        const foreground = glyph.findLayerById('layer-1');
-        const sibling = glyph.findLayerById('layer-2');
-        const background = foreground.backgroundLayer;
+        const foreground = glyph.findDrawingById('layer-1');
+        const sibling = glyph.findDrawingById('layer-2');
+        const background = foreground.backgroundDrawing;
         background.addComponent('B', [1, 0, 0, 1, 50, 0]);
-        const linkedLayersSpy = jest.spyOn(Layer.prototype, '_getLinkedLayers');
+        const linkedDrawingsSpy = jest.spyOn(
+            Drawing.prototype,
+            '_getLinkedDrawings'
+        );
         jest.spyOn(
             canvas.outlineEditor,
             'commitStructuralOutlineChange'
@@ -13078,8 +13197,8 @@ describe('GlyphCanvas decompose component', () => {
 
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = background.id;
-        canvas.outlineEditor.layerData = JSON.parse(
+        canvas.outlineEditor.selectedDrawingId = background.id;
+        canvas.outlineEditor.drawingData = JSON.parse(
             JSON.stringify(background.toJSON())
         );
         canvas.outlineEditor.canvasContextMenuTarget = {
@@ -13097,13 +13216,13 @@ describe('GlyphCanvas decompose component', () => {
             expect(canvas.outlineEditor.decomposeContextMenuComponents()).toBe(
                 true
             );
-            expect(linkedLayersSpy).toHaveBeenCalled();
+            expect(linkedDrawingsSpy).toHaveBeenCalled();
             expect(background.components).toHaveLength(0);
             expect(background.paths[0].nodes[0].x).toBe(50);
             expect(foreground.components).toHaveLength(1);
             expect(sibling.components).toHaveLength(1);
         } finally {
-            linkedLayersSpy.mockRestore();
+            linkedDrawingsSpy.mockRestore();
             currentFontSpy.mockRestore();
         }
     });
@@ -13118,8 +13237,8 @@ describe('GlyphCanvas command path drawing visuals', () => {
         canvas.textRunEditor.selectedGlyphIndex = 0;
         canvas.textRunEditor.shapedGlyphs = [{ ax: 500, dx: 0, dy: 0, g: 0 }];
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
+        canvas.outlineEditor.drawingData = {
             id: 'layer-1',
             width: 500,
             shapes: [
@@ -13327,7 +13446,7 @@ describe('GlyphCanvas command path drawing visuals', () => {
     });
 
     test('cmd hover on a point uses a crosshair cursor for cut-open', () => {
-        canvas.outlineEditor.layerData.shapes[0].nodes.splice(1, 0, {
+        canvas.outlineEditor.drawingData.shapes[0].nodes.splice(1, 0, {
             x: 55,
             y: 30,
             nodetype: 'Line'
@@ -13364,7 +13483,7 @@ describe('GlyphCanvas command path drawing visuals', () => {
     });
 
     test('drawOutlineEditor renders a visible start node for a one-point open path', () => {
-        canvas.outlineEditor.layerData.shapes = [
+        canvas.outlineEditor.drawingData.shapes = [
             {
                 nodes: [{ x: 20, y: 30, nodetype: 'Move' }],
                 closed: false
@@ -13433,7 +13552,7 @@ describe('GlyphCanvas anchor movement', () => {
         document.body.innerHTML = '<div id="test-container"></div>';
         canvas = new GlyphCanvas('test-container');
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             shapes: [],
             anchors: [
                 { x: 100, y: 100 },
@@ -13441,7 +13560,7 @@ describe('GlyphCanvas anchor movement', () => {
             ]
         };
         canvas.outlineEditor.selectedAnchors = [0];
-        canvas.outlineEditor.saveLayerData = jest.fn();
+        canvas.outlineEditor.saveDrawingData = jest.fn();
     });
 
     afterEach(() => {
@@ -13451,24 +13570,24 @@ describe('GlyphCanvas anchor movement', () => {
 
     test('should move selected anchors by delta', () => {
         canvas.outlineEditor.moveSelectedAnchors(10, 20);
-        expect(canvas.outlineEditor.layerData.anchors[0].x).toBe(110);
-        expect(canvas.outlineEditor.layerData.anchors[0].y).toBe(120);
+        expect(canvas.outlineEditor.drawingData.anchors[0].x).toBe(110);
+        expect(canvas.outlineEditor.drawingData.anchors[0].y).toBe(120);
     });
 
     test('should move multiple selected anchors', () => {
         canvas.outlineEditor.selectedAnchors = [0, 1];
         canvas.outlineEditor.moveSelectedAnchors(10, 20);
-        expect(canvas.outlineEditor.layerData.anchors[0].x).toBe(110);
-        expect(canvas.outlineEditor.layerData.anchors[0].y).toBe(120);
-        expect(canvas.outlineEditor.layerData.anchors[1].x).toBe(210);
-        expect(canvas.outlineEditor.layerData.anchors[1].y).toBe(220);
+        expect(canvas.outlineEditor.drawingData.anchors[0].x).toBe(110);
+        expect(canvas.outlineEditor.drawingData.anchors[0].y).toBe(120);
+        expect(canvas.outlineEditor.drawingData.anchors[1].x).toBe(210);
+        expect(canvas.outlineEditor.drawingData.anchors[1].y).toBe(220);
     });
 
     test('should not move anchors when none are selected', () => {
         canvas.outlineEditor.selectedAnchors = [];
         canvas.outlineEditor.moveSelectedAnchors(10, 20);
-        expect(canvas.outlineEditor.layerData.anchors[0].x).toBe(100);
-        expect(canvas.outlineEditor.layerData.anchors[0].y).toBe(100);
+        expect(canvas.outlineEditor.drawingData.anchors[0].x).toBe(100);
+        expect(canvas.outlineEditor.drawingData.anchors[0].y).toBe(100);
     });
 
     test('keyboard anchor move helper only mutates preview state until onKeyDown flushes the burst', () => {
@@ -13482,22 +13601,22 @@ describe('GlyphCanvas anchor movement', () => {
         const syncCurrentGlyphToYDocSpy = jest
             .spyOn(canvas.outlineEditor, '_syncCurrentGlyphToYDoc')
             .mockImplementation(() => {});
-        const saveLayerDataSpy = jest.spyOn(
+        const saveDrawingDataSpy = jest.spyOn(
             canvas.outlineEditor,
-            'saveLayerData'
+            'saveDrawingData'
         );
 
         try {
             expect(canvas.outlineEditor.moveSelectedAnchors(10, 20)).toBe(true);
-            expect(canvas.outlineEditor.layerData.anchors[0].x).toBe(110);
-            expect(canvas.outlineEditor.layerData.anchors[0].y).toBe(120);
+            expect(canvas.outlineEditor.drawingData.anchors[0].x).toBe(110);
+            expect(canvas.outlineEditor.drawingData.anchors[0].y).toBe(120);
             expect(canvas.outlineEditor._anchorAffectedGlyphNames).toEqual(
                 affectedGlyphNames
             );
-            expect(saveLayerDataSpy).not.toHaveBeenCalled();
+            expect(saveDrawingDataSpy).not.toHaveBeenCalled();
             expect(syncCurrentGlyphToYDocSpy).not.toHaveBeenCalled();
         } finally {
-            saveLayerDataSpy.mockRestore();
+            saveDrawingDataSpy.mockRestore();
             syncCurrentGlyphToYDocSpy.mockRestore();
             rebuildSpy.mockRestore();
         }
@@ -13549,8 +13668,8 @@ describe('GlyphCanvas anchor movement', () => {
                 findGlyph: jest.fn((glyphName) => {
                     if (glyphName === 'adieresis') {
                         return {
-                            findLayerById: jest.fn((layerId) =>
-                                layerId === 'layer-1'
+                            findDrawingById: jest.fn((drawingId) =>
+                                drawingId === 'layer-1'
                                     ? {
                                           toJSON: jest.fn(() => ({
                                               id: 'layer-1',
@@ -13572,8 +13691,10 @@ describe('GlyphCanvas anchor movement', () => {
 
                     if (glyphName === 'a') {
                         return {
-                            findLayerById: jest.fn((layerId) =>
-                                layerId === 'layer-1' ? { id: 'layer-1' } : null
+                            findDrawingById: jest.fn((drawingId) =>
+                                drawingId === 'layer-1'
+                                    ? { id: 'layer-1' }
+                                    : null
                             )
                         };
                     }
@@ -13582,40 +13703,42 @@ describe('GlyphCanvas anchor movement', () => {
                 })
             }
         };
-        const serializedDependentLayer = {
+        const serializedDependentDrawing = {
             id: 'layer-1',
             width: 610,
             anchors: [{ name: 'top', x: 140, y: 760 }],
             shapes: rebuiltDependentShapes,
             format_specific: { serialized: true }
         };
-        const serializeLayerSpy = jest
-            .spyOn(fontManager, 'serializeLayerForCommittedSync')
-            .mockImplementation((glyphName, layerId, layerData, options) => {
-                if (glyphName === 'adieresis' && layerId === 'layer-1') {
-                    if (options?.preserveExistingShapes) {
-                        return {
-                            ...serializedDependentLayer,
-                            shapes: staleStoredShapes
-                        };
+        const serializeDrawingSpy = jest
+            .spyOn(fontManager, 'serializeDrawingForCommittedSync')
+            .mockImplementation(
+                (glyphName, drawingId, drawingData, options) => {
+                    if (glyphName === 'adieresis' && drawingId === 'layer-1') {
+                        if (options?.preserveExistingShapes) {
+                            return {
+                                ...serializedDependentDrawing,
+                                shapes: staleStoredShapes
+                            };
+                        }
+                        return serializedDependentDrawing;
                     }
-                    return serializedDependentLayer;
-                }
 
-                return {
-                    id: layerId,
-                    width: 500,
-                    anchors: [],
-                    shapes: []
-                };
-            });
-        const syncLayerSnapshotsFromJson = jest.fn();
+                    return {
+                        id: drawingId,
+                        width: 500,
+                        anchors: [],
+                        shapes: []
+                    };
+                }
+            );
+        const syncDrawingSnapshotsFromJson = jest.fn();
         currentFontSpy = jest
             .spyOn(fontManager, 'currentFont', 'get')
             .mockReturnValue(currentFont);
 
         window.patchSyncEngine = {
-            syncLayerSnapshotsFromJson,
+            syncDrawingSnapshotsFromJson,
             syncGlyphFromJson: jest.fn(),
             beginTransaction: jest.fn(),
             endTransaction: jest.fn(),
@@ -13623,12 +13746,12 @@ describe('GlyphCanvas anchor movement', () => {
             recordAdd: jest.fn(),
             recordRemove: jest.fn()
         };
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.parseGlyphStack = jest.fn(() => [
             { glyphName: 'a' }
         ]);
         canvas.getCurrentGlyphName = jest.fn(() => 'a');
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             id: 'layer-1',
             width: 500,
             shapes: [],
@@ -13642,7 +13765,7 @@ describe('GlyphCanvas anchor movement', () => {
                 undefined,
                 null,
                 {
-                    changedLayerTargets: [
+                    changedDrawingTargets: [
                         { glyphName: 'a', layerId: 'layer-1' },
                         { glyphName: 'adieresis', layerId: 'layer-1' }
                     ],
@@ -13658,7 +13781,7 @@ describe('GlyphCanvas anchor movement', () => {
                 }
             );
 
-            expect(serializeLayerSpy).toHaveBeenCalledWith(
+            expect(serializeDrawingSpy).toHaveBeenCalledWith(
                 'adieresis',
                 'layer-1',
                 expect.objectContaining({
@@ -13667,7 +13790,7 @@ describe('GlyphCanvas anchor movement', () => {
                     anchors: [{ name: 'top', x: 140, y: 760 }],
                     shapes: rebuiltDependentShapes
                 }),
-                { authoritativeOptionalLayerFields: ['anchors'] }
+                { authoritativeOptionalDrawingFields: ['anchors'] }
             );
             expect(
                 currentFont.babelfontData.glyphs[1].layers[0].shapes
@@ -13675,19 +13798,19 @@ describe('GlyphCanvas anchor movement', () => {
             expect(
                 currentFont.babelfontData.glyphs[1].layers[0].shapes
             ).not.toEqual(staleStoredShapes);
-            expect(syncLayerSnapshotsFromJson).toHaveBeenCalledWith(
+            expect(syncDrawingSnapshotsFromJson).toHaveBeenCalledWith(
                 [
                     expect.objectContaining({
                         glyphName: 'a',
                         layerId: 'layer-1',
-                        layerJson: expect.objectContaining({
+                        drawingJson: expect.objectContaining({
                             id: 'layer-1'
                         })
                     }),
                     expect.objectContaining({
                         glyphName: 'adieresis',
                         layerId: 'layer-1',
-                        layerJson: serializedDependentLayer
+                        drawingJson: serializedDependentDrawing
                     })
                 ],
                 'Drag anchor',
@@ -13704,7 +13827,7 @@ describe('GlyphCanvas anchor movement', () => {
             );
         } finally {
             window.patchSyncEngine = originalPatchSyncEngine;
-            serializeLayerSpy.mockRestore();
+            serializeDrawingSpy.mockRestore();
         }
     });
 
@@ -13744,16 +13867,16 @@ describe('GlyphCanvas anchor movement', () => {
         const structuralTargetsSpy = jest
             .spyOn(
                 canvas.outlineEditor,
-                'getCurrentGlyphStructuralLayerTargets'
+                'getCurrentGlyphStructuralDrawingTargets'
             )
             .mockReturnValue([{ glyphName: 'A', layerId: 'layer-1' }]);
 
         window.patchSyncEngine = {
             beginTransaction: jest.fn(),
             endTransaction: jest.fn(),
-            syncLayerSnapshotsFromJson: jest.fn()
+            syncDrawingSnapshotsFromJson: jest.fn()
         };
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.parseGlyphStack = jest.fn(() => [
             { glyphName: 'A' }
         ]);
@@ -13762,7 +13885,7 @@ describe('GlyphCanvas anchor movement', () => {
             canvas.outlineEditor,
             'getCurrentGlyphModel'
         ).mockReturnValue({ name: 'A' });
-        jest.spyOn(canvas.outlineEditor, 'getCurrentLayerId').mockReturnValue(
+        jest.spyOn(canvas.outlineEditor, 'getCurrentDrawingId').mockReturnValue(
             'layer-1'
         );
 
@@ -13783,7 +13906,7 @@ describe('GlyphCanvas anchor movement', () => {
                 undefined,
                 null,
                 {
-                    changedLayerTargets: [
+                    changedDrawingTargets: [
                         { glyphName: 'A', layerId: 'layer-1' },
                         { glyphName: 'Adieresis', layerId: 'layer-1' }
                     ],
@@ -13824,8 +13947,8 @@ describe('GlyphCanvas anchor movement', () => {
         const commitSpy = jest
             .spyOn(canvas.outlineEditor, 'commitStructuralOutlineChange')
             .mockImplementation(() => {});
-        const saveLayerSpy = jest
-            .spyOn(canvas.outlineEditor, 'saveLayerData')
+        const saveDrawingSpy = jest
+            .spyOn(canvas.outlineEditor, 'saveDrawingData')
             .mockReturnValue(true);
         const clearPreviewSpy = jest
             .spyOn(fontManager, 'clearLiveDragPreview')
@@ -13837,7 +13960,7 @@ describe('GlyphCanvas anchor movement', () => {
             syncGlyphFromJson: jest.fn()
         };
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.parseGlyphStack = jest.fn(() => [
             { glyphName: 'A' }
         ]);
@@ -13851,7 +13974,7 @@ describe('GlyphCanvas anchor movement', () => {
         canvas.outlineEditor._dragType = 'slide-point';
         canvas.outlineEditor._hasMoved = true;
         canvas.outlineEditor._preDragDesc = 'Move point along curve: (0, 0)';
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             id: 'layer-1',
             width: 500,
             shapes: [],
@@ -13876,7 +13999,7 @@ describe('GlyphCanvas anchor movement', () => {
         } finally {
             window.patchSyncEngine = originalPatchSyncEngine;
             commitSpy.mockRestore();
-            saveLayerSpy.mockRestore();
+            saveDrawingSpy.mockRestore();
             clearPreviewSpy.mockRestore();
         }
     });
@@ -13886,8 +14009,8 @@ describe('GlyphCanvas anchor movement', () => {
         const importedFormatSpecific = {
             'com.schriftgestalt.Glyphs.attr': {}
         };
-        const directModelLayer = {
-            syncFromEditorLayerData: jest.fn(),
+        const directModelDrawing = {
+            syncFromEditorDrawingData: jest.fn(),
             toJSON: jest.fn(() => ({
                 id: 'layer-1',
                 width: 500,
@@ -13924,32 +14047,34 @@ describe('GlyphCanvas anchor movement', () => {
             },
             fontModel: {
                 findGlyph: jest.fn(() => ({
-                    findLayerById: jest.fn(() => directModelLayer)
+                    findDrawingById: jest.fn(() => directModelDrawing)
                 }))
             }
         };
         const currentFontSpy = jest
             .spyOn(fontManager, 'currentFont', 'get')
             .mockReturnValue(currentFont);
-        const serializeLayerSpy = jest
-            .spyOn(fontManager, 'serializeLayerForCommittedSync')
-            .mockImplementation((_glyphName, _layerId, layerData) => layerData);
-        const syncLayerSnapshotsFromJson = jest.fn();
+        const serializeDrawingSpy = jest
+            .spyOn(fontManager, 'serializeDrawingForCommittedSync')
+            .mockImplementation(
+                (_glyphName, _drawingId, drawingData) => drawingData
+            );
+        const syncDrawingSnapshotsFromJson = jest.fn();
 
         window.patchSyncEngine = {
-            syncLayerSnapshotsFromJson,
+            syncDrawingSnapshotsFromJson,
             beginTransaction: jest.fn(),
             endTransaction: jest.fn(),
             recordChange: jest.fn(),
             recordAdd: jest.fn(),
             recordRemove: jest.fn()
         };
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.parseGlyphStack = jest.fn(() => [
             { glyphName: 'adieresis' }
         ]);
         canvas.getCurrentGlyphName = jest.fn(() => 'adieresis');
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             id: 'layer-1',
             width: 500,
             shapes: [
@@ -13976,7 +14101,7 @@ describe('GlyphCanvas anchor movement', () => {
                 undefined,
                 null,
                 {
-                    changedLayerTargets: [
+                    changedDrawingTargets: [
                         { glyphName: 'adieresis', layerId: 'layer-1' }
                     ],
                     workerReplayTargets: [
@@ -13990,22 +14115,22 @@ describe('GlyphCanvas anchor movement', () => {
                 }
             );
 
-            const synchronizedLayer =
-                directModelLayer.syncFromEditorLayerData.mock.calls[0][0];
-            expect(synchronizedLayer).not.toHaveProperty('anchors');
-            expect(synchronizedLayer).not.toHaveProperty('format_specific');
+            const synchronizedDrawing =
+                directModelDrawing.syncFromEditorDrawingData.mock.calls[0][0];
+            expect(synchronizedDrawing).not.toHaveProperty('anchors');
+            expect(synchronizedDrawing).not.toHaveProperty('format_specific');
 
-            const serializedLayer = serializeLayerSpy.mock.calls[0][2];
-            expect(serializedLayer).not.toHaveProperty('anchors');
-            expect(serializedLayer.format_specific).toEqual(
+            const serializedDrawing = serializeDrawingSpy.mock.calls[0][2];
+            expect(serializedDrawing).not.toHaveProperty('anchors');
+            expect(serializedDrawing.format_specific).toEqual(
                 importedFormatSpecific
             );
-            expect(syncLayerSnapshotsFromJson).toHaveBeenCalledWith(
+            expect(syncDrawingSnapshotsFromJson).toHaveBeenCalledWith(
                 [
                     expect.objectContaining({
                         glyphName: 'adieresis',
                         layerId: 'layer-1',
-                        layerJson: serializedLayer
+                        drawingJson: serializedDrawing
                     })
                 ],
                 'Drag component',
@@ -14019,7 +14144,7 @@ describe('GlyphCanvas anchor movement', () => {
             );
         } finally {
             window.patchSyncEngine = originalPatchSyncEngine;
-            serializeLayerSpy.mockRestore();
+            serializeDrawingSpy.mockRestore();
             currentFontSpy.mockRestore();
         }
     });
@@ -14042,8 +14167,8 @@ describe('GlyphCanvas anchor movement', () => {
             .mockReturnValue(currentFont);
 
         window.patchSyncEngine = bridge;
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
-        canvas.outlineEditor.layerData = getLayerFromFontJson(
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
+        canvas.outlineEditor.drawingData = getDrawingFromFontJson(
             currentFont.babelfontData,
             'a'
         );
@@ -14056,18 +14181,20 @@ describe('GlyphCanvas anchor movement', () => {
 
         try {
             step = 'assert automatic layer';
-            const adieresisLayerModel = currentFont.fontModel
+            const adieresisDrawingModel = currentFont.fontModel
                 .findGlyph('adieresis')
-                .findLayerById('layer-1');
-            expect(adieresisLayerModel.isAutomaticAlignedLayer()).toBe(true);
+                .findDrawingById('layer-1');
+            expect(adieresisDrawingModel.isAutomaticAlignedDrawing()).toBe(
+                true
+            );
 
             step = 'capture original adieresis placement';
-            const originalAdieresisLayer = getLayerFromFontJson(
+            const originalAdieresisDrawing = getDrawingFromFontJson(
                 currentFont.babelfontData,
                 'adieresis'
             );
             const originalMarkTranslation = getComponentTranslation(
-                originalAdieresisLayer,
+                originalAdieresisDrawing,
                 'dieresiscomb'
             );
 
@@ -14078,12 +14205,12 @@ describe('GlyphCanvas anchor movement', () => {
             );
 
             step = 'read live adieresis placement';
-            const liveAdieresisLayer = currentFont.fontModel
+            const liveAdieresisDrawing = currentFont.fontModel
                 .findGlyph('adieresis')
-                .findLayerById('layer-1')
+                .findDrawingById('layer-1')
                 .toJSON();
             const liveMarkTranslation = getComponentTranslation(
-                liveAdieresisLayer,
+                liveAdieresisDrawing,
                 'dieresiscomb'
             );
             expect(liveMarkTranslation).toEqual([150, 800]);
@@ -14113,7 +14240,7 @@ describe('GlyphCanvas anchor movement', () => {
                 undefined,
                 null,
                 {
-                    changedLayerTargets: replayTargets,
+                    changedDrawingTargets: replayTargets,
                     workerReplayTargets: replayTargets
                 },
                 {
@@ -14124,27 +14251,33 @@ describe('GlyphCanvas anchor movement', () => {
             );
 
             step = 'assert local committed adieresis placement';
-            const committedAdieresisLayer = getLayerFromFontJson(
+            const committedAdieresisDrawing = getDrawingFromFontJson(
                 currentFont.babelfontData,
                 'adieresis'
             );
             expect(
-                getComponentTranslation(committedAdieresisLayer, 'dieresiscomb')
+                getComponentTranslation(
+                    committedAdieresisDrawing,
+                    'dieresiscomb'
+                )
             ).toEqual(liveMarkTranslation);
             expect(
-                getComponentTranslation(committedAdieresisLayer, 'dieresiscomb')
+                getComponentTranslation(
+                    committedAdieresisDrawing,
+                    'dieresiscomb'
+                )
             ).not.toEqual(originalMarkTranslation);
 
             step = 'assert ydoc committed adieresis placement';
-            const yDocAdieresisLayer = getLayerFromFontJson(
+            const yDocAdieresisDrawing = getDrawingFromFontJson(
                 bridge.getFontJsonSnapshot(),
                 'adieresis'
             );
             expect(
-                getComponentTranslation(yDocAdieresisLayer, 'dieresiscomb')
+                getComponentTranslation(yDocAdieresisDrawing, 'dieresiscomb')
             ).toEqual(liveMarkTranslation);
             expect(
-                getComponentTranslation(yDocAdieresisLayer, 'dieresiscomb')
+                getComponentTranslation(yDocAdieresisDrawing, 'dieresiscomb')
             ).not.toEqual(originalMarkTranslation);
         } catch (error) {
             throw new Error(
@@ -14157,7 +14290,7 @@ describe('GlyphCanvas anchor movement', () => {
 
     test('synces only direct layer JSON while preserving broader replay metadata', () => {
         const originalPatchSyncEngine = window.patchSyncEngine;
-        const syncLayerSnapshotsFromJson = jest.fn();
+        const syncDrawingSnapshotsFromJson = jest.fn();
         currentFontSpy = jest
             .spyOn(fontManager, 'currentFont', 'get')
             .mockReturnValue({
@@ -14191,8 +14324,8 @@ describe('GlyphCanvas anchor movement', () => {
                     findGlyph: jest.fn((glyphName) =>
                         glyphName === 'a'
                             ? {
-                                  findLayerById: jest.fn((layerId) =>
-                                      layerId === 'layer-1'
+                                  findDrawingById: jest.fn((drawingId) =>
+                                      drawingId === 'layer-1'
                                           ? {
                                                 toJSON: jest.fn(() => ({
                                                     id: 'layer-1',
@@ -14210,7 +14343,7 @@ describe('GlyphCanvas anchor movement', () => {
             });
 
         window.patchSyncEngine = {
-            syncLayerSnapshotsFromJson,
+            syncDrawingSnapshotsFromJson,
             syncGlyphFromJson: jest.fn(),
             beginTransaction: jest.fn(),
             endTransaction: jest.fn(),
@@ -14218,12 +14351,12 @@ describe('GlyphCanvas anchor movement', () => {
             recordAdd: jest.fn(),
             recordRemove: jest.fn()
         };
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.parseGlyphStack = jest.fn(() => [
             { glyphName: 'a' }
         ]);
         canvas.getCurrentGlyphName = jest.fn(() => 'a');
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             id: 'layer-1',
             width: 500,
             shapes: [],
@@ -14237,7 +14370,7 @@ describe('GlyphCanvas anchor movement', () => {
                 undefined,
                 null,
                 {
-                    changedLayerTargets: [
+                    changedDrawingTargets: [
                         { glyphName: 'a', layerId: 'layer-1' }
                     ],
                     workerReplayTargets: [
@@ -14252,12 +14385,12 @@ describe('GlyphCanvas anchor movement', () => {
                 }
             );
 
-            expect(syncLayerSnapshotsFromJson).toHaveBeenCalledWith(
+            expect(syncDrawingSnapshotsFromJson).toHaveBeenCalledWith(
                 [
                     expect.objectContaining({
                         glyphName: 'a',
                         layerId: 'layer-1',
-                        layerJson: expect.objectContaining({
+                        drawingJson: expect.objectContaining({
                             id: 'layer-1',
                             width: 500,
                             shapes: [],
@@ -14283,19 +14416,22 @@ describe('GlyphCanvas anchor movement', () => {
     });
 
     test('toggle smooth preserves dependent changed-layer widening when metrics keys are affected', () => {
-        const applyMetricsKeysToCurrentEditedLayerSpy = jest
-            .spyOn(canvas.outlineEditor, 'applyMetricsKeysToCurrentEditedLayer')
+        const applyMetricsKeysToCurrentEditedDrawingSpy = jest
+            .spyOn(
+                canvas.outlineEditor,
+                'applyMetricsKeysToCurrentEditedDrawing'
+            )
             .mockReturnValue({
                 affectedGlyphNames: new Set(['a', 'adieresis'])
             });
-        const syncKeyboardOutlineLayerEditSpy = jest
-            .spyOn(canvas.outlineEditor, 'syncKeyboardOutlineLayerEdit')
+        const syncKeyboardOutlineDrawingEditSpy = jest
+            .spyOn(canvas.outlineEditor, 'syncKeyboardOutlineDrawingEdit')
             .mockImplementation(() => {});
-        const saveLayerDataSpy = jest
-            .spyOn(canvas.outlineEditor, 'saveLayerData')
+        const saveDrawingDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'saveDrawingData')
             .mockImplementation(() => {});
 
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             width: 500,
             shapes: [
                 {
@@ -14323,27 +14459,27 @@ describe('GlyphCanvas anchor movement', () => {
             ]);
 
             expect(
-                applyMetricsKeysToCurrentEditedLayerSpy
+                applyMetricsKeysToCurrentEditedDrawingSpy
             ).toHaveBeenCalledWith(false, {
                 rebuildAutomaticComposites: true
             });
-            expect(saveLayerDataSpy).toHaveBeenCalledWith('keyboard-outline');
-            expect(syncKeyboardOutlineLayerEditSpy).toHaveBeenCalledWith(
+            expect(saveDrawingDataSpy).toHaveBeenCalledWith('keyboard-outline');
+            expect(syncKeyboardOutlineDrawingEditSpy).toHaveBeenCalledWith(
                 'Toggle smooth',
                 {
                     affectedGlyphNames: new Set(['a', 'adieresis'])
                 }
             );
         } finally {
-            applyMetricsKeysToCurrentEditedLayerSpy.mockRestore();
-            syncKeyboardOutlineLayerEditSpy.mockRestore();
-            saveLayerDataSpy.mockRestore();
+            applyMetricsKeysToCurrentEditedDrawingSpy.mockRestore();
+            syncKeyboardOutlineDrawingEditSpy.mockRestore();
+            saveDrawingDataSpy.mockRestore();
         }
     });
 
     test('keyboard outline commit syncs actual changed dependent layers without widening to metadata-only replay targets', () => {
         const originalPatchSyncEngine = window.patchSyncEngine;
-        const syncLayersFromJson = jest.fn();
+        const syncDrawingsFromJson = jest.fn();
         const computeRecompositionClosureSpy = jest
             .spyOn(canvas.outlineEditor, 'computeRecompositionClosure')
             .mockReturnValue({
@@ -14413,8 +14549,8 @@ describe('GlyphCanvas anchor movement', () => {
                         { name: 'agrave' }
                     ],
                     findGlyph: jest.fn((glyphName) => ({
-                        findLayerById: jest.fn((layerId) =>
-                            layerId === 'layer-1'
+                        findDrawingById: jest.fn((drawingId) =>
+                            drawingId === 'layer-1'
                                 ? {
                                       id: 'layer-1',
                                       toJSON: jest.fn(() => ({
@@ -14436,7 +14572,7 @@ describe('GlyphCanvas anchor movement', () => {
             });
 
         window.patchSyncEngine = {
-            syncLayerSnapshotsFromJson: syncLayersFromJson,
+            syncDrawingSnapshotsFromJson: syncDrawingsFromJson,
             syncGlyphFromJson: jest.fn(),
             beginTransaction: jest.fn(),
             endTransaction: jest.fn(),
@@ -14444,12 +14580,12 @@ describe('GlyphCanvas anchor movement', () => {
             recordAdd: jest.fn(),
             recordRemove: jest.fn()
         };
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.parseGlyphStack = jest.fn(() => [
             { glyphName: 'a' }
         ]);
         canvas.getCurrentGlyphName = jest.fn(() => 'a');
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             id: 'layer-1',
             width: 500,
             shapes: [],
@@ -14457,16 +14593,16 @@ describe('GlyphCanvas anchor movement', () => {
         };
 
         try {
-            canvas.outlineEditor.syncKeyboardOutlineLayerEdit('Arrow key', {
+            canvas.outlineEditor.syncKeyboardOutlineDrawingEdit('Arrow key', {
                 affectedGlyphNames: new Set(['a', 'adieresis'])
             });
 
-            expect(syncLayersFromJson).toHaveBeenCalledWith(
+            expect(syncDrawingsFromJson).toHaveBeenCalledWith(
                 [
                     expect.objectContaining({
                         glyphName: 'a',
                         layerId: 'layer-1',
-                        layerJson: expect.objectContaining({
+                        drawingJson: expect.objectContaining({
                             id: 'layer-1',
                             width: 500
                         })
@@ -14474,7 +14610,7 @@ describe('GlyphCanvas anchor movement', () => {
                     expect.objectContaining({
                         glyphName: 'adieresis',
                         layerId: 'layer-1',
-                        layerJson: expect.objectContaining({
+                        drawingJson: expect.objectContaining({
                             id: 'layer-1',
                             width: 600
                         })
@@ -14507,7 +14643,7 @@ describe('GlyphCanvas component movement', () => {
         document.body.innerHTML = '<div id="test-container"></div>';
         canvas = new GlyphCanvas('test-container');
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             shapes: [
                 { reference: 'A', transform: [1, 0, 0, 1, 100, 100] },
                 { reference: 'A', transform: [1, 0, 0, 1, 200, 200] }
@@ -14515,7 +14651,7 @@ describe('GlyphCanvas component movement', () => {
             anchors: []
         };
         canvas.outlineEditor.selectedComponents = [0];
-        canvas.outlineEditor.saveLayerData = jest.fn();
+        canvas.outlineEditor.saveDrawingData = jest.fn();
     });
 
     afterEach(() => {
@@ -14576,10 +14712,10 @@ describe('GlyphCanvas component movement', () => {
     test('should move selected components by delta', () => {
         canvas.outlineEditor.moveSelectedComponents(10, 20);
         expect(
-            canvas.outlineEditor.layerData.shapes[0].transform.translation[0]
+            canvas.outlineEditor.drawingData.shapes[0].transform.translation[0]
         ).toBe(110);
         expect(
-            canvas.outlineEditor.layerData.shapes[0].transform.translation[1]
+            canvas.outlineEditor.drawingData.shapes[0].transform.translation[1]
         ).toBe(120);
     });
 
@@ -14587,24 +14723,28 @@ describe('GlyphCanvas component movement', () => {
         canvas.outlineEditor.selectedComponents = [0, 1];
         canvas.outlineEditor.moveSelectedComponents(10, 20);
         expect(
-            canvas.outlineEditor.layerData.shapes[0].transform.translation[0]
+            canvas.outlineEditor.drawingData.shapes[0].transform.translation[0]
         ).toBe(110);
         expect(
-            canvas.outlineEditor.layerData.shapes[0].transform.translation[1]
+            canvas.outlineEditor.drawingData.shapes[0].transform.translation[1]
         ).toBe(120);
         expect(
-            canvas.outlineEditor.layerData.shapes[1].transform.translation[0]
+            canvas.outlineEditor.drawingData.shapes[1].transform.translation[0]
         ).toBe(210);
         expect(
-            canvas.outlineEditor.layerData.shapes[1].transform.translation[1]
+            canvas.outlineEditor.drawingData.shapes[1].transform.translation[1]
         ).toBe(220);
     });
 
     test('should not move components when none are selected', () => {
         canvas.outlineEditor.selectedComponents = [];
         canvas.outlineEditor.moveSelectedComponents(10, 20);
-        expect(canvas.outlineEditor.layerData.shapes[0].transform[4]).toBe(100);
-        expect(canvas.outlineEditor.layerData.shapes[0].transform[5]).toBe(100);
+        expect(canvas.outlineEditor.drawingData.shapes[0].transform[4]).toBe(
+            100
+        );
+        expect(canvas.outlineEditor.drawingData.shapes[0].transform[5]).toBe(
+            100
+        );
     });
 
     test('keyboard component nudges update geometry without immediately syncing', () => {
@@ -14616,7 +14756,7 @@ describe('GlyphCanvas component movement', () => {
             const affectedGlyphNames =
                 canvas.outlineEditor.moveSelectedComponents(10, 20);
 
-            expect(canvas.outlineEditor.saveLayerData).not.toHaveBeenCalled();
+            expect(canvas.outlineEditor.saveDrawingData).not.toHaveBeenCalled();
             expect(syncCurrentGlyphToYDocSpy).not.toHaveBeenCalled();
             expect(Array.from(affectedGlyphNames || [])).toEqual([]);
         } finally {
@@ -14629,7 +14769,7 @@ describe('GlyphCanvas component movement', () => {
             reference: 'inner',
             transform: { translation: [40, 50] }
         };
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             shapes: [
                 {
                     reference: 'nestedBase',
@@ -14648,14 +14788,14 @@ describe('GlyphCanvas component movement', () => {
         canvas.outlineEditor.selectedComponents = [0];
         jest.spyOn(
             canvas.outlineEditor,
-            'isAutomaticComposedLayer'
+            'isAutomaticComposedDrawing'
         ).mockReturnValue(false);
 
         canvas.outlineEditor.moveSelectedComponents(10, 20);
 
         expect(nestedComponent.transform.translation).toEqual([50, 70]);
         expect(
-            canvas.outlineEditor.layerData.shapes[0].transform.translation
+            canvas.outlineEditor.drawingData.shapes[0].transform.translation
         ).toEqual([0, 0]);
     });
 
@@ -14664,7 +14804,7 @@ describe('GlyphCanvas component movement', () => {
             reference: 'inner',
             transform: { translation: [40, 50] }
         };
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             shapes: [
                 {
                     reference: 'nestedBase',
@@ -14683,7 +14823,7 @@ describe('GlyphCanvas component movement', () => {
         canvas.outlineEditor.selectedComponents = [0];
         jest.spyOn(
             canvas.outlineEditor,
-            'isAutomaticComposedLayer'
+            'isAutomaticComposedDrawing'
         ).mockReturnValue(true);
 
         expect(canvas.outlineEditor.moveSelectedComponents(10, 20)).toBeNull();
@@ -14725,8 +14865,8 @@ describe('GlyphCanvas mode switching', () => {
     test('should exit glyph edit mode correctly', () => {
         canvas.outlineEditor.active = true;
         canvas.textRunEditor.selectedGlyphIndex = 0;
-        canvas.outlineEditor.selectedLayerId = 'layer1';
-        canvas.outlineEditor.layerData = { shapes: [], anchors: [] };
+        canvas.outlineEditor.selectedDrawingId = 'layer1';
+        canvas.outlineEditor.drawingData = { shapes: [], anchors: [] };
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 0 }
         ];
@@ -14735,16 +14875,16 @@ describe('GlyphCanvas mode switching', () => {
 
         expect(canvas.outlineEditor.active).toBe(false);
         expect(canvas.textRunEditor.selectedGlyphIndex).toBe(-1);
-        expect(canvas.outlineEditor.selectedLayerId).toBe(null);
-        expect(canvas.outlineEditor.layerData).toBe(null);
+        expect(canvas.outlineEditor.selectedDrawingId).toBe(null);
+        expect(canvas.outlineEditor.drawingData).toBe(null);
         expect(canvas.outlineEditor.selectedPoints).toEqual([]);
     });
 
     test('pressing T exits edit mode without inserting t into the text run', () => {
         canvas.outlineEditor.active = true;
         canvas.textRunEditor.selectedGlyphIndex = 0;
-        canvas.outlineEditor.selectedLayerId = 'layer1';
-        canvas.outlineEditor.layerData = { shapes: [], anchors: [] };
+        canvas.outlineEditor.selectedDrawingId = 'layer1';
+        canvas.outlineEditor.drawingData = { shapes: [], anchors: [] };
         canvas.textRunEditor.textBuffer = 'A';
         const insertText = jest.spyOn(canvas.textRunEditor, 'insertText');
 
@@ -14768,7 +14908,7 @@ describe('GlyphCanvas mode switching', () => {
             contourIndex: 0,
             nodeIndex: 0
         };
-        canvas.outlineEditor.layerData = { shapes: [], anchors: [] };
+        canvas.outlineEditor.drawingData = { shapes: [], anchors: [] };
 
         canvas.exitGlyphEditMode();
 
@@ -14778,7 +14918,7 @@ describe('GlyphCanvas mode switching', () => {
     test('should clear drag state when exiting glyph edit mode', () => {
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.isDraggingPoint = true;
-        canvas.outlineEditor.layerData = { shapes: [], anchors: [] };
+        canvas.outlineEditor.drawingData = { shapes: [], anchors: [] };
 
         canvas.exitGlyphEditMode();
 
@@ -14788,7 +14928,7 @@ describe('GlyphCanvas mode switching', () => {
     test('should refresh the property panel when exiting glyph edit mode', () => {
         canvas.outlineEditor.active = true;
         canvas.textRunEditor.selectedGlyphIndex = 0;
-        canvas.outlineEditor.layerData = { shapes: [], anchors: [] };
+        canvas.outlineEditor.drawingData = { shapes: [], anchors: [] };
 
         const updatePropertyPanelSpy = jest
             .spyOn(canvas, 'updatePropertyPanel')
@@ -14987,12 +15127,12 @@ describe('GlyphCanvas component editing stack', () => {
     });
 
     test('preserves a feature-variation root while entering and exiting a nested component', async () => {
-        const featureComponentLayer = {
+        const featureComponentDrawing = {
             id: 'S-layer',
             width: 500,
             shapes: []
         };
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             id: 'feature-root-layer',
             width: 500,
             shapes: [
@@ -15002,21 +15142,23 @@ describe('GlyphCanvas component editing stack', () => {
                 },
                 {
                     reference: 'S',
-                    layerData: featureComponentLayer
+                    layerData: featureComponentDrawing
                 }
             ]
         };
         canvas.outlineEditor.glyphStack = 'dollar.feaVar.0@feature-root-layer';
         jest.spyOn(canvas, 'getCurrentGlyphName').mockReturnValue('dollar');
-        jest.spyOn(canvas.outlineEditor, 'findMatchingLayer').mockReturnValue({
-            id: 'S-layer'
-        });
+        jest.spyOn(canvas.outlineEditor, 'findMatchingDrawing').mockReturnValue(
+            {
+                id: 'S-layer'
+            }
+        );
         jest.spyOn(
             canvas.outlineEditor,
-            'getCurrentLayerModel'
+            'getCurrentDrawingModel'
         ).mockReturnValue(null);
-        const fetchLayerData = jest
-            .spyOn(canvas.outlineEditor, 'fetchLayerData')
+        const fetchDrawingData = jest
+            .spyOn(canvas.outlineEditor, 'fetchDrawingData')
             .mockResolvedValue();
 
         await canvas.outlineEditor.enterComponentEditing(1, true);
@@ -15024,9 +15166,9 @@ describe('GlyphCanvas component editing stack', () => {
         expect(canvas.outlineEditor.glyphStack).toBe(
             'dollar.feaVar.0@feature-root-layer>1:S@S-layer'
         );
-        expect(fetchLayerData).toHaveBeenCalledWith(true);
-        expect(canvas.outlineEditor.getCurrentLayerDataFromStack()).toBe(
-            featureComponentLayer
+        expect(fetchDrawingData).toHaveBeenCalledWith(true);
+        expect(canvas.outlineEditor.getCurrentDrawingDataFromStack()).toBe(
+            featureComponentDrawing
         );
 
         expect(canvas.outlineEditor.exitComponentEditing(true)).toBe(true);
@@ -15124,14 +15266,14 @@ describe('GlyphCanvas component editing stack', () => {
         canvas.outlineEditor.updateEditorTitleBar();
         expect(document.querySelector('.editor-glyph-bg-badge')).toBeNull();
 
-        canvas.outlineEditor.rebuildGlyphStackWithNewLayer('master-layer.bg');
+        canvas.outlineEditor.rebuildGlyphStackWithNewDrawing('master-layer.bg');
 
         expect(canvas.outlineEditor.glyphStack).toBe('b@master-layer.bg');
         expect(
             document.querySelector('.editor-glyph-bg-badge').textContent
         ).toBe('BG');
 
-        canvas.outlineEditor.rebuildGlyphStackWithNewLayer('master-layer');
+        canvas.outlineEditor.rebuildGlyphStackWithNewDrawing('master-layer');
 
         expect(canvas.outlineEditor.glyphStack).toBe('b@master-layer');
         expect(document.querySelector('.editor-glyph-bg-badge')).toBeNull();
@@ -15429,7 +15571,7 @@ describe('GlyphCanvas property panel', () => {
             });
         canvas.getCurrentGlyphName = jest.fn(() => 'panelGlyph');
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
     });
 
     afterEach(() => {
@@ -15454,7 +15596,7 @@ describe('GlyphCanvas property panel', () => {
     });
 
     test('updates property panel after layer switch', () => {
-        canvas.outlineEditor.selectedLayerId = 'layer-2';
+        canvas.outlineEditor.selectedDrawingId = 'layer-2';
         canvas.updatePropertyPanel();
 
         let inputs = document.querySelectorAll('.glyph-property-input');
@@ -15465,15 +15607,15 @@ describe('GlyphCanvas property panel', () => {
             '.glyph-property-display-value'
         );
         const glyph = fontManager.currentFont.fontModel.findGlyph('panelGlyph');
-        let selectedLayer = glyph.layers.find(
-            (layer) => layer.id === 'layer-2'
+        let selectedDrawing = glyph.drawings.find(
+            (drawing) => drawing.id === 'layer-2'
         );
         expect(values[1].textContent).toBe(
-            String(selectedLayer.resolveMetricsKey('right').value)
+            String(selectedDrawing.resolveMetricsKey('right').value)
         );
         expect(widthDisplay.textContent).toBe('500');
 
-        canvas.outlineEditor.selectedLayerId = 'layer-3';
+        canvas.outlineEditor.selectedDrawingId = 'layer-3';
         canvas.updatePropertyPanel();
 
         inputs = document.querySelectorAll('.glyph-property-input');
@@ -15481,14 +15623,16 @@ describe('GlyphCanvas property panel', () => {
 
         values = document.querySelectorAll('.glyph-property-value');
         widthDisplay = document.querySelector('.glyph-property-display-value');
-        selectedLayer = glyph.layers.find((layer) => layer.id === 'layer-3');
-        expect(selectedLayer.resolveMetricsKey('right').value).toBeNull();
-        expect(values[1].textContent).toBe(String(selectedLayer.rsb));
+        selectedDrawing = glyph.drawings.find(
+            (drawing) => drawing.id === 'layer-3'
+        );
+        expect(selectedDrawing.resolveMetricsKey('right').value).toBeNull();
+        expect(values[1].textContent).toBe(String(selectedDrawing.rsb));
         expect(widthDisplay.textContent).toBe('500');
     });
 
     test('shows auto placeholder for automatic layer without explicit key', () => {
-        canvas.outlineEditor.selectedLayerId = 'layer-3';
+        canvas.outlineEditor.selectedDrawingId = 'layer-3';
         const glyph = fontManager.currentFont.fontModel.findGlyph('panelGlyph');
         glyph.rightMetricsKey = undefined;
 
@@ -15519,11 +15663,12 @@ describe('GlyphCanvas property panel', () => {
     });
 
     test('shows name, position, angle, and global controls for a selected layer guide', () => {
-        const layer =
-            fontManager.currentFont.fontModel.findGlyph('panelGlyph').layers[0];
-        layer.addGuide({ x: 80, y: 120, angle: 15 }, 'baseline');
+        const drawing =
+            fontManager.currentFont.fontModel.findGlyph('panelGlyph')
+                .drawings[0];
+        drawing.addGuide({ x: 80, y: 120, angle: 15 }, 'baseline');
         canvas.outlineEditor.selectedGuideHandle = {
-            scope: 'layer',
+            scope: 'drawing',
             index: 0
         };
 
@@ -15557,10 +15702,10 @@ describe('GlyphCanvas property panel', () => {
     });
 
     test('shows global checked for a selected master guide', () => {
-        const master = fontManager.currentFont.fontModel.masters[0];
-        master.addGuide({ x: 0, y: 700, angle: 0 }, 'capHeight');
+        const station = fontManager.currentFont.fontModel.stations[0];
+        station.addGuide({ x: 0, y: 700, angle: 0 }, 'capHeight');
         canvas.outlineEditor.selectedGuideHandle = {
-            scope: 'master',
+            scope: 'station',
             index: 0
         };
 
@@ -15578,14 +15723,15 @@ describe('GlyphCanvas property panel', () => {
     });
 
     test('commits selected guide name, position, and angle from the property panel', async () => {
-        const layer =
-            fontManager.currentFont.fontModel.findGlyph('panelGlyph').layers[0];
-        layer.addGuide({ x: 80, y: 120, angle: 15 }, 'baseline');
+        const drawing =
+            fontManager.currentFont.fontModel.findGlyph('panelGlyph')
+                .drawings[0];
+        drawing.addGuide({ x: 80, y: 120, angle: 15 }, 'baseline');
         canvas.outlineEditor.selectedGuideHandle = {
-            scope: 'layer',
+            scope: 'drawing',
             index: 0
         };
-        canvas.outlineEditor.fetchLayerData = jest.fn().mockResolvedValue();
+        canvas.outlineEditor.fetchDrawingData = jest.fn().mockResolvedValue();
         canvas.updatePropertyPanel();
 
         const nameInput = document.querySelector(
@@ -15609,22 +15755,23 @@ describe('GlyphCanvas property panel', () => {
         angleInput.dispatchEvent(new Event('change'));
         await new Promise((resolve) => setTimeout(resolve, 0));
 
-        expect(layer.guides[0].name).toBe('xHeight');
-        expect(layer.guides[0].pos.x).toBe(100);
-        expect(layer.guides[0].pos.y).toBe(120);
-        expect(layer.guides[0].pos.angle).toBe(90);
+        expect(drawing.guides[0].name).toBe('xHeight');
+        expect(drawing.guides[0].pos.x).toBe(100);
+        expect(drawing.guides[0].pos.y).toBe(120);
+        expect(drawing.guides[0].pos.angle).toBe(90);
     });
 
     test('toggles guide between layer and master via Global checkbox', async () => {
-        const layer =
-            fontManager.currentFont.fontModel.findGlyph('panelGlyph').layers[0];
-        const master = fontManager.currentFont.fontModel.masters[0];
-        layer.addGuide({ x: 80, y: 120, angle: 15 }, 'baseline');
+        const drawing =
+            fontManager.currentFont.fontModel.findGlyph('panelGlyph')
+                .drawings[0];
+        const station = fontManager.currentFont.fontModel.stations[0];
+        drawing.addGuide({ x: 80, y: 120, angle: 15 }, 'baseline');
         canvas.outlineEditor.selectedGuideHandle = {
-            scope: 'layer',
+            scope: 'drawing',
             index: 0
         };
-        canvas.outlineEditor.fetchLayerData = jest.fn().mockResolvedValue();
+        canvas.outlineEditor.fetchDrawingData = jest.fn().mockResolvedValue();
 
         canvas.updatePropertyPanel();
         const globalInput = document.querySelector(
@@ -15634,12 +15781,12 @@ describe('GlyphCanvas property panel', () => {
         globalInput.dispatchEvent(new Event('change'));
         await new Promise((resolve) => setTimeout(resolve, 0));
 
-        expect(layer.guides).toHaveLength(0);
-        expect(master.guides).toHaveLength(1);
-        expect(master.guides[0].name).toBe('baseline');
-        expect(master.guides[0].pos.x).toBe(80);
+        expect(drawing.guides).toHaveLength(0);
+        expect(station.guides).toHaveLength(1);
+        expect(station.guides[0].name).toBe('baseline');
+        expect(station.guides[0].pos.x).toBe(80);
         expect(canvas.outlineEditor.selectedGuideHandle).toEqual({
-            scope: 'master',
+            scope: 'station',
             index: 0
         });
 
@@ -15652,19 +15799,20 @@ describe('GlyphCanvas property panel', () => {
         globalInputAfter.dispatchEvent(new Event('change'));
         await new Promise((resolve) => setTimeout(resolve, 0));
 
-        expect(master.guides).toHaveLength(0);
-        expect(layer.guides).toHaveLength(1);
-        expect(layer.guides[0].name).toBe('baseline');
+        expect(station.guides).toHaveLength(0);
+        expect(drawing.guides).toHaveLength(1);
+        expect(drawing.guides[0].name).toBe('baseline');
         expect(canvas.outlineEditor.selectedGuideHandle).toEqual({
-            scope: 'layer',
+            scope: 'drawing',
             index: 0
         });
     });
 
     test('shows name and position controls for a selected anchor', () => {
-        const layer =
-            fontManager.currentFont.fontModel.findGlyph('panelGlyph').layers[0];
-        layer.addAnchor(120, 640, 'top');
+        const drawing =
+            fontManager.currentFont.fontModel.findGlyph('panelGlyph')
+                .drawings[0];
+        drawing.addAnchor(120, 640, 'top');
         canvas.outlineEditor.selectedAnchors = [0];
 
         canvas.updatePropertyPanel();
@@ -15689,10 +15837,11 @@ describe('GlyphCanvas property panel', () => {
     });
 
     test('shows shared position controls without name for multiple selected anchors', () => {
-        const layer =
-            fontManager.currentFont.fontModel.findGlyph('panelGlyph').layers[0];
-        layer.addAnchor(120, 640, 'top');
-        layer.addAnchor(120, 0, 'bottom');
+        const drawing =
+            fontManager.currentFont.fontModel.findGlyph('panelGlyph')
+                .drawings[0];
+        drawing.addAnchor(120, 640, 'top');
+        drawing.addAnchor(120, 0, 'bottom');
         canvas.outlineEditor.selectedAnchors = [0, 1];
 
         canvas.updatePropertyPanel();
@@ -15715,16 +15864,17 @@ describe('GlyphCanvas property panel', () => {
     });
 
     test('rejects renaming an anchor to an existing name', async () => {
-        const layer =
-            fontManager.currentFont.fontModel.findGlyph('panelGlyph').layers[0];
-        layer.addAnchor(120, 640, 'top');
-        layer.addAnchor(120, 0, 'bottom');
+        const drawing =
+            fontManager.currentFont.fontModel.findGlyph('panelGlyph')
+                .drawings[0];
+        drawing.addAnchor(120, 640, 'top');
+        drawing.addAnchor(120, 0, 'bottom');
         canvas.outlineEditor.selectedAnchors = [0];
         jest.spyOn(
             canvas.outlineEditor,
             'prepareAnchorStructuralChange'
         ).mockReturnValue(true);
-        canvas.outlineEditor.fetchLayerData = jest.fn().mockResolvedValue();
+        canvas.outlineEditor.fetchDrawingData = jest.fn().mockResolvedValue();
         const alertSpy = jest
             .spyOn(window, 'alert')
             .mockImplementation(() => {});
@@ -15738,7 +15888,7 @@ describe('GlyphCanvas property panel', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(alertSpy).toHaveBeenCalled();
-        expect(layer.anchors[0].name).toBe('top');
+        expect(drawing.anchors[0].name).toBe('top');
         expect(
             document.querySelector(
                 '.glyph-property-input[data-property-field="anchor-name"]'
@@ -15749,11 +15899,12 @@ describe('GlyphCanvas property panel', () => {
     });
 
     test('commits selected anchor position from the property panel', async () => {
-        const layer =
-            fontManager.currentFont.fontModel.findGlyph('panelGlyph').layers[0];
-        layer.addAnchor(120, 640, 'top');
+        const drawing =
+            fontManager.currentFont.fontModel.findGlyph('panelGlyph')
+                .drawings[0];
+        drawing.addAnchor(120, 640, 'top');
         canvas.outlineEditor.selectedAnchors = [0];
-        canvas.outlineEditor.fetchLayerData = jest.fn().mockResolvedValue();
+        canvas.outlineEditor.fetchDrawingData = jest.fn().mockResolvedValue();
         jest.spyOn(fontManager, 'setEditingCompileContext').mockImplementation(
             () => {}
         );
@@ -15765,14 +15916,15 @@ describe('GlyphCanvas property panel', () => {
         xInput.dispatchEvent(new Event('change'));
         await new Promise((resolve) => setTimeout(resolve, 0));
 
-        expect(layer.anchors[0].x).toBe(150);
-        expect(layer.anchors[0].y).toBe(640);
+        expect(drawing.anchors[0].x).toBe(150);
+        expect(drawing.anchors[0].y).toBe(640);
     });
 
     test('adds an anchor at the cursor position from the context-menu flow', async () => {
-        const layer =
-            fontManager.currentFont.fontModel.findGlyph('panelGlyph').layers[0];
-        canvas.outlineEditor.fetchLayerData = jest.fn().mockResolvedValue();
+        const drawing =
+            fontManager.currentFont.fontModel.findGlyph('panelGlyph')
+                .drawings[0];
+        canvas.outlineEditor.fetchDrawingData = jest.fn().mockResolvedValue();
         jest.spyOn(
             canvas.outlineEditor,
             'prepareAnchorStructuralChange'
@@ -15785,19 +15937,20 @@ describe('GlyphCanvas property panel', () => {
         await canvas.openAddAnchorDialogAt({ x: 250, y: 700 });
 
         expect(promptSpy).toHaveBeenCalled();
-        expect(layer.anchors).toHaveLength(1);
-        expect(layer.anchors[0].name).toBe('top');
-        expect(layer.anchors[0].x).toBe(250);
-        expect(layer.anchors[0].y).toBe(700);
+        expect(drawing.anchors).toHaveLength(1);
+        expect(drawing.anchors[0].name).toBe('top');
+        expect(drawing.anchors[0].x).toBe(250);
+        expect(drawing.anchors[0].y).toBe(700);
         expect(canvas.outlineEditor.selectedAnchors).toEqual([0]);
 
         promptSpy.mockRestore();
     });
 
     test('rounds anchor placement coordinates to integers on create', async () => {
-        const layer =
-            fontManager.currentFont.fontModel.findGlyph('panelGlyph').layers[0];
-        canvas.outlineEditor.fetchLayerData = jest.fn().mockResolvedValue();
+        const drawing =
+            fontManager.currentFont.fontModel.findGlyph('panelGlyph')
+                .drawings[0];
+        canvas.outlineEditor.fetchDrawingData = jest.fn().mockResolvedValue();
         const prepareSpy = jest
             .spyOn(canvas.outlineEditor, 'prepareAnchorStructuralChange')
             .mockReturnValue(true);
@@ -15808,8 +15961,8 @@ describe('GlyphCanvas property panel', () => {
 
         await canvas.openAddAnchorDialogAt({ x: 250.6, y: 699.4 });
 
-        expect(layer.anchors[0].x).toBe(251);
-        expect(layer.anchors[0].y).toBe(699);
+        expect(drawing.anchors[0].x).toBe(251);
+        expect(drawing.anchors[0].y).toBe(699);
 
         promptSpy.mockRestore();
         prepareSpy.mockRestore();
@@ -15817,9 +15970,10 @@ describe('GlyphCanvas property panel', () => {
     });
 
     test('adds a local unnamed guideline at the cursor position from the context-menu flow', async () => {
-        const layer =
-            fontManager.currentFont.fontModel.findGlyph('panelGlyph').layers[0];
-        canvas.outlineEditor.fetchLayerData = jest.fn().mockResolvedValue();
+        const drawing =
+            fontManager.currentFont.fontModel.findGlyph('panelGlyph')
+                .drawings[0];
+        canvas.outlineEditor.fetchDrawingData = jest.fn().mockResolvedValue();
         canvas.outlineEditor.guidelinesVisible = false;
         const setVisibleSpy = jest.spyOn(
             canvas.outlineEditor,
@@ -15827,13 +15981,13 @@ describe('GlyphCanvas property panel', () => {
         );
         await canvas.addGuideAtPosition({ x: 250.6, y: 700.4 });
 
-        expect(layer.guides).toHaveLength(1);
-        expect(layer.guides[0].name).toBeUndefined();
-        expect(layer.guides[0].pos.x).toBe(251);
-        expect(layer.guides[0].pos.y).toBe(700);
-        expect(layer.guides[0].pos.angle).toBe(0);
+        expect(drawing.guides).toHaveLength(1);
+        expect(drawing.guides[0].name).toBeUndefined();
+        expect(drawing.guides[0].pos.x).toBe(251);
+        expect(drawing.guides[0].pos.y).toBe(700);
+        expect(drawing.guides[0].pos.angle).toBe(0);
         expect(canvas.outlineEditor.selectedGuideHandle).toEqual({
-            scope: 'layer',
+            scope: 'drawing',
             index: 0
         });
         expect(setVisibleSpy).toHaveBeenCalledWith(true);
@@ -15845,10 +15999,10 @@ describe('GlyphCanvas property panel', () => {
     });
 
     test('context menu offers Add guideline for editable layers', () => {
-        canvas.outlineEditor.getCurrentLayerModel = jest.fn(() => ({
+        canvas.outlineEditor.getCurrentDrawingModel = jest.fn(() => ({
             is_background: false
         }));
-        canvas.outlineEditor.getCurrentLayerDataFromStack = jest.fn(() => ({
+        canvas.outlineEditor.getCurrentDrawingDataFromStack = jest.fn(() => ({
             isInterpolated: false
         }));
 
@@ -15859,10 +16013,10 @@ describe('GlyphCanvas property panel', () => {
     });
 
     test('context menu offers Add component on background layers', () => {
-        canvas.outlineEditor.getCurrentLayerModel = jest.fn(() => ({
+        canvas.outlineEditor.getCurrentDrawingModel = jest.fn(() => ({
             is_background: true
         }));
-        canvas.outlineEditor.getCurrentLayerDataFromStack = jest.fn(() => ({
+        canvas.outlineEditor.getCurrentDrawingDataFromStack = jest.fn(() => ({
             isInterpolated: false
         }));
 
@@ -15874,10 +16028,10 @@ describe('GlyphCanvas property panel', () => {
     });
 
     test('context menu offers Decompose when the target is a component', () => {
-        canvas.outlineEditor.getCurrentLayerModel = jest.fn(() => ({
+        canvas.outlineEditor.getCurrentDrawingModel = jest.fn(() => ({
             is_background: false
         }));
-        canvas.outlineEditor.getCurrentLayerDataFromStack = jest.fn(() => ({
+        canvas.outlineEditor.getCurrentDrawingDataFromStack = jest.fn(() => ({
             isInterpolated: false
         }));
 
@@ -15915,9 +16069,10 @@ describe('GlyphCanvas property panel', () => {
     });
 
     test('rejects adding an anchor when the name already exists', async () => {
-        const layer =
-            fontManager.currentFont.fontModel.findGlyph('panelGlyph').layers[0];
-        layer.addAnchor(10, 10, 'top');
+        const drawing =
+            fontManager.currentFont.fontModel.findGlyph('panelGlyph')
+                .drawings[0];
+        drawing.addAnchor(10, 10, 'top');
         const promptSpy = jest.spyOn(window, 'prompt').mockReturnValue('top');
         const alertSpy = jest
             .spyOn(window, 'alert')
@@ -15926,16 +16081,17 @@ describe('GlyphCanvas property panel', () => {
         await canvas.openAddAnchorDialogAt({ x: 250, y: 700 });
 
         expect(alertSpy).toHaveBeenCalled();
-        expect(layer.anchors).toHaveLength(1);
+        expect(drawing.anchors).toHaveLength(1);
 
         promptSpy.mockRestore();
         alertSpy.mockRestore();
     });
 
     test('marks invalid formulas in red', () => {
-        const layer =
-            fontManager.currentFont.fontModel.findGlyph('panelGlyph').layers[0];
-        layer.rightMetricsKey = '==missingGlyph';
+        const drawing =
+            fontManager.currentFont.fontModel.findGlyph('panelGlyph')
+                .drawings[0];
+        drawing.rightMetricsKey = '==missingGlyph';
 
         canvas.updatePropertyPanel();
 
@@ -16162,7 +16318,7 @@ describe('Text-mode kerning property panel', () => {
     let originalPatchSyncEngine;
     let originalWindowGlyphCanvas;
 
-    const makeKerningFont = ({ includeSecondMaster = false } = {}) =>
+    const makeKerningFont = ({ includeSecondStation = false } = {}) =>
         Font.fromData({
             upm: 1000,
             version: [1, 0],
@@ -16184,7 +16340,7 @@ describe('Text-mode kerning property panel', () => {
                         '@AFirst:@VSecond': -120
                     }
                 },
-                ...(includeSecondMaster
+                ...(includeSecondStation
                     ? [
                           {
                               id: 'master-2',
@@ -16222,7 +16378,7 @@ describe('Text-mode kerning property panel', () => {
                             anchors: [],
                             guides: []
                         },
-                        ...(includeSecondMaster
+                        ...(includeSecondStation
                             ? [
                                   {
                                       id: 'layer-A-master-2',
@@ -16255,7 +16411,7 @@ describe('Text-mode kerning property panel', () => {
                             anchors: [],
                             guides: []
                         },
-                        ...(includeSecondMaster
+                        ...(includeSecondStation
                             ? [
                                   {
                                       id: 'layer-V-master-2',
@@ -16290,7 +16446,7 @@ describe('Text-mode kerning property panel', () => {
             format_specific: {}
         });
 
-    const setTextRunState = ({ rtl = false, masterId = 'master-1' } = {}) => {
+    const setTextRunState = ({ rtl = false, stationId = 'master-1' } = {}) => {
         const clusterMap = rtl
             ? [
                   {
@@ -16334,7 +16490,7 @@ describe('Text-mode kerning property panel', () => {
               ];
 
         canvas.textRunEditor.cursorPosition = 1;
-        canvas.textRunEditor.selectedMasterId = masterId;
+        canvas.textRunEditor.selectedStationId = stationId;
         canvas.textRunEditor.clusterMap = clusterMap;
         canvas.textRunEditor.glyphNameBuffer = ['A', 'V'];
         canvas.textRunEditor.textBuffer = 'AV';
@@ -16369,7 +16525,7 @@ describe('Text-mode kerning property panel', () => {
             .spyOn(fontManager, 'currentFont', 'get')
             .mockReturnValue(currentFont);
         canvas.outlineEditor.active = false;
-        canvas.outlineEditor.selectedLayerId = null;
+        canvas.outlineEditor.selectedDrawingId = null;
         canvas.render = jest.fn();
     });
 
@@ -16380,8 +16536,8 @@ describe('Text-mode kerning property panel', () => {
         canvas.destroy();
     });
 
-    test('renders first-second pills in text mode while off-master', () => {
-        setTextRunState({ masterId: null });
+    test('renders first-second pills in text mode while off-station', () => {
+        setTextRunState({ stationId: null });
 
         canvas.updatePropertyPanel();
 
@@ -16427,7 +16583,7 @@ describe('Text-mode kerning property panel', () => {
         ).toHaveLength(2);
         expect(
             document.querySelector('.glyph-kerning-center').textContent
-        ).toContain('Select an exact master');
+        ).toContain('Select an exact station');
     });
 
     test('inverts First and Second kerning-group colors in RTL text mode', () => {
@@ -16473,11 +16629,11 @@ describe('Text-mode kerning property panel', () => {
     });
 
     test('shows left and right kerning group chips for the current glyph in edit view', () => {
-        const layer = fontModel.findGlyph('A').layers[0];
+        const drawing = fontModel.findGlyph('A').drawings[0];
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.selectedLayerId = layer.id;
+        canvas.outlineEditor.selectedDrawingId = drawing.id;
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
-        canvas.getCurrentEditingLayerModel = jest.fn(() => layer);
+        canvas.getCurrentEditingDrawingModel = jest.fn(() => drawing);
 
         canvas.updatePropertyPanel();
 
@@ -16548,7 +16704,7 @@ describe('Text-mode kerning property panel', () => {
 
     test('shows a short message at direction boundaries', () => {
         canvas.textRunEditor.cursorPosition = 1;
-        canvas.textRunEditor.selectedMasterId = 'master-1';
+        canvas.textRunEditor.selectedStationId = 'master-1';
         canvas.textRunEditor.clusterMap = [
             {
                 glyphIndex: 0,
@@ -16628,7 +16784,7 @@ describe('Text-mode kerning property panel', () => {
     });
 
     test('keeps an explicitly selected base chip active even when only the group pair is defined', () => {
-        fontModel.masters[0].kerning = {
+        fontModel.stations[0].kerning = {
             '@AFirst:@VSecond': -120
         };
         setTextRunState();
@@ -16657,7 +16813,7 @@ describe('Text-mode kerning property panel', () => {
     });
 
     test('preselects group chips when no kerning pair is defined and groups exist', () => {
-        fontModel.masters[0].kerning = {};
+        fontModel.stations[0].kerning = {};
         setTextRunState();
 
         canvas.updatePropertyPanel();
@@ -16751,7 +16907,7 @@ describe('Text-mode kerning property panel', () => {
             await Promise.resolve();
 
             expect(document.activeElement).toBe(canvas.canvas);
-            expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(-55);
+            expect(fontModel.stations[0].kerning['A:@VSecond']).toBe(-55);
         } finally {
             jest.useRealTimers();
         }
@@ -16809,7 +16965,7 @@ describe('Text-mode kerning property panel', () => {
                 undefined,
                 -55
             );
-            expect(fontModel.masters[0].kerning_rtl['@AFirst:@VSecond']).toBe(
+            expect(fontModel.stations[0].kerning_rtl['@AFirst:@VSecond']).toBe(
                 -55
             );
             expect(
@@ -16828,7 +16984,7 @@ describe('Text-mode kerning property panel', () => {
         window.glyphCanvas = canvas;
         try {
             setTextRunState();
-            fontModel.masters[0].kerning = {
+            fontModel.stations[0].kerning = {
                 'A:@VSecond': -40
             };
             canvas.textModeKerningSelection = {
@@ -16849,7 +17005,7 @@ describe('Text-mode kerning property panel', () => {
         window.glyphCanvas = canvas;
         try {
             setTextRunState();
-            fontModel.masters[0].kerning = {
+            fontModel.stations[0].kerning = {
                 'A:@VSecond': 40
             };
             canvas.textModeKerningSelection = {
@@ -16870,7 +17026,7 @@ describe('Text-mode kerning property panel', () => {
         window.glyphCanvas = canvas;
         try {
             setTextRunState({ rtl: true });
-            fontModel.masters[0].kerning_rtl = {
+            fontModel.stations[0].kerning_rtl = {
                 '@AFirst:@VSecond': -40
             };
             canvas.textModeKerningSelection = {
@@ -16892,7 +17048,7 @@ describe('Text-mode kerning property panel', () => {
         window.glyphCanvas = canvas;
         try {
             setTextRunState({ rtl: true });
-            fontModel.masters[0].kerning_rtl = {
+            fontModel.stations[0].kerning_rtl = {
                 '@AFirst:@VSecond': 40
             };
             canvas.textModeKerningSelection = {
@@ -16913,7 +17069,7 @@ describe('Text-mode kerning property panel', () => {
         window.glyphCanvas = canvas;
         try {
             setTextRunState({ rtl: true });
-            fontModel.masters[0].kerning_rtl = {
+            fontModel.stations[0].kerning_rtl = {
                 '@AFirst:@VSecond': -40
             };
             canvas.textModeKerningSelection = {
@@ -16965,7 +17121,7 @@ describe('Text-mode kerning property panel', () => {
         window.glyphCanvas = canvas;
         try {
             setTextRunState({ rtl: true });
-            fontModel.masters[0].kerning_rtl = {
+            fontModel.stations[0].kerning_rtl = {
                 '@AFirst:@VSecond': -40
             };
             canvas.textModeKerningSelection = {
@@ -17018,7 +17174,7 @@ describe('Text-mode kerning property panel', () => {
         window.glyphCanvas = canvas;
         try {
             setTextRunState();
-            fontModel.masters[0].kerning = {
+            fontModel.stations[0].kerning = {
                 'A:@VSecond': 40
             };
             canvas.textModeKerningSelection = {
@@ -17062,7 +17218,7 @@ describe('Text-mode kerning property panel', () => {
 
     test('RTL live kerning overlay grows left from the right-edge caret for negative values', () => {
         setTextRunState({ rtl: true });
-        fontModel.masters[0].kerning_rtl = {
+        fontModel.stations[0].kerning_rtl = {
             '@AFirst:@VSecond': -40
         };
         canvas.textModeKerningSelection = {
@@ -17080,7 +17236,7 @@ describe('Text-mode kerning property panel', () => {
             })
         );
 
-        fontModel.masters[0].kerning_rtl['@AFirst:@VSecond'] = -50;
+        fontModel.stations[0].kerning_rtl['@AFirst:@VSecond'] = -50;
         // Caret stays put until live nudge/reshape; overlay widens away left.
         expect(canvas.textRunEditor.cursorX).toBe(110);
         const overlay50 = canvas.getTextModeKerningOverlayState();
@@ -17095,7 +17251,7 @@ describe('Text-mode kerning property panel', () => {
 
     test('RTL live kerning overlay grows right from the left-edge caret for positive values', () => {
         setTextRunState({ rtl: true });
-        fontModel.masters[0].kerning_rtl = {
+        fontModel.stations[0].kerning_rtl = {
             '@AFirst:@VSecond': 40
         };
         canvas.textModeKerningSelection = {
@@ -17113,7 +17269,7 @@ describe('Text-mode kerning property panel', () => {
             })
         );
 
-        fontModel.masters[0].kerning_rtl['@AFirst:@VSecond'] = 50;
+        fontModel.stations[0].kerning_rtl['@AFirst:@VSecond'] = 50;
         expect(canvas.textRunEditor.cursorX).toBe(110);
         const overlay50 = canvas.getTextModeKerningOverlayState();
         expect(overlay50).toEqual(
@@ -17127,7 +17283,7 @@ describe('Text-mode kerning property panel', () => {
 
     test('LTR live kerning overlay grows right from the left-edge caret for negative values', () => {
         setTextRunState();
-        fontModel.masters[0].kerning = {
+        fontModel.stations[0].kerning = {
             'A:@VSecond': -40
         };
         canvas.textModeKerningSelection = {
@@ -17145,7 +17301,7 @@ describe('Text-mode kerning property panel', () => {
             })
         );
 
-        fontModel.masters[0].kerning['A:@VSecond'] = -50;
+        fontModel.stations[0].kerning['A:@VSecond'] = -50;
         expect(canvas.textRunEditor.cursorX).toBe(60);
         const overlay50 = canvas.getTextModeKerningOverlayState();
         expect(overlay50).toEqual(
@@ -17159,7 +17315,7 @@ describe('Text-mode kerning property panel', () => {
 
     test('LTR live kerning overlay grows left from the right-edge caret for positive values', () => {
         setTextRunState();
-        fontModel.masters[0].kerning = {
+        fontModel.stations[0].kerning = {
             'A:@VSecond': 40
         };
         canvas.textModeKerningSelection = {
@@ -17177,7 +17333,7 @@ describe('Text-mode kerning property panel', () => {
             })
         );
 
-        fontModel.masters[0].kerning['A:@VSecond'] = 50;
+        fontModel.stations[0].kerning['A:@VSecond'] = 50;
         expect(canvas.textRunEditor.cursorX).toBe(60);
         const overlay50 = canvas.getTextModeKerningOverlayState();
         expect(overlay50).toEqual(
@@ -17236,7 +17392,7 @@ describe('Text-mode kerning property panel', () => {
         canvas.textRunEditor.findLastGlyphAtClusterPosition = jest.fn(
             (clusterPos) => (clusterPos === 0 ? 2 : clusterPos === 1 ? 0 : 1)
         );
-        fontModel.masters[0].kerning_rtl = {
+        fontModel.stations[0].kerning_rtl = {
             'A:V': -40
         };
         // Prefer glyph keys for this fixture (no group dependency).
@@ -17260,7 +17416,7 @@ describe('Text-mode kerning property panel', () => {
         );
 
         // Written at once; the compiled font moves the glyphs, not a preview.
-        expect(fontModel.masters[0].kerning_rtl['A:V']).toBe(-41);
+        expect(fontModel.stations[0].kerning_rtl['A:V']).toBe(-41);
         expect(canvas.textRunEditor.shapedGlyphs[1].dx || 0).toBe(0);
         expect(canvas.textRunEditor.clusterMap[2].x).toBe(rightBeforeX);
         expect(canvas.textRunEditor.cursorX).toBe(beforeCaret);
@@ -17282,7 +17438,7 @@ describe('Text-mode kerning property panel', () => {
                 altKey: true
             })
         );
-        expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(-41);
+        expect(fontModel.stations[0].kerning['A:@VSecond']).toBe(-41);
         // No faked advance: the compile that follows reshapes the text.
         expect(canvas.textRunEditor.shapedGlyphs[0].ax).toBe(40);
         await kerningCompileLands();
@@ -17294,7 +17450,7 @@ describe('Text-mode kerning property panel', () => {
                 shiftKey: true
             })
         );
-        expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(-31);
+        expect(fontModel.stations[0].kerning['A:@VSecond']).toBe(-31);
         await kerningCompileLands();
 
         await canvas.onKeyDown(
@@ -17305,7 +17461,7 @@ describe('Text-mode kerning property panel', () => {
                 metaKey: true
             })
         );
-        expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(69);
+        expect(fontModel.stations[0].kerning['A:@VSecond']).toBe(69);
     });
 
     test('nudges of one pair are ticks of one edit burst', async () => {
@@ -17351,17 +17507,17 @@ describe('Text-mode kerning property panel', () => {
         };
 
         await nudge('ArrowLeft');
-        expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(-41);
+        expect(fontModel.stations[0].kerning['A:@VSecond']).toBe(-41);
 
         // A held key repeats faster than the text compiles.
         await nudge('ArrowLeft');
         await nudge('ArrowLeft');
         await nudge('ArrowLeft');
-        expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(-41);
+        expect(fontModel.stations[0].kerning['A:@VSecond']).toBe(-41);
 
         await kerningCompileLands();
         // No step is lost: the three waiting nudges land as one write.
-        expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(-44);
+        expect(fontModel.stations[0].kerning['A:@VSecond']).toBe(-44);
     });
 
     test('kerning writes keep the linked pace even when compiles are fast', async () => {
@@ -17378,10 +17534,10 @@ describe('Text-mode kerning property panel', () => {
         // linked windows apply and compile: the next one waits.
         canvas['textModeKerningWrites'].settle();
         await new Promise((resolve) => setTimeout(resolve, pace / 3));
-        expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(-41);
+        expect(fontModel.stations[0].kerning['A:@VSecond']).toBe(-41);
 
         await new Promise((resolve) => setTimeout(resolve, pace));
-        expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(-42);
+        expect(fontModel.stations[0].kerning['A:@VSecond']).toBe(-42);
     });
 
     test('a kerning write whose compile never lands frees the next', async () => {
@@ -17392,11 +17548,11 @@ describe('Text-mode kerning property panel', () => {
         await canvas.onKeyDown(
             new KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true })
         );
-        expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(-41);
+        expect(fontModel.stations[0].kerning['A:@VSecond']).toBe(-41);
 
         await new Promise((resolve) => setTimeout(resolve, 400));
 
-        expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(-42);
+        expect(fontModel.stations[0].kerning['A:@VSecond']).toBe(-42);
     });
 
     test('a live kerning gesture never takes the view lock that holds painting', async () => {
@@ -17522,7 +17678,7 @@ describe('Text-mode kerning property panel', () => {
             document.dispatchEvent(new MouseEvent('mouseup', {}));
 
             // 30 screen px at 50% zoom are 60 font units.
-            expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(20);
+            expect(fontModel.stations[0].kerning['A:@VSecond']).toBe(20);
             expect(canvas.textModeKerningHandleDrag).toBeNull();
             expect(burstKeys.length).toBeGreaterThan(0);
             expect(new Set(burstKeys).size).toBe(1);
@@ -17546,14 +17702,14 @@ describe('Text-mode kerning property panel', () => {
             );
             canvas['kerningHandleMoves'].flush();
 
-            expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(-20);
+            expect(fontModel.stations[0].kerning['A:@VSecond']).toBe(-20);
             const handle = canvas.getTextModeKerningHandle();
             expect(handle.value).toBe(20);
             // 30 screen px at 50% zoom: 60 units right of where it began.
             expect(handle.x).toBe(start.x + 60);
 
             document.dispatchEvent(new MouseEvent('mouseup', {}));
-            expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(20);
+            expect(fontModel.stations[0].kerning['A:@VSecond']).toBe(20);
         });
 
         test('follows the pointer in right-to-left text', () => {
@@ -17601,14 +17757,14 @@ describe('Text-mode kerning property panel', () => {
             })
         );
 
-        expect(fontModel.masters[0].kerning['A:@VSecond']).toBe(-41);
+        expect(fontModel.stations[0].kerning['A:@VSecond']).toBe(-41);
         expect(canvas.getTextModeKerningOverlayState()).toEqual(
             expect.objectContaining({ value: -41 })
         );
     });
 
     test('returns overlays for all defined kerning pairs in the text run', () => {
-        fontModel.masters[0].kerning = {
+        fontModel.stations[0].kerning = {
             'A:@VSecond': -40,
             'V:W': -30
         };
@@ -17681,7 +17837,7 @@ describe('Text-mode kerning property panel', () => {
         input.dispatchEvent(new Event('input', { bubbles: true }));
         expect(canvas.textModeKerningDraftPairKey).toBe('A\u0000@VSecond');
 
-        fontModel.masters[0].kerning['A:@VSecond'] = -70;
+        fontModel.stations[0].kerning['A:@VSecond'] = -70;
         window.dispatchEvent(new CustomEvent('fontModelSync'));
 
         expect(canvas.textModeKerningDraftPairKey).toBeNull();
@@ -17692,7 +17848,7 @@ describe('Text-mode kerning property panel', () => {
     });
 
     test('switching masters clears a stale kerning draft and shows the target master value', () => {
-        fontModel = makeKerningFont({ includeSecondMaster: true });
+        fontModel = makeKerningFont({ includeSecondStation: true });
         currentFont.fontModel = fontModel;
 
         setTextRunState();
@@ -17706,7 +17862,7 @@ describe('Text-mode kerning property panel', () => {
         expect(canvas.textModeKerningDraftPairKey).toBe('A\u0000@VSecond');
         expect(canvas.textModeKerningDraftScopeKey).toBe('master-1\u0000ltr');
 
-        canvas.applyTextModeKerningMasterChange('master-2');
+        canvas.applyTextModeKerningStationChange('master-2');
         canvas.updatePropertyPanel();
 
         expect(canvas.textModeKerningDraftPairKey).toBeNull();
@@ -17761,7 +17917,7 @@ describe('Text-mode kerning property panel', () => {
     });
 
     test('renders a single RTL ValueRecord field', () => {
-        fontModel.masters[0].kerning_rtl = {
+        fontModel.stations[0].kerning_rtl = {
             '@AFirst:@VSecond': -120
         };
         setTextRunState({ rtl: true });
@@ -18029,7 +18185,7 @@ describe('OutlineEditor exact selected layers', () => {
                 glyphName: 'A',
                 layers: makeComponentFont()
                     .findGlyph('A')
-                    .layers.map((layer) => layer.toJSON())
+                    .drawings.map((drawing) => drawing.toJSON())
             });
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
         interpolateSpy = fontInterpolation.interpolateGlyph.mockResolvedValue({
@@ -18190,7 +18346,7 @@ describe('OutlineEditor exact selected layers', () => {
 
         canvas.outlineEditor.setRootFeatureVariationSelection(
             secondVariation.id,
-            { clearLayerSelection: true }
+            { clearDrawingSelection: true }
         );
         glyph.removeFeatureVariation(firstVariation);
 
@@ -18361,14 +18517,14 @@ describe('OutlineEditor exact selected layers', () => {
             glyphName: 'dollar',
             layers: font
                 .findGlyph('dollar')
-                .layers.map((layer) => layer.toJSON())
+                .drawings.map((drawing) => drawing.toJSON())
         });
         canvas.propertiesSection = targetContainer;
         canvas.outlineEditor.active = true;
         canvas.getCurrentGlyphName = jest.fn(() => 'dollar.VAR.1');
         canvas.axesManager.variationSettings = { wght: 60 };
 
-        await canvas.displayMastersList(targetContainer, false);
+        await canvas.displayStationsList(targetContainer, false);
 
         const featureVariationsWidget = targetContainer.querySelector(
             '.editor-feature-variations-widget'
@@ -18393,13 +18549,13 @@ describe('OutlineEditor exact selected layers', () => {
             familyId
         );
         expect(canvas.axesManager.variationSettings).toEqual({ wght: 60 });
-        expect(canvas.outlineEditor.selectedLayerId).toBeNull();
+        expect(canvas.outlineEditor.selectedDrawingId).toBeNull();
         expect(canvas.outlineEditor.glyphStack).toBe(
             'dollar.feaVar.0@missing_interpolation'
         );
 
         targetContainer.replaceChildren();
-        await canvas.displayMastersList(targetContainer, false);
+        await canvas.displayStationsList(targetContainer, false);
 
         const selectedFeatureVariationsWidget = targetContainer.querySelector(
             '.editor-feature-variations-widget'
@@ -18411,11 +18567,11 @@ describe('OutlineEditor exact selected layers', () => {
                 .getAttribute('data-feature-variation-id')
         ).toBe(familyId);
         expect(
-            targetContainer.querySelectorAll('.editor-layer-item')
+            targetContainer.querySelectorAll('.editor-drawing-item')
         ).toHaveLength(3);
         expect(
             targetContainer.querySelector(
-                '.editor-layer-item[data-layer-id="dollar-feature"]'
+                '.editor-drawing-item[data-drawing-id="dollar-feature"]'
             )
         ).toBeTruthy();
 
@@ -18430,13 +18586,13 @@ describe('OutlineEditor exact selected layers', () => {
             canvas.outlineEditor.getSelectedRootFeatureVariationId()
         ).toBeNull();
         expect(canvas.axesManager.variationSettings).toEqual({ wght: 60 });
-        expect(canvas.outlineEditor.selectedLayerId).toBeNull();
+        expect(canvas.outlineEditor.selectedDrawingId).toBeNull();
         expect(canvas.outlineEditor.glyphStack).toBe(
             'dollar@missing_interpolation'
         );
 
         targetContainer.replaceChildren();
-        await canvas.displayMastersList(targetContainer, false);
+        await canvas.displayStationsList(targetContainer, false);
 
         const featureVariationItem = targetContainer.querySelector(
             '.editor-feature-variation-item[data-feature-variation-id]'
@@ -18446,15 +18602,15 @@ describe('OutlineEditor exact selected layers', () => {
             .findGlyph('dollar')
             .featureVariations[0].setAxisRules([{ min: 120 }]);
         expect(updatedFeatureVariation.axisRules).toEqual([{ min: 120 }]);
-        expect(updatedFeatureVariation.layers).toHaveLength(1);
+        expect(updatedFeatureVariation.drawings).toHaveLength(1);
         expect(
-            updatedFeatureVariation.layers[0].format_specific[
+            updatedFeatureVariation.drawings[0].format_specific[
                 'com.schriftgestalt.Glyphs.attr'
             ].axisRules
         ).toEqual([{ min: 120 }]);
 
         const addButton = targetContainer.querySelector(
-            '[title="Add feature variation"]'
+            '[title="Add variation"]'
         );
         addButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
         const addModal = document.querySelector(
@@ -18498,7 +18654,7 @@ describe('OutlineEditor exact selected layers', () => {
         ).toEqual(expect.arrayContaining([[{ min: 120 }], [{ min: 300 }]]));
 
         targetContainer.replaceChildren();
-        await canvas.displayMastersList(targetContainer, false);
+        await canvas.displayStationsList(targetContainer, false);
         const multiFamilyItems = targetContainer.querySelectorAll(
             '.editor-feature-variation-item'
         );
@@ -18515,7 +18671,7 @@ describe('OutlineEditor exact selected layers', () => {
         expect(
             font
                 .findGlyph('dollar')
-                .layers.some((layer) => layer.id === 'dollar-feature')
+                .drawings.some((drawing) => drawing.id === 'dollar-feature')
         ).toBe(false);
 
         updatePropertiesUISpy.mockRestore();
@@ -18527,12 +18683,12 @@ describe('OutlineEditor exact selected layers', () => {
         const setRootFeatureVariationSelection = jest.fn();
 
         editor.active = true;
-        editor.selectedLayerId = 'feature-layer-1';
+        editor.selectedDrawingId = 'feature-layer-1';
         editor['getRootGlyphModel'] = jest.fn(() => ({ featureVariations }));
         editor.getSelectedRootFeatureVariationId = jest.fn(() => null);
         editor.setRootFeatureVariationSelection =
             setRootFeatureVariationSelection;
-        editor.autoSelectMatchingLayer = jest.fn().mockResolvedValue();
+        editor.autoSelectMatchingDrawing = jest.fn().mockResolvedValue();
         editor.interpolateCurrentGlyph = jest.fn().mockResolvedValue();
         canvas.updatePropertiesUI = jest.fn().mockResolvedValue();
         canvas.render = jest.fn();
@@ -18547,7 +18703,7 @@ describe('OutlineEditor exact selected layers', () => {
 
         expect(setRootFeatureVariationSelection).toHaveBeenCalledWith(
             'feature-b',
-            { clearLayerSelection: true }
+            { clearDrawingSelection: true }
         );
 
         editor.getSelectedRootFeatureVariationId = jest.fn(() => 'feature-b');
@@ -18560,15 +18716,15 @@ describe('OutlineEditor exact selected layers', () => {
         );
         expect(setRootFeatureVariationSelection).toHaveBeenLastCalledWith(
             null,
-            { clearLayerSelection: true }
+            { clearDrawingSelection: true }
         );
 
         editor['getRootFeatureVariation'] = jest.fn(() => ({
-            layers: [{ id: 'feature-layer-1' }, { id: 'feature-layer-2' }]
+            drawings: [{ id: 'feature-layer-1' }, { id: 'feature-layer-2' }]
         }));
-        editor.getFullLayerData = jest.fn((layerId) => ({ id: layerId }));
-        editor.selectLayer = jest.fn().mockResolvedValue();
-        canvas.getSortedLayers = jest.fn((layers) => layers || []);
+        editor.getFullDrawingData = jest.fn((drawingId) => ({ id: drawingId }));
+        editor.selectDrawing = jest.fn().mockResolvedValue();
+        canvas.getSortedDrawings = jest.fn((drawings) => drawings || []);
 
         await editor.onKeyDown(
             new KeyboardEvent('keydown', {
@@ -18577,11 +18733,11 @@ describe('OutlineEditor exact selected layers', () => {
             })
         );
 
-        expect(canvas.getSortedLayers).toHaveBeenCalledWith([
+        expect(canvas.getSortedDrawings).toHaveBeenCalledWith([
             { id: 'feature-layer-1' },
             { id: 'feature-layer-2' }
         ]);
-        expect(editor.selectLayer).toHaveBeenCalledWith({
+        expect(editor.selectDrawing).toHaveBeenCalledWith({
             id: 'feature-layer-2'
         });
     });
@@ -18591,26 +18747,26 @@ describe('OutlineEditor exact selected layers', () => {
         ['brace-layer', 520, 110, 260]
     ])(
         'uses exact stored root layer data for selected %s while keeping interpolated component transforms',
-        async (layerId, expectedWidth, expectedFirstX, expectedAnchorX) => {
-            canvas.outlineEditor.selectedLayerId = layerId;
-            canvas.outlineEditor.glyphStack = `A@${layerId}`;
+        async (drawingId, expectedWidth, expectedFirstX, expectedAnchorX) => {
+            canvas.outlineEditor.selectedDrawingId = drawingId;
+            canvas.outlineEditor.glyphStack = `A@${drawingId}`;
 
-            await canvas.outlineEditor.fetchLayerData(true);
+            await canvas.outlineEditor.fetchDrawingData(true);
 
             expect(interpolateSpy).toHaveBeenCalled();
-            expect(canvas.outlineEditor.layerData.isInterpolated).toBe(false);
-            expect(canvas.outlineEditor.layerData.width).toBe(expectedWidth);
-            expect(canvas.outlineEditor.layerData.shapes[0].nodes[0].x).toBe(
+            expect(canvas.outlineEditor.drawingData.isInterpolated).toBe(false);
+            expect(canvas.outlineEditor.drawingData.width).toBe(expectedWidth);
+            expect(canvas.outlineEditor.drawingData.shapes[0].nodes[0].x).toBe(
                 expectedFirstX
             );
-            expect(canvas.outlineEditor.layerData.anchors[0].x).toBe(
+            expect(canvas.outlineEditor.drawingData.anchors[0].x).toBe(
                 expectedAnchorX
             );
-            expect(canvas.outlineEditor.layerData.shapes[1].transform[4]).toBe(
-                55.5
-            );
             expect(
-                canvas.outlineEditor.layerData.shapes[1].layerData.shapes[0]
+                canvas.outlineEditor.drawingData.shapes[1].transform[4]
+            ).toBe(55.5);
+            expect(
+                canvas.outlineEditor.drawingData.shapes[1].layerData.shapes[0]
                     .nodes[0].x
             ).toBe(20);
             expect(canvas.outlineEditor.renderVerticalMetrics).toEqual({
@@ -18620,22 +18776,22 @@ describe('OutlineEditor exact selected layers', () => {
     );
 
     test('keeps an empty transient background empty when interpolation has foreground paths', async () => {
-        canvas.outlineEditor.selectedLayerId = 'background-master-layer';
+        canvas.outlineEditor.selectedDrawingId = 'background-master-layer';
         canvas.outlineEditor.glyphStack = 'A@background-master-layer';
 
-        await canvas.outlineEditor.fetchLayerData(true);
+        await canvas.outlineEditor.fetchDrawingData(true);
 
         expect(interpolateSpy).not.toHaveBeenCalled();
-        expect(canvas.outlineEditor.layerData.isInterpolated).toBe(false);
-        expect(canvas.outlineEditor.layerData.width).toBe(500);
-        expect(canvas.outlineEditor.layerData.shapes).toEqual([]);
+        expect(canvas.outlineEditor.drawingData.isInterpolated).toBe(false);
+        expect(canvas.outlineEditor.drawingData.width).toBe(500);
+        expect(canvas.outlineEditor.drawingData.shapes).toEqual([]);
     });
 
     test('switches directly to a materialized background with copied path data', async () => {
         const fontModel = fontManager.currentFont.fontModel;
         const glyph = fontModel.findGlyph('A');
-        const foreground = glyph.findLayerById('master-layer');
-        const background = foreground.backgroundLayer;
+        const foreground = glyph.findDrawingById('master-layer');
+        const background = foreground.backgroundDrawing;
         const copiedPath = background.addPath(true);
         copiedPath.nodes = [
             { x: 225, y: 0, nodetype: 'Line' },
@@ -18645,25 +18801,25 @@ describe('OutlineEditor exact selected layers', () => {
         ];
 
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.selectedLayerId = foreground.id;
+        canvas.outlineEditor.selectedDrawingId = foreground.id;
         canvas.outlineEditor.glyphStack = `A@${foreground.id}`;
-        await canvas.outlineEditor.fetchLayerData(true);
+        await canvas.outlineEditor.fetchDrawingData(true);
 
-        await canvas.outlineEditor.toggleBackgroundLayerEditing();
+        await canvas.outlineEditor.toggleBackgroundDrawingEditing();
 
-        expect(canvas.outlineEditor.isEditingBackgroundLayer()).toBe(true);
-        expect(canvas.outlineEditor.getPairedLayerModel().id).toBe(
+        expect(canvas.outlineEditor.isEditingBackgroundDrawing()).toBe(true);
+        expect(canvas.outlineEditor.getPairedDrawingModel().id).toBe(
             foreground.id
         );
-        expect(canvas.outlineEditor.isLayerSwitchAnimating).toBe(false);
-        expect(canvas.outlineEditor.layerData.shapes[0].nodes[0].x).toBe(225);
+        expect(canvas.outlineEditor.isDrawingSwitchAnimating).toBe(false);
+        expect(canvas.outlineEditor.drawingData.shapes[0].nodes[0].x).toBe(225);
     });
 
     test('keeps a materialized background selected through drawing and final-path deletion', async () => {
         const fontModel = fontManager.currentFont.fontModel;
         const glyph = fontModel.findGlyph('A');
-        const foreground = glyph.findLayerById('master-layer');
-        const virtualBackground = foreground.backgroundLayer;
+        const foreground = glyph.findDrawingById('master-layer');
+        const virtualBackground = foreground.backgroundDrawing;
         const originalPatchSyncEngine = window.patchSyncEngine;
         const queueCompileSpy = jest
             .spyOn(
@@ -18682,9 +18838,9 @@ describe('OutlineEditor exact selected layers', () => {
             .mockReturnValue({ glyphX: 100, glyphY: 200 });
 
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.selectedLayerId = virtualBackground.id;
+        canvas.outlineEditor.selectedDrawingId = virtualBackground.id;
         canvas.outlineEditor.glyphStack = `A@${virtualBackground.id}`;
-        canvas.outlineEditor.layerData = virtualBackground.toJSON();
+        canvas.outlineEditor.drawingData = virtualBackground.toJSON();
         window.patchSyncEngine = undefined;
 
         try {
@@ -18692,14 +18848,14 @@ describe('OutlineEditor exact selected layers', () => {
                 true
             );
 
-            const background = glyph.findLayerById(
-                foreground.background_layer_id
+            const background = glyph.findDrawingById(
+                foreground.background_drawing_id
             );
             expect(background?.is_background).toBe(true);
-            expect(canvas.outlineEditor.selectedLayerId).toBe(background.id);
+            expect(canvas.outlineEditor.selectedDrawingId).toBe(background.id);
             expect(canvas.outlineEditor.glyphStack).toBe(`A@${background.id}`);
-            expect(canvas.outlineEditor.layerData.id).toBe(background.id);
-            expect(canvas.outlineEditor.getCurrentLayerModel().id).toBe(
+            expect(canvas.outlineEditor.drawingData.id).toBe(background.id);
+            expect(canvas.outlineEditor.getCurrentDrawingModel().id).toBe(
                 background.id
             );
 
@@ -18710,8 +18866,8 @@ describe('OutlineEditor exact selected layers', () => {
                 )
             ).toBe(true);
             expect(background.paths[0].nodes).toHaveLength(2);
-            expect(canvas.outlineEditor.selectedLayerId).toBe(background.id);
-            expect(canvas.outlineEditor.getCurrentLayerModel().id).toBe(
+            expect(canvas.outlineEditor.selectedDrawingId).toBe(background.id);
+            expect(canvas.outlineEditor.getCurrentDrawingModel().id).toBe(
                 background.id
             );
 
@@ -18720,9 +18876,9 @@ describe('OutlineEditor exact selected layers', () => {
                     skipRender: true
                 })
             ).toBe(false);
-            await canvas.outlineEditor.fetchLayerData(true);
-            expect(canvas.outlineEditor.selectedLayerId).toBe(background.id);
-            expect(canvas.outlineEditor.layerData.shapes).toHaveLength(1);
+            await canvas.outlineEditor.fetchDrawingData(true);
+            expect(canvas.outlineEditor.selectedDrawingId).toBe(background.id);
+            expect(canvas.outlineEditor.drawingData.shapes).toHaveLength(1);
 
             canvas.outlineEditor.selectedPoints = [
                 { contourIndex: 0, nodeIndex: 0 },
@@ -18736,10 +18892,10 @@ describe('OutlineEditor exact selected layers', () => {
                     skipRender: true
                 })
             ).toBe(false);
-            await canvas.outlineEditor.fetchLayerData(true);
-            expect(canvas.outlineEditor.selectedLayerId).toBe(background.id);
+            await canvas.outlineEditor.fetchDrawingData(true);
+            expect(canvas.outlineEditor.selectedDrawingId).toBe(background.id);
             expect(canvas.outlineEditor.glyphStack).toBe(`A@${background.id}`);
-            expect(canvas.outlineEditor.layerData).toEqual(
+            expect(canvas.outlineEditor.drawingData).toEqual(
                 expect.objectContaining({ shapes: [] })
             );
         } finally {
@@ -18754,12 +18910,12 @@ describe('OutlineEditor exact selected layers', () => {
     test('syncs a materialized background pair before its preview compile', () => {
         const fontModel = fontManager.currentFont.fontModel;
         const glyph = fontModel.findGlyph('A');
-        const foreground = glyph.findLayerById('master-layer');
-        const virtualBackground = foreground.backgroundLayer;
+        const foreground = glyph.findDrawingById('master-layer');
+        const virtualBackground = foreground.backgroundDrawing;
         const originalPatchSyncEngine = window.patchSyncEngine;
         const beginTransaction = jest.fn();
         const endTransaction = jest.fn();
-        const syncLayerSnapshotsFromJson = jest.fn();
+        const syncDrawingSnapshotsFromJson = jest.fn();
         const queueCompileSpy = jest
             .spyOn(
                 canvas.outlineEditor,
@@ -18771,9 +18927,9 @@ describe('OutlineEditor exact selected layers', () => {
             .mockReturnValue({ glyphX: 100, glyphY: 200 });
 
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.selectedLayerId = virtualBackground.id;
+        canvas.outlineEditor.selectedDrawingId = virtualBackground.id;
         canvas.outlineEditor.glyphStack = `A@${virtualBackground.id}`;
-        canvas.outlineEditor.layerData = virtualBackground.toJSON();
+        canvas.outlineEditor.drawingData = virtualBackground.toJSON();
         window.patchSyncEngine = {
             getFontJsonSnapshot: () => ({
                 // The bridge JSON reference aliases the model, so it already
@@ -18782,7 +18938,7 @@ describe('OutlineEditor exact selected layers', () => {
             }),
             beginTransaction,
             endTransaction,
-            syncLayerSnapshotsFromJson
+            syncDrawingSnapshotsFromJson
         };
 
         try {
@@ -18790,8 +18946,8 @@ describe('OutlineEditor exact selected layers', () => {
                 true
             );
 
-            const background = glyph.findLayerById(
-                foreground.background_layer_id
+            const background = glyph.findDrawingById(
+                foreground.background_drawing_id
             );
             expect(beginTransaction).toHaveBeenCalledWith(
                 'Draw path',
@@ -18802,7 +18958,7 @@ describe('OutlineEditor exact selected layers', () => {
                 })
             );
             expect(endTransaction).toHaveBeenCalledTimes(1);
-            expect(syncLayerSnapshotsFromJson).toHaveBeenCalledWith(
+            expect(syncDrawingSnapshotsFromJson).toHaveBeenCalledWith(
                 expect.arrayContaining([
                     expect.objectContaining({
                         glyphName: 'A',
@@ -18811,7 +18967,7 @@ describe('OutlineEditor exact selected layers', () => {
                     expect.objectContaining({
                         glyphName: 'A',
                         layerId: background.id,
-                        layerJson: expect.objectContaining({
+                        drawingJson: expect.objectContaining({
                             is_background: true,
                             shapes: expect.any(Array)
                         })
@@ -18836,64 +18992,64 @@ describe('OutlineEditor exact selected layers', () => {
     test('keeps a valid background selected during automatic layer matching', async () => {
         const fontModel = fontManager.currentFont.fontModel;
         const glyph = fontModel.findGlyph('A');
-        const foreground = glyph.findLayerById('master-layer');
-        const background = foreground.backgroundLayer;
+        const foreground = glyph.findDrawingById('master-layer');
+        const background = foreground.backgroundDrawing;
         background.addPath(true);
 
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.selectedLayerId = background.id;
+        canvas.outlineEditor.selectedDrawingId = background.id;
         canvas.outlineEditor.glyphStack = `A@${background.id}`;
-        canvas.outlineEditor.layerData = background.toJSON();
+        canvas.outlineEditor.drawingData = background.toJSON();
 
-        await canvas.outlineEditor.autoSelectMatchingLayer({
+        await canvas.outlineEditor.autoSelectMatchingDrawing({
             skipRender: true
         });
 
-        expect(canvas.outlineEditor.selectedLayerId).toBe(background.id);
+        expect(canvas.outlineEditor.selectedDrawingId).toBe(background.id);
         expect(canvas.outlineEditor.glyphStack).toBe(`A@${background.id}`);
-        expect(canvas.outlineEditor.getCurrentLayerModel().id).toBe(
+        expect(canvas.outlineEditor.getCurrentDrawingModel().id).toBe(
             background.id
         );
     });
 
     test('does not save an unmaterialized transient background layer', async () => {
-        const saveLayerDataSpy = jest.spyOn(fontManager, 'saveLayerData');
-        canvas.outlineEditor.selectedLayerId = 'background-master-layer';
+        const saveDrawingDataSpy = jest.spyOn(fontManager, 'saveDrawingData');
+        canvas.outlineEditor.selectedDrawingId = 'background-master-layer';
         canvas.outlineEditor.glyphStack = 'A@background-master-layer';
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             id: 'background-master-layer',
             width: 500,
             shapes: [],
             isInterpolated: false
         };
 
-        await canvas.outlineEditor.saveLayerData('mouse-drag-outline');
+        await canvas.outlineEditor.saveDrawingData('mouse-drag-outline');
 
-        expect(saveLayerDataSpy).not.toHaveBeenCalled();
+        expect(saveDrawingDataSpy).not.toHaveBeenCalled();
     });
 
     test('saves the materialized background named by the active stack', async () => {
         const fontModel = fontManager.currentFont.fontModel;
         const glyph = fontModel.findGlyph('A');
-        const foreground = glyph.findLayerById('master-layer');
-        const background = foreground.backgroundLayer;
+        const foreground = glyph.findDrawingById('master-layer');
+        const background = foreground.backgroundDrawing;
         background.addPath(true);
-        const saveLayerDataSpy = jest
-            .spyOn(fontManager, 'saveLayerData')
+        const saveDrawingDataSpy = jest
+            .spyOn(fontManager, 'saveDrawingData')
             .mockResolvedValue(undefined);
 
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.selectedLayerId = foreground.id;
+        canvas.outlineEditor.selectedDrawingId = foreground.id;
         canvas.outlineEditor.glyphStack = `A@${background.id}`;
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             ...background.toJSON(),
             isInterpolated: false
         };
 
         try {
-            await canvas.outlineEditor.saveLayerData('mouse-drag-outline');
+            await canvas.outlineEditor.saveDrawingData('mouse-drag-outline');
 
-            expect(saveLayerDataSpy).toHaveBeenCalledWith(
+            expect(saveDrawingDataSpy).toHaveBeenCalledWith(
                 'A',
                 background.id,
                 expect.objectContaining({
@@ -18907,9 +19063,9 @@ describe('OutlineEditor exact selected layers', () => {
                     skipRender: true
                 })
             ).toBe(false);
-            expect(canvas.outlineEditor.selectedLayerId).toBe(background.id);
+            expect(canvas.outlineEditor.selectedDrawingId).toBe(background.id);
         } finally {
-            saveLayerDataSpy.mockRestore();
+            saveDrawingDataSpy.mockRestore();
         }
     });
 
@@ -18919,24 +19075,24 @@ describe('OutlineEditor exact selected layers', () => {
             .mockImplementation(() => {});
         interpolateSpy.mockRejectedValueOnce(new Error('incompatible glyph'));
 
-        canvas.outlineEditor.selectedLayerId = 'master-layer';
+        canvas.outlineEditor.selectedDrawingId = 'master-layer';
         canvas.outlineEditor.glyphStack = 'A@master-layer';
 
-        await canvas.outlineEditor.fetchLayerData(true);
+        await canvas.outlineEditor.fetchDrawingData(true);
 
         try {
             expect(interpolateSpy).toHaveBeenCalled();
-            expect(canvas.outlineEditor.layerData.isInterpolated).toBe(false);
-            expect(canvas.outlineEditor.layerData.width).toBe(500);
-            expect(canvas.outlineEditor.layerData.shapes[0].nodes[0].x).toBe(
+            expect(canvas.outlineEditor.drawingData.isInterpolated).toBe(false);
+            expect(canvas.outlineEditor.drawingData.width).toBe(500);
+            expect(canvas.outlineEditor.drawingData.shapes[0].nodes[0].x).toBe(
                 100
             );
-            expect(canvas.outlineEditor.layerData.anchors[0].x).toBe(250);
+            expect(canvas.outlineEditor.drawingData.anchors[0].x).toBe(250);
             expect(
-                canvas.outlineEditor.layerData.shapes[1].layerData.width
+                canvas.outlineEditor.drawingData.shapes[1].layerData.width
             ).toBe(300);
             expect(
-                canvas.outlineEditor.layerData.shapes[1].layerData.shapes[0]
+                canvas.outlineEditor.drawingData.shapes[1].layerData.shapes[0]
                     .nodes[0].x
             ).toBe(20);
             expect(canvas.outlineEditor.renderVerticalMetrics).toEqual({
@@ -18957,10 +19113,10 @@ describe('OutlineEditor exact selected layers', () => {
             glyphName: 'autoGlyph',
             layers: font
                 .findGlyph('autoGlyph')
-                .layers.map((layer) => layer.toJSON())
+                .drawings.map((drawing) => drawing.toJSON())
         });
         canvas.getCurrentGlyphName = jest.fn(() => 'autoGlyph');
-        canvas.outlineEditor.selectedLayerId = 'auto-layer';
+        canvas.outlineEditor.selectedDrawingId = 'auto-layer';
         canvas.outlineEditor.glyphStack = 'autoGlyph@auto-layer';
 
         interpolateSpy.mockResolvedValueOnce({
@@ -18991,24 +19147,26 @@ describe('OutlineEditor exact selected layers', () => {
             _verticalMetrics: {}
         });
 
-        await canvas.outlineEditor.fetchLayerData(true);
+        await canvas.outlineEditor.fetchDrawingData(true);
 
-        expect(canvas.outlineEditor.layerData.width).toBe(400);
-        expect(canvas.outlineEditor.layerData.shapes[0].transform[4]).toBe(100);
+        expect(canvas.outlineEditor.drawingData.width).toBe(400);
+        expect(canvas.outlineEditor.drawingData.shapes[0].transform[4]).toBe(
+            100
+        );
     });
 
     test('resolves normal component layer data from the object model before interpolation returns', async () => {
-        let capturedRootLayerData = null;
+        let capturedRootDrawingData = null;
         canvas.glyphCanvas = canvas;
-        const assignLayerDataSpy = jest.spyOn(
+        const assignDrawingDataSpy = jest.spyOn(
             canvas.outlineEditor,
-            'assignLayerData'
+            'assignDrawingData'
         );
 
         interpolateSpy.mockImplementation(
             () =>
                 new Promise((resolve) => {
-                    capturedRootLayerData = canvas.outlineEditor.layerData;
+                    capturedRootDrawingData = canvas.outlineEditor.drawingData;
                     resolve({
                         width: 999.75,
                         shapes: [
@@ -19032,76 +19190,76 @@ describe('OutlineEditor exact selected layers', () => {
                 })
         );
 
-        canvas.outlineEditor.selectedLayerId = 'master-layer';
+        canvas.outlineEditor.selectedDrawingId = 'master-layer';
         canvas.outlineEditor.glyphStack = 'A@master-layer';
 
-        await canvas.outlineEditor.fetchLayerData(true);
+        await canvas.outlineEditor.fetchDrawingData(true);
 
-        expect(assignLayerDataSpy).toHaveBeenCalled();
-        expect(capturedRootLayerData).toBeTruthy();
-        expect(capturedRootLayerData.isInterpolated).toBe(false);
-        expect(capturedRootLayerData.shapes[1].layerData.width).toBe(300);
+        expect(assignDrawingDataSpy).toHaveBeenCalled();
+        expect(capturedRootDrawingData).toBeTruthy();
+        expect(capturedRootDrawingData.isInterpolated).toBe(false);
+        expect(capturedRootDrawingData.shapes[1].layerData.width).toBe(300);
         expect(
-            capturedRootLayerData.shapes[1].layerData.shapes[0].nodes[0].x
+            capturedRootDrawingData.shapes[1].layerData.shapes[0].nodes[0].x
         ).toBe(20);
-        expect(canvas.outlineEditor.layerData.shapes[1].transform[4]).toBe(
+        expect(canvas.outlineEditor.drawingData.shapes[1].transform[4]).toBe(
             55.5
         );
 
-        assignLayerDataSpy.mockRestore();
+        assignDrawingDataSpy.mockRestore();
     });
 
     test('renders intermediate layers as italic Intermediate Layer labels in the layers list', async () => {
         const targetContainer = document.createElement('div');
         canvas.outlineEditor.active = true;
 
-        await canvas.displayMastersList(targetContainer);
+        await canvas.displayStationsList(targetContainer);
 
         const intermediateName = targetContainer.querySelector(
-            '.editor-layer-item[data-layer-id="brace-layer"] .master-item-name'
+            '.editor-drawing-item[data-drawing-id="brace-layer"] .station-item-name'
         );
         const defaultName = targetContainer.querySelector(
-            '.editor-layer-item[data-layer-id="master-layer"] .master-item-name'
+            '.editor-drawing-item[data-drawing-id="master-layer"] .station-item-name'
         );
 
         expect(intermediateName).toBeTruthy();
-        expect(intermediateName.textContent).toBe('Intermediate Layer');
+        expect(intermediateName.textContent).toBe('Free drawing');
         expect(
-            intermediateName.classList.contains('master-item-name-intermediate')
+            intermediateName.classList.contains('station-item-name-free')
         ).toBe(true);
-        expect(
-            defaultName.classList.contains('master-item-name-intermediate')
-        ).toBe(false);
+        expect(defaultName.classList.contains('station-item-name-free')).toBe(
+            false
+        );
     });
 
     test('renders both userspace and designspace location lines in the layers list', async () => {
         const targetContainer = document.createElement('div');
         canvas.outlineEditor.active = true;
 
-        await canvas.displayMastersList(targetContainer);
+        await canvas.displayStationsList(targetContainer);
 
-        const masterLayerLocation = targetContainer.querySelector(
-            '.editor-layer-item[data-layer-id="master-layer"] .master-item-location'
+        const stationDrawingLocation = targetContainer.querySelector(
+            '.editor-drawing-item[data-drawing-id="master-layer"] .station-item-location'
         );
-        const braceLayerLocation = targetContainer.querySelector(
-            '.editor-layer-item[data-layer-id="brace-layer"] .master-item-location'
+        const freeDrawingLocation = targetContainer.querySelector(
+            '.editor-drawing-item[data-drawing-id="brace-layer"] .station-item-location'
         );
 
-        expect(masterLayerLocation?.textContent).toBe('wght:0/0');
-        expect(braceLayerLocation?.textContent).toBe('wght:50/50');
+        expect(stationDrawingLocation?.textContent).toBe('wght:0/0');
+        expect(freeDrawingLocation?.textContent).toBe('wght:50/50');
     });
 
     test('renders both userspace and designspace location lines in the masters list', async () => {
         const targetContainer = document.createElement('div');
         canvas.outlineEditor.active = false;
 
-        await canvas.displayMastersList(targetContainer);
+        await canvas.displayStationsList(targetContainer);
 
-        const masterLocation = targetContainer.querySelector(
-            '.editor-layer-item[data-master-id="master-1"] .master-item-location'
+        const stationLocation = targetContainer.querySelector(
+            '.editor-drawing-item[data-station-id="master-1"] .station-item-location'
         );
 
-        expect(masterLocation?.textContent).toBe('wght:0/0');
+        expect(stationLocation?.textContent).toBe('wght:0/0');
     });
 
     test('disables the create-layer button at an exact layer location', async () => {
@@ -19109,10 +19267,10 @@ describe('OutlineEditor exact selected layers', () => {
         canvas.outlineEditor.active = true;
         canvas.axesManager.variationSettings = { wght: 0 };
 
-        await canvas.displayMastersList(targetContainer);
+        await canvas.displayStationsList(targetContainer);
 
         const addButton = targetContainer.querySelector(
-            '.editor-layer-add-button'
+            '.editor-drawing-add-button'
         );
 
         expect(addButton).toBeTruthy();
@@ -19121,8 +19279,8 @@ describe('OutlineEditor exact selected layers', () => {
 
     test('enables the create-layer button between exact layer locations and creates an intermediate layer there', async () => {
         const targetContainer = document.createElement('div');
-        const createLayerSpy = jest
-            .spyOn(canvas.outlineEditor, 'createInterpolatedLayer')
+        const createDrawingSpy = jest
+            .spyOn(canvas.outlineEditor, 'createInterpolatedDrawing')
             .mockResolvedValue({ id: 'new-layer' });
         const updateSpy = jest
             .spyOn(canvas, 'updatePropertiesUI')
@@ -19131,10 +19289,10 @@ describe('OutlineEditor exact selected layers', () => {
         canvas.outlineEditor.active = true;
         canvas.axesManager.variationSettings = { wght: 75 };
 
-        await canvas.displayMastersList(targetContainer);
+        await canvas.displayStationsList(targetContainer);
 
         const addButton = targetContainer.querySelector(
-            '.editor-layer-add-button'
+            '.editor-drawing-add-button'
         );
 
         expect(addButton).toBeTruthy();
@@ -19144,18 +19302,18 @@ describe('OutlineEditor exact selected layers', () => {
         await Promise.resolve();
         await Promise.resolve();
 
-        expect(createLayerSpy).toHaveBeenCalledWith(
+        expect(createDrawingSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 glyphName: 'A',
-                masterId: 'master-1',
-                isMasterBound: false,
+                stationId: 'master-1',
+                isStationBound: false,
                 designLocation: { wght: 75 },
                 extrapolate: true
             })
         );
 
         updateSpy.mockRestore();
-        createLayerSpy.mockRestore();
+        createDrawingSpy.mockRestore();
     });
 
     test('enables the create-layer button when the selected stored layer does not match the current location', async () => {
@@ -19163,12 +19321,12 @@ describe('OutlineEditor exact selected layers', () => {
 
         canvas.outlineEditor.active = true;
         canvas.axesManager.variationSettings = { wght: 75 };
-        canvas.outlineEditor.selectedLayerId = 'brace-layer';
+        canvas.outlineEditor.selectedDrawingId = 'brace-layer';
 
-        await canvas.displayMastersList(targetContainer);
+        await canvas.displayStationsList(targetContainer);
 
         const addButton = targetContainer.querySelector(
-            '.editor-layer-add-button'
+            '.editor-drawing-add-button'
         );
 
         expect(addButton).toBeTruthy();
@@ -19181,25 +19339,25 @@ describe('OutlineEditor exact selected layers', () => {
 
         canvas.outlineEditor.active = true;
         canvas.axesManager.variationSettings = { wght: 0 };
-        canvas.outlineEditor.selectedLayerId = 'master-layer';
+        canvas.outlineEditor.selectedDrawingId = 'master-layer';
 
-        await canvas.displayMastersList(targetContainer);
+        await canvas.displayStationsList(targetContainer);
 
         const addButton = targetContainer.querySelector(
-            '.editor-layer-add-button'
+            '.editor-drawing-add-button'
         );
 
         expect(addButton).toBeTruthy();
         expect(addButton.disabled).toBe(true);
 
-        canvas.outlineEditor.selectedLayerId = null;
+        canvas.outlineEditor.selectedDrawingId = null;
         canvas.axesManager.variationSettings = { wght: 60 };
-        canvas.outlineEditor.updateLayerSelection();
+        canvas.outlineEditor.updateDrawingSelection();
 
         expect(addButton.disabled).toBe(false);
     });
 
-    test('selectLayer keeps the clicked master layer selected during the immediate properties UI rebuild', async () => {
+    test('selectDrawing keeps the clicked master layer selected during the immediate properties UI rebuild', async () => {
         const targetContainer = document.createElement('div');
         document.body.appendChild(targetContainer);
         const setupAnimationSpy = jest
@@ -19213,24 +19371,24 @@ describe('OutlineEditor exact selected layers', () => {
         canvas.textRunEditor.shapedGlyphs = [{ ax: 500, dx: 0, dy: 0, g: 0 }];
         canvas.axesManager.variationSettings = { wght: 60 };
 
-        await canvas.displayMastersList(targetContainer, false);
+        await canvas.displayStationsList(targetContainer, false);
 
-        const masterLayer = currentFontSpy.mock.results
+        const stationDrawing = currentFontSpy.mock.results
             .at(-1)
             .value.fontModel.findGlyph('A')
-            .findLayerById('master-layer');
+            .findDrawingById('master-layer');
 
-        await canvas.outlineEditor.selectLayer(masterLayer);
+        await canvas.outlineEditor.selectDrawing(stationDrawing);
 
-        expect(canvas.outlineEditor.selectedLayerId).toBe('master-layer');
+        expect(canvas.outlineEditor.selectedDrawingId).toBe('master-layer');
         expect(
-            targetContainer.querySelector('.editor-layer-add-button').disabled
+            targetContainer.querySelector('.editor-drawing-add-button').disabled
         ).toBe(true);
 
         setupAnimationSpy.mockRestore();
     });
 
-    test('selectLayer resumes a repaint deferred during its suppressed layer swap', async () => {
+    test('selectDrawing resumes a repaint deferred during its suppressed layer swap', async () => {
         const targetContainer = document.createElement('div');
         document.body.appendChild(targetContainer);
         const setupAnimationSpy = jest
@@ -19248,14 +19406,14 @@ describe('OutlineEditor exact selected layers', () => {
         canvas.axesManager.variationSettings = { wght: 60 };
         canvas.hasDeferredRenderRequest = true;
 
-        await canvas.displayMastersList(targetContainer, false);
+        await canvas.displayStationsList(targetContainer, false);
 
-        const masterLayer = currentFontSpy.mock.results
+        const stationDrawing = currentFontSpy.mock.results
             .at(-1)
             .value.fontModel.findGlyph('A')
-            .findLayerById('master-layer');
+            .findDrawingById('master-layer');
 
-        await canvas.outlineEditor.selectLayer(masterLayer);
+        await canvas.outlineEditor.selectDrawing(stationDrawing);
 
         expect(canvas.renderSuppressed).toBe(false);
         expect(requestRepaintAfterCompileSpy).toHaveBeenCalledTimes(1);
@@ -19264,7 +19422,7 @@ describe('OutlineEditor exact selected layers', () => {
         setupAnimationSpy.mockRestore();
     });
 
-    test('selectLayer disables the create-layer button on the first click after deleting an intermediate layer', async () => {
+    test('selectDrawing disables the create-layer button on the first click after deleting an intermediate layer', async () => {
         const targetContainer = document.createElement('div');
         document.body.appendChild(targetContainer);
         const font = makeComponentFont();
@@ -19276,7 +19434,9 @@ describe('OutlineEditor exact selected layers', () => {
         currentFontSpy.mockReturnValue(currentFont);
         fetchGlyphDataSpy.mockResolvedValue({
             glyphName: 'A',
-            layers: font.findGlyph('A').layers.map((layer) => layer.toJSON())
+            layers: font
+                .findGlyph('A')
+                .drawings.map((drawing) => drawing.toJSON())
         });
         const forceFullWorkerCacheUpdateSpy = jest
             .spyOn(fontManager, 'forceFullWorkerCacheUpdate')
@@ -19288,15 +19448,15 @@ describe('OutlineEditor exact selected layers', () => {
             .spyOn(canvas, 'animateToLocation')
             .mockImplementation(async (location) => {
                 canvas.axesManager.variationSettings = { ...location };
-                canvas.outlineEditor.selectedLayerId = null;
-                canvas.outlineEditor.layerData = {
+                canvas.outlineEditor.selectedDrawingId = null;
+                canvas.outlineEditor.drawingData = {
                     width: 520,
                     shapes: [],
                     anchors: [],
                     guides: [],
                     isInterpolated: true
                 };
-                canvas.outlineEditor.updateLayerSelection();
+                canvas.outlineEditor.updateDrawingSelection();
             });
         const setupAnimationSpy = jest
             .spyOn(canvas.axesManager, '_setupAnimation')
@@ -19308,19 +19468,19 @@ describe('OutlineEditor exact selected layers', () => {
         canvas.textRunEditor.shapedGlyphs = [{ ax: 500, dx: 0, dy: 0, g: 0 }];
         canvas.axesManager.variationSettings = { wght: 50 };
 
-        await canvas.displayMastersList(targetContainer, false);
-        await canvas.outlineEditor.deleteLayerById('brace-layer');
+        await canvas.displayStationsList(targetContainer, false);
+        await canvas.outlineEditor.deleteDrawingById('brace-layer');
 
-        const resolvedMasterLayer = currentFont.fontModel
+        const resolvedStationDrawing = currentFont.fontModel
             .findGlyph('A')
-            .findLayerById('master-layer');
+            .findDrawingById('master-layer');
 
-        await canvas.outlineEditor.selectLayer(resolvedMasterLayer);
+        await canvas.outlineEditor.selectDrawing(resolvedStationDrawing);
 
         expect(canvas.axesManager.variationSettings).toEqual({ wght: 50 });
-        expect(canvas.outlineEditor.selectedLayerId).toBe('master-layer');
+        expect(canvas.outlineEditor.selectedDrawingId).toBe('master-layer');
         expect(
-            targetContainer.querySelector('.editor-layer-add-button').disabled
+            targetContainer.querySelector('.editor-drawing-add-button').disabled
         ).toBe(true);
 
         dirtySpy.mockRestore();
@@ -19329,37 +19489,37 @@ describe('OutlineEditor exact selected layers', () => {
         animateSpy.mockRestore();
     });
 
-    test('autoSelectMatchingLayer re-enables the create-layer button when already interpolating between stored layer locations', async () => {
+    test('autoSelectMatchingDrawing re-enables the create-layer button when already interpolating between stored layer locations', async () => {
         const targetContainer = document.createElement('div');
         canvas.propertiesSection = targetContainer;
         canvas.outlineEditor.active = true;
         canvas.axesManager.variationSettings = { wght: 0 };
 
-        await canvas.displayMastersList(targetContainer);
+        await canvas.displayStationsList(targetContainer);
 
         const addButton = targetContainer.querySelector(
-            '.editor-layer-add-button'
+            '.editor-drawing-add-button'
         );
 
         expect(addButton).toBeTruthy();
         expect(addButton.disabled).toBe(true);
 
-        canvas.outlineEditor.selectedLayerId = null;
+        canvas.outlineEditor.selectedDrawingId = null;
         canvas.axesManager.variationSettings = { wght: 60 };
         addButton.disabled = true;
 
-        await canvas.outlineEditor.autoSelectMatchingLayer();
+        await canvas.outlineEditor.autoSelectMatchingDrawing();
 
-        expect(canvas.outlineEditor.selectedLayerId).toBe(null);
+        expect(canvas.outlineEditor.selectedDrawingId).toBe(null);
         expect(addButton.disabled).toBe(false);
     });
 
     test('paints object-model geometry in color when a slider drag hits an exact layer', async () => {
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = null;
+        canvas.outlineEditor.selectedDrawingId = null;
         canvas.outlineEditor.isInterpolating = true;
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             width: 510,
             shapes: [],
             anchors: [],
@@ -19371,7 +19531,7 @@ describe('OutlineEditor exact selected layers', () => {
         canvas.axesManager.variationSettings = { wght: 50 };
         const applyRustSpy = jest.spyOn(
             canvas.outlineEditor,
-            'applyRustLayerData'
+            'applyRustDrawingData'
         );
         const interpolateCurrentSpy = jest.spyOn(
             canvas.outlineEditor,
@@ -19379,13 +19539,13 @@ describe('OutlineEditor exact selected layers', () => {
         );
 
         canvas.outlineEditor.onSliderChange('wght', 50);
-        await canvas.outlineEditor.autoSelectMatchingLayer();
+        await canvas.outlineEditor.autoSelectMatchingDrawing();
 
         expect(interpolateCurrentSpy).not.toHaveBeenCalled();
-        expect(canvas.outlineEditor.selectedLayerId).toBe('brace-layer');
+        expect(canvas.outlineEditor.selectedDrawingId).toBe('brace-layer');
         expect(canvas.outlineEditor.isInterpolating).toBe(true);
-        expect(canvas.outlineEditor.layerData.isInterpolated).toBe(false);
-        expect(canvas.outlineEditor.layerData.width).toBe(520);
+        expect(canvas.outlineEditor.drawingData.isInterpolated).toBe(false);
+        expect(canvas.outlineEditor.drawingData.width).toBe(520);
         expect(canvas.outlineEditor.isPaintingInterpolatedPreview()).toBe(
             false
         );
@@ -19398,9 +19558,9 @@ describe('OutlineEditor exact selected layers', () => {
     test('paints the object-model layer from the slider target while variation settings are still easing', async () => {
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = null;
+        canvas.outlineEditor.selectedDrawingId = null;
         canvas.outlineEditor.isInterpolating = true;
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             width: 510,
             shapes: [],
             anchors: [],
@@ -19414,11 +19574,11 @@ describe('OutlineEditor exact selected layers', () => {
         canvas.axesManager.animationTargetValues = { wght: 50 };
 
         canvas.outlineEditor.onSliderChange('wght', 50);
-        await canvas.outlineEditor.autoSelectMatchingLayer();
+        await canvas.outlineEditor.autoSelectMatchingDrawing();
 
-        expect(canvas.outlineEditor.selectedLayerId).toBe('brace-layer');
-        expect(canvas.outlineEditor.layerData.isInterpolated).toBe(false);
-        expect(canvas.outlineEditor.layerData.width).toBe(520);
+        expect(canvas.outlineEditor.selectedDrawingId).toBe('brace-layer');
+        expect(canvas.outlineEditor.drawingData.isInterpolated).toBe(false);
+        expect(canvas.outlineEditor.drawingData.width).toBe(520);
         expect(canvas.outlineEditor.isInterpolating).toBe(true);
     });
 
@@ -19430,14 +19590,14 @@ describe('OutlineEditor exact selected layers', () => {
         interpolateSpy.mockImplementationOnce(() => firstRequest.promise);
         const applyRustSpy = jest.spyOn(
             canvas.outlineEditor,
-            'applyRustLayerData'
+            'applyRustDrawingData'
         );
 
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = null;
+        canvas.outlineEditor.selectedDrawingId = null;
         canvas.outlineEditor.isInterpolating = true;
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             width: 510,
             shapes: [],
             anchors: [],
@@ -19454,7 +19614,7 @@ describe('OutlineEditor exact selected layers', () => {
         canvas.axesManager.variationSettings = { wght: 41 };
         canvas.axesManager.animationTargetValues = { wght: 50 };
         canvas.outlineEditor.onSliderChange('wght', 50);
-        await canvas.outlineEditor.autoSelectMatchingLayer();
+        await canvas.outlineEditor.autoSelectMatchingDrawing();
 
         firstRequest.resolve({
             width: 999.75,
@@ -19464,9 +19624,9 @@ describe('OutlineEditor exact selected layers', () => {
         });
         await inFlight;
 
-        expect(canvas.outlineEditor.selectedLayerId).toBe('brace-layer');
-        expect(canvas.outlineEditor.layerData.width).toBe(520);
-        expect(canvas.outlineEditor.layerData.isInterpolated).toBe(false);
+        expect(canvas.outlineEditor.selectedDrawingId).toBe('brace-layer');
+        expect(canvas.outlineEditor.drawingData.width).toBe(520);
+        expect(canvas.outlineEditor.drawingData.isInterpolated).toBe(false);
         expect(canvas.outlineEditor.isInterpolating).toBe(true);
         expect(applyRustSpy).not.toHaveBeenCalled();
 
@@ -19475,65 +19635,65 @@ describe('OutlineEditor exact selected layers', () => {
 
     test('tracks unlinked layers per glyph and updates the summary toggle in the layers list', async () => {
         const targetContainer = document.createElement('div');
-        const selectLayerSpy = jest
-            .spyOn(canvas.outlineEditor, 'selectLayer')
+        const selectDrawingSpy = jest
+            .spyOn(canvas.outlineEditor, 'selectDrawing')
             .mockResolvedValue();
         canvas.outlineEditor.active = true;
 
-        await canvas.displayMastersList(targetContainer);
+        await canvas.displayStationsList(targetContainer);
 
         const summaryToggle = targetContainer.querySelector(
-            '.editor-layers-header .editor-layer-link-summary-toggle'
+            '.editor-drawings-header .editor-drawing-link-summary-toggle'
         );
-        const masterToggle = targetContainer.querySelector(
-            '.editor-layer-item[data-layer-id="master-layer"] .editor-layer-link-toggle'
+        const stationToggle = targetContainer.querySelector(
+            '.editor-drawing-item[data-drawing-id="master-layer"] .editor-drawing-link-toggle'
         );
         const braceToggle = targetContainer.querySelector(
-            '.editor-layer-item[data-layer-id="brace-layer"] .editor-layer-link-toggle'
+            '.editor-drawing-item[data-drawing-id="brace-layer"] .editor-drawing-link-toggle'
         );
 
         expect(summaryToggle).toBeTruthy();
-        expect(masterToggle).toBeTruthy();
+        expect(stationToggle).toBeTruthy();
         expect(braceToggle).toBeTruthy();
         expect(summaryToggle.getAttribute('data-linked')).toBe('true');
-        expect(masterToggle.getAttribute('data-linked')).toBe('true');
+        expect(stationToggle.getAttribute('data-linked')).toBe('true');
         expect(braceToggle.getAttribute('data-linked')).toBe('true');
 
-        masterToggle.click();
+        stationToggle.click();
 
-        expect(selectLayerSpy).not.toHaveBeenCalled();
-        expect(canvas.outlineEditor.getUnlinkedLayerIdsForGlyph('A')).toEqual(
+        expect(selectDrawingSpy).not.toHaveBeenCalled();
+        expect(canvas.outlineEditor.getUnlinkedDrawingIdsForGlyph('A')).toEqual(
             new Set(['master-layer'])
         );
         expect(summaryToggle.getAttribute('data-linked')).toBe('false');
-        expect(masterToggle.getAttribute('data-linked')).toBe('false');
+        expect(stationToggle.getAttribute('data-linked')).toBe('false');
         expect(braceToggle.getAttribute('data-linked')).toBe('true');
 
         summaryToggle.click();
 
-        expect(canvas.outlineEditor.getUnlinkedLayerIdsForGlyph('A')).toEqual(
+        expect(canvas.outlineEditor.getUnlinkedDrawingIdsForGlyph('A')).toEqual(
             new Set()
         );
         expect(summaryToggle.getAttribute('data-linked')).toBe('true');
-        expect(masterToggle.getAttribute('data-linked')).toBe('true');
+        expect(stationToggle.getAttribute('data-linked')).toBe('true');
         expect(braceToggle.getAttribute('data-linked')).toBe('true');
 
         summaryToggle.click();
 
-        expect(canvas.outlineEditor.getUnlinkedLayerIdsForGlyph('A')).toEqual(
+        expect(canvas.outlineEditor.getUnlinkedDrawingIdsForGlyph('A')).toEqual(
             new Set(['master-layer', 'brace-layer'])
         );
         expect(summaryToggle.getAttribute('data-linked')).toBe('false');
-        expect(masterToggle.getAttribute('data-linked')).toBe('false');
+        expect(stationToggle.getAttribute('data-linked')).toBe('false');
         expect(braceToggle.getAttribute('data-linked')).toBe('false');
 
-        selectLayerSpy.mockRestore();
+        selectDrawingSpy.mockRestore();
     });
 
     test('reuses the same linkage state for a glyph in nested component editing as at root level', async () => {
         const targetContainer = document.createElement('div');
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.setLayerLinked(
+        canvas.outlineEditor.setDrawingLinked(
             'component-layer',
             false,
             'componentGlyph'
@@ -19542,17 +19702,17 @@ describe('OutlineEditor exact selected layers', () => {
             'A@master-layer>componentGlyph@component-layer';
         canvas.outlineEditor.currentGlyphName = 'componentGlyph';
 
-        await canvas.displayMastersList(targetContainer);
+        await canvas.displayStationsList(targetContainer);
 
-        const nestedLayerToggle = targetContainer.querySelector(
-            '.editor-layer-item[data-layer-id="component-layer"] .editor-layer-link-toggle'
+        const nestedDrawingToggle = targetContainer.querySelector(
+            '.editor-drawing-item[data-drawing-id="component-layer"] .editor-drawing-link-toggle'
         );
         const summaryToggle = targetContainer.querySelector(
-            '.editor-layers-header .editor-layer-link-summary-toggle'
+            '.editor-drawings-header .editor-drawing-link-summary-toggle'
         );
 
-        expect(nestedLayerToggle).toBeTruthy();
-        expect(nestedLayerToggle.getAttribute('data-linked')).toBe('false');
+        expect(nestedDrawingToggle).toBeTruthy();
+        expect(nestedDrawingToggle.getAttribute('data-linked')).toBe('false');
         expect(summaryToggle.getAttribute('data-linked')).toBe('false');
     });
 
@@ -19560,51 +19720,51 @@ describe('OutlineEditor exact selected layers', () => {
         const targetContainer = document.createElement('div');
         const incompatibleFont = makeComponentFont();
         const glyph = incompatibleFont.findGlyph('A');
-        glyph.findLayerById('brace-layer').addPath(true);
+        glyph.findDrawingById('brace-layer').addPath(true);
 
         currentFontSpy.mockReturnValue({ fontModel: incompatibleFont });
         fetchGlyphDataSpy.mockResolvedValue({
             glyphName: 'A',
-            layers: glyph.layers.map((layer) => layer.toJSON())
+            layers: glyph.drawings.map((drawing) => drawing.toJSON())
         });
         canvas.outlineEditor.active = true;
 
-        canvas.outlineEditor.selectedLayerId = 'master-layer';
-        await canvas.displayMastersList(targetContainer);
+        canvas.outlineEditor.selectedDrawingId = 'master-layer';
+        await canvas.displayStationsList(targetContainer);
 
         expect(
             targetContainer.querySelector(
-                '.editor-layer-item[data-layer-id="brace-layer"] .editor-layer-link-toggle'
+                '.editor-drawing-item[data-drawing-id="brace-layer"] .editor-drawing-link-toggle'
             )
         ).toBeTruthy();
         expect(
             targetContainer.querySelector(
-                '.editor-layer-item[data-layer-id="brace-layer"] .editor-layer-compatibility-indicator .material-symbols-outlined'
+                '.editor-drawing-item[data-drawing-id="brace-layer"] .editor-drawing-compatibility-indicator .material-symbols-outlined'
             )?.textContent
         ).toBe('broken_image');
         expect(
             targetContainer.querySelector(
-                '.editor-layer-item[data-layer-id="master-layer"] .editor-layer-compatibility-indicator'
+                '.editor-drawing-item[data-drawing-id="master-layer"] .editor-drawing-compatibility-indicator'
             )
         ).toBeFalsy();
 
         targetContainer.replaceChildren();
-        canvas.outlineEditor.selectedLayerId = 'brace-layer';
-        await canvas.displayMastersList(targetContainer);
+        canvas.outlineEditor.selectedDrawingId = 'brace-layer';
+        await canvas.displayStationsList(targetContainer);
 
         expect(
             targetContainer.querySelector(
-                '.editor-layer-item[data-layer-id="master-layer"] .editor-layer-link-toggle'
+                '.editor-drawing-item[data-drawing-id="master-layer"] .editor-drawing-link-toggle'
             )
         ).toBeTruthy();
         expect(
             targetContainer.querySelector(
-                '.editor-layer-item[data-layer-id="master-layer"] .editor-layer-compatibility-indicator .material-symbols-outlined'
+                '.editor-drawing-item[data-drawing-id="master-layer"] .editor-drawing-compatibility-indicator .material-symbols-outlined'
             )?.textContent
         ).toBe('broken_image');
         expect(
             targetContainer.querySelector(
-                '.editor-layer-item[data-layer-id="brace-layer"] .editor-layer-compatibility-indicator'
+                '.editor-drawing-item[data-drawing-id="brace-layer"] .editor-drawing-compatibility-indicator'
             )
         ).toBeFalsy();
     });
@@ -19612,58 +19772,58 @@ describe('OutlineEditor exact selected layers', () => {
     test('refreshes the layers list compatibility state when switching the active layer', async () => {
         const incompatibleFont = makeComponentFont();
         const glyph = incompatibleFont.findGlyph('A');
-        const masterLayer = glyph.findLayerById('master-layer');
-        const braceLayer = glyph.findLayerById('brace-layer');
-        glyph.findLayerById('brace-layer').addPath(true);
+        const stationDrawing = glyph.findDrawingById('master-layer');
+        const freeDrawing = glyph.findDrawingById('brace-layer');
+        glyph.findDrawingById('brace-layer').addPath(true);
 
         currentFontSpy.mockReturnValue({ fontModel: incompatibleFont });
         fetchGlyphDataSpy.mockResolvedValue({
             glyphName: 'A',
-            layers: glyph.layers.map((layer) => layer.toJSON())
+            layers: glyph.drawings.map((drawing) => drawing.toJSON())
         });
 
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.selectedLayerId = 'master-layer';
+        canvas.outlineEditor.selectedDrawingId = 'master-layer';
 
         const updateSpy = jest
             .spyOn(canvas, 'updatePropertiesUI')
             .mockResolvedValue();
 
-        await canvas.outlineEditor.selectLayer(braceLayer);
+        await canvas.outlineEditor.selectDrawing(freeDrawing);
 
         expect(updateSpy).toHaveBeenCalled();
-        expect(canvas.outlineEditor.selectedLayerId).toBe('brace-layer');
+        expect(canvas.outlineEditor.selectedDrawingId).toBe('brace-layer');
 
         updateSpy.mockRestore();
 
         const targetContainer = document.createElement('div');
-        await canvas.displayMastersList(targetContainer);
+        await canvas.displayStationsList(targetContainer);
 
         expect(
             targetContainer.querySelector(
-                '.editor-layer-item[data-layer-id="brace-layer"] .editor-layer-compatibility-indicator'
+                '.editor-drawing-item[data-drawing-id="brace-layer"] .editor-drawing-compatibility-indicator'
             )
         ).toBeFalsy();
         expect(
             targetContainer.querySelector(
-                '.editor-layer-item[data-layer-id="master-layer"] .editor-layer-link-toggle'
+                '.editor-drawing-item[data-drawing-id="master-layer"] .editor-drawing-link-toggle'
             )
         ).toBeTruthy();
         expect(
             targetContainer.querySelector(
-                '.editor-layer-item[data-layer-id="master-layer"] .editor-layer-compatibility-indicator .material-symbols-outlined'
+                '.editor-drawing-item[data-drawing-id="master-layer"] .editor-drawing-compatibility-indicator .material-symbols-outlined'
             )?.textContent
         ).toBe('broken_image');
     });
 
-    test('refreshes the layers list when layerFingerprintChanged is emitted for the current glyph', async () => {
+    test('refreshes the layers list when drawingFingerprintChanged is emitted for the current glyph', async () => {
         canvas.outlineEditor.active = true;
         const updateSpy = jest
             .spyOn(canvas, 'updatePropertiesUI')
             .mockResolvedValue();
 
         window.dispatchEvent(
-            new CustomEvent('layerFingerprintChanged', {
+            new CustomEvent('drawingFingerprintChanged', {
                 detail: {
                     glyphName: 'A',
                     layerId: 'master-layer'
@@ -19678,7 +19838,7 @@ describe('OutlineEditor exact selected layers', () => {
         updateSpy.mockRestore();
     });
 
-    test('createInterpolatedLayer materializes a populated master-bound layer from interpolation data', async () => {
+    test('createInterpolatedDrawing materializes a populated master-bound layer from interpolation data', async () => {
         const font = makeComponentFont();
         const glyph = font.findGlyph('A');
         const currentFont = {
@@ -19702,55 +19862,56 @@ describe('OutlineEditor exact selected layers', () => {
         const dirtySpy = jest
             .spyOn(fontManager, 'updateDirtyIndicator')
             .mockResolvedValue();
-        const selectLayerSpy = jest
-            .spyOn(canvas.outlineEditor, 'selectLayer')
+        const selectDrawingSpy = jest
+            .spyOn(canvas.outlineEditor, 'selectDrawing')
             .mockResolvedValue();
 
-        glyph.removeLayer(
-            glyph.layers.findIndex((layer) => layer.id === 'master-layer')
+        glyph.removeDrawing(
+            glyph.drawings.findIndex((drawing) => drawing.id === 'master-layer')
         );
         currentFontSpy.mockReturnValue(currentFont);
         window.patchSyncEngine = patchSyncEngine;
 
         try {
-            const newLayer = await canvas.outlineEditor.createInterpolatedLayer(
-                {
+            const newDrawing =
+                await canvas.outlineEditor.createInterpolatedDrawing({
                     glyphName: 'A',
                     userspaceLocation: { wght: 0 },
-                    masterId: 'master-1',
+                    stationId: 'master-1',
                     designLocation: { wght: 0 },
-                    isMasterBound: true,
+                    isStationBound: true,
                     extrapolate: true
-                }
-            );
+                });
 
-            expect(newLayer.id).toBe('master-1');
-            const storedLayer = font.findGlyph('A').findLayerById(newLayer.id);
+            expect(newDrawing.id).toBe('master-1');
+            const storedDrawing = font
+                .findGlyph('A')
+                .findDrawingById(newDrawing.id);
 
-            expect(storedLayer).toBeTruthy();
-            expect(storedLayer.master.type).toBe('DefaultForMaster');
-            expect(storedLayer.width).toBe(999.75);
-            expect(storedLayer.shapes.length).toBeGreaterThan(0);
-            expect(storedLayer.anchors[0].x).toBe(999.9);
+            expect(storedDrawing).toBeTruthy();
+            expect(storedDrawing.station.type).toBe('DefaultForMaster');
+            expect(storedDrawing.width).toBe(999.75);
+            expect(storedDrawing.shapes.length).toBeGreaterThan(0);
+            expect(storedDrawing.anchors[0].x).toBe(999.9);
             expect(currentFont.markDirty).toHaveBeenCalled();
             expect(currentFont.syncJsonFromModel).not.toHaveBeenCalled();
             expect(patchSyncEngine.syncGlyphFromJson).toHaveBeenCalledWith(
                 'A',
-                'Create interpolated layer sync',
+                'Create interpolated drawing sync',
                 undefined,
                 undefined,
-                newLayer.id,
+                newDrawing.id,
                 undefined,
                 undefined,
-                'layer-create',
-                'layer-create',
+                'drawing-create',
+                'drawing-create',
                 null
             );
             expect(forceFullWorkerCacheUpdateSpy).not.toHaveBeenCalled();
-            expect(selectLayerSpy).toHaveBeenCalled();
+            expect(selectDrawingSpy).toHaveBeenCalled();
         } finally {
             window.patchSyncEngine = originalPatchSyncEngine;
-            selectLayerSpy.mockRestore();
+            selectDrawingSpy.mockRestore();
             dirtySpy.mockRestore();
             forceFullWorkerCacheUpdateSpy.mockRestore();
         }
@@ -19775,8 +19936,8 @@ describe('OutlineEditor exact selected layers', () => {
         const dirtySpy = jest
             .spyOn(fontManager, 'updateDirtyIndicator')
             .mockResolvedValue();
-        const selectLayerSpy = jest
-            .spyOn(canvas.outlineEditor, 'selectLayer')
+        const selectDrawingSpy = jest
+            .spyOn(canvas.outlineEditor, 'selectDrawing')
             .mockResolvedValue();
         const featureGlyphName = 'A.feaVar.0';
 
@@ -19784,30 +19945,30 @@ describe('OutlineEditor exact selected layers', () => {
         window.patchSyncEngine = patchSyncEngine;
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.glyphStack = `${featureGlyphName}@${featureVariation.layers[0].id}`;
+        canvas.outlineEditor.glyphStack = `${featureGlyphName}@${featureVariation.drawings[0].id}`;
 
         try {
-            const familyLayerIds = featureVariation.layers.map(
-                (layer) => layer.id
+            const familyDrawingIds = featureVariation.drawings.map(
+                (drawing) => drawing.id
             );
             const intermediate =
-                await canvas.outlineEditor.createInterpolatedLayer({
+                await canvas.outlineEditor.createInterpolatedDrawing({
                     glyphName: featureGlyphName,
                     userspaceLocation: { wght: 50 },
-                    masterId: 'master-1',
+                    stationId: 'master-1',
                     designLocation: { wght: 50 },
-                    isMasterBound: false,
+                    isStationBound: false,
                     extrapolate: true
                 });
 
             expect(intermediate).toBeTruthy();
             expect(
-                featureVariation.findLayerById(intermediate.id)
+                featureVariation.findDrawingById(intermediate.id)
             ).toBeTruthy();
             expect(
-                glyph.layers.find((layer) => layer.id === intermediate.id)
+                glyph.drawings.find((drawing) => drawing.id === intermediate.id)
             ).toBeUndefined();
-            expect(intermediate.master.type).toBe('AssociatedWithMaster');
+            expect(intermediate.station.type).toBe('AssociatedWithMaster');
             expect(
                 intermediate.format_specific?.['com.schriftgestalt.Glyphs.attr']
                     ?.axisRules
@@ -19819,51 +19980,51 @@ describe('OutlineEditor exact selected layers', () => {
                 'A',
                 { wght: 50 },
                 true,
-                familyLayerIds
+                familyDrawingIds
             );
             expect(patchSyncEngine.syncGlyphFromJson).toHaveBeenCalledWith(
                 'A',
-                'Create interpolated layer sync',
+                'Create interpolated drawing sync',
                 undefined,
                 undefined,
                 intermediate.id,
                 undefined,
                 undefined,
-                'layer-create',
-                'layer-create',
+                'drawing-create',
+                'drawing-create',
                 null
             );
 
-            const intermediateLayerId = intermediate.id;
-            const deleted = await canvas.outlineEditor.deleteLayerById(
-                intermediateLayerId,
+            const freeDrawingId = intermediate.id;
+            const deleted = await canvas.outlineEditor.deleteDrawingById(
+                freeDrawingId,
                 { glyphName: featureGlyphName }
             );
 
             expect(deleted).toBe(true);
             expect(
-                featureVariation.findLayerById(intermediateLayerId)
+                featureVariation.findDrawingById(freeDrawingId)
             ).toBeUndefined();
             expect(patchSyncEngine.syncGlyphFromJson).toHaveBeenLastCalledWith(
                 'A',
-                'Delete layer sync',
+                'Delete drawing sync',
                 undefined,
                 undefined,
-                intermediateLayerId,
+                freeDrawingId,
                 undefined,
                 undefined,
-                'layer-delete',
-                'layer-delete',
+                'drawing-delete',
+                'drawing-delete',
                 null
             );
         } finally {
             window.patchSyncEngine = originalPatchSyncEngine;
-            selectLayerSpy.mockRestore();
+            selectDrawingSpy.mockRestore();
             dirtySpy.mockRestore();
         }
     });
 
-    test('deleteLayerById keeps a deleted selected master layer as a missing master selection', async () => {
+    test('deleteDrawingById keeps a deleted selected master layer as a missing master selection', async () => {
         const font = makeComponentFont();
         const currentFont = {
             fontModel: font,
@@ -19889,34 +20050,34 @@ describe('OutlineEditor exact selected layers', () => {
 
         currentFontSpy.mockReturnValue(currentFont);
         window.patchSyncEngine = patchSyncEngine;
-        canvas.outlineEditor.selectedLayerId = 'master-layer';
+        canvas.outlineEditor.selectedDrawingId = 'master-layer';
         canvas.outlineEditor.currentGlyphName = 'A';
         canvas.outlineEditor.glyphStack = 'A@master-layer';
 
         try {
             const deleted =
-                await canvas.outlineEditor.deleteLayerById('master-layer');
+                await canvas.outlineEditor.deleteDrawingById('master-layer');
 
             expect(deleted).toBe(true);
             expect(
-                font.findGlyph('A').findLayerById('master-layer')
+                font.findGlyph('A').findDrawingById('master-layer')
             ).toBeUndefined();
-            expect(canvas.outlineEditor.selectedLayerId).toBeNull();
-            expect(canvas.outlineEditor.getCurrentLayerId()).toBeNull();
+            expect(canvas.outlineEditor.selectedDrawingId).toBeNull();
+            expect(canvas.outlineEditor.getCurrentDrawingId()).toBeNull();
             expect(canvas.outlineEditor.glyphStack).toBe(
                 'A@missing_interpolation'
             );
             expect(currentFont.syncJsonFromModel).not.toHaveBeenCalled();
             expect(patchSyncEngine.syncGlyphFromJson).toHaveBeenCalledWith(
                 'A',
-                'Delete layer sync',
+                'Delete drawing sync',
                 undefined,
                 undefined,
                 expect.any(String),
                 undefined,
                 undefined,
-                'layer-delete',
-                'layer-delete',
+                'drawing-delete',
+                'drawing-delete',
                 null
             );
             expect(forceFullWorkerCacheUpdateSpy).not.toHaveBeenCalled();
@@ -19929,7 +20090,7 @@ describe('OutlineEditor exact selected layers', () => {
         }
     });
 
-    test('deleteLayerById clears stale pending layer-switch animation before falling back to interpolation', async () => {
+    test('deleteDrawingById clears stale pending layer-switch animation before falling back to interpolation', async () => {
         const font = makeComponentFont();
         const currentFont = {
             fontModel: font,
@@ -19955,11 +20116,11 @@ describe('OutlineEditor exact selected layers', () => {
 
         currentFontSpy.mockReturnValue(currentFont);
         window.patchSyncEngine = patchSyncEngine;
-        canvas.outlineEditor.selectedLayerId = 'brace-layer';
+        canvas.outlineEditor.selectedDrawingId = 'brace-layer';
         canvas.outlineEditor.currentGlyphName = 'A';
         canvas.outlineEditor.glyphStack = 'A@brace-layer';
-        canvas.outlineEditor.isLayerSwitchAnimating = true;
-        canvas.outlineEditor.targetLayerData = {
+        canvas.outlineEditor.isDrawingSwitchAnimating = true;
+        canvas.outlineEditor.targetDrawingData = {
             width: 520,
             shapes: [],
             anchors: [],
@@ -19968,16 +20129,16 @@ describe('OutlineEditor exact selected layers', () => {
         };
         try {
             const deleted =
-                await canvas.outlineEditor.deleteLayerById('brace-layer');
+                await canvas.outlineEditor.deleteDrawingById('brace-layer');
 
             expect(deleted).toBe(true);
-            expect(canvas.outlineEditor.selectedLayerId).toBeNull();
-            expect(canvas.outlineEditor.getCurrentLayerId()).toBeNull();
+            expect(canvas.outlineEditor.selectedDrawingId).toBeNull();
+            expect(canvas.outlineEditor.getCurrentDrawingId()).toBeNull();
             expect(canvas.outlineEditor.glyphStack).toBe(
                 'A@missing_interpolation'
             );
-            expect(canvas.outlineEditor.isLayerSwitchAnimating).toBe(false);
-            expect(canvas.outlineEditor.targetLayerData).toBeNull();
+            expect(canvas.outlineEditor.isDrawingSwitchAnimating).toBe(false);
+            expect(canvas.outlineEditor.targetDrawingData).toBeNull();
             expect(forceFullWorkerCacheUpdateSpy).not.toHaveBeenCalled();
             expect(animateSpy).toHaveBeenCalledWith({ wght: 50 }, 10);
         } finally {
@@ -19988,7 +20149,7 @@ describe('OutlineEditor exact selected layers', () => {
         }
     });
 
-    test('deleteLayerById deletes from the requested glyph instead of the current layer-list glyph', async () => {
+    test('deleteDrawingById deletes from the requested glyph instead of the current layer-list glyph', async () => {
         const font = makeComponentFont();
         const extraFont = Font.fromData({
             upm: 1000,
@@ -20058,7 +20219,7 @@ describe('OutlineEditor exact selected layers', () => {
         canvas.outlineEditor.currentGlyphName = 'A';
 
         try {
-            const deleted = await canvas.outlineEditor.deleteLayerById(
+            const deleted = await canvas.outlineEditor.deleteDrawingById(
                 'brace-layer',
                 {
                     glyphName: 'B'
@@ -20066,21 +20227,21 @@ describe('OutlineEditor exact selected layers', () => {
             );
 
             expect(deleted).toBe(true);
-            expect(glyphA.findLayerById('brace-layer')).toBeTruthy();
+            expect(glyphA.findDrawingById('brace-layer')).toBeTruthy();
             expect(
-                font.findGlyph('B').findLayerById('brace-layer')
+                font.findGlyph('B').findDrawingById('brace-layer')
             ).toBeUndefined();
             expect(currentFont.syncJsonFromModel).not.toHaveBeenCalled();
             expect(patchSyncEngine.syncGlyphFromJson).toHaveBeenCalledWith(
                 'B',
-                'Delete layer sync',
+                'Delete drawing sync',
                 undefined,
                 undefined,
                 'brace-layer',
                 undefined,
                 undefined,
-                'layer-delete',
-                'layer-delete',
+                'drawing-delete',
+                'drawing-delete',
                 null
             );
             expect(forceFullWorkerCacheUpdateSpy).not.toHaveBeenCalled();
@@ -20091,7 +20252,7 @@ describe('OutlineEditor exact selected layers', () => {
         }
     });
 
-    test('deleteLayerById removes the requested master layer when raw layer storage order differs from display order', async () => {
+    test('deleteDrawingById removes the requested master layer when raw layer storage order differs from display order', async () => {
         const font = Font.fromData({
             upm: 1000,
             version: [1, 0],
@@ -20189,37 +20350,37 @@ describe('OutlineEditor exact selected layers', () => {
 
         currentFontSpy.mockReturnValue(currentFont);
         window.patchSyncEngine = patchSyncEngine;
-        canvas.outlineEditor.selectedLayerId = 'master-layer-2';
+        canvas.outlineEditor.selectedDrawingId = 'master-layer-2';
         canvas.outlineEditor.currentGlyphName = 'A';
         canvas.outlineEditor.glyphStack = 'A@master-layer-2';
 
         try {
             const deleted =
-                await canvas.outlineEditor.deleteLayerById('master-layer-2');
+                await canvas.outlineEditor.deleteDrawingById('master-layer-2');
 
             expect(deleted).toBe(true);
             expect(
-                font.findGlyph('A').findLayerById('master-layer-2')
+                font.findGlyph('A').findDrawingById('master-layer-2')
             ).toBeUndefined();
             expect(
-                font.findGlyph('A').findLayerById('master-layer-3')
+                font.findGlyph('A').findDrawingById('master-layer-3')
             ).toBeTruthy();
-            expect(canvas.outlineEditor.selectedLayerId).toBeNull();
-            expect(canvas.outlineEditor.getCurrentLayerId()).toBeNull();
+            expect(canvas.outlineEditor.selectedDrawingId).toBeNull();
+            expect(canvas.outlineEditor.getCurrentDrawingId()).toBeNull();
             expect(canvas.outlineEditor.glyphStack).toBe(
                 'A@missing_interpolation'
             );
             expect(currentFont.syncJsonFromModel).not.toHaveBeenCalled();
             expect(patchSyncEngine.syncGlyphFromJson).toHaveBeenCalledWith(
                 'A',
-                'Delete layer sync',
+                'Delete drawing sync',
                 undefined,
                 undefined,
                 expect.any(String),
                 undefined,
                 undefined,
-                'layer-delete',
-                'layer-delete',
+                'drawing-delete',
+                'drawing-delete',
                 null
             );
             expect(forceFullWorkerCacheUpdateSpy).not.toHaveBeenCalled();
@@ -20236,20 +20397,20 @@ describe('OutlineEditor exact selected layers', () => {
         const targetContainer = document.createElement('div');
 
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.selectedLayerId = 'master-layer';
+        canvas.outlineEditor.selectedDrawingId = 'master-layer';
 
-        await canvas.displayMastersList(targetContainer);
+        await canvas.displayStationsList(targetContainer);
 
         const braceRow = targetContainer.querySelector(
-            '.editor-layer-item[data-layer-id="brace-layer"]'
+            '.editor-drawing-item[data-drawing-id="brace-layer"]'
         );
 
         expect(braceRow).toBeTruthy();
-        expect(braceRow.getAttribute('data-layer-id')).toBe('brace-layer');
+        expect(braceRow.getAttribute('data-drawing-id')).toBe('brace-layer');
         expect(braceRow.getAttribute('data-glyph-name')).toBe('A');
     });
 
-    test('reinterpolateLayerById batches delete and recreate into one committed transaction', async () => {
+    test('reinterpolateDrawingById batches delete and recreate into one committed transaction', async () => {
         const font = makeComponentFont();
         const currentFont = {
             fontModel: font,
@@ -20262,8 +20423,8 @@ describe('OutlineEditor exact selected layers', () => {
         const dirtySpy = jest
             .spyOn(fontManager, 'updateDirtyIndicator')
             .mockResolvedValue();
-        const selectLayerSpy = jest
-            .spyOn(canvas.outlineEditor, 'selectLayer')
+        const selectDrawingSpy = jest
+            .spyOn(canvas.outlineEditor, 'selectDrawing')
             .mockResolvedValue();
         const originalAutoCompileManager = window.autoCompileManager;
         window.autoCompileManager = {
@@ -20284,10 +20445,10 @@ describe('OutlineEditor exact selected layers', () => {
         };
 
         currentFontSpy.mockReturnValue(currentFont);
-        canvas.outlineEditor.selectedLayerId = 'brace-layer';
+        canvas.outlineEditor.selectedDrawingId = 'brace-layer';
         try {
-            const recreatedLayer =
-                await canvas.outlineEditor.reinterpolateLayerById(
+            const recreatedDrawing =
+                await canvas.outlineEditor.reinterpolateDrawingById(
                     'brace-layer'
                 );
 
@@ -20296,10 +20457,10 @@ describe('OutlineEditor exact selected layers', () => {
                 { wght: 50 },
                 true
             );
-            expect(recreatedLayer.id).toBe('brace-layer');
-            expect(font.findGlyph('A').findLayerById('brace-layer').width).toBe(
-                999.75
-            );
+            expect(recreatedDrawing.id).toBe('brace-layer');
+            expect(
+                font.findGlyph('A').findDrawingById('brace-layer').width
+            ).toBe(999.75);
             expect(currentFont.markDirty).toHaveBeenCalledTimes(3);
             expect(currentFont.syncJsonFromModel).not.toHaveBeenCalled();
             expect(forceFullWorkerCacheUpdateSpy).not.toHaveBeenCalled();
@@ -20307,45 +20468,45 @@ describe('OutlineEditor exact selected layers', () => {
                 window.autoCompileManager.checkAndSchedule
             ).not.toHaveBeenCalled();
             expect(beginTransactionSpy).toHaveBeenCalledWith(
-                'Reinterpolate layer',
+                'Reinterpolate drawing',
                 null,
                 expect.objectContaining({
-                    compileChangeSource: 'master-reinterpolate-batch',
+                    compileChangeSource: 'station-reinterpolate-batch',
                     compileEditType: null
                 })
             );
             expect(syncGlyphFromJsonSpy).toHaveBeenCalledWith(
                 'A',
-                'Reinterpolate layer sync',
+                'Reinterpolate drawing sync',
                 undefined,
                 undefined,
-                recreatedLayer.id,
+                recreatedDrawing.id,
                 undefined,
                 undefined,
-                'layer-reinterpolate',
-                'layer-reinterpolate',
+                'drawing-reinterpolate',
+                'drawing-reinterpolate',
                 null
             );
             expect(endTransactionSpy).toHaveBeenCalledTimes(1);
-            expect(selectLayerSpy).not.toHaveBeenCalled();
-            expect(canvas.outlineEditor.layerData.width).toBe(999.75);
+            expect(selectDrawingSpy).not.toHaveBeenCalled();
+            expect(canvas.outlineEditor.drawingData.width).toBe(999.75);
         } finally {
             window.autoCompileManager = originalAutoCompileManager;
             window.patchSyncEngine = originalPatchSyncEngine;
-            selectLayerSpy.mockRestore();
+            selectDrawingSpy.mockRestore();
             dirtySpy.mockRestore();
             forceFullWorkerCacheUpdateSpy.mockRestore();
         }
     });
 
-    test('reinterpolateLayerById tolerates non-cloneable source layer payloads', async () => {
+    test('reinterpolateDrawingById tolerates non-cloneable source layer payloads', async () => {
         const font = makeComponentFont();
         const currentFont = {
             fontModel: font,
             markDirty: jest.fn(),
             syncJsonFromModel: jest.fn()
         };
-        const braceLayer = font.findGlyph('A').findLayerById('brace-layer');
+        const freeDrawing = font.findGlyph('A').findDrawingById('brace-layer');
         const forceFullWorkerCacheUpdateSpy = jest
             .spyOn(fontManager, 'forceFullWorkerCacheUpdate')
             .mockResolvedValue();
@@ -20355,7 +20516,7 @@ describe('OutlineEditor exact selected layers', () => {
         const originalAutoCompileManager = window.autoCompileManager;
         const originalChangeBridge = window.changeBridge;
 
-        braceLayer.toJSON().format_specific = {
+        freeDrawing.toJSON().format_specific = {
             keep: 'value',
             inspectorWindow: window
         };
@@ -20379,14 +20540,14 @@ describe('OutlineEditor exact selected layers', () => {
 
         try {
             await expect(
-                canvas.outlineEditor.reinterpolateLayerById('brace-layer', {
-                    selectNewLayer: false
+                canvas.outlineEditor.reinterpolateDrawingById('brace-layer', {
+                    selectNewDrawing: false
                 })
             ).resolves.toMatchObject({ id: 'brace-layer', width: 999.75 });
 
-            expect(font.findGlyph('A').findLayerById('brace-layer').width).toBe(
-                999.75
-            );
+            expect(
+                font.findGlyph('A').findDrawingById('brace-layer').width
+            ).toBe(999.75);
         } finally {
             window.autoCompileManager = originalAutoCompileManager;
             window.changeBridge = originalChangeBridge;
@@ -20395,7 +20556,7 @@ describe('OutlineEditor exact selected layers', () => {
         }
     });
 
-    test('reinterpolateLayerById refreshes the currently selected same-id layer without pending switch animation', async () => {
+    test('reinterpolateDrawingById refreshes the currently selected same-id layer without pending switch animation', async () => {
         const font = makeComponentFont();
         const currentFont = {
             fontModel: font,
@@ -20432,46 +20593,46 @@ describe('OutlineEditor exact selected layers', () => {
 
         currentFontSpy.mockReturnValue(currentFont);
 
-        const braceLayer = font.findGlyph('A').findLayerById('brace-layer');
+        const freeDrawing = font.findGlyph('A').findDrawingById('brace-layer');
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'brace-layer';
+        canvas.outlineEditor.selectedDrawingId = 'brace-layer';
         canvas.outlineEditor.buildGlyphStack('A', 'brace-layer', []);
-        canvas.outlineEditor.layerData = braceLayer.toJSON();
-        canvas.outlineEditor.targetLayerData = {
+        canvas.outlineEditor.drawingData = freeDrawing.toJSON();
+        canvas.outlineEditor.targetDrawingData = {
             width: 1,
             shapes: [],
             anchors: [],
             guides: [],
             isInterpolated: false
         };
-        canvas.outlineEditor.isLayerSwitchAnimating = true;
+        canvas.outlineEditor.isDrawingSwitchAnimating = true;
 
         try {
-            const recreatedLayer =
-                await canvas.outlineEditor.reinterpolateLayerById(
+            const recreatedDrawing =
+                await canvas.outlineEditor.reinterpolateDrawingById(
                     'brace-layer',
                     {
                         glyphName: 'A',
-                        selectNewLayer: true
+                        selectNewDrawing: true
                     }
                 );
 
-            expect(recreatedLayer.id).toBe('brace-layer');
-            expect(canvas.outlineEditor.selectedLayerId).toBe('brace-layer');
-            expect(canvas.outlineEditor.isLayerSwitchAnimating).toBe(false);
-            expect(canvas.outlineEditor.targetLayerData).toBeNull();
-            expect(canvas.outlineEditor.layerData.width).toBe(999.75);
+            expect(recreatedDrawing.id).toBe('brace-layer');
+            expect(canvas.outlineEditor.selectedDrawingId).toBe('brace-layer');
+            expect(canvas.outlineEditor.isDrawingSwitchAnimating).toBe(false);
+            expect(canvas.outlineEditor.targetDrawingData).toBeNull();
+            expect(canvas.outlineEditor.drawingData.width).toBe(999.75);
             expect(bridgeSyncSpy).toHaveBeenCalledWith(
                 'A',
-                'Reinterpolate layer sync',
+                'Reinterpolate drawing sync',
                 undefined,
                 undefined,
                 'brace-layer',
                 undefined,
                 undefined,
-                'layer-reinterpolate',
-                'layer-reinterpolate',
+                'drawing-reinterpolate',
+                'drawing-reinterpolate',
                 null
             );
         } finally {
@@ -20484,7 +20645,7 @@ describe('OutlineEditor exact selected layers', () => {
         }
     });
 
-    test('reinterpolateLayerById uses the Rust-authored Yjs batch path when the bridge supports it', async () => {
+    test('reinterpolateDrawingById uses the Rust-authored Yjs batch path when the bridge supports it', async () => {
         const font = makeComponentFont();
         const currentFont = {
             fontModel: font,
@@ -20497,7 +20658,7 @@ describe('OutlineEditor exact selected layers', () => {
         const originalFontModel = window.currentFontModel;
         const originalPatchSyncEngine = window.patchSyncEngine;
         const rustBatchSpy = jest
-            .spyOn(fontManager, 'buildWorkerReinterpolateLayerBatch')
+            .spyOn(fontManager, 'buildWorkerReinterpolateDrawingBatch')
             .mockResolvedValue({
                 update: new Uint8Array([9, 8, 7]),
                 metadata: {
@@ -20521,7 +20682,7 @@ describe('OutlineEditor exact selected layers', () => {
             });
         const applyLocalGeneratedYjsUpdateSpy = jest.fn(
             (_update, operations) => {
-                const layerOperation = operations.find(
+                const drawingOperation = operations.find(
                     (operation) =>
                         Array.isArray(operation.path) &&
                         operation.path[0] === 'glyphs' &&
@@ -20529,12 +20690,14 @@ describe('OutlineEditor exact selected layers', () => {
                         operation.path[2] === 'layers' &&
                         operation.path[3] === 'brace-layer'
                 );
-                if (!layerOperation) {
+                if (!drawingOperation) {
                     return;
                 }
 
-                const layer = font.findGlyph('A').findLayerById('brace-layer');
-                layer.width = layerOperation.newValue.width;
+                const drawing = font
+                    .findGlyph('A')
+                    .findDrawingById('brace-layer');
+                drawing.width = drawingOperation.newValue.width;
             }
         );
 
@@ -20546,12 +20709,12 @@ describe('OutlineEditor exact selected layers', () => {
         currentFontSpy.mockReturnValue(currentFont);
 
         try {
-            const recreatedLayer =
-                await canvas.outlineEditor.reinterpolateLayerById(
+            const recreatedDrawing =
+                await canvas.outlineEditor.reinterpolateDrawingById(
                     'brace-layer',
                     {
                         glyphName: 'A',
-                        selectNewLayer: false
+                        selectNewDrawing: false
                     }
                 );
 
@@ -20561,15 +20724,15 @@ describe('OutlineEditor exact selected layers', () => {
                 expect.arrayContaining([
                     expect.objectContaining({
                         path: ['glyphs', 'A', 'layers', 'brace-layer'],
-                        applyMode: 'layer-snapshot'
+                        applyMode: 'drawing-snapshot'
                     })
                 ]),
-                'Reinterpolate layer sync'
+                'Reinterpolate drawing sync'
             );
-            expect(recreatedLayer.id).toBe('brace-layer');
-            expect(recreatedLayer.width).toBe(889);
+            expect(recreatedDrawing.id).toBe('brace-layer');
+            expect(recreatedDrawing.width).toBe(889);
             expect(currentFont.markDirty).toHaveBeenCalledWith(
-                'layer-reinterpolate'
+                'drawing-reinterpolate'
             );
         } finally {
             window.currentFontModel = originalFontModel;
@@ -20579,7 +20742,7 @@ describe('OutlineEditor exact selected layers', () => {
         }
     });
 
-    test('reinterpolateAllLayersForMaster applies one Rust-authored Yjs batch through the bridge', async () => {
+    test('reinterpolateAllDrawingsForStation applies one Rust-authored Yjs batch through the bridge', async () => {
         const font = makeComponentFont();
         const currentFont = {
             fontModel: font,
@@ -20593,7 +20756,7 @@ describe('OutlineEditor exact selected layers', () => {
         const originalPatchSyncEngine = window.patchSyncEngine;
         const applyLocalGeneratedYjsUpdateSpy = jest.fn();
         const rustBatchSpy = jest
-            .spyOn(fontManager, 'buildWorkerReinterpolateMasterLayersBatch')
+            .spyOn(fontManager, 'buildWorkerReinterpolateStationDrawingsBatch')
             .mockResolvedValue({
                 update: new Uint8Array([1, 2, 3]),
                 metadata: {
@@ -20631,7 +20794,7 @@ describe('OutlineEditor exact selected layers', () => {
         currentFontSpy.mockReturnValue(currentFont);
 
         try {
-            await canvas.outlineEditor.reinterpolateAllLayersForMaster(
+            await canvas.outlineEditor.reinterpolateAllDrawingsForStation(
                 'master-1'
             );
 
@@ -20646,7 +20809,7 @@ describe('OutlineEditor exact selected layers', () => {
                             'layers',
                             'component-layer'
                         ],
-                        applyMode: 'layer-snapshot',
+                        applyMode: 'drawing-snapshot',
                         workerReplayTargets: [
                             {
                                 glyphName: 'componentGlyph',
@@ -20656,7 +20819,7 @@ describe('OutlineEditor exact selected layers', () => {
                     }),
                     expect.objectContaining({
                         path: ['glyphs', 'A', 'layers', 'master-layer'],
-                        applyMode: 'layer-snapshot',
+                        applyMode: 'drawing-snapshot',
                         workerReplayTargets: [
                             {
                                 glyphName: 'A',
@@ -20665,7 +20828,7 @@ describe('OutlineEditor exact selected layers', () => {
                         ]
                     })
                 ]),
-                'Reinterpolate layer batch sync'
+                'Reinterpolate drawing batch sync'
             );
         } finally {
             window.currentFontModel = originalFontModel;
@@ -20755,7 +20918,7 @@ describe('OutlineEditor exact selected layers', () => {
         currentFontSpy.mockReturnValue(currentFont);
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = null;
+        canvas.outlineEditor.selectedDrawingId = null;
         canvas.axesManager.variationSettings = { wght: 800 };
 
         await canvas.outlineEditor.interpolateCurrentGlyph(true);
@@ -20784,12 +20947,15 @@ describe('OutlineEditor exact selected layers', () => {
                 anchors: [],
                 guides: []
             });
-        const applySpy = jest.spyOn(canvas.outlineEditor, 'applyRustLayerData');
+        const applySpy = jest.spyOn(
+            canvas.outlineEditor,
+            'applyRustDrawingData'
+        );
 
         currentFontSpy.mockReturnValue(currentFont);
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = null;
+        canvas.outlineEditor.selectedDrawingId = null;
         canvas.outlineEditor.isInterpolating = true;
         canvas.axesManager.variationSettings = { wght: 500 };
 
@@ -20859,12 +21025,15 @@ describe('OutlineEditor exact selected layers', () => {
                 anchors: [],
                 guides: []
             });
-        const applySpy = jest.spyOn(canvas.outlineEditor, 'applyRustLayerData');
+        const applySpy = jest.spyOn(
+            canvas.outlineEditor,
+            'applyRustDrawingData'
+        );
 
         currentFontSpy.mockReturnValue(currentFont);
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = null;
+        canvas.outlineEditor.selectedDrawingId = null;
         canvas.outlineEditor.isInterpolating = true;
         canvas.axesManager.variationSettings = { wght: 500 };
 
@@ -20892,7 +21061,7 @@ describe('OutlineEditor exact selected layers', () => {
         applySpy.mockRestore();
     });
 
-    test('selectLayer clears interpolation state from previous slider drag', async () => {
+    test('selectDrawing clears interpolation state from previous slider drag', async () => {
         const font = makeComponentFont();
         const currentFont = {
             fontModel: font,
@@ -20903,9 +21072,9 @@ describe('OutlineEditor exact selected layers', () => {
 
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = null;
+        canvas.outlineEditor.selectedDrawingId = null;
         canvas.outlineEditor.isInterpolating = true;
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             width: 520,
             shapes: [],
             anchors: [],
@@ -20915,17 +21084,17 @@ describe('OutlineEditor exact selected layers', () => {
         canvas.axesManager.variationSettings = { wght: 30 };
 
         // User clicks an exact layer in the list
-        const masterLayer = currentFont.fontModel
+        const stationDrawing = currentFont.fontModel
             .findGlyph('A')
-            .findLayerById('master-layer');
-        await canvas.outlineEditor.selectLayer(masterLayer);
+            .findDrawingById('master-layer');
+        await canvas.outlineEditor.selectDrawing(stationDrawing);
 
-        // After selectLayer, interpolation state must be fully cleared
-        expect(canvas.outlineEditor.selectedLayerId).toBe('master-layer');
+        // After selectDrawing, interpolation state must be fully cleared
+        expect(canvas.outlineEditor.selectedDrawingId).toBe('master-layer');
         expect(canvas.outlineEditor.isInterpolating).toBe(false);
     });
 
-    test('selectLayer clears interpolation state after play-loop animation', async () => {
+    test('selectDrawing clears interpolation state after play-loop animation', async () => {
         const font = makeComponentFont();
         const currentFont = {
             fontModel: font,
@@ -20936,9 +21105,9 @@ describe('OutlineEditor exact selected layers', () => {
 
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = null;
+        canvas.outlineEditor.selectedDrawingId = null;
         canvas.outlineEditor.isInterpolating = true;
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             width: 520,
             shapes: [],
             anchors: [],
@@ -20950,17 +21119,17 @@ describe('OutlineEditor exact selected layers', () => {
         canvas.axesManager.variationSettings = { wght: 75 };
 
         // User clicks an exact layer in the list
-        const masterLayer = currentFont.fontModel
+        const stationDrawing = currentFont.fontModel
             .findGlyph('A')
-            .findLayerById('master-layer');
-        await canvas.outlineEditor.selectLayer(masterLayer);
+            .findDrawingById('master-layer');
+        await canvas.outlineEditor.selectDrawing(stationDrawing);
 
-        // After selectLayer, interpolation state must be fully cleared
-        expect(canvas.outlineEditor.selectedLayerId).toBe('master-layer');
+        // After selectDrawing, interpolation state must be fully cleared
+        expect(canvas.outlineEditor.selectedDrawingId).toBe('master-layer');
         expect(canvas.outlineEditor.isInterpolating).toBe(false);
     });
 
-    test('createInterpolatedLayer routes structural layer additions through patch sync funnel', async () => {
+    test('createInterpolatedDrawing routes structural layer additions through patch sync funnel', async () => {
         const font = makeComponentFont();
         const currentFont = {
             fontModel: font,
@@ -21001,42 +21170,41 @@ describe('OutlineEditor exact selected layers', () => {
         const dirtySpy = jest
             .spyOn(fontManager, 'updateDirtyIndicator')
             .mockResolvedValue();
-        const selectLayerSpy = jest
-            .spyOn(canvas.outlineEditor, 'selectLayer')
+        const selectDrawingSpy = jest
+            .spyOn(canvas.outlineEditor, 'selectDrawing')
             .mockResolvedValue();
 
         currentFontSpy.mockReturnValue(currentFont);
         window.patchSyncEngine = patchSyncEngine;
 
         try {
-            const newLayer = await canvas.outlineEditor.createInterpolatedLayer(
-                {
+            const newDrawing =
+                await canvas.outlineEditor.createInterpolatedDrawing({
                     glyphName: 'A',
                     userspaceLocation: { wght: 0 },
-                    masterId: 'master-1',
+                    stationId: 'master-1',
                     designLocation: { wght: 0 },
-                    isMasterBound: true,
+                    isStationBound: true,
                     extrapolate: true
-                }
-            );
+                });
 
             expect(currentFont.syncJsonFromModel).not.toHaveBeenCalled();
             expect(patchSyncEngine.syncGlyphFromJson).toHaveBeenCalledWith(
                 'A',
-                'Create interpolated layer sync',
+                'Create interpolated drawing sync',
                 undefined,
                 undefined,
-                newLayer.id,
+                newDrawing.id,
                 undefined,
                 undefined,
-                'layer-create',
-                'layer-create',
+                'drawing-create',
+                'drawing-create',
                 null
             );
             expect(forceFullWorkerCacheUpdateSpy).not.toHaveBeenCalled();
         } finally {
             window.patchSyncEngine = originalPatchSyncEngine;
-            selectLayerSpy.mockRestore();
+            selectDrawingSpy.mockRestore();
             dirtySpy.mockRestore();
             forceFullWorkerCacheUpdateSpy.mockRestore();
             interpolateSpy.mockReset();
@@ -21076,44 +21244,45 @@ describe('OutlineEditor exact layerData parity', () => {
             fustatFont.findGlyph('adieresis');
         expect(glyph).toBeTruthy();
 
-        const regularMaster =
-            fustatFont.masters.find((master) => {
-                const names = master.name || {};
+        const regularStation =
+            fustatFont.stations.find((station) => {
+                const names = station.name || {};
                 return Object.values(names)
                     .join(' ')
                     .toLowerCase()
                     .includes('regular');
-            }) || fustatFont.masters[0];
-        expect(regularMaster).toBeTruthy();
+            }) || fustatFont.stations[0];
+        expect(regularStation).toBeTruthy();
 
-        const regularLayer =
-            glyph.findLayerByMasterId(regularMaster.id) || glyph.layers[0];
-        expect(regularLayer).toBeTruthy();
+        const regularDrawing =
+            glyph.findDrawingByStationId(regularStation.id) ||
+            glyph.drawings[0];
+        expect(regularDrawing).toBeTruthy();
 
-        canvas.outlineEditor.selectedLayerId = regularLayer.id;
-        canvas.outlineEditor.glyphStack = `Adieresis@${regularLayer.id}`;
+        canvas.outlineEditor.selectedDrawingId = regularDrawing.id;
+        canvas.outlineEditor.glyphStack = `Adieresis@${regularDrawing.id}`;
 
-        const exactLayerData =
-            canvas.outlineEditor.getExactLayerDataForSelection(
+        const exactDrawingData =
+            canvas.outlineEditor.getExactDrawingDataForSelection(
                 glyph.name,
-                regularLayer.id
+                regularDrawing.id
             );
         const userspaceLocation =
-            canvas.outlineEditor.getUserspaceLocationForLayer(
-                regularLayer.id,
+            canvas.outlineEditor.getUserspaceLocationForDrawing(
+                regularDrawing.id,
                 glyph.name
             );
 
         store_font(JSON.stringify(fustatFontData));
-        const rustLayerData = JSON.parse(
+        const rustDrawingData = JSON.parse(
             interpolate_glyph(
                 glyph.name,
                 JSON.stringify(userspaceLocation || {})
             )
         );
 
-        expect(canonicalizeLayerDataForComparison(exactLayerData)).toEqual(
-            canonicalizeLayerDataForComparison(rustLayerData)
+        expect(canonicalizeDrawingDataForComparison(exactDrawingData)).toEqual(
+            canonicalizeDrawingDataForComparison(rustDrawingData)
         );
     });
 
@@ -21121,20 +21290,20 @@ describe('OutlineEditor exact layerData parity', () => {
         const glyph = fustatFont.findGlyph('Adieresis');
         expect(glyph).toBeTruthy();
 
-        const regularLayer =
-            glyph.findLayerByMasterId(glyph.layers[0].master.master) ||
-            glyph.layers[0];
+        const regularDrawing =
+            glyph.findDrawingByStationId(glyph.drawings[0].station.master) ||
+            glyph.drawings[0];
 
-        canvas.outlineEditor.selectedLayerId = regularLayer.id;
-        canvas.outlineEditor.glyphStack = `Adieresis@${regularLayer.id}`;
+        canvas.outlineEditor.selectedDrawingId = regularDrawing.id;
+        canvas.outlineEditor.glyphStack = `Adieresis@${regularDrawing.id}`;
 
-        const exactLayerData =
-            canvas.outlineEditor.getExactLayerDataForSelection(
+        const exactDrawingData =
+            canvas.outlineEditor.getExactDrawingDataForSelection(
                 glyph.name,
-                regularLayer.id
+                regularDrawing.id
             );
 
-        const accentComponent = exactLayerData.shapes.find(
+        const accentComponent = exactDrawingData.shapes.find(
             (shape) => shape.reference === 'dieresiscomb.case'
         );
         expect(accentComponent).toBeTruthy();
@@ -21477,7 +21646,7 @@ describe('OutlineEditor per-layer selection memory', () => {
                 glyphName: 'A',
                 layers: font
                     .findGlyph('A')
-                    .layers.map((layer) => layer.toJSON())
+                    .drawings.map((drawing) => drawing.toJSON())
             });
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
         canvas.outlineEditor.active = false;
@@ -21491,37 +21660,39 @@ describe('OutlineEditor per-layer selection memory', () => {
     });
 
     test('stores layer linkage per glyph and defaults unknown layers to linked', () => {
-        canvas.outlineEditor.setLayerLinked('layer-1', false, 'A');
-        canvas.outlineEditor.setLayerLinked('layer-2', false, 'B');
+        canvas.outlineEditor.setDrawingLinked('layer-1', false, 'A');
+        canvas.outlineEditor.setDrawingLinked('layer-2', false, 'B');
 
-        expect(canvas.outlineEditor.isLayerLinked('layer-1', 'A')).toBe(false);
-        expect(canvas.outlineEditor.isLayerLinked('layer-2', 'A')).toBe(true);
-        expect(canvas.outlineEditor.getUnlinkedLayerIdsForGlyph('A')).toEqual(
+        expect(canvas.outlineEditor.isDrawingLinked('layer-1', 'A')).toBe(
+            false
+        );
+        expect(canvas.outlineEditor.isDrawingLinked('layer-2', 'A')).toBe(true);
+        expect(canvas.outlineEditor.getUnlinkedDrawingIdsForGlyph('A')).toEqual(
             new Set(['layer-1'])
         );
-        expect(canvas.outlineEditor.getUnlinkedLayerIdsForGlyph('B')).toEqual(
+        expect(canvas.outlineEditor.getUnlinkedDrawingIdsForGlyph('B')).toEqual(
             new Set(['layer-2'])
         );
 
-        canvas.outlineEditor.setLayerLinked('layer-1', true, 'A');
+        canvas.outlineEditor.setDrawingLinked('layer-1', true, 'A');
 
-        expect(canvas.outlineEditor.getUnlinkedLayerIdsForGlyph('A')).toEqual(
+        expect(canvas.outlineEditor.getUnlinkedDrawingIdsForGlyph('A')).toEqual(
             new Set()
         );
-        expect(canvas.outlineEditor.isLayerLinked('layer-3', 'A')).toBe(true);
+        expect(canvas.outlineEditor.isDrawingLinked('layer-3', 'A')).toBe(true);
     });
 
     test('copies same-index object selection to a compatible layer', async () => {
-        const [masterLayer, braceLayer] = font.findGlyph('A').layers;
+        const [stationDrawing, freeDrawing] = font.findGlyph('A').drawings;
 
-        await canvas.outlineEditor.selectLayer(masterLayer);
+        await canvas.outlineEditor.selectDrawing(stationDrawing);
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 1 }
         ];
         canvas.outlineEditor.selectedAnchors = [1];
         canvas.outlineEditor.selectedComponents = [1];
 
-        await canvas.outlineEditor.selectLayer(braceLayer);
+        await canvas.outlineEditor.selectDrawing(freeDrawing);
 
         expect(canvas.outlineEditor.selectedPoints).toEqual([
             { contourIndex: 0, nodeIndex: 1 }
@@ -21534,10 +21705,10 @@ describe('OutlineEditor per-layer selection memory', () => {
     test('copies selection to a newly selected compatible layer through the UI layer-switch path', async () => {
         const compatibleFont = makeSelectionFont({ compatibleOnly: true });
         const glyph = compatibleFont.findGlyph('A');
-        const masterLayer = glyph.findLayerById('master-layer');
-        const targetLayer = glyph.findLayerById('ui-compatible-layer');
-        const cloneLayerData = (layer) =>
-            JSON.parse(JSON.stringify(layer.toJSON()));
+        const stationDrawing = glyph.findDrawingById('master-layer');
+        const targetDrawing = glyph.findDrawingById('ui-compatible-layer');
+        const cloneDrawingData = (drawing) =>
+            JSON.parse(JSON.stringify(drawing.toJSON()));
 
         currentFontSpy.mockRestore();
         fetchGlyphDataSpy.mockRestore();
@@ -21552,39 +21723,39 @@ describe('OutlineEditor per-layer selection memory', () => {
                 glyphName: 'A',
                 layers: font
                     .findGlyph('A')
-                    .layers.map((layer) => layer.toJSON())
+                    .drawings.map((drawing) => drawing.toJSON())
             });
 
         expect(glyph.isCompatible).toBe(true);
 
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.layerData = cloneLayerData(masterLayer);
+        canvas.outlineEditor.drawingData = cloneDrawingData(stationDrawing);
         canvas.outlineEditor.performHitDetection = jest.fn();
-        canvas.outlineEditor.fetchLayerData = jest.fn(async () => {
-            const currentLayer = font
+        canvas.outlineEditor.fetchDrawingData = jest.fn(async () => {
+            const currentDrawing = font
                 .findGlyph('A')
-                .findLayerById(canvas.outlineEditor.selectedLayerId);
-            canvas.outlineEditor.layerData = cloneLayerData(currentLayer);
+                .findDrawingById(canvas.outlineEditor.selectedDrawingId);
+            canvas.outlineEditor.drawingData = cloneDrawingData(currentDrawing);
         });
 
-        canvas.outlineEditor.selectedLayerId = masterLayer.id;
-        canvas.outlineEditor.glyphStack = `A@${masterLayer.id}`;
+        canvas.outlineEditor.selectedDrawingId = stationDrawing.id;
+        canvas.outlineEditor.glyphStack = `A@${stationDrawing.id}`;
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 1 }
         ];
         canvas.outlineEditor.selectedAnchors = [1];
         canvas.outlineEditor.selectedComponents = [1];
 
-        await canvas.outlineEditor.selectLayer({
-            id: targetLayer.id,
-            name: targetLayer.name,
-            master: targetLayer.master,
-            location: targetLayer.location,
-            shapes: targetLayer.shapes || [],
-            width: targetLayer.width,
+        await canvas.outlineEditor.selectDrawing({
+            id: targetDrawing.id,
+            name: targetDrawing.name,
+            master: targetDrawing.station,
+            location: targetDrawing.location,
+            shapes: targetDrawing.shapes || [],
+            width: targetDrawing.width,
             isInterpolated: false
         });
-        await canvas.outlineEditor.restoreTargetLayerDataAfterAnimating();
+        await canvas.outlineEditor.restoreTargetDrawingDataAfterAnimating();
 
         expect(canvas.outlineEditor.selectedPoints).toEqual([
             { contourIndex: 0, nodeIndex: 1 }
@@ -21592,8 +21763,8 @@ describe('OutlineEditor per-layer selection memory', () => {
         expect(canvas.outlineEditor.selectedAnchors).toEqual([0]);
         expect(canvas.outlineEditor.selectedComponents).toEqual([1]);
 
-        await canvas.outlineEditor.selectLayer(masterLayer);
-        await canvas.outlineEditor.restoreTargetLayerDataAfterAnimating();
+        await canvas.outlineEditor.selectDrawing(stationDrawing);
+        await canvas.outlineEditor.restoreTargetDrawingDataAfterAnimating();
 
         expect(canvas.outlineEditor.selectedPoints).toEqual([
             { contourIndex: 0, nodeIndex: 1 }
@@ -21603,16 +21774,17 @@ describe('OutlineEditor per-layer selection memory', () => {
     });
 
     test('restores the target layer stored selection when the previous layer is incompatible', async () => {
-        const [masterLayer, , alternateLayer] = font.findGlyph('A').layers;
+        const [stationDrawing, , alternateDrawing] =
+            font.findGlyph('A').drawings;
 
-        await canvas.outlineEditor.selectLayer(alternateLayer);
+        await canvas.outlineEditor.selectDrawing(alternateDrawing);
         canvas.outlineEditor.selectedAnchors = [0];
         canvas.outlineEditor.selectedGuideHandle = {
-            scope: 'layer',
+            scope: 'drawing',
             index: 0
         };
 
-        await canvas.outlineEditor.selectLayer(masterLayer);
+        await canvas.outlineEditor.selectDrawing(stationDrawing);
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 2 }
         ];
@@ -21620,42 +21792,42 @@ describe('OutlineEditor per-layer selection memory', () => {
         canvas.outlineEditor.selectedAnchors = [];
         canvas.outlineEditor.selectedGuideHandle = null;
 
-        await canvas.outlineEditor.selectLayer(alternateLayer);
+        await canvas.outlineEditor.selectDrawing(alternateDrawing);
 
         expect(canvas.outlineEditor.selectedPoints).toEqual([]);
         expect(canvas.outlineEditor.selectedComponents).toEqual([]);
         expect(canvas.outlineEditor.selectedAnchors).toEqual([0]);
         expect(canvas.outlineEditor.selectedGuideHandle).toEqual({
-            scope: 'layer',
+            scope: 'drawing',
             index: 0
         });
     });
 
     test('preserves selection across animated layer switches in active edit mode', async () => {
-        const [masterLayer, braceLayer] = font.findGlyph('A').layers;
-        const cloneLayerData = (layer) =>
-            JSON.parse(JSON.stringify(layer.toJSON()));
+        const [stationDrawing, freeDrawing] = font.findGlyph('A').drawings;
+        const cloneDrawingData = (drawing) =>
+            JSON.parse(JSON.stringify(drawing.toJSON()));
 
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.layerData = cloneLayerData(masterLayer);
+        canvas.outlineEditor.drawingData = cloneDrawingData(stationDrawing);
         canvas.outlineEditor.performHitDetection = jest.fn();
-        canvas.outlineEditor.fetchLayerData = jest.fn(async () => {
-            const currentLayer = font
+        canvas.outlineEditor.fetchDrawingData = jest.fn(async () => {
+            const currentDrawing = font
                 .findGlyph('A')
-                .findLayerById(canvas.outlineEditor.selectedLayerId);
-            canvas.outlineEditor.layerData = cloneLayerData(currentLayer);
+                .findDrawingById(canvas.outlineEditor.selectedDrawingId);
+            canvas.outlineEditor.drawingData = cloneDrawingData(currentDrawing);
         });
 
-        canvas.outlineEditor.selectedLayerId = masterLayer.id;
-        canvas.outlineEditor.glyphStack = `A@${masterLayer.id}`;
+        canvas.outlineEditor.selectedDrawingId = stationDrawing.id;
+        canvas.outlineEditor.glyphStack = `A@${stationDrawing.id}`;
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 1 }
         ];
         canvas.outlineEditor.selectedAnchors = [1];
         canvas.outlineEditor.selectedComponents = [1];
 
-        await canvas.outlineEditor.selectLayer(braceLayer);
-        await canvas.outlineEditor.restoreTargetLayerDataAfterAnimating();
+        await canvas.outlineEditor.selectDrawing(freeDrawing);
+        await canvas.outlineEditor.restoreTargetDrawingDataAfterAnimating();
 
         expect(canvas.outlineEditor.selectedPoints).toEqual([
             { contourIndex: 0, nodeIndex: 1 }
@@ -21663,8 +21835,8 @@ describe('OutlineEditor per-layer selection memory', () => {
         expect(canvas.outlineEditor.selectedAnchors).toEqual([1]);
         expect(canvas.outlineEditor.selectedComponents).toEqual([1]);
 
-        await canvas.outlineEditor.selectLayer(masterLayer);
-        await canvas.outlineEditor.restoreTargetLayerDataAfterAnimating();
+        await canvas.outlineEditor.selectDrawing(stationDrawing);
+        await canvas.outlineEditor.restoreTargetDrawingDataAfterAnimating();
 
         expect(canvas.outlineEditor.selectedPoints).toEqual([
             { contourIndex: 0, nodeIndex: 1 }
@@ -21673,92 +21845,94 @@ describe('OutlineEditor per-layer selection memory', () => {
         expect(canvas.outlineEditor.selectedComponents).toEqual([1]);
     });
 
-    test('restoreTargetLayerDataAfterAnimating disables the create-layer button at the clicked exact layer location', async () => {
+    test('restoreTargetDrawingDataAfterAnimating disables the create-layer button at the clicked exact layer location', async () => {
         const targetContainer = document.createElement('div');
         document.body.appendChild(targetContainer);
-        const [masterLayer, braceLayer] = font.findGlyph('A').layers;
-        const cloneLayerData = (layer) =>
-            JSON.parse(JSON.stringify(layer.toJSON()));
+        const [stationDrawing, freeDrawing] = font.findGlyph('A').drawings;
+        const cloneDrawingData = (drawing) =>
+            JSON.parse(JSON.stringify(drawing.toJSON()));
         const setupAnimationSpy = jest
             .spyOn(canvas.axesManager, '_setupAnimation')
             .mockImplementation((newSettings) => {
                 canvas.axesManager.variationSettings = { wght: 30 };
-                canvas.outlineEditor.updateLayerSelection();
+                canvas.outlineEditor.updateDrawingSelection();
                 canvas.axesManager.variationSettings = { ...newSettings };
             });
-        const getSortedLayersSpy = jest
-            .spyOn(canvas, 'getSortedLayers')
-            .mockReturnValue(font.findGlyph('A').layers);
+        const getSortedDrawingsSpy = jest
+            .spyOn(canvas, 'getSortedDrawings')
+            .mockReturnValue(font.findGlyph('A').drawings);
 
         canvas.propertiesSection = targetContainer;
         canvas.outlineEditor.active = true;
         canvas.textRunEditor.selectedGlyphIndex = 0;
         canvas.textRunEditor.shapedGlyphs = [{ ax: 500, dx: 0, dy: 0, g: 0 }];
-        canvas.outlineEditor.layerData = cloneLayerData(masterLayer);
+        canvas.outlineEditor.drawingData = cloneDrawingData(stationDrawing);
         canvas.outlineEditor.performHitDetection = jest.fn();
-        canvas.outlineEditor.fetchLayerData = jest.fn(async () => {
-            const currentLayer = font
+        canvas.outlineEditor.fetchDrawingData = jest.fn(async () => {
+            const currentDrawing = font
                 .findGlyph('A')
-                .findLayerById(canvas.outlineEditor.selectedLayerId);
-            canvas.outlineEditor.layerData = cloneLayerData(currentLayer);
+                .findDrawingById(canvas.outlineEditor.selectedDrawingId);
+            canvas.outlineEditor.drawingData = cloneDrawingData(currentDrawing);
         });
-        canvas.outlineEditor.selectedLayerId = masterLayer.id;
-        canvas.outlineEditor.glyphStack = `A@${masterLayer.id}`;
+        canvas.outlineEditor.selectedDrawingId = stationDrawing.id;
+        canvas.outlineEditor.glyphStack = `A@${stationDrawing.id}`;
         canvas.axesManager.variationSettings = { wght: 0 };
 
-        await canvas.displayMastersList(targetContainer, false);
+        await canvas.displayStationsList(targetContainer, false);
 
         const addButton = targetContainer.querySelector(
-            '.editor-layer-add-button'
+            '.editor-drawing-add-button'
         );
 
         expect(addButton).toBeTruthy();
         expect(addButton.disabled).toBe(true);
 
-        await canvas.outlineEditor.selectLayer(braceLayer);
+        await canvas.outlineEditor.selectDrawing(freeDrawing);
 
         expect(addButton.disabled).toBe(false);
 
         canvas.axesManager.variationSettings = { wght: 75 };
 
-        await canvas.outlineEditor.restoreTargetLayerDataAfterAnimating();
+        await canvas.outlineEditor.restoreTargetDrawingDataAfterAnimating();
 
         const refreshedAddButton = targetContainer.querySelector(
-            '.editor-layer-add-button'
+            '.editor-drawing-add-button'
         );
 
-        expect(canvas.outlineEditor.selectedLayerId).toBe(braceLayer.id);
+        expect(canvas.outlineEditor.selectedDrawingId).toBe(freeDrawing.id);
         expect(refreshedAddButton.disabled).toBe(true);
 
-        getSortedLayersSpy.mockRestore();
+        getSortedDrawingsSpy.mockRestore();
         setupAnimationSpy.mockRestore();
     });
 
     test('does not transfer selection across glyph switches after glyph stack reset and restores glyph-local layer state', async () => {
         let selectedGlyphName = 'A';
-        const cloneLayerData = (layer) =>
-            JSON.parse(JSON.stringify(layer.toJSON()));
+        const cloneDrawingData = (drawing) =>
+            JSON.parse(JSON.stringify(drawing.toJSON()));
         const glyphA = font.findGlyph('A');
         const glyphN = font.findGlyph('n');
-        const masterLayerA = glyphA.findLayerById('master-layer');
-        const masterLayerN = glyphN.findLayerById('master-layer');
+        const stationDrawingA = glyphA.findDrawingById('master-layer');
+        const stationDrawingN = glyphN.findDrawingById('master-layer');
 
         canvas.getCurrentGlyphName = jest.fn(() => selectedGlyphName);
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.performHitDetection = jest.fn();
-        canvas.outlineEditor.fetchLayerData = jest.fn(async () => {
+        canvas.outlineEditor.fetchDrawingData = jest.fn(async () => {
             const glyph = font.findGlyph(selectedGlyphName);
-            const currentLayer = glyph.findLayerById(
-                canvas.outlineEditor.selectedLayerId
+            const currentDrawing = glyph.findDrawingById(
+                canvas.outlineEditor.selectedDrawingId
             );
-            canvas.outlineEditor.assignLayerData(cloneLayerData(currentLayer));
+            canvas.outlineEditor.assignDrawingData(
+                cloneDrawingData(currentDrawing)
+            );
             canvas.outlineEditor.currentGlyphName = selectedGlyphName;
         });
 
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = masterLayerA.id;
+        canvas.outlineEditor.selectedDrawingId = stationDrawingA.id;
         canvas.outlineEditor.glyphStack = '';
-        canvas.outlineEditor.layerData = cloneLayerData(masterLayerA);
+        canvas.outlineEditor.drawingData = cloneDrawingData(stationDrawingA);
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 1 },
             { contourIndex: 0, nodeIndex: 2 }
@@ -21767,18 +21941,18 @@ describe('OutlineEditor per-layer selection memory', () => {
         canvas.outlineEditor.selectedComponents = [1];
 
         selectedGlyphName = 'n';
-        await canvas.outlineEditor.autoSelectMatchingLayer();
+        await canvas.outlineEditor.autoSelectMatchingDrawing();
 
-        expect(canvas.outlineEditor.selectedLayerId).toBe(masterLayerN.id);
+        expect(canvas.outlineEditor.selectedDrawingId).toBe(stationDrawingN.id);
         expect(canvas.outlineEditor.selectedPoints).toEqual([]);
         expect(canvas.outlineEditor.selectedAnchors).toEqual([]);
         expect(canvas.outlineEditor.selectedComponents).toEqual([]);
 
         canvas.outlineEditor.glyphStack = '';
         selectedGlyphName = 'A';
-        await canvas.outlineEditor.autoSelectMatchingLayer();
+        await canvas.outlineEditor.autoSelectMatchingDrawing();
 
-        expect(canvas.outlineEditor.selectedLayerId).toBe(masterLayerA.id);
+        expect(canvas.outlineEditor.selectedDrawingId).toBe(stationDrawingA.id);
         expect(canvas.outlineEditor.selectedPoints).toEqual([
             { contourIndex: 0, nodeIndex: 1 },
             { contourIndex: 0, nodeIndex: 2 }
@@ -21790,9 +21964,11 @@ describe('OutlineEditor per-layer selection memory', () => {
     test('glyphselected snapshots the previous glyph layer selection and clears live selection before UI refresh', async () => {
         const glyphSelectedHandler =
             canvas.textRunEditor.callbacks.glyphselected[0];
-        const cloneLayerData = (layer) =>
-            JSON.parse(JSON.stringify(layer.toJSON()));
-        const masterLayerA = font.findGlyph('A').findLayerById('master-layer');
+        const cloneDrawingData = (drawing) =>
+            JSON.parse(JSON.stringify(drawing.toJSON()));
+        const stationDrawingA = font
+            .findGlyph('A')
+            .findDrawingById('master-layer');
 
         canvas.textRunEditor.shapedGlyphs = [
             { ax: 500, dx: 0, dy: 0, g: 0 },
@@ -21802,8 +21978,8 @@ describe('OutlineEditor per-layer selection memory', () => {
         canvas.getCurrentGlyphName = jest.fn(() => 'n');
         canvas.doUIUpdateAsync = jest.fn(async () => {
             expect(
-                canvas.outlineEditor.getStoredSelectionStateForLayer(
-                    masterLayerA
+                canvas.outlineEditor.getStoredSelectionStateForDrawing(
+                    stationDrawingA
                 )
             ).toEqual({
                 points: [
@@ -21822,9 +21998,9 @@ describe('OutlineEditor per-layer selection memory', () => {
 
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = masterLayerA.id;
-        canvas.outlineEditor.glyphStack = `A@${masterLayerA.id}`;
-        canvas.outlineEditor.layerData = cloneLayerData(masterLayerA);
+        canvas.outlineEditor.selectedDrawingId = stationDrawingA.id;
+        canvas.outlineEditor.glyphStack = `A@${stationDrawingA.id}`;
+        canvas.outlineEditor.drawingData = cloneDrawingData(stationDrawingA);
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 1 },
             { contourIndex: 0, nodeIndex: 2 }
@@ -21841,10 +22017,14 @@ describe('OutlineEditor per-layer selection memory', () => {
     test('glyphselected restores the original glyph selection after switching to another glyph and back', async () => {
         const glyphSelectedHandler =
             canvas.textRunEditor.callbacks.glyphselected[0];
-        const cloneLayerData = (layer) =>
-            JSON.parse(JSON.stringify(layer.toJSON()));
-        const masterLayerA = font.findGlyph('A').findLayerById('master-layer');
-        const masterLayerN = font.findGlyph('n').findLayerById('master-layer');
+        const cloneDrawingData = (drawing) =>
+            JSON.parse(JSON.stringify(drawing.toJSON()));
+        const stationDrawingA = font
+            .findGlyph('A')
+            .findDrawingById('master-layer');
+        const stationDrawingN = font
+            .findGlyph('n')
+            .findDrawingById('master-layer');
         let selectedGlyphName = 'A';
 
         canvas.textRunEditor.shapedGlyphs = [
@@ -21854,23 +22034,25 @@ describe('OutlineEditor per-layer selection memory', () => {
         canvas.getCurrentGlyphName = jest.fn(() => selectedGlyphName);
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.performHitDetection = jest.fn();
-        canvas.outlineEditor.fetchLayerData = jest.fn(async () => {
+        canvas.outlineEditor.fetchDrawingData = jest.fn(async () => {
             const glyph = font.findGlyph(selectedGlyphName);
-            const currentLayer = glyph.findLayerById(
-                canvas.outlineEditor.selectedLayerId
+            const currentDrawing = glyph.findDrawingById(
+                canvas.outlineEditor.selectedDrawingId
             );
-            canvas.outlineEditor.assignLayerData(cloneLayerData(currentLayer));
+            canvas.outlineEditor.assignDrawingData(
+                cloneDrawingData(currentDrawing)
+            );
             canvas.outlineEditor.currentGlyphName = selectedGlyphName;
         });
         canvas.doUIUpdateAsync = jest.fn(async () => {
-            await canvas.outlineEditor.autoSelectMatchingLayer();
+            await canvas.outlineEditor.autoSelectMatchingDrawing();
         });
 
         canvas.textRunEditor.selectedGlyphIndex = 0;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = masterLayerA.id;
-        canvas.outlineEditor.glyphStack = `A@${masterLayerA.id}`;
-        canvas.outlineEditor.layerData = cloneLayerData(masterLayerA);
+        canvas.outlineEditor.selectedDrawingId = stationDrawingA.id;
+        canvas.outlineEditor.glyphStack = `A@${stationDrawingA.id}`;
+        canvas.outlineEditor.drawingData = cloneDrawingData(stationDrawingA);
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 1 },
             { contourIndex: 0, nodeIndex: 2 }
@@ -21882,7 +22064,7 @@ describe('OutlineEditor per-layer selection memory', () => {
         canvas.textRunEditor.selectedGlyphIndex = 1;
         await glyphSelectedHandler(1, 0, true);
 
-        expect(canvas.outlineEditor.selectedLayerId).toBe(masterLayerN.id);
+        expect(canvas.outlineEditor.selectedDrawingId).toBe(stationDrawingN.id);
         expect(canvas.outlineEditor.selectedPoints).toEqual([]);
         expect(canvas.outlineEditor.selectedAnchors).toEqual([]);
         expect(canvas.outlineEditor.selectedComponents).toEqual([]);
@@ -21891,7 +22073,7 @@ describe('OutlineEditor per-layer selection memory', () => {
         canvas.textRunEditor.selectedGlyphIndex = 0;
         await glyphSelectedHandler(0, 1, true);
 
-        expect(canvas.outlineEditor.selectedLayerId).toBe(masterLayerA.id);
+        expect(canvas.outlineEditor.selectedDrawingId).toBe(stationDrawingA.id);
         expect(canvas.outlineEditor.selectedPoints).toEqual([
             { contourIndex: 0, nodeIndex: 1 },
             { contourIndex: 0, nodeIndex: 2 }
@@ -21903,18 +22085,20 @@ describe('OutlineEditor per-layer selection memory', () => {
     test("entering a nested component restores that glyph's stored selection from earlier root editing", async () => {
         const glyphSelectedHandler =
             canvas.textRunEditor.callbacks.glyphselected[0];
-        const cloneLayerData = (layer) =>
-            JSON.parse(JSON.stringify(layer.toJSON()));
-        const masterLayerA = font.findGlyph('A').findLayerById('master-layer');
-        const masterLayerAdieresis = font
+        const cloneDrawingData = (drawing) =>
+            JSON.parse(JSON.stringify(drawing.toJSON()));
+        const stationDrawingA = font
+            .findGlyph('A')
+            .findDrawingById('master-layer');
+        const stationDrawingAdieresis = font
             .findGlyph('adieresis')
-            .findLayerById('master-layer');
+            .findDrawingById('master-layer');
         let selectedGlyphName = 'A';
-        const makeNestedComponentLayerData = () => ({
-            id: masterLayerA.id,
-            width: masterLayerA.width,
-            master: masterLayerA.master,
-            shapes: JSON.parse(JSON.stringify(masterLayerA.shapes)),
+        const makeNestedComponentDrawingData = () => ({
+            id: stationDrawingA.id,
+            width: stationDrawingA.width,
+            master: stationDrawingA.station,
+            shapes: JSON.parse(JSON.stringify(stationDrawingA.shapes)),
             anchors: [
                 { name: 'bottom', x: 250, y: 0 },
                 { name: 'top', x: 250, y: 700 }
@@ -21929,35 +22113,35 @@ describe('OutlineEditor per-layer selection memory', () => {
         canvas.getCurrentGlyphName = jest.fn(() => selectedGlyphName);
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.performHitDetection = jest.fn();
-        canvas.outlineEditor.fetchLayerData = jest.fn(async () => {
+        canvas.outlineEditor.fetchDrawingData = jest.fn(async () => {
             const glyph = font.findGlyph(selectedGlyphName);
-            const currentLayer = glyph.findLayerById(
-                canvas.outlineEditor.selectedLayerId
+            const currentDrawing = glyph.findDrawingById(
+                canvas.outlineEditor.selectedDrawingId
             );
-            const nextLayerData = cloneLayerData(currentLayer);
+            const nextDrawingData = cloneDrawingData(currentDrawing);
             if (selectedGlyphName === 'adieresis') {
-                nextLayerData.shapes[0].layerData =
-                    makeNestedComponentLayerData();
+                nextDrawingData.shapes[0].layerData =
+                    makeNestedComponentDrawingData();
             }
-            canvas.outlineEditor.assignLayerData(nextLayerData);
+            canvas.outlineEditor.assignDrawingData(nextDrawingData);
             canvas.outlineEditor.currentGlyphName =
                 canvas.outlineEditor.parseGlyphStack().at(-1)?.glyphName ||
                 selectedGlyphName;
         });
         canvas.doUIUpdateAsync = jest.fn(async () => {
-            await canvas.outlineEditor.autoSelectMatchingLayer();
+            await canvas.outlineEditor.autoSelectMatchingDrawing();
         });
         canvas.updateComponentBreadcrumb = jest.fn();
         canvas.updatePropertiesUI = jest.fn(async () => {
-            await canvas.outlineEditor.autoSelectMatchingLayer();
+            await canvas.outlineEditor.autoSelectMatchingDrawing();
         });
         canvas.render = jest.fn();
 
         canvas.textRunEditor.selectedGlyphIndex = 0;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = masterLayerA.id;
-        canvas.outlineEditor.glyphStack = `A@${masterLayerA.id}`;
-        canvas.outlineEditor.layerData = cloneLayerData(masterLayerA);
+        canvas.outlineEditor.selectedDrawingId = stationDrawingA.id;
+        canvas.outlineEditor.glyphStack = `A@${stationDrawingA.id}`;
+        canvas.outlineEditor.drawingData = cloneDrawingData(stationDrawingA);
         canvas.outlineEditor.selectedPoints = [];
         canvas.outlineEditor.selectedAnchors = [0];
         canvas.outlineEditor.selectedComponents = [];
@@ -21965,11 +22149,11 @@ describe('OutlineEditor per-layer selection memory', () => {
         selectedGlyphName = 'adieresis';
         canvas.textRunEditor.selectedGlyphIndex = 1;
         await glyphSelectedHandler(1, 0, true);
-        canvas.outlineEditor.layerData.shapes[0].layerData =
-            makeNestedComponentLayerData();
+        canvas.outlineEditor.drawingData.shapes[0].layerData =
+            makeNestedComponentDrawingData();
 
-        expect(canvas.outlineEditor.selectedLayerId).toBe(
-            masterLayerAdieresis.id
+        expect(canvas.outlineEditor.selectedDrawingId).toBe(
+            stationDrawingAdieresis.id
         );
         expect(canvas.outlineEditor.selectedAnchors).toEqual([]);
 
@@ -21978,7 +22162,7 @@ describe('OutlineEditor per-layer selection memory', () => {
         await Promise.resolve();
 
         expect(canvas.outlineEditor.glyphStack).toBe(
-            `adieresis@${masterLayerAdieresis.id}>0:A@${masterLayerAdieresis.id}`
+            `adieresis@${stationDrawingAdieresis.id}>0:A@${stationDrawingAdieresis.id}`
         );
         expect(canvas.outlineEditor.currentGlyphName).toBe('A');
         expect(canvas.outlineEditor.selectedAnchors).toEqual([1]);
@@ -21987,14 +22171,16 @@ describe('OutlineEditor per-layer selection memory', () => {
     });
 
     test('first click of double-clicking another glyph does not clear the current glyph selection', () => {
-        const cloneLayerData = (layer) =>
-            JSON.parse(JSON.stringify(layer.toJSON()));
-        const masterLayerA = font.findGlyph('A').findLayerById('master-layer');
+        const cloneDrawingData = (drawing) =>
+            JSON.parse(JSON.stringify(drawing.toJSON()));
+        const stationDrawingA = font
+            .findGlyph('A')
+            .findDrawingById('master-layer');
 
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.selectedLayerId = masterLayerA.id;
-        canvas.outlineEditor.glyphStack = `A@${masterLayerA.id}`;
-        canvas.outlineEditor.layerData = cloneLayerData(masterLayerA);
+        canvas.outlineEditor.selectedDrawingId = stationDrawingA.id;
+        canvas.outlineEditor.glyphStack = `A@${stationDrawingA.id}`;
+        canvas.outlineEditor.drawingData = cloneDrawingData(stationDrawingA);
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 1 },
             { contourIndex: 0, nodeIndex: 2 }
@@ -22026,8 +22212,8 @@ describe('OutlineEditor per-layer selection memory', () => {
 
     test('double-clicking a path segment selects every node on that contour without targeting the preceding component', () => {
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.selectedLayerId = 'master-layer';
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.selectedDrawingId = 'master-layer';
+        canvas.outlineEditor.drawingData = {
             id: 'master-layer',
             width: 500,
             shapes: [
@@ -22074,8 +22260,8 @@ describe('OutlineEditor per-layer selection memory', () => {
 
     test('clicking a path segment selects that segment’s two on-curve nodes', async () => {
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.selectedLayerId = 'master-layer';
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.selectedDrawingId = 'master-layer';
+        canvas.outlineEditor.drawingData = {
             id: 'master-layer',
             width: 500,
             shapes: [
@@ -22124,8 +22310,8 @@ describe('OutlineEditor per-layer selection memory', () => {
 
     test('shift-clicking a path segment toggles only the unshared node next to a selected neighbor', async () => {
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.selectedLayerId = 'master-layer';
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.selectedDrawingId = 'master-layer';
+        canvas.outlineEditor.drawingData = {
             id: 'master-layer',
             width: 500,
             shapes: [
@@ -22194,8 +22380,8 @@ describe('OutlineEditor per-layer selection memory', () => {
 
     test('cmd-clicking a path segment inserts instead of toggling selection when something is already selected', async () => {
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.selectedLayerId = 'master-layer';
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.selectedDrawingId = 'master-layer';
+        canvas.outlineEditor.drawingData = {
             id: 'master-layer',
             width: 500,
             shapes: [
@@ -22263,10 +22449,14 @@ describe('OutlineEditor per-layer selection memory', () => {
     });
 
     test('keyboard glyph switching restores the original glyph selection after switching away and back', async () => {
-        const cloneLayerData = (layer) =>
-            JSON.parse(JSON.stringify(layer.toJSON()));
-        const masterLayerA = font.findGlyph('A').findLayerById('master-layer');
-        const masterLayerN = font.findGlyph('n').findLayerById('master-layer');
+        const cloneDrawingData = (drawing) =>
+            JSON.parse(JSON.stringify(drawing.toJSON()));
+        const stationDrawingA = font
+            .findGlyph('A')
+            .findDrawingById('master-layer');
+        const stationDrawingN = font
+            .findGlyph('n')
+            .findDrawingById('master-layer');
         let selectedGlyphName = 'A';
 
         canvas.getCurrentGlyphName = jest.fn(() => selectedGlyphName);
@@ -22275,16 +22465,18 @@ describe('OutlineEditor per-layer selection memory', () => {
         canvas.updateComponentBreadcrumb = jest.fn();
         canvas.updatePropertyPanel = jest.fn();
         canvas.render = jest.fn();
-        canvas.outlineEditor.fetchLayerData = jest.fn(async () => {
+        canvas.outlineEditor.fetchDrawingData = jest.fn(async () => {
             const glyph = font.findGlyph(selectedGlyphName);
-            const currentLayer = glyph.findLayerById(
-                canvas.outlineEditor.selectedLayerId
+            const currentDrawing = glyph.findDrawingById(
+                canvas.outlineEditor.selectedDrawingId
             );
-            canvas.outlineEditor.assignLayerData(cloneLayerData(currentLayer));
+            canvas.outlineEditor.assignDrawingData(
+                cloneDrawingData(currentDrawing)
+            );
             canvas.outlineEditor.currentGlyphName = selectedGlyphName;
         });
         canvas.updatePropertiesUI = jest.fn(async () => {
-            await canvas.outlineEditor.autoSelectMatchingLayer();
+            await canvas.outlineEditor.autoSelectMatchingDrawing();
         });
         canvas.textRunEditor.isPositionRTL = jest.fn(() => false);
         canvas.textRunEditor.textBuffer = 'An';
@@ -22295,9 +22487,9 @@ describe('OutlineEditor per-layer selection memory', () => {
 
         canvas.textRunEditor.selectedGlyphIndex = 0;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = masterLayerA.id;
-        canvas.outlineEditor.glyphStack = `A@${masterLayerA.id}`;
-        canvas.outlineEditor.layerData = cloneLayerData(masterLayerA);
+        canvas.outlineEditor.selectedDrawingId = stationDrawingA.id;
+        canvas.outlineEditor.glyphStack = `A@${stationDrawingA.id}`;
+        canvas.outlineEditor.drawingData = cloneDrawingData(stationDrawingA);
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 1 },
             { contourIndex: 0, nodeIndex: 2 }
@@ -22319,7 +22511,7 @@ describe('OutlineEditor per-layer selection memory', () => {
         await Promise.resolve();
 
         expect(canvas.textRunEditor.selectedGlyphIndex).toBe(1);
-        expect(canvas.outlineEditor.selectedLayerId).toBe(masterLayerN.id);
+        expect(canvas.outlineEditor.selectedDrawingId).toBe(stationDrawingN.id);
         expect(canvas.outlineEditor.selectedPoints).toEqual([]);
         expect(canvas.outlineEditor.selectedAnchors).toEqual([]);
         expect(canvas.outlineEditor.selectedComponents).toEqual([]);
@@ -22338,7 +22530,7 @@ describe('OutlineEditor per-layer selection memory', () => {
         await Promise.resolve();
 
         expect(canvas.textRunEditor.selectedGlyphIndex).toBe(0);
-        expect(canvas.outlineEditor.selectedLayerId).toBe(masterLayerA.id);
+        expect(canvas.outlineEditor.selectedDrawingId).toBe(stationDrawingA.id);
         expect(canvas.outlineEditor.selectedPoints).toEqual([
             { contourIndex: 0, nodeIndex: 1 },
             { contourIndex: 0, nodeIndex: 2 }
@@ -22348,10 +22540,14 @@ describe('OutlineEditor per-layer selection memory', () => {
     });
 
     test('double-click glyph switching restores the original glyph selection after switching away and back', async () => {
-        const cloneLayerData = (layer) =>
-            JSON.parse(JSON.stringify(layer.toJSON()));
-        const masterLayerA = font.findGlyph('A').findLayerById('master-layer');
-        const masterLayerN = font.findGlyph('n').findLayerById('master-layer');
+        const cloneDrawingData = (drawing) =>
+            JSON.parse(JSON.stringify(drawing.toJSON()));
+        const stationDrawingA = font
+            .findGlyph('A')
+            .findDrawingById('master-layer');
+        const stationDrawingN = font
+            .findGlyph('n')
+            .findDrawingById('master-layer');
         let selectedGlyphName = 'A';
         let hoveredGlyphIndex = 1;
 
@@ -22362,14 +22558,16 @@ describe('OutlineEditor per-layer selection memory', () => {
         canvas.updatePropertyPanel = jest.fn();
         canvas.render = jest.fn();
         canvas.updatePropertiesUI = jest.fn(async () => {
-            await canvas.outlineEditor.autoSelectMatchingLayer();
+            await canvas.outlineEditor.autoSelectMatchingDrawing();
         });
-        canvas.outlineEditor.fetchLayerData = jest.fn(async () => {
+        canvas.outlineEditor.fetchDrawingData = jest.fn(async () => {
             const glyph = font.findGlyph(selectedGlyphName);
-            const currentLayer = glyph.findLayerById(
-                canvas.outlineEditor.selectedLayerId
+            const currentDrawing = glyph.findDrawingById(
+                canvas.outlineEditor.selectedDrawingId
             );
-            canvas.outlineEditor.assignLayerData(cloneLayerData(currentLayer));
+            canvas.outlineEditor.assignDrawingData(
+                cloneDrawingData(currentDrawing)
+            );
             canvas.outlineEditor.currentGlyphName = selectedGlyphName;
         });
         canvas.updateHoveredGlyph = jest.fn(() => {
@@ -22382,9 +22580,9 @@ describe('OutlineEditor per-layer selection memory', () => {
 
         canvas.textRunEditor.selectedGlyphIndex = 0;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = masterLayerA.id;
-        canvas.outlineEditor.glyphStack = `A@${masterLayerA.id}`;
-        canvas.outlineEditor.layerData = cloneLayerData(masterLayerA);
+        canvas.outlineEditor.selectedDrawingId = stationDrawingA.id;
+        canvas.outlineEditor.glyphStack = `A@${stationDrawingA.id}`;
+        canvas.outlineEditor.drawingData = cloneDrawingData(stationDrawingA);
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 1 },
             { contourIndex: 0, nodeIndex: 2 }
@@ -22413,7 +22611,7 @@ describe('OutlineEditor per-layer selection memory', () => {
         await Promise.resolve();
 
         expect(canvas.textRunEditor.selectedGlyphIndex).toBe(1);
-        expect(canvas.outlineEditor.selectedLayerId).toBe(masterLayerN.id);
+        expect(canvas.outlineEditor.selectedDrawingId).toBe(stationDrawingN.id);
         expect(canvas.outlineEditor.selectedPoints).toEqual([]);
         expect(canvas.outlineEditor.selectedAnchors).toEqual([]);
         expect(canvas.outlineEditor.selectedComponents).toEqual([]);
@@ -22440,7 +22638,7 @@ describe('OutlineEditor per-layer selection memory', () => {
         await Promise.resolve();
 
         expect(canvas.textRunEditor.selectedGlyphIndex).toBe(0);
-        expect(canvas.outlineEditor.selectedLayerId).toBe(masterLayerA.id);
+        expect(canvas.outlineEditor.selectedDrawingId).toBe(stationDrawingA.id);
         expect(canvas.outlineEditor.selectedPoints).toEqual([
             { contourIndex: 0, nodeIndex: 1 },
             { contourIndex: 0, nodeIndex: 2 }
@@ -22451,10 +22649,14 @@ describe('OutlineEditor per-layer selection memory', () => {
 
     test('edit-mode reshaping reloads the outline for the glyph now at the selected index', async () => {
         const renderHandler = canvas.textRunEditor.callbacks.render[0];
-        const cloneLayerData = (layer) =>
-            JSON.parse(JSON.stringify(layer.toJSON()));
-        const masterLayerA = font.findGlyph('A').findLayerById('master-layer');
-        const masterLayerN = font.findGlyph('n').findLayerById('master-layer');
+        const cloneDrawingData = (drawing) =>
+            JSON.parse(JSON.stringify(drawing.toJSON()));
+        const stationDrawingA = font
+            .findGlyph('A')
+            .findDrawingById('master-layer');
+        const stationDrawingN = font
+            .findGlyph('n')
+            .findDrawingById('master-layer');
         let selectedGlyphName = 'A';
 
         canvas.getCurrentGlyphName = jest.fn(() => selectedGlyphName);
@@ -22464,23 +22666,25 @@ describe('OutlineEditor per-layer selection memory', () => {
         canvas.updatePropertyPanel = jest.fn();
         canvas.render = jest.fn();
         canvas.updatePropertiesUI = jest.fn(async () => {
-            await canvas.outlineEditor.autoSelectMatchingLayer();
+            await canvas.outlineEditor.autoSelectMatchingDrawing();
         });
-        canvas.outlineEditor.fetchLayerData = jest.fn(async () => {
+        canvas.outlineEditor.fetchDrawingData = jest.fn(async () => {
             const glyph = font.findGlyph(selectedGlyphName);
-            const currentLayer = glyph.findLayerById(
-                canvas.outlineEditor.selectedLayerId
+            const currentDrawing = glyph.findDrawingById(
+                canvas.outlineEditor.selectedDrawingId
             );
-            canvas.outlineEditor.assignLayerData(cloneLayerData(currentLayer));
+            canvas.outlineEditor.assignDrawingData(
+                cloneDrawingData(currentDrawing)
+            );
             canvas.outlineEditor.currentGlyphName = selectedGlyphName;
         });
         canvas.textRunEditor.shapedGlyphs = [{ ax: 500, dx: 0, dy: 0, g: 0 }];
         canvas.textRunEditor.selectedGlyphIndex = 0;
 
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = masterLayerA.id;
-        canvas.outlineEditor.glyphStack = `A@${masterLayerA.id}`;
-        canvas.outlineEditor.layerData = cloneLayerData(masterLayerA);
+        canvas.outlineEditor.selectedDrawingId = stationDrawingA.id;
+        canvas.outlineEditor.glyphStack = `A@${stationDrawingA.id}`;
+        canvas.outlineEditor.drawingData = cloneDrawingData(stationDrawingA);
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 1 },
             { contourIndex: 0, nodeIndex: 2 }
@@ -22494,9 +22698,9 @@ describe('OutlineEditor per-layer selection memory', () => {
         await Promise.resolve();
 
         expect(canvas.updatePropertiesUI).toHaveBeenCalledTimes(1);
-        expect(canvas.outlineEditor.fetchLayerData).toHaveBeenCalled();
-        expect(canvas.outlineEditor.selectedLayerId).toBe(masterLayerN.id);
-        expect(canvas.outlineEditor.glyphStack).toBe(`n@${masterLayerN.id}`);
+        expect(canvas.outlineEditor.fetchDrawingData).toHaveBeenCalled();
+        expect(canvas.outlineEditor.selectedDrawingId).toBe(stationDrawingN.id);
+        expect(canvas.outlineEditor.glyphStack).toBe(`n@${stationDrawingN.id}`);
         expect(canvas.outlineEditor.currentGlyphName).toBe('n');
         expect(canvas.outlineEditor.selectedPoints).toEqual([]);
         expect(canvas.outlineEditor.selectedAnchors).toEqual([]);
@@ -22507,10 +22711,14 @@ describe('OutlineEditor per-layer selection memory', () => {
         const renderHandler = canvas.textRunEditor.callbacks.render[0];
         const actualGetCurrentGlyphName =
             Object.getPrototypeOf(canvas).getCurrentGlyphName.bind(canvas);
-        const cloneLayerData = (layer) =>
-            JSON.parse(JSON.stringify(layer.toJSON()));
-        const masterLayerA = font.findGlyph('A').findLayerById('master-layer');
-        const masterLayerN = font.findGlyph('n').findLayerById('master-layer');
+        const cloneDrawingData = (drawing) =>
+            JSON.parse(JSON.stringify(drawing.toJSON()));
+        const stationDrawingA = font
+            .findGlyph('A')
+            .findDrawingById('master-layer');
+        const stationDrawingN = font
+            .findGlyph('n')
+            .findDrawingById('master-layer');
 
         canvas.getCurrentGlyphName = actualGetCurrentGlyphName;
 
@@ -22520,15 +22728,17 @@ describe('OutlineEditor per-layer selection memory', () => {
         canvas.updatePropertyPanel = jest.fn();
         canvas.render = jest.fn();
         canvas.updatePropertiesUI = jest.fn(async () => {
-            await canvas.outlineEditor.autoSelectMatchingLayer();
+            await canvas.outlineEditor.autoSelectMatchingDrawing();
         });
-        canvas.outlineEditor.fetchLayerData = jest.fn(async () => {
+        canvas.outlineEditor.fetchDrawingData = jest.fn(async () => {
             const currentGlyphName = actualGetCurrentGlyphName();
             const glyph = font.findGlyph(currentGlyphName);
-            const currentLayer = glyph.findLayerById(
-                canvas.outlineEditor.selectedLayerId
+            const currentDrawing = glyph.findDrawingById(
+                canvas.outlineEditor.selectedDrawingId
             );
-            canvas.outlineEditor.assignLayerData(cloneLayerData(currentLayer));
+            canvas.outlineEditor.assignDrawingData(
+                cloneDrawingData(currentDrawing)
+            );
             canvas.outlineEditor.currentGlyphName = currentGlyphName;
         });
         canvas.textRunEditor.glyphNameBuffer = ['n'];
@@ -22544,9 +22754,9 @@ describe('OutlineEditor per-layer selection memory', () => {
         canvas.textRunEditor.selectedGlyphIndex = 0;
 
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = masterLayerA.id;
-        canvas.outlineEditor.glyphStack = `A@${masterLayerA.id}`;
-        canvas.outlineEditor.layerData = cloneLayerData(masterLayerA);
+        canvas.outlineEditor.selectedDrawingId = stationDrawingA.id;
+        canvas.outlineEditor.glyphStack = `A@${stationDrawingA.id}`;
+        canvas.outlineEditor.drawingData = cloneDrawingData(stationDrawingA);
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 1 },
             { contourIndex: 0, nodeIndex: 2 }
@@ -22561,8 +22771,8 @@ describe('OutlineEditor per-layer selection memory', () => {
         await Promise.resolve();
 
         expect(canvas.updatePropertiesUI).toHaveBeenCalledTimes(1);
-        expect(canvas.outlineEditor.selectedLayerId).toBe(masterLayerN.id);
-        expect(canvas.outlineEditor.glyphStack).toBe(`n@${masterLayerN.id}`);
+        expect(canvas.outlineEditor.selectedDrawingId).toBe(stationDrawingN.id);
+        expect(canvas.outlineEditor.glyphStack).toBe(`n@${stationDrawingN.id}`);
         expect(canvas.outlineEditor.currentGlyphName).toBe('n');
         expect(canvas.outlineEditor.selectedPoints).toEqual([]);
         expect(canvas.outlineEditor.selectedAnchors).toEqual([]);
@@ -22682,11 +22892,11 @@ describe('GlyphCanvas keyboard handling', () => {
         window.glyphCanvas = canvas;
         canvas.outlineEditor.active = true;
         const toggleBackground = jest
-            .spyOn(canvas.outlineEditor, 'toggleBackgroundLayerEditing')
+            .spyOn(canvas.outlineEditor, 'toggleBackgroundDrawingEditing')
             .mockResolvedValue();
         const togglePaired = jest.spyOn(
             canvas.outlineEditor,
-            'togglePairedLayerVisible'
+            'togglePairedDrawingVisible'
         );
 
         const backgroundEvent = new KeyboardEvent('keydown', {
@@ -22991,7 +23201,9 @@ describe('GlyphCanvas keyboard handling', () => {
         });
         jest.spyOn(fontManager, 'fetchGlyphData').mockResolvedValue({
             glyphName: 'A',
-            layers: font.findGlyph('A').layers.map((layer) => layer.toJSON())
+            layers: font
+                .findGlyph('A')
+                .drawings.map((drawing) => drawing.toJSON())
         });
 
         const editorView = document.createElement('div');
@@ -23006,18 +23218,18 @@ describe('GlyphCanvas keyboard handling', () => {
 
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
 
-        await canvas.displayMastersList(propertiesSection, false);
+        await canvas.displayStationsList(propertiesSection, false);
 
         const summaryButton = propertiesSection.querySelector(
-            '.editor-layer-link-summary-toggle'
+            '.editor-drawing-link-summary-toggle'
         );
 
         expect(summaryButton).toBeTruthy();
         expect(summaryButton.getAttribute('title')).toBe(
-            'Unlink all layers (Cmd+Alt+L)'
+            'Unlink all drawings (Cmd+Alt+L)'
         );
 
         const firstEvent = new KeyboardEvent('keydown', {
@@ -23032,12 +23244,14 @@ describe('GlyphCanvas keyboard handling', () => {
         document.dispatchEvent(firstEvent);
 
         expect(firstEvent.defaultPrevented).toBe(true);
-        expect(canvas.outlineEditor.isLayerLinked('layer-1', 'A')).toBe(false);
-        expect(canvas.outlineEditor.isLayerLinked('brace-layer', 'A')).toBe(
+        expect(canvas.outlineEditor.isDrawingLinked('layer-1', 'A')).toBe(
+            false
+        );
+        expect(canvas.outlineEditor.isDrawingLinked('brace-layer', 'A')).toBe(
             false
         );
         expect(summaryButton.getAttribute('title')).toBe(
-            'Link all layers (Cmd+Alt+L)'
+            'Link all drawings (Cmd+Alt+L)'
         );
 
         const secondEvent = new KeyboardEvent('keydown', {
@@ -23052,12 +23266,12 @@ describe('GlyphCanvas keyboard handling', () => {
         document.dispatchEvent(secondEvent);
 
         expect(secondEvent.defaultPrevented).toBe(true);
-        expect(canvas.outlineEditor.isLayerLinked('layer-1', 'A')).toBe(true);
-        expect(canvas.outlineEditor.isLayerLinked('brace-layer', 'A')).toBe(
+        expect(canvas.outlineEditor.isDrawingLinked('layer-1', 'A')).toBe(true);
+        expect(canvas.outlineEditor.isDrawingLinked('brace-layer', 'A')).toBe(
             true
         );
         expect(summaryButton.getAttribute('title')).toBe(
-            'Unlink all layers (Cmd+Alt+L)'
+            'Unlink all drawings (Cmd+Alt+L)'
         );
     });
 });
@@ -23681,22 +23895,22 @@ describe('AxesManager coordinate fields', () => {
 
     test('snaps toward a stored layer location and releases after leaving the window', () => {
         const {
-            applyAxisSliderLayerSnap
+            applyAxisSliderDrawingSnap
         } = require('../js/glyph-canvas/variations');
 
-        const approaching = applyAxisSliderLayerSnap(49, [50], 2, []);
+        const approaching = applyAxisSliderDrawingSnap(49, [50], 2, []);
         expect(approaching.value).toBe(50);
         expect(approaching.disarmedValues).toEqual([]);
 
-        const leavingRest = applyAxisSliderLayerSnap(49, [50], 2, [50]);
+        const leavingRest = applyAxisSliderDrawingSnap(49, [50], 2, [50]);
         expect(leavingRest.value).toBe(49);
         expect(leavingRest.disarmedValues).toEqual([50]);
 
-        const rearmed = applyAxisSliderLayerSnap(47, [50], 2, [50]);
+        const rearmed = applyAxisSliderDrawingSnap(47, [50], 2, [50]);
         expect(rearmed.value).toBe(47);
         expect(rearmed.disarmedValues).toEqual([]);
 
-        const snapAgain = applyAxisSliderLayerSnap(49, [50], 2, []);
+        const snapAgain = applyAxisSliderDrawingSnap(49, [50], 2, []);
         expect(snapAgain.value).toBe(50);
     });
 
@@ -23707,7 +23921,7 @@ describe('AxesManager coordinate fields', () => {
             return 1;
         };
 
-        window.currentFontModel.masters = [
+        window.currentFontModel.stations = [
             { id: 'light', location: { wght: 100 } },
             { id: 'regular', location: { wght: 500 } },
             { id: 'bold', location: { wght: 900 } }
@@ -23717,22 +23931,22 @@ describe('AxesManager coordinate fields', () => {
         try {
             await canvas.axesManager.updateAxesUI();
             const marks = [
-                ...document.querySelectorAll('.editor-axis-layer-mark')
+                ...document.querySelectorAll('.editor-axis-drawing-mark')
             ];
             expect(marks).toHaveLength(3);
-            expect(marks.map((mark) => mark.dataset.layerLocation)).toEqual([
+            expect(marks.map((mark) => mark.dataset.drawingLocation)).toEqual([
                 '0',
                 '50',
                 '100'
             ]);
             expect(
-                marks[0].classList.contains('editor-axis-layer-mark-passed')
+                marks[0].classList.contains('editor-axis-drawing-mark-passed')
             ).toBe(true);
             expect(
-                marks[1].classList.contains('editor-axis-layer-mark-passed')
+                marks[1].classList.contains('editor-axis-drawing-mark-passed')
             ).toBe(true);
             expect(
-                marks[2].classList.contains('editor-axis-layer-mark-passed')
+                marks[2].classList.contains('editor-axis-drawing-mark-passed')
             ).toBe(false);
         } finally {
             global.requestAnimationFrame = originalRequestAnimationFrame;
@@ -23797,13 +24011,13 @@ describe('GlyphCanvas bounding box calculation', () => {
     });
 
     test('should return null when no layer data', () => {
-        canvas.outlineEditor.layerData = null;
+        canvas.outlineEditor.drawingData = null;
         const bbox = canvas.outlineEditor.calculateGlyphBoundingBox();
         expect(bbox).toBe(null);
     });
 
     test('should calculate bounding box for points', () => {
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             shapes: [
                 {
                     nodes: [
@@ -23838,10 +24052,10 @@ describe('GlyphCanvas state management', () => {
     });
 
     test('should track layer data dirty state', () => {
-        expect(canvas.outlineEditor.layerDataDirty).toBe(false);
+        expect(canvas.outlineEditor.drawingDataDirty).toBe(false);
 
         canvas.outlineEditor.active = true;
-        canvas.outlineEditor.layerData = {
+        canvas.outlineEditor.drawingData = {
             shapes: [
                 {
                     nodes: [{ x: 0, y: 0, type: 'l' }],
@@ -23853,13 +24067,13 @@ describe('GlyphCanvas state management', () => {
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 0 }
         ];
-        canvas.outlineEditor.saveLayerData = jest.fn();
+        canvas.outlineEditor.saveDrawingData = jest.fn();
 
         canvas.outlineEditor.moveSelectedPoints(10, 20);
 
-        expect(canvas.outlineEditor.layerDataDirty).toBe(false);
-        expect(canvas.outlineEditor.saveLayerData).not.toHaveBeenCalled();
-        expect(canvas.outlineEditor.layerData.shapes[0].nodes[0]).toEqual(
+        expect(canvas.outlineEditor.drawingDataDirty).toBe(false);
+        expect(canvas.outlineEditor.saveDrawingData).not.toHaveBeenCalled();
+        expect(canvas.outlineEditor.drawingData.shapes[0].nodes[0]).toEqual(
             expect.objectContaining({ x: 10, y: 20 })
         );
     });
@@ -23953,7 +24167,7 @@ describe('Linked component structural edits', () => {
     let canvas;
     let currentFontSpy;
     let dirtyIndicatorSpy;
-    let syncLayerToStorageSpy;
+    let syncDrawingToStorageSpy;
 
     const makeLinkedComponentFont = () =>
         Font.fromData({
@@ -24115,17 +24329,17 @@ describe('Linked component structural edits', () => {
         dirtyIndicatorSpy = jest
             .spyOn(fontManager, 'updateDirtyIndicator')
             .mockResolvedValue();
-        syncLayerToStorageSpy = jest
-            .spyOn(fontManager, 'syncLayerFromModelToStorage')
+        syncDrawingToStorageSpy = jest
+            .spyOn(fontManager, 'syncDrawingFromModelToStorage')
             .mockReturnValue(true);
         window.currentFontModel = font;
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
         canvas.outlineEditor.glyphStack = 'A@layer-1';
-        canvas.outlineEditor.layerData = JSON.parse(
+        canvas.outlineEditor.drawingData = JSON.parse(
             JSON.stringify(
-                font.findGlyph('A').findLayerById('layer-1').toJSON()
+                font.findGlyph('A').findDrawingById('layer-1').toJSON()
             )
         );
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
@@ -24140,7 +24354,7 @@ describe('Linked component structural edits', () => {
     });
 
     afterEach(() => {
-        syncLayerToStorageSpy.mockRestore();
+        syncDrawingToStorageSpy.mockRestore();
         dirtyIndicatorSpy.mockRestore();
         currentFontSpy.mockRestore();
         canvas.destroy();
@@ -24148,32 +24362,32 @@ describe('Linked component structural edits', () => {
 
     test('adds a component at the same shape index across linked layers', async () => {
         const font = fontManager.currentFont.fontModel;
-        const [activeLayer, linkedLayer] = font.findGlyph('A').layers;
+        const [activeDrawing, linkedDrawing] = font.findGlyph('A').drawings;
 
-        await canvas.addComponentToLayer(activeLayer, 'sourceB');
+        await canvas.addComponentToDrawing(activeDrawing, 'sourceB');
 
-        expect(activeLayer.shapes).toHaveLength(3);
-        expect(linkedLayer.shapes).toHaveLength(3);
-        expect(activeLayer.components[2].reference).toBe('sourceB');
-        expect(linkedLayer.components[2].reference).toBe('sourceB');
-        expect(activeLayer.components[2].toAffineArray().slice(4)).toEqual([
+        expect(activeDrawing.shapes).toHaveLength(3);
+        expect(linkedDrawing.shapes).toHaveLength(3);
+        expect(activeDrawing.components[2].reference).toBe('sourceB');
+        expect(linkedDrawing.components[2].reference).toBe('sourceB');
+        expect(activeDrawing.components[2].toAffineArray().slice(4)).toEqual([
             -50, 20
         ]);
-        expect(linkedLayer.components[2].toAffineArray().slice(4)).toEqual([
+        expect(linkedDrawing.components[2].toAffineArray().slice(4)).toEqual([
             -50, 20
         ]);
-        expect(activeLayer.components[2].automaticAlignment).toBe(true);
-        expect(linkedLayer.components[2].automaticAlignment).toBe(true);
+        expect(activeDrawing.components[2].automaticAlignment).toBe(true);
+        expect(linkedDrawing.components[2].automaticAlignment).toBe(true);
         expect(canvas.outlineEditor.selectedComponents).toEqual([2]);
-        expect(syncLayerToStorageSpy).toHaveBeenCalledWith('A', 'layer-1');
-        expect(syncLayerToStorageSpy).toHaveBeenCalledWith('A', 'layer-2');
+        expect(syncDrawingToStorageSpy).toHaveBeenCalledWith('A', 'layer-1');
+        expect(syncDrawingToStorageSpy).toHaveBeenCalledWith('A', 'layer-2');
     });
 
     test('places outlined components at the origin', async () => {
         const font = fontManager.currentFont.fontModel;
-        const [activeLayer, linkedLayer] = font.findGlyph('A').layers;
-        const sourceLayer = font.findGlyph('sourceA').layers[0];
-        sourceLayer.data.shapes = [
+        const [activeDrawing, linkedDrawing] = font.findGlyph('A').drawings;
+        const sourceDrawing = font.findGlyph('sourceA').drawings[0];
+        sourceDrawing.data.shapes = [
             {
                 closed: true,
                 nodes: [
@@ -24185,40 +24399,40 @@ describe('Linked component structural edits', () => {
             }
         ];
 
-        await canvas.addComponentToLayer(activeLayer, 'sourceA');
+        await canvas.addComponentToDrawing(activeDrawing, 'sourceA');
 
-        expect(activeLayer.components[2].toAffineArray().slice(4)).toEqual([
+        expect(activeDrawing.components[2].toAffineArray().slice(4)).toEqual([
             0, 0
         ]);
-        expect(linkedLayer.components[2].toAffineArray().slice(4)).toEqual([
+        expect(linkedDrawing.components[2].toAffineArray().slice(4)).toEqual([
             0, 0
         ]);
     });
 
     test('replaces linked automatic components and recomposes their placement', async () => {
         const font = fontManager.currentFont.fontModel;
-        const [activeLayer, linkedLayer] = font.findGlyph('A').layers;
-        const activeComponent = activeLayer.components[1];
+        const [activeDrawing, linkedDrawing] = font.findGlyph('A').drawings;
+        const activeComponent = activeDrawing.components[1];
         canvas.outlineEditor.selectedComponents = [1];
 
         await canvas.commitComponentReferenceChange(
-            activeLayer,
+            activeDrawing,
             activeComponent,
             'sourceC'
         );
 
-        expect(activeLayer.components[1].reference).toBe('sourceC');
-        expect(linkedLayer.components[1].reference).toBe('sourceC');
-        expect(activeLayer.components[1].toAffineArray().slice(4)).toEqual([
+        expect(activeDrawing.components[1].reference).toBe('sourceC');
+        expect(linkedDrawing.components[1].reference).toBe('sourceC');
+        expect(activeDrawing.components[1].toAffineArray().slice(4)).toEqual([
             -50, 50
         ]);
-        expect(linkedLayer.components[1].toAffineArray().slice(4)).toEqual([
+        expect(linkedDrawing.components[1].toAffineArray().slice(4)).toEqual([
             -50, 50
         ]);
-        expect(syncLayerToStorageSpy).toHaveBeenCalledWith('A', 'layer-1');
-        expect(syncLayerToStorageSpy).toHaveBeenCalledWith('A', 'layer-2');
+        expect(syncDrawingToStorageSpy).toHaveBeenCalledWith('A', 'layer-1');
+        expect(syncDrawingToStorageSpy).toHaveBeenCalledWith('A', 'layer-2');
         const finalStorageSyncCall = Math.max(
-            ...syncLayerToStorageSpy.mock.invocationCallOrder
+            ...syncDrawingToStorageSpy.mock.invocationCallOrder
         );
         expect(
             window.patchSyncEngine.endTransaction.mock.invocationCallOrder[0]
@@ -24229,7 +24443,7 @@ describe('Linked component structural edits', () => {
         '%s removes selected components across linked layers',
         async (key) => {
             const font = fontManager.currentFont.fontModel;
-            const [activeLayer, linkedLayer] = font.findGlyph('A').layers;
+            const [activeDrawing, linkedDrawing] = font.findGlyph('A').drawings;
             canvas.outlineEditor.selectedComponents = [1];
 
             const event = {
@@ -24244,10 +24458,10 @@ describe('Linked component structural edits', () => {
             await canvas.outlineEditor.onKeyDown(event);
 
             expect(event.preventDefault).toHaveBeenCalled();
-            expect(activeLayer.shapes).toHaveLength(1);
-            expect(linkedLayer.shapes).toHaveLength(1);
-            expect(activeLayer.components[0].reference).toBe('sourceA');
-            expect(linkedLayer.components[0].reference).toBe('sourceA');
+            expect(activeDrawing.shapes).toHaveLength(1);
+            expect(linkedDrawing.shapes).toHaveLength(1);
+            expect(activeDrawing.components[0].reference).toBe('sourceA');
+            expect(linkedDrawing.components[0].reference).toBe('sourceA');
             expect(canvas.outlineEditor.selectedComponents).toEqual([]);
         }
     );

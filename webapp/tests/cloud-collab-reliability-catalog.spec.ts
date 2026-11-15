@@ -179,8 +179,8 @@ test('a full tail stays local, and deleting the asset closes the peer', async ({
             const fontModel = (window as any).currentFontModel;
             const currentFont = (window as any).fontManager?.currentFont;
             const glyph = fontModel.findGlyph('a');
-            const layer = glyph.layers[0];
-            const node = layer.paths[0].nodes[0];
+            const drawing = glyph.drawings[0];
+            const node = drawing.paths[0].nodes[0];
             bridge.runWithoutRecording(() => {
                 node.x = node.x + 8;
             });
@@ -190,7 +190,7 @@ test('a full tail stays local, and deleting the asset closes the peer', async ({
                 'tail full should not land',
                 undefined,
                 undefined,
-                layer.id,
+                drawing.id,
                 undefined,
                 undefined,
                 undefined,

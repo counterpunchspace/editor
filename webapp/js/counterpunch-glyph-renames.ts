@@ -124,13 +124,13 @@ export async function planGlyphRenamesForFont(
 ): Promise<GlyphRenamePlan> {
     await glyphDataIndex.ensureReady();
     const glyphs: RenameGlyphInput[] = font.glyphs.map((glyph) => {
-        const layer = (glyph.layers || []).find(
+        const drawing = (glyph.drawings || []).find(
             (candidate) => !candidate.is_background
         );
         return {
             name: glyph.name,
             codepoints: glyph.codepoints,
-            components: (layer?.components || []).map(
+            components: (drawing?.components || []).map(
                 (component) => component.reference
             )
         };

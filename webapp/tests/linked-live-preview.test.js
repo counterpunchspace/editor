@@ -95,10 +95,10 @@ describe('LinkedLivePreviewReceiver', () => {
         const calls = [];
         const host = {
             isBusyLocally: () => false,
-            applyModelLayers: jest.fn((records) =>
+            applyModelDrawings: jest.fn((records) =>
                 calls.push(['model', records.length])
             ),
-            revertModelLayers: jest.fn(() => calls.push(['revert'])),
+            revertModelDrawings: jest.fn(() => calls.push(['revert'])),
             stageOverlay: jest.fn(async (records) => {
                 calls.push(['overlay', records.length]);
                 return true;
@@ -116,14 +116,14 @@ describe('LinkedLivePreviewReceiver', () => {
             time
         };
     }
-    const record = (layerId) => ({
+    const record = (drawingId) => ({
         glyphName: 'A',
-        layerId,
+        layerId: drawingId,
         layerData: { width: 500 }
     });
-    const payload = (layerId = 'l1') => ({
-        overlay: [record(layerId)],
-        model: [record(layerId)],
+    const payload = (drawingId = 'l1') => ({
+        overlay: [record(drawingId)],
+        model: [record(drawingId)],
         compile: { changeSource: 'keyboard-outline', editType: 'outline' }
     });
     const settle = async () => {
@@ -166,10 +166,10 @@ describe('LinkedLivePreviewReceiver', () => {
         receiver.receive('p1', payload('l3'));
         release();
         await settle();
-        const layerIds = host.applyModelLayers.mock.calls.map(
+        const drawingIds = host.applyModelDrawings.mock.calls.map(
             (call) => call[0][0].layerId
         );
-        expect(layerIds).toEqual(['l1', 'l3']);
+        expect(drawingIds).toEqual(['l1', 'l3']);
     });
 
     it('puts everything back when the sender ends without a commit', async () => {
@@ -204,7 +204,7 @@ describe('LinkedLivePreviewReceiver', () => {
         // A collaborator edits another layer meanwhile.
         receiver.settle(new Set(['other-layer']));
         receiver.end('p1');
-        expect(host.revertModelLayers).toHaveBeenCalledTimes(1);
+        expect(host.revertModelDrawings).toHaveBeenCalledTimes(1);
     });
 
     it('reverts every layer an earlier tick of the gesture previewed', async () => {
@@ -214,7 +214,7 @@ describe('LinkedLivePreviewReceiver', () => {
         receiver.receive('p1', payload('l2'));
         await settle();
         receiver.end('p1');
-        const reverted = host.revertModelLayers.mock.calls[0][0].map(
+        const reverted = host.revertModelDrawings.mock.calls[0][0].map(
             (target) => target.layerId
         );
         expect(reverted.sort()).toEqual(['l1', 'l2']);
@@ -225,9 +225,9 @@ describe('LinkedLivePreviewReceiver', () => {
         receiver.receive('window-a:1', payload());
         await settle();
         receiver.endFromWindow('window-b');
-        expect(host.revertModelLayers).not.toHaveBeenCalled();
+        expect(host.revertModelDrawings).not.toHaveBeenCalled();
         receiver.endFromWindow('window-a');
-        expect(host.revertModelLayers).toHaveBeenCalledTimes(1);
+        expect(host.revertModelDrawings).toHaveBeenCalledTimes(1);
     });
 
     it('ignores the end of another gesture', async () => {
@@ -235,7 +235,7 @@ describe('LinkedLivePreviewReceiver', () => {
         receiver.receive('p1', payload());
         await settle();
         receiver.end('other');
-        expect(host.revertModelLayers).not.toHaveBeenCalled();
+        expect(host.revertModelDrawings).not.toHaveBeenCalled();
     });
 
     it('reverts a preview whose sender went quiet', async () => {
@@ -243,7 +243,7 @@ describe('LinkedLivePreviewReceiver', () => {
         receiver.receive('p1', payload());
         await settle();
         time.advance(LINKED_PREVIEW_STALE_MS + 10);
-        expect(host.revertModelLayers).toHaveBeenCalledTimes(1);
+        expect(host.revertModelDrawings).toHaveBeenCalledTimes(1);
     });
 
     it('keeps its own drag untouched', async () => {
@@ -252,7 +252,7 @@ describe('LinkedLivePreviewReceiver', () => {
         });
         receiver.receive('p1', payload());
         await settle();
-        expect(host.applyModelLayers).not.toHaveBeenCalled();
+        expect(host.applyModelDrawings).not.toHaveBeenCalled();
         expect(host.stageOverlay).not.toHaveBeenCalled();
     });
 });
@@ -263,14 +263,14 @@ describe('PatchSyncEngine live preview layers', () => {
     });
 
     it('syncs the model layer and restores it from the document', () => {
-        const layer = {
-            syncFromEditorLayerData: jest.fn(),
+        const drawing = {
+            syncFromEditorDrawingData: jest.fn(),
             invalidateContentCaches: jest.fn()
         };
         window.fontManager = {
             currentFont: {
                 fontModel: {
-                    findGlyph: () => ({ findLayerById: () => layer })
+                    findGlyph: () => ({ findDrawingById: () => drawing })
                 }
             }
         };
@@ -294,20 +294,20 @@ describe('PatchSyncEngine live preview layers', () => {
                 }
             ]
         });
-        bridge.applyLivePreviewLayers([
+        bridge.applyLivePreviewDrawings([
             {
                 glyphName: 'A',
                 layerId: 'l1',
                 layerData: { width: 555, shapes: [{ type: 'path' }] }
             }
         ]);
-        expect(layer.syncFromEditorLayerData).toHaveBeenLastCalledWith({
+        expect(drawing.syncFromEditorDrawingData).toHaveBeenLastCalledWith({
             width: 555,
             shapes: [{ type: 'path' }]
         });
 
-        bridge.revertLivePreviewLayers([{ glyphName: 'A', layerId: 'l1' }]);
-        expect(layer.syncFromEditorLayerData).toHaveBeenLastCalledWith(
+        bridge.revertLivePreviewDrawings([{ glyphName: 'A', layerId: 'l1' }]);
+        expect(drawing.syncFromEditorDrawingData).toHaveBeenLastCalledWith(
             expect.objectContaining({ width: 400 })
         );
         bridge.destroy();

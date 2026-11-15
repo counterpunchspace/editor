@@ -4,7 +4,7 @@
 
 import {
     DecomposedAffineTransform,
-    Layer,
+    Drawing,
     type Font,
     type Glyph
 } from '../babelfont-model';
@@ -13,11 +13,11 @@ import {
     COUNTERPUNCH_CLIPBOARD_VERSION,
     FONT_EDITOR_CLIPBOARD_SCHEMA,
     FONT_EDITOR_CLIPBOARD_SCHEMA_VERSION,
-    type PasteClipboardMaster,
+    type PasteClipboardStation,
     type PasteFeatureVariation,
     type PasteGlyph,
-    type PasteGlyphLayer,
-    type PasteLayerMaster
+    type PasteGlyphDrawing,
+    type PasteDrawingStation
 } from './json';
 import type {
     PasteAnchor,
@@ -48,7 +48,7 @@ export type CounterpunchGlyphsClipboard = {
     version: number;
     kind: 'glyphs';
     nodeOrder: 'start-first';
-    masters: PasteClipboardMaster[];
+    masters: PasteClipboardStation[];
     glyphs: PasteGlyph[];
 };
 
@@ -97,16 +97,16 @@ export function buildSelectionClipboardDocument(options: {
 
 export function buildGlyphsClipboardDocument(
     glyphs: PasteGlyph[],
-    masters: PasteClipboardMaster[]
+    stations: PasteClipboardStation[]
 ): CounterpunchGlyphsClipboard | null {
-    if (glyphs.length === 0 || masters.length === 0) {
+    if (glyphs.length === 0 || stations.length === 0) {
         return null;
     }
     return {
         version: COUNTERPUNCH_CLIPBOARD_VERSION,
         kind: 'glyphs',
         nodeOrder: 'start-first',
-        masters,
+        masters: stations,
         glyphs
     };
 }
@@ -125,14 +125,14 @@ export function wrapClipboardEnvelope(
     };
 }
 
-export function serializeFontMastersForClipboard(
+export function serializeFontStationsForClipboard(
     font: Font
-): PasteClipboardMaster[] {
-    return (font.masters || []).map((master) => {
-        const location = plainLocation(master.location);
+): PasteClipboardStation[] {
+    return (font.stations || []).map((station) => {
+        const location = plainLocation(station.location);
         return {
-            id: master.id,
-            name: masterDisplayName(master),
+            id: station.id,
+            name: stationDisplayName(station),
             ...(location ? { location } : {})
         };
     });
@@ -140,23 +140,26 @@ export function serializeFontMastersForClipboard(
 
 export function serializeGlyphForClipboard(glyph: Glyph): PasteGlyph {
     const font = glyph.parent() as Font | null;
-    const masterIds = (font?.masters || []).map((master) => master.id);
-    const masterIndexById = new Map(
-        masterIds.map((id, index) => [id, index] as const)
+    const stationIds = (font?.stations || []).map((station) => station.id);
+    const stationIndexById = new Map(
+        stationIds.map((id, index) => [id, index] as const)
     );
 
-    const baseLayers: PasteGlyphLayer[] = [];
+    const baseDrawings: PasteGlyphDrawing[] = [];
     const featureVariationMap = new Map<
         string,
-        { axisRules: unknown[]; layers: PasteGlyphLayer[] }
+        { axisRules: unknown[]; layers: PasteGlyphDrawing[] }
     >();
 
-    for (const layer of getRawForegroundLayers(glyph)) {
-        const serialized = serializeLayerForClipboard(layer, masterIndexById);
+    for (const drawing of getRawForegroundDrawings(glyph)) {
+        const serialized = serializeDrawingForClipboard(
+            drawing,
+            stationIndexById
+        );
         if (!serialized) {
             continue;
         }
-        const axisRules = readFeatureVariationAxisRules(layer);
+        const axisRules = readFeatureVariationAxisRules(drawing);
         if (axisRules) {
             const familyId = JSON.stringify(axisRules);
             let family = featureVariationMap.get(familyId);
@@ -167,7 +170,7 @@ export function serializeGlyphForClipboard(glyph: Glyph): PasteGlyph {
             family.layers.push(serialized);
             continue;
         }
-        baseLayers.push(serialized);
+        baseDrawings.push(serialized);
     }
 
     const featureVariations: PasteFeatureVariation[] = [
@@ -178,23 +181,23 @@ export function serializeGlyphForClipboard(glyph: Glyph): PasteGlyph {
         name: glyph.name,
         leftMetricsKey: glyph.leftMetricsKey ?? null,
         rightMetricsKey: glyph.rightMetricsKey ?? null,
-        layers: baseLayers,
+        layers: baseDrawings,
         ...(featureVariations.length > 0 ? { featureVariations } : {})
     };
 }
 
-export function serializeLayerForClipboard(
-    layer: Layer,
-    masterIndexById?: Map<string, number>
-): PasteGlyphLayer | null {
-    const master = serializeLayerMaster(layer, masterIndexById);
-    if (!master) {
+export function serializeDrawingForClipboard(
+    drawing: Drawing,
+    stationIndexById?: Map<string, number>
+): PasteGlyphDrawing | null {
+    const station = serializeDrawingStation(drawing, stationIndexById);
+    if (!station) {
         return null;
     }
 
     const paths: PastePath[] = [];
     const components: PasteComponent[] = [];
-    for (const shape of layer.shapes || []) {
+    for (const shape of drawing.shapes || []) {
         if (shape.isPath?.()) {
             paths.push(serializePathForClipboard(shape.asPath()));
         } else if (shape.isComponent?.()) {
@@ -204,21 +207,21 @@ export function serializeLayerForClipboard(
         }
     }
 
-    const location = plainLocation(layer.location);
+    const location = plainLocation(drawing.location);
     return {
-        layerId: layer.id,
-        name: layer.name,
-        master,
+        layerId: drawing.id,
+        name: drawing.name,
+        master: station,
         ...(location ? { location } : {}),
-        width: Number(layer.width),
-        leftMetricsKey: layer.leftMetricsKey ?? null,
-        rightMetricsKey: layer.rightMetricsKey ?? null,
+        width: Number(drawing.width),
+        leftMetricsKey: drawing.leftMetricsKey ?? null,
+        rightMetricsKey: drawing.rightMetricsKey ?? null,
         paths,
         components,
-        anchors: (layer.anchors || [])
+        anchors: (drawing.anchors || [])
             .filter((anchor) => !!anchor.name)
             .map(serializeAnchorForClipboard),
-        guides: (layer.guides || []).map((guide) =>
+        guides: (drawing.guides || []).map((guide) =>
             serializeGuideForClipboard(guide, false)
         )
     };
@@ -333,7 +336,7 @@ export function serializeGuideForClipboard(
     };
 }
 
-export function serializeMasterGuideForClipboard(guide: {
+export function serializeStationGuideForClipboard(guide: {
     name?: string;
     pos?: { x?: number; y?: number; angle?: number };
     x?: number;
@@ -443,53 +446,53 @@ function toAffineTuple(
     );
 }
 
-function getRawForegroundLayers(glyph: Glyph): Layer[] {
-    const layersData = (glyph as unknown as { data?: { layers?: unknown[] } })
+function getRawForegroundDrawings(glyph: Glyph): Drawing[] {
+    const drawingsData = (glyph as unknown as { data?: { layers?: unknown[] } })
         .data?.layers;
-    if (!Array.isArray(layersData)) {
+    if (!Array.isArray(drawingsData)) {
         return [];
     }
-    const layers: Layer[] = [];
-    for (let index = 0; index < layersData.length; index++) {
-        const layer = new Layer(layersData as never, index, glyph);
-        if (layer.is_background) {
+    const drawings: Drawing[] = [];
+    for (let index = 0; index < drawingsData.length; index++) {
+        const drawing = new Drawing(drawingsData as never, index, glyph);
+        if (drawing.is_background) {
             continue;
         }
-        layers.push(layer);
+        drawings.push(drawing);
     }
-    return layers;
+    return drawings;
 }
 
-function serializeLayerMaster(
-    layer: Layer,
-    masterIndexById?: Map<string, number>
-): PasteLayerMaster | null {
-    const master = layer.master;
-    if (!master || typeof master !== 'object' || !('type' in master)) {
+function serializeDrawingStation(
+    drawing: Drawing,
+    stationIndexById?: Map<string, number>
+): PasteDrawingStation | null {
+    const station = drawing.station;
+    if (!station || typeof station !== 'object' || !('type' in station)) {
         return null;
     }
-    if (master.type === 'FreeFloating') {
+    if (station.type === 'FreeFloating') {
         return { type: 'FreeFloating' };
     }
     if (
-        master.type !== 'DefaultForMaster' &&
-        master.type !== 'AssociatedWithMaster'
+        station.type !== 'DefaultForMaster' &&
+        station.type !== 'AssociatedWithMaster'
     ) {
         return null;
     }
-    const masterId = master.master;
-    if (typeof masterId !== 'string' || !masterId) {
+    const stationId = station.master;
+    if (typeof stationId !== 'string' || !stationId) {
         return null;
     }
-    const masterIndex = masterIndexById?.get(masterId);
-    if (masterIndex === undefined) {
+    const stationIndex = stationIndexById?.get(stationId);
+    if (stationIndex === undefined) {
         return null;
     }
-    return { type: master.type, masterIndex };
+    return { type: station.type, masterIndex: stationIndex };
 }
 
-function readFeatureVariationAxisRules(layer: Layer): unknown[] | null {
-    const attributes = layer.format_specific?.[GLYPHS_ATTR_KEY];
+function readFeatureVariationAxisRules(drawing: Drawing): unknown[] | null {
+    const attributes = drawing.format_specific?.[GLYPHS_ATTR_KEY];
     if (
         !attributes ||
         typeof attributes !== 'object' ||
@@ -516,11 +519,11 @@ function plainLocation(value: unknown): Record<string, number> | null {
     return Object.keys(location).length > 0 ? location : null;
 }
 
-function masterDisplayName(master: {
+function stationDisplayName(station: {
     id: string;
     toJSON?: () => { name?: unknown };
 }): string {
-    const name = master.toJSON?.()?.name;
+    const name = station.toJSON?.()?.name;
     if (typeof name === 'string' && name) {
         return name;
     }
@@ -537,8 +540,8 @@ function masterDisplayName(master: {
             }
         }
     }
-    return master.id;
+    return station.id;
 }
 
-// Re-export helpers used by callers that also serialize master guides.
+// Re-export helpers used by callers that also serialize station guides.
 export type { PasteGlyph };

@@ -3,7 +3,7 @@
  *
  * The change bridge records dotted paths such as
  * `glyphs.A:layers.<id>:shapes.0.nodes.1.x` (colon separators protect glyph
- * names and layer IDs that themselves contain dots). This module maps those
+ * names and drawing IDs that themselves contain dots). This module maps those
  * paths onto the stable `GlyphFilterEventType` contract. It does **not** emit
  * `glyph.compatibility.changed`; that event is produced separately when
  * `Glyph.isCompatible` toggles (see GlyphOverviewFilterManager).
@@ -32,8 +32,8 @@ export interface GlyphFilterEntryDerivation {
      * emits `glyph.compatibility.changed` only on an actual toggle.
      */
     compatibilityCheckGlyphNames: string[];
-    /** True when the font master list changed (may affect every glyph). */
-    mastersChanged: boolean;
+    /** True when the font station list changed (may affect every glyph). */
+    stationsChanged: boolean;
     /** Host-owned glyph identity changes; never exposed in EVENT_TYPES. */
     lifecycleChanges: GlyphFilterLifecycleChange[];
 }
@@ -89,14 +89,14 @@ export function isPathShapeValue(value: unknown): boolean {
     return isRecord(wrapped) && Array.isArray(wrapped.nodes);
 }
 
-function layerMetadata(
+function drawingMetadata(
     glyphName: string,
-    layerId: string | undefined
+    drawingId: string | undefined
 ): Record<string, string | string[]> {
-    if (!layerId) {
+    if (!drawingId) {
         return { glyphName };
     }
-    return { glyphName, layerIds: [layerId] };
+    return { glyphName, drawingIds: [drawingId] };
 }
 
 function pushUniqueChange(
@@ -130,9 +130,9 @@ function classifyShapesArrayContents(value: unknown): {
  * Classify a committed entry under `glyphs.<name>.layers.<id>…`.
  * Returns semantic events for the touched subtree; never emits compatibility.
  */
-function deriveLayerSubtreeChanges(
+function deriveDrawingSubtreeChanges(
     glyphName: string,
-    layerId: string | undefined,
+    drawingId: string | undefined,
     rest: string[],
     entry: GlyphFilterCommittedEntry
 ): {
@@ -140,12 +140,12 @@ function deriveLayerSubtreeChanges(
     mayAffectCompatibility: boolean;
 } {
     const changes: GlyphFilterChange[] = [];
-    const meta = layerMetadata(glyphName, layerId);
+    const meta = drawingMetadata(glyphName, drawingId);
     const field = rest[0];
 
-    // Whole-layer write / structural layer add-remove.
+    // Whole-drawing write / structural drawing add-remove.
     if (!field) {
-        pushUniqueChange(changes, 'glyph.layers.changed', meta);
+        pushUniqueChange(changes, 'glyph.drawings.changed', meta);
         const snapshots = [entry.oldValue, entry.newValue];
         let mayAffectCompatibility = true;
         for (const snapshot of snapshots) {
@@ -169,15 +169,19 @@ function deriveLayerSubtreeChanges(
                 pushUniqueChange(changes, 'glyph.metrics.changed', meta);
             }
             if ('location' in snapshot) {
-                pushUniqueChange(changes, 'glyph.layer.location.changed', meta);
+                pushUniqueChange(
+                    changes,
+                    'glyph.drawing.location.changed',
+                    meta
+                );
             }
         }
-        // Layer membership always can affect the compatibility set.
+        // Drawing membership always can affect the compatibility set.
         return { changes, mayAffectCompatibility };
     }
 
     if (field === 'location') {
-        pushUniqueChange(changes, 'glyph.layer.location.changed', meta);
+        pushUniqueChange(changes, 'glyph.drawing.location.changed', meta);
         return { changes, mayAffectCompatibility: false };
     }
 
@@ -208,14 +212,14 @@ function deriveLayerSubtreeChanges(
     if (field === 'shapes') {
         return deriveShapesSubtreeChanges(
             glyphName,
-            layerId,
+            drawingId,
             rest.slice(1),
             entry
         );
     }
 
-    // Unknown layer field: treat as a structural layer change.
-    pushUniqueChange(changes, 'glyph.layers.changed', meta);
+    // Unknown drawing field: treat as a structural drawing change.
+    pushUniqueChange(changes, 'glyph.drawings.changed', meta);
     return { changes, mayAffectCompatibility: true };
 }
 
@@ -224,7 +228,7 @@ function deriveLayerSubtreeChanges(
  */
 function deriveShapesSubtreeChanges(
     glyphName: string,
-    layerId: string | undefined,
+    drawingId: string | undefined,
     rest: string[],
     entry: GlyphFilterCommittedEntry
 ): {
@@ -232,7 +236,7 @@ function deriveShapesSubtreeChanges(
     mayAffectCompatibility: boolean;
 } {
     const changes: GlyphFilterChange[] = [];
-    const meta = layerMetadata(glyphName, layerId);
+    const meta = drawingMetadata(glyphName, drawingId);
 
     // Entire shapes array replaced.
     if (rest.length === 0) {
@@ -324,30 +328,30 @@ function deriveShapesSubtreeChanges(
 /**
  * Map one committed change-log entry to filter events and compatibility hints.
  *
- * Committed paths use colon separators at glyph-name and layer-id boundaries
+ * Committed paths use colon separators at glyph-name and drawing-id boundaries
  * (`glyphs.A:layers.<id>:anchors.0`). Always parse with `getPathSegments` —
  * never `path.split('.')`, which breaks on those separators.
  */
 export function deriveGlyphFilterChangesFromCommittedEntry(
     entry: GlyphFilterCommittedEntry,
     options?: {
-        masterIds?: string[];
+        stationIds?: string[];
     }
 ): GlyphFilterEntryDerivation {
     const path = getPathSegments(entry.path);
     const changes: GlyphFilterChange[] = [];
     const compatibilityCheckGlyphNames: string[] = [];
     const lifecycleChanges: GlyphFilterLifecycleChange[] = [];
-    let mastersChanged = false;
+    let stationsChanged = false;
 
     if (path[0] === 'masters') {
-        // Kerning lives on masters but cannot change outline compatibility;
-        // treating it as a master change rechecked every glyph per kern edit.
-        mastersChanged = path[2] !== 'kerning';
+        // Kerning lives on stations but cannot change outline compatibility;
+        // treating it as a station change rechecked every glyph per kern edit.
+        stationsChanged = path[2] !== 'kerning';
         return {
             changes,
             compatibilityCheckGlyphNames,
-            mastersChanged,
+            stationsChanged,
             lifecycleChanges
         };
     }
@@ -356,7 +360,7 @@ export function deriveGlyphFilterChangesFromCommittedEntry(
         return {
             changes,
             compatibilityCheckGlyphNames,
-            mastersChanged,
+            stationsChanged,
             lifecycleChanges
         };
     }
@@ -368,7 +372,7 @@ export function deriveGlyphFilterChangesFromCommittedEntry(
         return {
             changes,
             compatibilityCheckGlyphNames,
-            mastersChanged,
+            stationsChanged,
             lifecycleChanges
         };
     }
@@ -378,7 +382,7 @@ export function deriveGlyphFilterChangesFromCommittedEntry(
         return {
             changes,
             compatibilityCheckGlyphNames,
-            mastersChanged,
+            stationsChanged,
             lifecycleChanges
         };
     }
@@ -388,7 +392,7 @@ export function deriveGlyphFilterChangesFromCommittedEntry(
         return {
             changes,
             compatibilityCheckGlyphNames,
-            mastersChanged,
+            stationsChanged,
             lifecycleChanges
         };
     }
@@ -402,7 +406,7 @@ export function deriveGlyphFilterChangesFromCommittedEntry(
         return {
             changes,
             compatibilityCheckGlyphNames,
-            mastersChanged,
+            stationsChanged,
             lifecycleChanges
         };
     }
@@ -416,7 +420,7 @@ export function deriveGlyphFilterChangesFromCommittedEntry(
         return {
             changes,
             compatibilityCheckGlyphNames,
-            mastersChanged,
+            stationsChanged,
             lifecycleChanges
         };
     }
@@ -426,7 +430,7 @@ export function deriveGlyphFilterChangesFromCommittedEntry(
         return {
             changes,
             compatibilityCheckGlyphNames,
-            mastersChanged,
+            stationsChanged,
             lifecycleChanges
         };
     }
@@ -436,7 +440,7 @@ export function deriveGlyphFilterChangesFromCommittedEntry(
         return {
             changes,
             compatibilityCheckGlyphNames,
-            mastersChanged,
+            stationsChanged,
             lifecycleChanges
         };
     }
@@ -448,7 +452,7 @@ export function deriveGlyphFilterChangesFromCommittedEntry(
         return {
             changes,
             compatibilityCheckGlyphNames,
-            mastersChanged,
+            stationsChanged,
             lifecycleChanges
         };
     }
@@ -464,21 +468,21 @@ export function deriveGlyphFilterChangesFromCommittedEntry(
         return {
             changes,
             compatibilityCheckGlyphNames,
-            mastersChanged,
+            stationsChanged,
             lifecycleChanges
         };
     }
 
     if (field === 'layers') {
-        const layerId = path[3];
+        const drawingId = path[3];
         // glyphs.<name>.layers  (rare bulk write)
-        if (!layerId) {
-            pushUniqueChange(changes, 'glyph.layers.changed', { glyphName });
+        if (!drawingId) {
+            pushUniqueChange(changes, 'glyph.drawings.changed', { glyphName });
             compatibilityCheckGlyphNames.push(glyphName);
             return {
                 changes,
                 compatibilityCheckGlyphNames,
-                mastersChanged,
+                stationsChanged,
                 lifecycleChanges
             };
         }
@@ -488,33 +492,33 @@ export function deriveGlyphFilterChangesFromCommittedEntry(
             path.length === 4 &&
             (entry.op === 'add' || entry.op === 'remove')
         ) {
-            pushUniqueChange(changes, 'glyph.layers.changed', {
+            pushUniqueChange(changes, 'glyph.drawings.changed', {
                 glyphName,
-                layerIds: [layerId]
+                drawingIds: [drawingId]
             });
             compatibilityCheckGlyphNames.push(glyphName);
             return {
                 changes,
                 compatibilityCheckGlyphNames,
-                mastersChanged,
+                stationsChanged,
                 lifecycleChanges
             };
         }
 
-        const layerResult = deriveLayerSubtreeChanges(
+        const drawingResult = deriveDrawingSubtreeChanges(
             glyphName,
-            layerId,
+            drawingId,
             path.slice(4),
             entry
         );
-        changes.push(...layerResult.changes);
-        if (layerResult.mayAffectCompatibility) {
+        changes.push(...drawingResult.changes);
+        if (drawingResult.mayAffectCompatibility) {
             compatibilityCheckGlyphNames.push(glyphName);
         }
         return {
             changes,
             compatibilityCheckGlyphNames,
-            mastersChanged,
+            stationsChanged,
             lifecycleChanges
         };
     }
@@ -522,7 +526,7 @@ export function deriveGlyphFilterChangesFromCommittedEntry(
     return {
         changes,
         compatibilityCheckGlyphNames,
-        mastersChanged,
+        stationsChanged,
         lifecycleChanges
     };
 }

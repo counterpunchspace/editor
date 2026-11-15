@@ -19,7 +19,7 @@ describe('assistant configuration', () => {
             }
         });
         expect(tool.function.description).toContain('Font()');
-        expect(tool.function.description).toContain('print(master.name.dflt)');
+        expect(tool.function.description).toContain('print(station.name.dflt)');
         expect(tool.function.description).not.toContain('Pyodide');
     });
 
@@ -42,7 +42,7 @@ describe('assistant configuration', () => {
         expect(ASSISTANT_SYSTEM_PROMPT).not.toContain(
             'must not modify font data or run execute_python_code'
         );
-        expect(ASSISTANT_SYSTEM_PROMPT).toContain('print(master.name.dflt)');
+        expect(ASSISTANT_SYSTEM_PROMPT).toContain('print(station.name.dflt)');
         expect(ASSISTANT_SYSTEM_PROMPT).toContain(
             'Never serialize the whole font to JSON to read one field'
         );

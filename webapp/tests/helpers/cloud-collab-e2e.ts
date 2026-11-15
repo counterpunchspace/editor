@@ -257,8 +257,8 @@ export async function nudgeGlyphNode(
             const fontModel = (window as any).currentFontModel;
             const currentFont = (window as any).fontManager?.currentFont;
             const glyph = fontModel.findGlyph(name);
-            const layer = glyph.layers[0];
-            const node = layer.paths[0].nodes[0];
+            const drawing = glyph.layers[0];
+            const node = drawing.paths[0].nodes[0];
             const oldX = node.x;
             bridge.runWithoutRecording(() => {
                 node.x = oldX + dx;
@@ -269,7 +269,7 @@ export async function nudgeGlyphNode(
                 transactionLabel,
                 undefined,
                 undefined,
-                layer.id,
+                drawing.id,
                 undefined,
                 undefined,
                 undefined,
@@ -306,10 +306,10 @@ export async function moveGlyphNodeThroughModel(
     const result = await page.evaluate(async (args) => {
         const w = window as any;
         const glyph = w.currentFontModel.findGlyph(args.glyphName);
-        const layer = args.layerId
-            ? glyph.findLayerById(args.layerId)
+        const drawing = args.layerId
+            ? glyph.findDrawingById(args.layerId)
             : glyph.layers[0];
-        const nodes = layer.paths[0].nodes;
+        const nodes = drawing.paths[0].nodes;
         const index =
             args.nodeIndex < 0 ? nodes.length + args.nodeIndex : args.nodeIndex;
         const node = nodes[index];
@@ -326,10 +326,10 @@ export async function moveGlyphNodeThroughModel(
         }
         await bridge.waitForPendingCloudCommits?.();
         return {
-            layerId: String(layer.id),
+            layerId: String(drawing.id),
             nodeIndex: index,
             oldX,
-            newX: layer.paths[0].nodes[index].x
+            newX: drawing.paths[0].nodes[index].x
         };
     }, edit);
     expect(result.newX).toBe(result.oldX + edit.deltaX);
@@ -339,16 +339,16 @@ export async function moveGlyphNodeThroughModel(
 export async function glyphNodeXAt(
     page: Page,
     glyphName: string,
-    layerId: string,
+    drawingId: string,
     nodeIndex: number
 ): Promise<number | null> {
     return page.evaluate(
         ({ name, id, index }) => {
             const glyph = (window as any).currentFontModel?.findGlyph?.(name);
-            const layer = glyph?.findLayerById?.(id);
-            return layer?.paths?.[0]?.nodes?.[index]?.x ?? null;
+            const drawing = glyph?.findDrawingById?.(id);
+            return drawing?.paths?.[0]?.nodes?.[index]?.x ?? null;
         },
-        { name: glyphName, id: layerId, index: nodeIndex }
+        { name: glyphName, id: drawingId, index: nodeIndex }
     );
 }
 

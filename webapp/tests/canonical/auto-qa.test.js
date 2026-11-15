@@ -41,7 +41,7 @@ const WORK_SANS_FIXTURE = JSON.parse(
     )
 );
 
-function makeMaster() {
+function makeStation() {
     return {
         id: 'master-1',
         name: { dflt: 'Regular' },
@@ -54,7 +54,7 @@ function makeMaster() {
     };
 }
 
-function makeLayer(options = {}) {
+function makeDrawing(options = {}) {
     const {
         id = 'layer-1',
         components = [],
@@ -90,7 +90,7 @@ function makeGlyph(name, options = {}) {
         category: 'Base',
         exported: true,
         codepoints,
-        layers: [makeLayer({ id: `${name}-0`, components, anchors })],
+        layers: [makeDrawing({ id: `${name}-0`, components, anchors })],
         format_specific: {}
     };
 }
@@ -101,7 +101,7 @@ function makeFont(glyphs) {
         version: [1, 0],
         axes: [],
         instances: [],
-        masters: [makeMaster()],
+        masters: [makeStation()],
         glyphs,
         note: '',
         names: {},

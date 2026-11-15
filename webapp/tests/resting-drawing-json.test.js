@@ -1,13 +1,13 @@
 const {
-    describeRestingLayerViolation,
-    omitRestingLayerRuntimeKeys,
-    toRestingLayerJson,
+    describeRestingDrawingViolation,
+    omitRestingDrawingRuntimeKeys,
+    toRestingDrawingJson,
     toRestingShapeJson
-} = require('../js/resting-layer-json');
+} = require('../js/resting-drawing-json');
 
-describe('resting-layer-json', () => {
+describe('resting-drawing-json', () => {
     test('strips interpolator keys and converts affine component transforms', () => {
-        const layer = toRestingLayerJson(
+        const drawing = toRestingDrawingJson(
             {
                 id: 'layer-1',
                 width: 600,
@@ -25,29 +25,29 @@ describe('resting-layer-json', () => {
             { mode: 'delta' }
         );
 
-        expect(layer._interpolationRequestId).toBeUndefined();
-        expect(layer.isInterpolated).toBeUndefined();
-        expect(layer.shapes[0].layerData).toBeUndefined();
-        expect(layer.shapes[0].reference).toBe('a');
-        expect(Array.isArray(layer.shapes[0].transform)).toBe(false);
-        expect(layer.shapes[0].transform.translation).toEqual([12, 34]);
-        expect(describeRestingLayerViolation(layer)).toBeNull();
+        expect(drawing._interpolationRequestId).toBeUndefined();
+        expect(drawing.isInterpolated).toBeUndefined();
+        expect(drawing.shapes[0].layerData).toBeUndefined();
+        expect(drawing.shapes[0].reference).toBe('a');
+        expect(Array.isArray(drawing.shapes[0].transform)).toBe(false);
+        expect(drawing.shapes[0].transform.translation).toEqual([12, 34]);
+        expect(describeRestingDrawingViolation(drawing)).toBeNull();
     });
 
     test('stripInterpolatorRequestId leaves preview metrics', () => {
         const {
             stripInterpolatorRequestId
-        } = require('../js/resting-layer-json');
-        const layer = {
+        } = require('../js/resting-drawing-json');
+        const drawing = {
             width: 500,
             _interpolationRequestId: 4,
             _verticalMetrics: { ascender: 800 },
             isInterpolated: false
         };
-        stripInterpolatorRequestId(layer);
-        expect(layer._interpolationRequestId).toBeUndefined();
-        expect(layer._verticalMetrics).toEqual({ ascender: 800 });
-        expect(layer.isInterpolated).toBe(false);
+        stripInterpolatorRequestId(drawing);
+        expect(drawing._interpolationRequestId).toBeUndefined();
+        expect(drawing._verticalMetrics).toEqual({ ascender: 800 });
+        expect(drawing.isInterpolated).toBe(false);
     });
 
     test('replace keeps width, master, and shapes when incoming snapshot is interpolator-only', () => {
@@ -57,7 +57,7 @@ describe('resting-layer-json', () => {
             master: { type: 'DefaultForMaster', master: 'master-1' },
             shapes: [{ nodes: ['100 200 l'], closed: true }]
         };
-        const replaced = toRestingLayerJson(
+        const replaced = toRestingDrawingJson(
             {
                 _interpolationRequestId: 3,
                 shapes: [{ id: 'ghost', transform: [1, 0, 0, 1, 0, 0] }]
@@ -73,10 +73,10 @@ describe('resting-layer-json', () => {
 
     test('applyRestingShapeGeometryToEditorLayer keeps nested component layerData', () => {
         const {
-            applyRestingShapeGeometryToEditorLayer
-        } = require('../js/resting-layer-json');
+            applyRestingShapeGeometryToEditorDrawing
+        } = require('../js/resting-drawing-json');
         const nested = { shapes: [{ nodes: [{ x: 0, y: 0, type: 'Line' }] }] };
-        const editorLayer = {
+        const editorDrawing = {
             width: 500,
             shapes: [
                 {
@@ -92,7 +92,7 @@ describe('resting-layer-json', () => {
                 }
             ]
         };
-        const restingLayer = {
+        const restingDrawing = {
             width: 540,
             shapes: [
                 {
@@ -107,16 +107,16 @@ describe('resting-layer-json', () => {
             ]
         };
 
-        applyRestingShapeGeometryToEditorLayer(editorLayer, restingLayer);
+        applyRestingShapeGeometryToEditorDrawing(editorDrawing, restingDrawing);
 
-        expect(editorLayer.shapes[0].layerData).toBe(nested);
-        expect(editorLayer.shapes[0].isInterpolated).toBe(false);
-        expect(editorLayer.shapes[0].transform.translation).toEqual([40, 20]);
-        expect(editorLayer.shapes[0]).not.toBe(restingLayer.shapes[0]);
+        expect(editorDrawing.shapes[0].layerData).toBe(nested);
+        expect(editorDrawing.shapes[0].isInterpolated).toBe(false);
+        expect(editorDrawing.shapes[0].transform.translation).toEqual([40, 20]);
+        expect(editorDrawing.shapes[0]).not.toBe(restingDrawing.shapes[0]);
     });
 
     test('omitRestingLayerRuntimeKeys leaves identity fields', () => {
-        const next = omitRestingLayerRuntimeKeys({
+        const next = omitRestingDrawingRuntimeKeys({
             width: 10,
             _verticalMetrics: { ascender: 800 },
             master: { type: 'DefaultForMaster', master: 'm' }

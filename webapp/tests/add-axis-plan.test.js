@@ -14,14 +14,14 @@ const weightFont = {
         { id: 'm2', name: 'Regular', location: { wght: 400 } },
         { id: 'm3', name: 'Bold', location: { wght: 700 } }
     ],
-    defaultMasterId: 'm2',
+    defaultStationId: 'm2',
     glyphCount: 10,
     braceGlyphCount: 1,
-    braceLayerCount: 2,
+    freeDrawingCount: 2,
     instanceCount: 2
 };
 
-function masterRecord(id, name, wght) {
+function stationRecord(id, name, wght) {
     return {
         id,
         name: { dflt: name },
@@ -43,9 +43,9 @@ const records = {
         }
     ],
     masters: [
-        masterRecord('m1', 'Light', 300),
-        masterRecord('m2', 'Regular', 400),
-        masterRecord('m3', 'Bold', 700)
+        stationRecord('m1', 'Light', 300),
+        stationRecord('m2', 'Regular', 400),
+        stationRecord('m3', 'Bold', 700)
     ],
     instances: [
         {
@@ -77,7 +77,7 @@ describe('AddAxisModel', () => {
         expect(model.direction).toBe('above');
         expect(model.existingAt).toBe(100);
         expect(model.columnValue('max')).toBe(125);
-        expect(model.newMasters().map((m) => m.name)).toEqual([
+        expect(model.newStations().map((m) => m.name)).toEqual([
             'Light Expanded',
             'Expanded',
             'Bold Expanded'
@@ -91,9 +91,9 @@ describe('AddAxisModel', () => {
             masters: [
                 { id: 'a', name: 'Regular Text', location: { wght: 400 } }
             ],
-            defaultMasterId: 'a'
+            defaultStationId: 'a'
         });
-        expect(model.newMasters()[0].name).toBe('Text Expanded');
+        expect(model.newStations()[0].name).toBe('Text Expanded');
     });
 
     test('skips axes the font already has and disables impossible directions', () => {
@@ -111,7 +111,7 @@ describe('AddAxisModel', () => {
     test('both sides gives two copies per master and a symmetric range', () => {
         const model = new AddAxisModel(weightFont);
         model.setDirection('both');
-        expect(model.newMasters()).toHaveLength(6);
+        expect(model.newStations()).toHaveLength(6);
         expect(model.deriveAxis()).toMatchObject({
             min: 75,
             max: 125,
@@ -134,7 +134,7 @@ describe('AddAxisModel', () => {
         model.cell('m1', 'max').on = false;
         model.cell('m3', 'max').on = false;
         expect(model.validate().warnings[2][0]).toMatch(
-            /^Light and Bold get no wider copy\. Those masters are filled in/
+            /^Light and Bold get no wider copy\. Those stations are filled in/
         );
     });
 
@@ -172,13 +172,13 @@ describe('AddAxisModel', () => {
     test('builds a plan: existing masters get the new tag, copies clone their source', () => {
         const model = new AddAxisModel(weightFont);
         model.cell('m3', 'max').on = false;
-        const { plan, masterCount } = model.buildPlan(
+        const { plan, stationCount } = model.buildPlan(
             records.axes,
             records.masters,
             records.instances,
             newId
         );
-        expect(masterCount).toBe(2);
+        expect(stationCount).toBe(2);
         expect(plan.axes[1]).toMatchObject({
             tag: 'wdth',
             min: 100,
@@ -237,9 +237,9 @@ describe('AddAxisModel', () => {
             ...weightFont,
             axes: [],
             masters: [{ id: 'r', name: 'Regular', location: {} }],
-            defaultMasterId: 'r'
+            defaultStationId: 'r'
         });
-        expect(model.newMasters().map((m) => m.name)).toEqual(['Expanded']);
+        expect(model.newStations().map((m) => m.name)).toEqual(['Expanded']);
         expect(model.axisRecord(false)).toMatchObject({
             min: 100,
             default: 100,

@@ -157,7 +157,7 @@ test('basic limits reject a second font and a font over the glyph cap, and an un
             const savedLimits = plugin._assetLimits;
             plugin._eligibility = null;
             plugin._assetLimits = null;
-            const masterId = model.masters?.[0]?.id;
+            const stationId = model.stations?.[0]?.id;
             const glyphs = model._data.glyphs;
             const originalCount = glyphs.length;
             try {
@@ -168,13 +168,13 @@ test('basic limits reject a second font and a font over the glyph cap, and an un
                         category: 'Base',
                         exported: true,
                         id: `pad-id-${index}`,
-                        layers: masterId
+                        layers: stationId
                             ? [
                                   {
                                       id: `pad-layer-${index}`,
                                       width: 500,
                                       shapes: [],
-                                      associatedMasterId: masterId,
+                                      associatedMasterId: stationId,
                                       _type: 'Layer'
                                   }
                               ]
@@ -489,8 +489,8 @@ test('revoking a member closes an open glyph shard, and a new invite restores ed
             try {
                 const bridge = (window as any).changeBridge;
                 const glyph = (window as any).currentFontModel.findGlyph('a');
-                const layer = glyph.layers[0];
-                const node = layer.paths[0].nodes[0];
+                const drawing = glyph.drawings[0];
+                const node = drawing.paths[0].nodes[0];
                 const oldX = node.x;
                 bridge.runWithoutRecording(() => {
                     node.x = oldX + 3;
@@ -501,7 +501,7 @@ test('revoking a member closes an open glyph shard, and a new invite restores ed
                     'revoked glyph write',
                     undefined,
                     undefined,
-                    layer.id,
+                    drawing.id,
                     undefined,
                     undefined,
                     undefined,
@@ -522,7 +522,7 @@ test('revoking a member closes an open glyph shard, and a new invite restores ed
             }
         });
         const ownerX = await opened.ownerPage.evaluate(() => {
-            return (window as any).currentFontModel.findGlyph('a').layers[0]
+            return (window as any).currentFontModel.findGlyph('a').drawings[0]
                 .paths[0].nodes[0].x;
         });
         if (write.x != null) {

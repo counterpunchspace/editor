@@ -29,21 +29,21 @@ import {
     stabilizeIndexedMapPath,
     diffYArray,
     applyIndexedMapArray as applyIndexedMapArrayToYMap,
-    ensureGlyphLayersMap,
+    ensureGlyphDrawingsMap,
     replaceYMapContents,
     YMAP_INFRASTRUCTURE_KEYS
 } from './change-bridge-ydoc';
 import {
-    repairLayerGeometryOrphans,
-    readLayerGeometry,
-    writeLayerGeometry
-} from './layer-geometry-ydoc';
+    repairDrawingGeometryOrphans,
+    readDrawingGeometry,
+    writeDrawingGeometry
+} from './drawing-geometry-ydoc';
 import {
-    omitRestingLayerRuntimeKeys,
-    RESTING_LAYER_IDENTITY_KEYS,
-    RESTING_LAYER_RUNTIME_KEYS,
-    toRestingLayerJson
-} from './resting-layer-json';
+    omitRestingDrawingRuntimeKeys,
+    RESTING_DRAWING_IDENTITY_KEYS,
+    RESTING_DRAWING_RUNTIME_KEYS,
+    toRestingDrawingJson
+} from './resting-drawing-json';
 import {
     type ChangeLogEntry,
     type ChangeOp,
@@ -55,13 +55,13 @@ import {
     type GlyphRename,
     createLogEntry,
     deriveGlyphName,
-    deriveLayerId,
+    deriveDrawingId,
     deriveGlyphNameFromPath,
     deriveGlyphNamesFromPaths,
-    deriveLayerIdFromPath,
-    deriveLayerIdsFromPaths,
+    deriveDrawingIdFromPath,
+    deriveDrawingIdsFromPaths,
     deriveObjectInfoFromPath,
-    getLayerTouchKey,
+    getDrawingTouchKey,
     historyReplayValue,
     isSnapshotRootPath,
     getPathSegments,
@@ -72,12 +72,12 @@ import {
     normalizeGlyphRenames,
     glyphRenamesForHistoryAction,
     normalizeChangeLogEntry,
-    resolveCollaborationOriginatingLayer,
-    resolveCommitOriginatingLayer,
+    resolveCollaborationOriginatingDrawing,
+    resolveCommitOriginatingDrawing,
     resolveHistoryTargetItem,
     resolveUndoSurfaceAffinity,
     resetLogCounter,
-    isDerivedLayerChangePath
+    isDerivedDrawingChangePath
 } from './change-log';
 import type { Babelfont } from './babelfont';
 import { Logger } from './logger';
@@ -186,9 +186,9 @@ import {
     type CollabSubmitRequest
 } from './filesystem-plugins/cloud-shard-limits';
 import {
-    computeLayerRecompositionClosure,
+    computeDrawingRecompositionClosure,
     deriveEditKindsFromChangeLogEntries,
-    shouldResettleDerivedLayersOnHistoryReplay,
+    shouldResettleDerivedDrawingsOnHistoryReplay,
     type FontModelLike
 } from './recomposition-closure';
 
@@ -241,11 +241,11 @@ function mergeBurstEnvelopes(
 
 type Unsafe = ReturnType<typeof JSON.parse>;
 type YjsUpdate = Uint8Array<ArrayBufferLike>;
-type OptionalLayerField = 'anchors' | 'guides' | 'format_specific';
+type OptionalDrawingField = 'anchors' | 'guides' | 'format_specific';
 
-type LayerSnapshotSyncTarget = WorkerReplayTarget & {
-    layerJson: unknown;
-    authoritativeOptionalLayerFields?: readonly OptionalLayerField[];
+type DrawingSnapshotSyncTarget = WorkerReplayTarget & {
+    drawingJson: unknown;
+    authoritativeOptionalDrawingFields?: readonly OptionalDrawingField[];
 };
 
 export type { ChangeLogEntry } from './change-log';
@@ -426,7 +426,7 @@ type SyntheticChangeOperation = {
 };
 
 export type BatchApplyMode =
-    'default' | 'font-snapshot' | 'glyph-snapshot' | 'layer-snapshot';
+    'default' | 'font-snapshot' | 'glyph-snapshot' | 'drawing-snapshot';
 
 export type TransactionBufferedOperation = SyntheticChangeOperation & {
     applyPath?: (string | number)[];
@@ -536,7 +536,7 @@ function historyPathsOverlap(left: string, right: string): boolean {
     return true;
 }
 const GLYPH_REVISION_ORIGIN = 'glyph-revision-signal';
-const LAYER_EDIT_ORIGIN_PREFIX = 'layer-edit:';
+const DRAWING_EDIT_ORIGIN_PREFIX = 'drawing-edit:';
 
 function stateVectorsEqual(left: Uint8Array, right: Uint8Array): boolean {
     return (
@@ -545,15 +545,15 @@ function stateVectorsEqual(left: Uint8Array, right: Uint8Array): boolean {
     );
 }
 
-/** Whether a history item's own entries already write this glyph layer. */
-function historyItemWritesLayer(
+/** Whether a history item's own entries already write this glyph drawing. */
+function historyItemWritesDrawing(
     item: HistoryStackItem,
     target: WorkerReplayTarget
 ): boolean {
     return item.entries.some(
         (entry) =>
             deriveGlyphNameFromPath(entry.path) === target.glyphName &&
-            (deriveLayerIdFromPath(entry.path) ?? target.layerId) ===
+            (deriveDrawingIdFromPath(entry.path) ?? target.layerId) ===
                 target.layerId
     );
 }
@@ -651,16 +651,16 @@ export type UndoRedoResult = {
     historyItem: HistoryStackItem | null;
 };
 
-type LayerFingerprintTarget = {
+type DrawingFingerprintTarget = {
     glyphName: string;
     layerId: string;
 };
 
-type LayerFingerprintSnapshotEntry = LayerFingerprintTarget & {
+type DrawingFingerprintSnapshotEntry = DrawingFingerprintTarget & {
     fingerprint: string | null;
 };
 
-type LayerSyncMetadata = {
+type DrawingSyncMetadata = {
     editSource?: string | null;
     compileChangeSource?: string | null;
     compileEditType?: string | null;
@@ -674,24 +674,24 @@ const INDEXED_ARRAY_ORDER_KEYS: Record<string, string> = {
     guides: 'guideOrder'
 };
 
-const GRANULAR_LAYER_ARRAY_KEYS = new Set(['anchors', 'guides']);
+const GRANULAR_DRAWING_ARRAY_KEYS = new Set(['anchors', 'guides']);
 
-function getLayerManagerKey(glyphName: string, layerId: string): string {
-    return `${glyphName}@@${layerId}`;
+function getDrawingManagerKey(glyphName: string, drawingId: string): string {
+    return `${glyphName}@@${drawingId}`;
 }
 
-function getLayerEditOrigin(glyphName: string, layerId: string): string {
-    return `${LAYER_EDIT_ORIGIN_PREFIX}${glyphName}@@${layerId}`;
+function getDrawingEditOrigin(glyphName: string, drawingId: string): string {
+    return `${DRAWING_EDIT_ORIGIN_PREFIX}${glyphName}@@${drawingId}`;
 }
 
-function getLayerFingerprintTargetKey(
+function getDrawingFingerprintTargetKey(
     glyphName: string,
-    layerId: string
+    drawingId: string
 ): string {
-    return `${glyphName}@@${layerId}`;
+    return `${glyphName}@@${drawingId}`;
 }
 
-function normalizeLayerSignatureNodeType(nodeType: unknown): string {
+function normalizeDrawingSignatureNodeType(nodeType: unknown): string {
     switch (nodeType) {
         case 'Move':
         case 'Line':
@@ -736,13 +736,15 @@ function getPathLikeShape(shape: Unsafe): Unsafe | null {
     return null;
 }
 
-function getLayerFingerprintFromJson(layerJson: Unsafe): string | null {
-    if (!layerJson || typeof layerJson !== 'object') {
+function getDrawingFingerprintFromJson(drawingJson: Unsafe): string | null {
+    if (!drawingJson || typeof drawingJson !== 'object') {
         return null;
     }
 
-    const shapes = Array.isArray(layerJson.shapes) ? layerJson.shapes : [];
-    const anchors = Array.isArray(layerJson.anchors) ? layerJson.anchors : [];
+    const shapes = Array.isArray(drawingJson.shapes) ? drawingJson.shapes : [];
+    const anchors = Array.isArray(drawingJson.anchors)
+        ? drawingJson.anchors
+        : [];
 
     const componentSignatures = shapes
         .filter(
@@ -762,7 +764,7 @@ function getLayerFingerprintFromJson(layerJson: Unsafe): string | null {
         .map((pathShape: Unsafe) => {
             const nodes = Array.isArray(pathShape.nodes) ? pathShape.nodes : [];
             const nodeTypes = nodes.map((node: unknown) =>
-                normalizeLayerSignatureNodeType((node as Unsafe)?.nodetype)
+                normalizeDrawingSignatureNodeType((node as Unsafe)?.nodetype)
             );
             const closedFlag = pathShape.closed === false ? '0' : '1';
             const booleanFlag = pathHasSubtractionFlag(
@@ -887,7 +889,7 @@ export class PatchSyncEngine {
     private _collaboratorTouches: Array<{ seq: number; path: string }> = [];
     /** Room baselines of the undo or redo being replayed, so rooms it reaches through dependent composites are sent too. */
     private _historyReplayBaselines: Map<string, Uint8Array> | null = null;
-    /** Dependent composite layers the current replay recomposed outside the item's own entries. */
+    /** Dependent composite drawings the current replay recomposed outside the item's own entries. */
     private _historyReplayDependentTargets: WorkerReplayTarget[] = [];
     private _changeLog: ChangeLogEntry[] = [];
     /** Unique window identifier */
@@ -930,8 +932,8 @@ export class PatchSyncEngine {
     });
     /** Bursts opened by `runInEditBurst` that have not returned yet. */
     private _ambientBursts: EditBurst[] = [];
-    /** Layers each live-preview burst stages; its commit closes it. */
-    private _liveBurstLayers = new Map<string, Set<string>>();
+    /** Drawings each live-preview burst stages; its commit closes it. */
+    private _liveBurstDrawings = new Map<string, Set<string>>();
     /** The burst the open outermost transaction began in. */
     private _txBurst: EditBurst | null = null;
     /** Listeners that send to the room (see `LocalUpdateListenerOptions`). */
@@ -1123,19 +1125,19 @@ export class PatchSyncEngine {
         );
     }
 
-    private _collectLayerFingerprintSnapshot(
-        targets?: LayerFingerprintTarget[] | null
-    ): Map<string, LayerFingerprintSnapshotEntry> {
-        const snapshot = new Map<string, LayerFingerprintSnapshotEntry>();
+    private _collectDrawingFingerprintSnapshot(
+        targets?: DrawingFingerprintTarget[] | null
+    ): Map<string, DrawingFingerprintSnapshotEntry> {
+        const snapshot = new Map<string, DrawingFingerprintSnapshotEntry>();
         const glyphs = (this._fontJson as Unsafe)?.glyphs;
         if (!Array.isArray(glyphs)) {
             return snapshot;
         }
 
         // Targeted fast path: when the caller scoped this to a small set of
-        // (glyph, layer) pairs, do an indexed lookup instead of iterating
-        // every glyph and every layer in the font. For 1058 glyphs with
-        // ~5 layers each, this is the difference between 5000+ iterations
+        // (glyph, drawing) pairs, do an indexed lookup instead of iterating
+        // every glyph and every drawing in the font. For 1058 glyphs with
+        // ~5 drawings each, this is the difference between 5000+ iterations
         // and N (typically 1-20) per call. _syncJsonFromYDoc fires this
         // twice (before/after) on every Yjs sync (undo, remote, scoped).
         if (targets?.length) {
@@ -1160,12 +1162,12 @@ export class PatchSyncEngine {
             const dedupe = new Set<string>();
             for (const target of targets) {
                 const glyphName = target?.glyphName;
-                const layerId = target?.layerId;
-                if (!glyphName || !layerId) continue;
+                const drawingId = target?.layerId;
+                if (!glyphName || !drawingId) continue;
 
-                const targetKey = getLayerFingerprintTargetKey(
+                const targetKey = getDrawingFingerprintTargetKey(
                     glyphName,
-                    layerId
+                    drawingId
                 );
                 if (dedupe.has(targetKey)) continue;
                 dedupe.add(targetKey);
@@ -1173,18 +1175,21 @@ export class PatchSyncEngine {
                 const glyph = ensureGlyphIndex().get(glyphName);
                 if (!glyph) continue;
 
-                const layers = Array.isArray(glyph.layers) ? glyph.layers : [];
-                // Layer counts per glyph are tiny (typically 1-10). A linear
+                const drawings = Array.isArray(glyph.layers)
+                    ? glyph.layers
+                    : [];
+                // Drawing counts per glyph are tiny (typically 1-10). A linear
                 // find here is faster than building a per-glyph index.
-                const layer = layers.find(
-                    (l: Unsafe) => typeof l?.id === 'string' && l.id === layerId
+                const drawing = drawings.find(
+                    (l: Unsafe) =>
+                        typeof l?.id === 'string' && l.id === drawingId
                 );
-                if (!layer) continue;
+                if (!drawing) continue;
 
                 snapshot.set(targetKey, {
                     glyphName,
-                    layerId,
-                    fingerprint: getLayerFingerprintFromJson(layer)
+                    layerId: drawingId,
+                    fingerprint: getDrawingFingerprintFromJson(drawing)
                 });
             }
             return snapshot;
@@ -1198,21 +1203,22 @@ export class PatchSyncEngine {
                 continue;
             }
 
-            const layers = Array.isArray(glyph.layers) ? glyph.layers : [];
-            for (const layer of layers) {
-                const layerId = typeof layer?.id === 'string' ? layer.id : null;
-                if (!layerId) {
+            const drawings = Array.isArray(glyph.layers) ? glyph.layers : [];
+            for (const drawing of drawings) {
+                const drawingId =
+                    typeof drawing?.id === 'string' ? drawing.id : null;
+                if (!drawingId) {
                     continue;
                 }
 
-                const targetKey = getLayerFingerprintTargetKey(
+                const targetKey = getDrawingFingerprintTargetKey(
                     glyphName,
-                    layerId
+                    drawingId
                 );
                 snapshot.set(targetKey, {
                     glyphName,
-                    layerId,
-                    fingerprint: getLayerFingerprintFromJson(layer)
+                    layerId: drawingId,
+                    fingerprint: getDrawingFingerprintFromJson(drawing)
                 });
             }
         }
@@ -1220,9 +1226,9 @@ export class PatchSyncEngine {
         return snapshot;
     }
 
-    private _emitLayerFingerprintChangedEvents(
-        previousSnapshot: Map<string, LayerFingerprintSnapshotEntry>,
-        nextSnapshot: Map<string, LayerFingerprintSnapshotEntry>
+    private _emitDrawingFingerprintChangedEvents(
+        previousSnapshot: Map<string, DrawingFingerprintSnapshotEntry>,
+        nextSnapshot: Map<string, DrawingFingerprintSnapshotEntry>
     ): void {
         if (typeof window === 'undefined') {
             return;
@@ -1244,16 +1250,16 @@ export class PatchSyncEngine {
             }
 
             const glyphName = next?.glyphName ?? previous?.glyphName;
-            const layerId = next?.layerId ?? previous?.layerId;
-            if (!glyphName || !layerId) {
+            const drawingId = next?.layerId ?? previous?.layerId;
+            if (!glyphName || !drawingId) {
                 continue;
             }
 
             window.dispatchEvent(
-                new CustomEvent('layerFingerprintChanged', {
+                new CustomEvent('drawingFingerprintChanged', {
                     detail: {
                         glyphName,
-                        layerId
+                        layerId: drawingId
                     }
                 })
             );
@@ -1278,7 +1284,7 @@ export class PatchSyncEngine {
         this._isLocalEditOrigin = (origin: unknown): boolean => {
             if (typeof origin !== 'string') return false;
             if (LOCAL_EDIT_ORIGINS.has(origin)) return true;
-            if (origin.startsWith(LAYER_EDIT_ORIGIN_PREFIX)) return true;
+            if (origin.startsWith(DRAWING_EDIT_ORIGIN_PREFIX)) return true;
             return false;
         };
         this._bindDocUpdates(this.yDoc, FONT_CORE_DOCUMENT_ID);
@@ -1308,7 +1314,7 @@ export class PatchSyncEngine {
             }
         });
         this._unbindBurstFinalize = this._editBursts.onFinalize((burst) => {
-            this._liveBurstLayers.delete(burst.key);
+            this._liveBurstDrawings.delete(burst.key);
             this._cloudHold.flushBurst(burst.key);
             return this.waitForPendingCloudCommits();
         });
@@ -1376,8 +1382,8 @@ export class PatchSyncEngine {
     }
 
     /**
-     * Rooms besides its own that one write reaches: a whole catalog, master
-     * list, master or kerning map spreads over the buckets.
+     * Rooms besides its own that one write reaches: a whole catalog, station
+     * list, station or kerning map spreads over the buckets.
      */
     private _extraLayoutDocumentIds(path: Array<string | number>): string[] {
         const layout = this._routingLayout();
@@ -1773,7 +1779,7 @@ export class PatchSyncEngine {
             return false;
         }
         const catalog = catalogMoves ? (this._readCatalogJson() ?? {}) : {};
-        const masters = kerningMoves
+        const stations = kerningMoves
             ? ((this._readTopLevelJsonFromY('masters') as unknown[]) ?? [])
             : [];
         this._adoptedLayoutCoreBaseline =
@@ -1822,10 +1828,11 @@ export class PatchSyncEngine {
             for (const [glyphId, entry] of Object.entries(catalog)) {
                 add(catalogRoomFor(next, glyphId), glyphId, toYType(entry));
             }
-            for (const master of Array.isArray(masters) ? masters : []) {
-                const record = (master ?? {}) as Record<string, unknown>;
-                const masterId = typeof record.id === 'string' ? record.id : '';
-                if (!masterId) continue;
+            for (const station of Array.isArray(stations) ? stations : []) {
+                const record = (station ?? {}) as Record<string, unknown>;
+                const stationId =
+                    typeof record.id === 'string' ? record.id : '';
+                if (!stationId) continue;
                 for (const direction of ['l', 'r'] as const) {
                     for (const [pair, value] of Object.entries(
                         flattenKerningMap(
@@ -1834,7 +1841,7 @@ export class PatchSyncEngine {
                     )) {
                         add(
                             kerningRoomFor(next, pair),
-                            kerningKey(masterId, direction, pair),
+                            kerningKey(stationId, direction, pair),
                             value
                         );
                     }
@@ -1989,37 +1996,37 @@ export class PatchSyncEngine {
         return catalog;
     }
 
-    private _masterIdAt(index: number): string | null {
-        const masters = this.fontMap.get('masters');
-        if (!(masters instanceof Y.Array)) {
+    private _stationIdAt(index: number): string | null {
+        const stations = this.fontMap.get('masters');
+        if (!(stations instanceof Y.Array)) {
             return null;
         }
-        const master = masters.get(index);
+        const station = stations.get(index);
         const id =
-            master instanceof Y.Map
-                ? master.get('id')
-                : (master as { id?: unknown } | undefined)?.id;
+            station instanceof Y.Map
+                ? station.get('id')
+                : (station as { id?: unknown } | undefined)?.id;
         return typeof id === 'string' && id ? id : null;
     }
 
-    private _masterIds(): string[] {
-        const masters = this.fontMap.get('masters');
-        if (!(masters instanceof Y.Array)) {
+    private _stationIds(): string[] {
+        const stations = this.fontMap.get('masters');
+        if (!(stations instanceof Y.Array)) {
             return [];
         }
-        return masters
+        return stations
             .toArray()
-            .map((master) =>
-                master instanceof Y.Map
-                    ? master.get('id')
-                    : (master as { id?: unknown } | undefined)?.id
+            .map((station) =>
+                station instanceof Y.Map
+                    ? station.get('id')
+                    : (station as { id?: unknown } | undefined)?.id
             )
             .filter((id): id is string => typeof id === 'string' && !!id);
     }
 
-    /** Flat pairs of one master and direction from the kerning rooms. */
+    /** Flat pairs of one station and direction from the kerning rooms. */
     private _readKerningPairs(
-        masterId: string,
+        stationId: string,
         direction: KerningDirection
     ): Record<string, unknown> {
         const pairs: Record<string, unknown> = {};
@@ -2028,7 +2035,7 @@ export class PatchSyncEngine {
                 const parsed = parseKerningKey(key);
                 if (
                     parsed &&
-                    parsed.masterId === masterId &&
+                    parsed.masterId === stationId &&
                     parsed.direction === direction
                 ) {
                     pairs[parsed.pair] = value;
@@ -2038,42 +2045,42 @@ export class PatchSyncEngine {
         return pairs;
     }
 
-    /** Make one master's pairs in one direction equal `next`. */
+    /** Make one station's pairs in one direction equal `next`. */
     private _writeKerningPairs(
-        masterId: string,
+        stationId: string,
         direction: KerningDirection,
         next: Record<string, number> | null
     ): void {
         const wanted = next ?? {};
-        const current = this._readKerningPairs(masterId, direction);
+        const current = this._readKerningPairs(stationId, direction);
         for (const pair of Object.keys(current)) {
             if (!(pair in wanted)) {
                 this._kerningBucketMap(pair).delete(
-                    kerningKey(masterId, direction, pair)
+                    kerningKey(stationId, direction, pair)
                 );
             }
         }
         for (const [pair, value] of Object.entries(wanted)) {
             if (current[pair] !== value) {
                 this._kerningBucketMap(pair).set(
-                    kerningKey(masterId, direction, pair),
+                    kerningKey(stationId, direction, pair),
                     value
                 );
             }
         }
     }
 
-    private _deleteMasterKerning(masterId: string): void {
-        this._writeKerningPairs(masterId, 'l', null);
-        this._writeKerningPairs(masterId, 'r', null);
+    private _deleteStationKerning(stationId: string): void {
+        this._writeKerningPairs(stationId, 'l', null);
+        this._writeKerningPairs(stationId, 'r', null);
     }
 
-    /** A master as stored in core under layout 2: without its kerning. */
-    private _withoutKerning(master: unknown): unknown {
-        if (!master || typeof master !== 'object' || Array.isArray(master)) {
-            return master;
+    /** A station as stored in core under layout 2: without its kerning. */
+    private _withoutKerning(station: unknown): unknown {
+        if (!station || typeof station !== 'object' || Array.isArray(station)) {
+            return station;
         }
-        const { kerning, kerning_rtl, ...rest } = master as Record<
+        const { kerning, kerning_rtl, ...rest } = station as Record<
             string,
             unknown
         >;
@@ -2082,21 +2089,21 @@ export class PatchSyncEngine {
         return rest;
     }
 
-    /** Move a master value's kerning fields into the kerning rooms. */
-    private _writeMasterKerningFromValue(master: unknown): void {
-        if (!master || typeof master !== 'object' || Array.isArray(master)) {
+    /** Move a station value's kerning fields into the kerning rooms. */
+    private _writeStationKerningFromValue(station: unknown): void {
+        if (!station || typeof station !== 'object' || Array.isArray(station)) {
             return;
         }
-        const record = master as Record<string, unknown>;
-        const masterId = typeof record.id === 'string' ? record.id : null;
-        if (!masterId) {
+        const record = station as Record<string, unknown>;
+        const stationId = typeof record.id === 'string' ? record.id : null;
+        if (!stationId) {
             return;
         }
         for (const direction of ['l', 'r'] as const) {
             const field = kerningFieldForDirection(direction);
             if (field in record) {
                 this._writeKerningPairs(
-                    masterId,
+                    stationId,
                     direction,
                     flattenKerningMap(record[field])
                 );
@@ -2157,27 +2164,27 @@ export class PatchSyncEngine {
             const next = Array.isArray(value) ? value : [];
             const keep = new Set(
                 next
-                    .map((master) => (master as { id?: unknown })?.id)
+                    .map((station) => (station as { id?: unknown })?.id)
                     .filter((id): id is string => typeof id === 'string')
             );
-            for (const masterId of this._masterIds()) {
-                if (!keep.has(masterId)) {
-                    this._deleteMasterKerning(masterId);
+            for (const stationId of this._stationIds()) {
+                if (!keep.has(stationId)) {
+                    this._deleteStationKerning(stationId);
                 }
             }
-            const existing = new Set(this._masterIds());
+            const existing = new Set(this._stationIds());
             this._replaceYMapEntry(
                 this.fontMap,
                 'masters',
-                next.map((master) => this._withoutKerning(master))
+                next.map((station) => this._withoutKerning(station))
             );
-            // Kerning edits arrive on kerning paths. A whole master list only
-            // brings the kerning of masters that are new here: a copy read
+            // Kerning edits arrive on kerning paths. A whole station list only
+            // brings the kerning of stations that are new here: a copy read
             // before the kerning rooms loaded would otherwise wipe them.
-            for (const master of next) {
-                const id = (master as { id?: unknown } | null)?.id;
+            for (const station of next) {
+                const id = (station as { id?: unknown } | null)?.id;
                 if (typeof id === 'string' && !existing.has(id)) {
-                    this._writeMasterKerningFromValue(master);
+                    this._writeStationKerningFromValue(station);
                 }
             }
             return true;
@@ -2185,10 +2192,10 @@ export class PatchSyncEngine {
         if (path.length === 2) {
             const id = (value as { id?: unknown } | null)?.id;
             const isNew =
-                typeof id === 'string' && !this._masterIds().includes(id);
+                typeof id === 'string' && !this._stationIds().includes(id);
             setYPath(this.fontMap, path, this._withoutKerning(value));
             if (isNew) {
-                this._writeMasterKerningFromValue(value);
+                this._writeStationKerningFromValue(value);
             }
             return true;
         }
@@ -2196,13 +2203,13 @@ export class PatchSyncEngine {
         if (!direction) {
             return false;
         }
-        const masterId = this._masterIdAt(Number(path[1]));
-        if (!masterId) {
+        const stationId = this._stationIdAt(Number(path[1]));
+        if (!stationId) {
             return true;
         }
         if (path.length === 3) {
             this._writeKerningPairs(
-                masterId,
+                stationId,
                 direction,
                 flattenKerningMap(value)
             );
@@ -2210,7 +2217,7 @@ export class PatchSyncEngine {
         }
         const pair = String(path[3]);
         const bucket = this._kerningBucketMap(pair);
-        const key = kerningKey(masterId, direction, pair);
+        const key = kerningKey(stationId, direction, pair);
         if (value === undefined || value === null) {
             bucket.delete(key);
         } else {
@@ -2248,16 +2255,16 @@ export class PatchSyncEngine {
             return false;
         }
         if (path.length === 1) {
-            for (const masterId of this._masterIds()) {
-                this._deleteMasterKerning(masterId);
+            for (const stationId of this._stationIds()) {
+                this._deleteStationKerning(stationId);
             }
             this.fontMap.delete('masters');
             return true;
         }
         if (path.length === 2) {
-            const masterId = this._masterIdAt(Number(path[1]));
-            if (masterId) {
-                this._deleteMasterKerning(masterId);
+            const stationId = this._stationIdAt(Number(path[1]));
+            if (stationId) {
+                this._deleteStationKerning(stationId);
             }
             deleteYPath(this.fontMap, path);
             return true;
@@ -2266,17 +2273,17 @@ export class PatchSyncEngine {
         if (!direction) {
             return false;
         }
-        const masterId = this._masterIdAt(Number(path[1]));
-        if (!masterId) {
+        const stationId = this._stationIdAt(Number(path[1]));
+        if (!stationId) {
             return true;
         }
         if (path.length === 3) {
-            this._writeKerningPairs(masterId, direction, null);
+            this._writeKerningPairs(stationId, direction, null);
             return true;
         }
         const pair = String(path[3]);
         this._kerningBucketMap(pair).delete(
-            kerningKey(masterId, direction, pair)
+            kerningKey(stationId, direction, pair)
         );
         return true;
     }
@@ -2313,21 +2320,21 @@ export class PatchSyncEngine {
             if (!direction) {
                 return { handled: false };
             }
-            const masterId = this._masterIdAt(Number(path[1]));
-            if (!masterId) {
+            const stationId = this._stationIdAt(Number(path[1]));
+            if (!stationId) {
                 return { handled: true, value: undefined };
             }
             if (path.length === 3) {
                 return {
                     handled: true,
-                    value: this._readKerningPairs(masterId, direction)
+                    value: this._readKerningPairs(stationId, direction)
                 };
             }
             const pair = String(path[3]);
             return {
                 handled: true,
                 value: this._kerningBucketMap(pair).get(
-                    kerningKey(masterId, direction, pair)
+                    kerningKey(stationId, direction, pair)
                 )
             };
         }
@@ -2336,7 +2343,7 @@ export class PatchSyncEngine {
 
     /**
      * Logical top-level font value as JSON: layout 2 assembles features,
-     * the catalog and master kerning from their rooms.
+     * the catalog and station kerning from their rooms.
      */
     private _readTopLevelJsonFromY(key: string): unknown {
         if (this.roomLayout) {
@@ -2354,15 +2361,15 @@ export class PatchSyncEngine {
                 return codepointIndexFromCatalog(this._readCatalogJson());
             }
             if (key === 'masters') {
-                const masters = this.fontMap.get('masters');
-                if (masters === undefined) {
+                const stations = this.fontMap.get('masters');
+                if (stations === undefined) {
                     return undefined;
                 }
-                const json = fromYType(masters);
+                const json = fromYType(stations);
                 if (Array.isArray(json)) {
-                    for (const master of json) {
-                        if (!master || typeof master !== 'object') continue;
-                        const record = master as Record<string, unknown>;
+                    for (const station of json) {
+                        if (!station || typeof station !== 'object') continue;
+                        const record = station as Record<string, unknown>;
                         const id =
                             typeof record.id === 'string' ? record.id : '';
                         record.kerning = this._readKerningPairs(id, 'l');
@@ -2392,7 +2399,7 @@ export class PatchSyncEngine {
 
     /**
      * Writing the layout map. The first layout moves this asset's features,
-     * catalog and master kerning out of core in the same core transaction;
+     * catalog and station kerning out of core in the same core transaction;
      * the caller writes their values to the rooms right after (see
      * adoptRoomLayout).
      */
@@ -2422,12 +2429,12 @@ export class PatchSyncEngine {
         this.fontMap.delete('features');
         this.fontMap.delete(CORE_GLYPH_CATALOG_KEY);
         this.fontMap.delete(CORE_CODEPOINT_INDEX_KEY);
-        const masters = this.fontMap.get('masters');
-        if (masters instanceof Y.Array) {
-            for (const master of masters.toArray()) {
-                if (master instanceof Y.Map) {
-                    master.delete('kerning');
-                    master.delete('kerning_rtl');
+        const stations = this.fontMap.get('masters');
+        if (stations instanceof Y.Array) {
+            for (const station of stations.toArray()) {
+                if (station instanceof Y.Map) {
+                    station.delete('kerning');
+                    station.delete('kerning_rtl');
                 }
             }
         }
@@ -2446,7 +2453,7 @@ export class PatchSyncEngine {
 
     /**
      * Move a layout 1 asset to room layout 2 in this window: core gets the
-     * layout and loses its features, catalog and master kerning; the rooms
+     * layout and loses its features, catalog and station kerning; the rooms
      * get them. Nothing is sent. A new asset then seeds the whole document
      * set. An asset that already has rooms seeds the layout rooms (they can
      * be far larger than one live write) and then calls
@@ -2461,7 +2468,7 @@ export class PatchSyncEngine {
         }
         const features = this._readTopLevelJsonFromY('features');
         const catalog = this._readTopLevelJsonFromY(CORE_GLYPH_CATALOG_KEY);
-        const masters = this._readTopLevelJsonFromY('masters');
+        const stations = this._readTopLevelJsonFromY('masters');
         this._adoptedLayoutCoreBaseline =
             this._lastBroadcastStateVectorByDoc.get(FONT_CORE_DOCUMENT_ID) ??
             Y.encodeStateVector(this.yDoc);
@@ -2498,10 +2505,11 @@ export class PatchSyncEngine {
                 }, FONT_EDIT_ORIGIN);
             }
             const byKerningBucket = new Map<string, Array<[string, unknown]>>();
-            for (const master of Array.isArray(masters) ? masters : []) {
-                const record = (master ?? {}) as Record<string, unknown>;
-                const masterId = typeof record.id === 'string' ? record.id : '';
-                if (!masterId) continue;
+            for (const station of Array.isArray(stations) ? stations : []) {
+                const record = (station ?? {}) as Record<string, unknown>;
+                const stationId =
+                    typeof record.id === 'string' ? record.id : '';
+                if (!stationId) continue;
                 for (const direction of ['l', 'r'] as const) {
                     const pairs = flattenKerningMap(
                         record[kerningFieldForDirection(direction)]
@@ -2514,7 +2522,7 @@ export class PatchSyncEngine {
                         byKerningBucket
                             .get(documentId)!
                             .push([
-                                kerningKey(masterId, direction, pair),
+                                kerningKey(stationId, direction, pair),
                                 value
                             ]);
                     }
@@ -2806,16 +2814,16 @@ export class PatchSyncEngine {
         if (!glyphMap) {
             return null;
         }
-        const layers = glyphMap.get('layers');
-        if (!(layers instanceof Y.Map) || layers.size === 0) {
+        const drawings = glyphMap.get('layers');
+        if (!(drawings instanceof Y.Map) || drawings.size === 0) {
             return null;
         }
-        const firstLayer = layers.values().next().value;
-        if (!(firstLayer instanceof Y.Map)) {
+        const firstDrawing = drawings.values().next().value;
+        if (!(firstDrawing instanceof Y.Map)) {
             return null;
         }
         try {
-            const shapes = readLayerGeometry(firstLayer);
+            const shapes = readDrawingGeometry(firstDrawing);
             const nodes = Array.isArray(shapes?.[0]?.nodes)
                 ? (shapes[0].nodes as Array<{ x?: unknown }>)
                 : [];
@@ -2838,7 +2846,7 @@ export class PatchSyncEngine {
                 };
             }
         ).currentFontModel?.findGlyph?.(glyphName);
-        const modelX = modelGlyph?.layers?.[0]?.paths?.[0]?.nodes?.[0]?.x;
+        const modelX = modelGlyph?.drawings?.[0]?.paths?.[0]?.nodes?.[0]?.x;
         const jsonGlyphs = (this._fontJson as { glyphs?: unknown } | null)
             ?.glyphs;
         const jsonGlyph = Array.isArray(jsonGlyphs)
@@ -2849,14 +2857,14 @@ export class PatchSyncEngine {
                       (glyph as { name?: unknown }).name === glyphName
               )
             : null;
-        const jsonLayer =
+        const jsonDrawing =
             jsonGlyph && typeof jsonGlyph === 'object'
                 ? (jsonGlyph as { layers?: Array<Record<string, unknown>> })
                       .layers?.[0]
                 : null;
-        const jsonShapes = jsonLayer?.shapes as
+        const jsonShapes = jsonDrawing?.shapes as
             Array<{ nodes?: Array<{ x?: unknown }> }> | undefined;
-        const jsonPaths = jsonLayer?.paths as
+        const jsonPaths = jsonDrawing?.paths as
             Array<{ nodes?: Array<{ x?: unknown }> }> | undefined;
         const jsonX =
             jsonShapes?.[0]?.nodes?.[0]?.x ?? jsonPaths?.[0]?.nodes?.[0]?.x;
@@ -3235,7 +3243,7 @@ export class PatchSyncEngine {
             isLayoutDocumentId(documentId)
         ) {
             // Layout 2 rooms hold parts of the core keys (features, the
-            // catalog, master kerning); describe them the same way.
+            // catalog, station kerning); describe them the same way.
             const snapshot = this._readCoreCatchUpSnapshot();
             return snapshot ? { kind: 'core', snapshot } : null;
         }
@@ -3312,7 +3320,7 @@ export class PatchSyncEngine {
                     path[0] === 'glyphs' && path.length >= 2
                         ? String(path[1])
                         : null;
-                const layerId =
+                const drawingId =
                     glyphName && path[2] === 'layers' && path.length >= 4
                         ? String(path[3])
                         : null;
@@ -3326,7 +3334,7 @@ export class PatchSyncEngine {
                         transactionId: null,
                         historyItemId,
                         op: forward.op === 'replace' ? 'set' : forward.op,
-                        undoScope: layerId
+                        undoScope: drawingId
                             ? 'layer'
                             : glyphName
                               ? 'glyph'
@@ -3338,8 +3346,12 @@ export class PatchSyncEngine {
                             forward.op === 'remove' ? undefined : forward.value,
                         compileChangeSource: CATCH_UP_COMPILE_SOURCE,
                         compileEditType: null,
-                        ...(glyphName && layerId
-                            ? { workerReplayTargets: [{ glyphName, layerId }] }
+                        ...(glyphName && drawingId
+                            ? {
+                                  workerReplayTargets: [
+                                      { glyphName, layerId: drawingId }
+                                  ]
+                              }
                             : {})
                     })
                 ];
@@ -4576,7 +4588,7 @@ export class PatchSyncEngine {
         // A multi-document commit hands every packet the same entries. Each
         // packet is described by its own document's entries only: the room
         // caps every description at 64 KiB, and one packet per glyph that
-        // each listed the whole commit (add master) could not fit, so the
+        // each listed the whole commit (add station) could not fit, so the
         // room refused those writes. It also kept every receiver re-reading
         // every glyph once per packet. Rename batches keep the full list:
         // the worker validates those against every renamed shard at once.
@@ -4668,7 +4680,7 @@ export class PatchSyncEngine {
                               replayNewValue: undefined,
                               workerReplayTargets: [],
                               glyphRenames: [],
-                              // A whole-glyph re-read, not a layer edit.
+                              // A whole-glyph re-read, not a drawing edit.
                               undoScope: 'glyph'
                           }
                       ]
@@ -5215,12 +5227,12 @@ export class PatchSyncEngine {
     }
 
     /**
-     * A drag or key nudge stages its layers without committing. Each stage
+     * A drag or key nudge stages its drawings without committing. Each stage
      * is a tick of a burst that the commit ends: the commit becomes the
      * burst's history item.
      */
-    noteLivePreviewTick(layerIds: string[]): void {
-        const ids = [...new Set(layerIds)].sort();
+    noteLivePreviewTick(drawingIds: string[]): void {
+        const ids = [...new Set(drawingIds)].sort();
         if (!ids.length) {
             return;
         }
@@ -5230,19 +5242,21 @@ export class PatchSyncEngine {
             // A drag may pause; the commit ends the burst, not the idle timer.
             idleMs: APP_SETTINGS.EDIT_BURST_MAX_MS
         });
-        this._liveBurstLayers.set(key, new Set(ids));
+        this._liveBurstDrawings.set(key, new Set(ids));
     }
 
     private _finalizeLiveBursts(
-        committedLayerIds: string[],
+        committedDrawingIds: string[],
         historyItemId: string
     ): void {
-        const committed = new Set(committedLayerIds);
-        for (const [key, layerIds] of [...this._liveBurstLayers]) {
-            if (![...layerIds].some((layerId) => committed.has(layerId))) {
+        const committed = new Set(committedDrawingIds);
+        for (const [key, drawingIds] of [...this._liveBurstDrawings]) {
+            if (
+                ![...drawingIds].some((drawingId) => committed.has(drawingId))
+            ) {
                 continue;
             }
-            this._liveBurstLayers.delete(key);
+            this._liveBurstDrawings.delete(key);
             const burst = this._editBursts.get(key);
             if (burst) {
                 burst.historyItemId = historyItemId;
@@ -5737,7 +5751,7 @@ export class PatchSyncEngine {
             this._pageHideHandler = null;
         }
         this._cloudLocalListeners.clear();
-        this._liveBurstLayers.clear();
+        this._liveBurstDrawings.clear();
         for (const unsub of this._docUpdateUnsubscribers) {
             unsub();
         }
@@ -5824,7 +5838,7 @@ export class PatchSyncEngine {
     }
 
     /**
-     * Record an add operation (new glyph, layer, shape, etc.).
+     * Record an add operation (new glyph, drawing, shape, etc.).
      * Glyph-root adds also sync `glyphOrder` from the model array when the
      * glyph is already spliced there (addGlyph / duplicate / paste), so
      * `_syncAllGlyphsFromYDoc` does not append the new name at the end.
@@ -5836,7 +5850,7 @@ export class PatchSyncEngine {
 
         const isObjectValue =
             !!value && typeof value === 'object' && !Array.isArray(value);
-        const isLayerRoot =
+        const isDrawingRoot =
             path.length === 4 && path[0] === 'glyphs' && path[2] === 'layers';
         const operations: TransactionBufferedOperation[] = [
             {
@@ -5847,8 +5861,8 @@ export class PatchSyncEngine {
                 applyMode:
                     isObjectValue && this._isGlyphRootPath(path)
                         ? 'glyph-snapshot'
-                        : isObjectValue && isLayerRoot
-                          ? 'layer-snapshot'
+                        : isObjectValue && isDrawingRoot
+                          ? 'drawing-snapshot'
                           : 'default'
             }
         ];
@@ -6004,7 +6018,7 @@ export class PatchSyncEngine {
                     typeof operation.newValue === 'object' &&
                     !Array.isArray(operation.newValue);
                 const isGlyphRoot = this._isGlyphRootPath(operation.path);
-                const isLayerRoot =
+                const isDrawingRoot =
                     operation.path.length === 4 &&
                     operation.path[0] === 'glyphs' &&
                     operation.path[2] === 'layers';
@@ -6029,8 +6043,8 @@ export class PatchSyncEngine {
                     applyMode:
                         isObjectValue && isGlyphRoot
                             ? ('glyph-snapshot' as BatchApplyMode)
-                            : isObjectValue && isLayerRoot
-                              ? ('layer-snapshot' as BatchApplyMode)
+                            : isObjectValue && isDrawingRoot
+                              ? ('drawing-snapshot' as BatchApplyMode)
                               : 'default'
                 };
             }),
@@ -6131,7 +6145,7 @@ export class PatchSyncEngine {
             storageFontSnapshot,
             previousSnapshot
         );
-        this._adoptIndexedFontLayerIds(
+        this._adoptIndexedFontDrawingIds(
             normalizedPreviousSnapshot,
             nextSnapshot
         );
@@ -6170,7 +6184,7 @@ export class PatchSyncEngine {
                     typeof newValue === 'object' &&
                     !Array.isArray(newValue);
                 const isGlyphRoot = this._isGlyphRootPath(path);
-                const isLayerRoot =
+                const isDrawingRoot =
                     path.length === 4 &&
                     path[0] === 'glyphs' &&
                     path[2] === 'layers';
@@ -6188,8 +6202,8 @@ export class PatchSyncEngine {
                     applyMode:
                         isObjectValue && isGlyphRoot
                             ? ('glyph-snapshot' as BatchApplyMode)
-                            : isObjectValue && isLayerRoot
-                              ? ('layer-snapshot' as BatchApplyMode)
+                            : isObjectValue && isDrawingRoot
+                              ? ('drawing-snapshot' as BatchApplyMode)
                               : 'default'
                 };
             }),
@@ -6487,7 +6501,7 @@ export class PatchSyncEngine {
         label: string,
         oldValue?: string,
         newValue?: string,
-        layerId?: string | null,
+        drawingId?: string | null,
         visualAnchorSide?: 'left' | 'right' | null,
         workerReplayTargets?: WorkerReplayTarget[],
         editSource?: string | null,
@@ -6500,7 +6514,7 @@ export class PatchSyncEngine {
             label,
             oldValue,
             newValue,
-            layerId,
+            drawingId,
             visualAnchorSide,
             workerReplayTargets,
             editSource,
@@ -6513,12 +6527,12 @@ export class PatchSyncEngine {
     }
 
     /**
-     * Sync multiple changed layers into Y.Doc in one transaction.
-     * Each target stays on the layer fast path so linked windows only
-     * receive the minimum changed layer snapshots.
+     * Sync multiple changed drawings into Y.Doc in one transaction.
+     * Each target stays on the drawing fast path so linked windows only
+     * receive the minimum changed drawing snapshots.
      */
-    syncLayersFromJson(
-        layerTargets: WorkerReplayTarget[],
+    syncDrawingsFromJson(
+        drawingTargets: WorkerReplayTarget[],
         label: string,
         oldValue?: string,
         newValue?: string,
@@ -6535,14 +6549,14 @@ export class PatchSyncEngine {
         assertCompileStamp(compileChangeSource, compileEditType);
         assertCloudAssetMutable();
 
-        const uniqueTargets = normalizeWorkerReplayTargets(layerTargets);
+        const uniqueTargets = normalizeWorkerReplayTargets(drawingTargets);
         if (!uniqueTargets.length) {
             return;
         }
 
         if (uniqueTargets.length === 1) {
             const [target] = uniqueTargets;
-            this._trySyncSingleLayer(
+            this._trySyncSingleDrawing(
                 target.glyphName,
                 target.layerId,
                 label,
@@ -6565,7 +6579,7 @@ export class PatchSyncEngine {
 
         const operations: TransactionBufferedOperation[] = [];
 
-        for (const { glyphName, layerId } of uniqueTargets) {
+        for (const { glyphName, layerId: drawingId } of uniqueTargets) {
             const glyphJson = glyphs.find(
                 (g: Record<string, unknown>) => g.name === glyphName
             ) as Record<string, unknown> | undefined;
@@ -6578,36 +6592,36 @@ export class PatchSyncEngine {
                 continue;
             }
 
-            const layersMap = glyphMap.get('layers') as
+            const drawingsMap = glyphMap.get('layers') as
                 Y.Map<unknown> | undefined;
-            if (!layersMap) {
+            if (!drawingsMap) {
                 continue;
             }
 
-            const glyphLayers = (glyphJson.layers ?? []) as Array<
+            const glyphDrawings = (glyphJson.layers ?? []) as Array<
                 Record<string, unknown>
             >;
-            const layerJson = glyphLayers.find(
-                (layer: Record<string, unknown>) => layer.id === layerId
+            const drawingJson = glyphDrawings.find(
+                (drawing: Record<string, unknown>) => drawing.id === drawingId
             );
-            if (!layerJson) {
+            if (!drawingJson) {
                 continue;
             }
-            const yLayerForHistory = layersMap.get(layerId);
-            const storageLayerJson = this._prepareLayerSnapshotForHistory(
-                layerId,
-                layerJson,
-                yLayerForHistory instanceof Y.Map
-                    ? fromYType(yLayerForHistory)
+            const yDrawingForHistory = drawingsMap.get(drawingId);
+            const storageDrawingJson = this._prepareDrawingSnapshotForHistory(
+                drawingId,
+                drawingJson,
+                yDrawingForHistory instanceof Y.Map
+                    ? fromYType(yDrawingForHistory)
                     : null,
-                yLayerForHistory instanceof Y.Map ? yLayerForHistory : null
+                yDrawingForHistory instanceof Y.Map ? yDrawingForHistory : null
             );
             operations.push(
-                ...this._buildLayerSyncOperations(
+                ...this._buildDrawingSyncOperations(
                     glyphName,
-                    layerId,
-                    layersMap,
-                    storageLayerJson,
+                    drawingId,
+                    drawingsMap,
+                    storageDrawingJson,
                     label,
                     oldValue,
                     newValue,
@@ -6630,19 +6644,19 @@ export class PatchSyncEngine {
         this._queueOrCommitOperations(operations, label);
 
         console.log(
-            `Layer sync committed for ${uniqueTargets
+            `Drawing sync committed for ${uniqueTargets
                 .map((target) => `${target.glyphName}/${target.layerId}`)
                 .join(', ')} (${label}) [batched fast path]`
         );
     }
 
     /**
-     * Sync explicit changed-layer snapshots into Y.Doc in one transaction.
-     * Use this when the caller already has committed next-layer JSON and the
+     * Sync explicit changed-drawing snapshots into Y.Doc in one transaction.
+     * Use this when the caller already has committed next-drawing JSON and the
      * bridge's shared `_fontJson` reference may alias mutable editor storage.
      */
-    syncLayerSnapshotsFromJson(
-        layerTargets: LayerSnapshotSyncTarget[],
+    syncDrawingSnapshotsFromJson(
+        drawingTargets: DrawingSnapshotSyncTarget[],
         label: string,
         oldValue?: string,
         newValue?: string,
@@ -6658,10 +6672,10 @@ export class PatchSyncEngine {
         assertCompileStamp(compileChangeSource, compileEditType);
         assertCloudAssetMutable();
 
-        const uniqueTargets: LayerSnapshotSyncTarget[] = [];
+        const uniqueTargets: DrawingSnapshotSyncTarget[] = [];
         const seenTargets = new Set<string>();
-        for (const target of layerTargets) {
-            if (!target.glyphName || !target.layerId || !target.layerJson) {
+        for (const target of drawingTargets) {
+            if (!target.glyphName || !target.layerId || !target.drawingJson) {
                 continue;
             }
             const key = `${target.glyphName}@@${target.layerId}`;
@@ -6679,68 +6693,71 @@ export class PatchSyncEngine {
         const operations: TransactionBufferedOperation[] = [];
         for (const {
             glyphName,
-            layerId,
-            layerJson,
-            authoritativeOptionalLayerFields
+            layerId: drawingId,
+            drawingJson,
+            authoritativeOptionalDrawingFields
         } of uniqueTargets) {
             const glyphMap = this._glyphMapForName(glyphName);
             if (!glyphMap) {
                 continue;
             }
 
-            const layersMap = glyphMap.get('layers') as
+            const drawingsMap = glyphMap.get('layers') as
                 Y.Map<unknown> | undefined;
-            if (!layersMap) {
+            if (!drawingsMap) {
                 continue;
             }
 
-            const yLayerMap = layersMap.get(layerId);
-            const yLayerJson = yLayerMap ? fromYType(yLayerMap) : null;
-            const storageLayerJson = this._prepareLayerSnapshotForHistory(
-                layerId,
-                layerJson,
-                yLayerJson,
-                yLayerMap instanceof Y.Map ? yLayerMap : null
+            const yDrawingMap = drawingsMap.get(drawingId);
+            const yDrawingJson = yDrawingMap ? fromYType(yDrawingMap) : null;
+            const storageDrawingJson = this._prepareDrawingSnapshotForHistory(
+                drawingId,
+                drawingJson,
+                yDrawingJson,
+                yDrawingMap instanceof Y.Map ? yDrawingMap : null
             );
-            if (authoritativeOptionalLayerFields !== undefined) {
+            if (authoritativeOptionalDrawingFields !== undefined) {
                 if (
-                    yLayerJson &&
-                    typeof yLayerJson === 'object' &&
-                    !Array.isArray(yLayerJson)
+                    yDrawingJson &&
+                    typeof yDrawingJson === 'object' &&
+                    !Array.isArray(yDrawingJson)
                 ) {
-                    const existingLayer = yLayerJson as Record<string, unknown>;
+                    const existingDrawing = yDrawingJson as Record<
+                        string,
+                        unknown
+                    >;
                     const authoritativeFields = new Set(
-                        authoritativeOptionalLayerFields
+                        authoritativeOptionalDrawingFields
                     );
                     for (const key of [
                         'anchors',
                         'guides',
                         'format_specific'
-                    ] as OptionalLayerField[]) {
+                    ] as OptionalDrawingField[]) {
                         if (authoritativeFields.has(key)) {
                             continue;
                         }
                         if (
                             Object.prototype.hasOwnProperty.call(
-                                existingLayer,
+                                existingDrawing,
                                 key
                             )
                         ) {
-                            storageLayerJson[key] = cloneHistoryValue(
-                                existingLayer[key]
+                            storageDrawingJson[key] = cloneHistoryValue(
+                                existingDrawing[key]
                             );
                         } else {
-                            delete storageLayerJson[key];
+                            delete storageDrawingJson[key];
                         }
                     }
                 }
             }
             operations.push(
-                ...this._buildLayerSyncOperations(
+                ...this._buildDrawingSyncOperations(
                     glyphName,
-                    layerId,
-                    layersMap,
-                    storageLayerJson,
+                    drawingId,
+                    drawingsMap,
+                    storageDrawingJson,
                     label,
                     oldValue,
                     newValue,
@@ -6756,7 +6773,7 @@ export class PatchSyncEngine {
         }
 
         if (!operations.length) {
-            this._emitMetadataOnlyLayerSnapshotUpdate(
+            this._emitMetadataOnlyDrawingSnapshotUpdate(
                 uniqueTargets,
                 label,
                 oldValue,
@@ -6772,27 +6789,27 @@ export class PatchSyncEngine {
 
         const wasInTransaction = this._txDepth > 0;
         const commitResult = this._queueOrCommitOperations(operations, label);
-        // Only reload layers that this packet actually wrote into Yjs.
+        // Only reload drawings that this packet actually wrote into Yjs.
         // workerReplayTargets are intentionally wider (invalidate-only
         // dependents for compile/cache). Reloading those from Yjs would
         // clobber live-already-recomposed model state with stale document
         // data when those dependents were not part of the mutation set.
         if (!wasInTransaction && operations.length) {
-            const writtenLayerTargets = normalizeWorkerReplayTargets(
+            const writtenDrawingTargets = normalizeWorkerReplayTargets(
                 operations.map((operation) => {
                     const applyPath = operation.applyPath ?? operation.path;
                     return {
                         glyphName: deriveGlyphName(applyPath) || '',
-                        layerId: deriveLayerId(applyPath) || ''
+                        layerId: deriveDrawingId(applyPath) || ''
                     };
                 })
             );
-            if (writtenLayerTargets.length) {
-                this._syncPatchedLayerTargetsFromYDoc(writtenLayerTargets);
+            if (writtenDrawingTargets.length) {
+                this._syncPatchedDrawingTargetsFromYDoc(writtenDrawingTargets);
             }
         }
         if (!wasInTransaction && !commitResult) {
-            this._emitMetadataOnlyLayerSnapshotUpdate(
+            this._emitMetadataOnlyDrawingSnapshotUpdate(
                 uniqueTargets,
                 label,
                 oldValue,
@@ -6807,14 +6824,14 @@ export class PatchSyncEngine {
         }
 
         console.log(
-            `Layer snapshot sync committed for ${uniqueTargets
+            `Drawing snapshot sync committed for ${uniqueTargets
                 .map((target) => `${target.glyphName}/${target.layerId}`)
                 .join(', ')} (${label}) [batched fast path]`
         );
     }
 
-    private _emitMetadataOnlyLayerSnapshotUpdate(
-        uniqueTargets: LayerSnapshotSyncTarget[],
+    private _emitMetadataOnlyDrawingSnapshotUpdate(
+        uniqueTargets: DrawingSnapshotSyncTarget[],
         label: string,
         oldValue: string | undefined,
         newValue: string | undefined,
@@ -6863,77 +6880,77 @@ export class PatchSyncEngine {
         this._emitLocalUpdate(update, changeLogEntries);
     }
 
-    private _buildLayerSyncOperations(
+    private _buildDrawingSyncOperations(
         glyphName: string,
-        layerId: string,
-        layersMap: Y.Map<unknown>,
-        storageLayerJson: Record<string, unknown>,
+        drawingId: string,
+        drawingsMap: Y.Map<unknown>,
+        storageDrawingJson: Record<string, unknown>,
         label: string,
         oldValue: string | undefined,
         newValue: string | undefined,
-        metadata: LayerSyncMetadata
+        metadata: DrawingSyncMetadata
     ): TransactionBufferedOperation[] {
-        const yLayerMap = layersMap.get(layerId);
-        const yLayerJson = yLayerMap ? fromYType(yLayerMap) : null;
-        if (!yLayerJson) {
+        const yDrawingMap = drawingsMap.get(drawingId);
+        const yDrawingJson = yDrawingMap ? fromYType(yDrawingMap) : null;
+        if (!yDrawingJson) {
             return [
                 {
                     op: 'set' as ChangeOp,
-                    path: ['glyphs', glyphName, 'layers', layerId],
+                    path: ['glyphs', glyphName, 'layers', drawingId],
                     oldValue: null,
-                    newValue: cloneHistoryValue(storageLayerJson),
+                    newValue: cloneHistoryValue(storageDrawingJson),
                     editSource: metadata.editSource,
                     compileChangeSource: metadata.compileChangeSource,
                     compileEditType: metadata.compileEditType,
                     visualAnchorSide: metadata.visualAnchorSide,
                     workerReplayTargets: metadata.workerReplayTargets,
                     originatingGlyphName: glyphName,
-                    originatingLayerId: layerId,
-                    applyPath: ['glyphs', glyphName, 'layers', layerId],
-                    applyNewValue: storageLayerJson,
-                    applyMode: 'layer-snapshot' as BatchApplyMode
+                    originatingLayerId: drawingId,
+                    applyPath: ['glyphs', glyphName, 'layers', drawingId],
+                    applyNewValue: storageDrawingJson,
+                    applyMode: 'drawing-snapshot' as BatchApplyMode
                 }
             ];
         }
 
-        const previousLayer = yLayerJson as Record<string, unknown>;
+        const previousDrawing = yDrawingJson as Record<string, unknown>;
         if (
-            !Object.prototype.hasOwnProperty.call(storageLayerJson, 'name') &&
-            Object.prototype.hasOwnProperty.call(previousLayer, 'name')
+            !Object.prototype.hasOwnProperty.call(storageDrawingJson, 'name') &&
+            Object.prototype.hasOwnProperty.call(previousDrawing, 'name')
         ) {
-            storageLayerJson.name = cloneHistoryValue(previousLayer.name);
+            storageDrawingJson.name = cloneHistoryValue(previousDrawing.name);
         }
         if (
-            this._shouldUseGranularSingleLayerSync(
+            this._shouldUseGranularSingleDrawingSync(
                 glyphName,
-                layerId,
-                previousLayer,
-                storageLayerJson
+                drawingId,
+                previousDrawing,
+                storageDrawingJson
             )
         ) {
-            this._adoptIndexedLayerIds(previousLayer, storageLayerJson);
-            return this._buildGranularLayerSyncOperations(
+            this._adoptIndexedDrawingIds(previousDrawing, storageDrawingJson);
+            return this._buildGranularDrawingSyncOperations(
                 glyphName,
-                layerId,
-                previousLayer,
-                storageLayerJson,
+                drawingId,
+                previousDrawing,
+                storageDrawingJson,
                 metadata
             );
         }
 
-        const sparseLayerDelta = this._buildSparseLayerDelta(
-            previousLayer,
-            storageLayerJson,
-            layerId
+        const sparseDrawingDelta = this._buildSparseDrawingDelta(
+            previousDrawing,
+            storageDrawingJson,
+            drawingId
         );
-        if (!sparseLayerDelta) {
+        if (!sparseDrawingDelta) {
             return [];
         }
 
         return [
             {
                 op: 'set' as ChangeOp,
-                path: ['glyphs', glyphName, 'layers', layerId],
+                path: ['glyphs', glyphName, 'layers', drawingId],
                 oldValue: oldValue ?? glyphName,
                 newValue: newValue ?? label,
                 editSource: metadata.editSource,
@@ -6942,32 +6959,32 @@ export class PatchSyncEngine {
                 visualAnchorSide: metadata.visualAnchorSide,
                 workerReplayTargets: metadata.workerReplayTargets,
                 originatingGlyphName: glyphName,
-                originatingLayerId: layerId,
-                applyPath: ['glyphs', glyphName, 'layers', layerId],
-                applyOldValue: sparseLayerDelta.oldValues,
-                applyNewValue: sparseLayerDelta.delta,
-                applyMode: 'layer-snapshot' as BatchApplyMode
+                originatingLayerId: drawingId,
+                applyPath: ['glyphs', glyphName, 'layers', drawingId],
+                applyOldValue: sparseDrawingDelta.oldValues,
+                applyNewValue: sparseDrawingDelta.delta,
+                applyMode: 'drawing-snapshot' as BatchApplyMode
             }
         ];
     }
 
-    private _buildGranularLayerSyncOperations(
+    private _buildGranularDrawingSyncOperations(
         glyphName: string,
-        layerId: string,
-        previousLayer: Record<string, unknown>,
-        nextLayer: Record<string, unknown>,
-        metadata: LayerSyncMetadata
+        drawingId: string,
+        previousDrawing: Record<string, unknown>,
+        nextDrawing: Record<string, unknown>,
+        metadata: DrawingSyncMetadata
     ): TransactionBufferedOperation[] {
         const basePath: (string | number)[] = [
             'glyphs',
             glyphName,
             'layers',
-            layerId
+            drawingId
         ];
         return this._buildGranularValueSyncOperations(
             basePath,
-            previousLayer,
-            nextLayer,
+            previousDrawing,
+            nextDrawing,
             metadata
         );
     }
@@ -6976,7 +6993,7 @@ export class PatchSyncEngine {
         path: (string | number)[],
         previousValue: unknown,
         nextValue: unknown,
-        metadata: LayerSyncMetadata
+        metadata: DrawingSyncMetadata
     ): TransactionBufferedOperation[] {
         if (this._isDeepEqual(previousValue, nextValue)) {
             return [];
@@ -6985,7 +7002,7 @@ export class PatchSyncEngine {
         const lastSegment = path[path.length - 1];
         if (
             typeof lastSegment === 'string' &&
-            GRANULAR_LAYER_ARRAY_KEYS.has(lastSegment) &&
+            GRANULAR_DRAWING_ARRAY_KEYS.has(lastSegment) &&
             Array.isArray(previousValue) &&
             Array.isArray(nextValue)
         ) {
@@ -7008,7 +7025,7 @@ export class PatchSyncEngine {
             this._haveShapeStructuresChanged(previousValue, nextValue)
         ) {
             return [
-                this._createGranularLayerOperation(
+                this._createGranularDrawingOperation(
                     'set',
                     path,
                     previousValue,
@@ -7060,7 +7077,7 @@ export class PatchSyncEngine {
             // change shifts numeric paths, so replay it as one array value.
             if (previousValue.length !== nextValue.length) {
                 return [
-                    this._createGranularLayerOperation(
+                    this._createGranularDrawingOperation(
                         'set',
                         path,
                         previousValue,
@@ -7087,7 +7104,7 @@ export class PatchSyncEngine {
 
         if (previousValue === undefined) {
             return [
-                this._createGranularLayerOperation(
+                this._createGranularDrawingOperation(
                     'add',
                     path,
                     undefined,
@@ -7098,7 +7115,7 @@ export class PatchSyncEngine {
         }
         if (nextValue === undefined) {
             return [
-                this._createGranularLayerOperation(
+                this._createGranularDrawingOperation(
                     'remove',
                     path,
                     previousValue,
@@ -7108,7 +7125,7 @@ export class PatchSyncEngine {
             ];
         }
         return [
-            this._createGranularLayerOperation(
+            this._createGranularDrawingOperation(
                 'set',
                 path,
                 previousValue,
@@ -7159,13 +7176,13 @@ export class PatchSyncEngine {
         arrayKey: string,
         previousArray: unknown[],
         nextArray: unknown[],
-        metadata: LayerSyncMetadata
+        metadata: DrawingSyncMetadata
     ): TransactionBufferedOperation[] {
         const previousById = this._mapArrayItemsById(previousArray);
         const nextById = this._mapArrayItemsById(nextArray);
         if (!previousById || !nextById) {
             return [
-                this._createGranularLayerOperation(
+                this._createGranularDrawingOperation(
                     'set',
                     path,
                     previousArray,
@@ -7188,7 +7205,7 @@ export class PatchSyncEngine {
         // restore the same IDs and order rather than replaying shifted indices.
         if (!this._isDeepEqual(previousIds, nextIds)) {
             return [
-                this._createGranularLayerOperation(
+                this._createGranularDrawingOperation(
                     'set',
                     path,
                     previousArray,
@@ -7214,18 +7231,18 @@ export class PatchSyncEngine {
         return operations;
     }
 
-    private _createGranularLayerOperation(
+    private _createGranularDrawingOperation(
         op: ChangeOp,
         path: (string | number)[],
         oldValue: unknown,
         newValue: unknown,
-        metadata: LayerSyncMetadata
+        metadata: DrawingSyncMetadata
     ): TransactionBufferedOperation {
         const originatingGlyphName =
             path[0] === 'glyphs' && typeof path[1] === 'string'
                 ? path[1]
                 : null;
-        const originatingLayerId =
+        const originatingDrawingId =
             path[2] === 'layers' && typeof path[3] === 'string'
                 ? path[3]
                 : null;
@@ -7240,7 +7257,7 @@ export class PatchSyncEngine {
             visualAnchorSide: metadata.visualAnchorSide ?? null,
             workerReplayTargets: metadata.workerReplayTargets,
             originatingGlyphName,
-            originatingLayerId
+            originatingLayerId: originatingDrawingId
         };
     }
 
@@ -7261,24 +7278,24 @@ export class PatchSyncEngine {
         return map;
     }
 
-    private _adoptIndexedLayerIds(
-        previousLayer: Record<string, unknown>,
-        nextLayer: Record<string, unknown>,
+    private _adoptIndexedDrawingIds(
+        previousDrawing: Record<string, unknown>,
+        nextDrawing: Record<string, unknown>,
         replaceExistingIds = false
     ): void {
         this._adoptIndexedArrayIds(
-            previousLayer.anchors,
-            nextLayer.anchors,
+            previousDrawing.anchors,
+            nextDrawing.anchors,
             replaceExistingIds
         );
         this._adoptIndexedArrayIds(
-            previousLayer.anchors,
-            nextLayer.anchors,
+            previousDrawing.anchors,
+            nextDrawing.anchors,
             replaceExistingIds
         );
         this._adoptIndexedArrayIds(
-            previousLayer.guides,
-            nextLayer.guides,
+            previousDrawing.guides,
+            nextDrawing.guides,
             replaceExistingIds
         );
     }
@@ -7343,36 +7360,36 @@ export class PatchSyncEngine {
             if (!liveGlyph && !previousGlyph) {
                 continue;
             }
-            const liveLayers = new Map(
-                this._coerceGlyphLayerSnapshots(liveGlyph?.layers).map(
-                    (layer) => [String(layer.id || ''), layer]
+            const liveDrawings = new Map(
+                this._coerceGlyphDrawingSnapshots(liveGlyph?.layers).map(
+                    (drawing) => [String(drawing.id || ''), drawing]
                 )
             );
-            const previousLayers = new Map(
-                this._coerceGlyphLayerSnapshots(previousGlyph?.layers).map(
-                    (layer) => [String(layer.id || ''), layer]
+            const previousDrawings = new Map(
+                this._coerceGlyphDrawingSnapshots(previousGlyph?.layers).map(
+                    (drawing) => [String(drawing.id || ''), drawing]
                 )
             );
-            for (const nextLayer of this._coerceGlyphLayerSnapshots(
+            for (const nextDrawing of this._coerceGlyphDrawingSnapshots(
                 nextGlyph.layers
             )) {
-                const layerId = String(nextLayer.id || '');
+                const drawingId = String(nextDrawing.id || '');
                 const identityShapes =
-                    liveLayers.get(layerId)?.shapes ??
-                    previousLayers.get(layerId)?.shapes;
+                    liveDrawings.get(drawingId)?.shapes ??
+                    previousDrawings.get(drawingId)?.shapes;
                 this._alignReloadShapeIdentities(
                     identityShapes,
-                    nextLayer.shapes
+                    nextDrawing.shapes
                 );
                 this._alignReloadShapeIdentities(
                     identityShapes,
-                    previousLayers.get(layerId)?.shapes
+                    previousDrawings.get(drawingId)?.shapes
                 );
             }
         }
     }
 
-    private _adoptIndexedFontLayerIds(
+    private _adoptIndexedFontDrawingIds(
         previousSnapshot: unknown,
         nextSnapshot: unknown
     ): void {
@@ -7385,36 +7402,39 @@ export class PatchSyncEngine {
                           !Array.isArray(item)
                   )
                 : [];
-        const previousMasters = asRecords(
+        const previousStations = asRecords(
             (previousSnapshot as Record<string, unknown>)?.masters
         );
-        const nextMasters = asRecords(
+        const nextStations = asRecords(
             (nextSnapshot as Record<string, unknown>)?.masters
         );
-        const previousMastersById = new Map(
-            previousMasters.map((master) => [String(master.id || ''), master])
+        const previousStationsById = new Map(
+            previousStations.map((station) => [
+                String(station.id || ''),
+                station
+            ])
         );
 
-        for (const nextMaster of nextMasters) {
-            const previousMaster = previousMastersById.get(
-                String(nextMaster.id || '')
+        for (const nextStation of nextStations) {
+            const previousStation = previousStationsById.get(
+                String(nextStation.id || '')
             );
-            if (previousMaster) {
+            if (previousStation) {
                 if (
                     !Object.prototype.hasOwnProperty.call(
-                        previousMaster,
+                        previousStation,
                         'kerning_rtl'
                     ) &&
-                    nextMaster.kerning_rtl &&
-                    typeof nextMaster.kerning_rtl === 'object' &&
-                    !Array.isArray(nextMaster.kerning_rtl) &&
-                    Object.keys(nextMaster.kerning_rtl).length === 0
+                    nextStation.kerning_rtl &&
+                    typeof nextStation.kerning_rtl === 'object' &&
+                    !Array.isArray(nextStation.kerning_rtl) &&
+                    Object.keys(nextStation.kerning_rtl).length === 0
                 ) {
-                    delete nextMaster.kerning_rtl;
+                    delete nextStation.kerning_rtl;
                 }
                 this._adoptIndexedArrayIds(
-                    previousMaster.guides,
-                    nextMaster.guides,
+                    previousStation.guides,
+                    nextStation.guides,
                     true
                 );
             }
@@ -7438,22 +7458,26 @@ export class PatchSyncEngine {
                 continue;
             }
 
-            const previousLayersById = new Map(
-                this._coerceGlyphLayerSnapshots(previousGlyph.layers).map(
-                    (layer) => [String(layer.id || ''), layer]
+            const previousDrawingsById = new Map(
+                this._coerceGlyphDrawingSnapshots(previousGlyph.layers).map(
+                    (drawing) => [String(drawing.id || ''), drawing]
                 )
             );
-            for (const nextLayer of this._coerceGlyphLayerSnapshots(
+            for (const nextDrawing of this._coerceGlyphDrawingSnapshots(
                 nextGlyph.layers
             )) {
-                const previousLayer = previousLayersById.get(
-                    String(nextLayer.id || '')
+                const previousDrawing = previousDrawingsById.get(
+                    String(nextDrawing.id || '')
                 );
-                if (previousLayer) {
-                    this._adoptIndexedLayerIds(previousLayer, nextLayer, true);
+                if (previousDrawing) {
+                    this._adoptIndexedDrawingIds(
+                        previousDrawing,
+                        nextDrawing,
+                        true
+                    );
                     this._alignReloadShapeIdentities(
-                        previousLayer.shapes,
-                        nextLayer.shapes
+                        previousDrawing.shapes,
+                        nextDrawing.shapes
                     );
                 }
             }
@@ -7614,26 +7638,33 @@ export class PatchSyncEngine {
                 previousByName.get(name) ?? null,
                 liveByName.get(name) ?? null
             );
-            const nextLayers = this._coerceGlyphLayerSnapshots(
+            const nextDrawings = this._coerceGlyphDrawingSnapshots(
                 nextGlyph.layers
             );
-            const previousLayers = this._coerceGlyphLayerSnapshots(
+            const previousDrawings = this._coerceGlyphDrawingSnapshots(
                 previousByName.get(name)?.layers
             );
-            const liveLayers = this._coerceGlyphLayerSnapshots(
+            const liveDrawings = this._coerceGlyphDrawingSnapshots(
                 liveByName.get(name)?.layers
             );
-            const previousLayersById = new Map(
-                previousLayers.map((layer) => [String(layer.id || ''), layer])
+            const previousDrawingsById = new Map(
+                previousDrawings.map((drawing) => [
+                    String(drawing.id || ''),
+                    drawing
+                ])
             );
-            const liveLayersById = new Map(
-                liveLayers.map((layer) => [String(layer.id || ''), layer])
+            const liveDrawingsById = new Map(
+                liveDrawings.map((drawing) => [
+                    String(drawing.id || ''),
+                    drawing
+                ])
             );
-            for (const nextLayer of nextLayers) {
+            for (const nextDrawing of nextDrawings) {
                 omitFromRecord(
-                    nextLayer,
-                    previousLayersById.get(String(nextLayer.id || '')) ?? null,
-                    liveLayersById.get(String(nextLayer.id || '')) ?? null
+                    nextDrawing,
+                    previousDrawingsById.get(String(nextDrawing.id || '')) ??
+                        null,
+                    liveDrawingsById.get(String(nextDrawing.id || '')) ?? null
                 );
             }
         }
@@ -7670,39 +7701,39 @@ export class PatchSyncEngine {
         });
     }
 
-    private _isCompleteLayerSnapshot(
-        nextLayer: Record<string, unknown>
+    private _isCompleteDrawingSnapshot(
+        nextDrawing: Record<string, unknown>
     ): boolean {
         return (
-            Object.prototype.hasOwnProperty.call(nextLayer, 'width') &&
-            Object.prototype.hasOwnProperty.call(nextLayer, 'master') &&
-            Object.prototype.hasOwnProperty.call(nextLayer, 'shapes')
+            Object.prototype.hasOwnProperty.call(nextDrawing, 'width') &&
+            Object.prototype.hasOwnProperty.call(nextDrawing, 'master') &&
+            Object.prototype.hasOwnProperty.call(nextDrawing, 'shapes')
         );
     }
 
-    private _shouldUseGranularSingleLayerSync(
+    private _shouldUseGranularSingleDrawingSync(
         glyphName: string,
-        layerId: string,
-        previousLayer: Record<string, unknown>,
-        nextLayer: Record<string, unknown>
+        drawingId: string,
+        previousDrawing: Record<string, unknown>,
+        nextDrawing: Record<string, unknown>
     ): boolean {
-        if (this._hasBufferedLayerRootOperation(glyphName, layerId)) {
+        if (this._hasBufferedDrawingRootOperation(glyphName, drawingId)) {
             return false;
         }
 
-        // Partial layer fragments must stay on the sparse layer-delta path so
+        // Partial drawing fragments must stay on the sparse drawing-delta path so
         // omitted fields remain untouched. Granular sync is only safe for
-        // complete layer snapshots that carry the layer's core fields.
-        if (!this._isCompleteLayerSnapshot(nextLayer)) {
+        // complete drawing snapshots that carry the drawing's core fields.
+        if (!this._isCompleteDrawingSnapshot(nextDrawing)) {
             return false;
         }
 
         return true;
     }
 
-    private _hasBufferedLayerRootOperation(
+    private _hasBufferedDrawingRootOperation(
         glyphName: string,
-        layerId: string
+        drawingId: string
     ): boolean {
         return this._txBufferedOperations.some((operation) => {
             if (operation.path.length !== 4) {
@@ -7713,24 +7744,24 @@ export class PatchSyncEngine {
                 operation.path[0] === 'glyphs' &&
                 operation.path[1] === glyphName &&
                 operation.path[2] === 'layers' &&
-                operation.path[3] === layerId
+                operation.path[3] === drawingId
             );
         });
     }
 
-    private _buildSparseLayerDelta(
-        previousLayer: Record<string, unknown> | null,
-        nextLayer: Record<string, unknown>,
-        layerId: string
+    private _buildSparseDrawingDelta(
+        previousDrawing: Record<string, unknown> | null,
+        nextDrawing: Record<string, unknown>,
+        drawingId: string
     ): {
         delta: Record<string, unknown>;
         oldValues: Record<string, unknown>;
     } | null {
-        const delta: Record<string, unknown> = { id: layerId };
+        const delta: Record<string, unknown> = { id: drawingId };
         const oldValues: Record<string, unknown> = {};
 
-        for (const [key, value] of Object.entries(nextLayer)) {
-            const oldValue = previousLayer?.[key];
+        for (const [key, value] of Object.entries(nextDrawing)) {
+            const oldValue = previousDrawing?.[key];
             if (this._isDeepEqual(value, oldValue)) {
                 continue;
             }
@@ -7757,7 +7788,7 @@ export class PatchSyncEngine {
         label: string,
         oldValue?: string,
         newValue?: string,
-        layerId?: string | null,
+        drawingId?: string | null,
         visualAnchorSide?: 'left' | 'right' | null,
         workerReplayTargets?: WorkerReplayTarget[],
         editSource?: string | null,
@@ -7778,14 +7809,14 @@ export class PatchSyncEngine {
             return;
         }
 
-        // Fast path: single glyph + known layer → compare and sync only
-        // the affected layer, avoiding full-glyph JSON reconstruction,
+        // Fast path: single glyph + known drawing → compare and sync only
+        // the affected drawing, avoiding full-glyph JSON reconstruction,
         // deep-equality checks, and cloning.
-        if (uniqueGlyphNames.length === 1 && layerId) {
+        if (uniqueGlyphNames.length === 1 && drawingId) {
             if (
-                this._trySyncSingleLayer(
+                this._trySyncSingleDrawing(
                     uniqueGlyphNames[0],
-                    layerId,
+                    drawingId,
                     label,
                     oldValue!,
                     newValue!,
@@ -7851,28 +7882,29 @@ export class PatchSyncEngine {
             return;
         }
 
-        const undoScope = this._deriveBulkUndoScope(targets, layerId ?? null);
+        const undoScope = this._deriveBulkUndoScope(targets, drawingId ?? null);
         this._queueOrCommitOperations(
             targets.map((target) => {
-                const glyphLayers = (target.glyphJson.layers ?? []) as Array<
+                const glyphDrawings = (target.glyphJson.layers ?? []) as Array<
                     Record<string, unknown>
                 >;
-                const previousGlyphLayers = Array.isArray(
+                const previousGlyphDrawings = Array.isArray(
                     target.previousGlyphJson.layers
                 )
                     ? (target.previousGlyphJson.layers as Array<
                           Record<string, unknown>
                       >)
                     : [];
-                // A layer id whose JSON is already gone is a structural
-                // delete. Layer scope would apply the transaction label as
-                // a delta and leave the Y layer in place.
-                const syncLayerId =
-                    layerId &&
-                    glyphLayers.some(
-                        (layer: Record<string, unknown>) => layer.id === layerId
+                // A drawing id whose JSON is already gone is a structural
+                // delete. Drawing scope would apply the transaction label as
+                // a delta and leave the Y drawing in place.
+                const syncDrawingId =
+                    drawingId &&
+                    glyphDrawings.some(
+                        (drawing: Record<string, unknown>) =>
+                            drawing.id === drawingId
                     )
-                        ? layerId
+                        ? drawingId
                         : null;
                 const glyphSnapshot = this._normalizeGlyphSnapshot(
                     target.glyphJson,
@@ -7881,43 +7913,43 @@ export class PatchSyncEngine {
                 const previousGlyphSnapshot = this._normalizeGlyphSnapshot(
                     target.previousGlyphJson
                 );
-                const layerSnapshot = syncLayerId
-                    ? this._normalizeLayerSnapshot(
-                          syncLayerId,
-                          glyphLayers.find(
-                              (layer: Record<string, unknown>) =>
-                                  layer.id === syncLayerId
+                const drawingSnapshot = syncDrawingId
+                    ? this._normalizeDrawingSnapshot(
+                          syncDrawingId,
+                          glyphDrawings.find(
+                              (drawing: Record<string, unknown>) =>
+                                  drawing.id === syncDrawingId
                           ),
-                          previousGlyphLayers.find(
-                              (layer: Record<string, unknown>) =>
-                                  layer.id === syncLayerId
+                          previousGlyphDrawings.find(
+                              (drawing: Record<string, unknown>) =>
+                                  drawing.id === syncDrawingId
                           )
                       )
                     : undefined;
-                const previousLayerSnapshot = syncLayerId
-                    ? previousGlyphLayers.find(
-                          (layer: Record<string, unknown>) =>
-                              layer.id === syncLayerId
+                const previousDrawingSnapshot = syncDrawingId
+                    ? previousGlyphDrawings.find(
+                          (drawing: Record<string, unknown>) =>
+                              drawing.id === syncDrawingId
                       )
                     : undefined;
-                const isLayerScope = undoScope === 'layer' && !!syncLayerId;
-                const originatingLayerId =
-                    syncLayerId ??
+                const isDrawingScope = undoScope === 'layer' && !!syncDrawingId;
+                const originatingDrawingId =
+                    syncDrawingId ??
                     (Array.isArray(target.glyphJson.layers)
                         ? String(
                               (
                                   target.glyphJson.layers as Array<
                                       Record<string, unknown>
                                   >
-                              ).find((layer) => layer?.id)?.id ?? ''
+                              ).find((drawing) => drawing?.id)?.id ?? ''
                           ) || null
                         : null);
 
-                const layerPathId = syncLayerId ?? layerId ?? '';
+                const drawingPathId = syncDrawingId ?? drawingId ?? '';
                 return {
                     op: 'set' as ChangeOp,
-                    path: isLayerScope
-                        ? ['glyphs', target.glyphName, 'layers', layerPathId]
+                    path: isDrawingScope
+                        ? ['glyphs', target.glyphName, 'layers', drawingPathId]
                         : ['glyphs', target.glyphName],
                     oldValue:
                         undoScope === 'font'
@@ -7933,16 +7965,18 @@ export class PatchSyncEngine {
                     visualAnchorSide,
                     workerReplayTargets,
                     originatingGlyphName: target.glyphName,
-                    originatingLayerId,
-                    applyPath: isLayerScope
-                        ? ['glyphs', target.glyphName, 'layers', layerPathId]
+                    originatingLayerId: originatingDrawingId,
+                    applyPath: isDrawingScope
+                        ? ['glyphs', target.glyphName, 'layers', drawingPathId]
                         : ['glyphs', target.glyphName],
-                    applyOldValue: isLayerScope
-                        ? previousLayerSnapshot
+                    applyOldValue: isDrawingScope
+                        ? previousDrawingSnapshot
                         : previousGlyphSnapshot,
-                    applyNewValue: isLayerScope ? layerSnapshot : glyphSnapshot,
-                    applyMode: isLayerScope
-                        ? 'layer-snapshot'
+                    applyNewValue: isDrawingScope
+                        ? drawingSnapshot
+                        : glyphSnapshot,
+                    applyMode: isDrawingScope
+                        ? 'drawing-snapshot'
                         : 'glyph-snapshot'
                 };
             }),
@@ -7957,16 +7991,16 @@ export class PatchSyncEngine {
     /**
      * Instead of reconstructing the entire glyph from the Y.Doc,
      * deep-comparing the whole glyph, and cloning it multiple times,
-     * this only touches the one affected layer — dramatically reducing
+     * this only touches the one affected drawing — dramatically reducing
      * JSON serialization overhead for point-move operations.
      *
      * Returns true if the fast path handled the sync (even if no
      * changes were found), false if the caller should fall back to
      * the full glyph path.
      */
-    private _trySyncSingleLayer(
+    private _trySyncSingleDrawing(
         glyphName: string,
-        layerId: string,
+        drawingId: string,
         label: string,
         oldValue?: string,
         newValue?: string,
@@ -7988,29 +8022,32 @@ export class PatchSyncEngine {
         const glyphMap = this._glyphMapForName(glyphName);
         if (!glyphMap) return false;
 
-        const layersMap = glyphMap.get('layers') as Y.Map<unknown> | undefined;
-        if (!layersMap) return false;
+        const drawingsMap = glyphMap.get('layers') as
+            Y.Map<unknown> | undefined;
+        if (!drawingsMap) return false;
 
-        // Find the layer in the in-memory model
-        const glyphLayers = (glyphJson.layers ?? []) as Array<
+        // Find the drawing in the in-memory model
+        const glyphDrawings = (glyphJson.layers ?? []) as Array<
             Record<string, unknown>
         >;
-        const layerJson = glyphLayers.find(
-            (l: Record<string, unknown>) => l.id === layerId
+        const drawingJson = glyphDrawings.find(
+            (l: Record<string, unknown>) => l.id === drawingId
         );
-        if (!layerJson) return false;
-        const existingYLayer = layersMap.get(layerId);
-        const storageLayerJson = this._prepareLayerSnapshotForHistory(
-            layerId,
-            layerJson,
-            existingYLayer instanceof Y.Map ? fromYType(existingYLayer) : null,
-            existingYLayer instanceof Y.Map ? existingYLayer : null
+        if (!drawingJson) return false;
+        const existingYDrawing = drawingsMap.get(drawingId);
+        const storageDrawingJson = this._prepareDrawingSnapshotForHistory(
+            drawingId,
+            drawingJson,
+            existingYDrawing instanceof Y.Map
+                ? fromYType(existingYDrawing)
+                : null,
+            existingYDrawing instanceof Y.Map ? existingYDrawing : null
         );
-        const operations = this._buildLayerSyncOperations(
+        const operations = this._buildDrawingSyncOperations(
             glyphName,
-            layerId,
-            layersMap,
-            storageLayerJson,
+            drawingId,
+            drawingsMap,
+            storageDrawingJson,
             label,
             oldValue,
             newValue,
@@ -8030,7 +8067,7 @@ export class PatchSyncEngine {
         this._queueOrCommitOperations(operations, label);
 
         console.log(
-            `Glyph sync committed for ${glyphName} layer ${layerId} (${label}) [fast path]`
+            `Glyph sync committed for ${glyphName} drawing ${drawingId} (${label}) [fast path]`
         );
         return true;
     }
@@ -8045,14 +8082,14 @@ export class PatchSyncEngine {
      */
     undo(
         glyphName?: string,
-        layerId?: string | null,
+        drawingId?: string | null,
         historyTargetKey?: string | null,
         surface?: HistoryUndoSurface | null
     ): UndoRedoResult | null {
         return this._replayHistoryAction(
             'undo',
             glyphName,
-            layerId,
+            drawingId,
             historyTargetKey,
             surface
         );
@@ -8061,14 +8098,14 @@ export class PatchSyncEngine {
     /** Redo the most recently undone history item on the given surface. */
     redo(
         glyphName?: string,
-        layerId?: string | null,
+        drawingId?: string | null,
         historyTargetKey?: string | null,
         surface?: HistoryUndoSurface | null
     ): UndoRedoResult | null {
         return this._replayHistoryAction(
             'redo',
             glyphName,
-            layerId,
+            drawingId,
             historyTargetKey,
             surface
         );
@@ -8077,13 +8114,13 @@ export class PatchSyncEngine {
     /** Check if undo is available. */
     canUndo(
         glyphName?: string,
-        layerId?: string | null,
+        drawingId?: string | null,
         historyTargetKey?: string | null,
         surface?: HistoryUndoSurface | null
     ): boolean {
         return !!this._resolveUndoHistoryItem(
             glyphName,
-            layerId,
+            drawingId,
             'undo',
             historyTargetKey,
             surface
@@ -8093,13 +8130,13 @@ export class PatchSyncEngine {
     /** Check if redo is available. */
     canRedo(
         glyphName?: string,
-        layerId?: string | null,
+        drawingId?: string | null,
         historyTargetKey?: string | null,
         surface?: HistoryUndoSurface | null
     ): boolean {
         return !!this._resolveUndoHistoryItem(
             glyphName,
-            layerId,
+            drawingId,
             'redo',
             historyTargetKey,
             surface
@@ -8109,7 +8146,7 @@ export class PatchSyncEngine {
     private _replayHistoryAction(
         historyAction: 'undo' | 'redo',
         glyphName: string | undefined,
-        layerId: string | null | undefined,
+        drawingId: string | null | undefined,
         historyTargetKey: string | null | undefined,
         surface: HistoryUndoSurface | null | undefined
     ): UndoRedoResult | null {
@@ -8118,7 +8155,7 @@ export class PatchSyncEngine {
         void this._editBursts.finalizeAll();
         const historyItem = this._resolveUndoHistoryItem(
             glyphName,
-            layerId,
+            drawingId,
             historyAction,
             historyTargetKey,
             surface
@@ -8150,7 +8187,7 @@ export class PatchSyncEngine {
         const target = this._targetFromHistoryItem(
             historyItem,
             glyphName ?? null,
-            layerId ?? null
+            drawingId ?? null
         );
         const scope = this._scopeForTarget(target);
         const documentIds = this._documentIdsForHistoryItem(
@@ -8223,15 +8260,15 @@ export class PatchSyncEngine {
                 loggedEntryIndex,
                 dependentTargets
             );
-            const layerSyncTargets = writtenTargets.length
+            const drawingSyncTargets = writtenTargets.length
                 ? writtenTargets
-                : this._historyReplayLayerSyncTargets(
+                : this._historyReplayDrawingSyncTargets(
                       historyItem,
                       scope,
                       workerReplayTargets
                   );
-            if (layerSyncTargets) {
-                this._syncJsonFromYDoc(layerSyncTargets);
+            if (drawingSyncTargets) {
+                this._syncJsonFromYDoc(drawingSyncTargets);
             } else if (metadataEntries?.length) {
                 this._syncRemoteJsonFromYDoc(metadataEntries);
             } else {
@@ -8261,11 +8298,11 @@ export class PatchSyncEngine {
     }
 
     /**
-     * Layer-patch the JSON shadow when every path the item touched lives
-     * under a patchable layer covered by the replay targets; otherwise the
+     * Drawing-patch the JSON shadow when every path the item touched lives
+     * under a patchable drawing covered by the replay targets; otherwise the
      * caller falls back to semantic-entry sync.
      */
-    private _historyReplayLayerSyncTargets(
+    private _historyReplayDrawingSyncTargets(
         historyItem: HistoryStackItem,
         scope: UndoScope,
         workerReplayTargets: WorkerReplayTarget[]
@@ -8275,28 +8312,28 @@ export class PatchSyncEngine {
         }
         if (
             !workerReplayTargets.every((replayTarget) =>
-                this._canPatchLayerFromYDoc(replayTarget)
+                this._canPatchDrawingFromYDoc(replayTarget)
             )
         ) {
             return null;
         }
-        const coveredLayerKeys = new Set(
+        const coveredDrawingKeys = new Set(
             workerReplayTargets.map((replayTarget) =>
-                getLayerTouchKey(replayTarget.glyphName, replayTarget.layerId)
+                getDrawingTouchKey(replayTarget.glyphName, replayTarget.layerId)
             )
         );
         const everyPathCovered = historyItem.touchedPaths.every((path) =>
-            coveredLayerKeys.has(
-                getLayerTouchKey(
+            coveredDrawingKeys.has(
+                getDrawingTouchKey(
                     deriveGlyphNameFromPath(path),
-                    deriveLayerIdFromPath(path)
+                    deriveDrawingIdFromPath(path)
                 )
             )
         );
         return everyPathCovered ? workerReplayTargets : null;
     }
 
-    /** Public JSON of a glyph or layer root, or null when absent. */
+    /** Public JSON of a glyph or drawing root, or null when absent. */
     private _readReplaySnapshot(entryPath: string): unknown {
         const path = this._toYDocPath(this._parseEntryPath(entryPath));
         if (this._isGlyphRootPath(path)) {
@@ -8311,7 +8348,7 @@ export class PatchSyncEngine {
     }
 
     /**
-     * Envelopes may omit glyph/layer snapshot bodies to stay under the
+     * Envelopes may omit glyph/drawing snapshot bodies to stay under the
      * packet limit. The receiver reads them from its own Y.Doc around the
      * apply so the history item stays replayable.
      */
@@ -8346,7 +8383,7 @@ export class PatchSyncEngine {
      * YJS_ONLY (binary): The remote binary Yjs update is applied and
      * the worker also receives it via _yjsWorkerCallback.
      * Remote JSON/model sync must stay branch-scoped: top-level keys, glyphs,
-     * and layers are patched from the authoritative Y.Doc without any full
+     * and drawings are patched from the authoritative Y.Doc without any full
      * yDocToJson rebuild on the receiving window hot path.
      */
     applyRemoteUpdate(
@@ -8682,7 +8719,7 @@ export class PatchSyncEngine {
         }
 
         const entries = remoteEntries ?? [];
-        const layerTargets = new Map<
+        const drawingTargets = new Map<
             string,
             { glyphName: string; layerId: string }
         >();
@@ -8716,11 +8753,11 @@ export class PatchSyncEngine {
             }
 
             const glyphName = this._deriveGlyphNameFromPath(entry.path);
-            const layerId = this._deriveLayerIdFromPath(entry.path);
-            const explicitLayerTargets = normalizeWorkerReplayTargets(
+            const drawingId = this._deriveDrawingIdFromPath(entry.path);
+            const explicitDrawingTargets = normalizeWorkerReplayTargets(
                 entry.workerReplayTargets
             );
-            const hasExplicitLayerTargets = explicitLayerTargets.length > 0;
+            const hasExplicitDrawingTargets = explicitDrawingTargets.length > 0;
             if (!glyphName) {
                 syncEntireFont = true;
                 continue;
@@ -8731,14 +8768,14 @@ export class PatchSyncEngine {
             const isGlyphRootSet =
                 pathSegments.length === 2 && entry.op === 'set';
             const isWholeGlyphChange =
-                !layerId && (entry.undoScope !== 'layer' || isGlyphRootSet);
-            const isWholeLayerChange =
-                layerId !== null &&
+                !drawingId && (entry.undoScope !== 'layer' || isGlyphRootSet);
+            const isWholeDrawingChange =
+                drawingId !== null &&
                 pathSegments.length === 4 &&
                 pathSegments[2] === 'layers' &&
-                !hasExplicitLayerTargets;
+                !hasExplicitDrawingTargets;
 
-            if (isWholeGlyphChange || isWholeLayerChange) {
+            if (isWholeGlyphChange || isWholeDrawingChange) {
                 glyphNames.add(glyphName);
                 continue;
             }
@@ -8746,16 +8783,16 @@ export class PatchSyncEngine {
 
         if (!syncEntireFont) {
             for (const entry of entries) {
-                const explicitLayerTargets = normalizeWorkerReplayTargets(
+                const explicitDrawingTargets = normalizeWorkerReplayTargets(
                     entry.workerReplayTargets
                 );
-                if (explicitLayerTargets.length > 0) {
-                    for (const target of explicitLayerTargets) {
+                if (explicitDrawingTargets.length > 0) {
+                    for (const target of explicitDrawingTargets) {
                         if (glyphNames.has(target.glyphName)) {
                             continue;
                         }
-                        layerTargets.set(
-                            getLayerFingerprintTargetKey(
+                        drawingTargets.set(
+                            getDrawingFingerprintTargetKey(
                                 target.glyphName,
                                 target.layerId
                             ),
@@ -8766,14 +8803,14 @@ export class PatchSyncEngine {
                 }
 
                 const glyphName = this._deriveGlyphNameFromPath(entry.path);
-                const layerId = this._deriveLayerIdFromPath(entry.path);
-                if (!glyphName || !layerId || glyphNames.has(glyphName)) {
+                const drawingId = this._deriveDrawingIdFromPath(entry.path);
+                if (!glyphName || !drawingId || glyphNames.has(glyphName)) {
                     continue;
                 }
 
-                layerTargets.set(
-                    getLayerFingerprintTargetKey(glyphName, layerId),
-                    { glyphName, layerId }
+                drawingTargets.set(
+                    getDrawingFingerprintTargetKey(glyphName, drawingId),
+                    { glyphName, layerId: drawingId }
                 );
             }
         }
@@ -8781,11 +8818,11 @@ export class PatchSyncEngine {
         const fingerprintTargets = this._collectRemoteFingerprintTargets(
             syncEntireFont,
             glyphNames,
-            Array.from(layerTargets.values())
+            Array.from(drawingTargets.values())
         );
         const previousFingerprintSnapshot =
             fingerprintTargets !== undefined
-                ? this._collectLayerFingerprintSnapshot(fingerprintTargets)
+                ? this._collectDrawingFingerprintSnapshot(fingerprintTargets)
                 : null;
 
         if (syncEntireFont) {
@@ -8797,11 +8834,11 @@ export class PatchSyncEngine {
                 this._patchGlyphFromYDoc(glyphName);
             }
             const fallbackGlyphNames = new Set<string>();
-            for (const target of layerTargets.values()) {
+            for (const target of drawingTargets.values()) {
                 if (glyphNames.has(target.glyphName)) {
                     continue;
                 }
-                if (!this._patchLayerFromYDoc(target)) {
+                if (!this._patchDrawingFromYDoc(target)) {
                     fallbackGlyphNames.add(target.glyphName);
                 }
             }
@@ -8816,9 +8853,9 @@ export class PatchSyncEngine {
         this._applyExplicitPropertyRemovalsToFontJson(entries);
 
         if (previousFingerprintSnapshot) {
-            this._emitLayerFingerprintChangedEvents(
+            this._emitDrawingFingerprintChangedEvents(
                 previousFingerprintSnapshot,
-                this._collectLayerFingerprintSnapshot(fingerprintTargets)
+                this._collectDrawingFingerprintSnapshot(fingerprintTargets)
             );
         }
     }
@@ -8862,15 +8899,15 @@ export class PatchSyncEngine {
     private _collectRemoteFingerprintTargets(
         syncEntireFont: boolean,
         glyphNames: Set<string>,
-        layerTargets: Array<{ glyphName: string; layerId: string }>
-    ): LayerFingerprintTarget[] | null | undefined {
+        drawingTargets: Array<{ glyphName: string; layerId: string }>
+    ): DrawingFingerprintTarget[] | null | undefined {
         if (syncEntireFont) {
             return null;
         }
 
-        const targets = normalizeWorkerReplayTargets(layerTargets);
+        const targets = normalizeWorkerReplayTargets(drawingTargets);
         for (const glyphName of glyphNames) {
-            this._appendGlyphLayerFingerprintTargets(glyphName, targets);
+            this._appendGlyphDrawingFingerprintTargets(glyphName, targets);
         }
 
         return targets.length > 0
@@ -8878,25 +8915,28 @@ export class PatchSyncEngine {
             : undefined;
     }
 
-    private _appendGlyphLayerFingerprintTargets(
+    private _appendGlyphDrawingFingerprintTargets(
         glyphName: string,
-        targets: LayerFingerprintTarget[]
+        targets: DrawingFingerprintTarget[]
     ): void {
         const seen = new Set(
             targets.map((target) =>
-                getLayerFingerprintTargetKey(target.glyphName, target.layerId)
+                getDrawingFingerprintTargetKey(target.glyphName, target.layerId)
             )
         );
-        const pushTarget = (layerId: string | null) => {
-            if (!layerId) {
+        const pushTarget = (drawingId: string | null) => {
+            if (!drawingId) {
                 return;
             }
-            const targetKey = getLayerFingerprintTargetKey(glyphName, layerId);
+            const targetKey = getDrawingFingerprintTargetKey(
+                glyphName,
+                drawingId
+            );
             if (seen.has(targetKey)) {
                 return;
             }
             seen.add(targetKey);
-            targets.push({ glyphName, layerId });
+            targets.push({ glyphName, layerId: drawingId });
         };
 
         const glyphs = Array.isArray((this._fontJson as Unsafe)?.glyphs)
@@ -8904,23 +8944,23 @@ export class PatchSyncEngine {
                   (glyph) => glyph?.name === glyphName
               ) as Unsafe | undefined)
             : undefined;
-        const existingLayers = Array.isArray(glyphs?.layers)
+        const existingDrawings = Array.isArray(glyphs?.layers)
             ? (glyphs.layers as Unsafe[])
             : [];
-        for (const layer of existingLayers) {
-            pushTarget(typeof layer?.id === 'string' ? layer.id : null);
+        for (const drawing of existingDrawings) {
+            pushTarget(typeof drawing?.id === 'string' ? drawing.id : null);
         }
 
         const glyphMap = this._glyphMapForName(glyphName);
         if (!(glyphMap instanceof Y.Map)) {
             return;
         }
-        const layersMap = glyphMap.get('layers');
-        if (!(layersMap instanceof Y.Map)) {
+        const drawingsMap = glyphMap.get('layers');
+        if (!(drawingsMap instanceof Y.Map)) {
             return;
         }
-        layersMap.forEach((_value: unknown, layerId: string) => {
-            pushTarget(layerId);
+        drawingsMap.forEach((_value: unknown, drawingId: string) => {
+            pushTarget(drawingId);
         });
     }
 
@@ -8972,43 +9012,45 @@ export class PatchSyncEngine {
         existing: Unsafe,
         snapshot: Unsafe
     ): void {
-        const existingLayers = Array.isArray(existing.layers)
+        const existingDrawings = Array.isArray(existing.layers)
             ? (existing.layers as Unsafe[])
             : [];
-        const snapshotLayers = Array.isArray(snapshot.layers)
+        const snapshotDrawings = Array.isArray(snapshot.layers)
             ? (snapshot.layers as Unsafe[])
             : [];
-        const layersById = new Map<string, Unsafe>();
-        for (const layer of existingLayers) {
-            if (typeof layer?.id === 'string' && layer.id) {
-                layersById.set(layer.id, layer);
+        const drawingsById = new Map<string, Unsafe>();
+        for (const drawing of existingDrawings) {
+            if (typeof drawing?.id === 'string' && drawing.id) {
+                drawingsById.set(drawing.id, drawing);
             }
         }
-        const nextLayers: Unsafe[] = [];
-        for (const layerSnapshot of snapshotLayers) {
-            const layerId =
-                typeof layerSnapshot?.id === 'string' ? layerSnapshot.id : '';
-            if (!layerId) {
-                throw new Error('malformed glyph snapshot: layer missing id');
+        const nextDrawings: Unsafe[] = [];
+        for (const drawingSnapshot of snapshotDrawings) {
+            const drawingId =
+                typeof drawingSnapshot?.id === 'string'
+                    ? drawingSnapshot.id
+                    : '';
+            if (!drawingId) {
+                throw new Error('malformed glyph snapshot: drawing missing id');
             }
-            const existingLayer = layersById.get(layerId);
+            const existingDrawing = drawingsById.get(drawingId);
             if (
-                existingLayer &&
-                typeof existingLayer === 'object' &&
-                !Array.isArray(existingLayer)
+                existingDrawing &&
+                typeof existingDrawing === 'object' &&
+                !Array.isArray(existingDrawing)
             ) {
                 this._assignJsonObjectInPlace(
-                    existingLayer as Record<string, unknown>,
-                    layerSnapshot as Record<string, unknown>
+                    existingDrawing as Record<string, unknown>,
+                    drawingSnapshot as Record<string, unknown>
                 );
-                nextLayers.push(existingLayer);
+                nextDrawings.push(existingDrawing);
             } else {
-                nextLayers.push(layerSnapshot);
+                nextDrawings.push(drawingSnapshot);
             }
         }
         this._assignJsonObjectInPlace(existing as Record<string, unknown>, {
             ...(snapshot as Record<string, unknown>),
-            layers: nextLayers
+            layers: nextDrawings
         });
     }
 
@@ -9261,7 +9303,7 @@ export class PatchSyncEngine {
                 fromYType(glyphMap),
                 readOptions?.existingGlyph,
                 {
-                    strictLayers: true,
+                    strictDrawings: true,
                     ignoreExisting: readOptions?.ignoreExisting === true
                 }
             )
@@ -9426,19 +9468,19 @@ export class PatchSyncEngine {
             }
 
             if (pathSegments.length === 4 && pathSegments[2] === 'layers') {
-                const layerId = pathSegments[3];
-                const layers = Array.isArray(glyphRecord.layers)
+                const drawingId = pathSegments[3];
+                const drawings = Array.isArray(glyphRecord.layers)
                     ? (glyphRecord.layers as Unsafe[])
                     : null;
-                if (!layers) {
+                if (!drawings) {
                     continue;
                 }
 
-                const layerIndex = layers.findIndex(
-                    (layer) => layer?.id === layerId
+                const drawingIndex = drawings.findIndex(
+                    (drawing) => drawing?.id === drawingId
                 );
-                if (layerIndex >= 0) {
-                    layers.splice(layerIndex, 1);
+                if (drawingIndex >= 0) {
+                    drawings.splice(drawingIndex, 1);
                 }
                 continue;
             }
@@ -9447,17 +9489,19 @@ export class PatchSyncEngine {
                 continue;
             }
 
-            const layerId = pathSegments[3];
+            const drawingId = pathSegments[3];
             const propertyKey = pathSegments[4];
-            const layers = Array.isArray(glyphRecord.layers)
+            const drawings = Array.isArray(glyphRecord.layers)
                 ? (glyphRecord.layers as Unsafe[])
                 : null;
-            const layerRecord = layers?.find((layer) => layer?.id === layerId);
-            if (!layerRecord) {
+            const drawingRecord = drawings?.find(
+                (drawing) => drawing?.id === drawingId
+            );
+            if (!drawingRecord) {
                 continue;
             }
 
-            delete layerRecord[propertyKey];
+            delete drawingRecord[propertyKey];
         }
     }
 
@@ -9598,8 +9642,8 @@ export class PatchSyncEngine {
             historyTarget,
             operations: normalizedOperations
         });
-        const originatingLayer =
-            this._resolveCommitOriginatingLayer(normalizedOperations);
+        const originatingDrawing =
+            this._resolveCommitOriginatingDrawing(normalizedOperations);
         const changeLogEntries: ChangeLogEntry[] = normalizedOperations.map(
             (operation) => {
                 const operationHistoryTarget =
@@ -9644,8 +9688,8 @@ export class PatchSyncEngine {
                     historyTargetType: operationHistoryTarget?.type ?? null,
                     historyTargetKey: operationHistoryTarget?.key ?? null,
                     historyTargetLabel: operationHistoryTarget?.label ?? null,
-                    originatingGlyphName: originatingLayer.glyphName,
-                    originatingLayerId: originatingLayer.layerId
+                    originatingGlyphName: originatingDrawing.glyphName,
+                    originatingLayerId: originatingDrawing.layerId
                 });
             }
         );
@@ -9765,9 +9809,9 @@ export class PatchSyncEngine {
             changedLayerIds: [
                 ...new Set(
                     changeLogEntries
-                        .map((entry) => deriveLayerIdFromPath(entry.path))
-                        .filter((layerId): layerId is string =>
-                            Boolean(layerId)
+                        .map((entry) => deriveDrawingIdFromPath(entry.path))
+                        .filter((drawingId): drawingId is string =>
+                            Boolean(drawingId)
                         )
                 )
             ]
@@ -9876,12 +9920,12 @@ export class PatchSyncEngine {
     /**
      * Convert a babelfont JSON path to a Y.Doc path.
      *
-     * Glyphs and layers in Y.Doc are keyed by name/ID (Y.Map) rather than
+     * Glyphs and drawings in Y.Doc are keyed by name/ID (Y.Map) rather than
      * array index. So ["glyphs", 0, "layers", 2, "width"] becomes
-     * ["glyphs", "A", "layers", "layer-uuid", "width"] etc.
+     * ["glyphs", "A", "layers", "drawing-uuid", "width"] etc.
      *
      * Since the model already passes human-readable keys (glyph names,
-     * layer IDs) for these segments, this function only needs to ensure
+     * drawing IDs) for these segments, this function only needs to ensure
      * numeric array indices remain numbers for Y.Array segments.
      */
     private _toYDocPath(path: (string | number)[]): (string | number)[] {
@@ -9908,8 +9952,8 @@ export class PatchSyncEngine {
      * Sync the local babelfont JSON from the current Y.Doc state.
      * Called after remote updates or undo/redo.
      *
-     * YJS_ONLY when fast path succeeds: _patchLayerFromYDoc applies
-     * only the touched layers — no full JSON rebuild.
+     * YJS_ONLY when fast path succeeds: _patchDrawingFromYDoc applies
+     * only the touched drawings — no full JSON rebuild.
      * When scope hints are unavailable, the live JSON/model is rebuilt from
      * branch-scoped reads of top-level keys and glyph snapshots, not from a
      * monolithic yDocToJson conversion.
@@ -9917,13 +9961,13 @@ export class PatchSyncEngine {
     /**
      * Patch the live babelfontData object from the current Y.Doc state.
      *
-     * When `scopeHint` is provided (layer-scoped undo/redo), only that one
-     * layer is reconstructed from Y.Doc — ~100-1000× faster than a full
+     * When `scopeHint` is provided (drawing-scoped undo/redo), only that one
+     * drawing is reconstructed from Y.Doc — ~100-1000× faster than a full
      * font rebuild for large fonts. Falls through to the full sync if any
      * Y.Doc path lookup fails.
      *
-     * YJS_ONLY when _patchLayerFromYDoc succeeds for all scopeHints
-     * (per-layer Y.Doc→JSON, no full rebuild).
+     * YJS_ONLY when _patchDrawingFromYDoc succeeds for all scopeHints
+     * (per-drawing Y.Doc→JSON, no full rebuild).
      */
     private _syncJsonFromYDoc(
         scopeHints?:
@@ -9941,48 +9985,48 @@ export class PatchSyncEngine {
         const fingerprintTargets =
             normalizedScopeHints.length > 0 ? normalizedScopeHints : null;
         const previousFingerprintSnapshot =
-            this._collectLayerFingerprintSnapshot(fingerprintTargets);
+            this._collectDrawingFingerprintSnapshot(fingerprintTargets);
 
-        // Fast path: only reconstruct the touched layers from Y.Doc.
+        // Fast path: only reconstruct the touched drawings from Y.Doc.
         if (
             normalizedScopeHints.length > 0 &&
             normalizedScopeHints.every((scopeHint) =>
-                this._patchLayerFromYDoc(scopeHint)
+                this._patchDrawingFromYDoc(scopeHint)
             )
         ) {
-            this._syncPatchedLayersIntoObjectModel(normalizedScopeHints);
-            this._emitLayerFingerprintChangedEvents(
+            this._syncPatchedDrawingsIntoObjectModel(normalizedScopeHints);
+            this._emitDrawingFingerprintChangedEvents(
                 previousFingerprintSnapshot,
-                this._collectLayerFingerprintSnapshot(fingerprintTargets)
+                this._collectDrawingFingerprintSnapshot(fingerprintTargets)
             );
             return;
         }
 
         throw new Error(
-            'Steady-state Yjs synchronization requires valid layer scope hints.'
+            'Steady-state Yjs synchronization requires valid drawing scope hints.'
         );
     }
 
-    private _canPatchLayerFromYDoc(scopeHint: {
+    private _canPatchDrawingFromYDoc(scopeHint: {
         glyphName: string;
         layerId: string;
     }): boolean {
         const glyphMap = this._glyphMapForName(scopeHint.glyphName);
-        const layersMap =
+        const drawingsMap =
             glyphMap instanceof Y.Map ? glyphMap.get('layers') : null;
         const glyph = (this._fontJson as Unsafe)?.glyphs?.find(
             (candidate: Unsafe) => candidate?.name === scopeHint.glyphName
         );
         return (
-            layersMap instanceof Y.Map &&
-            layersMap.get(scopeHint.layerId) instanceof Y.Map &&
+            drawingsMap instanceof Y.Map &&
+            drawingsMap.get(scopeHint.layerId) instanceof Y.Map &&
             glyph?.layers?.some(
-                (layer: Unsafe) => layer?.id === scopeHint.layerId
+                (drawing: Unsafe) => drawing?.id === scopeHint.layerId
             )
         );
     }
 
-    private _patchLayerFromYDoc(scopeHint: {
+    private _patchDrawingFromYDoc(scopeHint: {
         glyphName: string;
         layerId: string;
     }): boolean {
@@ -9991,13 +10035,13 @@ export class PatchSyncEngine {
             return false;
         }
 
-        const layersMap = glyphMap.get('layers');
-        if (!(layersMap instanceof Y.Map)) {
+        const drawingsMap = glyphMap.get('layers');
+        if (!(drawingsMap instanceof Y.Map)) {
             return false;
         }
 
-        const layerMap = layersMap.get(scopeHint.layerId);
-        if (!(layerMap instanceof Y.Map)) {
+        const drawingMap = drawingsMap.get(scopeHint.layerId);
+        if (!(drawingMap instanceof Y.Map)) {
             return false;
         }
 
@@ -10010,65 +10054,66 @@ export class PatchSyncEngine {
             return false;
         }
 
-        const layers = glyphs[glyphIdx].layers as Unsafe[] | undefined;
-        const layerIdx =
-            layers?.findIndex((l: Unsafe) => l.id === scopeHint.layerId) ?? -1;
-        if (layerIdx < 0 || !layers) {
+        const drawings = glyphs[glyphIdx].layers as Unsafe[] | undefined;
+        const drawingIdx =
+            drawings?.findIndex((l: Unsafe) => l.id === scopeHint.layerId) ??
+            -1;
+        if (drawingIdx < 0 || !drawings) {
             return false;
         }
 
-        const patchedLayer = this._cloneRuntimeValue(
-            this._normalizeLayerSnapshot(
+        const patchedDrawing = this._cloneRuntimeValue(
+            this._normalizeDrawingSnapshot(
                 scopeHint.layerId,
-                fromYType(layerMap),
-                layers[layerIdx]
+                fromYType(drawingMap),
+                drawings[drawingIdx]
             )
         ) as Unsafe;
 
         if (
-            patchedLayer &&
-            typeof patchedLayer === 'object' &&
-            !Array.isArray(patchedLayer)
+            patchedDrawing &&
+            typeof patchedDrawing === 'object' &&
+            !Array.isArray(patchedDrawing)
         ) {
-            const layerRecord = patchedLayer as Record<string, unknown>;
-            if (!('width' in layerRecord)) {
+            const drawingRecord = patchedDrawing as Record<string, unknown>;
+            if (!('width' in drawingRecord)) {
                 console.warn(
-                    `[PatchSyncEngine] _syncJsonFromYDoc: layer ${scopeHint.layerId} missing "width" after fromYType. Keys: ${Object.keys(layerRecord).join(',')}`
+                    `[PatchSyncEngine] _syncJsonFromYDoc: drawing ${scopeHint.layerId} missing "width" after fromYType. Keys: ${Object.keys(drawingRecord).join(',')}`
                 );
                 const yKeys: string[] = [];
-                layerMap.forEach((_v: unknown, k: string) => {
+                drawingMap.forEach((_v: unknown, k: string) => {
                     yKeys.push(k);
                 });
                 console.warn(
-                    `[PatchSyncEngine] Y.Map keys for layer: ${yKeys.join(',')}`
+                    `[PatchSyncEngine] Y.Map keys for drawing: ${yKeys.join(',')}`
                 );
             }
         }
 
         if (
-            layers[layerIdx] &&
-            typeof layers[layerIdx] === 'object' &&
-            !Array.isArray(layers[layerIdx]) &&
-            patchedLayer &&
-            typeof patchedLayer === 'object' &&
-            !Array.isArray(patchedLayer)
+            drawings[drawingIdx] &&
+            typeof drawings[drawingIdx] === 'object' &&
+            !Array.isArray(drawings[drawingIdx]) &&
+            patchedDrawing &&
+            typeof patchedDrawing === 'object' &&
+            !Array.isArray(patchedDrawing)
         ) {
             this._assignJsonObjectInPlace(
-                layers[layerIdx] as Record<string, unknown>,
-                patchedLayer as Record<string, unknown>
+                drawings[drawingIdx] as Record<string, unknown>,
+                patchedDrawing as Record<string, unknown>
             );
         } else {
-            layers[layerIdx] = patchedLayer;
+            drawings[drawingIdx] = patchedDrawing;
         }
         return true;
     }
 
     /**
-     * Show another window's uncommitted layers in this window's model
+     * Show another window's uncommitted drawings in this window's model
      * without recording a change or touching the documents. The commit that
-     * follows replaces them; `revertLivePreviewLayers` undoes them.
+     * follows replaces them; `revertLivePreviewDrawings` undoes them.
      */
-    applyLivePreviewLayers(
+    applyLivePreviewDrawings(
         records: Array<{
             glyphName: string;
             layerId: string;
@@ -10082,17 +10127,17 @@ export class PatchSyncEngine {
         }
         withSuppressedModelRecording(() => {
             for (const record of records) {
-                const modelLayer = fontModel
+                const modelDrawing = fontModel
                     .findGlyph?.(record.glyphName)
-                    ?.findLayerById?.(record.layerId);
+                    ?.findDrawingById?.(record.layerId);
                 const data = record.layerData as Unsafe;
                 if (
-                    !modelLayer ||
-                    typeof modelLayer.syncFromEditorLayerData !== 'function'
+                    !modelDrawing ||
+                    typeof modelDrawing.syncFromEditorDrawingData !== 'function'
                 ) {
                     continue;
                 }
-                modelLayer.syncFromEditorLayerData({
+                modelDrawing.syncFromEditorDrawingData({
                     width: data.width,
                     ...(data.height !== undefined
                         ? { height: data.height }
@@ -10113,24 +10158,24 @@ export class PatchSyncEngine {
                         ? { format_specific: data.format_specific }
                         : {})
                 });
-                modelLayer.invalidateContentCaches?.();
+                modelDrawing.invalidateContentCaches?.();
             }
         });
     }
 
-    /** The model layers go back to what the documents hold. */
-    revertLivePreviewLayers(
+    /** The model drawings go back to what the documents hold. */
+    revertLivePreviewDrawings(
         targets: Array<{ glyphName: string; layerId: string }>
     ): void {
         // The Yjs documents are the authority; the stored JSON may share
-        // objects with the model layers the preview just replaced.
+        // objects with the model drawings the preview just replaced.
         for (const target of targets) {
-            this._patchLayerFromYDoc(target);
+            this._patchDrawingFromYDoc(target);
         }
-        this._syncPatchedLayersIntoObjectModel(targets);
+        this._syncPatchedDrawingsIntoObjectModel(targets);
     }
 
-    private _syncPatchedLayersIntoObjectModel(
+    private _syncPatchedDrawingsIntoObjectModel(
         scopeHints: Array<{ glyphName: string; layerId: string }>
     ): void {
         const fontModel = (window as Unsafe).fontManager?.currentFont
@@ -10144,54 +10189,56 @@ export class PatchSyncEngine {
 
         withSuppressedModelRecording(() => {
             for (const scopeHint of scopeHints) {
-                const modelLayer = fontModel
+                const modelDrawing = fontModel
                     .findGlyph?.(scopeHint.glyphName)
-                    ?.findLayerById?.(scopeHint.layerId);
-                const storedLayer = glyphs
+                    ?.findDrawingById?.(scopeHint.layerId);
+                const storedDrawing = glyphs
                     .find((glyph) => glyph?.name === scopeHint.glyphName)
                     ?.layers?.find(
-                        (layer: Unsafe) => layer?.id === scopeHint.layerId
+                        (drawing: Unsafe) => drawing?.id === scopeHint.layerId
                     );
-                if (!modelLayer || !storedLayer) {
+                if (!modelDrawing || !storedDrawing) {
                     continue;
                 }
 
-                if (typeof modelLayer.syncFromEditorLayerData === 'function') {
-                    modelLayer.syncFromEditorLayerData({
-                        width: storedLayer.width,
-                        ...(storedLayer.height !== undefined
-                            ? { height: storedLayer.height }
+                if (
+                    typeof modelDrawing.syncFromEditorDrawingData === 'function'
+                ) {
+                    modelDrawing.syncFromEditorDrawingData({
+                        width: storedDrawing.width,
+                        ...(storedDrawing.height !== undefined
+                            ? { height: storedDrawing.height }
                             : {}),
-                        ...(storedLayer.vertWidth !== undefined
-                            ? { vertWidth: storedLayer.vertWidth }
+                        ...(storedDrawing.vertWidth !== undefined
+                            ? { vertWidth: storedDrawing.vertWidth }
                             : {}),
-                        ...(storedLayer.shapes !== undefined
-                            ? { shapes: storedLayer.shapes }
+                        ...(storedDrawing.shapes !== undefined
+                            ? { shapes: storedDrawing.shapes }
                             : {}),
-                        ...(storedLayer.anchors !== undefined
-                            ? { anchors: storedLayer.anchors }
+                        ...(storedDrawing.anchors !== undefined
+                            ? { anchors: storedDrawing.anchors }
                             : {}),
-                        ...(storedLayer.guides !== undefined
-                            ? { guides: storedLayer.guides }
+                        ...(storedDrawing.guides !== undefined
+                            ? { guides: storedDrawing.guides }
                             : {}),
-                        ...(storedLayer.format_specific !== undefined
-                            ? { format_specific: storedLayer.format_specific }
+                        ...(storedDrawing.format_specific !== undefined
+                            ? { format_specific: storedDrawing.format_specific }
                             : {})
                     });
-                    modelLayer.invalidateContentCaches?.();
+                    modelDrawing.invalidateContentCaches?.();
                     continue;
                 }
 
-                const rawLayerData = modelLayer.toJSON?.();
-                if (rawLayerData && typeof rawLayerData === 'object') {
-                    Object.assign(rawLayerData, storedLayer);
+                const rawDrawingData = modelDrawing.toJSON?.();
+                if (rawDrawingData && typeof rawDrawingData === 'object') {
+                    Object.assign(rawDrawingData, storedDrawing);
                 }
-                modelLayer.invalidateContentCaches?.();
+                modelDrawing.invalidateContentCaches?.();
             }
         });
     }
 
-    private _syncPatchedLayerTargetsFromYDoc(
+    private _syncPatchedDrawingTargetsFromYDoc(
         scopeHints: Array<{ glyphName: string; layerId: string }>
     ): void {
         const normalizedScopeHints = normalizeWorkerReplayTargets(scopeHints);
@@ -10200,18 +10247,18 @@ export class PatchSyncEngine {
         }
 
         const previousFingerprintSnapshot =
-            this._collectLayerFingerprintSnapshot(normalizedScopeHints);
+            this._collectDrawingFingerprintSnapshot(normalizedScopeHints);
         const patchedScopeHints = normalizedScopeHints.filter((scopeHint) =>
-            this._patchLayerFromYDoc(scopeHint)
+            this._patchDrawingFromYDoc(scopeHint)
         );
         if (!patchedScopeHints.length) {
             return;
         }
 
-        this._syncPatchedLayersIntoObjectModel(patchedScopeHints);
-        this._emitLayerFingerprintChangedEvents(
+        this._syncPatchedDrawingsIntoObjectModel(patchedScopeHints);
+        this._emitDrawingFingerprintChangedEvents(
             previousFingerprintSnapshot,
-            this._collectLayerFingerprintSnapshot(normalizedScopeHints)
+            this._collectDrawingFingerprintSnapshot(normalizedScopeHints)
         );
     }
 
@@ -10243,12 +10290,12 @@ export class PatchSyncEngine {
 
     private _deriveUndoScope(
         glyphName: string | null,
-        layerId: string | null
+        drawingId: string | null
     ): UndoScope {
         if (!glyphName) {
             return 'font';
         }
-        if (layerId) {
+        if (drawingId) {
             return 'layer';
         }
         return 'glyph';
@@ -10282,24 +10329,24 @@ export class PatchSyncEngine {
         });
     }
 
-    private _resolveCommitOriginatingLayer(
+    private _resolveCommitOriginatingDrawing(
         operations: TransactionBufferedOperation[]
     ): { glyphName: string | null; layerId: string | null } {
         let contextSurface: HistoryUndoSurface | null = null;
         let contextGlyphName: string | null = null;
-        let contextLayerId: string | null = null;
+        let contextDrawingId: string | null = null;
         try {
             const context = getUndoRedoContext();
             contextSurface = context.surface;
             contextGlyphName = context.undoGlyphName ?? null;
-            contextLayerId = context.undoLayerId ?? null;
+            contextDrawingId = context.undoDrawingId ?? null;
         } catch {
             contextSurface = null;
         }
-        return resolveCommitOriginatingLayer({
+        return resolveCommitOriginatingDrawing({
             contextSurface,
             contextGlyphName,
-            contextLayerId,
+            contextDrawingId,
             operations
         });
     }
@@ -10707,14 +10754,14 @@ export class PatchSyncEngine {
             }
         }
 
-        // Snapshot-mode operations carry a full layer/glyph object and are
+        // Snapshot-mode operations carry a full drawing/glyph object and are
         // always material changes, so skip the no-op reduction. Default-mode
         // property changes (e.g. feature code edits) may be no-ops and still
         // need the reduction to filter them out.
         const skipNoOpReduction =
             finalizedOperations.length === 1 &&
             (finalizedOperations[0].applyMode === 'font-snapshot' ||
-                finalizedOperations[0].applyMode === 'layer-snapshot' ||
+                finalizedOperations[0].applyMode === 'drawing-snapshot' ||
                 finalizedOperations[0].applyMode === 'glyph-snapshot');
         const hasPythonSyntheticOps = finalizedOperations.some(
             (operation) =>
@@ -10775,8 +10822,8 @@ export class PatchSyncEngine {
             historyTarget: primaryHistoryTarget,
             operations: effectiveOperations
         });
-        const originatingLayer =
-            this._resolveCommitOriginatingLayer(effectiveOperations);
+        const originatingDrawing =
+            this._resolveCommitOriginatingDrawing(effectiveOperations);
         const changeLogEntries: ChangeLogEntry[] = [];
 
         for (const operation of effectiveOperations) {
@@ -10798,7 +10845,7 @@ export class PatchSyncEngine {
                 op: operation.op,
                 undoScope: this._deriveUndoScope(
                     deriveGlyphName(operation.path),
-                    deriveLayerId(operation.path)
+                    deriveDrawingId(operation.path)
                 ),
                 undoSurfaceAffinity,
                 path: joinPathWithGlyphSeparator(operation.path),
@@ -10828,8 +10875,8 @@ export class PatchSyncEngine {
                 historyTargetType: operationHistoryTarget?.type ?? null,
                 historyTargetKey: operationHistoryTarget?.key ?? null,
                 historyTargetLabel: operationHistoryTarget?.label ?? null,
-                originatingGlyphName: originatingLayer.glyphName,
-                originatingLayerId: originatingLayer.layerId
+                originatingGlyphName: originatingDrawing.glyphName,
+                originatingLayerId: originatingDrawing.layerId
             });
             changeLogEntries.push(entry);
         }
@@ -11114,11 +11161,13 @@ export class PatchSyncEngine {
         this._flushDestroyedGlyphDocs();
         this._onDirty?.();
 
-        if (this._liveBurstLayers.size > 0 && !this._isApplyingRemote) {
+        if (this._liveBurstDrawings.size > 0 && !this._isApplyingRemote) {
             this._finalizeLiveBursts(
                 changeLogEntries
-                    .map((entry) => deriveLayerIdFromPath(entry.path))
-                    .filter((layerId): layerId is string => Boolean(layerId)),
+                    .map((entry) => deriveDrawingIdFromPath(entry.path))
+                    .filter((drawingId): drawingId is string =>
+                        Boolean(drawingId)
+                    ),
                 nextHistoryItemId
             );
         }
@@ -11146,9 +11195,9 @@ export class PatchSyncEngine {
             changedLayerIds: [
                 ...new Set(
                     changeLogEntries
-                        .map((entry) => deriveLayerIdFromPath(entry.path))
-                        .filter((layerId): layerId is string =>
-                            Boolean(layerId)
+                        .map((entry) => deriveDrawingIdFromPath(entry.path))
+                        .filter((drawingId): drawingId is string =>
+                            Boolean(drawingId)
                         )
                 )
             ]
@@ -11167,10 +11216,10 @@ export class PatchSyncEngine {
 
         const applyPath = operation.applyPath ?? operation.path;
         const glyphName = deriveGlyphName(applyPath);
-        const layerId = deriveLayerId(applyPath);
+        const drawingId = deriveDrawingId(applyPath);
 
-        if (glyphName && layerId) {
-            return [{ glyphName, layerId }];
+        if (glyphName && drawingId) {
+            return [{ glyphName, layerId: drawingId }];
         }
 
         if (
@@ -11189,19 +11238,19 @@ export class PatchSyncEngine {
             return [];
         }
 
-        const layers = Array.isArray((glyphSnapshot as Unsafe).layers)
+        const drawings = Array.isArray((glyphSnapshot as Unsafe).layers)
             ? ((glyphSnapshot as Unsafe).layers as Unsafe[])
             : [];
         return normalizeWorkerReplayTargets(
-            layers.map((layer) => {
-                const snapshotLayerId =
-                    layer && typeof layer === 'object'
-                        ? String(layer.id || '')
+            drawings.map((drawing) => {
+                const snapshotDrawingId =
+                    drawing && typeof drawing === 'object'
+                        ? String(drawing.id || '')
                         : '';
-                return snapshotLayerId
+                return snapshotDrawingId
                     ? {
                           glyphName,
-                          layerId: snapshotLayerId
+                          layerId: snapshotDrawingId
                       }
                     : null;
             })
@@ -11380,8 +11429,8 @@ export class PatchSyncEngine {
                 continue;
             }
             const glyphName = String(path[1]);
-            const layerId = String(path[3]);
-            const key = `${glyphName}:${layerId}`;
+            const drawingId = String(path[3]);
+            const key = `${glyphName}:${drawingId}`;
             if (seen.has(key)) {
                 continue;
             }
@@ -11390,13 +11439,13 @@ export class PatchSyncEngine {
             if (!(glyphMap instanceof Y.Map)) {
                 continue;
             }
-            const layersMap = glyphMap.get('layers');
-            if (!(layersMap instanceof Y.Map)) {
+            const drawingsMap = glyphMap.get('layers');
+            if (!(drawingsMap instanceof Y.Map)) {
                 continue;
             }
-            const layerMap = layersMap.get(layerId);
-            if (layerMap instanceof Y.Map) {
-                repairLayerGeometryOrphans(layerMap);
+            const drawingMap = drawingsMap.get(drawingId);
+            if (drawingMap instanceof Y.Map) {
+                repairDrawingGeometryOrphans(drawingMap);
             }
         }
     }
@@ -11410,33 +11459,33 @@ export class PatchSyncEngine {
         documentId?: string
     ): void {
         const targetDoc = documentId ? this._docForId(documentId) : undefined;
-        const layersByDoc = new Map<Y.Doc, Y.Map<unknown>[]>();
+        const drawingsByDoc = new Map<Y.Doc, Y.Map<unknown>[]>();
         for (const glyphName of new Set(this._glyphNameById.values())) {
             const glyphMap = this._glyphMapForName(glyphName);
             if (!(glyphMap instanceof Y.Map)) {
                 continue;
             }
-            const layersMap = glyphMap.get('layers');
-            if (!(layersMap instanceof Y.Map)) {
+            const drawingsMap = glyphMap.get('layers');
+            if (!(drawingsMap instanceof Y.Map)) {
                 continue;
             }
-            layersMap.forEach((layer) => {
+            drawingsMap.forEach((drawing) => {
                 if (
-                    !(layer instanceof Y.Map) ||
-                    !layer.doc ||
-                    (targetDoc && layer.doc !== targetDoc)
+                    !(drawing instanceof Y.Map) ||
+                    !drawing.doc ||
+                    (targetDoc && drawing.doc !== targetDoc)
                 ) {
                     return;
                 }
-                const layers = layersByDoc.get(layer.doc) || [];
-                layers.push(layer);
-                layersByDoc.set(layer.doc, layers);
+                const drawings = drawingsByDoc.get(drawing.doc) || [];
+                drawings.push(drawing);
+                drawingsByDoc.set(drawing.doc, drawings);
             });
         }
-        for (const [doc, layers] of layersByDoc) {
+        for (const [doc, drawings] of drawingsByDoc) {
             doc.transact(() => {
-                for (const layer of layers) {
-                    repairLayerGeometryOrphans(layer);
+                for (const drawing of drawings) {
+                    repairDrawingGeometryOrphans(drawing);
                 }
             }, SYSTEM_REMOTE_ORIGIN);
         }
@@ -11476,12 +11525,12 @@ export class PatchSyncEngine {
         }
 
         if (
-            operation.applyMode === 'layer-snapshot' &&
+            operation.applyMode === 'drawing-snapshot' &&
             applyPath.length === 4 &&
             applyPath[0] === 'glyphs' &&
             applyPath[2] === 'layers'
         ) {
-            this._applyLayerDelta(
+            this._applyDrawingDelta(
                 String(applyPath[1]),
                 String(applyPath[3]),
                 applyValue
@@ -11499,21 +11548,23 @@ export class PatchSyncEngine {
         layerId: string | null;
     } {
         const touchedGlyphNames = new Set<string>();
-        const touchedLayerKeys = new Set<string>();
+        const touchedDrawingKeys = new Set<string>();
         let hasFontScopedChange = false;
         let hasGlyphScopedChange = false;
 
         for (const operation of operations) {
             const glyphName = deriveGlyphName(operation.path);
-            const layerId = deriveLayerId(operation.path);
+            const drawingId = deriveDrawingId(operation.path);
             if (!glyphName) {
                 hasFontScopedChange = true;
             }
             if (glyphName) {
                 touchedGlyphNames.add(glyphName);
             }
-            if (glyphName && layerId) {
-                touchedLayerKeys.add(getLayerManagerKey(glyphName, layerId));
+            if (glyphName && drawingId) {
+                touchedDrawingKeys.add(
+                    getDrawingManagerKey(glyphName, drawingId)
+                );
             } else if (glyphName) {
                 hasGlyphScopedChange = true;
             }
@@ -11521,14 +11572,14 @@ export class PatchSyncEngine {
 
         if (!hasFontScopedChange && touchedGlyphNames.size === 1) {
             const glyphName = [...touchedGlyphNames][0];
-            if (!hasGlyphScopedChange && touchedLayerKeys.size === 1) {
-                const [managerKey] = [...touchedLayerKeys];
-                const [, layerId] = managerKey.split('@@');
+            if (!hasGlyphScopedChange && touchedDrawingKeys.size === 1) {
+                const [managerKey] = [...touchedDrawingKeys];
+                const [, drawingId] = managerKey.split('@@');
                 return {
                     scope: 'layer',
-                    origin: this._getEditOrigin(glyphName, layerId, 'layer'),
+                    origin: this._getEditOrigin(glyphName, drawingId, 'layer'),
                     glyphName,
-                    layerId
+                    layerId: drawingId
                 };
             }
             return {
@@ -11762,11 +11813,11 @@ export class PatchSyncEngine {
 
     private _getEditOrigin(
         glyphName: string | null,
-        layerId: string | null,
+        drawingId: string | null,
         scope: UndoScope
     ): string {
-        if (scope === 'layer' && glyphName && layerId) {
-            return getLayerEditOrigin(glyphName, layerId);
+        if (scope === 'layer' && glyphName && drawingId) {
+            return getDrawingEditOrigin(glyphName, drawingId);
         }
         if (scope === 'glyph') {
             return GLYPH_EDIT_ORIGIN;
@@ -11776,13 +11827,13 @@ export class PatchSyncEngine {
 
     private _deriveBulkUndoScope(
         targets: Array<{ glyphName: string }>,
-        layerId: string | null
+        drawingId: string | null
     ): UndoScope {
         const glyphNames = new Set(targets.map((target) => target.glyphName));
         if (glyphNames.size !== 1) {
             return 'font';
         }
-        if (layerId) {
+        if (drawingId) {
             return 'layer';
         }
         return 'glyph';
@@ -11801,14 +11852,14 @@ export class PatchSyncEngine {
                 .map((entry) => this._deriveGlyphNameFromPath(entry.path))
                 .filter((glyphName): glyphName is string => !!glyphName)
         );
-        const layerKeys = new Set(
+        const drawingKeys = new Set(
             remoteEntries
                 .filter((entry) => entry.undoScope === 'layer')
                 .map((entry) => {
                     const glyphName = this._deriveGlyphNameFromPath(entry.path);
-                    const layerId = this._deriveLayerIdFromPath(entry.path);
-                    return glyphName && layerId
-                        ? getLayerManagerKey(glyphName, layerId)
+                    const drawingId = this._deriveDrawingIdFromPath(entry.path);
+                    return glyphName && drawingId
+                        ? getDrawingManagerKey(glyphName, drawingId)
                         : null;
                 })
                 .filter((key): key is string => !!key)
@@ -11817,7 +11868,7 @@ export class PatchSyncEngine {
         if (remoteEntries.some((entry) => entry.undoScope === 'font')) {
             return FONT_EDIT_ORIGIN;
         }
-        // Composite/dependent layer packets keep the originating layer's
+        // Composite/dependent drawing packets keep the originating drawing's
         // edit origin rather than FONT_EDIT_ORIGIN.
         if (
             remoteEntries.some((entry) => entry.undoScope === 'layer') &&
@@ -11831,25 +11882,25 @@ export class PatchSyncEngine {
                 originating?.originatingGlyphName &&
                 originating.originatingLayerId
             ) {
-                return getLayerEditOrigin(
+                return getDrawingEditOrigin(
                     originating.originatingGlyphName,
                     originating.originatingLayerId
                 );
             }
         }
-        if (layerKeys.size === 1 && glyphNames.size === 1) {
+        if (drawingKeys.size === 1 && glyphNames.size === 1) {
             const entry =
                 targetItem ??
                 remoteEntries.find(
                     (candidate) =>
                         !!this._deriveGlyphNameFromPath(candidate.path) &&
-                        !!this._deriveLayerIdFromPath(candidate.path)
+                        !!this._deriveDrawingIdFromPath(candidate.path)
                 );
             if (entry) {
                 const glyphName = this._deriveGlyphNameFromPath(entry.path);
-                const layerId = this._deriveLayerIdFromPath(entry.path);
-                if (glyphName && layerId) {
-                    return getLayerEditOrigin(glyphName, layerId);
+                const drawingId = this._deriveDrawingIdFromPath(entry.path);
+                if (glyphName && drawingId) {
+                    return getDrawingEditOrigin(glyphName, drawingId);
                 }
             }
         }
@@ -11859,7 +11910,7 @@ export class PatchSyncEngine {
         return FONT_EDIT_ORIGIN;
     }
 
-    private _getRemoteLayerSyncScopes(
+    private _getRemoteDrawingSyncScopes(
         remoteEntries?: ChangeLogEntry[]
     ): Array<{ glyphName: string; layerId: string }> | null {
         if (!remoteEntries?.length) {
@@ -11869,8 +11920,8 @@ export class PatchSyncEngine {
         if (
             remoteEntries.some((entry) => {
                 const glyphName = this._deriveGlyphNameFromPath(entry.path);
-                const layerId = this._deriveLayerIdFromPath(entry.path);
-                return !!glyphName && !layerId;
+                const drawingId = this._deriveDrawingIdFromPath(entry.path);
+                return !!glyphName && !drawingId;
             })
         ) {
             return null;
@@ -11887,8 +11938,10 @@ export class PatchSyncEngine {
                 }
 
                 const glyphName = this._deriveGlyphNameFromPath(entry.path);
-                const layerId = this._deriveLayerIdFromPath(entry.path);
-                return glyphName && layerId ? [{ glyphName, layerId }] : [];
+                const drawingId = this._deriveDrawingIdFromPath(entry.path);
+                return glyphName && drawingId
+                    ? [{ glyphName, layerId: drawingId }]
+                    : [];
             })
         );
 
@@ -11899,46 +11952,48 @@ export class PatchSyncEngine {
         return targets;
     }
 
-    private _hasMaterializedLayerRoot(
+    private _hasMaterializedDrawingRoot(
         glyphName: string,
-        layerId: string
+        drawingId: string
     ): boolean {
         const glyphMap = this._glyphMapForName(glyphName);
-        const layersMap =
+        const drawingsMap =
             glyphMap instanceof Y.Map ? glyphMap.get('layers') : null;
-        const layerValue =
-            layersMap instanceof Y.Map ? layersMap.get(layerId) : undefined;
-        if (!(layerValue instanceof Y.Map)) {
+        const drawingValue =
+            drawingsMap instanceof Y.Map
+                ? drawingsMap.get(drawingId)
+                : undefined;
+        if (!(drawingValue instanceof Y.Map)) {
             return false;
         }
 
-        const layerSnapshot = fromYType(layerValue);
+        const drawingSnapshot = fromYType(drawingValue);
         if (
-            !layerSnapshot ||
-            typeof layerSnapshot !== 'object' ||
-            Array.isArray(layerSnapshot)
+            !drawingSnapshot ||
+            typeof drawingSnapshot !== 'object' ||
+            Array.isArray(drawingSnapshot)
         ) {
             return false;
         }
 
-        const layerRecord = layerSnapshot as Record<string, unknown>;
+        const drawingRecord = drawingSnapshot as Record<string, unknown>;
         return (
-            typeof layerRecord.id === 'string' &&
-            layerRecord.id.length > 0 &&
-            layerRecord.id === layerId
+            typeof drawingRecord.id === 'string' &&
+            drawingRecord.id.length > 0 &&
+            drawingRecord.id === drawingId
         );
     }
 
     private _resolveUndoHistoryItem(
         glyphName: string | undefined,
-        layerId: string | null | undefined,
+        drawingId: string | null | undefined,
         historyAction: 'undo' | 'redo',
         historyTargetKey?: string | null,
         surface?: HistoryUndoSurface | null
     ): HistoryStackItem | null {
         return resolveHistoryTargetItem(this._changeLog, {
             glyphName: glyphName ?? null,
-            layerId: layerId ?? null,
+            layerId: drawingId ?? null,
             historyAction,
             historyTargetKey: historyTargetKey ?? null,
             surface: surface ?? null
@@ -12036,8 +12091,8 @@ export class PatchSyncEngine {
         return deriveGlyphNameFromPath(path);
     }
 
-    private _deriveLayerIdFromPath(path: string): string | null {
-        return deriveLayerIdFromPath(path);
+    private _deriveDrawingIdFromPath(path: string): string | null {
+        return deriveDrawingIdFromPath(path);
     }
 
     private _parseEntryPath(path: string): (string | number)[] {
@@ -12050,18 +12105,18 @@ export class PatchSyncEngine {
         item: HistoryStackItem,
         direction: 'undo' | 'redo'
     ): WorkerReplayTarget[] {
-        const resettleDerivedLayers =
-            shouldResettleDerivedLayersOnHistoryReplay(
+        const resettleDerivedDrawings =
+            shouldResettleDerivedDrawingsOnHistoryReplay(
                 item,
                 !!this._getResettleFontModel()
             );
         const orderedEntries = (
             direction === 'undo' ? [...item.entries].reverse() : item.entries
         ).filter(isReplayableHistoryEntry);
-        const replayEntries = resettleDerivedLayers
+        const replayEntries = resettleDerivedDrawings
             ? orderedEntries.filter(
                   (entry) =>
-                      !isDerivedLayerChangePath(
+                      !isDerivedDrawingChangePath(
                           entry.path,
                           item.originatingGlyphName
                       )
@@ -12069,10 +12124,11 @@ export class PatchSyncEngine {
             : orderedEntries;
 
         this._replayHistoryEntries(replayEntries, direction);
-        const settled = resettleDerivedLayers
-            ? this._resettleDerivedLayersAfterOriginReplay(item)
+        const settled = resettleDerivedDrawings
+            ? this._resettleDerivedDrawingsAfterOriginReplay(item)
             : this._reflowDependentsAfterReplay(item);
-        const recomposed = this._recomposeStaleAutomaticLayersAfterReplay(item);
+        const recomposed =
+            this._recomposeStaleAutomaticDrawingsAfterReplay(item);
         return recomposed.length
             ? normalizeWorkerReplayTargets([...settled, ...recomposed])
             : settled;
@@ -12093,13 +12149,16 @@ export class PatchSyncEngine {
         }
         const originEntries = item.entries.filter(
             (entry) =>
-                !isDerivedLayerChangePath(entry.path, item.originatingGlyphName)
+                !isDerivedDrawingChangePath(
+                    entry.path,
+                    item.originatingGlyphName
+                )
         );
         if (deriveEditKindsFromChangeLogEntries(originEntries).size === 0) {
             return [];
         }
         const before = this._historyReplayDependentTargets.length;
-        const targets = this._resettleDerivedLayersAfterOriginReplay(item);
+        const targets = this._resettleDerivedDrawingsAfterOriginReplay(item);
         return this._historyReplayDependentTargets.length > before
             ? targets
             : [];
@@ -12109,20 +12168,20 @@ export class PatchSyncEngine {
      * A replay restores stored component positions. When it switches
      * automatic alignment back on (or restores a composite whose base
      * anchors moved since), those positions are stale: recompose the
-     * replayed automatic layers, unrecorded, within the same replay.
+     * replayed automatic drawings, unrecorded, within the same replay.
      */
-    private _recomposeStaleAutomaticLayersAfterReplay(
+    private _recomposeStaleAutomaticDrawingsAfterReplay(
         item: HistoryStackItem
     ): WorkerReplayTarget[] {
         const fontModel = this._getResettleFontModel() as Unsafe;
         if (!fontModel) {
             return [];
         }
-        const targets = this._collectOriginLayerTargets(
+        const targets = this._collectOriginDrawingTargets(
             item,
             item.entries.filter(
                 (entry) =>
-                    !isDerivedLayerChangePath(
+                    !isDerivedDrawingChangePath(
                         entry.path,
                         item.originatingGlyphName
                     )
@@ -12131,23 +12190,23 @@ export class PatchSyncEngine {
         if (!targets.length) {
             return [];
         }
-        this._syncPatchedLayerTargetsFromYDoc(targets);
+        this._syncPatchedDrawingTargetsFromYDoc(targets);
         const recomposed: WorkerReplayTarget[] = [];
         for (const target of targets) {
-            const layer = fontModel
+            const drawing = fontModel
                 .findGlyph?.(target.glyphName)
-                ?.findLayerById?.(target.layerId);
-            if (!layer?.isAutomaticAlignedLayer?.()) {
+                ?.findDrawingById?.(target.layerId);
+            if (!drawing?.isAutomaticAlignedDrawing?.()) {
                 continue;
             }
-            layer.invalidateContentCaches?.();
+            drawing.invalidateContentCaches?.();
             const changed = this.runWithoutRecording(
-                () => layer.rebuildAutomaticComposition?.() === true
+                () => drawing.rebuildAutomaticComposition?.() === true
             );
             if (!changed) {
                 continue;
             }
-            this._applySettledLayerFromFontJson(
+            this._applySettledDrawingFromFontJson(
                 target.glyphName,
                 target.layerId
             );
@@ -12233,11 +12292,11 @@ export class PatchSyncEngine {
             this._applyGlyphSnapshot(String(path[1]), replayValue);
             return;
         }
-        if (this._isLayerRootPath(path)) {
+        if (this._isDrawingRootPath(path)) {
             if (replayValue === null || replayValue === undefined) {
                 this._deleteRoutedYPath(path);
             } else {
-                this._applyLayerDelta(
+                this._applyDrawingDelta(
                     String(path[1]),
                     String(path[3]),
                     replayValue
@@ -12283,7 +12342,7 @@ export class PatchSyncEngine {
         return fontModel;
     }
 
-    private _collectOriginLayerTargets(
+    private _collectOriginDrawingTargets(
         item: HistoryStackItem,
         entries: ChangeLogEntry[]
     ): WorkerReplayTarget[] {
@@ -12296,39 +12355,39 @@ export class PatchSyncEngine {
                 : null,
             ...entries.map((entry) => ({
                 glyphName: deriveGlyphNameFromPath(entry.path) || '',
-                layerId: deriveLayerIdFromPath(entry.path) || ''
+                layerId: deriveDrawingIdFromPath(entry.path) || ''
             }))
         ]);
     }
 
-    private _getFontJsonLayer(
+    private _getFontJsonDrawing(
         glyphName: string,
-        layerId: string
+        drawingId: string
     ): Record<string, unknown> | null {
         const glyphs = Array.isArray(this._fontJson?.glyphs)
             ? (this._fontJson.glyphs as Unsafe[])
             : [];
         const glyphJson = glyphs.find((glyph) => glyph?.name === glyphName);
-        const layerJson = Array.isArray(glyphJson?.layers)
+        const drawingJson = Array.isArray(glyphJson?.layers)
             ? (glyphJson.layers as Unsafe[]).find(
-                  (layer) => layer?.id === layerId
+                  (drawing) => drawing?.id === drawingId
               )
             : null;
-        if (!layerJson || typeof layerJson !== 'object') {
+        if (!drawingJson || typeof drawingJson !== 'object') {
             return null;
         }
-        return layerJson as Record<string, unknown>;
+        return drawingJson as Record<string, unknown>;
     }
 
-    private _resettleDerivedLayersAfterOriginReplay(
+    private _resettleDerivedDrawingsAfterOriginReplay(
         item: HistoryStackItem
     ): WorkerReplayTarget[] {
         const fontModel = this._getResettleFontModel();
-        const originTargets = this._collectOriginLayerTargets(
+        const originTargets = this._collectOriginDrawingTargets(
             item,
             item.entries.filter(
                 (entry) =>
-                    !isDerivedLayerChangePath(
+                    !isDerivedDrawingChangePath(
                         entry.path,
                         item.originatingGlyphName
                     )
@@ -12339,13 +12398,13 @@ export class PatchSyncEngine {
         }
 
         if (originTargets.length) {
-            this._syncPatchedLayerTargetsFromYDoc(originTargets);
+            this._syncPatchedDrawingTargetsFromYDoc(originTargets);
         }
 
         const editKinds = deriveEditKindsFromChangeLogEntries(
             item.entries.filter(
                 (entry) =>
-                    !isDerivedLayerChangePath(
+                    !isDerivedDrawingChangePath(
                         entry.path,
                         item.originatingGlyphName
                     )
@@ -12356,12 +12415,12 @@ export class PatchSyncEngine {
         }
 
         const sourceTarget = originTargets[0];
-        const closure = computeLayerRecompositionClosure({
+        const closure = computeDrawingRecompositionClosure({
             sourceTargets: originTargets,
             editKinds,
             scope: 'all',
             fontModel,
-            activeLayerId: sourceTarget?.layerId ?? item.originatingLayerId,
+            activeDrawingId: sourceTarget?.layerId ?? item.originatingLayerId,
             sourceGlyphName:
                 sourceTarget?.glyphName ?? item.originatingGlyphName,
             suppressor: this
@@ -12375,14 +12434,14 @@ export class PatchSyncEngine {
             ) {
                 return false;
             }
-            return !!this._getFontJsonLayer(target.glyphName, target.layerId);
+            return !!this._getFontJsonDrawing(target.glyphName, target.layerId);
         });
         for (const target of derivedTargets) {
-            const changed = this._applySettledLayerFromFontJson(
+            const changed = this._applySettledDrawingFromFontJson(
                 target.glyphName,
                 target.layerId
             );
-            if (changed && !historyItemWritesLayer(item, target)) {
+            if (changed && !historyItemWritesDrawing(item, target)) {
                 this._historyReplayDependentTargets.push(target);
             }
         }
@@ -12392,35 +12451,35 @@ export class PatchSyncEngine {
         ]);
     }
 
-    private _applySettledLayerFromFontJson(
+    private _applySettledDrawingFromFontJson(
         glyphName: string,
-        layerId: string
+        drawingId: string
     ): boolean {
-        const layerJson = this._getFontJsonLayer(glyphName, layerId);
-        if (!layerJson) {
+        const drawingJson = this._getFontJsonDrawing(glyphName, drawingId);
+        if (!drawingJson) {
             return false;
         }
         const glyphMap = this._glyphMapForName(glyphName);
-        const layersMap =
+        const drawingsMap =
             glyphMap instanceof Y.Map ? glyphMap.get('layers') : null;
-        const yLayerMap =
-            layersMap instanceof Y.Map ? layersMap.get(layerId) : null;
-        if (!(yLayerMap instanceof Y.Map)) {
+        const yDrawingMap =
+            drawingsMap instanceof Y.Map ? drawingsMap.get(drawingId) : null;
+        if (!(yDrawingMap instanceof Y.Map)) {
             return false;
         }
 
-        const yLayerJson = fromYType(yLayerMap) as Record<string, unknown>;
-        const delta: Record<string, unknown> = { id: layerId };
+        const yDrawingJson = fromYType(yDrawingMap) as Record<string, unknown>;
+        const delta: Record<string, unknown> = { id: drawingId };
         let hasChanges = false;
-        for (const [key, value] of Object.entries(layerJson)) {
-            if (JSON.stringify(value) === JSON.stringify(yLayerJson?.[key])) {
+        for (const [key, value] of Object.entries(drawingJson)) {
+            if (JSON.stringify(value) === JSON.stringify(yDrawingJson?.[key])) {
                 continue;
             }
             delta[key] = cloneHistoryValue(value);
             hasChanges = true;
         }
-        for (const key of Object.keys(yLayerJson || {})) {
-            if (key === 'id' || key in layerJson) {
+        for (const key of Object.keys(yDrawingJson || {})) {
+            if (key === 'id' || key in drawingJson) {
                 continue;
             }
             if (key === 'shapes' || key === 'anchors' || key === 'guides') {
@@ -12432,14 +12491,14 @@ export class PatchSyncEngine {
         if (!hasChanges) {
             return false;
         }
-        // The JSON can differ from the stored layer in form only; then the
+        // The JSON can differ from the stored drawing in form only; then the
         // write changes nothing, and the room must not be baselined (a
         // baselined glyph gets a revision stamp, which would go unsent).
         const documentId = this.documentIdForPath(['glyphs', glyphName]);
         const doc = this._docForId(documentId);
         const before = doc ? Y.encodeStateVector(doc) : null;
         const baselined = this._noteHistoryReplayDocument(documentId);
-        this._applyLayerDelta(glyphName, layerId, delta);
+        this._applyDrawingDelta(glyphName, drawingId, delta);
         if (
             doc &&
             before &&
@@ -12471,7 +12530,7 @@ export class PatchSyncEngine {
     }
 
     /**
-     * Name the dependent layers an undo or redo recomposed on its log entry,
+     * Name the dependent drawings an undo or redo recomposed on its log entry,
      * so their rooms carry entries (and are sent) and collaborators note the
      * change for their own undo guards.
      */
@@ -12520,22 +12579,22 @@ export class PatchSyncEngine {
         return value === undefined ? undefined : cloneHistoryValue(value);
     }
 
-    private _prepareLayerSnapshotForHistory(
-        layerId: string,
-        layerJson: unknown,
-        existingLayerJson: unknown,
-        existingLayerMap?: Y.Map<unknown> | null
+    private _prepareDrawingSnapshotForHistory(
+        drawingId: string,
+        drawingJson: unknown,
+        existingDrawingJson: unknown,
+        existingDrawingMap?: Y.Map<unknown> | null
     ): Record<string, unknown> {
-        let prepared = this._prepareStorageValue(layerJson) as Record<
+        let prepared = this._prepareStorageValue(drawingJson) as Record<
             string,
             unknown
         >;
         if (
-            existingLayerMap instanceof Y.Map &&
+            existingDrawingMap instanceof Y.Map &&
             !Object.prototype.hasOwnProperty.call(prepared, 'shapes')
         ) {
             try {
-                const yShapes = readLayerGeometry(existingLayerMap);
+                const yShapes = readDrawingGeometry(existingDrawingMap);
                 if (yShapes && yShapes.length > 0) {
                     prepared = { ...prepared, shapes: yShapes };
                 }
@@ -12543,10 +12602,10 @@ export class PatchSyncEngine {
                 // Keep the prepared snapshot if packed geometry cannot be read.
             }
         }
-        return this._normalizeLayerSnapshot(
-            layerId,
+        return this._normalizeDrawingSnapshot(
+            drawingId,
             prepared,
-            existingLayerJson
+            existingDrawingJson
         ) as Record<string, unknown>;
     }
 
@@ -12565,7 +12624,7 @@ export class PatchSyncEngine {
                 return candidate;
             }
 
-            const record = omitRestingLayerRuntimeKeys(
+            const record = omitRestingDrawingRuntimeKeys(
                 candidate as Record<string, unknown>
             );
             const isPathOrComponent =
@@ -12645,8 +12704,8 @@ export class PatchSyncEngine {
         item: HistoryStackItem,
         direction: 'undo' | 'redo'
     ): boolean {
-        const resettleDerivedLayers =
-            shouldResettleDerivedLayersOnHistoryReplay(
+        const resettleDerivedDrawings =
+            shouldResettleDerivedDrawingsOnHistoryReplay(
                 item,
                 !!this._getResettleFontModel()
             );
@@ -12654,8 +12713,8 @@ export class PatchSyncEngine {
             (entry) =>
                 isReplayableHistoryEntry(entry) &&
                 !(
-                    resettleDerivedLayers &&
-                    isDerivedLayerChangePath(
+                    resettleDerivedDrawings &&
+                    isDerivedDrawingChangePath(
                         entry.path,
                         item.originatingGlyphName
                     )
@@ -12679,13 +12738,13 @@ export class PatchSyncEngine {
                 return true;
             }
             const path = this._toYDocPath(this._parseEntryPath(entry.path));
-            if (this._isLayerRootPath(path) && replayValue == null) {
+            if (this._isDrawingRootPath(path) && replayValue == null) {
                 return true;
             }
             if (replayValue === undefined) {
                 return false;
             }
-            if (this._isGlyphRootPath(path) || this._isLayerRootPath(path)) {
+            if (this._isGlyphRootPath(path) || this._isDrawingRootPath(path)) {
                 return !!replayValue && typeof replayValue === 'object';
             }
             return true;
@@ -12696,7 +12755,7 @@ export class PatchSyncEngine {
         return path.length === 2 && path[0] === 'glyphs' && !!path[1];
     }
 
-    private _isLayerRootPath(path: (string | number)[]): boolean {
+    private _isDrawingRootPath(path: (string | number)[]): boolean {
         return (
             path.length === 4 &&
             path[0] === 'glyphs' &&
@@ -12898,15 +12957,15 @@ export class PatchSyncEngine {
         targetMap.set(key, nextValue);
     }
 
-    private _replaceLayerMapContents(
-        layerMap: Y.Map<unknown>,
+    private _replaceDrawingMapContents(
+        drawingMap: Y.Map<unknown>,
         nextRecord: Record<string, unknown>
     ): void {
-        const existingRecord = fromYType(layerMap) as Record<
+        const existingRecord = fromYType(drawingMap) as Record<
             string,
             unknown
         > | null;
-        const sanitizedRecord = toRestingLayerJson(nextRecord, {
+        const sanitizedRecord = toRestingDrawingJson(nextRecord, {
             existing: existingRecord,
             mode: 'replace',
             context: 'Y.Doc write'
@@ -12921,41 +12980,43 @@ export class PatchSyncEngine {
             }
         }
 
-        layerMap.forEach((_value: unknown, key: string) => {
+        drawingMap.forEach((_value: unknown, key: string) => {
             if (
                 nextKeys.has(key) ||
                 indexedStorageKeysToKeep.has(key) ||
                 YMAP_INFRASTRUCTURE_KEYS.has(key) ||
                 key === 'shapes' ||
-                (RESTING_LAYER_IDENTITY_KEYS as readonly string[]).includes(key)
+                (RESTING_DRAWING_IDENTITY_KEYS as readonly string[]).includes(
+                    key
+                )
             ) {
                 return;
             }
 
-            layerMap.delete(key);
+            drawingMap.delete(key);
         });
 
-        for (const runtimeKey of RESTING_LAYER_RUNTIME_KEYS) {
-            layerMap.delete(runtimeKey);
+        for (const runtimeKey of RESTING_DRAWING_RUNTIME_KEYS) {
+            drawingMap.delete(runtimeKey);
         }
 
         for (const [key, value] of Object.entries(sanitizedRecord)) {
             if (key === 'shapes' && Array.isArray(value)) {
-                writeLayerGeometry(layerMap, value, toYType);
+                writeDrawingGeometry(drawingMap, value, toYType);
                 continue;
             }
             const mapping = INDEXED_MAP_KEYS[key];
             if (mapping) {
-                layerMap.delete(key);
+                drawingMap.delete(key);
                 if (Array.isArray(value)) {
-                    applyIndexedMapArrayToYMap(layerMap, key, value);
+                    applyIndexedMapArrayToYMap(drawingMap, key, value);
                     continue;
                 }
-                layerMap.delete(mapping.byId);
-                layerMap.delete(mapping.order);
+                drawingMap.delete(mapping.byId);
+                drawingMap.delete(mapping.order);
             }
 
-            this._replaceYMapEntry(layerMap, key, value);
+            this._replaceYMapEntry(drawingMap, key, value);
         }
     }
 
@@ -12995,46 +13056,47 @@ export class PatchSyncEngine {
         }
         for (const [gk, gv] of Object.entries(glyphJson)) {
             if (gk === 'layers' && Array.isArray(gv)) {
-                let layersMap = glyphMap.get('layers') as
+                let drawingsMap = glyphMap.get('layers') as
                     Y.Map<unknown> | undefined;
-                if (!(layersMap instanceof Y.Map)) {
-                    layersMap = new Y.Map<unknown>();
-                    glyphMap.set('layers', layersMap);
+                if (!(drawingsMap instanceof Y.Map)) {
+                    drawingsMap = new Y.Map<unknown>();
+                    glyphMap.set('layers', drawingsMap);
                 }
 
-                const nextLayerIds = new Set<string>();
-                for (const layerJson of gv as Record<string, unknown>[]) {
-                    const layerId = (layerJson.id as string) ?? '';
-                    if (!layerId) {
+                const nextDrawingIds = new Set<string>();
+                for (const drawingJson of gv as Record<string, unknown>[]) {
+                    const drawingId = (drawingJson.id as string) ?? '';
+                    if (!drawingId) {
                         continue;
                     }
-                    nextLayerIds.add(layerId);
-                    // Patch the existing layerMap in place so the snapshot
+                    nextDrawingIds.add(drawingId);
+                    // Patch the existing drawingMap in place so the snapshot
                     // produces minimal Yjs deltas.
-                    let layerMap = layersMap.get(layerId) as
+                    let drawingMap = drawingsMap.get(drawingId) as
                         Y.Map<unknown> | undefined;
-                    if (!(layerMap instanceof Y.Map)) {
-                        layerMap = new Y.Map<unknown>();
-                        layersMap.set(layerId, layerMap);
+                    if (!(drawingMap instanceof Y.Map)) {
+                        drawingMap = new Y.Map<unknown>();
+                        drawingsMap.set(drawingId, drawingMap);
                     }
-                    const normalizedLayerJson = this._normalizeLayerSnapshot(
-                        layerId,
-                        layerJson,
-                        fromYType(layerMap)
-                    ) as Record<string, unknown>;
-                    this._replaceLayerMapContents(
-                        layerMap,
-                        normalizedLayerJson
+                    const normalizedDrawingJson =
+                        this._normalizeDrawingSnapshot(
+                            drawingId,
+                            drawingJson,
+                            fromYType(drawingMap)
+                        ) as Record<string, unknown>;
+                    this._replaceDrawingMapContents(
+                        drawingMap,
+                        normalizedDrawingJson
                     );
                 }
 
-                // Remove layers that are no longer in the snapshot
-                layersMap.forEach((_value: unknown, key: string) => {
-                    if (!nextLayerIds.has(key)) {
-                        layersMap?.delete(key);
+                // Remove drawings that are no longer in the snapshot
+                drawingsMap.forEach((_value: unknown, key: string) => {
+                    if (!nextDrawingIds.has(key)) {
+                        drawingsMap?.delete(key);
                     }
                 });
-                setYPath(glyphMap, ['layerOrder'], Array.from(nextLayerIds));
+                setYPath(glyphMap, ['layerOrder'], Array.from(nextDrawingIds));
                 continue;
             }
 
@@ -13220,7 +13282,7 @@ export class PatchSyncEngine {
     private _normalizeGlyphSnapshot(
         glyphSnapshot: unknown,
         existingGlyphSnapshot?: unknown,
-        options?: { strictLayers?: boolean; ignoreExisting?: boolean }
+        options?: { strictDrawings?: boolean; ignoreExisting?: boolean }
     ): unknown {
         if (
             !glyphSnapshot ||
@@ -13255,81 +13317,85 @@ export class PatchSyncEngine {
         if (
             Object.prototype.hasOwnProperty.call(incomingGlyphRecord, 'layers')
         ) {
-            const incomingLayers = this._coerceGlyphLayerSnapshots(
+            const incomingDrawings = this._coerceGlyphDrawingSnapshots(
                 incomingGlyphRecord.layers
             );
-            const existingLayers = this._coerceGlyphLayerSnapshots(
+            const existingDrawings = this._coerceGlyphDrawingSnapshots(
                 existingGlyphRecord.layers
             );
-            const existingLayersById = new Map(
-                existingLayers
+            const existingDrawingsById = new Map(
+                existingDrawings
                     .filter(
-                        (layer): layer is Record<string, unknown> =>
-                            !!layer && typeof layer === 'object'
+                        (drawing): drawing is Record<string, unknown> =>
+                            !!drawing && typeof drawing === 'object'
                     )
-                    .map((layer) => [String(layer.id || ''), layer])
+                    .map((drawing) => [String(drawing.id || ''), drawing])
             );
 
-            mergedGlyphRecord.layers = incomingLayers
-                .map((layer) => {
-                    const layerId =
-                        layer && typeof layer === 'object'
-                            ? String(layer.id || '')
+            mergedGlyphRecord.layers = incomingDrawings
+                .map((drawing) => {
+                    const drawingId =
+                        drawing && typeof drawing === 'object'
+                            ? String(drawing.id || '')
                             : '';
-                    if (!layerId) {
-                        if (options?.strictLayers) {
+                    if (!drawingId) {
+                        if (options?.strictDrawings) {
                             throw new Error(
-                                'malformed glyph snapshot: layer missing id'
+                                'malformed glyph snapshot: drawing missing id'
                             );
                         }
                         return null;
                     }
-                    return this._normalizeLayerSnapshot(
-                        layerId,
-                        layer,
+                    return this._normalizeDrawingSnapshot(
+                        drawingId,
+                        drawing,
                         ignoreExisting
                             ? undefined
-                            : existingLayersById.get(layerId),
+                            : existingDrawingsById.get(drawingId),
                         !ignoreExisting
                     );
                 })
-                .filter((layer): layer is Record<string, unknown> => !!layer);
+                .filter(
+                    (drawing): drawing is Record<string, unknown> => !!drawing
+                );
         }
 
         return mergedGlyphRecord;
     }
 
-    private _coerceGlyphLayerSnapshots(
-        layersSnapshot: unknown
+    private _coerceGlyphDrawingSnapshots(
+        drawingsSnapshot: unknown
     ): Array<Record<string, unknown>> {
-        if (Array.isArray(layersSnapshot)) {
-            return layersSnapshot.filter(
-                (layer): layer is Record<string, unknown> =>
-                    !!layer &&
-                    typeof layer === 'object' &&
-                    !Array.isArray(layer)
+        if (Array.isArray(drawingsSnapshot)) {
+            return drawingsSnapshot.filter(
+                (drawing): drawing is Record<string, unknown> =>
+                    !!drawing &&
+                    typeof drawing === 'object' &&
+                    !Array.isArray(drawing)
             );
         }
 
         if (
-            layersSnapshot &&
-            typeof layersSnapshot === 'object' &&
-            !Array.isArray(layersSnapshot)
+            drawingsSnapshot &&
+            typeof drawingsSnapshot === 'object' &&
+            !Array.isArray(drawingsSnapshot)
         ) {
-            return Object.entries(layersSnapshot as Record<string, unknown>)
-                .filter(([, layer]) => !!layer && typeof layer === 'object')
-                .map(([layerId, layer]) => {
-                    const layerRecord = cloneHistoryValue(layer) as Record<
+            return Object.entries(drawingsSnapshot as Record<string, unknown>)
+                .filter(
+                    ([, drawing]) => !!drawing && typeof drawing === 'object'
+                )
+                .map(([drawingId, drawing]) => {
+                    const drawingRecord = cloneHistoryValue(drawing) as Record<
                         string,
                         unknown
                     >;
                     if (
-                        typeof layerRecord.id !== 'string' ||
-                        !layerRecord.id.length
+                        typeof drawingRecord.id !== 'string' ||
+                        !drawingRecord.id.length
                     ) {
-                        layerRecord.id = layerId;
+                        drawingRecord.id = drawingId;
                     }
-                    return layerRecord;
+                    return drawingRecord;
                 });
         }
 
@@ -13346,38 +13412,38 @@ export class PatchSyncEngine {
             return;
         }
 
-        const masterNameById = new Map<string, string>();
-        const masters = Array.isArray(fontJson.masters)
+        const stationNameById = new Map<string, string>();
+        const stations = Array.isArray(fontJson.masters)
             ? (fontJson.masters as Unsafe[])
             : [];
 
-        for (const master of masters) {
+        for (const station of stations) {
             if (
-                !master ||
-                typeof master !== 'object' ||
-                Array.isArray(master)
+                !station ||
+                typeof station !== 'object' ||
+                Array.isArray(station)
             ) {
                 continue;
             }
 
-            const masterId =
-                typeof master.id === 'string' && master.id.length
-                    ? master.id
+            const stationId =
+                typeof station.id === 'string' && station.id.length
+                    ? station.id
                     : '';
-            const masterName =
-                typeof master.name === 'string'
-                    ? master.name
-                    : master.name &&
-                        typeof master.name === 'object' &&
-                        typeof (master.name as Record<string, unknown>).dflt ===
-                            'string'
+            const stationName =
+                typeof station.name === 'string'
+                    ? station.name
+                    : station.name &&
+                        typeof station.name === 'object' &&
+                        typeof (station.name as Record<string, unknown>)
+                            .dflt === 'string'
                       ? String(
-                            (master.name as Record<string, unknown>).dflt || ''
+                            (station.name as Record<string, unknown>).dflt || ''
                         )
                       : '';
 
-            if (masterId && masterName) {
-                masterNameById.set(masterId, masterName);
+            if (stationId && stationName) {
+                stationNameById.set(stationId, stationName);
             }
         }
 
@@ -13389,330 +13455,329 @@ export class PatchSyncEngine {
                 continue;
             }
 
-            const layers = Array.isArray(glyph.layers)
+            const drawings = Array.isArray(glyph.layers)
                 ? (glyph.layers as Unsafe[])
                 : [];
-            for (const layer of layers) {
+            for (const drawing of drawings) {
                 if (
-                    !layer ||
-                    typeof layer !== 'object' ||
-                    Array.isArray(layer)
+                    !drawing ||
+                    typeof drawing !== 'object' ||
+                    Array.isArray(drawing)
                 ) {
                     continue;
                 }
 
-                if (layer.height === undefined) {
-                    delete layer.height;
+                if (drawing.height === undefined) {
+                    delete drawing.height;
                 }
-                if (layer.vertWidth === undefined) {
-                    delete layer.vertWidth;
+                if (drawing.vertWidth === undefined) {
+                    delete drawing.vertWidth;
                 }
-                if (layer.isInterpolated === false) {
-                    delete layer.isInterpolated;
+                if (drawing.isInterpolated === false) {
+                    delete drawing.isInterpolated;
                 }
-                if (layer.name === undefined) {
-                    delete layer.name;
+                if (drawing.name === undefined) {
+                    delete drawing.name;
                 }
 
-                const master = layer.master;
+                const station = drawing.master;
                 if (
-                    !master ||
-                    typeof master !== 'object' ||
-                    Array.isArray(master) ||
-                    master.type !== 'DefaultForMaster' ||
-                    typeof master.master !== 'string' ||
-                    !master.master.length
+                    !station ||
+                    typeof station !== 'object' ||
+                    Array.isArray(station) ||
+                    station.type !== 'DefaultForMaster' ||
+                    typeof station.master !== 'string' ||
+                    !station.master.length
                 ) {
                     continue;
                 }
 
-                const masterName = masterNameById.get(master.master);
+                const stationName = stationNameById.get(station.master);
                 if (
-                    typeof layer.name === 'string' &&
-                    (!layer.name.length ||
-                        (masterName && layer.name === masterName))
+                    typeof drawing.name === 'string' &&
+                    (!drawing.name.length ||
+                        (stationName && drawing.name === stationName))
                 ) {
-                    delete layer.name;
+                    delete drawing.name;
                 }
             }
         }
     }
 
-    private _getKnownMasterIds(): Set<string> {
-        const masterIds = new Set<string>();
-        const masters = (this._fontJson as Unsafe)?.masters;
-        if (!Array.isArray(masters)) {
-            return masterIds;
+    private _getKnownStationIds(): Set<string> {
+        const stationIds = new Set<string>();
+        const stations = (this._fontJson as Unsafe)?.masters;
+        if (!Array.isArray(stations)) {
+            return stationIds;
         }
 
-        for (const master of masters) {
-            const masterId =
-                master && typeof master === 'object'
-                    ? String((master as Record<string, unknown>).id || '')
+        for (const station of stations) {
+            const stationId =
+                station && typeof station === 'object'
+                    ? String((station as Record<string, unknown>).id || '')
                     : '';
-            if (masterId) {
-                masterIds.add(masterId);
+            if (stationId) {
+                stationIds.add(stationId);
             }
         }
 
-        return masterIds;
+        return stationIds;
     }
 
-    private _normalizeLayerMasterSnapshot(
-        layerId: string,
-        layerRecord: Record<string, unknown>,
-        existingLayerRecord: Record<string, unknown>
+    private _normalizeDrawingStationSnapshot(
+        drawingId: string,
+        drawingRecord: Record<string, unknown>,
+        existingDrawingRecord: Record<string, unknown>
     ): void {
-        const normalizeMasterValue = (
-            masterValue: unknown
+        const normalizeStationValue = (
+            stationValue: unknown
         ): Record<string, unknown> | null => {
-            if (!masterValue || typeof masterValue !== 'object') {
-                if (typeof masterValue === 'string' && masterValue.length) {
+            if (!stationValue || typeof stationValue !== 'object') {
+                if (typeof stationValue === 'string' && stationValue.length) {
                     return {
                         type: 'DefaultForMaster',
-                        master: masterValue
+                        master: stationValue
                     };
                 }
                 return null;
             }
 
-            if (Array.isArray(masterValue)) {
+            if (Array.isArray(stationValue)) {
                 return null;
             }
 
-            const masterRecord = cloneHistoryValue(masterValue) as Record<
+            const stationRecord = cloneHistoryValue(stationValue) as Record<
                 string,
                 unknown
             >;
 
-            if (masterRecord.type === 'FreeFloating') {
+            if (stationRecord.type === 'FreeFloating') {
                 return { type: 'FreeFloating' };
             }
 
             if (
-                (masterRecord.type === 'DefaultForMaster' ||
-                    masterRecord.type === 'AssociatedWithMaster') &&
-                typeof masterRecord.master === 'string' &&
-                masterRecord.master.length
+                (stationRecord.type === 'DefaultForMaster' ||
+                    stationRecord.type === 'AssociatedWithMaster') &&
+                typeof stationRecord.master === 'string' &&
+                stationRecord.master.length
             ) {
                 return {
-                    type: masterRecord.type,
-                    master: masterRecord.master
+                    type: stationRecord.type,
+                    master: stationRecord.master
                 };
             }
 
             if (
-                typeof masterRecord.master === 'string' &&
-                masterRecord.master.length
-            ) {
-                return {
-                    type: 'DefaultForMaster',
-                    master: masterRecord.master
-                };
-            }
-
-            if (
-                typeof masterRecord.DefaultForMaster === 'string' &&
-                masterRecord.DefaultForMaster.length
+                typeof stationRecord.master === 'string' &&
+                stationRecord.master.length
             ) {
                 return {
                     type: 'DefaultForMaster',
-                    master: masterRecord.DefaultForMaster
+                    master: stationRecord.master
                 };
             }
 
             if (
-                typeof masterRecord.default_for_master === 'string' &&
-                masterRecord.default_for_master.length
+                typeof stationRecord.DefaultForMaster === 'string' &&
+                stationRecord.DefaultForMaster.length
             ) {
                 return {
                     type: 'DefaultForMaster',
-                    master: masterRecord.default_for_master
+                    master: stationRecord.DefaultForMaster
                 };
             }
 
             if (
-                typeof masterRecord.AssociatedWithMaster === 'string' &&
-                masterRecord.AssociatedWithMaster.length
+                typeof stationRecord.default_for_master === 'string' &&
+                stationRecord.default_for_master.length
+            ) {
+                return {
+                    type: 'DefaultForMaster',
+                    master: stationRecord.default_for_master
+                };
+            }
+
+            if (
+                typeof stationRecord.AssociatedWithMaster === 'string' &&
+                stationRecord.AssociatedWithMaster.length
             ) {
                 return {
                     type: 'AssociatedWithMaster',
-                    master: masterRecord.AssociatedWithMaster
+                    master: stationRecord.AssociatedWithMaster
                 };
             }
 
             if (
-                typeof masterRecord.associated_with_master === 'string' &&
-                masterRecord.associated_with_master.length
+                typeof stationRecord.associated_with_master === 'string' &&
+                stationRecord.associated_with_master.length
             ) {
                 return {
                     type: 'AssociatedWithMaster',
-                    master: masterRecord.associated_with_master
+                    master: stationRecord.associated_with_master
                 };
             }
 
-            if ('FreeFloating' in masterRecord) {
+            if ('FreeFloating' in stationRecord) {
                 return { type: 'FreeFloating' };
             }
 
             return null;
         };
 
-        const normalizedMaster = normalizeMasterValue(layerRecord.master);
+        const normalizedStation = normalizeStationValue(drawingRecord.master);
 
-        if (normalizedMaster) {
-            layerRecord.master = normalizedMaster;
+        if (normalizedStation) {
+            drawingRecord.master = normalizedStation;
         } else {
-            const existingMaster = normalizeMasterValue(
-                existingLayerRecord.master
+            const existingStation = normalizeStationValue(
+                existingDrawingRecord.master
             );
-            if (existingMaster) {
-                layerRecord.master = existingMaster;
-            } else if (this._getKnownMasterIds().has(layerId)) {
-                layerRecord.master = {
+            if (existingStation) {
+                drawingRecord.master = existingStation;
+            } else if (this._getKnownStationIds().has(drawingId)) {
+                drawingRecord.master = {
                     type: 'DefaultForMaster',
-                    master: layerId
+                    master: drawingId
                 };
             }
         }
     }
 
-    private _normalizeLayerSnapshot(
-        layerId: string,
-        layerSnapshot: unknown,
-        existingLayerSnapshot?: unknown,
+    private _normalizeDrawingSnapshot(
+        drawingId: string,
+        drawingSnapshot: unknown,
+        existingDrawingSnapshot?: unknown,
         preserveMissingKeys = true,
         isExistingFresh?: boolean
     ): unknown {
         if (
-            !layerSnapshot ||
-            typeof layerSnapshot !== 'object' ||
-            Array.isArray(layerSnapshot)
+            !drawingSnapshot ||
+            typeof drawingSnapshot !== 'object' ||
+            Array.isArray(drawingSnapshot)
         ) {
-            return layerSnapshot;
+            return drawingSnapshot;
         }
 
-        const existingLayerRecord =
-            existingLayerSnapshot &&
-            typeof existingLayerSnapshot === 'object' &&
-            !Array.isArray(existingLayerSnapshot)
+        const existingDrawingRecord =
+            existingDrawingSnapshot &&
+            typeof existingDrawingSnapshot === 'object' &&
+            !Array.isArray(existingDrawingSnapshot)
                 ? isExistingFresh
-                    ? (existingLayerSnapshot as Record<string, unknown>)
-                    : (cloneHistoryValue(existingLayerSnapshot) as Record<
+                    ? (existingDrawingSnapshot as Record<string, unknown>)
+                    : (cloneHistoryValue(existingDrawingSnapshot) as Record<
                           string,
                           unknown
                       >)
                 : {};
-        const incomingLayerRecord = cloneHistoryValue(layerSnapshot) as Record<
-            string,
-            unknown
-        >;
-        const mergedLayerRecord = preserveMissingKeys
+        const incomingDrawingRecord = cloneHistoryValue(
+            drawingSnapshot
+        ) as Record<string, unknown>;
+        const mergedDrawingRecord = preserveMissingKeys
             ? {
-                  ...existingLayerRecord,
-                  ...incomingLayerRecord
+                  ...existingDrawingRecord,
+                  ...incomingDrawingRecord
               }
-            : { ...incomingLayerRecord };
+            : { ...incomingDrawingRecord };
 
         if (
-            typeof mergedLayerRecord.id !== 'string' ||
-            !mergedLayerRecord.id.length
+            typeof mergedDrawingRecord.id !== 'string' ||
+            !mergedDrawingRecord.id.length
         ) {
-            mergedLayerRecord.id = layerId;
+            mergedDrawingRecord.id = drawingId;
         }
 
-        this._normalizeLayerMasterSnapshot(
-            layerId,
-            mergedLayerRecord,
-            existingLayerRecord
+        this._normalizeDrawingStationSnapshot(
+            drawingId,
+            mergedDrawingRecord,
+            existingDrawingRecord
         );
 
-        const layerMaster = mergedLayerRecord.master as
+        const drawingStation = mergedDrawingRecord.master as
             Record<string, unknown> | undefined;
         if (
-            layerMaster &&
-            typeof layerMaster === 'object' &&
-            !Array.isArray(layerMaster) &&
-            layerMaster.type === 'DefaultForMaster' &&
-            typeof layerMaster.master === 'string' &&
-            typeof mergedLayerRecord.name === 'string'
+            drawingStation &&
+            typeof drawingStation === 'object' &&
+            !Array.isArray(drawingStation) &&
+            drawingStation.type === 'DefaultForMaster' &&
+            typeof drawingStation.master === 'string' &&
+            typeof mergedDrawingRecord.name === 'string'
         ) {
-            const masterName = Array.isArray(
+            const stationName = Array.isArray(
                 (this._fontJson as Unsafe)?.masters
             )
                 ? (((this._fontJson as Unsafe).masters as Unsafe[]).find(
-                      (master) => master?.id === layerMaster.master
+                      (station) => station?.id === drawingStation.master
                   )?.name as string | { dflt?: string } | undefined)
                 : undefined;
-            const normalizedMasterName =
-                typeof masterName === 'string'
-                    ? masterName
-                    : masterName && typeof masterName === 'object'
-                      ? String(masterName.dflt || '')
+            const normalizedStationName =
+                typeof stationName === 'string'
+                    ? stationName
+                    : stationName && typeof stationName === 'object'
+                      ? String(stationName.dflt || '')
                       : '';
             if (
-                !mergedLayerRecord.name.length ||
-                (normalizedMasterName &&
-                    mergedLayerRecord.name === normalizedMasterName)
+                !mergedDrawingRecord.name.length ||
+                (normalizedStationName &&
+                    mergedDrawingRecord.name === normalizedStationName)
             ) {
-                delete mergedLayerRecord.name;
+                delete mergedDrawingRecord.name;
             }
         }
 
         if (
-            typeof mergedLayerRecord.width !== 'number' ||
-            !Number.isFinite(mergedLayerRecord.width)
+            typeof mergedDrawingRecord.width !== 'number' ||
+            !Number.isFinite(mergedDrawingRecord.width)
         ) {
             // A remote update can arrive before one it builds on: Yjs holds
-            // part of it back, and the layer briefly has no valid width.
+            // part of it back, and the drawing briefly has no valid width.
             // Keep the width this window has until the rest arrives; a
             // throw here stops the socket and the rest never comes.
-            const existingWidth = existingLayerRecord.width;
+            const existingWidth = existingDrawingRecord.width;
             if (
                 typeof existingWidth === 'number' &&
                 Number.isFinite(existingWidth)
             ) {
-                mergedLayerRecord.width = existingWidth;
+                mergedDrawingRecord.width = existingWidth;
             } else {
                 throw new Error(
-                    `[PatchSyncEngine] Layer ${layerId} has invalid width; refusing to normalize malformed layer snapshot.`
+                    `[PatchSyncEngine] Drawing ${drawingId} has invalid width; refusing to normalize malformed drawing snapshot.`
                 );
             }
         }
 
-        for (const [key, value] of Object.entries(mergedLayerRecord)) {
+        for (const [key, value] of Object.entries(mergedDrawingRecord)) {
             if (value === undefined) {
-                delete mergedLayerRecord[key];
+                delete mergedDrawingRecord[key];
             }
         }
 
         const incomingHasShapes = Object.prototype.hasOwnProperty.call(
-            incomingLayerRecord,
+            incomingDrawingRecord,
             'shapes'
         );
-        const existingShapes = existingLayerRecord.shapes;
+        const existingShapes = existingDrawingRecord.shapes;
         if (
             preserveMissingKeys &&
             !incomingHasShapes &&
             Array.isArray(existingShapes) &&
             existingShapes.length > 0
         ) {
-            mergedLayerRecord.shapes = existingShapes;
+            mergedDrawingRecord.shapes = existingShapes;
         }
 
-        if (mergedLayerRecord.isInterpolated === false) {
-            delete mergedLayerRecord.isInterpolated;
+        if (mergedDrawingRecord.isInterpolated === false) {
+            delete mergedDrawingRecord.isInterpolated;
         }
 
-        return toRestingLayerJson(mergedLayerRecord, {
-            existing: preserveMissingKeys ? existingLayerRecord : undefined,
+        return toRestingDrawingJson(mergedDrawingRecord, {
+            existing: preserveMissingKeys ? existingDrawingRecord : undefined,
             mode: 'replace',
             context: 'history snapshot'
         });
     }
 
     /**
-     * Apply a sparse layer delta to the Y.Doc.
+     * Apply a sparse drawing delta to the Y.Doc.
      *
      * The delta contains ONLY the fields that changed.  Fields absent
      * from the delta are left untouched in the Y.Doc — this is the
@@ -13724,9 +13789,9 @@ export class PatchSyncEngine {
      * entire array.  Fields with value `null` are deleted from the
      * Y.Map.
      */
-    private _applyLayerDelta(
+    private _applyDrawingDelta(
         glyphName: string,
-        layerId: string,
+        drawingId: string,
         delta: unknown
     ): void {
         const glyphMap = this._glyphMapForName(glyphName);
@@ -13734,11 +13799,11 @@ export class PatchSyncEngine {
             return;
         }
 
-        const layersMap = ensureGlyphLayersMap(glyphMap);
+        const drawingsMap = ensureGlyphDrawingsMap(glyphMap);
 
         if (!delta || typeof delta !== 'object' || Array.isArray(delta)) {
             console.warn(
-                `[PatchSyncEngine] Ignoring malformed layer delta for ${glyphName}/${layerId}; expected object payload.`
+                `[PatchSyncEngine] Ignoring malformed drawing delta for ${glyphName}/${drawingId}; expected object payload.`
             );
             return;
         }
@@ -13751,39 +13816,39 @@ export class PatchSyncEngine {
             return;
         }
 
-        const existingLayerValue = layersMap.get(layerId);
-        let layerMap =
-            existingLayerValue instanceof Y.Map
-                ? existingLayerValue
+        const existingDrawingValue = drawingsMap.get(drawingId);
+        let drawingMap =
+            existingDrawingValue instanceof Y.Map
+                ? existingDrawingValue
                 : undefined;
 
-        // Creating a new layer from a sparse delta requires width and master.
-        if (!(layerMap instanceof Y.Map)) {
+        // Creating a new drawing from a sparse delta requires width and station.
+        if (!(drawingMap instanceof Y.Map)) {
             const hasWidth =
                 typeof deltaRecord.width === 'number' &&
                 Number.isFinite(deltaRecord.width);
-            const hasMaster =
+            const hasStation =
                 !!deltaRecord.master &&
                 typeof deltaRecord.master === 'object' &&
                 !Array.isArray(deltaRecord.master);
-            if (!hasWidth || !hasMaster) {
+            if (!hasWidth || !hasStation) {
                 console.warn(
-                    `[PatchSyncEngine] Ignoring sparse layer delta for missing ${glyphName}/${layerId}; cannot create layer root from sparse payload.`
+                    `[PatchSyncEngine] Ignoring sparse drawing delta for missing ${glyphName}/${drawingId}; cannot create drawing root from sparse payload.`
                 );
                 return;
             }
-            layerMap = new Y.Map<unknown>();
-            layersMap.set(layerId, layerMap);
+            drawingMap = new Y.Map<unknown>();
+            drawingsMap.set(drawingId, drawingMap);
         }
 
-        // Read existing Y.Doc state for master normalization context.
-        const existingYDocRecord = fromYType(layerMap) as Record<
+        // Read existing Y.Doc state for station normalization context.
+        const existingYDocRecord = fromYType(drawingMap) as Record<
             string,
             unknown
         > | null;
 
-        // Clone the delta — _normalizeLayerMasterSnapshot mutates it.
-        const workingRecord = toRestingLayerJson(
+        // Clone the delta — _normalizeDrawingStationSnapshot mutates it.
+        const workingRecord = toRestingDrawingJson(
             cloneHistoryValue(deltaRecord) as Record<string, unknown>,
             {
                 existing: existingYDocRecord,
@@ -13792,10 +13857,10 @@ export class PatchSyncEngine {
             }
         ) as Record<string, unknown>;
 
-        // Normalize master if it changed.
+        // Normalize station if it changed.
         if ('master' in workingRecord) {
-            this._normalizeLayerMasterSnapshot(
-                layerId,
+            this._normalizeDrawingStationSnapshot(
+                drawingId,
                 workingRecord,
                 existingYDocRecord ?? {}
             );
@@ -13808,16 +13873,16 @@ export class PatchSyncEngine {
                 !Number.isFinite(workingRecord.width)
             ) {
                 console.warn(
-                    `[PatchSyncEngine] Layer delta for ${glyphName}/${layerId} has invalid width; refusing to apply width.`
+                    `[PatchSyncEngine] Drawing delta for ${glyphName}/${drawingId} has invalid width; refusing to apply width.`
                 );
                 delete workingRecord.width;
             }
         }
 
-        // Validate master if it's in the delta.
+        // Validate station if it's in the delta.
         if ('master' in workingRecord && !workingRecord.master) {
             console.warn(
-                `[PatchSyncEngine] Layer delta for ${glyphName}/${layerId} has invalid master; refusing to apply master.`
+                `[PatchSyncEngine] Drawing delta for ${glyphName}/${drawingId} has invalid station; refusing to apply station.`
             );
             delete workingRecord.master;
         }
@@ -13827,17 +13892,17 @@ export class PatchSyncEngine {
             workingRecord.isInterpolated = null;
         }
 
-        for (const runtimeKey of RESTING_LAYER_RUNTIME_KEYS) {
-            layerMap.delete(runtimeKey);
+        for (const runtimeKey of RESTING_DRAWING_RUNTIME_KEYS) {
+            drawingMap.delete(runtimeKey);
         }
 
         // Apply each delta key to the Y.Map.
         for (const [key, value] of Object.entries(workingRecord)) {
             if (value === null || value === undefined) {
                 if (
-                    (RESTING_LAYER_IDENTITY_KEYS as readonly string[]).includes(
-                        key
-                    )
+                    (
+                        RESTING_DRAWING_IDENTITY_KEYS as readonly string[]
+                    ).includes(key)
                 ) {
                     continue;
                 }
@@ -13845,15 +13910,15 @@ export class PatchSyncEngine {
                 // so downstream readers see the data as absent (not
                 // empty), preserving merge semantics.
                 if (key === 'shapes') {
-                    writeLayerGeometry(layerMap, [], toYType);
+                    writeDrawingGeometry(drawingMap, [], toYType);
                     continue;
                 }
                 if (INDEXED_MAP_KEYS[key]) {
                     const mapping = INDEXED_MAP_KEYS[key]!;
-                    layerMap.delete(mapping.byId);
-                    layerMap.delete(mapping.order);
+                    drawingMap.delete(mapping.byId);
+                    drawingMap.delete(mapping.order);
                 } else {
-                    layerMap.delete(key);
+                    drawingMap.delete(key);
                 }
             } else {
                 // Anchors/guides are stored as indexed maps. Shapes use
@@ -13862,15 +13927,15 @@ export class PatchSyncEngine {
                     (key === 'anchors' || key === 'guides') &&
                     Array.isArray(value)
                 ) {
-                    applyIndexedMapArrayToYMap(layerMap, key, value);
+                    applyIndexedMapArrayToYMap(drawingMap, key, value);
                     continue;
                 }
                 if (key === 'shapes' && Array.isArray(value)) {
-                    writeLayerGeometry(layerMap, value, toYType);
+                    writeDrawingGeometry(drawingMap, value, toYType);
                     continue;
                 }
 
-                this._replaceYMapEntry(layerMap, key, value);
+                this._replaceYMapEntry(drawingMap, key, value);
             }
         }
     }
@@ -13878,10 +13943,10 @@ export class PatchSyncEngine {
     private _targetFromHistoryItem(
         item: HistoryStackItem,
         fallbackGlyphName: string | null,
-        fallbackLayerId: string | null
+        fallbackDrawingId: string | null
     ): UndoTarget {
         const glyphNames = deriveGlyphNamesFromPaths(item.touchedPaths);
-        const layerIds = deriveLayerIdsFromPaths(item.touchedPaths);
+        const drawingIds = deriveDrawingIdsFromPaths(item.touchedPaths);
         if (item.undoScope === 'layer') {
             return {
                 glyphName:
@@ -13889,7 +13954,9 @@ export class PatchSyncEngine {
                     glyphNames[0] ??
                     fallbackGlyphName,
                 layerId:
-                    item.originatingLayerId ?? layerIds[0] ?? fallbackLayerId
+                    item.originatingLayerId ??
+                    drawingIds[0] ??
+                    fallbackDrawingId
             };
         }
         if (item.undoScope === 'glyph') {
@@ -13967,7 +14034,7 @@ export class PatchSyncEngine {
         direction: 'local' | 'remote',
         derivedForwardChanges: DerivedForwardChange[]
     ): CollaborationLogItem {
-        const originating = resolveCollaborationOriginatingLayer(
+        const originating = resolveCollaborationOriginatingDrawing(
             message.metadata.undoScope,
             message.changes.length
                 ? message.changes.map((change, index) => ({

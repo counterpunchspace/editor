@@ -151,23 +151,23 @@ async function navigateToGlyphN(page: Page): Promise<void> {
     );
 }
 
-async function selectFirstMasterLayer(page: Page): Promise<void> {
+async function selectFirstStationDrawing(page: Page): Promise<void> {
     await page.evaluate(async () => {
         const gc = (window as any).glyphCanvas;
         const oe = gc.outlineEditor;
         const hasLinked = () => {
-            const layer = oe.getCurrentLayerModel?.();
-            return (layer?._getLinkedLayers?.() || []).length > 0;
+            const drawing = oe.getCurrentDrawingModel?.();
+            return (drawing?._getLinkedDrawings?.() || []).length > 0;
         };
 
         if (
-            !oe.selectedLayerId ||
-            !oe.getCurrentLayerModel?.() ||
+            !oe.selectedDrawingId ||
+            !oe.getCurrentDrawingModel?.() ||
             !hasLinked()
         ) {
-            const sortedLayers = gc.getSortedLayers() || [];
-            for (const candidate of sortedLayers) {
-                await oe.selectLayer(candidate);
+            const sortedDrawings = gc.getSortedDrawings() || [];
+            for (const candidate of sortedDrawings) {
+                await oe.selectDrawing(candidate);
                 if (hasLinked()) {
                     break;
                 }
@@ -178,11 +178,11 @@ async function selectFirstMasterLayer(page: Page): Promise<void> {
     await page.waitForFunction(
         () => {
             const oe = (window as any).glyphCanvas?.outlineEditor;
-            const layer = oe?.getCurrentLayerModel?.();
-            if (!layer || layer.is_background) {
+            const drawing = oe?.getCurrentDrawingModel?.();
+            if (!drawing || drawing.is_background) {
                 return false;
             }
-            return (layer._getLinkedLayers?.() || []).length > 0;
+            return (drawing._getLinkedDrawings?.() || []).length > 0;
         },
         undefined,
         { timeout: 20000 }
@@ -212,7 +212,7 @@ async function glyphToPage(
 }
 
 async function captureOutlineFingerprint(page: Page): Promise<{
-    layers: Array<{
+    drawings: Array<{
         id: string;
         paths: Array<{
             closed: boolean;
@@ -243,22 +243,22 @@ async function captureOutlineFingerprint(page: Page): Promise<{
         };
 
         const oe = (window as any).glyphCanvas.outlineEditor;
-        const currentLayer = oe.getCurrentLayerModel();
-        const linkedLayers = currentLayer?._getLinkedLayers?.() || [];
+        const currentDrawing = oe.getCurrentDrawingModel();
+        const linkedDrawings = currentDrawing?._getLinkedDrawings?.() || [];
         const glyph = oe.getCurrentGlyphModel();
         const compatibility = glyph?.calculateOutlineCompatibility?.();
-        const layers = [currentLayer, ...linkedLayers]
+        const drawings = [currentDrawing, ...linkedDrawings]
             .filter(Boolean)
-            .map((layer: any) => ({
-                id: String(layer.id),
-                paths: (layer.paths || []).map((path: any) =>
+            .map((drawing: any) => ({
+                id: String(drawing.id),
+                paths: (drawing.paths || []).map((path: any) =>
                     toPathFingerprint(path)
                 )
             }))
             .sort((a: any, b: any) => a.id.localeCompare(b.id));
 
         return {
-            layers,
+            drawings,
             compatible: Boolean(compatibility?.compatible)
         };
     });
@@ -278,7 +278,7 @@ async function performUndo(page: Page): Promise<void> {
             'undo',
             context.undoGlyphName,
             context.rootGlyphName,
-            context.undoLayerId,
+            context.undoDrawingId,
             context.historyTargetKey
         );
     });
@@ -300,15 +300,15 @@ async function performUndo(page: Page): Promise<void> {
             };
 
             const oe = (window as any).glyphCanvas?.outlineEditor;
-            const currentLayer = oe?.getCurrentLayerModel?.();
-            const linkedLayers = currentLayer?._getLinkedLayers?.() || [];
+            const currentDrawing = oe?.getCurrentDrawingModel?.();
+            const linkedDrawings = currentDrawing?._getLinkedDrawings?.() || [];
             const glyph = oe?.getCurrentGlyphModel?.();
             const compatibility = glyph?.calculateOutlineCompatibility?.();
-            const layers = [currentLayer, ...linkedLayers]
+            const drawings = [currentDrawing, ...linkedDrawings]
                 .filter(Boolean)
-                .map((layer: any) => ({
-                    id: String(layer.id),
-                    paths: (layer.paths || []).map((path: any) =>
+                .map((drawing: any) => ({
+                    id: String(drawing.id),
+                    paths: (drawing.paths || []).map((path: any) =>
                         toPathFingerprint(path)
                     )
                 }))
@@ -316,7 +316,7 @@ async function performUndo(page: Page): Promise<void> {
 
             return (
                 JSON.stringify({
-                    layers,
+                    drawings,
                     compatible: Boolean(compatibility?.compatible)
                 }) !== previousJson
             );
@@ -346,22 +346,22 @@ test('fuzz path context actions on Fustat n: click intent maps to start node and
     await waitForBridgeReady(page);
 
     await navigateToGlyphN(page);
-    await selectFirstMasterLayer(page);
+    await selectFirstStationDrawing(page);
 
     const baseline = await page.evaluate(() => {
         const oe = (window as any).glyphCanvas.outlineEditor;
-        const layer = oe.getCurrentLayerModel();
-        const linkedLayers = layer?._getLinkedLayers?.() || [];
+        const drawing = oe.getCurrentDrawingModel();
+        const linkedDrawings = drawing?._getLinkedDrawings?.() || [];
         const glyph = oe.getCurrentGlyphModel();
         const compatibility = glyph?.calculateOutlineCompatibility?.();
 
         return {
-            linkedLayerCount: linkedLayers.length,
+            linkedDrawingCount: linkedDrawings.length,
             compatibility
         };
     });
 
-    expect(baseline.linkedLayerCount).toBeGreaterThan(0);
+    expect(baseline.linkedDrawingCount).toBeGreaterThan(0);
     expect(baseline.compatibility?.compatible).toBeTruthy();
 
     let seed = 1337 + testInfo.repeatEachIndex * 100003 + testInfo.retry * 1009;
@@ -377,9 +377,9 @@ test('fuzz path context actions on Fustat n: click intent maps to start node and
     for (let i = 0; i < 12; i++) {
         const candidates = await page.evaluate(() => {
             const oe = (window as any).glyphCanvas.outlineEditor;
-            const layer = oe.getCurrentLayerModel();
+            const drawing = oe.getCurrentDrawingModel();
             const path =
-                layer?.paths?.find((candidatePath: any) => {
+                drawing?.paths?.find((candidatePath: any) => {
                     if (!candidatePath?.closed) {
                         return false;
                     }
@@ -400,7 +400,7 @@ test('fuzz path context actions on Fustat n: click intent maps to start node and
                             node?.nodetype === 'QCurve'
                     );
                     return hasLine && hasCurve;
-                }) || layer?.paths?.[0];
+                }) || drawing?.paths?.[0];
             const nodes = path?.nodes || [];
             let onCurveOrdinal = -1;
             const result: Array<{
@@ -454,8 +454,8 @@ test('fuzz path context actions on Fustat n: click intent maps to start node and
             const oe = (window as any).glyphCanvas.outlineEditor;
             const target = oe.canvasContextMenuTarget;
             const point = target?.intendedPoint;
-            const layer = oe.getCurrentLayerModel();
-            const path = layer?.paths?.[target?.pathIndex ?? -1];
+            const drawing = oe.getCurrentDrawingModel();
+            const path = drawing?.paths?.[target?.pathIndex ?? -1];
 
             if (!point || !path?.nodes?.length) {
                 return null;
@@ -505,8 +505,8 @@ test('fuzz path context actions on Fustat n: click intent maps to start node and
         const afterSetStart = await page.evaluate(
             ({ expectedX, expectedY, expectedLinkedCount, pathIndex }) => {
                 const oe = (window as any).glyphCanvas.outlineEditor;
-                const layer = oe.getCurrentLayerModel();
-                const path = layer?.paths?.[pathIndex];
+                const drawing = oe.getCurrentDrawingModel();
+                const path = drawing?.paths?.[pathIndex];
                 const nodes = path?.nodes || [];
                 const startNode = nodes[0];
                 const startNodeCoords = {
@@ -516,8 +516,8 @@ test('fuzz path context actions on Fustat n: click intent maps to start node and
                 const target = oe.canvasContextMenuTarget;
                 const glyph = oe.getCurrentGlyphModel();
                 const compatibility = glyph?.calculateOutlineCompatibility?.();
-                const linkedLayerCount =
-                    layer?._getLinkedLayers?.()?.length || 0;
+                const linkedDrawingCount =
+                    drawing?._getLinkedDrawings?.()?.length || 0;
 
                 return {
                     startNode: startNodeCoords,
@@ -528,14 +528,14 @@ test('fuzz path context actions on Fustat n: click intent maps to start node and
                         Math.abs(startNodeCoords.x - expectedX) < 0.001 &&
                         Math.abs(startNodeCoords.y - expectedY) < 0.001,
                     compatibilityOk: Boolean(compatibility?.compatible),
-                    linkedLayerCount,
+                    linkedDrawingCount: linkedDrawingCount,
                     expectedLinkedCount
                 };
             },
             {
                 expectedX: intendedStart!.x,
                 expectedY: intendedStart!.y,
-                expectedLinkedCount: baseline.linkedLayerCount,
+                expectedLinkedCount: baseline.linkedDrawingCount,
                 pathIndex: actionPathIndex
             }
         );
@@ -545,15 +545,15 @@ test('fuzz path context actions on Fustat n: click intent maps to start node and
             `set-start mismatch: ${JSON.stringify(afterSetStart)}`
         ).toBeTruthy();
         expect(afterSetStart.compatibilityOk).toBeTruthy();
-        expect(afterSetStart.linkedLayerCount).toBe(
+        expect(afterSetStart.linkedDrawingCount).toBe(
             afterSetStart.expectedLinkedCount
         );
 
         const snapshotBeforeReverse = await page.evaluate(() => {
             const oe = (window as any).glyphCanvas.outlineEditor;
             const target = oe.canvasContextMenuTarget;
-            const layer = oe.getCurrentLayerModel();
-            const linkedLayers = layer?._getLinkedLayers?.() || [];
+            const drawing = oe.getCurrentDrawingModel();
+            const linkedDrawings = drawing?._getLinkedDrawings?.() || [];
             const pathIndex = target?.pathIndex ?? 0;
             const toGeometrySignature = (pathData: any) => {
                 const nodes = pathData?.nodes || [];
@@ -567,7 +567,7 @@ test('fuzz path context actions on Fustat n: click intent maps to start node and
                 };
             };
 
-            return [layer, ...linkedLayers].map((entry: any) => ({
+            return [drawing, ...linkedDrawings].map((entry: any) => ({
                 id: entry.id,
                 path: toGeometrySignature(entry.paths?.[pathIndex]?.toJSON?.())
             }));
@@ -607,8 +607,8 @@ test('fuzz path context actions on Fustat n: click intent maps to start node and
         const afterDoubleReverse = await page.evaluate(() => {
             const oe = (window as any).glyphCanvas.outlineEditor;
             const target = oe.canvasContextMenuTarget;
-            const layer = oe.getCurrentLayerModel();
-            const linkedLayers = layer?._getLinkedLayers?.() || [];
+            const drawing = oe.getCurrentDrawingModel();
+            const linkedDrawings = drawing?._getLinkedDrawings?.() || [];
             const glyph = oe.getCurrentGlyphModel();
             const compatibility = glyph?.calculateOutlineCompatibility?.();
             const pathIndex = target?.pathIndex ?? 0;
@@ -626,8 +626,8 @@ test('fuzz path context actions on Fustat n: click intent maps to start node and
 
             return {
                 compatibility,
-                linkedLayerCount: linkedLayers.length,
-                paths: [layer, ...linkedLayers].map((entry: any) => ({
+                linkedDrawingCount: linkedDrawings.length,
+                paths: [drawing, ...linkedDrawings].map((entry: any) => ({
                     id: entry.id,
                     path: toGeometrySignature(
                         entry.paths?.[pathIndex]?.toJSON?.()
@@ -637,8 +637,8 @@ test('fuzz path context actions on Fustat n: click intent maps to start node and
         });
 
         expect(afterDoubleReverse.compatibility?.compatible).toBeTruthy();
-        expect(afterDoubleReverse.linkedLayerCount).toBe(
-            baseline.linkedLayerCount
+        expect(afterDoubleReverse.linkedDrawingCount).toBe(
+            baseline.linkedDrawingCount
         );
         expect(afterDoubleReverse.paths).toEqual(snapshotBeforeReverse);
     }

@@ -54,11 +54,11 @@ describe('ArrowAdjustableTextInput edit bursts', () => {
     });
 
     it('names a different burst for a different target', async () => {
-        let layerId = 'layer-1';
-        const { input } = makeField({ burstScope: () => layerId });
+        let drawingId = 'layer-1';
+        const { input } = makeField({ burstScope: () => drawingId });
 
         await press(input);
-        layerId = 'layer-2';
+        drawingId = 'layer-2';
         await press(input);
 
         expect(new Set(burstKeys).size).toBe(2);

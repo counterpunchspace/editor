@@ -9,9 +9,9 @@ Start with the drawing tools in the Editor title bar. Click a tool, then click o
 - **Text** (`T`) leaves outline editing and returns to the text run.
 - **Select** (`V`) clicks and drags points, handles, components, and other objects. Entering a glyph always starts on Select.
 - **Pen** (`P`) draws a new contour point by point, or continues from a selected open end. Each click places a point. Click the first point to close, or connect to another open end to join two contours. While Pen is active, drawing can continue beyond the current glyph width; nearby glyphs are ignored so they do not steal the gesture.
-- **Insert** (`I`) clicks a segment to add a node. It is enabled when the layer has path segments. The hover preview is a smooth node on a curve and a corner square on a straight segment.
-- **Convert** (`C`) clicks a straight segment to turn it into a curve. It is enabled when the layer has straight segments.
-- **Cut** (toolbar only) clicks an on-curve node to open the contour there. Click a segment to insert a node at that point and cut in the same step. It is enabled when the layer has contours.
+- **Insert** (`I`) clicks a segment to add a node. It is enabled when the drawing has path segments. The hover preview is a smooth node on a curve and a corner square on a straight segment.
+- **Convert** (`C`) clicks a straight segment to turn it into a curve. It is enabled when the drawing has straight segments.
+- **Cut** (toolbar only) clicks an on-curve node to open the contour there. Click a segment to insert a node at that point and cut in the same step. It is enabled when the drawing has contours.
 
 Pen only draws. Insert only inserts. Convert only converts. Cut only cuts. Switch back to Select when you want to move points.
 
@@ -19,13 +19,13 @@ Pen only draws. Insert only inserts. Convert only converts. Cut only cuts. Switc
 
 With Select, click a point, then drag. Handles appear on curve points. Make small moves first so you can tell whether you changed one segment or the whole rhythm. Click a line or curve (away from its ends) to select that segment’s two on-curve nodes. Double-click selects the whole contour. Shift-click a segment to add or remove it: a neighbor already selected adds or removes only the new end node; a segment between two selected neighbors adds or removes both of its nodes and leaves the outer nodes selected. `Shift` does the same add/remove on nodes, anchors, and components. Nodes, anchors, and path segments are picked before component fills. An anchor that sits on a node keeps a slightly larger pick ring around that node so the outer chrome is clickable.
 
-Right-click a component and choose **Decompose** to replace it with the transformed outlines in that same place. Linked layers get the same action on the matching component; a background layer stays local. Automatic vs manual placement is in [Automatic composition](07-automatic-composition.md).
+Right-click a component and choose **Decompose** to replace it with the transformed outlines in that same place. Linked drawings get the same action on the matching component; a background drawing stays local. Automatic vs manual placement is in [Automatic composition](07-automatic-composition.md).
 
-**Subtract** in the property panel marks selected paths as cutters (`fip001-boolean`). They punch a hole in everything below them in shape order; paths drawn later sit on top. Nodes stay editable. Cutter strokes are dashed. Cutter fill uses the same transparency as path fill (**Fill** in Editing View → View) and covers the whole cutter except where a later solid covers it. Solids below a cutter drop fill in the overlap, matching the compiled hole. Glyph overview tiles punch the same holes. Compile flattens any glyph that uses a cutter (including through components) and runs the same boolean. Linked layers get the flag at the same shape indexes.
+**Subtract** in the property panel marks selected paths as cutters (`fip001-boolean`). They punch a hole in everything below them in shape order; paths drawn later sit on top. Nodes stay editable. Cutter strokes are dashed. Cutter fill uses the same transparency as path fill (**Fill** in Editing View → View) and covers the whole cutter except where a later solid covers it. Solids below a cutter drop fill in the overlap, matching the compiled hole. Glyph overview tiles punch the same holes. Compile flattens any glyph that uses a cutter (including through components) and runs the same boolean. Linked drawings get the flag at the same shape indexes.
 
-With two or more closed paths selected, the same panel shows Union, Difference, Intersection, and Exclusion. Those rewrite the selected paths. Difference keeps the lowest path in shape order and subtracts the others. Linked layers get the same operation. If the results would no longer match across those layers, the editor asks before applying.
+With two or more closed paths selected, the same panel shows Union, Difference, Intersection, and Exclusion. Those rewrite the selected paths. Difference keeps the lowest path in shape order and subtracts the others. Linked drawings get the same operation. If the results would no longer match across those drawings, the editor asks before applying.
 
-Right-click selected shapes and open **Arrange** for **Bring Forward**, **Send Backward**, **Bring to Front**, and **Send to Back**. The same actions move mixed path and component selections together, including on linked layers.
+Right-click selected shapes and open **Arrange** for **Bring Forward**, **Send Backward**, **Bring to Front**, and **Send to Back**. The same actions move mixed path and component selections together, including on linked drawings.
 
 Hold Tab in outline mode, then drag, to measure a custom distance.
 

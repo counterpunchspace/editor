@@ -26,7 +26,7 @@ import {
     type CanAddGlyphsResult,
     type FileContextAction,
     type FileContextTarget,
-    type MasterTopologyGate,
+    type StationTopologyGate,
     type PluginMessageOptions,
     type TitleBarMenuItem
 } from '../filesystem-plugin';
@@ -1912,7 +1912,7 @@ export class CloudPlugin extends FilesystemPlugin {
         }
         // Only a font opened from the cloud can have glyphs still on the server.
         if (this.getCurrentAssetIdForSharing()) {
-            const gate = this.getMasterTopologyGate();
+            const gate = this.getStationTopologyGate();
             if (!gate.allowed) {
                 return {
                     note: 'This font isn’t fully downloaded',
@@ -2187,7 +2187,7 @@ export class CloudPlugin extends FilesystemPlugin {
         this._pendingSparseHydration = sparse;
     }
 
-    getMasterTopologyGate(): MasterTopologyGate {
+    getStationTopologyGate(): StationTopologyGate {
         const bridge = window.patchSyncEngine;
         if (!bridge?.hasSparseWorkingSet?.()) {
             const downloading = (
@@ -2201,7 +2201,7 @@ export class CloudPlugin extends FilesystemPlugin {
             return downloading
                 ? {
                       allowed: false,
-                      reason: 'Some glyphs are still downloading. Masters can be added, removed, or reinterpolated once every glyph is loaded.'
+                      reason: 'Some glyphs are still downloading. Stations can be added, removed, or reinterpolated once every glyph is loaded.'
                   }
                 : { allowed: true };
         }
@@ -2216,11 +2216,11 @@ export class CloudPlugin extends FilesystemPlugin {
             !window.windowRole?.isLinkedWindow?.() &&
             !!catalogIds &&
             !shouldAutoSparseHydrate(catalogIds.length);
-        const blocked: MasterTopologyGate = {
+        const blocked: StationTopologyGate = {
             allowed: false,
             reason: canReopenWithAllGlyphs
-                ? 'This font is only partly downloaded. Reopen it with all glyphs to add, remove, or reinterpolate masters.'
-                : 'This font is only partly downloaded. Masters cannot be added, removed, or reinterpolated while some glyphs stay on the server.',
+                ? 'This font is only partly downloaded. Reopen it with all glyphs to add, remove, or reinterpolate stations.'
+                : 'This font is only partly downloaded. Stations cannot be added, removed, or reinterpolated while some glyphs stay on the server.',
             canReopenWithAllGlyphs
         };
         if (!catalogIds || this.isHydratingOverviewGlyphs()) {

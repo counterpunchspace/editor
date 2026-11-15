@@ -6,9 +6,9 @@
 
 import { Logger } from './logger';
 import {
-    selectTourMasterByName,
+    selectTourStationByName,
     TOUR_EDIERESIS_LETTER,
-    TOUR_EXTRABOLD_MASTER_NAME,
+    TOUR_EXTRABOLD_STATION_NAME,
     TOUR_INTERPOLATED_WGHT,
     TOUR_LETTER_L,
     TOUR_SAMPLE_TEXT,
@@ -42,7 +42,7 @@ export type TourViewport = {
     height: number;
 };
 
-type SnapshotLayer = {
+type SnapshotDrawing = {
     id?: string;
     is_background?: boolean;
     shapes?: unknown[];
@@ -176,7 +176,7 @@ async function restoreTextStage(
     exitTourEditMode();
     const canvas = window.glyphCanvas;
     if (stage.master) {
-        await selectTourMasterByName(stage.master);
+        await selectTourStationByName(stage.master);
     } else if (typeof stage.wght === 'number') {
         await canvas?.animateToLocation?.({ wght: stage.wght }, 1);
     }
@@ -201,13 +201,13 @@ async function openTourLetter(
     return waitFor(
         () =>
             getTourEditRootGlyphName() === glyphName &&
-            !!canvas.outlineEditor?.layerData,
+            !!canvas.outlineEditor?.drawingData,
         EDIT_MODE_TIMEOUT_MS
     );
 }
 
 function findPathIndex(): number {
-    const shapes = window.glyphCanvas?.outlineEditor?.layerData?.shapes || [];
+    const shapes = window.glyphCanvas?.outlineEditor?.drawingData?.shapes || [];
     return shapes.findIndex(
         (shape) => !!shape && typeof shape === 'object' && 'nodes' in shape
     );
@@ -219,7 +219,7 @@ async function restoreEditLStage(
 ): Promise<void> {
     await restoreTextStage(
         stage.layer === 'master'
-            ? { kind: 'text', ss04: true, master: TOUR_EXTRABOLD_MASTER_NAME }
+            ? { kind: 'text', ss04: true, master: TOUR_EXTRABOLD_STATION_NAME }
             : { kind: 'text', ss04: true, wght: TOUR_INTERPOLATED_WGHT }
     );
     if (snapshot) {
@@ -248,7 +248,7 @@ async function restoreEdieresisStage(
     await restoreTextStage({
         kind: 'text',
         ss04: true,
-        master: TOUR_EXTRABOLD_MASTER_NAME
+        master: TOUR_EXTRABOLD_STATION_NAME
     });
     if (snapshot) {
         restoreTourGlyphSnapshot(snapshot);
@@ -263,8 +263,8 @@ async function restoreEdieresisStage(
     }
     const editor = window.glyphCanvas?.outlineEditor;
     for (const [depth, reference] of stage.components.entries()) {
-        const layer = editor?.getCurrentLayerDataFromStack?.();
-        const shapes = layer?.shapes || [];
+        const drawing = editor?.getCurrentDrawingDataFromStack?.();
+        const shapes = drawing?.shapes || [];
         const index = shapes.findIndex((shape) => {
             const ref =
                 shape && typeof shape === 'object' && 'reference' in shape
@@ -347,20 +347,21 @@ export function isTourStageIntact(stage: TourStage): boolean {
     return editGlyph === null;
 }
 
-function getTourEditGlyphLayers(): SnapshotLayer[] {
+function getTourEditGlyphDrawings(): SnapshotDrawing[] {
     const font =
         window.currentFontModel || window.fontManager?.currentFont?.fontModel;
     const glyph = font?.findGlyph?.(TOUR_EDIT_GLYPH);
-    const layers = glyph?.layers;
-    if (!layers) {
+    const drawings = glyph?.drawings;
+    if (!drawings) {
         return [];
     }
-    return Array.from(layers as Iterable<SnapshotLayer>);
+    return Array.from(drawings as Iterable<SnapshotDrawing>);
 }
 
 /** Shape ids are left out: re-adding a shape gives it a new one. */
-function serializeLayerShapes(layer: SnapshotLayer): string {
-    const json = typeof layer.toJSON === 'function' ? layer.toJSON() : layer;
+function serializeDrawingShapes(drawing: SnapshotDrawing): string {
+    const json =
+        typeof drawing.toJSON === 'function' ? drawing.toJSON() : drawing;
     const shapes = (json?.shapes || []).map((shape) => {
         if (!shape || typeof shape !== 'object') {
             return shape;
@@ -371,36 +372,40 @@ function serializeLayerShapes(layer: SnapshotLayer): string {
     return JSON.stringify(shapes);
 }
 
-/** Outlines of every master layer of the drawing glyph. */
+/** Outlines of every station drawing of the tour glyph. */
 export function captureTourGlyphSnapshot(): TourGlyphSnapshot | null {
-    const layers = getTourEditGlyphLayers()
-        .filter((layer) => !layer.is_background && layer.id)
-        .map((layer) => ({
-            id: layer.id as string,
-            shapes: serializeLayerShapes(layer)
+    const drawings = getTourEditGlyphDrawings()
+        .filter((drawing) => !drawing.is_background && drawing.id)
+        .map((drawing) => ({
+            id: drawing.id as string,
+            shapes: serializeDrawingShapes(drawing)
         }));
-    if (layers.length === 0) {
+    if (drawings.length === 0) {
         return null;
     }
-    return { glyphName: TOUR_EDIT_GLYPH, layers };
+    return { glyphName: TOUR_EDIT_GLYPH, layers: drawings };
 }
 
-/** Write changed layers back; untouched layers keep their history. */
+/** Write changed drawings back; untouched drawings keep their history. */
 export function restoreTourGlyphSnapshot(snapshot: TourGlyphSnapshot): void {
     const canvas = window.glyphCanvas;
-    for (const layer of getTourEditGlyphLayers()) {
-        const saved = snapshot.layers.find((entry) => entry.id === layer.id);
-        if (!saved || serializeLayerShapes(layer) === saved.shapes) {
+    for (const drawing of getTourEditGlyphDrawings()) {
+        const saved = snapshot.layers.find((entry) => entry.id === drawing.id);
+        if (!saved || serializeDrawingShapes(drawing) === saved.shapes) {
             continue;
         }
-        const model = layer as SnapshotLayer & {
+        const model = drawing as SnapshotDrawing & {
             removeShape?: (index: number) => void;
             addShape?: (shape: unknown) => unknown;
         };
         if (!model.removeShape || !model.addShape) {
             continue;
         }
-        for (let index = (layer.shapes?.length ?? 0) - 1; index >= 0; index--) {
+        for (
+            let index = (drawing.shapes?.length ?? 0) - 1;
+            index >= 0;
+            index--
+        ) {
             model.removeShape(index);
         }
         for (const shape of JSON.parse(saved.shapes) as unknown[]) {
@@ -408,14 +413,14 @@ export function restoreTourGlyphSnapshot(snapshot: TourGlyphSnapshot): void {
         }
         if (canvas?.outlineEditor?.active) {
             canvas.outlineEditor.clearAllSelections?.();
-            canvas.syncCurrentOutlineLayerDataFromModel?.(
-                layer as Parameters<
-                    typeof canvas.syncCurrentOutlineLayerDataFromModel
+            canvas.syncCurrentOutlineDrawingDataFromModel?.(
+                drawing as Parameters<
+                    typeof canvas.syncCurrentOutlineDrawingDataFromModel
                 >[0]
             );
             canvas.render?.();
         }
-        console.log('Restored tour glyph layer', layer.id);
+        console.log('Restored tour glyph drawing', drawing.id);
     }
 }
 

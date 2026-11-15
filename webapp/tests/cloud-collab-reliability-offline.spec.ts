@@ -7,7 +7,7 @@ import {
 import {
     waitForBridgeReady,
     alignEditorCanvas,
-    waitUntilGlyphLayerDataMatches
+    waitUntilGlyphDrawingDataMatches
 } from './helpers/change-bridge-cross-window';
 import { cleanupCloudCollabUsers } from './helpers/cloud-collab-session';
 import {
@@ -39,8 +39,8 @@ async function nudgeGlyphNodeAt(
             const fontModel = (window as any).currentFontModel;
             const currentFont = (window as any).fontManager?.currentFont;
             const glyph = fontModel.findGlyph(name);
-            const layer = glyph.layers[0];
-            const node = layer.paths[0].nodes[index];
+            const drawing = glyph.drawings[0];
+            const node = drawing.paths[0].nodes[index];
             const oldX = node.x;
             bridge.runWithoutRecording(() => {
                 node.x = oldX + dx;
@@ -51,7 +51,7 @@ async function nudgeGlyphNodeAt(
                 transactionLabel,
                 undefined,
                 undefined,
-                layer.id,
+                drawing.id,
                 undefined,
                 undefined,
                 undefined,
@@ -75,13 +75,13 @@ async function firstAndLastNodeX(
 ): Promise<{ first: number; last: number }> {
     return page.evaluate((name) => {
         const glyph = (window as any).currentFontModel.findGlyph(name);
-        const nodes = glyph.layers[0].paths[0].nodes;
+        const nodes = glyph.drawings[0].paths[0].nodes;
         return { first: nodes[0].x, last: nodes[nodes.length - 1].x };
     }, glyphName);
 }
 
 async function editFontCoreThroughModel(page: Page): Promise<{
-    masterId: string;
+    stationId: string;
     kern: number;
     version: [number, number];
 }> {
@@ -89,13 +89,13 @@ async function editFontCoreThroughModel(page: Page): Promise<{
         const w = window as any;
         const font = w.currentFontModel;
         const bridge = w.patchSyncEngine;
-        const master = font.masters[0];
+        const station = font.stations[0];
         bridge.beginTransaction('Edit kerning pair', null, {
             compileChangeSource: 'keyboard-kerning-value',
             compileEditType: 'kerning-value'
         });
         try {
-            master.kerning = { ...master.kerning, 'a:b': -37 };
+            station.kerning = { ...station.kerning, 'a:b': -37 };
         } finally {
             bridge.endTransaction();
         }
@@ -111,8 +111,8 @@ async function editFontCoreThroughModel(page: Page): Promise<{
         }
         await bridge.waitForPendingCloudCommits?.();
         return {
-            masterId: String(master.id),
-            kern: master.kerning['a:b'],
+            stationId: String(station.id),
+            kern: station.kerning['a:b'],
             version: [...font.version] as [number, number]
         };
     });
@@ -120,17 +120,17 @@ async function editFontCoreThroughModel(page: Page): Promise<{
 
 async function readFontCore(
     page: Page,
-    masterId: string
+    stationId: string
 ): Promise<{ kern: number | null; version: [number, number] | null }> {
     return page.evaluate((id) => {
         const font = (window as any).currentFontModel;
-        const master = (font?.masters || []).find((m: any) => m.id === id);
+        const station = (font?.stations || []).find((s: any) => s.id === id);
         const version = font?.version;
         return {
-            kern: master?.kerning?.['a:b'] ?? null,
+            kern: station?.kerning?.['a:b'] ?? null,
             version: version ? ([...version] as [number, number]) : null
         };
-    }, masterId);
+    }, stationId);
 }
 
 async function holdGlyphSockets(page: Page): Promise<number> {
@@ -221,7 +221,7 @@ test('glyph catch-up applies edits made while the peer was offline, including a 
         await expect
             .poll(async () => glyphNodeX(inviteePage, 'b'), { timeout: 120000 })
             .toBe(bBefore + 17);
-        await waitUntilGlyphLayerDataMatches(ownerPage, inviteePage, [
+        await waitUntilGlyphDrawingDataMatches(ownerPage, inviteePage, [
             'a',
             'b'
         ]);
@@ -274,10 +274,10 @@ test('two-sided offline edits on the same glyph survive compaction, converge, an
         );
         inviteeContext = invitee.inviteeContext;
         const { inviteePage } = invitee;
-        await waitUntilGlyphLayerDataMatches(ownerPage, inviteePage, ['a']);
+        await waitUntilGlyphDrawingDataMatches(ownerPage, inviteePage, ['a']);
         const nodeCount = await ownerPage.evaluate(() => {
             const glyph = (window as any).currentFontModel.findGlyph('a');
-            return glyph.layers[0].paths[0].nodes.length;
+            return glyph.drawings[0].paths[0].nodes.length;
         });
         expect(nodeCount).toBeGreaterThan(1);
 
@@ -317,7 +317,7 @@ test('two-sided offline edits on the same glyph survive compaction, converge, an
             null,
             { timeout: 90000 }
         );
-        await waitUntilGlyphLayerDataMatches(ownerPage, inviteePage, ['a']);
+        await waitUntilGlyphDrawingDataMatches(ownerPage, inviteePage, ['a']);
         // Agreeing is not enough: both offline edits must survive the merge.
         const expected = {
             first: ownerEdit.newX,
@@ -335,7 +335,7 @@ test('two-sided offline edits on the same glyph survive compaction, converge, an
         const coreEdit = await editFontCoreThroughModel(ownerPage);
         expect(coreEdit.kern).toBe(-37);
         await expect
-            .poll(async () => readFontCore(inviteePage, coreEdit.masterId), {
+            .poll(async () => readFontCore(inviteePage, coreEdit.stationId), {
                 timeout: 60000
             })
             .toEqual({ kern: -37, version: coreEdit.version });
@@ -357,7 +357,7 @@ test('two-sided offline edits on the same glyph survive compaction, converge, an
             })
             .toEqual(expected);
         await expect
-            .poll(async () => readFontCore(inviteePage, coreEdit.masterId), {
+            .poll(async () => readFontCore(inviteePage, coreEdit.stationId), {
                 timeout: 60000
             })
             .toEqual({ kern: -37, version: coreEdit.version });

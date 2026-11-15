@@ -424,7 +424,7 @@ export function checkRequiredCallRule(rule) {
             rule.description,
             "Missing codec calls:",
             ...failures,
-            "Route layer writes through resting-layer-json.ts, or deliberately review and update architecture/graph-chokepoints.json.",
+            "Route layer writes through resting-drawing-json.ts, or deliberately review and update architecture/graph-chokepoints.json.",
         ].join("\n"),
     );
 }

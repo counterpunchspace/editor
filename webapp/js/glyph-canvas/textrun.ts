@@ -149,7 +149,7 @@ export class TextRunEditor {
     selectionEnd: number | null;
     fontBlob: Uint8Array | null;
     shapingFontBlob: Uint8Array | null;
-    selectedMasterId: string | null; // Currently selected master ID for text mode rendering
+    selectedStationId: string | null; // Currently selected station ID for text mode rendering
     spaceKeyTimer: number | null; // Timer for space key delay
     spaceKeyPressTime: number | null; // Timestamp when space was pressed
     spaceActivatedPreview: boolean; // Whether space key activated preview mode
@@ -213,7 +213,7 @@ export class TextRunEditor {
         this.selectionStart = null; // Start of selection (null = no selection)
         this.selectionEnd = null; // End of selection
 
-        // Master selection for text mode
+        // Station selection for text mode
         // Space key delay for preview mode in text mode
         this.spaceKeyTimer = null;
         this.spaceKeyPressTime = null;
@@ -221,7 +221,7 @@ export class TextRunEditor {
         this.saveTextBufferToFontTimer = null;
         this.cursorStyleBeforePreview = null;
 
-        this.selectedMasterId = null; // No master selected by default
+        this.selectedStationId = null; // No station selected by default
 
         this.callbacks = {}; // For notifying GlyphCanvas of updates
         this.applyLayoutSettingsFromState();
@@ -1366,7 +1366,7 @@ export class TextRunEditor {
             }
 
             // Use the same parser as the outline and overview paste routes so
-            // structured layer/glyph documents never enter the text buffer.
+            // structured drawing/glyph documents never enter the text buffer.
             const parsed = parseClipboardPayloads(payloads);
             if (parsed) {
                 window.glyphCanvas?.rememberClipboardPasteKind?.(parsed.kind);
@@ -2700,18 +2700,18 @@ export class TextRunEditor {
         }
 
         const fontModel = window.currentFontModel;
-        if (!fontModel?.masters?.length) {
+        if (!fontModel?.stations?.length) {
             return false;
         }
 
-        const master =
-            (this.selectedMasterId &&
-                fontModel.masters.find(
+        const station =
+            (this.selectedStationId &&
+                fontModel.stations.find(
                     (candidate: { id?: string }) =>
-                        candidate.id === this.selectedMasterId
+                        candidate.id === this.selectedStationId
                 )) ||
             null;
-        if (!master) {
+        if (!station) {
             return false;
         }
 
@@ -2769,7 +2769,7 @@ export class TextRunEditor {
                 ).map((name) => `@${name}`)
             ];
 
-            const kerning = (isRTL ? master.kerning_rtl : master.kerning) as
+            const kerning = (isRTL ? station.kerning_rtl : station.kerning) as
                 KerningContainer | undefined;
             const value = resolvePreferredKerningPairValue(
                 kerning,
@@ -2834,9 +2834,11 @@ export class TextRunEditor {
             ? glyphCanvas.getCurrentGlyphName?.()
             : null;
         if (currentGlyphName === glyphName) {
-            const currentLayer = (glyphCanvas as any)?.getCurrentLayerModel?.();
-            if (currentLayer && Number.isFinite(currentLayer.width)) {
-                return currentLayer.width;
+            const currentDrawing = (
+                glyphCanvas as any
+            )?.getCurrentDrawingModel?.();
+            if (currentDrawing && Number.isFinite(currentDrawing.width)) {
+                return currentDrawing.width;
             }
         }
 
@@ -2846,17 +2848,17 @@ export class TextRunEditor {
             return null;
         }
 
-        let layer =
-            this.selectedMasterId && modelGlyph.findLayerByMasterId
-                ? modelGlyph.findLayerByMasterId(this.selectedMasterId)
+        let drawing =
+            this.selectedStationId && modelGlyph.findDrawingByStationId
+                ? modelGlyph.findDrawingByStationId(this.selectedStationId)
                 : null;
 
-        if (!layer && modelGlyph.layers && modelGlyph.layers.length > 0) {
-            layer = modelGlyph.layers[0];
+        if (!drawing && modelGlyph.drawings && modelGlyph.drawings.length > 0) {
+            drawing = modelGlyph.drawings[0];
         }
 
-        if (layer && Number.isFinite(layer.width)) {
-            return layer.width;
+        if (drawing && Number.isFinite(drawing.width)) {
+            return drawing.width;
         }
 
         return null;
@@ -2867,7 +2869,7 @@ export class TextRunEditor {
      * deltas against.
      *
      * The baseline MUST come from `glyph.ax` — the value those deltas are
-     * applied to. Seeding it from a model layer width instead desynchronises
+     * applied to. Seeding it from a model drawing width instead desynchronises
      * the two, because the object model is recomposed ahead of the compiled
      * font during a live drag. The difference then gets folded into `ax` and
      * persists as a constant per-drag offset (derived glyphs such as an
@@ -3670,8 +3672,8 @@ export class TextRunEditor {
 
     /**
      * Prefer the compiled editing font's variation-aware advance for explicit
-     * /.name tokens that are present in the subset. This is what lets layer /
-     * master switch animation update `/A` spacing the same way typed glyphs do.
+     * /.name tokens that are present in the subset. This is what lets drawing /
+     * station switch animation update `/A` spacing the same way typed glyphs do.
      * Display-string shaping of `/A` itself cannot be reused: HarfBuzz shapes
      * the slash and name characters, not the named glyph.
      */
@@ -3705,7 +3707,7 @@ export class TextRunEditor {
             outlineEditor?.active &&
             window.glyphCanvas?.getCurrentGlyphName?.() === glyphName
         ) {
-            const liveWidth = outlineEditor.layerData?.width;
+            const liveWidth = outlineEditor.drawingData?.width;
             if (typeof liveWidth === 'number' && Number.isFinite(liveWidth)) {
                 return liveWidth;
             }
@@ -3721,25 +3723,25 @@ export class TextRunEditor {
             return null;
         }
 
-        const selectedMasterLayer =
-            this.selectedMasterId && glyph.findLayerByMasterId
-                ? glyph.findLayerByMasterId(this.selectedMasterId)
+        const selectedStationDrawing =
+            this.selectedStationId && glyph.findDrawingByStationId
+                ? glyph.findDrawingByStationId(this.selectedStationId)
                 : null;
         if (
-            selectedMasterLayer &&
-            typeof selectedMasterLayer.width === 'number'
+            selectedStationDrawing &&
+            typeof selectedStationDrawing.width === 'number'
         ) {
-            return selectedMasterLayer.width;
+            return selectedStationDrawing.width;
         }
 
-        const matchingLayer = outlineEditor?.findMatchingLayer?.(glyphName);
-        if (matchingLayer && typeof matchingLayer.width === 'number') {
-            return matchingLayer.width;
+        const matchingDrawing = outlineEditor?.findMatchingDrawing?.(glyphName);
+        if (matchingDrawing && typeof matchingDrawing.width === 'number') {
+            return matchingDrawing.width;
         }
 
-        const fallbackLayer = glyph.layers?.[0];
-        if (fallbackLayer && typeof fallbackLayer.width === 'number') {
-            return fallbackLayer.width;
+        const fallbackDrawing = glyph.drawings?.[0];
+        if (fallbackDrawing && typeof fallbackDrawing.width === 'number') {
+            return fallbackDrawing.width;
         }
 
         return null;

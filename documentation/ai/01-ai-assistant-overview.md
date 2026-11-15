@@ -17,7 +17,7 @@ Enable editing only when you want those actions. Save the font first if the chan
 
 Ask in plain language. Send with **Ask Assistant** or `Cmd/Ctrl+Enter` while the prompt is focused. For a **reusable script** or **Overview filter**, the assistant drafts into the Script Editor (`Counterpunch/Scripts` vs `Counterpunch/Filters`). You review the buffer, then Save or Run yourself.
 
-For a one-off font change with editing on, it may execute Python immediately instead of creating a Python file for that. Keep a request to one operation with named glyphs, layers, or ranges.
+For a one-off font change with editing on, it may execute Python immediately instead of creating a Python file for that. Keep a request to one operation with named glyphs, drawings, or ranges.
 
 Conversations are currently not yet saved. If you click on the + symbol, a new conversation starts and the old one is lost. (Subject to change)
 

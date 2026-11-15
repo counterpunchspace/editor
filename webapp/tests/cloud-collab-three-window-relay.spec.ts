@@ -21,32 +21,32 @@ import {
     waitForOptionalEditingFontCompileEvent,
     getEditingFontCompileTracker,
     getCompilationErrorText,
-    extractGlyphLayerData,
-    extractRawLayerProperties,
-    extractYDocLayerKeys,
-    extractYDocLayerIds,
-    extractRawLayerShapes,
-    extractRawLayerAnchors,
-    waitForRawLayerAnchors,
+    extractGlyphDrawingData,
+    extractRawDrawingProperties,
+    extractYDocDrawingKeys,
+    extractYDocDrawingIds,
+    extractRawDrawingShapes,
+    extractRawDrawingAnchors,
+    waitForRawDrawingAnchors,
     extractModelGlyphSnapshot,
     extractRawGlyphSnapshot,
-    extractActiveLayerSelectionState,
+    extractActiveDrawingSelectionState,
     extractActiveInterpolatedRenderState,
     setInterpolatedEditorState,
-    findThinLayerId,
+    findThinDrawingId,
     setAxisSliderValue,
-    countModelLayers,
-    getModelLayerIds,
-    waitForNewAssociatedLayerId,
-    waitForLayerIdToDisappear,
-    selectLayerRow,
+    countModelDrawings,
+    getModelDrawingIds,
+    waitForNewAssociatedDrawingId,
+    waitForDrawingIdToDisappear,
+    selectDrawingRow,
     dismissVisibleTippies,
     alignEditorCanvas,
     setupEditTextMode,
     installCrossWindowTrackersOnContext,
     openLinkedEditorWindow,
     waitForWindowSyncPeers,
-    waitUntilGlyphLayerDataMatches
+    waitUntilGlyphDrawingDataMatches
 } from './helpers/change-bridge-cross-window';
 import {
     LOCAL_EDITOR_ORIGIN,
@@ -146,7 +146,9 @@ test.describe('three-window relay scenarios', () => {
             await alignEditorCanvas(ownerPage, 'a', { wght: 200 });
             await focusView(viewerPage, 'ControlOrMeta+Shift+E', 'view-editor');
             await alignEditorCanvas(viewerPage, 'a', { wght: 200 });
-            await waitUntilGlyphLayerDataMatches(ownerPage, viewerPage, ['a']);
+            await waitUntilGlyphDrawingDataMatches(ownerPage, viewerPage, [
+                'a'
+            ]);
             await viewerPage.waitForFunction(
                 () =>
                     (window as any).cloudPlugin?.getCurrentAssetRole?.() ===
@@ -234,8 +236,8 @@ test.describe('three-window relay scenarios', () => {
                 const fontModel = (window as any).currentFontModel;
                 const currentFont = (window as any).fontManager?.currentFont;
                 const glyph = fontModel.findGlyph('a');
-                const layer = glyph.layers[0];
-                const node = layer.paths[0].nodes[0];
+                const drawing = glyph.drawings[0];
+                const node = drawing.paths[0].nodes[0];
                 const oldX = node.x;
                 bridge.runWithoutRecording(() => {
                     node.x = oldX + 11;
@@ -246,7 +248,7 @@ test.describe('three-window relay scenarios', () => {
                     'Owner edit for viewer',
                     undefined,
                     undefined,
-                    layer.id,
+                    drawing.id,
                     undefined,
                     undefined,
                     undefined,
@@ -256,7 +258,9 @@ test.describe('three-window relay scenarios', () => {
                 return { oldX, newX: node.x };
             });
             expect(ownerEdit.newX).toBe(ownerEdit.oldX + 11);
-            await waitUntilGlyphLayerDataMatches(ownerPage, viewerPage, ['a']);
+            await waitUntilGlyphDrawingDataMatches(ownerPage, viewerPage, [
+                'a'
+            ]);
             expect(await glyphNodeX(viewerPage)).toBe(ownerEdit.newX);
 
             const viewerWrite = await viewerPage.evaluate(async () => {
@@ -264,8 +268,8 @@ test.describe('three-window relay scenarios', () => {
                 const fontModel = (window as any).currentFontModel;
                 const currentFont = (window as any).fontManager?.currentFont;
                 const glyph = fontModel.findGlyph('a');
-                const layer = glyph.layers[0];
-                const node = layer.paths[0].nodes[0];
+                const drawing = glyph.drawings[0];
+                const node = drawing.paths[0].nodes[0];
                 const oldX = node.x;
                 try {
                     bridge.syncGlyphFromJson(
@@ -273,7 +277,7 @@ test.describe('three-window relay scenarios', () => {
                         'Viewer edit',
                         undefined,
                         undefined,
-                        layer.id,
+                        drawing.id,
                         undefined,
                         undefined,
                         undefined,

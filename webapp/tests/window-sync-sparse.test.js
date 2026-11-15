@@ -193,11 +193,11 @@ describe('linked window resident snapshot', () => {
             applyCloudOwnedData
         } = require('../js/filesystem-plugins/cloud-glyph-catalog');
         const previousFontModel = window.currentFontModel;
-        const layer = { id: 'layer-1', width: 600, shapes: [] };
+        const drawing = { id: 'layer-1', width: 600, shapes: [] };
         const sourceJson = {
             upm: 1000,
             glyphs: [
-                { name: 'a', id: 'id-a', layers: [layer] },
+                { name: 'a', id: 'id-a', layers: [drawing] },
                 {
                     name: 'newcomp',
                     id: 'id-new',
@@ -213,7 +213,7 @@ describe('linked window resident snapshot', () => {
 
         const linkedJson = {
             upm: 1000,
-            glyphs: [{ name: 'a', id: 'id-a', layers: [{ ...layer }] }]
+            glyphs: [{ name: 'a', id: 'id-a', layers: [{ ...drawing }] }]
         };
         applyCloudOwnedData(linkedJson);
         const linked = new PatchSyncEngine('catch-up-linked');
@@ -249,7 +249,7 @@ describe('linked window resident snapshot', () => {
 
         const glyph = window.currentFontModel.findGlyph('newcomp');
         expect(glyph).toBeDefined();
-        expect(Array.isArray(glyph.layers) && glyph.layers.length > 0).toBe(
+        expect(Array.isArray(glyph.drawings) && glyph.drawings.length > 0).toBe(
             true
         );
         sync.destroy();
@@ -270,11 +270,11 @@ describe('linked window resident snapshot', () => {
         const previousSync = window.windowSync;
         const previousFontManager = window.fontManager;
         const previousPatch = window.patchSyncEngine;
-        const layer = { id: 'layer-1', width: 600, shapes: [] };
+        const drawing = { id: 'layer-1', width: 600, shapes: [] };
         const fullJson = {
             upm: 1000,
             glyphs: [
-                { name: 'a', id: 'id-a', layers: [layer] },
+                { name: 'a', id: 'id-a', layers: [drawing] },
                 {
                     name: 'newcomp',
                     id: 'id-new',

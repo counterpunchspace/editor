@@ -104,7 +104,7 @@ describe('history visibility vs undo actionability', () => {
         window.glyphCanvas = {
             outlineEditor: {
                 active: false,
-                selectedLayerId: null,
+                selectedDrawingId: null,
                 parseGlyphStack: jest.fn(() => []),
                 currentGlyphName: 'A'
             },
@@ -119,7 +119,7 @@ describe('history visibility vs undo actionability', () => {
         window.glyphCanvas = {
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'A' }]),
                 currentGlyphName: 'A'
             },
@@ -134,7 +134,7 @@ describe('history visibility vs undo actionability', () => {
         window.glyphCanvas = {
             outlineEditor: {
                 active: false,
-                selectedLayerId: null,
+                selectedDrawingId: null,
                 parseGlyphStack: jest.fn(() => []),
                 currentGlyphName: 'A'
             },

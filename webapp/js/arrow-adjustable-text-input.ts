@@ -4,7 +4,7 @@ type ArrowAdjustableTextInputOptions = {
     applyValue: (value: number) => void | Promise<void>;
     findReplacementInput?: () => HTMLInputElement | null;
     /**
-     * What the field edits (layer, selection, cell). Together with the field
+     * What the field edits (drawing, selection, cell). Together with the field
      * itself it names the edit burst: a held arrow key is one history item
      * and one cloud send, not one per repeat. `false` when `applyValue` runs
      * its own burst.

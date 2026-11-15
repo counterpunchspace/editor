@@ -152,7 +152,7 @@ const GROUPS = {
             'tests/change-bridge-cross-window.spec.ts',
             'tests/feature-subset-fustat.spec.ts',
             'tests/python-live-runtime.spec.ts',
-            'tests/add-master-large-font.spec.ts'
+            'tests/add-station-large-font.spec.ts'
         ]
     },
     'cloud-collab': {
@@ -165,7 +165,7 @@ const GROUPS = {
         'quota': ['tests/cloud-collab-quota.spec.ts'],
         'deletion': ['tests/cloud-collab-deletion.spec.ts'],
         'sparse-closure': ['tests/cloud-collab-sparse-closure.spec.ts'],
-        'master-topology': ['tests/cloud-collab-master-topology.spec.ts'],
+        'master-topology': ['tests/cloud-collab-station-topology.spec.ts'],
         'three-window-sync': ['tests/cloud-collab-three-window-sync.spec.ts'],
         'three-window-relay': ['tests/cloud-collab-three-window-relay.spec.ts'],
         'room-layout': ['tests/cloud-collab-room-layout.spec.ts']

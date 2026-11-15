@@ -167,36 +167,36 @@ export function resolveUndoSurfaceAffinity(options: {
     return null;
 }
 
-export function deriveOriginatingLayerFromPaths(paths: string[]): {
+export function deriveOriginatingDrawingFromPaths(paths: string[]): {
     glyphName: string | null;
     layerId: string | null;
 } {
     for (const path of paths) {
         const glyphName = deriveGlyphNameFromPath(path);
-        const layerId = deriveLayerIdFromPath(path);
-        if (glyphName && layerId) {
-            return { glyphName, layerId };
+        const drawingId = deriveDrawingIdFromPath(path);
+        if (glyphName && drawingId) {
+            return { glyphName, layerId: drawingId };
         }
     }
     return { glyphName: null, layerId: null };
 }
 
-function operationPathTouchesLayer(
+function operationPathTouchesDrawing(
     path: (string | number)[] | undefined
 ): boolean {
-    return !!path && !!deriveLayerId(path);
+    return !!path && !!deriveDrawingId(path);
 }
 
 /**
- * Transaction undo origin: the layer the user edited, not each written
- * cascade/replay target. Canvas context wins for layer-touching commits so
+ * Transaction undo origin: the drawing the user edited, not each written
+ * cascade/replay target. Canvas context wins for drawing-touching commits so
  * dependent snapshots cannot claim ownership. Font-root canvas edits (kerning)
  * leave origin unset.
  */
-export function resolveCommitOriginatingLayer(options: {
+export function resolveCommitOriginatingDrawing(options: {
     contextSurface?: HistoryUndoSurface | null;
     contextGlyphName?: string | null;
-    contextLayerId?: string | null;
+    contextDrawingId?: string | null;
     operations: Array<{
         originatingGlyphName?: string | null;
         originatingLayerId?: string | null;
@@ -205,21 +205,21 @@ export function resolveCommitOriginatingLayer(options: {
     }>;
 }): { glyphName: string | null; layerId: string | null } {
     const operations = options.operations ?? [];
-    const touchesLayer = operations.some(
+    const touchesDrawing = operations.some(
         (operation) =>
-            operationPathTouchesLayer(operation.applyPath) ||
-            operationPathTouchesLayer(operation.path)
+            operationPathTouchesDrawing(operation.applyPath) ||
+            operationPathTouchesDrawing(operation.path)
     );
 
     if (
         options.contextSurface === 'canvas' &&
         options.contextGlyphName &&
-        options.contextLayerId &&
-        touchesLayer
+        options.contextDrawingId &&
+        touchesDrawing
     ) {
         return {
             glyphName: options.contextGlyphName,
-            layerId: options.contextLayerId
+            layerId: options.contextDrawingId
         };
     }
 
@@ -232,7 +232,7 @@ export function resolveCommitOriginatingLayer(options: {
         }
     }
 
-    return deriveOriginatingLayerFromPaths(
+    return deriveOriginatingDrawingFromPaths(
         operations.map((operation) => {
             const path = operation.applyPath ?? operation.path ?? [];
             return joinPathWithGlyphSeparator(path);
@@ -241,13 +241,13 @@ export function resolveCommitOriginatingLayer(options: {
 }
 
 /**
- * Originating layer for collaboration / history display metadata.
+ * Originating drawing for collaboration / history display metadata.
  *
- * Only layer-scoped edits invent an origin from paths. Font- and glyph-scoped
- * packets often include many layer paths as structural payloads (add/remove
- * master, glyph paste cascades); those must not become a fake Layer origin.
+ * Only drawing-scoped edits invent an origin from paths. Font- and glyph-scoped
+ * packets often include many drawing paths as structural payloads (add/remove
+ * station, glyph paste cascades); those must not become a fake drawing origin.
  */
-export function resolveCollaborationOriginatingLayer(
+export function resolveCollaborationOriginatingDrawing(
     undoScope: UndoScope,
     entries: Array<{
         path: string;
@@ -268,29 +268,31 @@ export function resolveCollaborationOriginatingLayer(
         return { glyphName: null, layerId: null };
     }
 
-    return deriveOriginatingLayerFromPaths(entries.map((entry) => entry.path));
+    return deriveOriginatingDrawingFromPaths(
+        entries.map((entry) => entry.path)
+    );
 }
 
-function collectTouchedLayerIdsForGlyph(
+function collectTouchedDrawingIdsForGlyph(
     paths: string[],
     glyphName: string
 ): Set<string> {
-    const layerIds = new Set<string>();
+    const drawingIds = new Set<string>();
     for (const path of paths) {
         if (deriveGlyphNameFromPath(path) !== glyphName) {
             continue;
         }
-        const layerId = deriveLayerIdFromPath(path);
-        if (layerId) {
-            layerIds.add(layerId);
+        const drawingId = deriveDrawingIdFromPath(path);
+        if (drawingId) {
+            drawingIds.add(drawingId);
         }
     }
-    return layerIds;
+    return drawingIds;
 }
 
 /**
  * History row origin subtitle: which undo surface owns this edit.
- * Prefers stamped undoScope over path-inferred layer identity.
+ * Prefers stamped undoScope over path-inferred drawing identity.
  */
 export function formatHistoryOriginLabel(options: {
     undoScope: UndoScope;
@@ -300,9 +302,9 @@ export function formatHistoryOriginLabel(options: {
     originatingGlyphName?: string | null;
     originatingLayerId?: string | null;
     changePaths?: string[];
-    resolveLayerMasterDisplayName?: (
+    resolveDrawingStationDisplayName?: (
         glyphName: string,
-        layerOrMasterId: string
+        drawingOrStationId: string
     ) => string;
 }): string {
     if (options.historyTargetKey || options.historyTargetLabel) {
@@ -310,9 +312,9 @@ export function formatHistoryOriginLabel(options: {
     }
 
     if (options.undoSurfaceAffinity === 'canvas') {
-        const layerOriginLabel = formatLayerHistoryOriginLabel(options);
-        if (layerOriginLabel) {
-            return layerOriginLabel;
+        const drawingOriginLabel = formatDrawingHistoryOriginLabel(options);
+        if (drawingOriginLabel) {
+            return drawingOriginLabel;
         }
         return 'Editing View';
     }
@@ -326,51 +328,51 @@ export function formatHistoryOriginLabel(options: {
     }
 
     if (options.undoScope === 'glyph') {
-        const layerOriginLabel = formatLayerHistoryOriginLabel(options);
-        if (layerOriginLabel) {
-            return layerOriginLabel;
+        const drawingOriginLabel = formatDrawingHistoryOriginLabel(options);
+        if (drawingOriginLabel) {
+            return drawingOriginLabel;
         }
         return 'Overview';
     }
 
-    return formatLayerHistoryOriginLabel(options) ?? 'Font';
+    return formatDrawingHistoryOriginLabel(options) ?? 'Font';
 }
 
-function formatLayerHistoryOriginLabel(options: {
+function formatDrawingHistoryOriginLabel(options: {
     originatingGlyphName?: string | null;
     originatingLayerId?: string | null;
     changePaths?: string[];
-    resolveLayerMasterDisplayName?: (
+    resolveDrawingStationDisplayName?: (
         glyphName: string,
-        layerOrMasterId: string
+        drawingOrStationId: string
     ) => string;
 }): string | null {
-    const pathOrigin = deriveOriginatingLayerFromPaths(
+    const pathOrigin = deriveOriginatingDrawingFromPaths(
         options.changePaths ?? []
     );
     const originatingGlyph =
         options.originatingGlyphName ?? pathOrigin.glyphName;
-    const originatingLayer = options.originatingLayerId ?? pathOrigin.layerId;
+    const originatingDrawing = options.originatingLayerId ?? pathOrigin.layerId;
 
-    if (!originatingGlyph || !originatingLayer) {
+    if (!originatingGlyph || !originatingDrawing) {
         return null;
     }
 
-    const touchedLayerIds = collectTouchedLayerIdsForGlyph(
+    const touchedDrawingIds = collectTouchedDrawingIdsForGlyph(
         options.changePaths ?? [],
         originatingGlyph
     );
-    if (touchedLayerIds.size > 1) {
-        return `Layer · ${originatingGlyph}`;
+    if (touchedDrawingIds.size > 1) {
+        return `Drawing · ${originatingGlyph}`;
     }
 
-    const layerLabel = options.resolveLayerMasterDisplayName
-        ? options.resolveLayerMasterDisplayName(
+    const drawingLabel = options.resolveDrawingStationDisplayName
+        ? options.resolveDrawingStationDisplayName(
               originatingGlyph,
-              originatingLayer
+              originatingDrawing
           )
-        : originatingLayer;
-    return `Layer · ${originatingGlyph} / ${layerLabel}`;
+        : originatingDrawing;
+    return `Drawing · ${originatingGlyph} / ${drawingLabel}`;
 }
 
 export function normalizeGlyphRenames(
@@ -414,14 +416,14 @@ export function glyphRenamesForHistoryAction(
         }))
     );
 }
-export function getLayerTouchKey(
+export function getDrawingTouchKey(
     glyphName: string | null,
-    layerId: string | null
+    drawingId: string | null
 ): string | null {
-    if (!glyphName || !layerId) {
+    if (!glyphName || !drawingId) {
         return null;
     }
-    return `${glyphName}@@${layerId}`;
+    return `${glyphName}@@${drawingId}`;
 }
 
 export function normalizeWorkerReplayTargets(
@@ -438,7 +440,7 @@ export function normalizeWorkerReplayTargets(
         }
 
         normalizedTargets.set(
-            getLayerTouchKey(target.glyphName, target.layerId)!,
+            getDrawingTouchKey(target.glyphName, target.layerId)!,
             {
                 glyphName: target.glyphName,
                 layerId: target.layerId
@@ -513,7 +515,7 @@ export interface ChangeLogEntry {
     originatingLayerId: string | null;
     /** Which screen side stayed visually anchored for this edit */
     visualAnchorSide?: 'left' | 'right' | null;
-    /** Exact worker cache layer targets needed to replay this edit incrementally */
+    /** Exact worker cache drawing targets needed to replay this edit incrementally */
     workerReplayTargets: WorkerReplayTarget[];
     /** Glyph-map key moves that must preserve cache ordering without a Y.Doc dump. */
     glyphRenames: GlyphRename[];
@@ -560,7 +562,7 @@ export function createLogEntry(
         property?: string;
         touchedPaths?: string[];
         touchedGlyphNames?: string[];
-        touchedLayerKeys?: string[];
+        touchedDrawingKeys?: string[];
         historyTargetType?: HistoryTargetType | null;
         historyTargetKey?: string | null;
         historyTargetLabel?: string | null;
@@ -582,13 +584,13 @@ export function createLogEntry(
 ): ChangeLogEntry {
     const nextId = _nextId++;
     const glyphName = deriveGlyphNameFromPath(fields.path);
-    const layerId = deriveLayerIdFromPath(fields.path);
+    const drawingId = deriveDrawingIdFromPath(fields.path);
     return attachDerivedEntryAccessors({
         id: nextId,
         historyItemId: fields.historyItemId ?? `history-item-${nextId}`,
         historyAction: fields.historyAction ?? 'change',
         targetHistoryItemId: fields.targetHistoryItemId ?? null,
-        undoScope: fields.undoScope ?? deriveUndoScope(glyphName, layerId),
+        undoScope: fields.undoScope ?? deriveUndoScope(glyphName, drawingId),
         undoSurfaceAffinity: fields.undoSurfaceAffinity ?? null,
         timestamp: fields.timestamp,
         transactionDurationMs: fields.transactionDurationMs ?? null,
@@ -638,7 +640,7 @@ export type ChangeLogEntryLike = Omit<
     property?: string | null;
     touchedPaths?: string[] | null;
     touchedGlyphNames?: string[] | null;
-    touchedLayerKeys?: string[] | null;
+    touchedDrawingKeys?: string[] | null;
     historyTargetType?: HistoryTargetType | null;
     historyTargetKey?: string | null;
     historyTargetLabel?: string | null;
@@ -667,7 +669,7 @@ export interface HistoryStackItem {
     lastAction: HistoryAction;
     historyTargetKeys: string[];
     workerReplayTargets: WorkerReplayTarget[];
-    /** Glyph/layer where the forward edit started; canvas undo also includes other written layers of this glyph. */
+    /** Glyph/drawing where the forward edit started; canvas undo also includes other written drawings of this glyph. */
     originatingGlyphName: string | null;
     originatingLayerId: string | null;
     /** Change-log index of the item's first forward entry. */
@@ -684,7 +686,7 @@ function getGlyphScopeKey(glyphName: string | null): string {
     return glyphName ?? FONT_SCOPE_KEY;
 }
 
-export function isDerivedLayerChangePath(
+export function isDerivedDrawingChangePath(
     path: string,
     originatingGlyphName: string | null | undefined
 ): boolean {
@@ -695,11 +697,11 @@ export function isDerivedLayerChangePath(
     return !!glyphName && glyphName !== originatingGlyphName;
 }
 
-function getLayerScopeKey(
+function getDrawingScopeKey(
     glyphName: string | null,
-    layerId: string | null
+    drawingId: string | null
 ): string | null {
-    return getLayerTouchKey(glyphName, layerId);
+    return getDrawingTouchKey(glyphName, drawingId);
 }
 
 /**
@@ -755,15 +757,15 @@ export function joinPathWithGlyphSeparator(path: (string | number)[]): string {
     if (path.length === 2) {
         return `${path[0]}.${path[1]}:`;
     }
-    // Glyph-level fields are not layer ids. A trailing colon here makes
-    // format_specific.metric_left look like a layer named metric_left.
+    // Glyph-level fields are not drawing ids. A trailing colon here makes
+    // format_specific.metric_left look like a drawing named metric_left.
     if (path[2] !== 'layers') {
         return `${path[0]}.${path[1]}:${encodePathTail(path.slice(2))}`;
     }
     // Separator after glyph name
     let result = path[0] + '.' + path[1] + ':' + path[2];
     if (path.length <= 3) return result;
-    // Separator after layer ID (path[3]). Later segments may contain dots
+    // Separator after drawing ID (path[3]). Later segments may contain dots
     // (Glyphs metrics-key names), so those dots are escaped.
     result += '.' + path[3] + ':' + encodePathTail(path.slice(4));
     return result;
@@ -771,10 +773,10 @@ export function joinPathWithGlyphSeparator(path: (string | number)[]): string {
 
 /**
  * Split a change-path string that uses ':' as the separator at glyph-name
- * and layer-ID boundaries.
+ * and drawing-ID boundaries.
  *
  * Format: glyphs.{glyphName}:layers.{layerId}:shapes.0.nodes.2.x
- * (glyph names and layer IDs may contain dots — ':' is unambiguous.)
+ * (glyph names and drawing IDs may contain dots — ':' is unambiguous.)
  */
 function splitGlyphPath(path: string): string[] | null {
     if (!path.startsWith('glyphs.')) {
@@ -792,24 +794,24 @@ function splitGlyphPath(path: string): string[] | null {
     const afterGlyph = rest.slice(colonIdx + 1);
     if (!afterGlyph) return ['glyphs', glyphName];
 
-    // Split layer-id boundary: layers.{layerId}:rest
+    // Split drawing-id boundary: layers.{layerId}:rest
     const secondColonIdx = afterGlyph.indexOf(':');
     if (secondColonIdx < 0) {
-        // No layer separator — remainder is a glyph-level field path.
+        // No drawing separator — remainder is a glyph-level field path.
         return ['glyphs', glyphName, ...decodePathTail(afterGlyph)];
     }
 
-    const layerPart = afterGlyph.slice(0, secondColonIdx); // "layers.layer.regular.v1"
-    const afterLayer = afterGlyph.slice(secondColonIdx + 1); // "shapes.0.nodes.2.x"
+    const drawingPart = afterGlyph.slice(0, secondColonIdx); // "layers.layer.regular.v1"
+    const afterDrawing = afterGlyph.slice(secondColonIdx + 1); // "shapes.0.nodes.2.x"
 
-    const layerSegments = layerPart.split('.');
-    // layerSegments[0] should be "layers", the rest is the layer ID
-    const layerId = layerSegments.slice(1).join('.');
+    const drawingSegments = drawingPart.split('.');
+    // layerSegments[0] should be "layers", the rest is the drawing ID
+    const drawingId = drawingSegments.slice(1).join('.');
 
-    const segments = ['glyphs', glyphName, 'layers', layerId];
-    if (!afterLayer) return segments;
+    const segments = ['glyphs', glyphName, 'layers', drawingId];
+    if (!afterDrawing) return segments;
 
-    return [...segments, ...decodePathTail(afterLayer)];
+    return [...segments, ...decodePathTail(afterDrawing)];
 }
 
 export function getPathSegments(path: string): string[] {
@@ -853,7 +855,7 @@ function attachDerivedEntryAccessors(entry: ChangeLogEntry): ChangeLogEntry {
         layerId: {
             configurable: true,
             enumerable: false,
-            get: () => deriveLayerIdFromPath(entry.path)
+            get: () => deriveDrawingIdFromPath(entry.path)
         },
         objectType: {
             configurable: true,
@@ -880,10 +882,10 @@ function attachDerivedEntryAccessors(entry: ChangeLogEntry): ChangeLogEntry {
             enumerable: false,
             get: () => deriveGlyphNamesFromPaths([entry.path])
         },
-        touchedLayerKeys: {
+        touchedDrawingKeys: {
             configurable: true,
             enumerable: false,
-            get: () => deriveLayerTouchKeysFromPaths([entry.path])
+            get: () => deriveDrawingTouchKeysFromPaths([entry.path])
         }
     });
 
@@ -931,12 +933,12 @@ function removeFromStack(stack: string[], itemId: string): void {
 
 function deriveUndoScope(
     glyphName: string | null,
-    layerId: string | null
+    drawingId: string | null
 ): UndoScope {
     if (!glyphName) {
         return 'font';
     }
-    if (layerId) {
+    if (drawingId) {
         return 'layer';
     }
     return 'glyph';
@@ -945,9 +947,9 @@ function deriveUndoScope(
 function deriveHistoryItemUndoScope(
     entries: ChangeLogEntry[],
     glyphNames: Set<string>,
-    layerIds: Set<string>,
+    drawingIds: Set<string>,
     originatingGlyph: string | null,
-    originatingLayerId: string | null
+    originatingDrawingId: string | null
 ): UndoScope {
     if (entries.some((entry) => entry.undoScope === 'font')) {
         return 'font';
@@ -956,16 +958,16 @@ function deriveHistoryItemUndoScope(
         return 'font';
     }
     if (glyphNames.size > 1) {
-        // Layer edits that cascade into dependent glyphs stay on the
-        // originating layer's stack.
+        // Drawing edits that cascade into dependent glyphs stay on the
+        // originating drawing's stack.
         return originatingGlyph &&
-            originatingLayerId &&
+            originatingDrawingId &&
             entries.every(
                 (entry) =>
                     entry.undoScope === 'layer' &&
                     (deriveGlyphNameFromPath(entry.path) !== originatingGlyph ||
-                        deriveLayerIdFromPath(entry.path) ===
-                            originatingLayerId)
+                        deriveDrawingIdFromPath(entry.path) ===
+                            originatingDrawingId)
             ) &&
             !historyItemHasFontStructuralPath(entries)
             ? 'layer'
@@ -974,14 +976,14 @@ function deriveHistoryItemUndoScope(
     if (entries.some((entry) => entry.undoScope === 'glyph')) {
         return 'glyph';
     }
-    if (layerIds.size !== 1) {
+    if (drawingIds.size !== 1) {
         return 'glyph';
     }
     return 'layer';
 }
 
 /**
- * True for font-root edits (masters, axes, names, …). Layer paths under
+ * True for font-root edits (stations, axes, names, …). Drawing paths under
  * `glyphs.*` are not structural even when the history item is font-scoped
  * for undo (e.g. sidebearing cascades).
  */
@@ -1025,9 +1027,9 @@ function stripMutableHistoryItem(
 
     const {
         glyphNameSet: _glyphNameSet,
-        layerIdSet: _layerIdSet,
+        drawingIdSet: _drawingIdSet,
         touchedPathSet: _touchedPathSet,
-        touchedLayerKeySet: _touchedLayerKeySet,
+        touchedDrawingKeySet: _touchedDrawingKeySet,
         scopeKeys: _scopeKeys,
         historyTargetKeySet: _historyTargetKeySet,
         workerReplayTargetMap: _workerReplayTargetMap,
@@ -1038,9 +1040,9 @@ function stripMutableHistoryItem(
 
 type MutableHistoryStackItem = HistoryStackItem & {
     glyphNameSet: Set<string>;
-    layerIdSet: Set<string>;
+    drawingIdSet: Set<string>;
     touchedPathSet: Set<string>;
-    touchedLayerKeySet: Set<string>;
+    touchedDrawingKeySet: Set<string>;
     scopeKeys: Set<string>;
     historyTargetKeySet: Set<string>;
     workerReplayTargetMap: Map<string, WorkerReplayTarget>;
@@ -1079,7 +1081,7 @@ export function historyReplayValue(
     return hasReplayPayload ? entry.replayNewValue : entry.newValue;
 }
 
-/** Glyph roots (`glyphs.A`) and layer roots (`glyphs.A:layers.L`). */
+/** Glyph roots (`glyphs.A`) and drawing roots (`glyphs.A:layers.L`). */
 export function isSnapshotRootPath(path: string): boolean {
     const segments = getPathSegments(path);
     return (
@@ -1093,7 +1095,7 @@ export function isSnapshotRootPath(path: string): boolean {
  * A forward entry can be replayed when it carries the value its direction
  * needs (`set` needs either side; `add`/`remove` carry one side and delete
  * on the other). Snapshot roots only replay objects (null/undefined means
- * absent): metadata-only layer packets carry label strings there instead.
+ * absent): metadata-only drawing packets carry label strings there instead.
  */
 export function isReplayableHistoryEntry(entry: ChangeLogEntry): boolean {
     const oldValue = historyReplayValue(entry, 'undo');
@@ -1138,9 +1140,9 @@ function processHistoryEntry(
                 undoSurfaceAffinity: entry.undoSurfaceAffinity ?? null,
                 touchedPaths: [],
                 glyphNameSet: new Set<string>(),
-                layerIdSet: new Set<string>(),
+                drawingIdSet: new Set<string>(),
                 touchedPathSet: new Set<string>(),
-                touchedLayerKeySet: new Set<string>(),
+                touchedDrawingKeySet: new Set<string>(),
                 scopeKeys: new Set<string>(),
                 historyTargetKeySet: new Set<string>(),
                 workerReplayTargetMap: new Map<string, WorkerReplayTarget>(),
@@ -1161,7 +1163,7 @@ function processHistoryEntry(
     };
 
     const entryGlyphName = deriveGlyphNameFromPath(entry.path);
-    const entryLayerId = deriveLayerIdFromPath(entry.path);
+    const entryDrawingId = deriveDrawingIdFromPath(entry.path);
     const glyphScopeKey = getGlyphScopeKey(entryGlyphName);
 
     if (entry.historyAction === 'change') {
@@ -1192,8 +1194,8 @@ function processHistoryEntry(
         if (entryGlyphName && !item.glyphNameSet.has(entryGlyphName)) {
             item.glyphNameSet.add(entryGlyphName);
         }
-        if (entryLayerId && !item.layerIdSet.has(entryLayerId)) {
-            item.layerIdSet.add(entryLayerId);
+        if (entryDrawingId && !item.drawingIdSet.has(entryDrawingId)) {
+            item.drawingIdSet.add(entryDrawingId);
         }
         if (
             !item.originatingGlyphName &&
@@ -1208,19 +1210,25 @@ function processHistoryEntry(
             !item.originatingGlyphName &&
             !item.originatingLayerId &&
             entryGlyphName &&
-            entryLayerId
+            entryDrawingId
         ) {
-            // First layer path in the transaction is the edit origin (cascades
+            // First drawing path in the transaction is the edit origin (cascades
             // append dependents after the source write).
             item.originatingGlyphName = entryGlyphName;
-            item.originatingLayerId = entryLayerId;
+            item.originatingLayerId = entryDrawingId;
         }
         if (!item.touchedPathSet.has(entry.path)) {
             item.touchedPathSet.add(entry.path);
         }
-        const touchedLayerKey = getLayerTouchKey(entryGlyphName, entryLayerId);
-        if (touchedLayerKey && !item.touchedLayerKeySet.has(touchedLayerKey)) {
-            item.touchedLayerKeySet.add(touchedLayerKey);
+        const touchedDrawingKey = getDrawingTouchKey(
+            entryGlyphName,
+            entryDrawingId
+        );
+        if (
+            touchedDrawingKey &&
+            !item.touchedDrawingKeySet.has(touchedDrawingKey)
+        ) {
+            item.touchedDrawingKeySet.add(touchedDrawingKey);
         }
         if (
             entry.historyTargetKey &&
@@ -1231,7 +1239,7 @@ function processHistoryEntry(
         for (const target of normalizeWorkerReplayTargets(
             entry.workerReplayTargets
         )) {
-            const targetKey = getLayerTouchKey(
+            const targetKey = getDrawingTouchKey(
                 target.glyphName,
                 target.layerId
             );
@@ -1242,14 +1250,14 @@ function processHistoryEntry(
         item.undoScope = deriveHistoryItemUndoScope(
             item.entries,
             item.glyphNameSet,
-            item.layerIdSet,
+            item.drawingIdSet,
             item.originatingGlyphName,
             item.originatingLayerId
         );
-        // Master add/remove (and similar) mix a font-root write with many
-        // glyph layer paths. Keep them on the Font undo surface — do not
-        // attribute the transaction to the first touched layer, or History
-        // labels them "Layer" and Font-context undo cannot reach them.
+        // Station add/remove (and similar) mix a font-root write with many
+        // glyph drawing paths. Keep them on the Font undo surface — do not
+        // attribute the transaction to the first touched drawing, or History
+        // labels them “Drawing” and Font-context undo cannot reach them.
         if (historyItemHasFontStructuralPath(item.entries)) {
             item.originatingGlyphName = null;
             item.originatingLayerId = null;
@@ -1260,19 +1268,25 @@ function processHistoryEntry(
             getStack(activeByScope, glyphScopeKey).push(item.id);
         }
 
-        const layerScopeKey = getLayerScopeKey(entryGlyphName, entryLayerId);
+        const drawingScopeKey = getDrawingScopeKey(
+            entryGlyphName,
+            entryDrawingId
+        );
         if (
-            layerScopeKey &&
-            !item.scopeKeys.has(layerScopeKey) &&
+            drawingScopeKey &&
+            !item.scopeKeys.has(drawingScopeKey) &&
             !historyItemHasFontStructuralPath(item.entries)
         ) {
-            item.scopeKeys.add(layerScopeKey);
-            getStack(activeByScope, layerScopeKey).push(item.id);
+            item.scopeKeys.add(drawingScopeKey);
+            getStack(activeByScope, drawingScopeKey).push(item.id);
         }
 
         getStack(undoneByScope, glyphScopeKey).length = 0;
-        if (layerScopeKey && !historyItemHasFontStructuralPath(item.entries)) {
-            getStack(undoneByScope, layerScopeKey).length = 0;
+        if (
+            drawingScopeKey &&
+            !historyItemHasFontStructuralPath(item.entries)
+        ) {
+            getStack(undoneByScope, drawingScopeKey).length = 0;
         }
         return;
     }
@@ -1346,12 +1360,12 @@ export function resolveHistoryTargetItemId(
     entries: ChangeLogEntry[],
     glyphName: string | null | undefined,
     historyAction: 'undo' | 'redo',
-    layerId?: string | null
+    drawingId?: string | null
 ): string | null {
     return (
         resolveHistoryTargetItem(entries, {
             glyphName,
-            layerId,
+            layerId: drawingId,
             historyAction
         })?.id ?? null
     );
@@ -1368,13 +1382,13 @@ export function resolveHistoryTargetItem(
     }
 ): HistoryStackItem | null {
     const glyphName = options.glyphName ?? null;
-    const layerId = options.layerId ?? null;
+    const drawingId = options.layerId ?? null;
     const historyTargetKey = options.historyTargetKey ?? null;
 
     return selectHistoryTarget(
         buildHistoryStackItems(entries, {
             glyphName,
-            layerId,
+            layerId: drawingId,
             includeUndone: true,
             historyTargetKey,
             surface: options.surface ?? null
@@ -1499,42 +1513,42 @@ function inferHistoryUndoSurface(options: {
     if (options.glyphName) {
         return 'overview';
     }
-    // No surface / glyph / layer / feature key → unfiltered list (tests, dumps).
+    // No surface / glyph / drawing / feature key → unfiltered list (tests, dumps).
     return null;
 }
 
 /**
- * Canvas Cmd+Z includes every layer of the originating glyph that this item
+ * Canvas Cmd+Z includes every drawing of the originating glyph that this item
  * actually wrote. Dependent glyphs in the same packet stay off that stack.
- * Editing View font-root edits (kerning, master guides, …) join via
+ * Editing View font-root edits (kerning, station guides, …) join via
  * `undoSurfaceAffinity === 'canvas'` only when the item has no originating
- * layer — affinity must not make a layer-origin packet global.
+ * drawing — affinity must not make a drawing-origin packet global.
  */
-function historyItemTouchesCanvasLayer(
+function historyItemTouchesCanvasDrawing(
     item: MutableHistoryStackItem,
     glyphName: string,
-    layerId: string
+    drawingId: string
 ): boolean {
     if (item.originatingGlyphName !== glyphName) {
         return false;
     }
-    if (item.originatingLayerId === layerId) {
+    if (item.originatingLayerId === drawingId) {
         return true;
     }
-    const touchKey = getLayerTouchKey(glyphName, layerId);
-    return !!touchKey && item.touchedLayerKeySet.has(touchKey);
+    const touchKey = getDrawingTouchKey(glyphName, drawingId);
+    return !!touchKey && item.touchedDrawingKeySet.has(touchKey);
 }
 
 function historyItemMatchesCanvasSurface(
     item: MutableHistoryStackItem,
     glyphName: string | null,
-    layerId: string | null
+    drawingId: string | null
 ): boolean {
     if (item.originatingGlyphName) {
-        if (glyphName && layerId) {
-            return historyItemTouchesCanvasLayer(item, glyphName, layerId);
+        if (glyphName && drawingId) {
+            return historyItemTouchesCanvasDrawing(item, glyphName, drawingId);
         }
-        // Text mode (no layer): still reach layer-origin edits for the caret glyph.
+        // Text mode (no drawing): still reach drawing-origin edits for the caret glyph.
         return (
             !!glyphName &&
             item.originatingGlyphName === glyphName &&
@@ -1544,8 +1558,8 @@ function historyItemMatchesCanvasSurface(
     if (item.undoSurfaceAffinity === 'canvas') {
         return true;
     }
-    if (glyphName && layerId) {
-        return historyItemTouchesCanvasLayer(item, glyphName, layerId);
+    if (glyphName && drawingId) {
+        return historyItemTouchesCanvasDrawing(item, glyphName, drawingId);
     }
     return false;
 }
@@ -1560,12 +1574,12 @@ function historyItemMatchesSurface(
     }
 ): boolean {
     const glyphName = options.glyphName ?? null;
-    const layerId = options.layerId ?? null;
+    const drawingId = options.layerId ?? null;
     const historyTargetKey = options.historyTargetKey ?? null;
 
     switch (surface) {
         case 'canvas': {
-            return historyItemMatchesCanvasSurface(item, glyphName, layerId);
+            return historyItemMatchesCanvasSurface(item, glyphName, drawingId);
         }
         case 'overview': {
             if (item.undoSurfaceAffinity === 'overview') {
@@ -1595,7 +1609,7 @@ function historyItemMatchesSurface(
             if (item.originatingLayerId) {
                 return false;
             }
-            // Master add/remove (and similar) rewrite glyph layers but are
+            // Station add/remove (and similar) rewrite glyph drawings but are
             // font-structural transactions — keep them on the Font surface.
             if (historyItemHasFontStructuralPath(item.entries)) {
                 return item.undoScope === 'font';
@@ -1707,9 +1721,9 @@ export function deriveObjectInfo(path: (string | number)[]): {
         if (path.length === 2)
             return { objectType: 'glyph', objectId: glyphName };
         if (path.length >= 4 && path[2] === 'layers') {
-            const layerId = String(path[3]);
+            const drawingId = String(path[3]);
             if (path.length === 4)
-                return { objectType: 'layer', objectId: layerId };
+                return { objectType: 'layer', objectId: drawingId };
             if (path.length >= 6 && path[4] === 'shapes') {
                 const shapeIdx = String(path[5]);
                 if (path.length === 6)
@@ -1717,7 +1731,7 @@ export function deriveObjectInfo(path: (string | number)[]): {
                 if (path.length >= 8 && path[6] === 'nodes')
                     return {
                         objectType: 'node',
-                        objectId: `${glyphName}/${layerId}/shape${shapeIdx}/node${path[7]}`
+                        objectId: `${glyphName}/${drawingId}/shape${shapeIdx}/node${path[7]}`
                     };
                 // It might be a component or path sub-property
                 return { objectType: 'shape', objectId: shapeIdx };
@@ -1725,14 +1739,14 @@ export function deriveObjectInfo(path: (string | number)[]): {
             if (path.length >= 6 && path[4] === 'anchors')
                 return {
                     objectType: 'anchor',
-                    objectId: `${glyphName}/${layerId}/anchor${path[5]}`
+                    objectId: `${glyphName}/${drawingId}/anchor${path[5]}`
                 };
             if (path.length >= 6 && path[4] === 'guides')
                 return {
                     objectType: 'guide',
-                    objectId: `${glyphName}/${layerId}/guide${path[5]}`
+                    objectId: `${glyphName}/${drawingId}/guide${path[5]}`
                 };
-            return { objectType: 'layer', objectId: layerId };
+            return { objectType: 'layer', objectId: drawingId };
         }
         return { objectType: 'glyph', objectId: glyphName };
     }
@@ -1765,7 +1779,7 @@ export function deriveGlyphName(path: (string | number)[]): string | null {
     return null;
 }
 
-export function deriveLayerId(path: (string | number)[]): string | null {
+export function deriveDrawingId(path: (string | number)[]): string | null {
     if (
         path[0] === 'glyphs' &&
         path[2] === 'layers' &&
@@ -1783,11 +1797,11 @@ export function deriveGlyphNameFromPath(path: string): string | null {
     return deriveGlyphName(getPathSegments(path));
 }
 
-export function deriveLayerIdFromPath(path: string): string | null {
+export function deriveDrawingIdFromPath(path: string): string | null {
     if (!path) {
         return null;
     }
-    return deriveLayerId(getPathSegments(path));
+    return deriveDrawingId(getPathSegments(path));
 }
 
 export function deriveObjectInfoFromPath(path: string): {
@@ -1808,35 +1822,35 @@ export function deriveGlyphNamesFromPaths(paths: string[]): string[] {
     return [...glyphNames];
 }
 
-export function deriveLayerIdsFromPaths(paths: string[]): string[] {
-    const layerIds = new Set<string>();
+export function deriveDrawingIdsFromPaths(paths: string[]): string[] {
+    const drawingIds = new Set<string>();
     for (const path of paths) {
-        const layerId = deriveLayerIdFromPath(path);
-        if (layerId) {
-            layerIds.add(layerId);
+        const drawingId = deriveDrawingIdFromPath(path);
+        if (drawingId) {
+            drawingIds.add(drawingId);
         }
     }
-    return [...layerIds];
+    return [...drawingIds];
 }
 
-export function deriveLayerTouchKeysFromPaths(paths: string[]): string[] {
-    const layerKeys = new Set<string>();
+export function deriveDrawingTouchKeysFromPaths(paths: string[]): string[] {
+    const drawingKeys = new Set<string>();
     for (const path of paths) {
         const glyphName = deriveGlyphNameFromPath(path);
-        const layerId = deriveLayerIdFromPath(path);
-        const layerKey = getLayerTouchKey(glyphName, layerId);
-        if (layerKey) {
-            layerKeys.add(layerKey);
+        const drawingId = deriveDrawingIdFromPath(path);
+        const drawingKey = getDrawingTouchKey(glyphName, drawingId);
+        if (drawingKey) {
+            drawingKeys.add(drawingKey);
         }
     }
-    return [...layerKeys];
+    return [...drawingKeys];
 }
 
 export function normalizeChangeLogEntry(
     entry: ChangeLogEntryLike
 ): ChangeLogEntry {
     const glyphName = deriveGlyphNameFromPath(entry.path);
-    const layerId = deriveLayerIdFromPath(entry.path);
+    const drawingId = deriveDrawingIdFromPath(entry.path);
     return attachDerivedEntryAccessors({
         id: entry.id,
         timestamp: entry.timestamp,
@@ -1857,7 +1871,7 @@ export function normalizeChangeLogEntry(
         promptGroupId: entry.promptGroupId ?? null,
         historyItemId: normalizeHistoryItemId(entry.historyItemId, entry.id),
         historyAction: normalizeHistoryAction(entry.historyAction),
-        undoScope: entry.undoScope ?? deriveUndoScope(glyphName, layerId),
+        undoScope: entry.undoScope ?? deriveUndoScope(glyphName, drawingId),
         undoSurfaceAffinity:
             entry.undoSurfaceAffinity === 'canvas' ||
             entry.undoSurfaceAffinity === 'overview'

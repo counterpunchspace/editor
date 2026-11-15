@@ -6,17 +6,19 @@ jest.mock('../js/logger', () => ({
     }
 }));
 
-const { LayerDataNormalizer } = require('../js/layer-data-normalizer');
+const {
+    DrawingDataNormalizer: DrawingDataNormalizer
+} = require('../js/drawing-data-normalizer');
 
-describe('LayerDataNormalizer', () => {
+describe('DrawingDataNormalizer', () => {
     test('preserves missing layer width instead of synthesizing zero', () => {
-        const normalized = LayerDataNormalizer.normalize({ shapes: [] });
+        const normalized = DrawingDataNormalizer.normalize({ shapes: [] });
 
         expect(normalized).not.toHaveProperty('width');
     });
 
     test('preserves explicit zero layer width', () => {
-        const normalized = LayerDataNormalizer.normalize({
+        const normalized = DrawingDataNormalizer.normalize({
             width: 0,
             shapes: []
         });

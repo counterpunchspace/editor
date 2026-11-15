@@ -28,8 +28,8 @@ Normative behavior lives in `APP.md` (automatic composition + sidebearing keys) 
 ## Intended architecture (do not reinvent)
 
 ```
-Resting model / Yjs / worker canonical  →  Layer.toJSON()     (logical)
-Live preview overlay                    →  Layer.toCompileJSON() (physical)
+Resting model / Yjs / worker canonical  →  Drawing.toJSON()   (logical)
+Live preview overlay                    →  Drawing.toCompileJSON() (physical)
 Rust compile-read                       →  merge overlay, bake remaining logical =+/-= once
 Commit                                  →  logical snapshots → apply_yjs_update (clears overlay) → bake → full reshape
 ```
@@ -41,9 +41,9 @@ Commit                                  →  logical snapshots → apply_yjs_upd
 | Commit sidebearing | `scope:'all'`; logical `toJSON` into Yjs; full reshape |
 | Manual composites | `invalidateTargets` only — do not rewrite transforms/width |
 | Auto composites | Mutated only by `rebuildAutomaticComposition`, never metrics translate/bake |
-| Layer identity | Always `{glyphName, layerId}` per glyph — never reuse source layer UUID for dependents |
+| Drawing identity | Always `{glyphName, layerId}` per glyph — never reuse source drawing UUID for dependents |
 
-One cascade engine: `computeLayerRecompositionClosure` in `webapp/js/recomposition-closure.ts`.
+One cascade engine: `computeDrawingRecompositionClosure` in `webapp/js/recomposition-closure.ts`.
 
 ---
 
@@ -56,9 +56,9 @@ Rough order; several plans were partially implemented then partially reverted.
 **Real problems fixed (keep these):**
 
 - Split **recompose vs invalidate** so manuals are not model-mutated.
-- Persist automatic/metrics dependents in `changedLayerTargets` even when final rebuild is a no-op (Rule 18 / APP.md), so post-commit reload does not clobber live-updated model from stale Yjs.
-- Stop metrics fast-path from translating automatic layers.
-- Per-glyph layer matching for preview/sync targets.
+- Persist automatic/metrics dependents in `changedDrawingTargets` even when final rebuild is a no-op (Rule 18 / APP.md), so post-commit reload does not clobber live-updated model from stale Yjs.
+- Stop metrics fast-path from translating automatic drawings.
+- Per-glyph drawing matching for preview/sync targets.
 
 **User feedback after:** Live still wrong / RSB still drifts on drag 2; commit path improved.
 
@@ -80,11 +80,11 @@ Coalesce frames, defer reshape, drag layout snapshots, pointer rebase, atomic pr
 
 **Real bug, wrong repro path for the reported mouse handle case:**
 
-- `collectChangedLayerUpdatesFromModel({ compileFacing: true })` used to call `updateStoredLayerData` with `toCompileJSON()`, replacing `babelfontData.layers[i]`. Because `Layer.data` is `_parent[_index]`, that **poisons** resting translates → next `toCompileJSON` double-bakes.
-- Fix: skip `updateStoredLayerData` when `compileFacing`. Harden sticky first-base in `getAutomaticCompositionLayout` when `tx ≈ leftAdjustment`.
+- `collectChangedDrawingUpdatesFromModel({ compileFacing: true })` used to call `updateStoredDrawingData` with `toCompileJSON()`, replacing `babelfontData.layers[i]`. Because `Drawing.data` is `_parent[_index]`, that **poisons** resting translates → next `toCompileJSON` double-bakes.
+- Fix: skip `updateStoredDrawingData` when `compileFacing`. Harden sticky first-base in `getAutomaticCompositionLayout` when `tx ≈ leftAdjustment`.
 - Default `toJSONString` to logical (`compileFacing === true` only when explicit).
 
-**Why it felt like “nothing changed”:** mouse LSB staging uses `collectChangedLayerUpdatesFromTargets`, which **never** wrote storage. Writeback/sticky helped keyboard/glyph-name paths and poison recovery, not the primary mouse FromTargets path.
+**Why it felt like “nothing changed”:** mouse LSB staging uses `collectChangedDrawingUpdatesFromTargets`, which **never** wrote storage. Writeback/sticky helped keyboard/glyph-name paths and poison recovery, not the primary mouse FromTargets path.
 
 ### Round E — Live drag-2 session teardown (final diagnosis)
 
@@ -106,8 +106,8 @@ Live shows RSB from **HB outlines + model advances**. Commit replaces both from 
 | Hypothesis | Why discarded for this repro |
 |------------|------------------------------|
 | `rebuildAutomaticComposition` / width formula wrong | Unit test: sequential base LSB edits keep compile-facing RSB stable |
-| Commit serialization baking into Yjs | Commit uses `modelLayer.toJSON()`; user confirmed commit settles correct |
-| Mouse path writeback poisoning model | FromTargets never called `updateStoredLayerData` |
+| Commit serialization baking into Yjs | Commit uses `modelDrawing.toJSON()`; user confirmed commit settles correct |
+| Mouse path writeback poisoning model | FromTargets never called `updateStoredDrawingData` |
 | Need more RAF coalescing | User rejected paint-only framing; reverts made things worse |
 | Sticky first-base alone | Belt-and-suspenders; doesn’t explain FromTargets-only live drift |
 

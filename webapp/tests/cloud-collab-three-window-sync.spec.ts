@@ -21,32 +21,32 @@ import {
     waitForOptionalEditingFontCompileEvent,
     getEditingFontCompileTracker,
     getCompilationErrorText,
-    extractGlyphLayerData,
-    extractRawLayerProperties,
-    extractYDocLayerKeys,
-    extractYDocLayerIds,
-    extractRawLayerShapes,
-    extractRawLayerAnchors,
-    waitForRawLayerAnchors,
+    extractGlyphDrawingData,
+    extractRawDrawingProperties,
+    extractYDocDrawingKeys,
+    extractYDocDrawingIds,
+    extractRawDrawingShapes,
+    extractRawDrawingAnchors,
+    waitForRawDrawingAnchors,
     extractModelGlyphSnapshot,
     extractRawGlyphSnapshot,
-    extractActiveLayerSelectionState,
+    extractActiveDrawingSelectionState,
     extractActiveInterpolatedRenderState,
     setInterpolatedEditorState,
-    findThinLayerId,
+    findThinDrawingId,
     setAxisSliderValue,
-    countModelLayers,
-    getModelLayerIds,
-    waitForNewAssociatedLayerId,
-    waitForLayerIdToDisappear,
-    selectLayerRow,
+    countModelDrawings,
+    getModelDrawingIds,
+    waitForNewAssociatedDrawingId,
+    waitForDrawingIdToDisappear,
+    selectDrawingRow,
     dismissVisibleTippies,
     alignEditorCanvas,
     setupEditTextMode,
     installCrossWindowTrackersOnContext,
     openLinkedEditorWindow,
     waitForWindowSyncPeers,
-    waitUntilGlyphLayerDataMatches
+    waitUntilGlyphDrawingDataMatches
 } from './helpers/change-bridge-cross-window';
 import {
     LOCAL_EDITOR_ORIGIN,
@@ -180,11 +180,13 @@ test.describe('three-window sync scenarios', () => {
                 const glyph = (window as any).currentFontModel?.findGlyph?.(
                     'a'
                 );
-                return Array.isArray(glyph?.layers) && glyph.layers.length > 0;
+                return (
+                    Array.isArray(glyph?.drawings) && glyph.drawings.length > 0
+                );
             });
 
-            const thinLayerId = await findThinLayerId(mainPage);
-            expect(thinLayerId).toBeTruthy();
+            const thinDrawingId = await findThinDrawingId(mainPage);
+            expect(thinDrawingId).toBeTruthy();
             const glyphNames = ['a', 'adieresis', 'aacute'];
             const glyphNamesWithB = [...glyphNames, 'b'];
 
@@ -338,31 +340,31 @@ test.describe('three-window sync scenarios', () => {
             // (cross-origin isolation); restore the page-side test helpers.
             await installJsonCanonicalizer(mainPage);
             await installJsonCanonicalizer(linkedPage);
-            const mainBaselineData = await extractGlyphLayerData(
+            const mainBaselineData = await extractGlyphDrawingData(
                 mainPage,
                 glyphNames
             );
-            const linkedBaselineData = await extractGlyphLayerData(
+            const linkedBaselineData = await extractGlyphDrawingData(
                 linkedPage,
                 glyphNames
             );
             expect(linkedBaselineData).toEqual(mainBaselineData);
-            await waitUntilGlyphLayerDataMatches(
+            await waitUntilGlyphDrawingDataMatches(
                 mainPage,
                 inviteePage,
                 glyphNames
             );
 
             // Verify Y.Doc has all expected keys for the Thin/ExtraLight layer
-            const mainYDocKeys = await extractYDocLayerKeys(
+            const mainYDocKeys = await extractYDocDrawingKeys(
                 mainPage,
                 'a',
-                thinLayerId
+                thinDrawingId
             );
-            const linkedYDocKeys = await extractYDocLayerKeys(
+            const linkedYDocKeys = await extractYDocDrawingKeys(
                 linkedPage,
                 'a',
-                thinLayerId
+                thinDrawingId
             );
             expect(linkedYDocKeys).toEqual(mainYDocKeys);
             // Sanity: Thin/ExtraLight layer Y.Doc must have core properties
@@ -470,15 +472,15 @@ test.describe('three-window sync scenarios', () => {
                 );
             });
             const outlineEditResult = await mainPage.evaluate(
-                async (layerId) => {
+                async (drawingId) => {
                     const bridge = (window as any).changeBridge;
                     const fontModel = (window as any).currentFontModel;
                     const currentFont = (window as any).fontManager
                         ?.currentFont;
                     const glyph = fontModel.findGlyph('a');
-                    const layer = glyph.findLayerById(layerId);
+                    const drawing = glyph.findDrawingById(drawingId);
 
-                    const paths = layer.paths;
+                    const paths = drawing.paths;
                     if (!paths.length) return { error: 'No paths found' };
 
                     const firstPath = paths[0];
@@ -505,7 +507,7 @@ test.describe('three-window sync scenarios', () => {
                         'Drag point',
                         undefined,
                         undefined,
-                        layerId,
+                        drawingId,
                         undefined,
                         undefined,
                         undefined,
@@ -518,10 +520,10 @@ test.describe('three-window sync scenarios', () => {
                     let yDocKeysAfter: string[] = [];
                     try {
                         const glyphMap = bridge.getYValue(['glyphs', 'a']);
-                        const layersMap = glyphMap.get('layers');
-                        const layerMap = layersMap.get(layerId);
-                        if (layerMap) {
-                            layerMap.forEach((_v: any, k: string) =>
+                        const drawingsMap = glyphMap.get('layers');
+                        const drawingMap = drawingsMap.get(drawingId);
+                        if (drawingMap) {
+                            drawingMap.forEach((_v: any, k: string) =>
                                 yDocKeysAfter.push(k)
                             );
                         }
@@ -537,7 +539,7 @@ test.describe('three-window sync scenarios', () => {
                         yDocKeysAfterSync: yDocKeysAfter.sort()
                     };
                 },
-                thinLayerId
+                thinDrawingId
             );
 
             expect(outlineEditResult).not.toHaveProperty('error');
@@ -549,17 +551,17 @@ test.describe('three-window sync scenarios', () => {
             // Wait for remote change to arrive and be processed in linked window
             // Before waiting, install a Y.Doc observer on the linked window
             // to trace what happens when the Yjs update is applied
-            await linkedPage.evaluate((layerId) => {
+            await linkedPage.evaluate((drawingId) => {
                 const bridge = (window as any).changeBridge;
                 const Y = (window as any).Y;
                 const glyphMap = bridge.getYValue(['glyphs', 'a']);
-                const layersMap = glyphMap.get('layers');
-                const layerMap = layersMap.get(layerId);
+                const drawingsMap = glyphMap.get('layers');
+                const drawingMap = drawingsMap.get(drawingId);
 
-                // Observe the layerMap for changes
-                if (layerMap) {
+                // Observe the drawingMap for changes
+                if (drawingMap) {
                     (window as any).__layerObserverLog = [];
-                    layerMap.observe((event: any) => {
+                    drawingMap.observe((event: any) => {
                         const log = (window as any).__layerObserverLog;
                         log.push({
                             keysChanged: [...event.keysChanged],
@@ -582,19 +584,19 @@ test.describe('three-window sync scenarios', () => {
                         });
                     });
                 }
-            }, thinLayerId);
+            }, thinDrawingId);
 
             await waitForRemoteChange(linkedPage, outlineLastSyncTime);
             try {
-                await waitUntilGlyphLayerDataMatches(
+                await waitUntilGlyphDrawingDataMatches(
                     mainPage,
                     inviteePage,
                     glyphNames
                 );
             } catch (error) {
                 const [ownerDump, inviteeDump] = await Promise.all([
-                    dumpCloudGlyphSync(mainPage, 'a', thinLayerId),
-                    dumpCloudGlyphSync(inviteePage, 'a', thinLayerId)
+                    dumpCloudGlyphSync(mainPage, 'a', thinDrawingId),
+                    dumpCloudGlyphSync(inviteePage, 'a', thinDrawingId)
                 ]);
                 console.log(
                     `ownerWebSocketTrace=${JSON.stringify(ownerDump.trace)}`
@@ -606,15 +608,20 @@ test.describe('three-window sync scenarios', () => {
             }
 
             // Check the observer log
-            const observerLog = await linkedPage.evaluate((layerId) => {
+            const observerLog = await linkedPage.evaluate((drawingId) => {
                 const bridge = (window as any).changeBridge;
                 let keys: string[] = [];
                 try {
                     const glyphMap = bridge.getYValue(['glyphs', 'a']);
-                    const layersMap = glyphMap.get('layers');
-                    const layerMap = layersMap.get(layerId);
-                    if (layerMap && typeof layerMap.forEach === 'function') {
-                        layerMap.forEach((_v: any, k: string) => keys.push(k));
+                    const drawingsMap = glyphMap.get('layers');
+                    const drawingMap = drawingsMap.get(drawingId);
+                    if (
+                        drawingMap &&
+                        typeof drawingMap.forEach === 'function'
+                    ) {
+                        drawingMap.forEach((_v: any, k: string) =>
+                            keys.push(k)
+                        );
                     }
                 } catch {}
                 return {
@@ -623,71 +630,73 @@ test.describe('three-window sync scenarios', () => {
                     fontMapObserverLog:
                         (window as any).__fontMapObserverLog || []
                 };
-            }, thinLayerId);
+            }, thinDrawingId);
             console.log('Observer log:', JSON.stringify(observerLog));
 
             // Debug: check linked window's Y.Doc and model state
-            const linkedDebug = await linkedPage.evaluate((layerId) => {
+            const linkedDebug = await linkedPage.evaluate((drawingId) => {
                 const bridge = (window as any).changeBridge;
                 const fontModel = (window as any).currentFontModel;
 
                 // Check Y.Doc: how many layers does glyph 'a' have?
-                let yDocLayerCount = 0;
-                let yDocLayerKeysAtTarget: string[] = [];
+                let yDocDrawingCount = 0;
+                let yDocDrawingKeysAtTarget: string[] = [];
                 try {
-                    const layersMap = bridge?.getYValue?.([
+                    const drawingsMap = bridge?.getYValue?.([
                         'glyphs',
                         'a',
                         'layers'
                     ]);
-                    layersMap?.forEach((layerMap: any, layerId2: string) => {
-                        yDocLayerCount++;
-                        if (
-                            layerId2 === layerId &&
-                            layerMap &&
-                            typeof layerMap.forEach === 'function'
-                        ) {
-                            layerMap.forEach((_v: any, k: string) =>
-                                yDocLayerKeysAtTarget.push(k)
-                            );
+                    drawingsMap?.forEach(
+                        (drawingMap: any, drawingId2: string) => {
+                            yDocDrawingCount++;
+                            if (
+                                drawingId2 === drawingId &&
+                                drawingMap &&
+                                typeof drawingMap.forEach === 'function'
+                            ) {
+                                drawingMap.forEach((_v: any, k: string) =>
+                                    yDocDrawingKeysAtTarget.push(k)
+                                );
+                            }
                         }
-                    });
+                    );
                 } catch {}
 
                 // Check model
                 const glyph = fontModel?.findGlyph('a');
-                const modelLayerCount = glyph?.layers?.length;
+                const modelDrawingCount = glyph?.drawings?.length;
 
                 return {
-                    yDocLayerCount,
-                    yDocLayerKeysAtTarget: yDocLayerKeysAtTarget.sort(),
-                    modelLayerCount,
-                    targetLayerId: layerId
+                    yDocLayerCount: yDocDrawingCount,
+                    yDocLayerKeysAtTarget: yDocDrawingKeysAtTarget.sort(),
+                    modelLayerCount: modelDrawingCount,
+                    targetLayerId: drawingId
                 };
-            }, thinLayerId);
+            }, thinDrawingId);
             console.log('Linked debug:', JSON.stringify(linkedDebug));
 
             // ── 6. Assert data identity after outline edit ────────────
-            const mainDataAfterOutline = await extractGlyphLayerData(
+            const mainDataAfterOutline = await extractGlyphDrawingData(
                 mainPage,
                 glyphNames
             );
-            const linkedDataAfterOutline = await extractGlyphLayerData(
+            const linkedDataAfterOutline = await extractGlyphDrawingData(
                 linkedPage,
                 glyphNames
             );
             expect(linkedDataAfterOutline).toEqual(mainDataAfterOutline);
 
             // Y.Doc layer keys must be preserved in the linked window
-            const mainYDocKeysAfterOutline = await extractYDocLayerKeys(
+            const mainYDocKeysAfterOutline = await extractYDocDrawingKeys(
                 mainPage,
                 'a',
-                thinLayerId
+                thinDrawingId
             );
-            const linkedYDocKeysAfterOutline = await extractYDocLayerKeys(
+            const linkedYDocKeysAfterOutline = await extractYDocDrawingKeys(
                 linkedPage,
                 'a',
-                thinLayerId
+                thinDrawingId
             );
             expect(linkedYDocKeysAfterOutline).toEqual(
                 mainYDocKeysAfterOutline
@@ -700,35 +709,35 @@ test.describe('three-window sync scenarios', () => {
             expect(linkedYDocKeysAfterOutline).toContain('anchorsById');
 
             // Raw babelfontData layer properties must be preserved
-            const mainRawProps = await extractRawLayerProperties(
+            const mainRawProps = await extractRawDrawingProperties(
                 mainPage,
                 'a',
-                thinLayerId
+                thinDrawingId
             );
-            const linkedRawProps = await extractRawLayerProperties(
+            const linkedRawProps = await extractRawDrawingProperties(
                 linkedPage,
                 'a',
-                thinLayerId
+                thinDrawingId
             );
             expect(linkedRawProps).toEqual(mainRawProps);
 
-            const mainAnchorsBeforeAnchorEdit = await extractRawLayerAnchors(
+            const mainAnchorsBeforeAnchorEdit = await extractRawDrawingAnchors(
                 mainPage,
                 'a',
-                thinLayerId
+                thinDrawingId
             );
 
             // Shapes must have 'closed' field preserved (Y.Doc roundtrip
             // must not lose it — this is what causes compilation errors)
-            const mainShapes = await extractRawLayerShapes(
+            const mainShapes = await extractRawDrawingShapes(
                 mainPage,
                 'a',
-                thinLayerId
+                thinDrawingId
             );
-            const linkedShapes = await extractRawLayerShapes(
+            const linkedShapes = await extractRawDrawingShapes(
                 linkedPage,
                 'a',
-                thinLayerId
+                thinDrawingId
             );
             expect(linkedShapes).toEqual(mainShapes);
             // Verify 'closed' field exists on path shapes
@@ -740,10 +749,13 @@ test.describe('three-window sync scenarios', () => {
             }
 
             // Model layer count must stay at 3 (ExtraLight, Regular, ExtraBold)
-            const mainLayerCount = await countModelLayers(mainPage, 'a');
-            const linkedLayerCount = await countModelLayers(linkedPage, 'a');
-            expect(linkedLayerCount).toBe(mainLayerCount);
-            expect(linkedLayerCount).toBe(3);
+            const mainDrawingCount = await countModelDrawings(mainPage, 'a');
+            const linkedDrawingCount = await countModelDrawings(
+                linkedPage,
+                'a'
+            );
+            expect(linkedDrawingCount).toBe(mainDrawingCount);
+            expect(linkedDrawingCount).toBe(3);
 
             // ── 7. Anchor edit: move top anchor ──────────────────────
             const anchorLastSyncTime =
@@ -751,15 +763,15 @@ test.describe('three-window sync scenarios', () => {
             const linkedCompileBeforeAnchor =
                 await getEditingFontCompileTracker(linkedPage);
             const anchorEditResult = await mainPage.evaluate(
-                async (layerId) => {
+                async (drawingId) => {
                     const bridge = (window as any).changeBridge;
                     const fontModel = (window as any).currentFontModel;
                     const currentFont = (window as any).fontManager
                         ?.currentFont;
                     const glyph = fontModel.findGlyph('a');
-                    const layer = glyph.findLayerById(layerId);
+                    const drawing = glyph.findDrawingById(drawingId);
 
-                    const anchors = layer.anchors;
+                    const anchors = drawing.anchors;
                     if (!anchors.length) return { error: 'No anchors found' };
 
                     // Find the 'top' anchor
@@ -779,7 +791,7 @@ test.describe('three-window sync scenarios', () => {
                         for (const glyphName of fontModel.rebuildAutomaticCompositesForGlyphs(
                             new Set(['a']),
                             {
-                                preferredLayerId: layerId,
+                                preferredLayerId: drawingId,
                                 preferredSourceGlyphName: 'a'
                             }
                         )) {
@@ -790,26 +802,26 @@ test.describe('three-window sync scenarios', () => {
                     // Sync babelfontJson from model
                     currentFont.syncJsonFromModel();
 
-                    const changedLayerTargets = Array.from(affectedGlyphNames)
+                    const changedDrawingTargets = Array.from(affectedGlyphNames)
                         .map((glyphName) => {
                             const matchedGlyph = fontModel.findGlyph(glyphName);
-                            const matchedLayer =
-                                matchedGlyph?.findLayerById(layerId) ??
-                                layer.getMatchingLayerOnGlyph?.(glyphName);
-                            return matchedLayer?.id
-                                ? { glyphName, layerId: matchedLayer.id }
+                            const matchedDrawing =
+                                matchedGlyph?.findDrawingById(drawingId) ??
+                                drawing.getMatchingDrawingOnGlyph?.(glyphName);
+                            return matchedDrawing?.id
+                                ? { glyphName, layerId: matchedDrawing.id }
                                 : null;
                         })
                         .filter(Boolean);
 
                     // Sync only the changed layers into the bridge transaction.
-                    bridge.syncLayersFromJson(
-                        changedLayerTargets,
+                    bridge.syncDrawingsFromJson(
+                        changedDrawingTargets,
                         'Drag anchor',
                         undefined,
                         undefined,
                         undefined,
-                        changedLayerTargets,
+                        changedDrawingTargets,
                         'mouse-drag-anchor',
                         'mouse-drag-anchor',
                         null
@@ -822,10 +834,10 @@ test.describe('three-window sync scenarios', () => {
                         newX: topAnchor.x,
                         newY: topAnchor.y,
                         affectedGlyphNames: Array.from(affectedGlyphNames),
-                        changedLayerTargets
+                        changedDrawingTargets: changedDrawingTargets
                     };
                 },
-                thinLayerId
+                thinDrawingId
             );
 
             expect(anchorEditResult).not.toHaveProperty('error');
@@ -834,7 +846,7 @@ test.describe('three-window sync scenarios', () => {
 
             // Wait for remote change
             await waitForRemoteChange(linkedPage, anchorLastSyncTime);
-            await waitUntilGlyphLayerDataMatches(
+            await waitUntilGlyphDrawingDataMatches(
                 mainPage,
                 inviteePage,
                 glyphNames
@@ -846,26 +858,26 @@ test.describe('three-window sync scenarios', () => {
                 );
 
             // ── 8. Assert data identity after anchor edit ─────────────
-            const mainDataAfterAnchor = await extractGlyphLayerData(
+            const mainDataAfterAnchor = await extractGlyphDrawingData(
                 mainPage,
                 glyphNames
             );
-            const linkedDataAfterAnchor = await extractGlyphLayerData(
+            const linkedDataAfterAnchor = await extractGlyphDrawingData(
                 linkedPage,
                 glyphNames
             );
             expect(linkedDataAfterAnchor).toEqual(mainDataAfterAnchor);
 
             // Y.Doc layer keys still preserved
-            const mainYDocKeysAfterAnchor = await extractYDocLayerKeys(
+            const mainYDocKeysAfterAnchor = await extractYDocDrawingKeys(
                 mainPage,
                 'a',
-                thinLayerId
+                thinDrawingId
             );
-            const linkedYDocKeysAfterAnchor = await extractYDocLayerKeys(
+            const linkedYDocKeysAfterAnchor = await extractYDocDrawingKeys(
                 linkedPage,
                 'a',
-                thinLayerId
+                thinDrawingId
             );
             expect(linkedYDocKeysAfterAnchor).toEqual(mainYDocKeysAfterAnchor);
             expect(linkedYDocKeysAfterAnchor).toContain('width');
@@ -875,28 +887,28 @@ test.describe('three-window sync scenarios', () => {
             expect(linkedYDocKeysAfterAnchor).toContain('anchorsById');
 
             // Raw properties
-            const mainRawProps2 = await extractRawLayerProperties(
+            const mainRawProps2 = await extractRawDrawingProperties(
                 mainPage,
                 'a',
-                thinLayerId
+                thinDrawingId
             );
-            const linkedRawProps2 = await extractRawLayerProperties(
+            const linkedRawProps2 = await extractRawDrawingProperties(
                 linkedPage,
                 'a',
-                thinLayerId
+                thinDrawingId
             );
             expect(linkedRawProps2).toEqual(mainRawProps2);
 
             // Anchors must be identical
-            const mainAnchors = await extractRawLayerAnchors(
+            const mainAnchors = await extractRawDrawingAnchors(
                 mainPage,
                 'a',
-                thinLayerId
+                thinDrawingId
             );
-            const linkedAnchors = await extractRawLayerAnchors(
+            const linkedAnchors = await extractRawDrawingAnchors(
                 linkedPage,
                 'a',
-                thinLayerId
+                thinDrawingId
             );
             expect(linkedAnchors).toEqual(mainAnchors);
 
@@ -953,31 +965,31 @@ test.describe('three-window sync scenarios', () => {
             const linkedCompileBeforeUndo =
                 await getEditingFontCompileTracker(linkedPage);
             await mainPage.evaluate(
-                async ({ glyphName, layerId }) => {
+                async ({ glyphName, layerId: drawingId }) => {
                     await (window as any).runBridgeUndoRedo?.(
                         'undo',
                         glyphName,
                         glyphName,
-                        layerId,
+                        drawingId,
                         null
                     );
                 },
                 {
                     glyphName: 'a',
-                    layerId: thinLayerId
+                    layerId: thinDrawingId
                 }
             );
 
             await waitForRemoteChange(linkedPage, undoLastSyncTime);
-            await waitUntilGlyphLayerDataMatches(
+            await waitUntilGlyphDrawingDataMatches(
                 mainPage,
                 inviteePage,
                 glyphNames
             );
-            await waitForRawLayerAnchors(
+            await waitForRawDrawingAnchors(
                 linkedPage,
                 'a',
-                thinLayerId,
+                thinDrawingId,
                 mainAnchorsBeforeAnchorEdit
             );
             const linkedUndoTriggeredCompile =
@@ -1007,39 +1019,39 @@ test.describe('three-window sync scenarios', () => {
                 );
             }
 
-            const mainDataAfterUndo = await extractGlyphLayerData(
+            const mainDataAfterUndo = await extractGlyphDrawingData(
                 mainPage,
                 glyphNames
             );
-            const linkedDataAfterUndo = await extractGlyphLayerData(
+            const linkedDataAfterUndo = await extractGlyphDrawingData(
                 linkedPage,
                 glyphNames
             );
             expect(mainDataAfterUndo).toEqual(mainDataAfterOutline);
             expect(linkedDataAfterUndo).toEqual(mainDataAfterOutline);
 
-            const mainRawPropsAfterUndo = await extractRawLayerProperties(
+            const mainRawPropsAfterUndo = await extractRawDrawingProperties(
                 mainPage,
                 'a',
-                thinLayerId
+                thinDrawingId
             );
-            const linkedRawPropsAfterUndo = await extractRawLayerProperties(
+            const linkedRawPropsAfterUndo = await extractRawDrawingProperties(
                 linkedPage,
                 'a',
-                thinLayerId
+                thinDrawingId
             );
             expect(mainRawPropsAfterUndo).toEqual(mainRawProps);
             expect(linkedRawPropsAfterUndo).toEqual(mainRawProps);
 
-            const mainAnchorsAfterUndo = await extractRawLayerAnchors(
+            const mainAnchorsAfterUndo = await extractRawDrawingAnchors(
                 mainPage,
                 'a',
-                thinLayerId
+                thinDrawingId
             );
-            const linkedAnchorsAfterUndo = await extractRawLayerAnchors(
+            const linkedAnchorsAfterUndo = await extractRawDrawingAnchors(
                 linkedPage,
                 'a',
-                thinLayerId
+                thinDrawingId
             );
             expect(mainAnchorsAfterUndo).toEqual(mainAnchorsBeforeAnchorEdit);
             expect(linkedAnchorsAfterUndo).toEqual(mainAnchorsBeforeAnchorEdit);
@@ -1066,7 +1078,7 @@ test.describe('three-window sync scenarios', () => {
                 await extractModelGlyphSnapshot(mainPage, glyphName);
             const linkedModelGlyphBeforeIntermediate =
                 await extractModelGlyphSnapshot(linkedPage, glyphName);
-            const layerIdsBeforeIntermediate = await getModelLayerIds(
+            const drawingIdsBeforeIntermediate = await getModelDrawingIds(
                 mainPage,
                 glyphName
             );
@@ -1078,16 +1090,16 @@ test.describe('three-window sync scenarios', () => {
             await setupEditTextMode(mainPage, 'a');
             await setupEditTextMode(linkedPage, 'a');
 
-            const addLayerLastSyncTime =
+            const addDrawingLastSyncTime =
                 await getLastFontModelSyncTime(linkedPage);
             await setAxisSliderValue(mainPage, 'wght', 600);
             await expect(
-                mainPage.locator('.editor-layer-add-button')
+                mainPage.locator('.editor-drawing-add-button')
             ).toBeEnabled();
-            await mainPage.locator('.editor-layer-add-button').click();
+            await mainPage.locator('.editor-drawing-add-button').click();
 
-            await waitForRemoteChange(linkedPage, addLayerLastSyncTime);
-            await waitUntilGlyphLayerDataMatches(
+            await waitForRemoteChange(linkedPage, addDrawingLastSyncTime);
+            await waitUntilGlyphDrawingDataMatches(
                 mainPage,
                 inviteePage,
                 glyphNames
@@ -1096,14 +1108,14 @@ test.describe('three-window sync scenarios', () => {
             await waitForEditingCompile(linkedPage);
             await waitForEditingCompile(inviteePage);
 
-            const intermediateLayerId = await waitForNewAssociatedLayerId(
+            const freeDrawingId = await waitForNewAssociatedDrawingId(
                 mainPage,
                 glyphName,
-                layerIdsBeforeIntermediate
+                drawingIdsBeforeIntermediate
             );
-            expect(intermediateLayerId).toBeTruthy();
+            expect(freeDrawingId).toBeTruthy();
             await linkedPage.waitForFunction(
-                ({ glyphName, layerId }) => {
+                ({ glyphName, layerId: drawingId }) => {
                     const glyph = (window as any).currentFontModel?.findGlyph(
                         glyphName
                     );
@@ -1112,29 +1124,26 @@ test.describe('three-window sync scenarios', () => {
                             ? glyph.toJSON()
                             : glyph?.data;
                     return !!snapshot?.layers?.some(
-                        (layer: any) => String(layer?.id || '') === layerId
+                        (drawing: any) =>
+                            String(drawing?.id || '') === drawingId
                     );
                 },
-                { glyphName, layerId: intermediateLayerId },
+                { glyphName, layerId: freeDrawingId },
                 { timeout: 20000 }
             );
 
-            const linkedLayerIdsAfterIntermediateAdd = await getModelLayerIds(
-                linkedPage,
-                glyphName
-            );
-            expect(linkedLayerIdsAfterIntermediateAdd).toContain(
-                intermediateLayerId
+            const linkedDrawingIdsAfterIntermediateAdd =
+                await getModelDrawingIds(linkedPage, glyphName);
+            expect(linkedDrawingIdsAfterIntermediateAdd).toContain(
+                freeDrawingId
             );
 
-            const mainDataAfterIntermediateAdd = await extractGlyphLayerData(
+            const mainDataAfterIntermediateAdd = await extractGlyphDrawingData(
                 mainPage,
                 glyphNames
             );
-            const linkedDataAfterIntermediateAdd = await extractGlyphLayerData(
-                linkedPage,
-                glyphNames
-            );
+            const linkedDataAfterIntermediateAdd =
+                await extractGlyphDrawingData(linkedPage, glyphNames);
             const mainModelGlyphAfterIntermediateAdd =
                 await extractModelGlyphSnapshot(mainPage, glyphName);
             const linkedModelGlyphAfterIntermediateAdd =
@@ -1154,52 +1163,55 @@ test.describe('three-window sync scenarios', () => {
             );
             expect(
                 mainModelGlyphAfterIntermediateAdd.layers.some(
-                    (layer: any) => layer.id === intermediateLayerId
+                    (drawing: any) => drawing.id === freeDrawingId
                 )
             ).toBe(true);
 
-            await selectLayerRow(mainPage, intermediateLayerId);
-            await selectLayerRow(linkedPage, intermediateLayerId);
+            await selectDrawingRow(mainPage, freeDrawingId);
+            await selectDrawingRow(linkedPage, freeDrawingId);
 
-            const intermediateLayerRow = mainPage.locator(
-                `.editor-layer-item[data-layer-id="${intermediateLayerId}"]`
+            const freeDrawingRow = mainPage.locator(
+                `.editor-drawing-item[data-drawing-id="${freeDrawingId}"]`
             );
-            await intermediateLayerRow.click({ button: 'right' });
-            const deleteLayerMenuItem = mainPage.getByRole('menuitem', {
-                name: 'Delete layer'
+            await freeDrawingRow.click({ button: 'right' });
+            const deleteDrawingMenuItem = mainPage.getByRole('menuitem', {
+                name: 'Delete drawing'
             });
-            await expect(deleteLayerMenuItem).toBeVisible();
+            await expect(deleteDrawingMenuItem).toBeVisible();
             // Escape needs focus inside the menu, which a layer-list rebuild
             // from the delete below can take away.
             await mainPage.keyboard.press('Escape');
-            await expect(deleteLayerMenuItem).toBeHidden();
+            await expect(deleteDrawingMenuItem).toBeHidden();
             const deleteApplied = await mainPage.evaluate(
-                async ({ glyphName, layerId }) => {
+                async ({ glyphName, layerId: drawingId }) => {
                     const outlineEditor = (window as any).glyphCanvas
                         ?.outlineEditor;
-                    return !!(await outlineEditor?.deleteLayerById(layerId, {
-                        glyphName,
-                        changeSource: 'layer-delete-context-menu'
-                    }));
+                    return !!(await outlineEditor?.deleteDrawingById(
+                        drawingId,
+                        {
+                            glyphName,
+                            changeSource: 'drawing-delete-context-menu'
+                        }
+                    ));
                 },
-                { glyphName, layerId: intermediateLayerId }
+                { glyphName, layerId: freeDrawingId }
             );
             expect(deleteApplied).toBe(true);
 
-            await waitForLayerIdToDisappear(
+            await waitForDrawingIdToDisappear(
                 mainPage,
                 glyphName,
-                intermediateLayerId
+                freeDrawingId
             );
-            await waitForLayerIdToDisappear(
+            await waitForDrawingIdToDisappear(
                 linkedPage,
                 glyphName,
-                intermediateLayerId
+                freeDrawingId
             );
-            await waitForLayerIdToDisappear(
+            await waitForDrawingIdToDisappear(
                 inviteePage,
                 glyphName,
-                intermediateLayerId
+                freeDrawingId
             );
             await waitForEditingCompile(mainPage);
             await waitForEditingCompile(linkedPage);
@@ -1212,19 +1224,17 @@ test.describe('three-window sync scenarios', () => {
                 await expect
                     .poll(
                         async () =>
-                            (await extractActiveLayerSelectionState(page))
-                                .currentLayerExists,
+                            (await extractActiveDrawingSelectionState(page))
+                                .currentDrawingExists,
                         { timeout: 15000 }
                     )
                     .toBe(true);
             }
 
-            const mainLayerIdsAfterIntermediateDelete = await getModelLayerIds(
-                mainPage,
-                glyphName
-            );
-            const linkedLayerIdsAfterIntermediateDelete =
-                await getModelLayerIds(linkedPage, glyphName);
+            const mainDrawingIdsAfterIntermediateDelete =
+                await getModelDrawingIds(mainPage, glyphName);
+            const linkedDrawingIdsAfterIntermediateDelete =
+                await getModelDrawingIds(linkedPage, glyphName);
             const mainModelGlyphAfterIntermediateDelete =
                 await extractModelGlyphSnapshot(mainPage, glyphName);
             const linkedModelGlyphAfterIntermediateDelete =
@@ -1234,26 +1244,26 @@ test.describe('three-window sync scenarios', () => {
             const linkedRawGlyphAfterIntermediateDelete =
                 await extractRawGlyphSnapshot(linkedPage, glyphName);
             const mainSelectionAfterIntermediateDelete =
-                await extractActiveLayerSelectionState(mainPage);
+                await extractActiveDrawingSelectionState(mainPage);
             const linkedSelectionAfterIntermediateDelete =
-                await extractActiveLayerSelectionState(linkedPage);
-            const mainYDocLayerIdsAfterIntermediateDelete =
-                await extractYDocLayerIds(mainPage, glyphName);
-            const linkedYDocLayerIdsAfterIntermediateDelete =
-                await extractYDocLayerIds(linkedPage, glyphName);
+                await extractActiveDrawingSelectionState(linkedPage);
+            const mainYDocDrawingIdsAfterIntermediateDelete =
+                await extractYDocDrawingIds(mainPage, glyphName);
+            const linkedYDocDrawingIdsAfterIntermediateDelete =
+                await extractYDocDrawingIds(linkedPage, glyphName);
             const mainCompilationErrorAfterIntermediateDelete =
                 await getCompilationErrorText(mainPage);
             const linkedCompilationErrorAfterIntermediateDelete =
                 await getCompilationErrorText(linkedPage);
 
-            expect(mainLayerIdsAfterIntermediateDelete).toEqual(
-                layerIdsBeforeIntermediate
+            expect(mainDrawingIdsAfterIntermediateDelete).toEqual(
+                drawingIdsBeforeIntermediate
             );
-            expect(linkedLayerIdsAfterIntermediateDelete).toEqual(
-                layerIdsBeforeIntermediate
+            expect(linkedDrawingIdsAfterIntermediateDelete).toEqual(
+                drawingIdsBeforeIntermediate
             );
-            expect(linkedYDocLayerIdsAfterIntermediateDelete).toEqual(
-                mainYDocLayerIdsAfterIntermediateDelete
+            expect(linkedYDocDrawingIdsAfterIntermediateDelete).toEqual(
+                mainYDocDrawingIdsAfterIntermediateDelete
             );
             expect(linkedModelGlyphAfterIntermediateDelete).toEqual(
                 mainModelGlyphAfterIntermediateDelete
@@ -1264,35 +1274,35 @@ test.describe('three-window sync scenarios', () => {
             );
             expect(
                 (linkedRawGlyphAfterIntermediateDelete?.layers || []).map(
-                    (layer: any) => layer.id
+                    (drawing: any) => drawing.id
                 )
             ).toEqual(
                 (mainRawGlyphAfterIntermediateDelete?.layers || []).map(
-                    (layer: any) => layer.id
+                    (drawing: any) => drawing.id
                 )
             );
             expect(
                 mainModelGlyphAfterIntermediateDelete.layers.some(
-                    (layer: any) => layer.id === intermediateLayerId
+                    (drawing: any) => drawing.id === freeDrawingId
                 )
             ).toBe(false);
             expect(
                 linkedModelGlyphAfterIntermediateDelete.layers.some(
-                    (layer: any) => layer.id === intermediateLayerId
+                    (drawing: any) => drawing.id === freeDrawingId
                 )
             ).toBe(false);
             expect(
-                mainSelectionAfterIntermediateDelete.currentLayerExists
+                mainSelectionAfterIntermediateDelete.currentDrawingExists
             ).toBe(true);
             expect(
-                linkedSelectionAfterIntermediateDelete.currentLayerExists
+                linkedSelectionAfterIntermediateDelete.currentDrawingExists
             ).toBe(true);
             expect(
-                mainSelectionAfterIntermediateDelete.selectedLayerId
-            ).not.toBe(intermediateLayerId);
+                mainSelectionAfterIntermediateDelete.selectedDrawingId
+            ).not.toBe(freeDrawingId);
             expect(
-                linkedSelectionAfterIntermediateDelete.selectedLayerId
-            ).not.toBe(intermediateLayerId);
+                linkedSelectionAfterIntermediateDelete.selectedDrawingId
+            ).not.toBe(freeDrawingId);
             expect(mainCompilationErrorAfterIntermediateDelete).toBeNull();
             expect(linkedCompilationErrorAfterIntermediateDelete).toBeNull();
             expect(mainErrors).toEqual([]);
@@ -1309,14 +1319,14 @@ test.describe('three-window sync scenarios', () => {
             const linkedInterpolatedStateBeforePostDeleteOutline =
                 await extractActiveInterpolatedRenderState(linkedPage);
             expect(
-                linkedInterpolatedStateBeforePostDeleteOutline.selectedLayerId,
+                linkedInterpolatedStateBeforePostDeleteOutline.selectedDrawingId,
                 JSON.stringify({
                     setup: linkedInterpolatedSetup,
                     state: linkedInterpolatedStateBeforePostDeleteOutline
                 })
             ).toBeNull();
             expect(
-                linkedInterpolatedStateBeforePostDeleteOutline.layerDataExists,
+                linkedInterpolatedStateBeforePostDeleteOutline.drawingDataExists,
                 JSON.stringify({
                     setup: linkedInterpolatedSetup,
                     state: linkedInterpolatedStateBeforePostDeleteOutline
@@ -1334,23 +1344,23 @@ test.describe('three-window sync scenarios', () => {
             const postDeleteOutlineLastSyncTime =
                 await getLastFontModelSyncTime(linkedPage);
             const postDeleteOutlineResult = await mainPage.evaluate(
-                async (layerId) => {
+                async (drawingId) => {
                     const bridge = (window as any).changeBridge;
                     const fontModel = (window as any).currentFontModel;
                     const currentFont = (window as any).fontManager
                         ?.currentFont;
                     const glyph = fontModel.findGlyph('a');
-                    const layer = glyph.findLayerById(layerId);
+                    const drawing = glyph.findDrawingById(drawingId);
 
-                    const paths = layer.paths;
+                    const paths = drawing.paths;
                     if (!paths.length) {
-                        return { error: 'No paths found after layer delete' };
+                        return { error: 'No paths found after drawing delete' };
                     }
 
                     const firstPath = paths[0];
                     const nodes = firstPath.nodes;
                     if (!nodes.length) {
-                        return { error: 'No nodes found after layer delete' };
+                        return { error: 'No nodes found after drawing delete' };
                     }
 
                     const firstNode = nodes[0];
@@ -1365,10 +1375,10 @@ test.describe('three-window sync scenarios', () => {
                     currentFont.syncJsonFromModel();
                     bridge.syncGlyphFromJson(
                         'a',
-                        'Drag point after intermediate layer delete',
+                        'Drag point after free drawing delete',
                         undefined,
                         undefined,
-                        layerId,
+                        drawingId,
                         undefined,
                         undefined,
                         undefined,
@@ -1383,7 +1393,7 @@ test.describe('three-window sync scenarios', () => {
                         newY: firstNode.y
                     };
                 },
-                thinLayerId
+                thinDrawingId
             );
 
             expect(postDeleteOutlineResult).not.toHaveProperty('error');
@@ -1392,7 +1402,7 @@ test.describe('three-window sync scenarios', () => {
                 linkedPage,
                 postDeleteOutlineLastSyncTime
             );
-            await waitUntilGlyphLayerDataMatches(
+            await waitUntilGlyphDrawingDataMatches(
                 mainPage,
                 inviteePage,
                 glyphNames
@@ -1400,26 +1410,24 @@ test.describe('three-window sync scenarios', () => {
             await waitForEditingCompile(mainPage);
             await waitForEditingCompile(linkedPage);
             await waitForEditingCompile(inviteePage);
-            await waitUntilGlyphLayerDataMatches(
+            await waitUntilGlyphDrawingDataMatches(
                 mainPage,
                 linkedPage,
                 glyphNames
             );
 
-            const mainDataAfterPostDeleteOutline = await extractGlyphLayerData(
-                mainPage,
-                glyphNames
-            );
+            const mainDataAfterPostDeleteOutline =
+                await extractGlyphDrawingData(mainPage, glyphNames);
             const linkedDataAfterPostDeleteOutline =
-                await extractGlyphLayerData(linkedPage, glyphNames);
+                await extractGlyphDrawingData(linkedPage, glyphNames);
             const mainRawGlyphAfterPostDeleteOutline =
                 await extractRawGlyphSnapshot(mainPage, glyphName);
             const linkedRawGlyphAfterPostDeleteOutline =
                 await extractRawGlyphSnapshot(linkedPage, glyphName);
             const mainShapesAfterPostDeleteOutline =
-                await extractRawLayerShapes(mainPage, 'a', thinLayerId);
+                await extractRawDrawingShapes(mainPage, 'a', thinDrawingId);
             const linkedShapesAfterPostDeleteOutline =
-                await extractRawLayerShapes(linkedPage, 'a', thinLayerId);
+                await extractRawDrawingShapes(linkedPage, 'a', thinDrawingId);
             const linkedInterpolatedStateAfterPostDeleteOutline =
                 await extractActiveInterpolatedRenderState(linkedPage);
 
@@ -1436,10 +1444,10 @@ test.describe('three-window sync scenarios', () => {
                 mainShapesAfterPostDeleteOutline
             );
             expect(
-                linkedInterpolatedStateAfterPostDeleteOutline.selectedLayerId
+                linkedInterpolatedStateAfterPostDeleteOutline.selectedDrawingId
             ).toBe(null);
             expect(
-                linkedInterpolatedStateAfterPostDeleteOutline.layerDataExists
+                linkedInterpolatedStateAfterPostDeleteOutline.drawingDataExists
             ).toBe(true);
             expect(
                 linkedInterpolatedStateAfterPostDeleteOutline.shapeCount
@@ -1449,17 +1457,19 @@ test.describe('three-window sync scenarios', () => {
             const postDeleteAnchorLastSyncTime =
                 await getLastFontModelSyncTime(linkedPage);
             const postDeleteAnchorResult = await mainPage.evaluate(
-                async (layerId) => {
+                async (drawingId) => {
                     const bridge = (window as any).changeBridge;
                     const fontModel = (window as any).currentFontModel;
                     const currentFont = (window as any).fontManager
                         ?.currentFont;
                     const glyph = fontModel.findGlyph('a');
-                    const layer = glyph.findLayerById(layerId);
+                    const drawing = glyph.findDrawingById(drawingId);
 
-                    const anchors = layer.anchors;
+                    const anchors = drawing.anchors;
                     if (!anchors.length) {
-                        return { error: 'No anchors found after layer delete' };
+                        return {
+                            error: 'No anchors found after drawing delete'
+                        };
                     }
 
                     const topAnchor =
@@ -1475,7 +1485,7 @@ test.describe('three-window sync scenarios', () => {
                         for (const glyphName of fontModel.rebuildAutomaticCompositesForGlyphs(
                             new Set(['a']),
                             {
-                                preferredLayerId: layerId,
+                                preferredLayerId: drawingId,
                                 preferredSourceGlyphName: 'a'
                             }
                         )) {
@@ -1485,25 +1495,25 @@ test.describe('three-window sync scenarios', () => {
 
                     currentFont.syncJsonFromModel();
 
-                    const changedLayerTargets = Array.from(affectedGlyphNames)
+                    const changedDrawingTargets = Array.from(affectedGlyphNames)
                         .map((glyphName) => {
                             const matchedGlyph = fontModel.findGlyph(glyphName);
-                            const matchedLayer =
-                                matchedGlyph?.findLayerById(layerId) ??
-                                layer.getMatchingLayerOnGlyph?.(glyphName);
-                            return matchedLayer?.id
-                                ? { glyphName, layerId: matchedLayer.id }
+                            const matchedDrawing =
+                                matchedGlyph?.findDrawingById(drawingId) ??
+                                drawing.getMatchingDrawingOnGlyph?.(glyphName);
+                            return matchedDrawing?.id
+                                ? { glyphName, layerId: matchedDrawing.id }
                                 : null;
                         })
                         .filter(Boolean);
 
-                    bridge.syncLayersFromJson(
-                        changedLayerTargets,
-                        'Drag anchor after intermediate layer delete',
+                    bridge.syncDrawingsFromJson(
+                        changedDrawingTargets,
+                        'Drag anchor after free drawing delete',
                         undefined,
                         undefined,
                         undefined,
-                        changedLayerTargets,
+                        changedDrawingTargets,
                         'mouse-drag-anchor',
                         'mouse-drag-anchor',
                         null
@@ -1517,14 +1527,14 @@ test.describe('three-window sync scenarios', () => {
                         affectedGlyphNames: Array.from(affectedGlyphNames)
                     };
                 },
-                thinLayerId
+                thinDrawingId
             );
 
             expect(postDeleteAnchorResult).not.toHaveProperty('error');
             expect(postDeleteAnchorResult.affectedGlyphNames).toContain('a');
 
             await waitForRemoteChange(linkedPage, postDeleteAnchorLastSyncTime);
-            await waitUntilGlyphLayerDataMatches(
+            await waitUntilGlyphDrawingDataMatches(
                 mainPage,
                 inviteePage,
                 glyphNames
@@ -1532,28 +1542,26 @@ test.describe('three-window sync scenarios', () => {
             await waitForEditingCompile(mainPage);
             await waitForEditingCompile(linkedPage);
             await waitForEditingCompile(inviteePage);
-            await waitUntilGlyphLayerDataMatches(
+            await waitUntilGlyphDrawingDataMatches(
                 mainPage,
                 linkedPage,
                 glyphNames
             );
 
-            const mainDataAfterPostDeleteAnchor = await extractGlyphLayerData(
+            const mainDataAfterPostDeleteAnchor = await extractGlyphDrawingData(
                 mainPage,
                 glyphNames
             );
-            const linkedDataAfterPostDeleteAnchor = await extractGlyphLayerData(
-                linkedPage,
-                glyphNames
-            );
+            const linkedDataAfterPostDeleteAnchor =
+                await extractGlyphDrawingData(linkedPage, glyphNames);
             const inviteeDataAfterPostDeleteAnchor =
-                await extractGlyphLayerData(inviteePage, glyphNames);
+                await extractGlyphDrawingData(inviteePage, glyphNames);
             const mainAnchorsAfterPostDeleteAnchor =
-                await extractRawLayerAnchors(mainPage, 'a', thinLayerId);
+                await extractRawDrawingAnchors(mainPage, 'a', thinDrawingId);
             const linkedAnchorsAfterPostDeleteAnchor =
-                await extractRawLayerAnchors(linkedPage, 'a', thinLayerId);
+                await extractRawDrawingAnchors(linkedPage, 'a', thinDrawingId);
             const inviteeAnchorsAfterPostDeleteAnchor =
-                await extractRawLayerAnchors(inviteePage, 'a', thinLayerId);
+                await extractRawDrawingAnchors(inviteePage, 'a', thinDrawingId);
             const linkedCompilationErrorAfterPostDeleteAnchor =
                 await getCompilationErrorText(linkedPage);
             const inviteeCompilationErrorAfterPostDeleteAnchor =
@@ -1579,41 +1587,41 @@ test.describe('three-window sync scenarios', () => {
             expect(linkedCompilationErrorAfterPostDeleteAnchor).toBeNull();
             expect(inviteeCompilationErrorAfterPostDeleteAnchor).toBeNull();
             expect(
-                linkedInterpolatedStateAfterPostDeleteAnchor.selectedLayerId
+                linkedInterpolatedStateAfterPostDeleteAnchor.selectedDrawingId
             ).toBe(null);
             expect(
-                linkedInterpolatedStateAfterPostDeleteAnchor.layerDataExists
+                linkedInterpolatedStateAfterPostDeleteAnchor.drawingDataExists
             ).toBe(true);
             expect(
                 linkedInterpolatedStateAfterPostDeleteAnchor.shapeCount
             ).toBeGreaterThan(0);
 
-            await waitUntilGlyphLayerDataMatches(
+            await waitUntilGlyphDrawingDataMatches(
                 mainPage,
                 inviteePage,
                 glyphNames
             );
 
             const canUndoAfterOwnerEdit = await inviteePage.evaluate(
-                (layerId) => {
+                (drawingId) => {
                     const bridge = (window as any).changeBridge;
                     return {
-                        inviteeCanUndo: !!bridge?.canUndo?.('a', layerId),
+                        inviteeCanUndo: !!bridge?.canUndo?.('a', drawingId),
                         path:
                             (window as any).fontManager?.currentFont?.path ??
                             null
                     };
                 },
-                thinLayerId
+                thinDrawingId
             );
             expect(canUndoAfterOwnerEdit.inviteeCanUndo).toBe(false);
 
             const linkedCanUndoOwnerEdit = await linkedPage.evaluate(
-                (layerId) => {
+                (drawingId) => {
                     const bridge = (window as any).changeBridge;
-                    return !!bridge?.canUndo?.('a', layerId);
+                    return !!bridge?.canUndo?.('a', drawingId);
                 },
-                thinLayerId
+                thinDrawingId
             );
             expect(linkedCanUndoOwnerEdit).toBe(true);
 
@@ -1639,8 +1647,8 @@ test.describe('three-window sync scenarios', () => {
                 const fontModel = (window as any).currentFontModel;
                 const currentFont = (window as any).fontManager?.currentFont;
                 const glyph = fontModel.findGlyph('b');
-                const layer = glyph.layers[0];
-                const node = layer.paths[0].nodes[0];
+                const drawing = glyph.drawings[0];
+                const node = drawing.paths[0].nodes[0];
                 const oldX = node.x;
                 bridge.runWithoutRecording(() => {
                     node.x = oldX + 21;
@@ -1651,7 +1659,7 @@ test.describe('three-window sync scenarios', () => {
                     'Invitee edit',
                     undefined,
                     undefined,
-                    layer.id,
+                    drawing.id,
                     undefined,
                     undefined,
                     undefined,
@@ -1660,7 +1668,7 @@ test.describe('three-window sync scenarios', () => {
                 );
                 return {
                     glyphName: glyph.name,
-                    layerId: layer.id,
+                    layerId: drawing.id,
                     oldX,
                     newX: node.x
                 };
@@ -1668,12 +1676,12 @@ test.describe('three-window sync scenarios', () => {
             expect(inviteeEdit.glyphName).toBe('b');
             expect(inviteeEdit.newX).toBe(inviteeEdit.oldX + 21);
             await waitForRemoteChange(mainPage, inviteeBSync);
-            await waitUntilGlyphLayerDataMatches(
+            await waitUntilGlyphDrawingDataMatches(
                 inviteePage,
                 mainPage,
                 glyphNamesWithB
             );
-            await waitUntilGlyphLayerDataMatches(
+            await waitUntilGlyphDrawingDataMatches(
                 inviteePage,
                 linkedPage,
                 glyphNamesWithB
@@ -1682,9 +1690,9 @@ test.describe('three-window sync scenarios', () => {
             expect(await glyphNodeX(linkedPage, 'b')).toBe(inviteeEdit.newX);
 
             const ownerCannotUndoInvitee = await mainPage.evaluate(
-                ({ glyphName, layerId }) => {
+                ({ glyphName, layerId: drawingId }) => {
                     const bridge = (window as any).changeBridge;
-                    return !!bridge?.canUndo?.(glyphName, layerId);
+                    return !!bridge?.canUndo?.(glyphName, drawingId);
                 },
                 inviteeEdit
             );
@@ -1693,17 +1701,17 @@ test.describe('three-window sync scenarios', () => {
                 (glyphName) => {
                     const fontModel = (window as any).currentFontModel;
                     const glyph = fontModel.findGlyph(glyphName);
-                    return glyph.layers[0].paths[0].nodes[0].x;
+                    return glyph.drawings[0].paths[0].nodes[0].x;
                 },
                 inviteeEdit.glyphName
             );
-            await mainPage.evaluate(({ glyphName, layerId }) => {
-                (window as any).changeBridge?.undo?.(glyphName, layerId);
+            await mainPage.evaluate(({ glyphName, layerId: drawingId }) => {
+                (window as any).changeBridge?.undo?.(glyphName, drawingId);
             }, inviteeEdit);
             const ownerWidthAfterUndo = await mainPage.evaluate((glyphName) => {
                 const fontModel = (window as any).currentFontModel;
                 const glyph = fontModel.findGlyph(glyphName);
-                return glyph.layers[0].paths[0].nodes[0].x;
+                return glyph.drawings[0].paths[0].nodes[0].x;
             }, inviteeEdit.glyphName);
             // The owner never edited `b`, so the invitee's edit is not on the
             // owner's undo stack and an owner undo leaves it alone.
@@ -1714,21 +1722,21 @@ test.describe('three-window sync scenarios', () => {
             // ── Owner and invitee edit different nodes of the same layer
             // through the recorded model path; the owner's undo must revert
             // only the owner's node and keep the invitee's edit everywhere.
-            const sharedNodeCount = await mainPage.evaluate((layerId) => {
+            const sharedNodeCount = await mainPage.evaluate((drawingId) => {
                 const glyph = (window as any).currentFontModel.findGlyph('a');
-                return glyph.findLayerById(layerId).paths[0].nodes.length;
-            }, thinLayerId);
+                return glyph.findDrawingById(drawingId).paths[0].nodes.length;
+            }, thinDrawingId);
             expect(sharedNodeCount).toBeGreaterThan(1);
             const ownerSharedEdit = await moveGlyphNodeThroughModel(mainPage, {
                 glyphName: 'a',
-                layerId: thinLayerId,
+                layerId: thinDrawingId,
                 nodeIndex: 0,
                 deltaX: 7,
-                label: 'Owner same-layer edit'
+                label: 'Owner same-drawing edit'
             });
             for (const page of [inviteePage, linkedPage]) {
                 await expect
-                    .poll(() => glyphNodeXAt(page, 'a', thinLayerId!, 0), {
+                    .poll(() => glyphNodeXAt(page, 'a', thinDrawingId!, 0), {
                         timeout: 60000
                     })
                     .toBe(ownerSharedEdit.newX);
@@ -1737,10 +1745,10 @@ test.describe('three-window sync scenarios', () => {
                 inviteePage,
                 {
                     glyphName: 'a',
-                    layerId: thinLayerId,
+                    layerId: thinDrawingId,
                     nodeIndex: -1,
                     deltaX: 19,
-                    label: 'Invitee same-layer edit'
+                    label: 'Invitee same-drawing edit'
                 }
             );
             for (const page of [mainPage, linkedPage]) {
@@ -1750,7 +1758,7 @@ test.describe('three-window sync scenarios', () => {
                             glyphNodeXAt(
                                 page,
                                 'a',
-                                thinLayerId!,
+                                thinDrawingId!,
                                 inviteeSharedEdit.nodeIndex
                             ),
                         { timeout: 60000 }
@@ -1759,35 +1767,38 @@ test.describe('three-window sync scenarios', () => {
             }
             expect(
                 await mainPage.evaluate(
-                    (layerId) =>
-                        !!(window as any).changeBridge?.canUndo?.('a', layerId),
-                    thinLayerId
+                    (drawingId) =>
+                        !!(window as any).changeBridge?.canUndo?.(
+                            'a',
+                            drawingId
+                        ),
+                    thinDrawingId
                 )
             ).toBe(true);
-            await mainPage.evaluate((layerId) => {
-                (window as any).changeBridge.undo('a', layerId);
-            }, thinLayerId);
+            await mainPage.evaluate((drawingId) => {
+                (window as any).changeBridge.undo('a', drawingId);
+            }, thinDrawingId);
             await mainPage.evaluate(() =>
                 (window as any).patchSyncEngine?.waitForPendingCloudCommits?.()
             );
-            const sharedLayerNodes = (page: Page) =>
+            const sharedDrawingNodes = (page: Page) =>
                 Promise.all([
-                    glyphNodeXAt(page, 'a', thinLayerId!, 0),
+                    glyphNodeXAt(page, 'a', thinDrawingId!, 0),
                     glyphNodeXAt(
                         page,
                         'a',
-                        thinLayerId!,
+                        thinDrawingId!,
                         inviteeSharedEdit.nodeIndex
                     )
                 ]);
-            const expectedSharedLayerNodes = [
+            const expectedSharedDrawingNodes = [
                 ownerSharedEdit.oldX,
                 inviteeSharedEdit.newX
             ];
             for (const page of [mainPage, linkedPage, inviteePage]) {
                 await expect
-                    .poll(() => sharedLayerNodes(page), { timeout: 60000 })
-                    .toEqual(expectedSharedLayerNodes);
+                    .poll(() => sharedDrawingNodes(page), { timeout: 60000 })
+                    .toEqual(expectedSharedDrawingNodes);
             }
 
             // ── 15. Edits to glyphs no other window has open ─────────────
@@ -1970,7 +1981,7 @@ test.describe('three-window sync scenarios', () => {
                 () =>
                     moveGlyphNodeThroughModel(inviteePage, {
                         glyphName: 'idotless',
-                        layerId: thinLayerId,
+                        layerId: thinDrawingId,
                         nodeIndex: 0,
                         deltaX: 23,
                         label: 'Invitee outline idotless'
@@ -1978,11 +1989,11 @@ test.describe('three-window sync scenarios', () => {
             );
             // FustatMini’s composites are not aligned automatically; the owner
             // turns that on for `i`, a component edit every window must take.
-            await mainPage.evaluate(async (layerId) => {
+            await mainPage.evaluate(async (drawingId) => {
                 const w = window as any;
-                const layer = w.currentFontModel
+                const drawing = w.currentFontModel
                     .findGlyph('i')
-                    .findLayerById(layerId);
+                    .findDrawingById(drawingId);
                 w.patchSyncEngine.beginTransaction(
                     'Automatic alignment',
                     null,
@@ -1992,7 +2003,7 @@ test.describe('three-window sync scenarios', () => {
                     }
                 );
                 try {
-                    for (const shape of layer.shapes) {
+                    for (const shape of drawing.shapes) {
                         const component = shape.asComponent?.();
                         if (component) {
                             component.automaticAlignment = true;
@@ -2002,18 +2013,18 @@ test.describe('three-window sync scenarios', () => {
                     w.patchSyncEngine.endTransaction();
                 }
                 await w.patchSyncEngine.waitForPendingCloudCommits?.();
-            }, thinLayerId);
+            }, thinDrawingId);
             for (const page of allPages) {
                 await expect
                     .poll(
                         () =>
                             page.evaluate(
-                                (layerId) =>
+                                (drawingId) =>
                                     (window as any).currentFontModel
                                         .findGlyph('i')
-                                        .findLayerById(layerId)
-                                        .isAutomaticAlignedLayer() === true,
-                                thinLayerId
+                                        .findDrawingById(drawingId)
+                                        .isAutomaticAlignedDrawing() === true,
+                                thinDrawingId
                             ),
                         { timeout: 60000 }
                     )
@@ -2023,23 +2034,23 @@ test.describe('three-window sync scenarios', () => {
 
             // Moving the base’s top anchor recomposes the automatically
             // aligned `i`: its dot moves in every window.
-            const iShapesBeforeAnchor = await extractRawLayerShapes(
+            const iShapesBeforeAnchor = await extractRawDrawingShapes(
                 mainPage,
                 'i',
-                thinLayerId!
+                thinDrawingId!
             );
             let recomposed: string[] = [];
             await editOffEditorGlyph(
                 mainPage,
                 'owner anchor idotless',
                 async () => {
-                    recomposed = await mainPage.evaluate(async (layerId) => {
+                    recomposed = await mainPage.evaluate(async (drawingId) => {
                         const w = window as any;
                         const fontModel = w.currentFontModel;
-                        const layer = fontModel
+                        const drawing = fontModel
                             .findGlyph('idotless')
-                            .findLayerById(layerId);
-                        const top = layer.anchors.find(
+                            .findDrawingById(drawingId);
+                        const top = drawing.anchors.find(
                             (anchor: any) => anchor.name === 'top'
                         );
                         const affected = new Set(['idotless']);
@@ -2049,7 +2060,7 @@ test.describe('three-window sync scenarios', () => {
                             for (const name of fontModel.rebuildAutomaticCompositesForGlyphs(
                                 new Set(['idotless']),
                                 {
-                                    preferredLayerId: layerId,
+                                    preferredLayerId: drawingId,
                                     preferredSourceGlyphName: 'idotless'
                                 }
                             )) {
@@ -2059,9 +2070,9 @@ test.describe('three-window sync scenarios', () => {
                         w.fontManager.currentFont.syncJsonFromModel();
                         const targets = [...affected].map((glyphName) => ({
                             glyphName,
-                            layerId
+                            layerId: drawingId
                         }));
-                        w.changeBridge.syncLayersFromJson(
+                        w.changeBridge.syncDrawingsFromJson(
                             targets,
                             'Drag anchor',
                             undefined,
@@ -2074,20 +2085,21 @@ test.describe('three-window sync scenarios', () => {
                         );
                         await w.patchSyncEngine.waitForPendingCloudCommits?.();
                         return [...affected];
-                    }, thinLayerId);
+                    }, thinDrawingId);
                 }
             );
             expect(recomposed).toContain('i');
-            const iShapesAfterAnchor = await extractRawLayerShapes(
+            const iShapesAfterAnchor = await extractRawDrawingShapes(
                 mainPage,
                 'i',
-                thinLayerId!
+                thinDrawingId!
             );
             expect(iShapesAfterAnchor).not.toEqual(iShapesBeforeAnchor);
             for (const page of [linkedPage, inviteePage]) {
                 await expect
                     .poll(
-                        () => extractRawLayerShapes(page, 'i', thinLayerId!),
+                        () =>
+                            extractRawDrawingShapes(page, 'i', thinDrawingId!),
                         {
                             timeout: 60000
                         }
@@ -2095,28 +2107,28 @@ test.describe('three-window sync scenarios', () => {
                     .toEqual(iShapesAfterAnchor);
             }
             await editOffEditorGlyph(linkedPage, 'linked width o', () =>
-                linkedPage.evaluate(async (layerId) => {
+                linkedPage.evaluate(async (drawingId) => {
                     const w = window as any;
-                    const layer = w.currentFontModel
+                    const drawing = w.currentFontModel
                         .findGlyph('o')
-                        .findLayerById(layerId);
+                        .findDrawingById(drawingId);
                     const bridge = w.patchSyncEngine;
                     bridge.beginTransaction('Set width', null, {
                         compileChangeSource: 'keyboard-sidebearing',
                         compileEditType: null
                     });
                     try {
-                        layer.width = layer.width + 30;
+                        drawing.width = drawing.width + 30;
                     } finally {
                         bridge.endTransaction();
                     }
-                }, thinLayerId)
+                }, thinDrawingId)
             );
             await editOffEditorGlyph(inviteePage, 'invitee kerning p:q', () =>
-                inviteePage.evaluate(async (masterId) => {
+                inviteePage.evaluate(async (stationId) => {
                     const w = window as any;
-                    const master = w.currentFontModel.masters.find(
-                        (candidate: any) => candidate.id === masterId
+                    const station = w.currentFontModel.stations.find(
+                        (candidate: any) => candidate.id === stationId
                     );
                     const bridge = w.patchSyncEngine;
                     bridge.beginTransaction('Edit kerning pair', null, {
@@ -2124,17 +2136,17 @@ test.describe('three-window sync scenarios', () => {
                         compileEditType: 'kerning-value'
                     });
                     try {
-                        master.kerning = { ...master.kerning, 'p:q': -80 };
+                        station.kerning = { ...station.kerning, 'p:q': -80 };
                     } finally {
                         bridge.endTransaction();
                     }
                     await bridge.waitForPendingCloudCommits?.();
-                }, thinLayerId)
+                }, thinDrawingId)
             );
             await editOffEditorGlyph(mainPage, 'owner outline p', () =>
                 moveGlyphNodeThroughModel(mainPage, {
                     glyphName: 'p',
-                    layerId: thinLayerId,
+                    layerId: thinDrawingId,
                     nodeIndex: 0,
                     deltaX: -17,
                     label: 'Owner outline p'
@@ -2151,7 +2163,7 @@ test.describe('three-window sync scenarios', () => {
             const aBeforeOwnerEdit = await glyphNodeXAt(
                 mainPage,
                 'a',
-                thinLayerId!,
+                thinDrawingId!,
                 0
             );
             const liveEditOfA = async (
@@ -2179,38 +2191,50 @@ test.describe('three-window sync scenarios', () => {
             await liveEditOfA(mainPage, 'owner outline a', () =>
                 moveGlyphNodeThroughModel(mainPage, {
                     glyphName: 'a',
-                    layerId: thinLayerId,
+                    layerId: thinDrawingId,
                     nodeIndex: 0,
                     deltaX: 13,
                     label: 'Owner outline a'
                 })
             );
             await liveEditOfA(mainPage, 'owner undo outline a', () =>
-                mainPage.evaluate(async (layerId) => {
+                mainPage.evaluate(async (drawingId) => {
                     const w = window as any;
-                    await w.runBridgeUndoRedo('undo', 'a', 'a', layerId, null);
+                    await w.runBridgeUndoRedo(
+                        'undo',
+                        'a',
+                        'a',
+                        drawingId,
+                        null
+                    );
                     await w.patchSyncEngine.waitForPendingCloudCommits?.();
-                }, thinLayerId)
+                }, thinDrawingId)
             );
             await liveEditOfA(inviteePage, 'invitee outline a', () =>
                 moveGlyphNodeThroughModel(inviteePage, {
                     glyphName: 'a',
-                    layerId: thinLayerId,
+                    layerId: thinDrawingId,
                     nodeIndex: 0,
                     deltaX: -11,
                     label: 'Invitee outline a'
                 })
             );
             await liveEditOfA(inviteePage, 'invitee undo outline a', () =>
-                inviteePage.evaluate(async (layerId) => {
+                inviteePage.evaluate(async (drawingId) => {
                     const w = window as any;
-                    await w.runBridgeUndoRedo('undo', 'a', 'a', layerId, null);
+                    await w.runBridgeUndoRedo(
+                        'undo',
+                        'a',
+                        'a',
+                        drawingId,
+                        null
+                    );
                     await w.patchSyncEngine.waitForPendingCloudCommits?.();
-                }, thinLayerId)
+                }, thinDrawingId)
             );
             for (const page of allPages) {
                 await expect
-                    .poll(() => glyphNodeXAt(page, 'a', thinLayerId!, 0), {
+                    .poll(() => glyphNodeXAt(page, 'a', thinDrawingId!, 0), {
                         timeout: 60000
                     })
                     .toBe(aBeforeOwnerEdit);
@@ -2226,11 +2250,11 @@ test.describe('three-window sync scenarios', () => {
             // its socket and recomposes `aacute` itself, as a preview: it
             // shows the owner’s `aacute` while its catch-up of `aacute` is
             // held back, and nothing extra goes over the wire.
-            await mainPage.evaluate(async (layerId) => {
+            await mainPage.evaluate(async (drawingId) => {
                 const w = window as any;
-                const layer = w.currentFontModel
+                const drawing = w.currentFontModel
                     .findGlyph('aacute')
-                    .findLayerById(layerId);
+                    .findDrawingById(drawingId);
                 w.patchSyncEngine.beginTransaction(
                     'Automatic alignment',
                     null,
@@ -2240,7 +2264,7 @@ test.describe('three-window sync scenarios', () => {
                     }
                 );
                 try {
-                    for (const shape of layer.shapes) {
+                    for (const shape of drawing.shapes) {
                         const component = shape.asComponent?.();
                         if (component) {
                             component.automaticAlignment = true;
@@ -2250,18 +2274,18 @@ test.describe('three-window sync scenarios', () => {
                     w.patchSyncEngine.endTransaction();
                 }
                 await w.patchSyncEngine.waitForPendingCloudCommits?.();
-            }, thinLayerId);
+            }, thinDrawingId);
             for (const page of allPages) {
                 await expect
                     .poll(
                         () =>
                             page.evaluate(
-                                (layerId) =>
+                                (drawingId) =>
                                     (window as any).currentFontModel
                                         .findGlyph('aacute')
-                                        .findLayerById(layerId)
-                                        .isAutomaticAlignedLayer() === true,
-                                thinLayerId
+                                        .findDrawingById(drawingId)
+                                        .isAutomaticAlignedDrawing() === true,
+                                thinDrawingId
                             ),
                         { timeout: 60000 }
                     )
@@ -2289,10 +2313,10 @@ test.describe('three-window sync scenarios', () => {
                     .poll(() => liveGlyphNames(page), { timeout: 30000 })
                     .toEqual(['a']);
             }
-            const aacuteBefore = await extractRawLayerShapes(
+            const aacuteBefore = await extractRawDrawingShapes(
                 inviteePage,
                 'aacute',
-                thinLayerId!
+                thinDrawingId!
             );
             let releaseAacuteCatchUp: () => void = () => {};
             const aacuteCatchUpHeld = new Promise<void>((resolve) => {
@@ -2314,13 +2338,13 @@ test.describe('three-window sync scenarios', () => {
                 mainPage,
                 'owner anchor a',
                 async () => {
-                    await mainPage.evaluate(async (layerId) => {
+                    await mainPage.evaluate(async (drawingId) => {
                         const w = window as any;
                         const fontModel = w.currentFontModel;
-                        const layer = fontModel
+                        const drawing = fontModel
                             .findGlyph('a')
-                            .findLayerById(layerId);
-                        const top = layer.anchors.find(
+                            .findDrawingById(drawingId);
+                        const top = drawing.anchors.find(
                             (anchor: any) => anchor.name === 'top'
                         );
                         const affected = new Set(['a']);
@@ -2330,7 +2354,7 @@ test.describe('three-window sync scenarios', () => {
                             for (const name of fontModel.rebuildAutomaticCompositesForGlyphs(
                                 new Set(['a']),
                                 {
-                                    preferredLayerId: layerId,
+                                    preferredLayerId: drawingId,
                                     preferredSourceGlyphName: 'a'
                                 }
                             )) {
@@ -2340,9 +2364,9 @@ test.describe('three-window sync scenarios', () => {
                         w.fontManager.currentFont.syncJsonFromModel();
                         const targets = [...affected].map((glyphName) => ({
                             glyphName,
-                            layerId
+                            layerId: drawingId
                         }));
-                        w.changeBridge.syncLayersFromJson(
+                        w.changeBridge.syncDrawingsFromJson(
                             targets,
                             'Drag anchor',
                             undefined,
@@ -2354,11 +2378,11 @@ test.describe('three-window sync scenarios', () => {
                             null
                         );
                         await w.patchSyncEngine.waitForPendingCloudCommits?.();
-                    }, thinLayerId);
-                    aacuteAfterOwnerEdit = await extractRawLayerShapes(
+                    }, thinDrawingId);
+                    aacuteAfterOwnerEdit = await extractRawDrawingShapes(
                         mainPage,
                         'aacute',
-                        thinLayerId!
+                        thinDrawingId!
                     );
                 }
             );
@@ -2370,10 +2394,10 @@ test.describe('three-window sync scenarios', () => {
                 await expect
                     .poll(
                         () =>
-                            extractRawLayerShapes(
+                            extractRawDrawingShapes(
                                 inviteePage,
                                 'aacute',
-                                thinLayerId!
+                                thinDrawingId!
                             ),
                         {
                             timeout: 30000,
@@ -2384,15 +2408,15 @@ test.describe('three-window sync scenarios', () => {
                     .toEqual(aacuteAfterOwnerEdit);
                 expect(
                     await inviteePage.evaluate(
-                        (layerId) =>
+                        (drawingId) =>
                             (
                                 window as any
                             ).remoteCascadePreview.pendingTargets.some(
                                 (target: any) =>
                                     target.glyphName === 'aacute' &&
-                                    target.layerId === layerId
+                                    target.layerId === drawingId
                             ),
-                        thinLayerId
+                        thinDrawingId
                     )
                 ).toBe(true);
             } finally {
@@ -2415,26 +2439,30 @@ test.describe('three-window sync scenarios', () => {
                 )
                 .toBe(0);
             expect(
-                await extractRawLayerShapes(inviteePage, 'aacute', thinLayerId!)
+                await extractRawDrawingShapes(
+                    inviteePage,
+                    'aacute',
+                    thinDrawingId!
+                )
             ).toEqual(aacuteAfterOwnerEdit);
             for (const page of allPages) {
                 await setEditingText(page, 'aipqe', 0);
                 await waitForEditingCompile(page);
             }
 
-            const dataBeforeReload = await extractGlyphLayerData(
+            const dataBeforeReload = await extractGlyphDrawingData(
                 mainPage,
                 glyphNamesWithB
             );
             expect(
-                await extractGlyphLayerData(mainPage, glyphNames)
+                await extractGlyphDrawingData(mainPage, glyphNames)
             ).not.toEqual(mainBaselineData);
-            await waitUntilGlyphLayerDataMatches(
+            await waitUntilGlyphDrawingDataMatches(
                 mainPage,
                 linkedPage,
                 glyphNamesWithB
             );
-            await waitUntilGlyphLayerDataMatches(
+            await waitUntilGlyphDrawingDataMatches(
                 mainPage,
                 inviteePage,
                 glyphNamesWithB
@@ -2535,34 +2563,34 @@ test.describe('three-window sync scenarios', () => {
                     glyphNamesWithB
                 );
             }
-            await waitUntilGlyphLayerDataMatches(
+            await waitUntilGlyphDrawingDataMatches(
                 mainPage,
                 linkedPage,
                 glyphNamesWithB
             );
-            await waitUntilGlyphLayerDataMatches(
+            await waitUntilGlyphDrawingDataMatches(
                 mainPage,
                 inviteePage,
                 glyphNamesWithB
             );
-            const mainDataAfterReload = await extractGlyphLayerData(
+            const mainDataAfterReload = await extractGlyphDrawingData(
                 mainPage,
                 glyphNamesWithB
             );
-            const linkedDataAfterReload = await extractGlyphLayerData(
+            const linkedDataAfterReload = await extractGlyphDrawingData(
                 linkedPage,
                 glyphNamesWithB
             );
-            const inviteeDataAfterReload = await extractGlyphLayerData(
+            const inviteeDataAfterReload = await extractGlyphDrawingData(
                 inviteePage,
                 glyphNamesWithB
             );
             expect(await glyphNodeX(mainPage, 'b')).toBe(inviteeEdit.newX);
-            expect(await sharedLayerNodes(mainPage)).toEqual(
-                expectedSharedLayerNodes
+            expect(await sharedDrawingNodes(mainPage)).toEqual(
+                expectedSharedDrawingNodes
             );
-            expect(await sharedLayerNodes(inviteePage)).toEqual(
-                expectedSharedLayerNodes
+            expect(await sharedDrawingNodes(inviteePage)).toEqual(
+                expectedSharedDrawingNodes
             );
             expect(mainDataAfterReload).toEqual(dataBeforeReload);
             expect(linkedDataAfterReload).toEqual(dataBeforeReload);
@@ -2670,8 +2698,8 @@ test.describe('three-window sync scenarios', () => {
                 const fontModel = (window as any).currentFontModel;
                 const currentFont = (window as any).fontManager?.currentFont;
                 const glyph = fontModel.findGlyph('a');
-                const layer = glyph.layers[0];
-                const node = layer.paths[0].nodes[0];
+                const drawing = glyph.drawings[0];
+                const node = drawing.paths[0].nodes[0];
                 const oldX = node.x;
                 bridge.runWithoutRecording(() => {
                     node.x = oldX + 50;
@@ -2683,7 +2711,7 @@ test.describe('three-window sync scenarios', () => {
                         'Revoked edit',
                         undefined,
                         undefined,
-                        layer.id,
+                        drawing.id,
                         undefined,
                         undefined,
                         undefined,
@@ -2712,14 +2740,14 @@ test.describe('three-window sync scenarios', () => {
             );
 
             const ownerStillEditable = await mainPage.evaluate(
-                async (layerId) => {
+                async (drawingId) => {
                     const bridge = (window as any).changeBridge;
                     const fontModel = (window as any).currentFontModel;
                     const currentFont = (window as any).fontManager
                         ?.currentFont;
                     const glyph = fontModel.findGlyph('a');
-                    const layer = glyph.findLayerById(layerId);
-                    const node = layer.paths[0].nodes[0];
+                    const drawing = glyph.findDrawingById(drawingId);
+                    const node = drawing.paths[0].nodes[0];
                     const oldX = node.x;
                     bridge.runWithoutRecording(() => {
                         node.x = oldX + 3;
@@ -2730,7 +2758,7 @@ test.describe('three-window sync scenarios', () => {
                         'Owner after revoke',
                         undefined,
                         undefined,
-                        layerId,
+                        drawingId,
                         undefined,
                         undefined,
                         undefined,
@@ -2739,11 +2767,11 @@ test.describe('three-window sync scenarios', () => {
                     );
                     return { oldX, newX: node.x };
                 },
-                thinLayerId
+                thinDrawingId
             );
             expect(ownerStillEditable.newX).toBe(ownerStillEditable.oldX + 3);
             await waitForCloudLiveIdle(mainPage);
-            await waitUntilGlyphLayerDataMatches(
+            await waitUntilGlyphDrawingDataMatches(
                 mainPage,
                 linkedPage,
                 glyphNames

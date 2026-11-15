@@ -35,5 +35,5 @@ Counterpunch recognizes the contributions of maintainers, type engineers, foundr
 ## Related pages
 
 - [Open, save, and file formats](files/03-open-save-formats.md)
-- [Axes and masters](editor/03-axes-masters.md)
+- [Axes and stations](editor/03-axes-stations.md)
 - [Python in Counterpunch](python/01-python-in-counterpunch.md)

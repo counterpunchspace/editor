@@ -302,10 +302,10 @@ async function loadAAdieresisTestFont(page: Page): Promise<void> {
         (dependentGlyphs) => {
             const font = (window as any).currentFontModel;
             return dependentGlyphs.every((glyphName) => {
-                const layer = font?.findGlyph?.(glyphName)?.layers?.[0];
+                const drawing = font?.findGlyph?.(glyphName)?.drawings?.[0];
                 return (
-                    layer?.isAutomaticAlignedLayer?.() === true &&
-                    layer.components?.every(
+                    drawing?.isAutomaticAlignedDrawing?.() === true &&
+                    drawing.components?.every(
                         (component: any) =>
                             component?.automaticAlignment === true
                     )
@@ -408,10 +408,10 @@ async function waitForLinkedWindowReady(
             (dependentGlyphs) => {
                 const font = (window as any).currentFontModel;
                 return dependentGlyphs.every((glyphName: string) => {
-                    const layer = font?.findGlyph?.(glyphName)?.layers?.[0];
+                    const drawing = font?.findGlyph?.(glyphName)?.drawings?.[0];
                     return (
-                        layer?.isAutomaticAlignedLayer?.() === true &&
-                        layer.components?.every(
+                        drawing?.isAutomaticAlignedDrawing?.() === true &&
+                        drawing.components?.every(
                             (component: any) =>
                                 component?.automaticAlignment === true
                         )
@@ -816,7 +816,7 @@ async function liveDragPoint(
         let fontX: number;
         let fontY: number;
         if (target === 'top-anchor') {
-            const anchor = outlineEditor.layerData.anchors.find(
+            const anchor = outlineEditor.drawingData.anchors.find(
                 (candidate: any) => candidate.name === 'top'
             );
             fontX = origin.x + anchor.x;
@@ -940,14 +940,14 @@ async function stopAdieresisRedrawLog(
     }, untilMs);
 }
 
-async function readAdieresisLayer(page: Page): Promise<unknown> {
+async function readAdieresisDrawing(page: Page): Promise<unknown> {
     return page.evaluate(() => {
-        const layer = (window as any).currentFontModel
+        const drawing = (window as any).currentFontModel
             ?.findGlyph?.('adieresis')
-            ?.findLayerById?.('L0');
+            ?.findDrawingById?.('L0');
         return {
-            width: layer?.width,
-            components: (layer?.components || []).map((component: any) => ({
+            width: drawing?.width,
+            components: (drawing?.components || []).map((component: any) => ({
                 reference: component.reference,
                 translation: component.transform?.translation
             }))
@@ -968,7 +968,7 @@ async function setAAdieresisEditingContext(page: Page): Promise<void> {
         await textRunEditor.selectGlyphByIndex(0, true);
         outlineEditor.active = true;
         outlineEditor.currentGlyphName = 'a';
-        outlineEditor.selectedLayerId = 'L0';
+        outlineEditor.selectedDrawingId = 'L0';
         await glyphCanvas.doUIUpdateAsync?.();
     });
     await page.waitForFunction(
@@ -996,20 +996,20 @@ async function commitAAdieresisEdit(
                 throw new Error('Missing font manager or change bridge');
             }
 
-            const findLayer = (glyphName: string) => {
+            const findDrawing = (glyphName: string) => {
                 const glyph = fontJson.glyphs.find(
                     (entry: any) => entry.name === glyphName
                 );
-                const layer = glyph?.layers?.find(
+                const drawing = glyph?.layers?.find(
                     (entry: any) => entry.id === 'L0'
                 );
-                if (!layer) {
+                if (!drawing) {
                     throw new Error(`Missing ${glyphName}/L0`);
                 }
-                return layer;
+                return drawing;
             };
 
-            const aLayer = findLayer('a');
+            const aDrawing = findDrawing('a');
             const dependentGlyphs = [
                 'adieresis',
                 'aacute',
@@ -1023,15 +1023,15 @@ async function commitAAdieresisEdit(
                 'atilde',
                 'ae'
             ];
-            const dependentLayers = dependentGlyphs.map((glyphName) =>
-                findLayer(glyphName)
+            const dependentDrawings = dependentGlyphs.map((glyphName) =>
+                findDrawing(glyphName)
             );
             if (kind === 'outline') {
-                aLayer.shapes[0].nodes[0].x += delta;
+                aDrawing.shapes[0].nodes[0].x += delta;
             } else if (kind === 'anchor') {
                 const modelAnchor = fontManager.currentFont.fontModel
                     .findGlyph('a')
-                    ?.findLayerById('L0')
+                    ?.findDrawingById('L0')
                     ?.findAnchor('top');
                 if (!modelAnchor) {
                     throw new Error('Missing a/L0 top anchor');
@@ -1040,15 +1040,15 @@ async function commitAAdieresisEdit(
                 fontManager.currentFont.fontModel.rebuildAutomaticCompositesForGlyphs?.(
                     new Set(['a']),
                     {
-                        preferredLayerId: 'L0',
+                        preferredDrawingId: 'L0',
                         preferredSourceGlyphName: 'a'
                     }
                 );
                 fontManager.currentFont.syncJsonFromModel?.();
             } else {
-                aLayer.width += delta;
-                for (const layer of dependentLayers) {
-                    layer.width = aLayer.width;
+                aDrawing.width += delta;
+                for (const drawing of dependentDrawings) {
+                    drawing.width = aDrawing.width;
                 }
             }
 
@@ -1059,7 +1059,7 @@ async function commitAAdieresisEdit(
                     layerId: 'L0'
                 }))
             ];
-            bridge.syncLayersFromJson(
+            bridge.syncDrawingsFromJson(
                 replayTargets,
                 `fuzz ${kind} ${step}`,
                 undefined,
@@ -1087,17 +1087,17 @@ async function runAAdieresisUndoRedo(
             const jsonGlyph = fontJson?.glyphs?.find(
                 (entry: any) => entry.name === 'a'
             );
-            const jsonLayer = jsonGlyph?.layers?.find(
+            const jsonDrawing = jsonGlyph?.layers?.find(
                 (entry: any) => entry.id === 'L0'
             );
-            const modelLayer = fontModel
+            const modelDrawing = fontModel
                 ?.findGlyph?.('a')
-                ?.findLayerById?.('L0')
+                ?.findDrawingById?.('L0')
                 ?.toJSON?.();
             const history = win.patchSyncEngine?.getHistoryStack?.('a', 'L0');
             return {
-                jsonLayer,
-                modelLayer,
+                jsonLayer: jsonDrawing,
+                modelLayer: modelDrawing,
                 historyTop: Array.isArray(history?.undo)
                     ? history.undo.at(-1)
                     : null,
@@ -1177,14 +1177,14 @@ async function expectAAdieresisSubsetPresent(
     page: Page,
     label: string
 ): Promise<void> {
-    const workerLayers = await getWorkerLayerShapeCounts(page);
+    const workerDrawings = await getWorkerDrawingShapeCounts(page);
     expect(
-        workerLayers.aSubsetShapes,
-        `${label}: worker subset must include a ${JSON.stringify(workerLayers)}`
+        workerDrawings.aSubsetShapes,
+        `${label}: worker subset must include a ${JSON.stringify(workerDrawings)}`
     ).toBeGreaterThan(0);
     expect(
-        workerLayers.adieresisSubsetShapes,
-        `${label}: worker subset must include adieresis ${JSON.stringify(workerLayers)}`
+        workerDrawings.adieresisSubsetShapes,
+        `${label}: worker subset must include adieresis ${JSON.stringify(workerDrawings)}`
     ).toBeGreaterThan(0);
 }
 
@@ -1218,33 +1218,33 @@ async function getAAdieresisState(page: Page): Promise<{
         const currentFont = (window as any).fontManager?.currentFont;
         const fontJson = currentFont?.babelfontData;
         const fontModel = currentFont?.fontModel;
-        const findLayer = (glyphName: string) => {
+        const findDrawing = (glyphName: string) => {
             const glyph = fontJson?.glyphs?.find(
                 (entry: any) => entry.name === glyphName
             );
             return glyph?.layers?.find((entry: any) => entry.id === 'L0');
         };
-        const findModelLayer = (glyphName: string) =>
+        const findModelDrawing = (glyphName: string) =>
             fontModel
                 ?.findGlyph?.(glyphName)
-                ?.findLayerById?.('L0')
+                ?.findDrawingById?.('L0')
                 ?.toJSON?.();
-        const aLayer = findLayer('a');
-        const adieresisLayer = findLayer('adieresis');
-        const modelALayer = findModelLayer('a');
-        const modelAdieresisLayer = findModelLayer('adieresis');
+        const aDrawing = findDrawing('a');
+        const adieresisDrawing = findDrawing('adieresis');
+        const modelADrawing = findModelDrawing('a');
+        const modelAdieresisDrawing = findModelDrawing('adieresis');
         return {
-            anchorY: Number(aLayer?.anchors?.[0]?.y),
+            anchorY: Number(aDrawing?.anchors?.[0]?.y),
             markY: Number(
-                adieresisLayer?.shapes?.[1]?.transform?.translation?.[1]
+                adieresisDrawing?.shapes?.[1]?.transform?.translation?.[1]
             ),
-            nodeX: Number(aLayer?.shapes?.[0]?.nodes?.[0]?.x),
-            width: Number(aLayer?.width),
-            aShapeCount: Number(aLayer?.shapes?.length ?? 0),
-            adieresisShapeCount: Number(adieresisLayer?.shapes?.length ?? 0),
-            modelAShapeCount: Number(modelALayer?.shapes?.length ?? 0),
+            nodeX: Number(aDrawing?.shapes?.[0]?.nodes?.[0]?.x),
+            width: Number(aDrawing?.width),
+            aShapeCount: Number(aDrawing?.shapes?.length ?? 0),
+            adieresisShapeCount: Number(adieresisDrawing?.shapes?.length ?? 0),
+            modelAShapeCount: Number(modelADrawing?.shapes?.length ?? 0),
             modelAdieresisShapeCount: Number(
-                modelAdieresisLayer?.shapes?.length ?? 0
+                modelAdieresisDrawing?.shapes?.length ?? 0
             )
         };
     });
@@ -1274,7 +1274,7 @@ async function expectAAdieresisShapesPresent(
     ).toBeGreaterThan(1);
 }
 
-async function getWorkerLayerShapeCounts(
+async function getWorkerDrawingShapeCounts(
     page: Page
 ): Promise<Record<string, boolean | number | null>> {
     return page.evaluate(async () => {
@@ -1283,34 +1283,35 @@ async function getWorkerLayerShapeCounts(
             (window as any).currentFontModel;
         const fontJson = (window as any).fontManager?.currentFont
             ?.babelfontData;
-        const aLayerId = fontModel?.findGlyph?.('a')?.layers?.[0]?.id;
-        const adieresisLayerId =
-            fontModel?.findGlyph?.('adieresis')?.layers?.[0]?.id;
+        const aDrawingId = fontModel?.findGlyph?.('a')?.drawings?.[0]?.id;
+        const adieresisDrawingId =
+            fontModel?.findGlyph?.('adieresis')?.drawings?.[0]?.id;
         const response = await (window as any).fontCompilation?.sendMessage?.({
-            type: 'dumpLayerState',
+            type: 'dumpDrawingState',
             layerTargets: [
-                { glyphName: 'a', layerId: aLayerId },
-                { glyphName: 'adieresis', layerId: adieresisLayerId }
+                { glyphName: 'a', layerId: aDrawingId },
+                { glyphName: 'adieresis', layerId: adieresisDrawingId }
             ]
         });
         const dump = response?.dumpJson ? JSON.parse(response.dumpJson) : null;
         const targets = Array.isArray(dump?.targets) ? dump.targets : [];
         const bridgeFontMap = (window as any).patchSyncEngine?.fontMap;
-        const getBridgeLayer = (glyphName: string, layerId: string) => {
+        const getBridgeDrawing = (glyphName: string, drawingId: string) => {
             const glyphsMap = bridgeFontMap?.get?.('glyphs');
             const glyphMap = glyphsMap?.get?.(glyphName);
-            const layersMap = glyphMap?.get?.('layers');
-            return layersMap?.get?.(layerId) ?? null;
+            const drawingsMap = glyphMap?.get?.('layers');
+            return drawingsMap?.get?.(drawingId) ?? null;
         };
         const byName = new Map(
             targets.map((target: any) => [target?.glyphName, target])
         );
-        const countShapes = (layer: any) =>
-            Array.isArray(layer?.shapes) ? layer.shapes.length : null;
-        const findStoredLayer = (glyphName: string, layerId: string) =>
+        const countShapes = (drawing: any) =>
+            Array.isArray(drawing?.shapes) ? drawing.shapes.length : null;
+        const findStoredDrawing = (glyphName: string, drawingId: string) =>
             fontJson?.glyphs
                 ?.find((glyph: any) => glyph.name === glyphName)
-                ?.layers?.find((layer: any) => layer.id === layerId) ?? null;
+                ?.layers?.find((drawing: any) => drawing.id === drawingId) ??
+            null;
         const stableJson = (value: any): string => {
             if (Array.isArray(value)) {
                 return `[${value.map(stableJson).join(',')}]`;
@@ -1340,8 +1341,8 @@ async function getWorkerLayerShapeCounts(
                 ])
             );
         };
-        const compareStoredLayer = (glyphName: string, layer: any) => {
-            const normalizeLayer = (candidate: any) => {
+        const compareStoredDrawing = (glyphName: string, drawing: any) => {
+            const normalizeDrawing = (candidate: any) => {
                 const normalized = cloneStorageValue(candidate);
                 if (
                     normalized?.format_specific &&
@@ -1351,51 +1352,51 @@ async function getWorkerLayerShapeCounts(
                 }
                 return normalized;
             };
-            const storedLayer = normalizeLayer(
-                findStoredLayer(glyphName, layer?.id)
+            const storedDrawing = normalizeDrawing(
+                findStoredDrawing(glyphName, drawing?.id)
             );
-            const storedJson = stableJson(storedLayer);
-            const workerJson = stableJson(normalizeLayer(layer));
+            const storedJson = stableJson(storedDrawing);
+            const workerJson = stableJson(normalizeDrawing(drawing));
             return {
-                matches: layer != null && storedJson === workerJson,
+                matches: drawing != null && storedJson === workerJson,
                 storedJson,
                 workerJson
             };
         };
-        const countBridgeShapes = (layerMap: any) => {
-            if (!layerMap?.get) {
+        const countBridgeShapes = (drawingMap: any) => {
+            if (!drawingMap?.get) {
                 return null;
             }
-            const shapeOrder = layerMap.get('shapeOrder');
+            const shapeOrder = drawingMap.get('shapeOrder');
             if (Array.isArray(shapeOrder)) {
                 return shapeOrder.length;
             }
             if (typeof shapeOrder?.length === 'number') {
                 return shapeOrder.length;
             }
-            const shapes = layerMap.get('shapes');
+            const shapes = drawingMap.get('shapes');
             return Array.isArray(shapes) ? shapes.length : null;
         };
-        const aYDoc = compareStoredLayer('a', byName.get('a')?.ydocLayer);
-        const aCanonical = compareStoredLayer(
+        const aYDoc = compareStoredDrawing('a', byName.get('a')?.ydocLayer);
+        const aCanonical = compareStoredDrawing(
             'a',
             byName.get('a')?.canonicalLayer
         );
-        const aSubset = compareStoredLayer('a', byName.get('a')?.subsetLayer);
-        const adieresisYDoc = compareStoredLayer(
+        const aSubset = compareStoredDrawing('a', byName.get('a')?.subsetLayer);
+        const adieresisYDoc = compareStoredDrawing(
             'adieresis',
             byName.get('adieresis')?.ydocLayer
         );
-        const adieresisCanonical = compareStoredLayer(
+        const adieresisCanonical = compareStoredDrawing(
             'adieresis',
             byName.get('adieresis')?.canonicalLayer
         );
-        const adieresisSubset = compareStoredLayer(
+        const adieresisSubset = compareStoredDrawing(
             'adieresis',
             byName.get('adieresis')?.subsetLayer
         );
         return {
-            aBridgeShapes: countBridgeShapes(getBridgeLayer('a', aLayerId)),
+            aBridgeShapes: countBridgeShapes(getBridgeDrawing('a', aDrawingId)),
             aYDocShapes: countShapes(byName.get('a')?.ydocLayer),
             aCanonicalShapes: countShapes(byName.get('a')?.canonicalLayer),
             aSubsetShapes: countShapes(byName.get('a')?.subsetLayer),
@@ -1407,7 +1408,7 @@ async function getWorkerLayerShapeCounts(
             aCanonicalMismatch: aCanonical.matches ? null : aCanonical,
             aSubsetMismatch: aSubset.matches ? null : aSubset,
             adieresisBridgeShapes: countBridgeShapes(
-                getBridgeLayer('adieresis', adieresisLayerId)
+                getBridgeDrawing('adieresis', adieresisDrawingId)
             ),
             adieresisYDocShapes: countShapes(
                 byName.get('adieresis')?.ydocLayer
@@ -1435,17 +1436,19 @@ async function getWorkerLayerShapeCounts(
     });
 }
 
-async function expectWorkerLayersMatchStored(
+async function expectWorkerDrawingsMatchStored(
     page: Page,
     label: string
 ): Promise<void> {
-    const workerLayers = await getWorkerLayerShapeCounts(page);
-    for (const [replica, matchesStored] of Object.entries(workerLayers).filter(
+    const workerDrawings = await getWorkerDrawingShapeCounts(page);
+    for (const [replica, matchesStored] of Object.entries(
+        workerDrawings
+    ).filter(
         ([key, value]) => key.endsWith('MatchesStored') && value !== null
     )) {
         expect(
             matchesStored,
-            `${label}: worker replica ${replica} ${JSON.stringify(workerLayers)}`
+            `${label}: worker replica ${replica} ${JSON.stringify(workerDrawings)}`
         ).toBe(true);
     }
 }
@@ -1566,8 +1569,9 @@ async function commitAAdieresisEditorEdit(
                 throw new Error('Missing editor state for sender commit');
             }
 
-            const layerData = outlineEditor.getCurrentLayerDataFromStack?.();
-            if (!layerData) {
+            const drawingData =
+                outlineEditor.getCurrentDrawingDataFromStack?.();
+            if (!drawingData) {
                 throw new Error('Missing current layer data for sender commit');
             }
 
@@ -1577,7 +1581,7 @@ async function commitAAdieresisEditorEdit(
                     : outlineEditor._buildNodeDesc?.(true);
 
             if (kind === 'anchor') {
-                const anchor = layerData.anchors?.find(
+                const anchor = drawingData.anchors?.find(
                     (entry: any) => entry?.name === 'top'
                 );
                 if (!anchor) {
@@ -1585,7 +1589,7 @@ async function commitAAdieresisEditorEdit(
                 }
                 anchor.y += delta;
             } else {
-                const node = layerData.shapes?.[0]?.nodes?.[0];
+                const node = drawingData.shapes?.[0]?.nodes?.[0];
                 if (!node) {
                     throw new Error('Missing outline node for sender commit');
                 }
@@ -1594,7 +1598,7 @@ async function commitAAdieresisEditorEdit(
 
             const changeSource =
                 kind === 'anchor' ? 'mouse-drag-anchor' : 'mouse-drag-outline';
-            await outlineEditor.saveLayerData(changeSource);
+            await outlineEditor.saveDrawingData(changeSource);
             if (kind === 'anchor') {
                 outlineEditor._anchorAffectedGlyphNames =
                     outlineEditor.rebuildAutomaticCompositesForCurrentEditedGlyph?.() ??
@@ -1608,7 +1612,7 @@ async function commitAAdieresisEditorEdit(
                 sourceTargets: sourceTarget,
                 editKinds,
                 scope: 'all',
-                activeLayerId: 'L0'
+                activeDrawingId: 'L0'
             }) ?? {
                 allTargets: sourceTarget,
                 recomposeTargets: []
@@ -1625,13 +1629,13 @@ async function commitAAdieresisEditorEdit(
                 undefined,
                 closure.allTargets?.length
                     ? {
-                          changedLayerTargets: [
+                          changedDrawingTargets: [
                               ...sourceTarget,
                               ...(closure.recomposeTargets ?? [])
                           ],
                           workerReplayTargets: closure.allTargets,
                           ...(kind === 'anchor' && {
-                              authoritativeOptionalLayerFields: ['anchors']
+                              authoritativeOptionalDrawingFields: ['anchors']
                           })
                       }
                     : undefined,
@@ -1688,11 +1692,11 @@ function expectUndoDrainSnapshotRestored(
 async function setEditingContext(
     page: Page,
     glyphName: string,
-    layerId: string
+    drawingId: string
 ): Promise<void> {
     // Step 1: Set text buffer and select glyph
     await page.evaluate(
-        async ({ glyphName, layerId }) => {
+        async ({ glyphName, layerId: drawingId }) => {
             const glyphCanvas = (window as any).glyphCanvas;
             const textRunEditor = glyphCanvas?.textRunEditor;
             const outlineEditor = glyphCanvas?.outlineEditor;
@@ -1703,7 +1707,7 @@ async function setEditingContext(
             textRunEditor.setTextBuffer(glyphName);
             await textRunEditor.selectGlyphByIndex(0, true);
         },
-        { glyphName, layerId }
+        { glyphName, layerId: drawingId }
     );
 
     // Wait for shaping to complete
@@ -1733,7 +1737,7 @@ async function setEditingContext(
 
     // Step 2: Enter outline mode
     await page.evaluate(
-        async ({ glyphName, layerId }) => {
+        async ({ glyphName, layerId: drawingId }) => {
             const glyphCanvas = (window as any).glyphCanvas;
             const outlineEditor = glyphCanvas?.outlineEditor;
             if (!glyphCanvas || !outlineEditor) {
@@ -1742,10 +1746,10 @@ async function setEditingContext(
 
             outlineEditor.active = true;
             outlineEditor.currentGlyphName = glyphName;
-            outlineEditor.selectedLayerId = layerId;
+            outlineEditor.selectedDrawingId = drawingId;
             await glyphCanvas.doUIUpdateAsync?.();
         },
-        { glyphName, layerId }
+        { glyphName, layerId: drawingId }
     );
 }
 
@@ -1790,7 +1794,7 @@ async function forceEditingCompile(
 async function editGlyphNode(
     page: Page,
     glyphName: string,
-    layerId: string,
+    drawingId: string,
     deltaX: number,
     deltaY: number
 ): Promise<{
@@ -1798,12 +1802,12 @@ async function editGlyphNode(
     after: { x: number; y: number };
 }> {
     return page.evaluate(
-        async ({ glyphName, layerId, deltaX, deltaY }) => {
+        async ({ glyphName, layerId: drawingId, deltaX, deltaY }) => {
             const fontManager = (window as any).fontManager;
             const fontModel = (window as any).currentFontModel;
             const glyph = fontModel?.findGlyph?.(glyphName);
-            const layer = glyph?.findLayerById?.(layerId);
-            const path = layer?.paths?.[0];
+            const drawing = glyph?.findDrawingById?.(drawingId);
+            const path = drawing?.paths?.[0];
             const node = path?.nodes?.[0];
 
             if (!fontManager || !node) {
@@ -1832,7 +1836,7 @@ async function editGlyphNode(
                 after: { x: Number(node.x), y: Number(node.y) }
             };
         },
-        { glyphName, layerId, deltaX, deltaY }
+        { glyphName, layerId: drawingId, deltaX, deltaY }
     );
 }
 
@@ -1843,7 +1847,7 @@ test.describe('Linked window editing compile regression', () => {
         test.setTimeout(300000);
 
         const glyphName = 'o';
-        const layerId = 'L0';
+        const drawingId = 'L0';
 
         const { context, mainPage, linkedPage } = await openLinkedEditingPair(
             browser,
@@ -1854,8 +1858,8 @@ test.describe('Linked window editing compile regression', () => {
         await installEditingFontCompileTracker(linkedPage);
         await installEditingFontVisualProbe(linkedPage);
 
-        await setEditingContext(mainPage, glyphName, layerId);
-        await setEditingContext(linkedPage, glyphName, layerId);
+        await setEditingContext(mainPage, glyphName, drawingId);
+        await setEditingContext(linkedPage, glyphName, drawingId);
 
         const linkedInitialTracker =
             await getEditingFontCompileTracker(linkedPage);
@@ -1882,7 +1886,7 @@ test.describe('Linked window editing compile regression', () => {
         const remoteEditResult = await editGlyphNode(
             mainPage,
             glyphName,
-            layerId,
+            drawingId,
             40,
             0
         );
@@ -1934,7 +1938,7 @@ test.describe('Linked window editing compile regression', () => {
         const localEditResult = await editGlyphNode(
             linkedPage,
             glyphName,
-            layerId,
+            drawingId,
             -20,
             0
         );
@@ -2014,9 +2018,9 @@ test.describe('Linked window editing compile regression', () => {
             linkedPage,
             'receiver after anchor'
         );
-        const senderWorkerCounts = await getWorkerLayerShapeCounts(mainPage);
+        const senderWorkerCounts = await getWorkerDrawingShapeCounts(mainPage);
         const receiverWorkerCounts =
-            await getWorkerLayerShapeCounts(linkedPage);
+            await getWorkerDrawingShapeCounts(linkedPage);
         expect(
             senderWorkerCounts.aYDocShapes,
             `sender worker dump ${JSON.stringify(senderWorkerCounts)}`
@@ -2065,8 +2069,8 @@ test.describe('Linked window editing compile regression', () => {
             receiverWorkerCounts.adieresisSubsetShapes,
             `receiver worker dump ${JSON.stringify(receiverWorkerCounts)}`
         ).toBeGreaterThan(0);
-        await expectWorkerLayersMatchStored(mainPage, 'sender');
-        await expectWorkerLayersMatchStored(linkedPage, 'receiver');
+        await expectWorkerDrawingsMatchStored(mainPage, 'sender');
+        await expectWorkerDrawingsMatchStored(linkedPage, 'receiver');
         await assertCompiledAAdieresisState(
             mainPage,
             'sender after editor anchor commit'
@@ -2297,11 +2301,11 @@ test.describe('Linked window editing compile regression', () => {
                 linkedPage,
                 `linked after ${operation.label} ${operation.kind} ${step}`
             );
-            await expectWorkerLayersMatchStored(
+            await expectWorkerDrawingsMatchStored(
                 mainPage,
                 `main after ${operation.label} ${operation.kind} ${step}`
             );
-            await expectWorkerLayersMatchStored(
+            await expectWorkerDrawingsMatchStored(
                 linkedPage,
                 `linked after ${operation.label} ${operation.kind} ${step}`
             );
@@ -2499,10 +2503,10 @@ test.describe('Linked window editing compile regression', () => {
             await expect
                 .poll(
                     async () =>
-                        JSON.stringify(await readAdieresisLayer(linkedPage)),
+                        JSON.stringify(await readAdieresisDrawing(linkedPage)),
                     { timeout: 20000 }
                 )
-                .toBe(JSON.stringify(await readAdieresisLayer(mainPage)));
+                .toBe(JSON.stringify(await readAdieresisDrawing(mainPage)));
         }
 
         await context.close();

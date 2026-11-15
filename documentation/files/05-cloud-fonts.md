@@ -48,7 +48,7 @@ When you reconnect, your edits are combined with everything others changed while
 
 - **Changes to different things are all kept.** If you moved a point in `a` and someone else kerned `A` and `V`, both changes stay.
 - **If you both changed the same thing, only one change is kept.** That can be the same point, the same width, the same kerning pair or the same OpenType feature.
-- **The same goes for the shape of a glyph.** If you both added or deleted points or contours in the same layer, only one of your versions of that layer is kept, together with the point moves that belong to it.
+- **The same goes for the shape of a glyph.** If you both added or deleted points or contours in the same drawing, only one of your versions of that drawing is kept, together with the point moves that belong to it.
 - **Which change is kept is decided at random**, not by who edited last. Everyone ends up with the same font, so nobody keeps seeing a different version.
 
 The same rule applies when two people online change the same thing at the same moment. Online, edits reach each other within about a second, so this rarely happens.

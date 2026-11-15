@@ -283,7 +283,7 @@ export class GlyphOverviewFilterManager {
     /**
      * Last observed `Glyph.isCompatible` per glyph name. Used so
      * `glyph.compatibility.changed` fires only on an actual boolean toggle,
-     * not on every layer edit that might affect outlines.
+     * not on every drawing edit that might affect outlines.
      */
     private glyphCompatibilityByName: Map<string, boolean> = new Map();
 
@@ -804,7 +804,7 @@ export class GlyphOverviewFilterManager {
 
     /**
      * Recheck outline compatibility for the given glyphs (or every glyph when
-     * masters change) and emit `glyph.compatibility.changed` only when the
+     * stations change) and emit `glyph.compatibility.changed` only when the
      * boolean toggles relative to the last observed value.
      */
     private collectCompatibilityToggleChanges(
@@ -854,9 +854,9 @@ export class GlyphOverviewFilterManager {
                 continue;
             }
 
-            const layerIds = Array.isArray(glyph.layers)
-                ? glyph.layers
-                      .map((layer: { id?: string }) => layer?.id)
+            const drawingIds = Array.isArray(glyph.drawings)
+                ? glyph.drawings
+                      .map((drawing: { id?: string }) => drawing?.id)
                       .filter(
                           (id: unknown): id is string =>
                               typeof id === 'string' && id.length > 0
@@ -868,7 +868,7 @@ export class GlyphOverviewFilterManager {
                 metadata: {
                     glyphName,
                     compatible,
-                    layerIds
+                    drawingIds
                 }
             });
         }
@@ -892,7 +892,7 @@ export class GlyphOverviewFilterManager {
         const changes: GlyphFilterChange[] = [];
         const lifecycleChanges: GlyphFilterLifecycleChange[] = [];
         const compatibilityCheckGlyphNames = new Set<string>();
-        let mastersChanged = false;
+        let stationsChanged = false;
         for (const entry of entries) {
             const derived = deriveGlyphFilterChangesFromCommittedEntry(entry);
             changes.push(...derived.changes);
@@ -900,8 +900,8 @@ export class GlyphOverviewFilterManager {
             for (const glyphName of derived.compatibilityCheckGlyphNames) {
                 compatibilityCheckGlyphNames.add(glyphName);
             }
-            if (derived.mastersChanged) {
-                mastersChanged = true;
+            if (derived.stationsChanged) {
+                stationsChanged = true;
             }
 
             for (const lifecycle of derived.lifecycleChanges) {
@@ -921,7 +921,7 @@ export class GlyphOverviewFilterManager {
         changes.push(
             ...this.collectCompatibilityToggleChanges(
                 compatibilityCheckGlyphNames,
-                mastersChanged
+                stationsChanged
             )
         );
 

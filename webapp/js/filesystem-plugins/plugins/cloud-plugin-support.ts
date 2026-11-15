@@ -450,14 +450,14 @@ export function canonicalizeCloudExportFontJson(
             glyph && typeof glyph === 'object' && !Array.isArray(glyph)
                 ? (glyph as Record<string, unknown>)
                 : null;
-        const layers = Array.isArray(glyphRecord?.layers)
+        const drawings = Array.isArray(glyphRecord?.layers)
             ? (glyphRecord.layers as unknown[])
             : [];
-        for (const layer of layers) {
+        for (const drawing of drawings) {
             const shapes = Array.isArray(
-                (layer as { shapes?: unknown[] }).shapes
+                (drawing as { shapes?: unknown[] }).shapes
             )
-                ? (layer as { shapes: unknown[] }).shapes
+                ? (drawing as { shapes: unknown[] }).shapes
                 : [];
             for (const shape of shapes) {
                 if (!shape || typeof shape !== 'object') {
@@ -490,14 +490,14 @@ export function validateCloudExportForFontOpen(
             glyph && typeof glyph === 'object' && !Array.isArray(glyph)
                 ? (glyph as Record<string, unknown>)
                 : null;
-        const layers = Array.isArray(glyphRecord?.layers)
+        const drawings = Array.isArray(glyphRecord?.layers)
             ? (glyphRecord.layers as unknown[])
             : [];
-        for (const layer of layers) {
+        for (const drawing of drawings) {
             const shapes = Array.isArray(
-                (layer as { shapes?: unknown[] }).shapes
+                (drawing as { shapes?: unknown[] }).shapes
             )
-                ? (layer as { shapes: unknown[] }).shapes
+                ? (drawing as { shapes: unknown[] }).shapes
                 : [];
             for (const shape of shapes) {
                 if (!shape || typeof shape !== 'object') {

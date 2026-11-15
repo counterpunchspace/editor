@@ -46,17 +46,17 @@ describe('linked live preview payload', () => {
                 }
             ]
         };
-        const sourceLayer = {
-            isAutomaticAlignedLayer: () => false,
+        const sourceDrawing = {
+            isAutomaticAlignedDrawing: () => false,
             toJSON: () => ({ width: 617, anchors: [{ name: 'top', x: 1 }] })
         };
         jest.spyOn(fontManager, 'currentFont', 'get').mockReturnValue({
             fontModel: {
                 findGlyph: (name) => ({
-                    findLayerById: () =>
+                    findDrawingById: () =>
                         name === 'A'
-                            ? sourceLayer
-                            : { isAutomaticAlignedLayer: () => true }
+                            ? sourceDrawing
+                            : { isAutomaticAlignedDrawing: () => true }
                 })
             }
         });

@@ -7,10 +7,10 @@ function editor() {
     const instance = Object.create(OutlineEditor.prototype);
     instance.selectedAnchors = [];
     // Plain layer objects, not the active layer: anchors come from them.
-    instance.resolveLayerModel = (layer) => layer;
-    instance.getCurrentLayerModel = () => null;
+    instance.resolveDrawingModel = (drawing) => drawing;
+    instance.getCurrentDrawingModel = () => null;
     instance.getActiveSelectionScopeGlyphName = () => null;
-    instance.getLayerGlyphName = () => null;
+    instance.getDrawingGlyphName = () => null;
     return instance;
 }
 
@@ -42,7 +42,7 @@ describe('anchor selection remap by name', () => {
 
     test('sanitizing a stored selection for another layer prefers names over indices', () => {
         const oe = editor();
-        const restored = oe.sanitizeSelectionStateForLayer(
+        const restored = oe.sanitizeSelectionStateForDrawing(
             {
                 points: [],
                 anchors: [0],
@@ -64,7 +64,7 @@ describe('anchor selection remap by name', () => {
         const oe = editor();
         const previous = { shapes: [], anchors: anchors('top', 'bottom') };
         const next = { shapes: [], anchors: anchors('bottom', 'top') };
-        const remapped = oe.remapSelectionStateBetweenLayers(
+        const remapped = oe.remapSelectionStateBetweenDrawings(
             {
                 points: [],
                 anchors: [0],

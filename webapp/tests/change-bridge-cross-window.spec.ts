@@ -21,13 +21,13 @@ import {
     waitForOptionalEditingFontCompileEvent,
     getEditingFontCompileTracker,
     getCompilationErrorText,
-    extractGlyphLayerData,
-    extractRawLayerProperties,
-    extractYDocLayerKeys,
-    extractRawLayerShapes,
-    extractRawLayerAnchors,
-    findThinLayerId,
-    countModelLayers,
+    extractGlyphDrawingData,
+    extractRawDrawingProperties,
+    extractYDocDrawingKeys,
+    extractRawDrawingShapes,
+    extractRawDrawingAnchors,
+    findThinDrawingId,
+    countModelDrawings,
     alignEditorCanvas,
     installCrossWindowTrackersOnContext,
     openLinkedEditorWindow,
@@ -64,8 +64,8 @@ test.describe('Cross-window ChangeBridge sync', () => {
         await focusView(mainPage, 'ControlOrMeta+Shift+E', 'view-editor');
         await alignEditorCanvas(mainPage, 'a', { wght: 200 });
 
-        const thinLayerId = await findThinLayerId(mainPage);
-        expect(thinLayerId).toBeTruthy();
+        const thinDrawingId = await findThinDrawingId(mainPage);
+        expect(thinDrawingId).toBeTruthy();
         const glyphNames = ['a', 'adieresis', 'aacute'];
 
         const linkedPage = await openLinkedEditorWindow(mainPage);
@@ -89,11 +89,11 @@ test.describe('Cross-window ChangeBridge sync', () => {
             linkedErrors.push(err.message);
         });
 
-        const mainBaselineData = await extractGlyphLayerData(
+        const mainBaselineData = await extractGlyphDrawingData(
             mainPage,
             glyphNames
         );
-        const linkedBaselineData = await extractGlyphLayerData(
+        const linkedBaselineData = await extractGlyphDrawingData(
             linkedPage,
             glyphNames
         );
@@ -102,14 +102,14 @@ test.describe('Cross-window ChangeBridge sync', () => {
         await alignEditorCanvas(linkedPage, 'a', { wght: 200 });
 
         const outlineLastSyncTime = await getLastFontModelSyncTime(linkedPage);
-        const outlineEditResult = await mainPage.evaluate(async (layerId) => {
+        const outlineEditResult = await mainPage.evaluate(async (drawingId) => {
             const bridge = (window as any).changeBridge;
             const fontModel = (window as any).currentFontModel;
             const currentFont = (window as any).fontManager?.currentFont;
             const glyph = fontModel.findGlyph('a');
-            const layer = glyph.findLayerById(layerId);
+            const drawing = glyph.findDrawingById(drawingId);
 
-            const paths = layer.paths;
+            const paths = drawing.paths;
             if (!paths.length) return { error: 'No paths found' };
 
             const firstPath = paths[0];
@@ -131,7 +131,7 @@ test.describe('Cross-window ChangeBridge sync', () => {
                 'Drag point',
                 undefined,
                 undefined,
-                layerId,
+                drawingId,
                 undefined,
                 undefined,
                 undefined,
@@ -145,74 +145,74 @@ test.describe('Cross-window ChangeBridge sync', () => {
                 newX: firstNode.x,
                 newY: firstNode.y
             };
-        }, thinLayerId);
+        }, thinDrawingId);
 
         expect(outlineEditResult).not.toHaveProperty('error');
         await waitForRemoteChange(linkedPage, outlineLastSyncTime);
         await waitForEditingCompile(mainPage);
         await waitForEditingCompile(linkedPage);
 
-        const mainDataAfterOutline = await extractGlyphLayerData(
+        const mainDataAfterOutline = await extractGlyphDrawingData(
             mainPage,
             glyphNames
         );
-        const linkedDataAfterOutline = await extractGlyphLayerData(
+        const linkedDataAfterOutline = await extractGlyphDrawingData(
             linkedPage,
             glyphNames
         );
         expect(linkedDataAfterOutline).toEqual(mainDataAfterOutline);
 
-        const mainYDocKeysAfterOutline = await extractYDocLayerKeys(
+        const mainYDocKeysAfterOutline = await extractYDocDrawingKeys(
             mainPage,
             'a',
-            thinLayerId
+            thinDrawingId
         );
-        const linkedYDocKeysAfterOutline = await extractYDocLayerKeys(
+        const linkedYDocKeysAfterOutline = await extractYDocDrawingKeys(
             linkedPage,
             'a',
-            thinLayerId
+            thinDrawingId
         );
         expect(linkedYDocKeysAfterOutline).toEqual(mainYDocKeysAfterOutline);
 
-        const mainRawProps = await extractRawLayerProperties(
+        const mainRawProps = await extractRawDrawingProperties(
             mainPage,
             'a',
-            thinLayerId
+            thinDrawingId
         );
-        const linkedRawProps = await extractRawLayerProperties(
+        const linkedRawProps = await extractRawDrawingProperties(
             linkedPage,
             'a',
-            thinLayerId
+            thinDrawingId
         );
         expect(linkedRawProps).toEqual(mainRawProps);
 
-        const mainShapes = await extractRawLayerShapes(
+        const mainShapes = await extractRawDrawingShapes(
             mainPage,
             'a',
-            thinLayerId
+            thinDrawingId
         );
-        const linkedShapes = await extractRawLayerShapes(
+        const linkedShapes = await extractRawDrawingShapes(
             linkedPage,
             'a',
-            thinLayerId
+            thinDrawingId
         );
         expect(linkedShapes).toEqual(mainShapes);
 
-        const mainLayerCount = await countModelLayers(mainPage, 'a');
-        const linkedLayerCount = await countModelLayers(linkedPage, 'a');
-        expect(linkedLayerCount).toBe(mainLayerCount);
+        const mainDrawingCount = await countModelDrawings(mainPage, 'a');
+        const linkedDrawingCount = await countModelDrawings(linkedPage, 'a');
+        expect(linkedDrawingCount).toBe(mainDrawingCount);
 
         const anchorLastSyncTime = await getLastFontModelSyncTime(linkedPage);
         const linkedCompileBeforeAnchor =
             await getEditingFontCompileTracker(linkedPage);
-        const anchorEditResult = await mainPage.evaluate(async (layerId) => {
+        const anchorEditResult = await mainPage.evaluate(async (drawingId) => {
             const bridge = (window as any).changeBridge;
             const fontModel = (window as any).currentFontModel;
             const currentFont = (window as any).fontManager?.currentFont;
             const glyph = fontModel.findGlyph('a');
-            const layer = glyph.findLayerById(layerId);
+            const drawing = glyph.findDrawingById(drawingId);
 
-            const anchors = layer.anchors;
+            const anchors = drawing.anchors;
             if (!anchors.length) return { error: 'No anchors found' };
 
             const topAnchor =
@@ -227,7 +227,7 @@ test.describe('Cross-window ChangeBridge sync', () => {
                 for (const glyphName of fontModel.rebuildAutomaticCompositesForGlyphs(
                     new Set(['a']),
                     {
-                        preferredLayerId: layerId,
+                        preferredDrawingId: drawingId,
                         preferredSourceGlyphName: 'a'
                     }
                 )) {
@@ -237,25 +237,25 @@ test.describe('Cross-window ChangeBridge sync', () => {
 
             currentFont.syncJsonFromModel();
 
-            const changedLayerTargets = Array.from(affectedGlyphNames)
+            const changedDrawingTargets = Array.from(affectedGlyphNames)
                 .map((glyphName) => {
                     const matchedGlyph = fontModel.findGlyph(glyphName);
-                    const matchedLayer =
-                        matchedGlyph?.findLayerById(layerId) ??
-                        layer.getMatchingLayerOnGlyph?.(glyphName);
-                    return matchedLayer?.id
-                        ? { glyphName, layerId: matchedLayer.id }
+                    const matchedDrawing =
+                        matchedGlyph?.findDrawingById(drawingId) ??
+                        drawing.getMatchingDrawingOnGlyph?.(glyphName);
+                    return matchedDrawing?.id
+                        ? { glyphName, layerId: matchedDrawing.id }
                         : null;
                 })
                 .filter(Boolean);
 
-            bridge.syncLayersFromJson(
-                changedLayerTargets,
+            bridge.syncDrawingsFromJson(
+                changedDrawingTargets,
                 'Drag anchor',
                 undefined,
                 undefined,
                 undefined,
-                changedLayerTargets,
+                changedDrawingTargets,
                 'mouse-drag-anchor',
                 'mouse-drag-anchor',
                 null
@@ -266,7 +266,7 @@ test.describe('Cross-window ChangeBridge sync', () => {
                 newY: topAnchor.y,
                 affectedGlyphNames: Array.from(affectedGlyphNames)
             };
-        }, thinLayerId);
+        }, thinDrawingId);
 
         expect(anchorEditResult).not.toHaveProperty('error');
         expect(anchorEditResult.newY).toBe(anchorEditResult.oldY - 100);
@@ -276,25 +276,25 @@ test.describe('Cross-window ChangeBridge sync', () => {
             linkedCompileBeforeAnchor.count
         );
 
-        const mainDataAfterAnchor = await extractGlyphLayerData(
+        const mainDataAfterAnchor = await extractGlyphDrawingData(
             mainPage,
             glyphNames
         );
-        const linkedDataAfterAnchor = await extractGlyphLayerData(
+        const linkedDataAfterAnchor = await extractGlyphDrawingData(
             linkedPage,
             glyphNames
         );
         expect(linkedDataAfterAnchor).toEqual(mainDataAfterAnchor);
 
-        const mainAnchors = await extractRawLayerAnchors(
+        const mainAnchors = await extractRawDrawingAnchors(
             mainPage,
             'a',
-            thinLayerId
+            thinDrawingId
         );
-        const linkedAnchors = await extractRawLayerAnchors(
+        const linkedAnchors = await extractRawDrawingAnchors(
             linkedPage,
             'a',
-            thinLayerId
+            thinDrawingId
         );
         expect(linkedAnchors).toEqual(mainAnchors);
         expect(mainDataAfterAnchor.a).not.toEqual(mainDataAfterOutline.a);
@@ -325,11 +325,11 @@ test.describe('Cross-window ChangeBridge sync', () => {
         await waitForBridgeReady(mainPage);
         await installJsonCanonicalizer(mainPage);
         await installFontModelSyncTracker(mainPage);
-        const thinLayerId = await findThinLayerId(mainPage);
-        expect(thinLayerId).toBeTruthy();
+        const thinDrawingId = await findThinDrawingId(mainPage);
+        expect(thinDrawingId).toBeTruthy();
 
         // Unsaved in main: a reload that reopened the source would miss it.
-        await nudgeFirstNode(mainPage, thinLayerId, 10);
+        await nudgeFirstNode(mainPage, thinDrawingId, 10);
 
         const linkedPage = await openLinkedEditorWindow(mainPage);
         await waitForLinkedWindowReady(linkedPage);
@@ -345,16 +345,16 @@ test.describe('Cross-window ChangeBridge sync', () => {
             fileHandle: !!(window as any).fontManager?.currentFont?.fileHandle
         }));
         expect(reloaded).toEqual({ sync: true, fileHandle: false });
-        expect(await extractGlyphLayerData(linkedPage, ['a'])).toEqual(
-            await extractGlyphLayerData(mainPage, ['a'])
+        expect(await extractGlyphDrawingData(linkedPage, ['a'])).toEqual(
+            await extractGlyphDrawingData(mainPage, ['a'])
         );
 
         // Same document, not a copy: an edit in the linked window reaches main.
         const mainSyncTime = await getLastFontModelSyncTime(mainPage);
-        await nudgeFirstNode(linkedPage, thinLayerId, 7);
+        await nudgeFirstNode(linkedPage, thinDrawingId, 7);
         await waitForRemoteChange(mainPage, mainSyncTime);
-        expect(await extractGlyphLayerData(mainPage, ['a'])).toEqual(
-            await extractGlyphLayerData(linkedPage, ['a'])
+        expect(await extractGlyphDrawingData(mainPage, ['a'])).toEqual(
+            await extractGlyphDrawingData(linkedPage, ['a'])
         );
 
         await context.close();
@@ -371,16 +371,16 @@ async function waitForLinkedWindowReady(linkedPage: Page): Promise<void> {
 
 async function nudgeFirstNode(
     page: Page,
-    layerId: string,
+    drawingId: string,
     dx: number
 ): Promise<void> {
     const result = await page.evaluate(
-        ({ layerId, dx }) => {
+        ({ layerId: drawingId, dx }) => {
             const bridge = (window as any).changeBridge;
-            const layer = (window as any).currentFontModel
+            const drawing = (window as any).currentFontModel
                 .findGlyph('a')
-                .findLayerById(layerId);
-            const node = layer?.paths?.[0]?.nodes?.[0];
+                .findDrawingById(drawingId);
+            const node = drawing?.paths?.[0]?.nodes?.[0];
             if (!node) return 'no node';
             bridge.runWithoutRecording(() => {
                 node.x += dx;
@@ -391,7 +391,7 @@ async function nudgeFirstNode(
                 'Drag point',
                 undefined,
                 undefined,
-                layerId,
+                drawingId,
                 undefined,
                 undefined,
                 undefined,
@@ -400,7 +400,7 @@ async function nudgeFirstNode(
             );
             return 'ok';
         },
-        { layerId, dx }
+        { layerId: drawingId, dx }
     );
     expect(result).toBe('ok');
 }

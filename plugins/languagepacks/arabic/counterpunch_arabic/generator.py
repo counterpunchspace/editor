@@ -538,11 +538,11 @@ def _alef_composites(
 
 
 def _component_names(glyph: Any) -> list[str]:
-    for layer in list(getattr(glyph, "layers", None) or []):
-        if _field(layer, "is_background"):
+    for drawing in list(getattr(glyph, "drawings", None) or []):
+        if _field(drawing, "is_background"):
             continue
         names = []
-        for component in list(_field(layer, "components") or []):
+        for component in list(_field(drawing, "components") or []):
             reference = _field(component, "reference")
             if isinstance(reference, str) and reference:
                 names.append(reference)

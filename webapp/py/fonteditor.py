@@ -47,14 +47,14 @@ _DICT_LIKE_FIELDS_BY_CLASS = {
     'Glyph': set(),
     'Guide': {'color', 'format_specific', 'pos'},
     'Instance': {'custom_names', 'format_specific', 'location', 'name'},
-    'Layer': {
+    'Drawing': {
         'color',
         'format_specific',
         'location',
-        'master',
+        'station',
         'smart_component_location',
     },
-    'Master': {
+    'Station': {
         # Pair maps keyed as "left:right" (glyph or @group names).
         'custom_ot_values',
         'format_specific',
@@ -111,18 +111,18 @@ def _infer_model_class_name(value):
     try:
         if _has_js_callable(value, 'findGlyph'):
             return 'Font'
-        if _has_js_callable(value, 'addLayer'):
+        if _has_js_callable(value, 'addDrawing'):
             return 'Glyph'
-        if _has_js_callable(value, 'getMaster') or _has_js_callable(
+        if _has_js_callable(value, 'getStation') or _has_js_callable(
             value, 'addAnchor'
         ):
-            return 'Layer'
+            return 'Drawing'
         if _has_js_callable(value, 'addGuide'):
-            return 'Master'
+            return 'Station'
         if _has_js_callable(value, 'addPath') and _has_js_callable(
             value, 'addComponent'
         ):
-            return 'Layer'
+            return 'Drawing'
     except Exception:
         pass
     return name
@@ -400,10 +400,10 @@ def _wrap_js_value(value, owner_class_name=None, attr_name=None):
     return value
 
 
-def _unwrap_layer_selection_value(value):
+def _unwrap_drawing_selection_value(value):
     if value is None:
         items = []
-    elif isinstance(value, LayerSelectionProxy):
+    elif isinstance(value, DrawingSelectionProxy):
         items = [item for item in value]
     elif isinstance(value, LiveListProxy):
         items = [value[i] for i in range(len(value))]
@@ -620,23 +620,23 @@ class LiveListProxy(MutableSequence):
         return self.__repr__()
 
 
-class LayerSelectionProxy:
-    def __init__(self, layer_js_obj):
-        self._layer_js_obj = layer_js_obj
+class DrawingSelectionProxy:
+    def __init__(self, drawing_js_obj):
+        self._drawing_js_obj = drawing_js_obj
 
     def _get_selection(self):
-        getter = getattr(self._layer_js_obj, '_getSelectionSnapshotForPython', None)
+        getter = getattr(self._drawing_js_obj, '_getSelectionSnapshotForPython', None)
         if getter is not None:
             return getter()
-        return getattr(self._layer_js_obj, 'selection')
+        return getattr(self._drawing_js_obj, 'selection')
 
     def _replace(self, items):
-        setter = getattr(self._layer_js_obj, '_setSelectionFromPython', None)
-        unwrapped_items = _unwrap_layer_selection_value(items)
+        setter = getattr(self._drawing_js_obj, '_setSelectionFromPython', None)
+        unwrapped_items = _unwrap_drawing_selection_value(items)
         if setter is not None:
             setter(unwrapped_items)
             return
-        setattr(self._layer_js_obj, 'selection', unwrapped_items)
+        setattr(self._drawing_js_obj, 'selection', unwrapped_items)
 
     def __len__(self):
         return int(self._get_selection().length)
@@ -702,7 +702,7 @@ class LayerSelectionProxy:
                 del current[index]
                 self._replace(current)
                 return
-        raise ValueError('LayerSelectionProxy.remove(x): x not in selection')
+        raise ValueError('DrawingSelectionProxy.remove(x): x not in selection')
 
     def to_py(self):
         return list(self)
@@ -720,8 +720,8 @@ class ModelObjectProxy:
 
     def __getattr__(self, name):
         owner_class_name = _infer_model_class_name(self._js_obj)
-        if owner_class_name == 'Layer' and name == 'selection':
-            return LayerSelectionProxy(self._js_obj)
+        if owner_class_name == 'Drawing' and name == 'selection':
+            return DrawingSelectionProxy(self._js_obj)
 
         if owner_class_name == 'Glyph' and name == 'anchors':
             try:
@@ -733,15 +733,15 @@ class ModelObjectProxy:
             ):
                 return _wrap_js_value(raw_anchors, owner_class_name, name)
 
-            layers = _wrap_js_value(
-                getattr(self._js_obj, 'layers', None), 'Glyph', 'layers'
+            drawings = _wrap_js_value(
+                getattr(self._js_obj, 'drawings', None), 'Glyph', 'drawings'
             )
             collected = []
-            if layers:
-                for layer in layers:
-                    layer_anchors = getattr(layer, 'anchors', None)
-                    if layer_anchors:
-                        collected.extend(list(layer_anchors))
+            if drawings:
+                for drawing in drawings:
+                    drawing_anchors = getattr(drawing, 'anchors', None)
+                    if drawing_anchors:
+                        collected.extend(list(drawing_anchors))
             return collected
 
         raw = getattr(self._js_obj, name)
@@ -758,8 +758,8 @@ class ModelObjectProxy:
 
     def __setattr__(self, name, value):
         owner_class_name = _infer_model_class_name(self._js_obj)
-        if owner_class_name == 'Layer' and name == 'selection':
-            setattr(self._js_obj, name, _unwrap_layer_selection_value(value))
+        if owner_class_name == 'Drawing' and name == 'selection':
+            setattr(self._js_obj, name, _unwrap_drawing_selection_value(value))
             return
 
         dict_fields = _DICT_LIKE_FIELDS_BY_CLASS.get(owner_class_name, set())
@@ -774,8 +774,8 @@ class ModelObjectProxy:
 
     def __getitem__(self, key):
         owner_class_name = _infer_model_class_name(self._js_obj)
-        if owner_class_name == 'Layer' and key == 'selection':
-            return LayerSelectionProxy(self._js_obj)
+        if owner_class_name == 'Drawing' and key == 'selection':
+            return DrawingSelectionProxy(self._js_obj)
 
         attr_name = key if isinstance(key, str) else None
         return _wrap_js_value(_js_get(self._js_obj, key), owner_class_name, attr_name)
@@ -855,18 +855,18 @@ def _cp_get_active_stack_entry():
     return parsed_stack[int(parsed_stack.length) - 1]
 
 
-def _cp_get_active_glyph_and_layer_ids():
+def _cp_get_active_glyph_and_drawing_ids():
     stack_entry = _cp_get_active_stack_entry()
 
     glyph_name = str(stack_entry.glyphName)
     if not glyph_name or glyph_name == 'undefined':
         raise RuntimeError('Active glyph is not available')
 
-    layer_id = str(stack_entry.layerId)
-    if not layer_id or layer_id == 'undefined':
-        raise RuntimeError('Active layer is not available')
+    drawing_id = str(stack_entry.layerId)
+    if not drawing_id or drawing_id == 'undefined':
+        raise RuntimeError('Active drawing is not available')
 
-    return glyph_name, layer_id
+    return glyph_name, drawing_id
 
 
 def Font():
@@ -926,74 +926,74 @@ def Glyph():
     Raises:
         RuntimeError: If outline editing is inactive or the glyph cannot be resolved
     """
-    glyph_name, _layer_id = _cp_get_active_glyph_and_layer_ids()
+    glyph_name, _drawing_id = _cp_get_active_glyph_and_drawing_ids()
     glyph = Font().findGlyph(glyph_name)
     if glyph is None:
         raise RuntimeError(f'Active glyph "{glyph_name}" is not available')
     return _as_model_proxy(glyph)
 
 
-def Layer():
+def Drawing():
     """
-    Get the currently active layer in outline editing mode.
+    Get the currently active drawing in outline editing mode.
 
     Returns:
-        Layer: The live Layer object from the current font model
+        Drawing: The live Drawing object from the current font model
 
     Raises:
-        RuntimeError: If outline editing is inactive or the layer cannot be resolved
+        RuntimeError: If outline editing is inactive or the drawing cannot be resolved
     """
-    glyph_name, layer_id = _cp_get_active_glyph_and_layer_ids()
+    glyph_name, drawing_id = _cp_get_active_glyph_and_drawing_ids()
     glyph = Font().findGlyph(glyph_name)
     if glyph is None:
         raise RuntimeError(f'Active glyph "{glyph_name}" is not available')
 
-    for layer in glyph.layers:
-        if layer.id == layer_id:
-            return layer
+    for drawing in glyph.drawings:
+        if drawing.id == drawing_id:
+            return drawing
 
     raise RuntimeError(
-        f'Active layer "{layer_id}" on glyph "{glyph_name}" is not available'
+        f'Active drawing "{drawing_id}" on glyph "{glyph_name}" is not available'
     )
 
 
-def Master():
+def Station():
     """
-    Get the currently selected master.
+    Get the currently selected station.
 
-    In outline editing mode, the master is resolved from the active layer and
-    returned only when that layer reflects a stored master. In text mode, the
-    selected master is resolved from the text-run editor's selected master ID.
+    In outline editing mode, the station is resolved from the active drawing and
+    returned only when that drawing sits at a station. In text mode, the
+    selected station is resolved from the text-run editor's selected station ID.
 
     Returns:
-        Master | None: The selected live Master object, or None when the
-        current designspace location does not correspond to a stored master.
+        Station | None: The selected live Station object, or None when the
+        current location is not a station.
 
     Raises:
         RuntimeError: If no font is currently open, or if outline editing is
-        active but the active glyph/layer cannot be resolved.
+        active but the active glyph/drawing cannot be resolved.
     """
     host = _cp_get_host_object()
     glyph_canvas = getattr(host, 'glyphCanvas', None)
     outline_editor = getattr(glyph_canvas, 'outlineEditor', None)
 
     if not _is_js_null_or_undefined(outline_editor) and bool(outline_editor.active):
-        layer = Layer()
-        return layer.getMaster()
+        drawing = Drawing()
+        return drawing.getStation()
 
     text_run_editor = getattr(glyph_canvas, 'textRunEditor', None)
     if _is_js_null_or_undefined(text_run_editor):
         return None
 
-    selected_master_id = getattr(text_run_editor, 'selectedMasterId', None)
-    if _is_js_null_or_undefined(selected_master_id) or selected_master_id is None:
+    selected_station_id = getattr(text_run_editor, 'selectedStationId', None)
+    if _is_js_null_or_undefined(selected_station_id) or selected_station_id is None:
         return None
 
-    selected_master_id = str(selected_master_id)
-    if not selected_master_id or selected_master_id == 'undefined':
+    selected_station_id = str(selected_station_id)
+    if not selected_station_id or selected_station_id == 'undefined':
         return None
 
-    return Font().findMaster(selected_master_id)
+    return Font().findStation(selected_station_id)
 
 
 def Context():
@@ -1050,9 +1050,9 @@ def _cp_compile_filters_discover():
             'id': plugin_id,
             'name': str(getattr(instance, 'name', '') or plugin_id),
             'description': str(getattr(instance, 'description', '') or ''),
-            'hasLayer': callable(getattr(instance, 'filter_layer_json', None)),
+            'hasDrawing': callable(getattr(instance, 'filter_drawing_json', None)),
             'hasPropagated': callable(
-                getattr(instance, 'filter_layer_json_propagated_anchors', None)
+                getattr(instance, 'filter_drawing_json_propagated_anchors', None)
             ),
             'hasFont': callable(getattr(instance, 'filter_font_json', None)),
             'hasSetup': callable(getattr(instance, 'setup', None)),
@@ -1083,7 +1083,7 @@ def _cp_active_compile_filter_ids(stored):
     return ids
 
 
-def _cp_compile_filter_transient_anchors(glyph_name, layer_id):
+def _cp_compile_filter_transient_anchors(glyph_name, drawing_id):
     font = Font()
     specific = getattr(font, 'format_specific', None)
     stored = []
@@ -1098,7 +1098,7 @@ def _cp_compile_filter_transient_anchors(glyph_name, layer_id):
         method = getattr(plugin, 'transientAnchors', None)
         if not callable(method):
             continue
-        for anchor in method(font, glyph_name, layer_id) or []:
+        for anchor in method(font, glyph_name, drawing_id) or []:
             if isinstance(anchor, dict):
                 anchors.append(anchor)
     return json.dumps(anchors)
@@ -1161,7 +1161,7 @@ def _cp_compile_filter_guide(plugin_id, change_json):
 
 
 def _cp_compile_filters_run(payload_json):
-    """Run the JSON compile hooks. payload is {ids, font, layers:[{glyphName, layer}]}."""
+    """Run the JSON compile hooks. payload is {ids, font, drawings:[{glyphName, drawing}]}."""
     payload = json.loads(payload_json)
     plugins = [
         _CP_COMPILE_FILTERS[plugin_id]
@@ -1170,28 +1170,28 @@ def _cp_compile_filters_run(payload_json):
     ]
     font = payload.get('font') or {}
     replaced = {}
-    needs_layers = any(
-        callable(getattr(plugin, 'filter_layer_json', None))
-        or callable(getattr(plugin, 'filter_layer_json_propagated_anchors', None))
+    needs_drawings = any(
+        callable(getattr(plugin, 'filter_drawing_json', None))
+        or callable(getattr(plugin, 'filter_drawing_json_propagated_anchors', None))
         for plugin in plugins
     )
-    if needs_layers:
-        current_layers = {
-            f"{item['glyphName']}\x1f{item['layer'].get('id') or ''}": item['layer']
-            for item in payload.get('layers') or []
+    if needs_drawings:
+        current_drawings = {
+            f"{item['glyphName']}\x1f{item['drawing'].get('id') or ''}": item['drawing']
+            for item in payload.get('drawings') or []
         }
-        for item in payload.get('layers') or []:
+        for item in payload.get('drawings') or []:
             glyph_name = item['glyphName']
-            working = json.loads(json.dumps(item['layer']))
+            working = json.loads(json.dumps(item['drawing']))
             key = f"{glyph_name}\x1f{working.get('id') or ''}"
             for plugin in plugins:
                 ctx = _cp_compile_filter_ctx(plugin, font, working)
-                layer_fn = getattr(plugin, 'filter_layer_json', None)
-                if callable(layer_fn):
-                    updated = layer_fn(working, ctx)
+                drawing_fn = getattr(plugin, 'filter_drawing_json', None)
+                if callable(drawing_fn):
+                    updated = drawing_fn(working, ctx)
                     if isinstance(updated, dict):
                         working = updated
-                propagated = getattr(plugin, 'filter_layer_json_propagated_anchors', None)
+                propagated = getattr(plugin, 'filter_drawing_json_propagated_anchors', None)
                 if callable(propagated):
                     inherited = item.get('inherited') or {}
                     anchors = working.setdefault('anchors', [])
@@ -1208,15 +1208,16 @@ def _cp_compile_filters_run(payload_json):
                     if isinstance(updated, dict):
                         working = updated
             replaced[key] = working
-            current_layers[key] = working
+            current_drawings[key] = working
 
+        # The font JSON is Babelfont data, so its glyphs keep their `layers` key.
         compile_font = json.loads(json.dumps(font))
         for glyph in compile_font.get('glyphs') or []:
-            layers = []
-            for layer in glyph.get('layers') or []:
-                key = f"{glyph.get('name')}\x1f{layer.get('id') or ''}"
-                layers.append(current_layers.get(key, layer))
-            glyph['layers'] = layers
+            drawings = []
+            for drawing in glyph.get('layers') or []:
+                key = f"{glyph.get('name')}\x1f{drawing.get('id') or ''}"
+                drawings.append(current_drawings.get(key, drawing))
+            glyph['layers'] = drawings
     else:
         compile_font = font
 
@@ -1236,7 +1237,7 @@ def _cp_compile_filters_run(payload_json):
             if isinstance(shift, dict):
                 anchor_shifts.append(shift)
     return json.dumps({
-        'layers': replaced,
+        'drawings': replaced,
         'features': '\n'.join(chunks),
         'anchorShifts': anchor_shifts,
     })
@@ -1258,16 +1259,16 @@ def _cp_plugin_settings_bag(format_specific):
     return nested if isinstance(nested, dict) else {}
 
 
-def _cp_compile_filter_ctx(plugin, font, layer):
-    master = layer.get('master') if isinstance(layer, dict) else None
-    master_id = master.get('master') if isinstance(master, dict) else None
-    masters = font.get('masters') or []
-    master_record = next((item for item in masters if item.get('id') == master_id), None)
+def _cp_compile_filter_ctx(plugin, font, drawing):
+    station_ref = drawing.get('master') if isinstance(drawing, dict) else None
+    station_id = station_ref.get('master') if isinstance(station_ref, dict) else None
+    stations = font.get('masters') or []
+    station = next((item for item in stations if item.get('id') == station_id), None)
     settings = _cp_plugin_settings_bag(font.get('format_specific') or {})
     values = (settings.get(getattr(plugin, 'id', ''), {}) or {}).get('values') or {}
     return {
-        'master': master_record,
-        'masterId': master_id,
+        'station': station,
+        'stationId': station_id,
         'axes': font.get('axes') or [],
         'settings': values,
     }

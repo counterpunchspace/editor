@@ -117,8 +117,8 @@ class FakeAnchor(FakeJsBase):
         self.name = name
 
 
-class FakeLayer(FakeJsBase):
-    constructor_name = 'Layer'
+class FakeDrawing(FakeJsBase):
+    constructor_name = 'Drawing'
 
     def __init__(self, allowed_items, initial_selection=None):
         super().__init__()
@@ -150,24 +150,24 @@ class FakeLayer(FakeJsBase):
 
         for item in items:
             if item not in self._allowed_items:
-                raise ValueError('Layer.selection can only contain objects from this layer')
+                raise ValueError('Drawing.selection can only contain objects from this drawing')
 
         self._selection = FakeJsArray(items)
 
 
-class FakeMaster(FakeJsBase):
-    constructor_name = 'Master'
+class FakeStation(FakeJsBase):
+    constructor_name = 'Station'
 
     def __init__(
         self,
         kerning,
-        master_id='master-1',
+        station_id='master-1',
         name=None,
         location=None,
         metrics=None,
     ):
         super().__init__()
-        self.id = master_id
+        self.id = station_id
         self.kerning = kerning
         self.name = name if name is not None else FakeLiveRecord({'dflt': 'ExtraLight'})
         self.location = location if location is not None else FakeLiveRecord({'wght': 30})
@@ -177,24 +177,24 @@ class FakeMaster(FakeJsBase):
 class FakeGlyph(FakeJsBase):
     constructor_name = 'Glyph'
 
-    def __init__(self, name, layers, category='Base', glyph_data=None):
+    def __init__(self, name, drawings, category='Base', glyph_data=None):
         super().__init__()
         self.name = name
-        self.layers = FakeJsArray(layers)
+        self.drawings = FakeJsArray(drawings)
         self.category = category
         self.glyphData = glyph_data if glyph_data is not None else JsNull()
 
-    def addLayer(self, *args):
+    def addDrawing(self, *args):
         return None
 
 
 class FakeFont(FakeJsBase):
     constructor_name = 'Font'
 
-    def __init__(self, glyphs, masters):
+    def __init__(self, glyphs, stations):
         super().__init__()
         self.glyphs = FakeJsArray(glyphs)
-        self.masters = FakeJsArray(masters)
+        self.stations = FakeJsArray(stations)
         self.names = FakeLiveRecord(
             {'family_name': FakeLiveRecord({'dflt': 'Test Family'})}
         )
@@ -205,23 +205,23 @@ class FakeFont(FakeJsBase):
                 return glyph
         return None
 
-    def findMaster(self, master_id):
-        for master in self.masters:
-            if master.id == master_id:
-                return master
+    def findStation(self, station_id):
+        for station in self.stations:
+            if station.id == station_id:
+                return station
         return None
 
 
-class FakeLayerForMaster(FakeJsBase):
-    constructor_name = 'Layer'
+class FakeDrawingForStation(FakeJsBase):
+    constructor_name = 'Drawing'
 
-    def __init__(self, layer_id, master=None):
+    def __init__(self, drawing_id, station=None):
         super().__init__()
-        self.id = layer_id
-        self._master = master
+        self.id = drawing_id
+        self._station = station
 
-    def getMaster(self):
-        return self._master
+    def getStation(self):
+        return self._station
 
     def addAnchor(self, *args):
         return None
@@ -242,9 +242,9 @@ class FakeOutlineEditor(FakeJsBase):
 class FakeTextRunEditor(FakeJsBase):
     constructor_name = 'TextRunEditor'
 
-    def __init__(self, selected_master_id=None):
+    def __init__(self, selected_station_id=None):
         super().__init__()
-        self.selectedMasterId = selected_master_id
+        self.selectedStationId = selected_station_id
 
 
 class FakeGlyphCanvas(FakeJsBase):
@@ -408,20 +408,20 @@ class FontEditorSelectionBridgeTest(unittest.TestCase):
         self.anchor_a = FakeAnchor('a')
         self.anchor_b = FakeAnchor('b')
         self.foreign_anchor = FakeAnchor('foreign')
-        self.layer = FakeLayer([self.anchor_a, self.anchor_b], [self.anchor_a])
-        self.layer_proxy = self.fonteditor.ModelObjectProxy(self.layer)
+        self.drawing = FakeDrawing([self.anchor_a, self.anchor_b], [self.anchor_a])
+        self.drawing_proxy = self.fonteditor.ModelObjectProxy(self.drawing)
 
-    def test_layer_selection_proxy_reads_and_mutates_live_selection(self):
-        selection = self.layer_proxy.selection
+    def test_drawing_selection_proxy_reads_and_mutates_live_selection(self):
+        selection = self.drawing_proxy.selection
 
         self.assertEqual(len(selection), 1)
-        self.assertGreater(self.layer.get_snapshot_calls, 0)
+        self.assertGreater(self.drawing.get_snapshot_calls, 0)
         self.assertEqual(selection[0]._js_obj, self.anchor_a)
         self.assertEqual([item._js_obj for item in list(selection)], [self.anchor_a])
         self.assertIn('<Anchor>', repr(selection))
 
         selection.append(self.fonteditor.ModelObjectProxy(self.anchor_b))
-        self.assertGreater(self.layer.set_selection_calls, 0)
+        self.assertGreater(self.drawing.set_selection_calls, 0)
         self.assertEqual(len(selection), 2)
         self.assertEqual([item._js_obj for item in selection], [self.anchor_a, self.anchor_b])
 
@@ -431,28 +431,28 @@ class FontEditorSelectionBridgeTest(unittest.TestCase):
         selection.insert(0, self.fonteditor.ModelObjectProxy(self.anchor_a))
         self.assertEqual([item._js_obj for item in selection], [self.anchor_a, self.anchor_b])
 
-    def test_layer_selection_assignment_supports_single_objects_and_validation(self):
-        self.layer_proxy.selection = self.fonteditor.ModelObjectProxy(self.anchor_b)
+    def test_drawing_selection_assignment_supports_single_objects_and_validation(self):
+        self.drawing_proxy.selection = self.fonteditor.ModelObjectProxy(self.anchor_b)
         self.assertEqual(
-            [item._js_obj for item in self.layer_proxy.selection],
+            [item._js_obj for item in self.drawing_proxy.selection],
             [self.anchor_b],
         )
 
         with self.assertRaises(ValueError):
-            self.layer_proxy.selection.append(
+            self.drawing_proxy.selection.append(
                 self.fonteditor.ModelObjectProxy(self.foreign_anchor)
             )
 
-    def test_master_kerning_map_is_wrapped_as_native_python_mapping(self):
+    def test_station_kerning_map_is_wrapped_as_native_python_mapping(self):
         kerning_map = FakeJsMap(
             {
                 'A:V': -80,
                 '@Left:@Right': -120,
             }.items()
         )
-        master_proxy = self.fonteditor.ModelObjectProxy(FakeMaster(kerning_map))
+        station_proxy = self.fonteditor.ModelObjectProxy(FakeStation(kerning_map))
 
-        kerning = master_proxy.kerning
+        kerning = station_proxy.kerning
 
         self.assertIsInstance(kerning, self.fonteditor.MutableMapping)
         self.assertEqual(kerning['A:V'], -80)
@@ -473,20 +473,20 @@ class FontEditorSelectionBridgeTest(unittest.TestCase):
             },
         )
 
-    def test_master_kerning_proxy_object_is_wrapped_as_native_python_mapping(self):
+    def test_station_kerning_proxy_object_is_wrapped_as_native_python_mapping(self):
         kerning_proxy = FakeJsObjectProxy({'@T:@A': -120, '@T:@O': -80})
-        master_proxy = self.fonteditor.ModelObjectProxy(FakeMaster(kerning_proxy))
+        station_proxy = self.fonteditor.ModelObjectProxy(FakeStation(kerning_proxy))
 
-        kerning = master_proxy.kerning
+        kerning = station_proxy.kerning
 
         self.assertIsInstance(kerning, self.fonteditor.MutableMapping)
         self.assertEqual(kerning['@T:@A'], -120)
         kerning['@T:@V'] = -140
         self.assertEqual(kerning_proxy._data['@T:@V'], -140)
 
-    def test_master_returns_selected_text_mode_master(self):
-        master = FakeMaster({}, master_id='master-selected')
-        font = FakeFont([], [master])
+    def test_station_returns_selected_text_mode_station(self):
+        station = FakeStation({}, station_id='master-selected')
+        font = FakeFont([], [station])
         host = FakeHost(
             font_model=font,
             glyph_canvas=FakeGlyphCanvas(
@@ -496,14 +496,14 @@ class FontEditorSelectionBridgeTest(unittest.TestCase):
         )
         self.fonteditor.js.window = host
 
-        resolved = self.fonteditor.Master()
+        resolved = self.fonteditor.Station()
 
         self.assertIsNotNone(resolved)
         self.assertEqual(resolved.id, 'master-selected')
 
-    def test_master_returns_none_when_text_mode_location_is_not_a_master(self):
-        master = FakeMaster({}, master_id='master-selected')
-        font = FakeFont([], [master])
+    def test_station_returns_none_when_text_mode_location_is_not_a_station(self):
+        station = FakeStation({}, station_id='master-selected')
+        font = FakeFont([], [station])
         host = FakeHost(
             font_model=font,
             glyph_canvas=FakeGlyphCanvas(
@@ -513,14 +513,14 @@ class FontEditorSelectionBridgeTest(unittest.TestCase):
         )
         self.fonteditor.js.window = host
 
-        self.assertIsNone(self.fonteditor.Master())
+        self.assertIsNone(self.fonteditor.Station())
 
-    def test_master_uses_active_layer_master_in_edit_mode(self):
-        selected_master = FakeMaster({}, master_id='master-edit')
-        active_layer = FakeLayerForMaster('layer-1', selected_master)
-        interpolated_layer = FakeLayerForMaster('layer-2', None)
-        glyph = FakeGlyph('A', [interpolated_layer, active_layer])
-        font = FakeFont([glyph], [selected_master])
+    def test_station_uses_active_drawing_station_in_edit_mode(self):
+        selected_station = FakeStation({}, station_id='master-edit')
+        active_drawing = FakeDrawingForStation('layer-1', selected_station)
+        interpolated_drawing = FakeDrawingForStation('layer-2', None)
+        glyph = FakeGlyph('A', [interpolated_drawing, active_drawing])
+        font = FakeFont([glyph], [selected_station])
         host = FakeHost(
             font_model=font,
             glyph_canvas=FakeGlyphCanvas(
@@ -533,16 +533,16 @@ class FontEditorSelectionBridgeTest(unittest.TestCase):
         )
         self.fonteditor.js.window = host
 
-        resolved = self.fonteditor.Master()
+        resolved = self.fonteditor.Station()
 
         self.assertIsNotNone(resolved)
         self.assertEqual(resolved.id, 'master-edit')
 
-    def test_master_returns_none_for_interpolated_edit_layer(self):
-        selected_master = FakeMaster({}, master_id='master-edit')
-        interpolated_layer = FakeLayerForMaster('layer-2', None)
-        glyph = FakeGlyph('A', [interpolated_layer])
-        font = FakeFont([glyph], [selected_master])
+    def test_station_returns_none_for_interpolated_edit_drawing(self):
+        selected_station = FakeStation({}, station_id='master-edit')
+        interpolated_drawing = FakeDrawingForStation('layer-2', None)
+        glyph = FakeGlyph('A', [interpolated_drawing])
+        font = FakeFont([glyph], [selected_station])
         host = FakeHost(
             font_model=font,
             glyph_canvas=FakeGlyphCanvas(
@@ -555,7 +555,7 @@ class FontEditorSelectionBridgeTest(unittest.TestCase):
         )
         self.fonteditor.js.window = host
 
-        self.assertIsNone(self.fonteditor.Master())
+        self.assertIsNone(self.fonteditor.Station())
 
     def test_glyph_category_string_stays_a_python_string(self):
         glyph = FakeGlyph('A', [], category='Mark')
@@ -643,21 +643,21 @@ class FontEditorSelectionBridgeTest(unittest.TestCase):
         self.assertNotIn('[object Object]', repr(resolved.category))
         self.assertNotIn('[object Object]', repr(resolved.glyphData))
 
-    def test_proxy_constructed_layer_exposes_anchors(self):
-        layer = FakeLayerForMaster('layer-1')
-        layer.constructor = FakeConstructor('Proxy')
-        layer.anchors = FakeJsArray([self.anchor_a])
-        proxy = self.fonteditor._wrap_js_value(layer)
+    def test_proxy_constructed_drawing_exposes_anchors(self):
+        drawing = FakeDrawingForStation('drawing-1')
+        drawing.constructor = FakeConstructor('Proxy')
+        drawing.anchors = FakeJsArray([self.anchor_a])
+        proxy = self.fonteditor._wrap_js_value(drawing)
 
         self.assertIsInstance(proxy, self.fonteditor.ModelObjectProxy)
         self.assertEqual(len(proxy.anchors), 1)
         self.assertEqual(proxy.anchors[0]._js_obj, self.anchor_a)
 
     def test_classify_filter_glyphs_reads_anchors_on_proxy_glyph(self):
-        layer = FakeLayerForMaster('layer-1')
-        layer.constructor = FakeConstructor('Proxy')
-        layer.anchors = FakeJsArray([])
-        glyph = FakeGlyph('A', [layer])
+        drawing = FakeDrawingForStation('drawing-1')
+        drawing.constructor = FakeConstructor('Proxy')
+        drawing.anchors = FakeJsArray([])
+        glyph = FakeGlyph('A', [drawing])
         glyph.constructor = FakeConstructor('Proxy')
 
         seen = []
@@ -679,12 +679,12 @@ class FontEditorSelectionBridgeTest(unittest.TestCase):
             self.fonteditor.ModelObjectProxy,
         )
 
-    def test_master_live_proxy_records_are_python_mappings(self):
-        master = FakeMaster({})
-        self.assertFalse(isinstance(master.name, JsProxy))
-        self.assertEqual(str(master.name), '[object Object]')
+    def test_station_live_proxy_records_are_python_mappings(self):
+        station = FakeStation({})
+        self.assertFalse(isinstance(station.name, JsProxy))
+        self.assertEqual(str(station.name), '[object Object]')
 
-        proxy = self.fonteditor.ModelObjectProxy(master)
+        proxy = self.fonteditor.ModelObjectProxy(station)
         name = proxy.name
         location = proxy.location
         metrics = proxy.metrics
@@ -692,7 +692,7 @@ class FontEditorSelectionBridgeTest(unittest.TestCase):
         self.assertIsInstance(name, self.fonteditor.LiveDictProxy)
         self.assertEqual(name.dflt, 'ExtraLight')
         name.dflt = 'Thin'
-        self.assertEqual(master.name._data['dflt'], 'Thin')
+        self.assertEqual(station.name._data['dflt'], 'Thin')
 
         self.assertNotIn('[object Object]', repr(name))
         self.assertNotIn('[object Object]', str(name))
@@ -706,7 +706,7 @@ class FontEditorSelectionBridgeTest(unittest.TestCase):
         self.assertEqual(metrics.XHeight, 500)
 
         with self.assertRaises(TypeError) as raised:
-            _ = master.name['dflt']
+            _ = station.name['dflt']
         self.assertNotIn('JsProxy', str(raised.exception))
         self.assertNotIn('pyodide', str(raised.exception).lower())
 

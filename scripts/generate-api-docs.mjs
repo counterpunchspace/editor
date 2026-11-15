@@ -24,7 +24,7 @@ const __dirname = dirname(__filename);
 const REPO_ROOT = join(__dirname, "..");
 
 const HIDDEN_PROPERTIES_BY_CLASS = {
-    Layer: new Set(["shapes"]),
+    Drawing: new Set(["shapes"]),
 };
 
 /**
@@ -270,10 +270,10 @@ function tsToPythonType(tsType) {
         "Anchor",
         "Guide",
         "Shape",
-        "Layer",
+        "Drawing",
         "Glyph",
         "Axis",
-        "Master",
+        "Station",
         "Instance",
         "Font",
     ];
@@ -314,15 +314,16 @@ function generateClassDocs(classInfo) {
     const accessExamples = {
         Font: "```python\n# fonteditor module is pre-loaded\nfont = Font()\n```",
         Glyph: '```python\nglyph = font.glyphs[0]\n# or\nglyph = font.findGlyph("A")\n```',
-        Layer: "```python\nlayer = glyph.layers[0]\n```",
-        Path: "```python\npath = layer.paths[0]\n```",
-        Component: "```python\ncomponent = layer.components[0]\n```",
+        Drawing: "```python\ndrawing = glyph.drawings[0]\n```",
+        Path: "```python\npath = drawing.paths[0]\n```",
+        Component: "```python\ncomponent = drawing.components[0]\n```",
         Node: "```python\nnode = path.nodes[0]\n```",
-        Anchor: "```python\nanchor = layer.anchors[0]\n```",
-        Guide: "```python\nguide = layer.guides[0]\n# or\nguide = master.guides[0]\n```",
-        Shape: "```python\npath = layer.paths[0]\nshape = path.parent()\n```",
+        Anchor: "```python\nanchor = drawing.anchors[0]\n```",
+        Guide: "```python\nguide = drawing.guides[0]\n# or\nguide = station.guides[0]\n```",
+        Shape: "```python\npath = drawing.paths[0]\nshape = path.parent()\n```",
         Axis: '```python\naxis = font.axes[0]\n# or\naxis = font.findAxisByTag("wght")\n```',
-        Master: '```python\nmaster = font.masters[0]\n# or\nmaster = font.findMaster("master-id")\n```',
+        Station:
+            '```python\nstation = font.stations[0]\n# or\nstation = font.findStation("station-id")\n```',
         Instance: "```python\ninstance = font.instances[0]\n```",
     };
 
@@ -444,7 +445,7 @@ function generateAPIDocs(version = null) {
         "Font",
         "Glyph",
         "FeatureVariationGlyph",
-        "Layer",
+        "Drawing",
         "Shape",
         "Path",
         "Node",
@@ -452,7 +453,7 @@ function generateAPIDocs(version = null) {
         "Anchor",
         "Guide",
         "Axis",
-        "Master",
+        "Station",
         "Instance",
     ];
 
@@ -552,29 +553,29 @@ Do not use \`.get()\`. Index kerning by pair key
 
 \`\`\`python
 font = Font()
-master = font.masters[0]
+station = font.stations[0]
 
 # Pair-key kerning dictionary
-master.kerning["A:V"] = -80
+station.kerning["A:V"] = -80
 
-# Per-master vertical metrics
-xh = master.metrics.XHeight
-master.metrics.Ascender = 800
+# Per-station vertical metrics
+xh = station.metrics.XHeight
+station.metrics.Ascender = 800
 
 # I18N: language tags are attributes
 print(font.names.family_name.dflt)
 font.names.family_name.dflt = "My Family"
 font.names.family_name.de = "Meine Familie"
 font.names.family_name.fr = "Ma Famille"
-print(master.name.dflt)
-master.name.dflt = "Standard"
+print(station.name.dflt)
+station.name.dflt = "Standard"
 
 # Designspace location
-print(master.location)
-print(master.location.wght)
+print(station.location)
+print(station.location.wght)
 
 # Optional snapshot copy when needed
-kerning_snapshot = master.kerning.as_dict()
+kerning_snapshot = station.kerning.as_dict()
 \`\`\`
 
 ### System Notifications
@@ -603,11 +604,11 @@ allowing navigation up the object tree to the root Font object.
 **Example:**
 \`\`\`python
 # Navigate from node up to font
-node = font.glyphs[0].layers[0].paths[0].nodes[0]
+node = font.glyphs[0].drawings[0].paths[0].nodes[0]
 path = node.parent()      # Path object
 shape = path.parent()     # Shape object
-layer = shape.parent()    # Layer object
-glyph = layer.parent()    # Glyph object
+drawing = shape.parent()    # Drawing object
+glyph = drawing.parent()    # Glyph object
 font = glyph.parent()     # Font object
 \`\`\`
 
@@ -631,11 +632,11 @@ font = Font()
 # Create a new glyph
 glyph = font.addGlyph("myGlyph", "Base")
 
-# Add a layer
-layer = glyph.addLayer(500)  # 500 units wide
+# Add a drawing
+drawing = glyph.addDrawing(500)  # 500 units wide
 
 # Create a rectangle path
-path = layer.addPath(closed=True)
+path = drawing.addPath(closed=True)
 path.appendNode(100, 0, "Line")
 path.appendNode(400, 0, "Line")
 path.appendNode(400, 700, "Line")
@@ -652,16 +653,16 @@ font = Font()
 # Find glyph A
 glyph_a = font.findGlyph("A")
 if glyph_a:
-    layer = glyph_a.layers[0]
+    drawing = glyph_a.drawings[0]
     
     # Modify all nodes
-    for path in layer.paths:
+    for path in drawing.paths:
         for node in path.nodes:
             node.x += 10  # Shift 10 units right
             node.y += 5   # Shift 5 units up
     
     # Add an anchor
-    layer.addAnchor(250, 700, "top")
+    drawing.addAnchor(250, 700, "top")
     
     print(f"Modified {glyph_a.name}")
 \`\`\`
@@ -673,14 +674,14 @@ font = Font()
 
 # Create a glyph with a component
 glyph = font.addGlyph("Aacute", "Base")
-layer = glyph.addLayer(600)
+drawing = glyph.addDrawing(600)
 
 # Add base letter component
-base = layer.addComponent("A")
+base = drawing.addComponent("A")
 
 # Add accent component with transformation
 # Transform: [scaleX, skewX, skewY, scaleY, translateX, translateY]
-accent = layer.addComponent("acutecomb", [1, 0, 0, 1, 250, 500])
+accent = drawing.addComponent("acutecomb", [1, 0, 0, 1, 250, 500])
 
 print(f"Created {glyph.name} with components")
 \`\`\`
@@ -693,9 +694,9 @@ font = Font()
 # Count nodes across all glyphs
 total_nodes = 0
 for glyph in font.glyphs:
-    if glyph.layers:
-        for layer in glyph.layers:
-            for path in layer.paths:
+    if glyph.drawings:
+        for drawing in glyph.drawings:
+            for path in drawing.paths:
                 total_nodes += len(path.nodes)
 
 print(f"Total nodes in font: {total_nodes}")
@@ -712,12 +713,12 @@ if font.axes:
     for axis in font.axes:
         print(f"  {axis.tag}: {axis.min} - {axis.max} (default: {axis.default})")
     
-    # Check masters
-    if font.masters:
-        print(f"\\nFont has {len(font.masters)} masters:")
-        for master in font.masters:
-            location_str = ", ".join(f"{k}={v}" for k, v in (master.location or {}).items())
-            print(f"  Master: {location_str}")
+    # Check stations
+    if font.stations:
+        print(f"\\nFont has {len(font.stations)} stations:")
+        for station in font.stations:
+            location_str = ", ".join(f"{k}={v}" for k, v in (station.location or {}).items())
+            print(f"  Station: {location_str}")
 \`\`\`
 
 ### Example 6: Batch Processing Glyphs
@@ -729,20 +730,20 @@ font = Font()
 scale_factor = 1.5
 
 for glyph in font.glyphs:
-    if glyph.layers:
-        for layer in glyph.layers:
+    if glyph.drawings:
+        for drawing in glyph.drawings:
             # Scale width
-            layer.width *= scale_factor
+            drawing.width *= scale_factor
             
             # Scale all outline paths
-            for path in layer.paths:
+            for path in drawing.paths:
                 for node in path.nodes:
                     node.x *= scale_factor
                     node.y *= scale_factor
             
             # Scale anchors
-            if layer.anchors:
-                for anchor in layer.anchors:
+            if drawing.anchors:
+                for anchor in drawing.anchors:
                     anchor.x *= scale_factor
                     anchor.y *= scale_factor
 
@@ -753,14 +754,14 @@ print(f"Scaled {len(font.glyphs)} glyphs by {scale_factor}x")
 
 \`\`\`python
 font = Font()
-master = font.masters[0]
+station = font.stations[0]
 
 # Pair-key kerning
-master.kerning["A:V"] = -90
-master.kerning["A:W"] = -70
+station.kerning["A:V"] = -90
+station.kerning["A:W"] = -70
 
 # Read values
-av_value = master.kerning["A:V"]
+av_value = station.kerning["A:V"]
 print(f"A/V kerning: {av_value}")
 
 # Update localized names
@@ -806,10 +807,10 @@ del feature_items[0]
 
 \`\`\`python
 # Use the filtered convenience collections when you know what you want
-for path in layer.paths:
+for path in drawing.paths:
     # Work with path
 
-for component in layer.components:
+for component in drawing.components:
     # Work with component
 \`\`\`
 
@@ -817,9 +818,9 @@ for component in layer.components:
 
 \`\`\`python
 # Check for optional properties
-if glyph.layers:
-    for layer in glyph.layers:
-        for path in layer.paths:
+if glyph.drawings:
+    for drawing in glyph.drawings:
+        for path in drawing.paths:
             for node in path.nodes:
                 print(f"Node at ({node.x}, {node.y})")
 \`\`\`
@@ -847,12 +848,12 @@ font.names.family_name = {
 
 \`\`\`python
 # Direct access (may fail if properties are None)
-# glyph.layers[0].paths[0].nodes  # DON'T DO THIS
+# glyph.drawings[0].paths[0].nodes  # DON'T DO THIS
 
 # Safe access with checks:
-layer = glyph.layers[0] if glyph.layers else None
-if layer and layer.paths:
-    path = layer.paths[0]
+drawing = glyph.drawings[0] if glyph.drawings else None
+if drawing and drawing.paths:
+    path = drawing.paths[0]
     nodes = path.nodes
     print(f"Path has {len(nodes)} nodes")
 \`\`\`
@@ -865,26 +866,26 @@ if layer and layer.paths:
 
 ### Common Issues
 
-**Q: Why does \`glyph.layers[0].paths[0].nodes\` fail?**
+**Q: Why does \`glyph.drawings[0].paths[0].nodes\` fail?**
 
 A: Optional properties may be \`None\`. Use safe access:
 \`\`\`python
 # Check each step
-if glyph.layers and len(glyph.layers) > 0:
-    layer = glyph.layers[0]
-    if layer.paths and len(layer.paths) > 0:
-        path = layer.paths[0]
+if glyph.drawings and len(glyph.drawings) > 0:
+    drawing = glyph.drawings[0]
+    if drawing.paths and len(drawing.paths) > 0:
+        path = drawing.paths[0]
         nodes = path.nodes  # Now safe to access
 \`\`\`
 
-**Q: How do I access only paths or only components in a layer?**
+**Q: How do I access only paths or only components in a drawing?**
 
-A: Use \`layer.paths\` and \`layer.components\` directly:
+A: Use \`drawing.paths\` and \`drawing.components\` directly:
 \`\`\`python
-for path in layer.paths:
+for path in drawing.paths:
     print(len(path.nodes))
 
-for component in layer.components:
+for component in drawing.components:
     print(component.reference)
 \`\`\`
 

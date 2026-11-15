@@ -440,8 +440,8 @@ describe('PatchSyncEngine edit bursts', () => {
         const glyph = engine
             .getFontJsonSnapshot()
             .glyphs.find((candidate) => candidate.name === 'A');
-        return glyph.layers.find((layer) => layer.id === 'layer-1').shapes[0]
-            .nodes[0].x;
+        return glyph.layers.find((drawing) => drawing.id === 'layer-1')
+            .shapes[0].nodes[0].x;
     }
 
     async function heldBurst(key, last) {

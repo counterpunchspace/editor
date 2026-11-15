@@ -522,8 +522,8 @@ export class FolderSaveTracker {
             return;
         }
         if (topLevel === 'masters') {
-            // Master metrics and kerning are font-level; adding or removing a
-            // master changes every glyph.
+            // Station metrics and kerning are font-level; adding or removing a
+            // station changes every glyph.
             if (segments.length > 2) {
                 this.fontLevel = true;
             } else {

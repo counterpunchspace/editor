@@ -314,9 +314,9 @@ export function getTourComponentCutout(
     if (!canvas || !editor) {
         return null;
     }
-    const layer =
-        editor.getCurrentLayerDataFromStack?.() || editor.layerData || null;
-    const shapes = layer?.shapes;
+    const drawing =
+        editor.getCurrentDrawingDataFromStack?.() || editor.drawingData || null;
+    const shapes = drawing?.shapes;
     if (!Array.isArray(shapes)) {
         return null;
     }
@@ -365,10 +365,10 @@ export function getTourComponentCutout(
 }
 
 function fallbackComponentBounds(
-    layerData: { width?: number } | undefined,
+    drawingData: { width?: number } | undefined,
     transform: number[]
 ): FontRect | null {
-    const width = Number(layerData?.width);
+    const width = Number(drawingData?.width);
     if (!Number.isFinite(width) || width <= 0) {
         return null;
     }

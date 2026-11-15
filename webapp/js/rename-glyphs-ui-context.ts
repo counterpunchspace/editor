@@ -68,7 +68,7 @@ export function rewriteTextBufferForGlyphRenames(
 
 /**
  * Rewrite glyph names inside a glyph_stack string.
- * Segments look like `glyph@layer` or `compIndex:glyph@layer`.
+ * Segments look like `glyph@drawing` or `compIndex:glyph@drawing`.
  */
 export function rewriteGlyphStackForGlyphRenames(
     stack: string,
@@ -93,8 +93,8 @@ export function rewriteGlyphStackForGlyphRenames(
                 return segment;
             }
             const glyphName = rest.slice(0, atIndex);
-            const layerId = rest.slice(atIndex + 1);
-            return `${prefix}${renames.get(glyphName) || glyphName}@${layerId}`;
+            const drawingId = rest.slice(atIndex + 1);
+            return `${prefix}${renames.get(glyphName) || glyphName}@${drawingId}`;
         })
         .join('>');
 }

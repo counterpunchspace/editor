@@ -8,7 +8,7 @@ Preserve user-controlled kerning group order through the editor even though font
 
 - Physical group membership stays in `Font.first_kern_groups` and `Font.second_kern_groups`.
 - Sparse per-glyph precedence stays in `Glyph.format_specific.space.counterpunch.kern1_group_order` and `kern2_group_order`.
-- Generated flat exception pairs stay tracked in `Master.format_specific['space.counterpunch.generated_kerning_pair_keys']`.
+- Generated flat exception pairs stay tracked in `Station.format_specific['space.counterpunch.generated_kerning_pair_keys']`.
 
 ## Authoring Rules
 

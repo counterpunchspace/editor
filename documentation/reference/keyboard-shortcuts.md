@@ -47,20 +47,20 @@ Each view title bar shows the same shortcut.
 - Double-click a glyph outline — enter outline editing
 - `Esc` — exit outline editing
 - `Tab` — sidebearing measurement overlay (not a tab character)
-- `Cmd/Ctrl+Up` / `Cmd/Ctrl+Down` — cycle masters
+- `Cmd/Ctrl+Up` / `Cmd/Ctrl+Down` — cycle stations
 
 ### Outline editing
 
 - Double-click a component — enter nested component editing in place
-- `Esc` — exit nested component editing, or exit live interpolation to the last selected layer
+- `Esc` — exit nested component editing, or exit live interpolation to the last selected drawing
 - `Cmd/Ctrl+Left` / `Cmd/Ctrl+Right` — go to the previous or next glyph, as the text cursor would
-- `Cmd/Ctrl+Up` / `Cmd/Ctrl+Down` — cycle layers
-- `Cmd/Ctrl+A` — select all objects on the current layer
-- `Cmd/Ctrl+B` — copy the selection to the paired (background) layer
-- `Cmd/Ctrl+Shift+B` — toggle editing the background layer
-- `Cmd/Ctrl+Alt/Option+B` — show or hide the paired layer
+- `Cmd/Ctrl+Up` / `Cmd/Ctrl+Down` — cycle drawings
+- `Cmd/Ctrl+A` — select all objects on the current drawing
+- `Cmd/Ctrl+B` — copy the selection to the background drawing
+- `Cmd/Ctrl+Shift+B` — toggle editing the background drawing
+- `Cmd/Ctrl+Alt/Option+B` — show or hide the background drawing
 - `Cmd/Ctrl+X` — cut the current selection to the clipboard (Edit → Cut)
-- Arrow keys — nudge selected objects (`Shift` for 10×, `Shift+Cmd/Ctrl` for 100×). `Cmd/Ctrl` alone still moves between glyphs or layers
+- Arrow keys — nudge selected objects (`Shift` for 10×, `Shift+Cmd/Ctrl` for 100×). `Cmd/Ctrl` alone still moves between glyphs or drawings
 - `Alt/Option+Arrow` — nudge selected points while their handles stay put
 - `Space` — preview outline fill in one paint according to Editing View → View → Preview Area, and a dotted rectangle marks the canvas viewport (property panel deducted) so you can pan the drawing onto it (grab cursor; drag to pan). Medium hides the editor title bar, sidebar, and property panel but keeps the focused view border; Full hides toolbar and app shell. Medium and Full make the canvas pannable in that same frame. Release Space to restore chrome in one paint.
 - `Tab` — measurement tool; click and drag for a custom line
@@ -84,8 +84,8 @@ Each view title bar shows the same shortcut.
 - `Shift` while dragging locks the whole selection to horizontal or vertical from where the drag started, including when `Shift` is pressed mid-drag
 - `Cmd/Ctrl+Alt/Option+S` — stack preview
 - `Cmd/Ctrl+Alt/Option+G` — guidelines
-- `Cmd/Ctrl+Alt/Option+L` — link or unlink layers
-- `Cmd/Ctrl+Alt/Option+Up` / `Cmd/Ctrl+Alt/Option+Down` — cycle feature variations
+- `Cmd/Ctrl+Alt/Option+L` — link or unlink drawings
+- `Cmd/Ctrl+Alt/Option+Up` / `Cmd/Ctrl+Alt/Option+Down` — cycle variations
 
 ### Panning and zooming
 

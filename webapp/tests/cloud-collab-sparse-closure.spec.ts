@@ -19,7 +19,7 @@ import {
     waitForFullStateSync,
     waitForWindowSyncPeers,
     waitForWindowSyncReady,
-    waitUntilGlyphLayerDataMatches
+    waitUntilGlyphDrawingDataMatches
 } from './helpers/change-bridge-cross-window';
 import {
     attachCloudCollabCookies,
@@ -49,8 +49,8 @@ async function glyphResidency(page: Page, glyphName: string): Promise<string> {
         const glyph = font?.findGlyph?.(name);
         const resident = !!(
             glyph &&
-            Array.isArray(glyph.layers) &&
-            glyph.layers.length
+            Array.isArray(glyph.drawings) &&
+            glyph.drawings.length
         );
         if (resident) {
             return 'resident';
@@ -117,12 +117,12 @@ async function glyphResidency(page: Page, glyphName: string): Promise<string> {
     }, glyphName);
 }
 
-/** Component references on the first layer, in shape order. */
+/** Component references on the first drawing, in shape order. */
 async function componentRefs(page: Page, glyphName: string): Promise<string[]> {
     return page.evaluate((name) => {
         const glyph = (window as any).currentFontModel.findGlyph(name);
         const refs: string[] = [];
-        for (const shape of glyph.layers[0].shapes || []) {
+        for (const shape of glyph.drawings[0].shapes || []) {
             if (shape.isComponent?.()) {
                 refs.push(shape.asComponent().reference);
             }
@@ -246,15 +246,15 @@ test('sparse peers hydrate a new composite, a new base, and a new GSUB alternate
         await settleCloudEdit(ownerPage);
         await ownerPage.evaluate(() => {
             const font = (window as any).currentFontModel;
-            font.findGlyph('newcomp').layers[0].addComponent('a');
+            font.findGlyph('newcomp').drawings[0].addComponent('a');
         });
         await settleCloudEdit(ownerPage);
         await expectGlyphBody(inviteePage, 'newcomp', true);
         await expectGlyphBody(linkedPage, 'newcomp', true);
-        await waitUntilGlyphLayerDataMatches(ownerPage, inviteePage, [
+        await waitUntilGlyphDrawingDataMatches(ownerPage, inviteePage, [
             'newcomp'
         ]);
-        await waitUntilGlyphLayerDataMatches(ownerPage, linkedPage, [
+        await waitUntilGlyphDrawingDataMatches(ownerPage, linkedPage, [
             'newcomp'
         ]);
         expect(await componentRefs(inviteePage, 'newcomp')).toEqual(['a']);
@@ -268,12 +268,12 @@ test('sparse peers hydrate a new composite, a new base, and a new GSUB alternate
         await settleCloudEdit(ownerPage);
         await ownerPage.evaluate(() => {
             const font = (window as any).currentFontModel;
-            font.findGlyph('adieresis').layers[0].addComponent('newbase');
+            font.findGlyph('adieresis').drawings[0].addComponent('newbase');
         });
         await settleCloudEdit(ownerPage);
         await settleCloudEdit(inviteePage);
         await expectGlyphBody(inviteePage, 'newbase', true);
-        await waitUntilGlyphLayerDataMatches(ownerPage, inviteePage, [
+        await waitUntilGlyphDrawingDataMatches(ownerPage, inviteePage, [
             'adieresis',
             'newbase'
         ]);
@@ -294,14 +294,16 @@ test('sparse peers hydrate a new composite, a new base, and a new GSUB alternate
                 const glyph = (window as any).currentFontModel?.findGlyph?.(
                     'a.ss01'
                 );
-                return Array.isArray(glyph?.layers) && glyph.layers.length > 0;
+                return (
+                    Array.isArray(glyph?.drawings) && glyph.drawings.length > 0
+                );
             },
             null,
             { timeout: 30000 }
         );
         await ownerPage.evaluate(() => {
             const font = (window as any).currentFontModel;
-            font.findGlyph('a.ss01').layers[0].addComponent('ss01mark');
+            font.findGlyph('a.ss01').drawings[0].addComponent('ss01mark');
             font.features.features.push([
                 'ss01',
                 { code: 'sub a by a.ss01;', automatic: false }
@@ -346,7 +348,7 @@ test('sparse peers hydrate a new composite, a new base, and a new GSUB alternate
         }
         await expectGlyphBody(inviteePage, 'a.ss01', true);
         await expectGlyphBody(inviteePage, 'ss01mark', true);
-        await waitUntilGlyphLayerDataMatches(ownerPage, inviteePage, [
+        await waitUntilGlyphDrawingDataMatches(ownerPage, inviteePage, [
             'a.ss01',
             'ss01mark'
         ]);
@@ -411,10 +413,10 @@ test('sparse peers hydrate a new composite, a new base, and a new GSUB alternate
         });
         await expectGlyphBody(orphanLinkedPage, 'orphan', true);
         await expectGlyphBody(inviteePage, 'orphan', true);
-        await waitUntilGlyphLayerDataMatches(ownerPage, orphanLinkedPage, [
+        await waitUntilGlyphDrawingDataMatches(ownerPage, orphanLinkedPage, [
             'orphan'
         ]);
-        await waitUntilGlyphLayerDataMatches(ownerPage, inviteePage, [
+        await waitUntilGlyphDrawingDataMatches(ownerPage, inviteePage, [
             'orphan'
         ]);
     } finally {

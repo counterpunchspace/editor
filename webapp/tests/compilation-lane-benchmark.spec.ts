@@ -243,7 +243,7 @@ test.describe('Compilation lane benchmark (Fustat)', () => {
                     );
                     const overlays = worker.filter(
                         (sample) =>
-                            sample.workerType === 'applyPreviewLayerOverlay'
+                            sample.workerType === 'applyPreviewDrawingOverlay'
                     );
                     const yjs = worker.filter(
                         (sample) => sample.workerType === 'applyYjsUpdate'
@@ -492,7 +492,7 @@ async function installProbe(page: Page): Promise<void> {
             const type = data?.type || 'unknown';
             const tracked = [
                 'compileEditingCached',
-                'applyPreviewLayerOverlay',
+                'applyPreviewDrawingOverlay',
                 'applyYjsUpdate',
                 'storeFontJson',
                 'seedYdoc',
@@ -693,25 +693,29 @@ async function enableAInheritorAutomaticComponents(page: Page): Promise<{
                 throw new Error('Fustat has no glyphs that inherit from a');
             }
 
-            const enableForegroundLayers = (glyphName: string): boolean => {
+            const enableForegroundDrawings = (glyphName: string): boolean => {
                 const glyph = font.findGlyph(glyphName);
                 if (!glyph) {
                     return false;
                 }
-                const layers = (glyph.layers || []).filter(
-                    (layer: { is_background?: boolean; shapes?: unknown[] }) =>
-                        !layer.is_background && (layer.shapes?.length ?? 0) > 0
+                const drawings = (glyph.drawings || []).filter(
+                    (drawing: {
+                        is_background?: boolean;
+                        shapes?: unknown[];
+                    }) =>
+                        !drawing.is_background &&
+                        (drawing.shapes?.length ?? 0) > 0
                 );
                 let enabled = false;
-                for (const layer of layers) {
-                    const components = layer.components || [];
+                for (const drawing of drawings) {
+                    const components = drawing.components || [];
                     if (components.length === 0) {
                         continue;
                     }
                     for (const component of components) {
                         component.automaticAlignment = true;
                     }
-                    layer.rebuildAutomaticComposition?.();
+                    drawing.rebuildAutomaticComposition?.();
                     enabled = true;
                 }
                 return enabled;
@@ -724,7 +728,7 @@ async function enableAInheritorAutomaticComponents(page: Page): Promise<{
             );
             try {
                 for (const glyphName of inheritorNames) {
-                    enableForegroundLayers(glyphName);
+                    enableForegroundDrawings(glyphName);
                 }
                 font.recomputeMetricsKeys?.(inheritorNames);
             } finally {
@@ -740,31 +744,32 @@ async function enableAInheritorAutomaticComponents(page: Page): Promise<{
                     const font = (window as any).currentFontModel;
                     return expectedNames.every((glyphName) => {
                         const glyph = font?.findGlyph?.(glyphName);
-                        const layers = (glyph?.layers || []).filter(
-                            (layer: {
+                        const drawings = (glyph?.drawings || []).filter(
+                            (drawing: {
                                 is_background?: boolean;
                                 shapes?: unknown[];
                                 components?: unknown[];
                             }) =>
-                                !layer.is_background &&
-                                (layer.shapes?.length ?? 0) > 0
+                                !drawing.is_background &&
+                                (drawing.shapes?.length ?? 0) > 0
                         );
-                        const componentLayers = layers.filter(
-                            (layer: { components?: unknown[] }) =>
-                                (layer.components || []).length > 0
+                        const componentDrawings = drawings.filter(
+                            (drawing: { components?: unknown[] }) =>
+                                (drawing.components || []).length > 0
                         );
-                        if (componentLayers.length === 0) {
+                        if (componentDrawings.length === 0) {
                             return true;
                         }
-                        return componentLayers.every(
-                            (layer: {
-                                isAutomaticAlignedLayer?: () => boolean;
+                        return componentDrawings.every(
+                            (drawing: {
+                                isAutomaticAlignedDrawing?: () => boolean;
                                 components?: Array<{
                                     automaticAlignment?: boolean;
                                 }>;
                             }) =>
-                                layer.isAutomaticAlignedLayer?.() === true &&
-                                (layer.components || []).every(
+                                drawing.isAutomaticAlignedDrawing?.() ===
+                                    true &&
+                                (drawing.components || []).every(
                                     (component) =>
                                         component.automaticAlignment === true
                                 )
@@ -846,15 +851,15 @@ async function frameCurrentGlyph(page: Page): Promise<void> {
 async function selectFirstOnCurve(page: Page): Promise<void> {
     await page.evaluate(() => {
         const oe = (window as any).glyphCanvas?.outlineEditor;
-        const layer = oe?.getCurrentLayerDataFromStack?.();
+        const drawing = oe?.getCurrentDrawingDataFromStack?.();
         for (
             let contourIndex = 0;
-            contourIndex < (layer?.shapes || []).length;
+            contourIndex < (drawing?.shapes || []).length;
             contourIndex++
         ) {
             const nodes =
-                layer.shapes[contourIndex]?.nodes ||
-                layer.shapes[contourIndex]?.Path?.nodes ||
+                drawing.shapes[contourIndex]?.nodes ||
+                drawing.shapes[contourIndex]?.Path?.nodes ||
                 [];
             for (let nodeIndex = 0; nodeIndex < nodes.length; nodeIndex++) {
                 const node = nodes[nodeIndex];
@@ -945,9 +950,11 @@ async function clientPointForNode(
         const vm = gc?.viewportManager;
         const tre = gc?.textRunEditor;
         const selected = oe?.selectedPoints?.[0];
-        const layer = oe?.getCurrentLayerDataFromStack?.();
+        const drawing = oe?.getCurrentDrawingDataFromStack?.();
         const node =
-            layer?.shapes?.[selected.contourIndex]?.nodes?.[selected.nodeIndex];
+            drawing?.shapes?.[selected.contourIndex]?.nodes?.[
+                selected.nodeIndex
+            ];
         if (!gc || !vm || !tre || !node) {
             throw new Error('Cannot map selected node to screen');
         }
@@ -991,8 +998,8 @@ async function clientPointForAnchor(
         const oe = gc?.outlineEditor;
         const vm = gc?.viewportManager;
         const tre = gc?.textRunEditor;
-        const layer = oe?.getCurrentLayerDataFromStack?.();
-        const anchor = layer?.anchors?.[oe?.selectedAnchors?.[0]];
+        const drawing = oe?.getCurrentDrawingDataFromStack?.();
+        const anchor = drawing?.anchors?.[oe?.selectedAnchors?.[0]];
         if (!gc || !vm || !tre || !anchor) {
             throw new Error('Cannot map selected anchor to screen');
         }
@@ -1009,11 +1016,11 @@ async function clientPointForAnchor(
 async function enterNestedBaseForAnchorDrag(page: Page): Promise<void> {
     await page.evaluate(async () => {
         const oe = (window as any).glyphCanvas?.outlineEditor;
-        const layer = oe?.getCurrentLayerDataFromStack?.();
-        if (layer?.anchors?.length) {
+        const drawing = oe?.getCurrentDrawingDataFromStack?.();
+        if (drawing?.anchors?.length) {
             return;
         }
-        const shapes = layer?.shapes || [];
+        const shapes = drawing?.shapes || [];
         const baseIndex = shapes.findIndex(
             (shape: { reference?: string; ref?: string }) =>
                 shape?.reference === 'a' || shape?.ref === 'a'
@@ -1027,8 +1034,8 @@ async function enterNestedBaseForAnchorDrag(page: Page): Promise<void> {
     });
     await page.waitForFunction(() => {
         const oe = (window as any).glyphCanvas?.outlineEditor;
-        const layer = oe?.getCurrentLayerDataFromStack?.();
-        return (layer?.anchors?.length || 0) > 0;
+        const drawing = oe?.getCurrentDrawingDataFromStack?.();
+        return (drawing?.anchors?.length || 0) > 0;
     });
 }
 
@@ -1077,9 +1084,9 @@ async function benchMouseDrag(
         } else {
             await page.evaluate(() => {
                 const oe = (window as any).glyphCanvas?.outlineEditor;
-                const layer = oe?.getCurrentLayerDataFromStack?.();
-                if (!layer?.anchors?.length) {
-                    throw new Error('Current layer has no anchors');
+                const drawing = oe?.getCurrentDrawingDataFromStack?.();
+                if (!drawing?.anchors?.length) {
+                    throw new Error('Current drawing has no anchors');
                 }
                 oe.selectedAnchors = [0];
                 oe.selectedPoints = [];
@@ -1241,8 +1248,8 @@ async function benchKeyboard(
         } else {
             await page.evaluate(() => {
                 const oe = (window as any).glyphCanvas?.outlineEditor;
-                if (!oe?.getCurrentLayerDataFromStack?.()?.anchors?.length) {
-                    throw new Error('Current layer has no anchors');
+                if (!oe?.getCurrentDrawingDataFromStack?.()?.anchors?.length) {
+                    throw new Error('Current drawing has no anchors');
                 }
                 oe.selectedAnchors = [0];
                 oe.selectedPoints = [];
@@ -1292,8 +1299,8 @@ async function ensureAnchorGlyph(page: Page): Promise<boolean> {
     const found = await page.evaluate(() => {
         const font = (window as any).currentFontModel;
         for (const glyph of font?.glyphs || []) {
-            for (const layer of glyph.layers || []) {
-                if (layer?.anchors?.length > 0) {
+            for (const drawing of glyph.drawings || []) {
+                if (drawing?.anchors?.length > 0) {
                     return glyph.name as string;
                 }
             }
@@ -1381,12 +1388,12 @@ async function benchKerningValue(page: Page): Promise<void> {
         await setLane(page, 'commit:keyboard-kerning-value');
         await page.evaluate((value) => {
             const gc = (window as any).glyphCanvas;
-            const master = (window as any).currentFontModel?.masters?.[0];
-            if (!gc?.writeTextModeKerningPairValue || !master) {
+            const station = (window as any).currentFontModel?.stations?.[0];
+            if (!gc?.writeTextModeKerningPairValue || !station) {
                 throw new Error('Kerning value writer is unavailable');
             }
             gc.writeTextModeKerningPairValue(
-                master,
+                station,
                 'a',
                 'adieresis',
                 10 + value,
@@ -1502,19 +1509,20 @@ async function benchUndoRedo(page: Page): Promise<void> {
         return {
             glyphName:
                 (window as any).glyphCanvas?.getCurrentGlyphName?.() || 'a',
-            layerId: oe?.selectedLayerId || oe?.getCurrentLayerId?.() || null
+            layerId:
+                oe?.selectedDrawingId || oe?.getCurrentDrawingId?.() || null
         };
     });
 
     for (let i = 0; i < ITERS; i += 1) {
         const before = await pipelineCount(page, 'commit:undo');
         await setLane(page, 'commit:undo');
-        await page.evaluate(async ({ glyphName, layerId }) => {
+        await page.evaluate(async ({ glyphName, layerId: drawingId }) => {
             await (window as any).runBridgeUndoRedo(
                 'undo',
                 glyphName,
                 glyphName,
-                layerId
+                drawingId
             );
         }, context);
         await waitForPipeline(page, 'commit:undo', before);
@@ -1522,12 +1530,12 @@ async function benchUndoRedo(page: Page): Promise<void> {
     for (let i = 0; i < ITERS; i += 1) {
         const before = await pipelineCount(page, 'commit:redo');
         await setLane(page, 'commit:redo');
-        await page.evaluate(async ({ glyphName, layerId }) => {
+        await page.evaluate(async ({ glyphName, layerId: drawingId }) => {
             await (window as any).runBridgeUndoRedo(
                 'redo',
                 glyphName,
                 glyphName,
-                layerId
+                drawingId
             );
         }, context);
         await waitForPipeline(page, 'commit:redo', before);

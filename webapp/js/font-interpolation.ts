@@ -27,10 +27,10 @@ const console = new Logger('FontInterpolation');
  *
  * @example
  * // After compilation, interpolation is ready:
- * const layer = await fontInterpolation.interpolateGlyph('A', { wght: 550 });
+ * const drawing = await fontInterpolation.interpolateGlyph('A', { wght: 550 });
  *
  * // Batch interpolate:
- * const layers = await fontInterpolation.interpolateGlyphs(['A', 'B', 'C'], { wght: 550 });
+ * const drawings = await fontInterpolation.interpolateGlyphs(['A', 'B', 'C'], { wght: 550 });
  */
 
 class FontInterpolationManager {
@@ -79,19 +79,19 @@ class FontInterpolationManager {
      *
      * @param {string} glyphName - Name of the glyph to interpolate
      * @param {Object} location - Axis locations, e.g., { wght: 550, wdth: 100 }
-     * @returns {Promise<Object>} Interpolated layer object with shapes, anchors, width, etc.
+     * @returns {Promise<Object>} Interpolated drawing object with shapes, anchors, width, etc.
      * @throws {Error} If no font is cached or interpolation fails
      *
      * @example
-     * const layer = await interpolateGlyph('A', { wght: 550 });
-     * console.log(layer.width); // 600
-     * console.log(layer.shapes); // Array of Path and Component objects
+     * const drawing = await interpolateGlyph('A', { wght: 550 });
+     * console.log(drawing.width); // 600
+     * console.log(drawing.shapes); // Array of Path and Component objects
      */
     async interpolateGlyph(
         glyphName: string,
         location: import('./locations').UserspaceLocation,
         extrapolate: boolean = false,
-        rootLayerIds?: string[]
+        rootDrawingIds?: string[]
     ): Promise<any> {
         if (!this.worker) {
             throw new Error(
@@ -99,8 +99,8 @@ class FontInterpolationManager {
             );
         }
 
-        const interpolationDomain = rootLayerIds
-            ? [...rootLayerIds].sort().join(',')
+        const interpolationDomain = rootDrawingIds
+            ? [...rootDrawingIds].sort().join(',')
             : '';
         const requestKey = `${glyphName}\u001e${interpolationDomain}`;
 
@@ -123,7 +123,7 @@ class FontInterpolationManager {
 
         const id = this.requestId++;
 
-        // Track this as the current request for this glyph and layer family.
+        // Track this as the current request for this glyph and drawing family.
         this.currentGlyphRequest = { id, glyphName, requestKey };
 
         return new Promise((resolve, reject) => {
@@ -143,7 +143,7 @@ class FontInterpolationManager {
                 glyphName,
                 location,
                 extrapolate,
-                rootLayerIds
+                rootLayerIds: rootDrawingIds
             });
         });
     }
@@ -214,17 +214,17 @@ class FontInterpolationManager {
                     );
                     pending.reject(new Error(data.error));
                 } else {
-                    // Parse the JSON layer
+                    // Parse the JSON drawing
                     try {
-                        const layer = JSON.parse(data.result);
+                        const drawing = JSON.parse(data.result);
                         console.log(
                             '[FontInterpolation]',
-                            '✅ Parsed layer, resolving promise with requestId:',
+                            '✅ Parsed drawing, resolving promise with requestId:',
                             data.id
                         );
-                        // Include the request ID with the layer so the caller can check ordering
-                        layer._interpolationRequestId = data.id;
-                        pending.resolve(layer);
+                        // Include the request ID with the drawing so the caller can check ordering
+                        drawing._interpolationRequestId = data.id;
+                        pending.resolve(drawing);
                     } catch (parseError) {
                         console.error(
                             '[FontInterpolation]',
@@ -233,7 +233,7 @@ class FontInterpolationManager {
                         );
                         pending.reject(
                             new Error(
-                                `Failed to parse layer JSON: ${parseError}`
+                                `Failed to parse drawing JSON: ${parseError}`
                             )
                         );
                     }
@@ -247,11 +247,11 @@ class FontInterpolationManager {
      *
      * @param {Array<string>} glyphNames - Array of glyph names
      * @param {Object} location - Axis locations
-     * @returns {Promise<Map<string, Object>>} Map of glyph name to interpolated layer
+     * @returns {Promise<Map<string, Object>>} Map of glyph name to interpolated drawing
      *
      * @example
-     * const layers = await interpolateGlyphs(['A', 'B', 'C'], { wght: 550 });
-     * layers.get('A').width; // 600
+     * const drawings = await interpolateGlyphs(['A', 'B', 'C'], { wght: 550 });
+     * drawings.get('A').width; // 600
      */
     async interpolateGlyphs(
         glyphNames: string[],
@@ -260,11 +260,11 @@ class FontInterpolationManager {
         const promises = glyphNames.map(
             async (glyphName): Promise<[string, any]> => {
                 try {
-                    const layer = await this.interpolateGlyph(
+                    const drawing = await this.interpolateGlyph(
                         glyphName,
                         location
                     );
-                    return [glyphName, layer];
+                    return [glyphName, drawing];
                 } catch (error) {
                     console.warn(
                         '[FontInterpolation]',
@@ -277,7 +277,7 @@ class FontInterpolationManager {
         );
 
         const results = await Promise.all(promises);
-        return new Map(results.filter(([_, layer]) => layer !== null));
+        return new Map(results.filter(([_, drawing]) => drawing !== null));
     }
 
     /**

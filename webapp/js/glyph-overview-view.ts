@@ -2250,11 +2250,11 @@ export class GlyphOverviewView {
         let ascender = fallbackAscender;
         let descender = fallbackDescender;
 
-        // Try to get metrics from first master
-        const master = font.masters?.[0];
-        if (master?.metrics) {
+        // Try to get metrics from first station
+        const station = font.stations?.[0];
+        if (station?.metrics) {
             // Look for Ascender/Descender in metrics (case may vary)
-            const metrics = master.metrics;
+            const metrics = station.metrics;
             if (
                 metrics.Ascender !== undefined &&
                 Number.isFinite(metrics.Ascender)

@@ -3,7 +3,7 @@ import APP_SETTINGS, {
     interpolateOutlineChromeScreenSize,
     outlineChromeStateScale
 } from '../settings';
-import { Layer, DecomposedAffineTransform } from '../babelfont-model';
+import { Drawing, DecomposedAffineTransform } from '../babelfont-model';
 import { pathHasSubtractionFlag } from '../path-boolean-flag';
 import { fillPunchFillContoursOnContext } from '../punch-fill-contours';
 import { Logger } from '../logger';
@@ -130,17 +130,17 @@ function collectDuplicateNodePositionKeys(
     );
 }
 
-type ComponentAlignmentLayerSnapshot = {
+type ComponentAlignmentDrawingSnapshot = {
     shapes?: Array<{
         reference?: string;
         format_specific?: Record<string, number | undefined>;
     }>;
 };
 
-function isAutomaticallyAlignedComponentLayer(
-    layerData: ComponentAlignmentLayerSnapshot | null | undefined
+function isAutomaticallyAlignedComponentDrawing(
+    drawingData: ComponentAlignmentDrawingSnapshot | null | undefined
 ): boolean {
-    const shapes = layerData?.shapes;
+    const shapes = drawingData?.shapes;
     if (!Array.isArray(shapes) || shapes.length === 0) {
         return false;
     }
@@ -225,7 +225,7 @@ function calculatePathBounds(pathData: string): {
     maxX: number;
     maxY: number;
 } | null {
-    const bounds = Layer.calculateSvgPathBounds(pathData);
+    const bounds = Drawing.calculateSvgPathBounds(pathData);
     if (!bounds) {
         return null;
     }
@@ -526,12 +526,12 @@ export class GlyphCanvasRenderer {
         return applyAffineToPoint(transform, x, y);
     }
 
-    private getLayerLocalBounds(
-        layerData: Babelfont.Layer,
+    private getDrawingLocalBounds(
+        drawingData: Babelfont.Layer,
         parentTransform: number[] = [1, 0, 0, 1, 0, 0]
     ): { minX: number; minY: number; maxX: number; maxY: number } | null {
-        const bounds = Layer.calculateShapeBounds(
-            layerData?.shapes,
+        const bounds = Drawing.calculateShapeBounds(
+            drawingData?.shapes,
             parentTransform
         );
         if (!bounds) {
@@ -546,20 +546,20 @@ export class GlyphCanvasRenderer {
         };
     }
 
-    private isPointInLayerShapes(
-        layerData: Babelfont.Layer,
+    private isPointInDrawingShapes(
+        drawingData: Babelfont.Layer,
         mouseX: number,
         mouseY: number,
         invScale: number
     ): boolean {
-        if (!layerData?.shapes) {
+        if (!drawingData?.shapes) {
             return false;
         }
 
-        for (const shape of layerData.shapes) {
+        for (const shape of drawingData.shapes) {
             if ('reference' in shape) {
-                const nestedLayerData = (shape as any).layerData;
-                if (!nestedLayerData?.shapes) {
+                const nestedDrawingData = (shape as any).layerData;
+                if (!nestedDrawingData?.shapes) {
                     continue;
                 }
 
@@ -577,8 +577,8 @@ export class GlyphCanvasRenderer {
                     transform[4],
                     transform[5]
                 );
-                const hit = this.isPointInLayerShapes(
-                    nestedLayerData,
+                const hit = this.isPointInDrawingShapes(
+                    nestedDrawingData,
                     mouseX,
                     mouseY,
                     invScale
@@ -619,11 +619,11 @@ export class GlyphCanvasRenderer {
         return false;
     }
 
-    hitTestStackPreviewLayer(mouseX: number, mouseY: number): number | null {
+    hitTestStackPreviewDrawing(mouseX: number, mouseY: number): number | null {
         const animator = this.glyphCanvas.stackPreviewAnimator;
         if (
             !animator.shouldRenderStackPreview() ||
-            animator.layerTree.length === 0
+            animator.drawingTree.length === 0
         ) {
             return null;
         }
@@ -639,11 +639,11 @@ export class GlyphCanvasRenderer {
         const invScale = 1 / this.viewportManager.scale;
         const viewportTransform = this.viewportManager.getTransformMatrix();
 
-        let bestLayerTreeIndex: number | null = null;
+        let bestDrawingTreeIndex: number | null = null;
         let bestDistance = Infinity;
 
-        for (let i = 0; i < animator.layerTree.length; i++) {
-            const node = animator.layerTree[i];
+        for (let i = 0; i < animator.drawingTree.length; i++) {
+            const node = animator.drawingTree[i];
 
             this.ctx.save();
             this.ctx.setTransform(
@@ -675,8 +675,8 @@ export class GlyphCanvasRenderer {
                 offsetDistance * Math.sin(diagonalAngleRad)
             );
 
-            const hit = this.isPointInLayerShapes(
-                node.componentLayerData,
+            const hit = this.isPointInDrawingShapes(
+                node.componentDrawingData,
                 mouseX,
                 mouseY,
                 invScale
@@ -692,14 +692,14 @@ export class GlyphCanvasRenderer {
 
                 if (distance < bestDistance) {
                     bestDistance = distance;
-                    bestLayerTreeIndex = i;
+                    bestDrawingTreeIndex = i;
                 }
             }
 
             this.ctx.restore();
         }
 
-        return bestLayerTreeIndex;
+        return bestDrawingTreeIndex;
     }
 
     /**
@@ -1172,7 +1172,7 @@ export class GlyphCanvasRenderer {
         }
     }
 
-    private getLiveSelectedLayerWidth(): number | null {
+    private getLiveSelectedDrawingWidth(): number | null {
         const overlayWidth =
             this.glyphCanvas.outlineEditor.getLiveSidebearingOverlayWidth();
         if (overlayWidth !== null) {
@@ -1180,10 +1180,10 @@ export class GlyphCanvasRenderer {
         }
         if (
             this.glyphCanvas.outlineEditor.active &&
-            this.glyphCanvas.outlineEditor.layerData &&
-            Number.isFinite(this.glyphCanvas.outlineEditor.layerData.width)
+            this.glyphCanvas.outlineEditor.drawingData &&
+            Number.isFinite(this.glyphCanvas.outlineEditor.drawingData.width)
         ) {
-            return this.glyphCanvas.outlineEditor.layerData.width;
+            return this.glyphCanvas.outlineEditor.drawingData.width;
         }
         return null;
     }
@@ -1192,11 +1192,11 @@ export class GlyphCanvasRenderer {
         minX: number;
         maxX: number;
     } | null {
-        const liveSelectedLayerWidth = this.getLiveSelectedLayerWidth();
+        const liveSelectedDrawingWidth = this.getLiveSelectedDrawingWidth();
         const toExtents = shapedRunHorizontalExtents(
             this.textRunEditor.shapedGlyphs,
             this.textRunEditor.selectedGlyphIndex,
-            liveSelectedLayerWidth
+            liveSelectedDrawingWidth
         );
         const drawState =
             this.glyphCanvas.featureChangeAnimator?.getDrawState() ?? null;
@@ -1207,7 +1207,7 @@ export class GlyphCanvasRenderer {
         const fromExtents = shapedRunHorizontalExtents(
             drawState.from.glyphs,
             drawState.fromSelectedIndex,
-            liveSelectedLayerWidth
+            liveSelectedDrawingWidth
         );
         if (!fromExtents) {
             return toExtents;
@@ -1245,7 +1245,7 @@ export class GlyphCanvasRenderer {
         const outlineEditor = this.glyphCanvas.outlineEditor;
         if (
             !outlineEditor.active ||
-            !outlineEditor.isEditingBackgroundLayer()
+            !outlineEditor.isEditingBackgroundDrawing()
         ) {
             return;
         }
@@ -1266,8 +1266,8 @@ export class GlyphCanvasRenderer {
         if (widthOriginX === null) {
             return;
         }
-        const pairedLayer = outlineEditor.getPairedLayerModel();
-        const width = pairedLayer?.width ?? outlineEditor.layerData?.width;
+        const pairedDrawing = outlineEditor.getPairedDrawingModel();
+        const width = pairedDrawing?.width ?? outlineEditor.drawingData?.width;
         if (typeof width !== 'number' || !Number.isFinite(width)) {
             return;
         }
@@ -1421,7 +1421,8 @@ export class GlyphCanvasRenderer {
             selectedGlyphIndex >= 0 &&
             selectedGlyphIndex < this.textRunEditor.shapedGlyphs.length
         ) {
-            const selectedLayerData = this.glyphCanvas.outlineEditor.layerData;
+            const selectedDrawingData =
+                this.glyphCanvas.outlineEditor.drawingData;
             const selectedGlyph =
                 this.textRunEditor.shapedGlyphs[selectedGlyphIndex];
             const animatedOriginX = this.getAnimatedActiveGlyphOriginX();
@@ -1430,17 +1431,20 @@ export class GlyphCanvasRenderer {
                 return;
             }
 
-            const pairedLayer =
-                this.glyphCanvas.outlineEditor.isEditingBackgroundLayer()
-                    ? this.glyphCanvas.outlineEditor.getPairedLayerModel()
+            const pairedDrawing =
+                this.glyphCanvas.outlineEditor.isEditingBackgroundDrawing()
+                    ? this.glyphCanvas.outlineEditor.getPairedDrawingModel()
                     : null;
             const overlayWidth =
                 this.glyphCanvas.outlineEditor.getLiveSidebearingOverlayWidth();
-            const layerWidth =
-                overlayWidth ?? pairedLayer?.width ?? selectedLayerData?.width;
+            const drawingWidth =
+                overlayWidth ??
+                pairedDrawing?.width ??
+                selectedDrawingData?.width;
             const activeGlyphAdvance =
-                typeof layerWidth === 'number' && Number.isFinite(layerWidth)
-                    ? layerWidth
+                typeof drawingWidth === 'number' &&
+                Number.isFinite(drawingWidth)
+                    ? drawingWidth
                     : Number(selectedGlyph.ax) || 0;
 
             const activeGlyphStartX = animatedOriginX;
@@ -1798,8 +1802,8 @@ export class GlyphCanvasRenderer {
     }
 
     private sameGuideHandle(
-        left: { scope: 'master' | 'layer'; index: number } | null,
-        right: { scope: 'master' | 'layer'; index: number } | null
+        left: { scope: 'station' | 'drawing'; index: number } | null,
+        right: { scope: 'station' | 'drawing'; index: number } | null
     ): boolean {
         if (!left || !right) {
             return left === right;
@@ -1808,8 +1812,8 @@ export class GlyphCanvasRenderer {
         return left.scope === right.scope && left.index === right.index;
     }
 
-    private getGuideColor(scope: 'master' | 'layer'): string {
-        return scope === 'master'
+    private getGuideColor(scope: 'station' | 'drawing'): string {
+        return scope === 'station'
             ? 'rgba(220, 64, 64, 0.95)'
             : 'rgba(64, 128, 235, 0.95)';
     }
@@ -2047,17 +2051,17 @@ export class GlyphCanvasRenderer {
         };
     }
 
-    private getCurrentLayerAdvanceWidth(): number {
+    private getCurrentDrawingAdvanceWidth(): number {
         const overlayWidth =
             this.glyphCanvas.outlineEditor.getLiveSidebearingOverlayWidth();
         if (typeof overlayWidth === 'number' && Number.isFinite(overlayWidth)) {
             return overlayWidth;
         }
-        const layerWidth =
-            this.glyphCanvas.outlineEditor.getCurrentLayerDataFromStack()
+        const drawingWidth =
+            this.glyphCanvas.outlineEditor.getCurrentDrawingDataFromStack()
                 ?.width;
-        return typeof layerWidth === 'number' && Number.isFinite(layerWidth)
-            ? layerWidth
+        return typeof drawingWidth === 'number' && Number.isFinite(drawingWidth)
+            ? drawingWidth
             : 0;
     }
 
@@ -2088,7 +2092,7 @@ export class GlyphCanvasRenderer {
         if (Math.abs(x) <= tolerance) {
             return true;
         }
-        const width = this.getCurrentLayerAdvanceWidth();
+        const width = this.getCurrentDrawingAdvanceWidth();
         if (Math.abs(x - width) <= tolerance) {
             return true;
         }
@@ -2173,7 +2177,7 @@ export class GlyphCanvasRenderer {
 
     private drawOutlineGuides(
         guides: Array<{
-            scope: 'master' | 'layer';
+            scope: 'station' | 'drawing';
             index: number;
             guide: Babelfont.Guide;
             rootX: number;
@@ -2399,7 +2403,7 @@ export class GlyphCanvasRenderer {
         maxY: number;
         hasPoints: boolean;
     } {
-        const bounds = Layer.calculateShapeBounds(shapes);
+        const bounds = Drawing.calculateShapeBounds(shapes);
         if (!bounds) {
             return {
                 minX: Infinity,
@@ -2601,14 +2605,14 @@ export class GlyphCanvasRenderer {
     }
 
     private fillOutlineEditorPunchOut(
-        layerData: { shapes?: unknown[] },
+        drawingData: { shapes?: unknown[] },
         localFillStyle: string
     ): void {
-        const isAutomatic = isAutomaticallyAlignedComponentLayer(
-            layerData as ComponentAlignmentLayerSnapshot
+        const isAutomatic = isAutomaticallyAlignedComponentDrawing(
+            drawingData as ComponentAlignmentDrawingSnapshot
         );
         const contours = this.collectPunchFillContours(
-            layerData.shapes,
+            drawingData.shapes,
             createIdentityAffine(),
             localFillStyle,
             (shapeIndex) =>
@@ -2668,10 +2672,10 @@ export class GlyphCanvasRenderer {
         );
     }
 
-    private layerHasPathInk(
-        layerData: Babelfont.Layer | null | undefined
+    private drawingHasPathInk(
+        drawingData: Babelfont.Layer | null | undefined
     ): boolean {
-        return (layerData?.shapes || []).some(
+        return (drawingData?.shapes || []).some(
             (shape) =>
                 'nodes' in shape &&
                 Array.isArray(shape.nodes) &&
@@ -2993,12 +2997,12 @@ export class GlyphCanvasRenderer {
         return positioned;
     }
 
-    private drawPlaceholderLayer(
-        layerData: Babelfont.Layer | null | undefined,
+    private drawPlaceholderDrawing(
+        drawingData: Babelfont.Layer | null | undefined,
         name: string,
         emphasis: PlaceholderEmphasis = 'rest'
     ): void {
-        const components = (layerData?.shapes || []).filter(
+        const components = (drawingData?.shapes || []).filter(
             (shape): shape is Babelfont.Component => 'reference' in shape
         );
         if (components.length) {
@@ -3008,11 +3012,11 @@ export class GlyphCanvasRenderer {
     }
 
     private paintPlaceholderForSelectedGlyph(
-        layerData: Babelfont.Layer | null | undefined
+        drawingData: Babelfont.Layer | null | undefined
     ): void {
         const origin = this.selectedGlyphOrigin();
         const name = this.placeholderGlyphName();
-        if (!origin || !name || this.layerHasPathInk(layerData)) {
+        if (!origin || !name || this.drawingHasPathInk(drawingData)) {
             return;
         }
         this.ctx.save();
@@ -3029,7 +3033,7 @@ export class GlyphCanvasRenderer {
                 transform[5]
             );
         }
-        this.drawPlaceholderLayer(layerData, name, 'active');
+        this.drawPlaceholderDrawing(drawingData, name, 'active');
         this.ctx.restore();
     }
 
@@ -3075,34 +3079,34 @@ export class GlyphCanvasRenderer {
             return;
         }
 
-        // Draw outline editor when a layer is selected. Space preview
+        // Draw outline editor when a drawing is selected. Space preview
         // multiplies this pass by previewChromeOpacity in render().
-        if (!this.glyphCanvas.outlineEditor.layerData) {
+        if (!this.glyphCanvas.outlineEditor.drawingData) {
             return;
         }
 
-        // Get the layer data at the current position in glyph_stack
+        // Get the drawing data at the current position in glyph_stack
         // This will return the root glyph data if not in component editing,
         // or the nested component data if we've entered components
-        const currentLayerData =
-            this.glyphCanvas.outlineEditor.getCurrentLayerDataFromStack();
+        const currentDrawingData =
+            this.glyphCanvas.outlineEditor.getCurrentDrawingDataFromStack();
         const visibleGuides = this.glyphCanvas.outlineEditor.getVisibleGuides();
         const hasPairedGhost =
-            this.glyphCanvas.outlineEditor.isPairedLayerVisible() &&
-            this.glyphCanvas.outlineEditor.getPairedLayerGhostPaths().length >
+            this.glyphCanvas.outlineEditor.isPairedDrawingVisible() &&
+            this.glyphCanvas.outlineEditor.getPairedDrawingGhostPaths().length >
                 0;
 
         // Skip rendering if there is nothing editable to show.
         if (
-            !currentLayerData ||
-            ((!currentLayerData.shapes ||
-                currentLayerData.shapes.length === 0) &&
-                (!currentLayerData.anchors ||
-                    currentLayerData.anchors.length === 0) &&
+            !currentDrawingData ||
+            ((!currentDrawingData.shapes ||
+                currentDrawingData.shapes.length === 0) &&
+                (!currentDrawingData.anchors ||
+                    currentDrawingData.anchors.length === 0) &&
                 visibleGuides.length === 0 &&
                 !hasPairedGhost)
         ) {
-            this.paintPlaceholderForSelectedGlyph(currentLayerData);
+            this.paintPlaceholderForSelectedGlyph(currentDrawingData);
             console.log(
                 '[Renderer]',
                 'Skipping drawOutlineEditor: no shapes, anchors, or guides at current stack position'
@@ -3151,7 +3155,7 @@ export class GlyphCanvasRenderer {
 
         // Apply accumulated component transform if editing a component
         // This positions the editor at the component's location in the parent
-        // Get the accumulated transform from the current layerData (which may be interpolated)
+        // Get the accumulated transform from the current drawing data (which may be interpolated)
         const transform =
             this.glyphCanvas.outlineEditor.getAccumulatedTransform();
 
@@ -3170,9 +3174,9 @@ export class GlyphCanvasRenderer {
             );
         }
 
-        if (!this.layerHasPathInk(currentLayerData)) {
-            this.drawPlaceholderLayer(
-                currentLayerData,
+        if (!this.drawingHasPathInk(currentDrawingData)) {
+            this.drawPlaceholderDrawing(
+                currentDrawingData,
                 this.placeholderGlyphName(),
                 'active'
             );
@@ -3183,7 +3187,7 @@ export class GlyphCanvasRenderer {
         // Subtraction cutters then dest-out in shape order; later additives
         // cover the cutter. Cutter fill stays except where later solids sit.
         this.fillOutlineEditorPunchOut(
-            currentLayerData,
+            currentDrawingData,
             this.getPathFillColor(isDarkTheme)
         );
 
@@ -3264,9 +3268,9 @@ export class GlyphCanvasRenderer {
                 minY = -200,
                 maxY = 1000; // Default bounds
 
-            if (currentLayerData && currentLayerData.shapes) {
+            if (currentDrawingData && currentDrawingData.shapes) {
                 // Calculate bounds from all contours
-                currentLayerData.shapes.forEach((shape) => {
+                currentDrawingData.shapes.forEach((shape) => {
                     const nodes = getNodesFromShape(shape);
                     if (nodes && nodes.length > 0) {
                         nodes.forEach(({ x, y }: { x: number; y: number }) => {
@@ -3330,8 +3334,8 @@ export class GlyphCanvasRenderer {
             '[Renderer]',
             'Drawing shapes. Component stack depth:',
             this.glyphCanvas.outlineEditor.getComponentDepth(),
-            'currentLayerData.shapes.length:',
-            currentLayerData?.shapes?.length
+            'currentDrawingData.shapes.length:',
+            currentDrawingData?.shapes?.length
         );
 
         // Collect component labels to draw at the end (on top of everything)
@@ -3356,20 +3360,23 @@ export class GlyphCanvasRenderer {
             fontSize: number;
         }> = [];
         const duplicateNodePositionKeys = collectDuplicateNodePositionKeys(
-            currentLayerData?.shapes
+            currentDrawingData?.shapes
         );
         const drawnDuplicateNodeWarningKeys = new Set<string>();
 
         // Only draw shapes if they exist (empty glyphs like space won't have shapes)
-        if (currentLayerData.shapes && Array.isArray(currentLayerData.shapes)) {
-            const isAutomaticComponentLayer =
-                isAutomaticallyAlignedComponentLayer(currentLayerData);
-            // Apply monochrome for interpolated previews. Exact stored layers
+        if (
+            currentDrawingData.shapes &&
+            Array.isArray(currentDrawingData.shapes)
+        ) {
+            const isAutomaticComponentDrawing =
+                isAutomaticallyAlignedComponentDrawing(currentDrawingData);
+            // Apply monochrome for interpolated previews. Exact stored drawings
             // keep object-model color even while a slider drag is still down.
             const isInterpolated =
                 this.glyphCanvas.outlineEditor.isPaintingInterpolatedPreview();
 
-            currentLayerData.shapes.forEach((shape, contourIndex: number) =>
+            currentDrawingData.shapes.forEach((shape, contourIndex: number) =>
                 this.drawShape(
                     shape,
                     contourIndex,
@@ -3380,7 +3387,7 @@ export class GlyphCanvasRenderer {
             );
 
             if (!this.glyphCanvas.outlineEditor.isPreviewMode) {
-                currentLayerData.shapes.forEach((shape, index: number) => {
+                currentDrawingData.shapes.forEach((shape, index: number) => {
                     if (!('reference' in shape)) {
                         return; // Not a component
                     }
@@ -3417,7 +3424,7 @@ export class GlyphCanvasRenderer {
                             componentShapes,
                             isSelected,
                             isHovered,
-                            isAutomaticComponentLayer,
+                            isAutomaticComponentDrawing,
                             !!isInterpolated,
                             invScale,
                             isDarkTheme,
@@ -3456,12 +3463,12 @@ export class GlyphCanvasRenderer {
 
         if (
             this.viewportManager.scale >= minZoomForHandles &&
-            currentLayerData.anchors &&
-            currentLayerData.anchors.length > 0
+            currentDrawingData.anchors &&
+            currentDrawingData.anchors.length > 0
         ) {
             const fontSize = 12 * invScale;
 
-            currentLayerData.anchors.forEach((anchor: any, index: number) => {
+            currentDrawingData.anchors.forEach((anchor: any, index: number) => {
                 const { x, y, name } = anchor;
                 const isInterpolated =
                     this.glyphCanvas.outlineEditor.isPaintingInterpolatedPreview();
@@ -3612,7 +3619,10 @@ export class GlyphCanvasRenderer {
         this.drawSelectionResizeBox(invScale, isDarkTheme);
 
         if (APP_SETTINGS.OUTLINE_EDITOR.SHOW_BBOX_CENTER_CROSSHAIR) {
-            const bounds = Layer.calculateBoundingBox(currentLayerData, true);
+            const bounds = Drawing.calculateBoundingBox(
+                currentDrawingData,
+                true
+            );
             if (bounds) {
                 const centerX = bounds.minX + bounds.width / 2;
                 const centerY = bounds.minY + bounds.height / 2;
@@ -3685,7 +3695,7 @@ export class GlyphCanvasRenderer {
             this.ctx.restore();
         });
 
-        this.drawPairedLayerGhost(invScale);
+        this.drawPairedDrawingGhost(invScale);
         this.drawMarqueeSelectionRect();
 
         this.ctx.restore();
@@ -3755,12 +3765,12 @@ export class GlyphCanvasRenderer {
         });
     }
 
-    private drawPairedLayerGhost(invScale: number): void {
-        if (!this.glyphCanvas.outlineEditor.isPairedLayerVisible()) {
+    private drawPairedDrawingGhost(invScale: number): void {
+        if (!this.glyphCanvas.outlineEditor.isPairedDrawingVisible()) {
             return;
         }
         const ghostPaths =
-            this.glyphCanvas.outlineEditor.getPairedLayerGhostPaths();
+            this.glyphCanvas.outlineEditor.getPairedDrawingGhostPaths();
         if (!ghostPaths.length) {
             return;
         }
@@ -3841,7 +3851,7 @@ export class GlyphCanvasRenderer {
         const segmentPreview = addPointPreview || commandCurvePreview;
         const closed = getClosedFromOutlineShape(shape);
         const addPointPreviewDescriptor = segmentPreview
-            ? Layer.getPathSegmentDescriptors({ nodes, closed }).find(
+            ? Drawing.getPathSegmentDescriptors({ nodes, closed }).find(
                   (descriptor) =>
                       descriptor.segmentId === segmentPreview.segmentId
               ) || null
@@ -3995,7 +4005,7 @@ export class GlyphCanvasRenderer {
                 isSubtractionPath ? this.subtractionOutlineDash(invScale) : []
             );
         };
-        const pathDescriptors = Layer.getPathSegmentDescriptors({
+        const pathDescriptors = Drawing.getPathSegmentDescriptors({
             nodes,
             closed
         });
@@ -5015,14 +5025,14 @@ export class GlyphCanvasRenderer {
             `[Renderer] drawCanvasPlugins${position === 'above' ? 'Above' : 'Below'} called`
         );
 
-        // Only draw plugins when we have an active outline editor with layer data
+        // Only draw plugins when we have an active outline editor with drawing data
         if (
-            !this.glyphCanvas.outlineEditor.layerData ||
+            !this.glyphCanvas.outlineEditor.drawingData ||
             !window.canvasPluginManager ||
             !window.canvasPluginManager.isLoaded()
         ) {
             console.log('[Renderer] Early return:', {
-                hasLayerData: !!this.glyphCanvas.outlineEditor.layerData,
+                hasDrawingData: !!this.glyphCanvas.outlineEditor.drawingData,
                 hasPluginManager: !!window.canvasPluginManager,
                 isLoaded: window.canvasPluginManager?.isLoaded()
             });
@@ -5044,12 +5054,12 @@ export class GlyphCanvasRenderer {
         const glyphName =
             this.textRunEditor.glyphNameBuffer[selectedGlyphIndex] || '';
 
-        // Get the current layer data
-        const layerData =
-            this.glyphCanvas.outlineEditor.getCurrentLayerDataFromStack();
+        // Get the current drawing data
+        const drawingData =
+            this.glyphCanvas.outlineEditor.getCurrentDrawingDataFromStack();
 
-        if (!layerData) {
-            console.log('[Renderer] No layer data from stack');
+        if (!drawingData) {
+            console.log('[Renderer] No drawing data from stack');
             return;
         }
 
@@ -5093,7 +5103,7 @@ export class GlyphCanvasRenderer {
                   );
 
         pluginMethod(
-            layerData,
+            drawingData,
             glyphName,
             this.ctx,
             this.viewportManager
@@ -5178,7 +5188,7 @@ export class GlyphCanvasRenderer {
         // Only render when editing mode is active and we have a selected glyph
         if (
             !this.glyphCanvas.outlineEditor.active ||
-            !this.glyphCanvas.outlineEditor.layerData
+            !this.glyphCanvas.outlineEditor.drawingData
         ) {
             return;
         }
@@ -5457,13 +5467,13 @@ export class GlyphCanvasRenderer {
         p2: { x: number; y: number }
     ): Array<{ x: number; y: number; t: number }> {
         const editor = this.glyphCanvas.outlineEditor;
-        const currentLayerData = editor.getCurrentLayerDataFromStack();
-        if (!currentLayerData?.shapes) {
+        const currentDrawingData = editor.getCurrentDrawingDataFromStack();
+        if (!currentDrawingData?.shapes) {
             return [];
         }
-        return Layer.intersectPathsWithLine(
+        return Drawing.intersectPathsWithLine(
             flattenShapesToPaths(
-                currentLayerData.shapes,
+                currentDrawingData.shapes,
                 editor.getAccumulatedTransform()
             ),
             p1,
@@ -5472,10 +5482,10 @@ export class GlyphCanvasRenderer {
     }
 
     drawMeasurementIntersections() {
-        // Only draw when the measurement key is pressed, in editing mode, and we have layer data
+        // Only draw when the measurement key is pressed, in editing mode, and we have drawing data
         if (
             !this.glyphCanvas.measurementTool.shouldDrawVisuals() ||
-            !this.glyphCanvas.outlineEditor.layerData
+            !this.glyphCanvas.outlineEditor.drawingData
         ) {
             return;
         }
@@ -5919,7 +5929,10 @@ export class GlyphCanvasRenderer {
         },
         pathTarget?: Path2D
     ): number {
-        const descriptors = Layer.getPathSegmentDescriptors({ nodes, closed });
+        const descriptors = Drawing.getPathSegmentDescriptors({
+            nodes,
+            closed
+        });
         if (!descriptors.length) {
             return this.buildPathFromNodes(nodes, closed, pathTarget);
         }
@@ -6397,28 +6410,33 @@ export class GlyphCanvasRenderer {
         );
         this.ctx.restore();
 
-        // Get current master ID for layer lookup
+        // Get current station ID for drawing lookup
         const fontModel = window.currentFontModel;
-        if (!fontModel || !fontModel.masters || fontModel.masters.length === 0)
+        if (
+            !fontModel ||
+            !fontModel.stations ||
+            fontModel.stations.length === 0
+        )
             return;
 
-        // In text mode, use selectedMasterId from textRunEditor
-        // In edit mode, get master from selected layer
-        let masterId = fontModel.masters[0].id;
+        // In text mode, use selectedStationId from textRunEditor
+        // In edit mode, get station from selected drawing
+        let stationId = fontModel.stations[0].id;
 
-        if (this.textRunEditor.selectedMasterId) {
-            // Text mode: use the master ID set by autoSelectMatchingMaster
-            masterId = this.textRunEditor.selectedMasterId;
-        } else if (this.glyphCanvas.outlineEditor.selectedLayerId) {
-            // Edit mode: find the master from the selected layer
-            const selectedLayer = fontModel.glyphs
-                .flatMap((g: any) => g.layers || [])
+        if (this.textRunEditor.selectedStationId) {
+            // Text mode: use the station ID set by autoSelectMatchingStation
+            stationId = this.textRunEditor.selectedStationId;
+        } else if (this.glyphCanvas.outlineEditor.selectedDrawingId) {
+            // Edit mode: find the station from the selected drawing
+            const selectedDrawing = fontModel.glyphs
+                .flatMap((g: any) => g.drawings || [])
                 .find(
                     (l: any) =>
-                        l.id === this.glyphCanvas.outlineEditor.selectedLayerId
+                        l.id ===
+                        this.glyphCanvas.outlineEditor.selectedDrawingId
                 );
-            if (selectedLayer && selectedLayer.master) {
-                masterId = selectedLayer.master.id;
+            if (selectedDrawing && selectedDrawing.station) {
+                stationId = selectedDrawing.station.id;
             }
         }
 
@@ -6431,8 +6449,8 @@ export class GlyphCanvasRenderer {
         console.log(
             '[TextMeasure] Processing',
             this.textRunEditor.shapedGlyphs.length,
-            'glyphs, masterId=',
-            masterId
+            'glyphs, stationId=',
+            stationId
         );
 
         this.textRunEditor.shapedGlyphs.forEach(
@@ -6464,56 +6482,56 @@ export class GlyphCanvasRenderer {
                 console.log(
                     '[TextMeasure] Glyph wrapper:',
                     !!glyphWrapper,
-                    'layers:',
-                    glyphWrapper?.layers?.length
+                    'drawings:',
+                    glyphWrapper?.drawings?.length
                 );
-                if (!glyphWrapper || !glyphWrapper.layers) {
+                if (!glyphWrapper || !glyphWrapper.drawings) {
                     console.log(
-                        '[TextMeasure] No glyph wrapper or layers, skipping'
+                        '[TextMeasure] No glyph wrapper or drawings, skipping'
                     );
                     return;
                 }
 
-                // Find the layer for the selected master
-                // Use the masterId determined at the start of this function
-                if (!masterId) {
+                // Find the drawing for the selected station
+                // Use the stationId determined at the start of this function
+                if (!stationId) {
                     return;
                 }
 
                 console.log(
-                    `[TextMeasure] ${glyphName}: Looking for master ${masterId}, available layers:`,
-                    glyphWrapper.layers.map((l: any) => ({
+                    `[TextMeasure] ${glyphName}: Looking for station ${stationId}, available drawings:`,
+                    glyphWrapper.drawings.map((l: any) => ({
                         id: l.id,
-                        masterType: l.master?.type,
-                        masterId: l.master?.master,
+                        stationType: l.station?.type,
+                        stationId: l.station?.master,
                         hasShapes: !!l.shapes,
                         shapeCount: l.shapes?.length || 0
                     }))
                 );
 
-                const layer = glyphWrapper.layers.find(
-                    (l: any) => l.master && l.master.master === masterId
+                const drawing = glyphWrapper.drawings.find(
+                    (l: any) => l.station && l.station.master === stationId
                 );
 
-                // Fallback: if no matching layer found, use the first layer
-                const actualLayer = layer || glyphWrapper.layers[0];
+                // Fallback: if no matching drawing found, use the first drawing
+                const actualDrawing = drawing || glyphWrapper.drawings[0];
 
-                if (!actualLayer) {
+                if (!actualDrawing) {
                     console.log(
-                        `[TextMeasure] ${glyphName}: No layer available!`
+                        `[TextMeasure] ${glyphName}: No drawing available!`
                     );
                     return;
                 }
 
                 console.log(
-                    `[TextMeasure] ${glyphName}: Found layer with ${(actualLayer as any).shapes?.length || 0} shapes`
+                    `[TextMeasure] ${glyphName}: Found drawing with ${(actualDrawing as any).shapes?.length || 0} shapes`
                 );
 
-                // Get the actual width from this layer (not from shaped glyph which may be from different master)
-                const actualWidth = (actualLayer as any).width || xAdvance;
+                // Get the actual width from this drawing (not from shaped glyph which may be from a different station)
+                const actualWidth = (actualDrawing as any).width || xAdvance;
 
                 console.log(
-                    `[TextMeasure] ${glyphName}: shaped xAdvance=${xAdvance}, actual layer width=${actualWidth}`
+                    `[TextMeasure] ${glyphName}: shaped xAdvance=${xAdvance}, actual drawing width=${actualWidth}`
                 );
 
                 // Calculate measurement Y in glyph-local space
@@ -6523,12 +6541,12 @@ export class GlyphCanvasRenderer {
 
                 console.log(
                     `[TextMeasure] ${glyphName}: yOffset=${glyphY}, mouseGlyphY=${mouseGlyphY.toFixed(1)}, lineY=${lineY.toFixed(1)}, bbox=`,
-                    (actualLayer as any).getBoundingBox(false)
+                    (actualDrawing as any).getBoundingBox(false)
                 );
 
-                // Use the Layer's sidebearing method to get measurements
+                // Use the Drawing's sidebearing method to get measurements
                 const sidebearings = (
-                    actualLayer as any
+                    actualDrawing as any
                 ).getSidebearingsAtHeight(lineY);
 
                 console.log(
@@ -6662,8 +6680,8 @@ export class GlyphCanvasRenderer {
     drawStackPreview(): void {
         console.log('[StackPreview] Rendering stack preview');
 
-        const layerTree = this.glyphCanvas.stackPreviewAnimator.layerTree;
-        if (layerTree.length === 0) return;
+        const drawingTree = this.glyphCanvas.stackPreviewAnimator.drawingTree;
+        if (drawingTree.length === 0) return;
 
         // Get glyph position in text run (same as normal rendering)
         if (
@@ -6720,14 +6738,14 @@ export class GlyphCanvasRenderer {
             180;
 
         // Get path origins from ALL layers - only outline paths, not components
-        layerTree.forEach((node) => {
+        drawingTree.forEach((node) => {
             // Skip layers without depth (base layer has no offset)
             if (node.depth === 0) return;
 
-            const layerData = node.componentLayerData;
-            if (!layerData || !layerData.shapes) return;
+            const drawingData = node.componentDrawingData;
+            if (!drawingData || !drawingData.shapes) return;
 
-            layerData.shapes.forEach((shape: any) => {
+            drawingData.shapes.forEach((shape: any) => {
                 if ('Component' in shape) return; // Only process paths, not components
 
                 const nodes = getNodesFromShape(shape);
@@ -6812,9 +6830,9 @@ export class GlyphCanvasRenderer {
         }
 
         const animator = this.glyphCanvas.stackPreviewAnimator;
-        const activeHighlightLayerTreeIndex =
-            animator.hoveredLayerTreeIndex ??
-            animator.highlightedLayerTreeIndex;
+        const activeHighlightDrawingTreeIndex =
+            animator.hoveredDrawingTreeIndex ??
+            animator.highlightedDrawingTreeIndex;
         const animationProgress = this.getStackPreviewAnimationProgress();
 
         const isSamePath = (pathA: number[], pathB: number[]): boolean => {
@@ -6829,14 +6847,14 @@ export class GlyphCanvasRenderer {
             return true;
         };
 
-        const getLayerOpacity = (node: any): number => {
+        const getDrawingOpacity = (node: any): number => {
             // Entering stack preview: keep the origin layer fully visible and fade in all others.
             if (animator.isAnimating && !animator.isReversing) {
-                const isOriginLayer = isSamePath(
+                const isOriginDrawing = isSamePath(
                     node.componentPath,
                     animator.highlightedComponentPath
                 );
-                return isOriginLayer ? 1 : animationProgress;
+                return isOriginDrawing ? 1 : animationProgress;
             }
 
             // Exiting via double-click: keep only the exact target layer fully visible,
@@ -6846,18 +6864,18 @@ export class GlyphCanvasRenderer {
                 animator.isReversing &&
                 animator.transitionTargetComponentPath
             ) {
-                const isTargetLayer = isSamePath(
+                const isTargetDrawing = isSamePath(
                     node.componentPath,
                     animator.transitionTargetComponentPath
                 );
-                return isTargetLayer ? 1 : animationProgress;
+                return isTargetDrawing ? 1 : animationProgress;
             }
 
             return 1;
         };
 
-        const getLayerOpacitySafe = (node: any): number => {
-            const opacity = getLayerOpacity(node);
+        const getDrawingOpacitySafe = (node: any): number => {
+            const opacity = getDrawingOpacity(node);
             if (opacity < 0) {
                 return 0;
             }
@@ -6868,14 +6886,14 @@ export class GlyphCanvasRenderer {
         };
 
         // Render all layers with animated diagonal offset (45° to top-right)
-        layerTree.forEach((node, layerTreeIndex) => {
-            const layerOpacity = getLayerOpacitySafe(node);
-            if (layerOpacity <= 0.001) {
+        drawingTree.forEach((node, drawingTreeIndex) => {
+            const drawingOpacity = getDrawingOpacitySafe(node);
+            if (drawingOpacity <= 0.001) {
                 return;
             }
 
             this.ctx.save();
-            this.ctx.globalAlpha *= layerOpacity;
+            this.ctx.globalAlpha *= drawingOpacity;
 
             // Translate to base glyph position
             this.ctx.translate(baseX, baseY);
@@ -6908,25 +6926,27 @@ export class GlyphCanvasRenderer {
             this.drawComponentInstance(node);
 
             if (
-                activeHighlightLayerTreeIndex !== null &&
-                layerTreeIndex === activeHighlightLayerTreeIndex
+                activeHighlightDrawingTreeIndex !== null &&
+                drawingTreeIndex === activeHighlightDrawingTreeIndex
             ) {
-                this.drawStackPreviewLayerHighlight(node);
+                this.drawStackPreviewDrawingHighlight(node);
             }
 
             this.ctx.restore();
         });
     }
 
-    private strokeLayerOutlinesRecursively(layerData: Babelfont.Layer): void {
-        if (!layerData?.shapes) {
+    private strokeDrawingOutlinesRecursively(
+        drawingData: Babelfont.Layer
+    ): void {
+        if (!drawingData?.shapes) {
             return;
         }
 
-        for (const shape of layerData.shapes) {
+        for (const shape of drawingData.shapes) {
             if ('reference' in shape) {
-                const nestedLayerData = (shape as any).layerData;
-                if (!nestedLayerData?.shapes) {
+                const nestedDrawingData = (shape as any).layerData;
+                if (!nestedDrawingData?.shapes) {
                     continue;
                 }
 
@@ -6943,7 +6963,7 @@ export class GlyphCanvasRenderer {
                     transform[4],
                     transform[5]
                 );
-                this.strokeLayerOutlinesRecursively(nestedLayerData);
+                this.strokeDrawingOutlinesRecursively(nestedDrawingData);
                 this.ctx.restore();
                 continue;
             }
@@ -6965,7 +6985,7 @@ export class GlyphCanvasRenderer {
         }
     }
 
-    private drawStackPreviewLayerHighlight(node: any): void {
+    private drawStackPreviewDrawingHighlight(node: any): void {
         const isDarkTheme =
             document.documentElement.getAttribute('data-theme') !== 'light';
         const animator = this.glyphCanvas.stackPreviewAnimator;
@@ -6983,7 +7003,7 @@ export class GlyphCanvasRenderer {
         this.ctx.lineJoin = 'round';
         this.ctx.lineCap = 'round';
 
-        this.strokeLayerOutlinesRecursively(node.componentLayerData);
+        this.strokeDrawingOutlinesRecursively(node.componentDrawingData);
 
         this.ctx.restore();
     }
@@ -6994,12 +7014,12 @@ export class GlyphCanvasRenderer {
             return;
         }
 
-        const hoveredLayerTreeIndex = animator.hoveredLayerTreeIndex;
-        if (hoveredLayerTreeIndex === null) {
+        const hoveredDrawingTreeIndex = animator.hoveredDrawingTreeIndex;
+        if (hoveredDrawingTreeIndex === null) {
             return;
         }
 
-        const node = animator.layerTree[hoveredLayerTreeIndex];
+        const node = animator.drawingTree[hoveredDrawingTreeIndex];
         if (!node) {
             return;
         }
@@ -7015,7 +7035,9 @@ export class GlyphCanvasRenderer {
         const offsetDistance =
             node.depth * animator.config.verticalSpacing * easedProgress;
 
-        const localBounds = this.getLayerLocalBounds(node.componentLayerData);
+        const localBounds = this.getDrawingLocalBounds(
+            node.componentDrawingData
+        );
         let labelX =
             basePosition.baseX +
             node.transform[4] +
@@ -7080,8 +7102,8 @@ export class GlyphCanvasRenderer {
      * Draw paths and component boxes, but DON'T recurse into nested components
      */
     drawComponentInstance(node: any): void {
-        const layerData = node.componentLayerData;
-        if (!layerData || !layerData.shapes) return;
+        const drawingData = node.componentDrawingData;
+        if (!drawingData || !drawingData.shapes) return;
 
         const invScale = 1 / this.viewportManager.scale;
         const isDarkTheme =
@@ -7089,17 +7111,17 @@ export class GlyphCanvasRenderer {
         const colors = isDarkTheme
             ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
             : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
-        const isAutomaticComponentLayer =
-            isAutomaticallyAlignedComponentLayer(layerData);
+        const isAutomaticComponentDrawing =
+            isAutomaticallyAlignedComponentDrawing(drawingData);
 
         // Draw paths (not components)
-        layerData.shapes.forEach((shape: any, index: number) => {
+        drawingData.shapes.forEach((shape: any, index: number) => {
             if ('reference' in shape) return;
             this.drawShape(shape, index, false);
         });
 
         // Draw blue boxes for components (same as normal editing mode)
-        layerData.shapes.forEach((shape: any, index: number) => {
+        drawingData.shapes.forEach((shape: any, index: number) => {
             if (!('reference' in shape)) return;
 
             const componentShapes = this.shapesForComponentDraw(shape);
@@ -7117,7 +7139,7 @@ export class GlyphCanvasRenderer {
                 componentShapes,
                 false,
                 false,
-                isAutomaticComponentLayer,
+                isAutomaticComponentDrawing,
                 false,
                 invScale,
                 isDarkTheme
@@ -7128,22 +7150,22 @@ export class GlyphCanvasRenderer {
     }
 
     /**
-     * Render layer shapes (paths and components)
+     * Render drawing shapes (paths and components)
      * Extracted from main render loop for reuse in stack preview
      */
-    private renderLayerShapes(
-        layerData: any,
+    private renderDrawingShapes(
+        drawingData: any,
         invScale: number,
         isDarkTheme: boolean,
         enableInteraction: boolean
     ): void {
-        const isAutomaticComponentLayer =
-            isAutomaticallyAlignedComponentLayer(layerData);
+        const isAutomaticComponentDrawing =
+            isAutomaticallyAlignedComponentDrawing(drawingData);
         // Draw filled background
         this.ctx.save();
         this.ctx.beginPath();
 
-        layerData.shapes.forEach((shape: any) => {
+        drawingData.shapes.forEach((shape: any) => {
             if ('reference' in shape) return;
 
             const nodes = getNodesFromShape(shape);
@@ -7160,12 +7182,12 @@ export class GlyphCanvasRenderer {
         this.ctx.restore();
 
         // Draw paths
-        layerData.shapes.forEach((shape: any, index: number) =>
+        drawingData.shapes.forEach((shape: any, index: number) =>
             this.drawShape(shape, index, false)
         );
 
         // Draw components
-        layerData.shapes.forEach((shape: any, index: number) => {
+        drawingData.shapes.forEach((shape: any, index: number) => {
             if (!('reference' in shape)) return;
 
             const componentShapes = this.shapesForComponentDraw(shape);
@@ -7193,7 +7215,7 @@ export class GlyphCanvasRenderer {
                 componentShapes,
                 isSelected,
                 isHovered,
-                isAutomaticComponentLayer,
+                isAutomaticComponentDrawing,
                 false,
                 invScale,
                 isDarkTheme

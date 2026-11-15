@@ -8,7 +8,7 @@ const {
     Font,
     normalizeLegacyGlyphsRtlKerning
 } = require('../js/babelfont-model');
-const { setKerningPairValueOnMaster } = require('../js/kerning-utils');
+const { setKerningPairValueOnStation } = require('../js/kerning-utils');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -140,8 +140,8 @@ describe('flat RTL kerning', () => {
         const previous = window.patchSyncEngine;
         window.patchSyncEngine = { recordChange, recordRemove };
         try {
-            const master = font.masters[0];
-            setKerningPairValueOnMaster(master, '@reh', '@alef', -80, true);
+            const station = font.stations[0];
+            setKerningPairValueOnStation(station, '@reh', '@alef', -80, true);
             expect(recordChange).toHaveBeenCalledTimes(1);
             expect(recordChange).toHaveBeenCalledWith(
                 ['masters', 0, 'kerning_rtl'],
@@ -149,14 +149,14 @@ describe('flat RTL kerning', () => {
                 undefined,
                 -80
             );
-            setKerningPairValueOnMaster(master, '@reh', '@alef', null, true);
+            setKerningPairValueOnStation(station, '@reh', '@alef', null, true);
             expect(recordRemove).toHaveBeenCalledTimes(1);
             expect(recordRemove).toHaveBeenCalledWith(
                 ['masters', 0, 'kerning_rtl', '@reh:@alef'],
                 -80
             );
-            expect(master.kerning_rtl).toEqual({});
-            expect(master.kerning).toEqual({});
+            expect(station.kerning_rtl).toEqual({});
+            expect(station.kerning).toEqual({});
             expect(font.format_specific?.[KEY]).toBeUndefined();
         } finally {
             window.patchSyncEngine = previous;
@@ -189,10 +189,10 @@ describe('flat RTL kerning', () => {
         expect(glyphsFile).not.toContain('kerning_rtl');
 
         const reopened = JSON.parse(open_font_file('Kink.glyphs', glyphsFile));
-        const master = reopened.masters.find(
+        const station = reopened.masters.find(
             (candidate) => candidate.id === source.masters[0].id
         );
-        expect(master.kerning_rtl).toEqual({
+        expect(station.kerning_rtl).toEqual({
             '@reh:@alef': -90,
             'space:space': -5
         });
@@ -212,8 +212,8 @@ describe('flat RTL kerning', () => {
             )
         );
         const without = compileWithWasm(JSON.stringify(source));
-        for (const master of source.masters) {
-            master.kerning_rtl = { 'space:uniE000': -50 };
+        for (const station of source.masters) {
+            station.kerning_rtl = { 'space:uniE000': -50 };
         }
         const withRtl = compileWithWasm(JSON.stringify(source));
 

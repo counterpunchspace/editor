@@ -15,9 +15,9 @@ import {
 
 const console = new Logger('Variations');
 
-export const AXIS_SLIDER_LAYER_SNAP_PX = 2;
+export const AXIS_SLIDER_DRAWING_SNAP_PX = 2;
 export const AXIS_SLIDER_THUMB_SIZE_PX = 12;
-const AXIS_SLIDER_LAYER_VALUE_EPSILON = 0.01;
+const AXIS_SLIDER_DRAWING_VALUE_EPSILON = 0.01;
 
 interface VariationAxis {
     tag: string;
@@ -47,7 +47,7 @@ function uniqueSortedAxisValues(values: number[]): number[] {
         if (
             unique.length === 0 ||
             Math.abs(unique[unique.length - 1] - value) >
-                AXIS_SLIDER_LAYER_VALUE_EPSILON
+                AXIS_SLIDER_DRAWING_VALUE_EPSILON
         ) {
             unique.push(value);
         }
@@ -56,11 +56,11 @@ function uniqueSortedAxisValues(values: number[]): number[] {
 }
 
 /**
- * Magnet snap for stored layer locations on an axis slider.
+ * Magnet snap for stored drawing locations on an axis slider.
  * Disarmed values (rested-on at drag start) pass through until the pointer
  * leaves the snap window, then they arm again.
  */
-export function applyAxisSliderLayerSnap(
+export function applyAxisSliderDrawingSnap(
     rawValue: number,
     snapValues: number[],
     snapDelta: number,
@@ -85,7 +85,7 @@ export function applyAxisSliderLayerSnap(
             stillDisarmed.some(
                 (disarmed) =>
                     Math.abs(disarmed - point) <=
-                    AXIS_SLIDER_LAYER_VALUE_EPSILON
+                    AXIS_SLIDER_DRAWING_VALUE_EPSILON
             )
         ) {
             continue;
@@ -122,7 +122,7 @@ export class AxesManager {
     loopAnimationStopCallbacks: (() => void)[];
     /** Per-axis persistent play-loop state (survives axes UI DOM rebuilds). */
     loopAnimationStates: Map<string, LoopAnimationState>;
-    /** Layer-location values disarmed for snap until the pointer leaves them. */
+    /** Drawing-location values disarmed for snap until the pointer leaves them. */
     private sliderSnapDisarmedValues: Map<string, number[]>;
 
     constructor() {
@@ -327,7 +327,7 @@ export class AxesManager {
                 const wrap = input.closest('.editor-axis-slider-wrap');
                 if (wrap instanceof HTMLElement) {
                     wrap.style.setProperty('--value-percent', `${percent}%`);
-                    this.updateLayerMarkPassedState(wrap, value, min, max);
+                    this.updateDrawingMarkPassedState(wrap, value, min, max);
                 }
             }
         });
@@ -359,13 +359,13 @@ export class AxesManager {
                 );
             }
         });
-        this.refreshAllLayerLocationMarks();
+        this.refreshAllDrawingLocationMarks();
     }
 
     /**
      * Editor axis sliders follow the font model's userspace axis ranges.
      * Compiled-font fvar can lag behind Font Info edits (min/max/map), which
-     * previously left sliders stuck at the old extrema and made layer jumps
+     * previously left sliders stuck at the old extrema and made drawing jumps
      * past that stale max interpolate incorrectly.
      */
     private getModelVariationAxes(): VariationAxis[] {
@@ -633,10 +633,10 @@ export class AxesManager {
             const sliderTrack = document.createElement('div');
             sliderTrack.className = 'editor-axis-slider-track';
             sliderTrack.setAttribute('aria-hidden', 'true');
-            const layerMarks = document.createElement('div');
-            layerMarks.className = 'editor-axis-layer-marks';
+            const drawingMarks = document.createElement('div');
+            drawingMarks.className = 'editor-axis-drawing-marks';
             sliderWrap.appendChild(sliderTrack);
-            sliderWrap.appendChild(layerMarks);
+            sliderWrap.appendChild(drawingMarks);
             sliderWrap.appendChild(slider);
 
             // Initialize variation setting
@@ -659,12 +659,17 @@ export class AxesManager {
                 const percent = ((theValue - min) / (max - min)) * 100;
                 slider.style.setProperty('--value-percent', `${percent}%`);
                 sliderWrap.style.setProperty('--value-percent', `${percent}%`);
-                this.updateLayerMarkPassedState(sliderWrap, theValue, min, max);
+                this.updateDrawingMarkPassedState(
+                    sliderWrap,
+                    theValue,
+                    min,
+                    max
+                );
             };
 
             // Set initial fill
             updateSliderFill();
-            this.renderLayerLocationMarks(sliderWrap, axis);
+            this.renderDrawingLocationMarks(sliderWrap, axis);
 
             const animateAxis = () => {
                 if (!state!.active) return;
@@ -821,7 +826,7 @@ export class AxesManager {
                 this.setVariation(axis.tag, value);
                 this.call('onSliderChange', axis.tag, value);
 
-                // Note: Layer selection will be handled when animation completes
+                // Note: Drawing selection will be handled when animation completes
             });
 
             designspaceValueLabel.addEventListener('change', async (e) => {
@@ -980,7 +985,7 @@ export class AxesManager {
         });
     }
 
-    getStoredLayerUserspaceValuesForAxis(
+    getStoredDrawingUserspaceValuesForAxis(
         axisTag: string,
         min: number,
         max: number
@@ -988,13 +993,13 @@ export class AxesManager {
         const fontModel = window.currentFontModel as
             | {
                   axes?: any[];
-                  masters?: Array<{
+                  stations?: Array<{
                       id?: string;
                       location?: Record<string, number>;
                   }>;
                   glyphs?: Array<{
                       name?: string;
-                      layers?: any[];
+                      drawings?: any[];
                   }>;
                   findGlyph?: (name: string) => any;
               }
@@ -1018,15 +1023,15 @@ export class AxesManager {
             const value = Number(userspace[axisTag]);
             if (
                 Number.isFinite(value) &&
-                value >= min - AXIS_SLIDER_LAYER_VALUE_EPSILON &&
-                value <= max + AXIS_SLIDER_LAYER_VALUE_EPSILON
+                value >= min - AXIS_SLIDER_DRAWING_VALUE_EPSILON &&
+                value <= max + AXIS_SLIDER_DRAWING_VALUE_EPSILON
             ) {
                 values.push(Math.min(max, Math.max(min, value)));
             }
         };
 
-        for (const master of fontModel.masters || []) {
-            addLocation(master.location);
+        for (const station of fontModel.stations || []) {
+            addLocation(station.location);
         }
 
         const glyphCanvas = window.glyphCanvas;
@@ -1039,21 +1044,21 @@ export class AxesManager {
                   (candidate) => candidate.name === glyphName
               )
             : null;
-        for (const layer of glyph?.layers || []) {
-            if (layer?.is_background) {
+        for (const drawing of glyph?.drawings || []) {
+            if (drawing?.is_background) {
                 continue;
             }
-            const hasLayerLocation =
-                !!layer?.location && Object.keys(layer.location).length > 0;
-            if (hasLayerLocation) {
-                addLocation(layer.location);
+            const hasDrawingLocation =
+                !!drawing?.location && Object.keys(drawing.location).length > 0;
+            if (hasDrawingLocation) {
+                addLocation(drawing.location);
                 continue;
             }
-            const masterId = layer?.master?.master || layer?._master;
-            const master = (fontModel.masters || []).find(
-                (candidate) => candidate.id === masterId
+            const stationId = drawing?.station?.master || drawing?._station;
+            const station = (fontModel.stations || []).find(
+                (candidate) => candidate.id === stationId
             );
-            addLocation(master?.location);
+            addLocation(station?.location);
         }
 
         return uniqueSortedAxisValues(values);
@@ -1069,7 +1074,7 @@ export class AxesManager {
             return 0;
         }
         const usable = Math.max(1, width - AXIS_SLIDER_THUMB_SIZE_PX);
-        return (AXIS_SLIDER_LAYER_SNAP_PX * (max - min)) / usable;
+        return (AXIS_SLIDER_DRAWING_SNAP_PX * (max - min)) / usable;
     }
 
     private disarmSliderSnapAtCurrentValue(
@@ -1078,7 +1083,7 @@ export class AxesManager {
     ): void {
         const min = Number(axis.min);
         const max = Number(axis.max);
-        const snapValues = this.getStoredLayerUserspaceValuesForAxis(
+        const snapValues = this.getStoredDrawingUserspaceValuesForAxis(
             axis.tag,
             min,
             max
@@ -1098,13 +1103,13 @@ export class AxesManager {
     ): number {
         const min = Number(axis.min);
         const max = Number(axis.max);
-        const snapValues = this.getStoredLayerUserspaceValuesForAxis(
+        const snapValues = this.getStoredDrawingUserspaceValuesForAxis(
             axis.tag,
             min,
             max
         );
         const snapDelta = this.getSliderSnapDeltaUserspace(slider, min, max);
-        const snapped = applyAxisSliderLayerSnap(
+        const snapped = applyAxisSliderDrawingSnap(
             rawValue,
             snapValues,
             snapDelta,
@@ -1117,28 +1122,28 @@ export class AxesManager {
         return snapped.value;
     }
 
-    private updateLayerMarkPassedState(
+    private updateDrawingMarkPassedState(
         wrap: HTMLElement,
         value: number,
         min: number,
         max: number
     ): void {
-        wrap.querySelectorAll('.editor-axis-layer-mark').forEach((mark) => {
+        wrap.querySelectorAll('.editor-axis-drawing-mark').forEach((mark) => {
             const location = Number(
-                (mark as HTMLElement).dataset.layerLocation
+                (mark as HTMLElement).dataset.drawingLocation
             );
             const passed =
                 Number.isFinite(location) &&
                 (max < min ? location >= value : location <= value);
-            mark.classList.toggle('editor-axis-layer-mark-passed', passed);
+            mark.classList.toggle('editor-axis-drawing-mark-passed', passed);
         });
     }
 
-    private renderLayerLocationMarks(
+    private renderDrawingLocationMarks(
         wrap: HTMLElement,
         axis: VariationAxis
     ): void {
-        const marks = wrap.querySelector('.editor-axis-layer-marks');
+        const marks = wrap.querySelector('.editor-axis-drawing-marks');
         if (!(marks instanceof HTMLElement)) {
             return;
         }
@@ -1149,20 +1154,20 @@ export class AxesManager {
         if (!Number.isFinite(span) || span === 0) {
             return;
         }
-        const values = this.getStoredLayerUserspaceValuesForAxis(
+        const values = this.getStoredDrawingUserspaceValuesForAxis(
             axis.tag,
             min,
             max
         );
         for (const location of values) {
             const mark = document.createElement('span');
-            mark.className = 'editor-axis-layer-mark';
-            mark.dataset.layerLocation = location.toString();
+            mark.className = 'editor-axis-drawing-mark';
+            mark.dataset.drawingLocation = location.toString();
             const t = (location - min) / span;
-            mark.style.setProperty('--layer-location-t', String(t));
+            mark.style.setProperty('--drawing-location-t', String(t));
             marks.appendChild(mark);
         }
-        this.updateLayerMarkPassedState(
+        this.updateDrawingMarkPassedState(
             wrap,
             parseFloat(
                 wrap.querySelector<HTMLInputElement>('.editor-axis-slider')
@@ -1173,7 +1178,7 @@ export class AxesManager {
         );
     }
 
-    private refreshAllLayerLocationMarks(): void {
+    private refreshAllDrawingLocationMarks(): void {
         if (!this.axesSection) {
             return;
         }
@@ -1190,7 +1195,7 @@ export class AxesManager {
                 if (!axisTag) {
                     return;
                 }
-                this.renderLayerLocationMarks(wrap as HTMLElement, {
+                this.renderDrawingLocationMarks(wrap as HTMLElement, {
                     tag: axisTag,
                     name: axisTag,
                     min: parseFloat(slider.min),
@@ -1256,7 +1261,7 @@ export class AxesManager {
         // Update sliders during animation
         this.updateAxisSliders();
         // Skip rendering on frame 1 (just after setup) to prevent jitter
-        // Frame 1 would show the target layer at near-start position which causes a flash
+        // Frame 1 would show the target drawing at near-start position which causes a flash
         if (this.animationCurrentFrame > 1) {
             this.call('animationInProgress');
         }
@@ -1278,7 +1283,7 @@ export class AxesManager {
             this.variationSettings = { ...this.animationTargetValues };
             this.updateAxisSliders(); // Update slider UI to match final values
 
-            // If this was a text field change, trigger layer selection now
+            // If this was a text field change, trigger drawing selection now
             if (this.isTextFieldChange) {
                 this.isTextFieldChange = false;
                 this.call('textFieldAnimationComplete');

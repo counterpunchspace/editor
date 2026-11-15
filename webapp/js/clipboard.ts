@@ -13,19 +13,19 @@
  * MIME for web interchange, and, via the Async Clipboard API, image/svg+xml
  * so macOS Chrome publishes public.svg-image for Glyphs Cmd+V.
  * Sync setData alone cannot expose SVG as a system UTI.
- * Selection pastes fan out to linked layers when linked.
+ * Selection pastes fan out to linked drawings when linked.
  * Whole-glyph JSON pastes create new glyphs (Glyphs-style .001 names)
- * with layer content remapped onto this font's masters.
- * SVG pastes are centered in the target layer.
+ * with drawing content remapped onto this font's stations.
+ * SVG pastes are centered in the target drawing.
  */
 
 import { Logger } from './logger';
 import { getHighestVisibleVerticalMetricValue } from './glyph-canvas/vertical-metrics';
-import type { Font, Glyph, Layer, Master, Path } from './babelfont-model';
+import type { Font, Glyph, Drawing, Station, Path } from './babelfont-model';
 import type { Babelfont } from './babelfont';
 import type {
     PasteFeatureVariation,
-    PasteGlyphLayer,
+    PasteGlyphDrawing,
     PasteGlyphsDocument
 } from './clipboard/json';
 import {
@@ -63,11 +63,11 @@ export {
     buildSelectionClipboardDocument,
     serializeAnchorForClipboard,
     serializeComponentForClipboard,
-    serializeFontMastersForClipboard,
+    serializeFontStationsForClipboard as serializeFontMastersForClipboard,
     serializeGlyphForClipboard,
     serializeGuideForClipboard,
-    serializeLayerForClipboard,
-    serializeMasterGuideForClipboard,
+    serializeDrawingForClipboard as serializeLayerForClipboard,
+    serializeStationGuideForClipboard as serializeMasterGuideForClipboard,
     serializePathForClipboard,
     stringifyClipboardDocument,
     summarizeClipboardDocument,
@@ -121,10 +121,10 @@ export type ParsedClipboard =
 export type ClipboardPasteKind = 'glyphs' | 'selection' | 'text' | 'empty';
 
 export type ApplyPasteOptions = {
-    activeLayer: Layer;
-    linkedLayers: Layer[];
-    master?: Master | null;
-    layerWidth: number;
+    activeDrawing: Drawing;
+    linkedDrawings: Drawing[];
+    station?: Station | null;
+    drawingWidth: number;
     verticalMetrics?: Record<string, number> | null;
     glyphExists: (name: string) => boolean;
 };
@@ -151,7 +151,7 @@ export type ApplyPasteGlyphsResult = ApplyPasteResult & {
 };
 
 export type ApplyReplaceSelectedPathsOptions = {
-    activeLayer: Layer;
+    activeDrawing: Drawing;
     /** Selected paths in ascending shape-index order. */
     selectedPaths: Path[];
     /** Names of anchors currently selected in the editor. */
@@ -322,7 +322,7 @@ export function writeClipboardDocumentToDataTransfer(
     paths: PastePath[],
     fontraOptions?: {
         layerId?: string;
-        layerWidth?: number;
+        drawingWidth?: number;
         codePoints?: number[];
         glyphCodePoints?: Record<string, number[]>;
         axisNameByKey?: Record<string, string>;
@@ -369,7 +369,7 @@ export async function writeClipboardDocumentAsync(
     paths: PastePath[],
     fontraOptions?: {
         layerId?: string;
-        layerWidth?: number;
+        drawingWidth?: number;
         codePoints?: number[];
         glyphCodePoints?: Record<string, number[]>;
         axisNameByKey?: Record<string, string>;
@@ -491,7 +491,7 @@ export function parseClipboardPayloads(
 }
 
 /**
- * Classify clipboard contents for paste targeting: whole glyphs, layer
+ * Classify clipboard contents for paste targeting: whole glyphs, drawing
  * selection / SVG, ordinary text, or nothing pasteable.
  */
 export function classifyClipboardPayloads(
@@ -517,37 +517,37 @@ export function applyPasteFragment(
     fragment: PasteFragment,
     options: ApplyPasteOptions
 ): ApplyPasteResult {
-    const targetLayers = [options.activeLayer, ...options.linkedLayers];
-    const isBackground = !!options.activeLayer.is_background;
+    const targetDrawings = [options.activeDrawing, ...options.linkedDrawings];
+    const isBackground = !!options.activeDrawing.is_background;
 
     let working: PasteFragment = cloneFragment(fragment);
 
     if (!working.keepAbsoluteCoords) {
-        working = centerFragmentInLayer(
+        working = centerFragmentInDrawing(
             working,
-            options.layerWidth,
+            options.drawingWidth,
             options.verticalMetrics
         );
         working = placeGuideOrigins(working, options.verticalMetrics);
     }
 
     const result = emptyResult(working);
-    const foregroundTargets = targetLayers.filter(
-        (layer) => !layer.is_background
+    const foregroundTargets = targetDrawings.filter(
+        (drawing) => !drawing.is_background
     );
 
-    for (const layer of targetLayers) {
+    for (const drawing of targetDrawings) {
         for (const path of working.paths) {
-            appendPathToLayer(layer, path);
+            appendPathToDrawing(drawing, path);
         }
     }
-    result.addedPathCount = working.paths.length * targetLayers.length;
+    result.addedPathCount = working.paths.length * targetDrawings.length;
 
-    applyNonPathObjectsToLayers(
+    applyNonPathObjectsToDrawings(
         working,
-        isBackground ? targetLayers : foregroundTargets,
-        options.activeLayer,
-        options.master ?? null,
+        isBackground ? targetDrawings : foregroundTargets,
+        options.activeDrawing,
+        options.station ?? null,
         options.glyphExists,
         result,
         {
@@ -560,7 +560,7 @@ export function applyPasteFragment(
 }
 
 /**
- * Normalize node types the same way layer fingerprints do (Move ≡ Line).
+ * Normalize node types the same way drawing fingerprints do (Move ≡ Line).
  */
 export function normalizeClipboardPathNodeType(
     nodeType: string | undefined
@@ -701,17 +701,17 @@ export function alignPastePathNodesToTarget(
 }
 
 /**
- * Replace selected paths' geometry on the active layer only (never fans out to
- * linked layers). Clipboard path count and structure must match the selection.
+ * Replace selected paths' geometry on the active drawing only (never fans out to
+ * linked drawings). Clipboard path count and structure must match the selection.
  * Only paths are compared — clipboard/local anchors, components, and guides are
  * ignored for compatibility. Closed-path start nodes may differ; incoming nodes
  * are rotated to preserve the selected path's start. Clipboard anchors update
- * existing active-layer anchors only when those anchors are currently selected.
+ * existing active-drawing anchors only when those anchors are currently selected.
  */
 export function applyReplaceSelectedPaths(
     options: ApplyReplaceSelectedPathsOptions
 ): ApplyReplaceSelectedPathsResult {
-    const { activeLayer, selectedPaths, selectedAnchorNames, fragment } =
+    const { activeDrawing, selectedPaths, selectedAnchorNames, fragment } =
         options;
 
     if (!selectedPaths.length) {
@@ -769,7 +769,7 @@ export function applyReplaceSelectedPaths(
             if (!selectedNames.has(anchor.name)) {
                 continue;
             }
-            const existing = findAnchorByName(activeLayer, anchor.name);
+            const existing = findAnchorByName(activeDrawing, anchor.name);
             if (!existing) {
                 continue;
             }
@@ -787,9 +787,9 @@ export function applyReplaceSelectedPaths(
 
 /**
  * Paste whole-glyph clipboard data as always-new glyphs.
- * Layers are matched by masterIndex (source master order → target master order).
- * Layer copies and braces are recreated; braces whose location axes are missing
- * in the target are skipped with a warning. Feature variations are attached to
+ * Drawings are matched by masterIndex (source station order → target station order).
+ * Drawing copies and free drawings are recreated; free drawings whose location axes are missing
+ * in the target are skipped with a warning. Variations are attached to
  * the new glyph as AssociatedWithMaster families.
  */
 export function applyPasteGlyphsDocument(
@@ -813,26 +813,26 @@ export function applyPasteGlyphsDocument(
         return { ...empty(), error: 'Clipboard has no glyphs to paste.' };
     }
 
-    const targetMasters = options.font.masters || [];
-    const masterCount = targetMasters.length;
-    if (masterCount < 1) {
+    const targetStations = options.font.stations || [];
+    const stationCount = targetStations.length;
+    if (stationCount < 1) {
         return {
             ...empty(),
-            error: 'Font has no masters to receive whole-glyph paste.'
+            error: 'Font has no stations to receive whole-glyph paste.'
         };
     }
 
     if (!document.masters?.length) {
         return {
             ...empty(),
-            error: 'Clipboard is missing masters metadata. Re-copy with the current Counterpunch / Glyphs script.'
+            error: 'Clipboard is missing station metadata. Re-copy with the current Counterpunch / Glyphs script.'
         };
     }
 
-    if (document.masters.length !== masterCount) {
+    if (document.masters.length !== stationCount) {
         return {
             ...empty(),
-            error: `Clipboard has ${document.masters.length} masters, font has ${masterCount}. Master counts must match.`
+            error: `Clipboard has ${document.masters.length} stations, font has ${stationCount}. Station counts must match.`
         };
     }
 
@@ -860,21 +860,21 @@ export function applyPasteGlyphsDocument(
             targetGlyph.rightMetricsKey = sourceGlyph.rightMetricsKey;
         }
 
-        const defaultLayersByMasterIndex = getDefaultLayersByMasterIndex(
+        const defaultDrawingsByStationIndex = getDefaultDrawingsByStationIndex(
             targetGlyph,
-            targetMasters
+            targetStations
         );
-        if (defaultLayersByMasterIndex.length !== masterCount) {
+        if (defaultDrawingsByStationIndex.length !== stationCount) {
             return {
                 ...aggregate,
-                error: `Glyph /${newName}: expected ${masterCount} default layers, got ${defaultLayersByMasterIndex.length}.`
+                error: `Glyph /${newName}: expected ${stationCount} default drawings, got ${defaultDrawingsByStationIndex.length}.`
             };
         }
 
-        skippedBraceCount += pasteLayersOntoGlyph(sourceGlyph.layers, {
+        skippedBraceCount += pasteDrawingsOntoGlyph(sourceGlyph.layers, {
             targetGlyph,
-            defaultLayersByMasterIndex,
-            targetMasters,
+            defaultDrawingsByStationIndex,
+            targetStations,
             targetAxisKeys,
             glyphExists: options.glyphExists,
             aggregate
@@ -885,7 +885,7 @@ export function applyPasteGlyphsDocument(
                 featureVariation,
                 {
                     targetGlyph,
-                    targetMasters,
+                    targetStations,
                     targetAxisKeys,
                     glyphExists: options.glyphExists,
                     aggregate
@@ -898,7 +898,7 @@ export function applyPasteGlyphsDocument(
 
     if (skippedBraceCount > 0) {
         aggregate.warnings.push(
-            `Skipped ${skippedBraceCount} intermediate/brace layer${
+            `Skipped ${skippedBraceCount} free drawing${
                 skippedBraceCount === 1 ? '' : 's'
             } because one or more axis ids are missing in this font.`
         );
@@ -909,95 +909,95 @@ export function applyPasteGlyphsDocument(
 
 type PasteOntoGlyphContext = {
     targetGlyph: Glyph;
-    defaultLayersByMasterIndex?: Layer[];
-    targetMasters: Master[];
+    defaultDrawingsByStationIndex?: Drawing[];
+    targetStations: Station[];
     targetAxisKeys: Set<string>;
     glyphExists: (name: string) => boolean;
     aggregate: ApplyPasteGlyphsResult;
 };
 
-function pasteLayersOntoGlyph(
-    sourceLayers: PasteGlyphLayer[],
+function pasteDrawingsOntoGlyph(
+    sourceDrawings: PasteGlyphDrawing[],
     context: PasteOntoGlyphContext
 ): number {
     let skippedBraces = 0;
-    for (const sourceLayer of sourceLayers) {
-        const master = sourceLayer.master;
-        if (master.type === 'FreeFloating') {
+    for (const sourceDrawing of sourceDrawings) {
+        const station = sourceDrawing.master;
+        if (station.type === 'FreeFloating') {
             continue;
         }
 
-        const masterIndex = master.masterIndex;
-        const targetMaster = context.targetMasters[masterIndex];
-        if (!targetMaster?.id) {
+        const stationIndex = station.masterIndex;
+        const targetStation = context.targetStations[stationIndex];
+        if (!targetStation?.id) {
             continue;
         }
 
-        const location = sourceLayer.location;
+        const location = sourceDrawing.location;
         const hasBraceLocation = !!location && Object.keys(location).length > 0;
 
-        if (master.type === 'DefaultForMaster') {
-            const targetLayer =
-                context.defaultLayersByMasterIndex?.[masterIndex];
-            if (!targetLayer) {
+        if (station.type === 'DefaultForMaster') {
+            const targetDrawing =
+                context.defaultDrawingsByStationIndex?.[stationIndex];
+            if (!targetDrawing) {
                 continue;
             }
-            pasteLayerContent(sourceLayer, targetLayer, context);
+            pasteDrawingContent(sourceDrawing, targetDrawing, context);
             continue;
         }
 
-        // AssociatedWithMaster: brace or layer copy
+        // AssociatedWithMaster: free drawing or drawing copy
         if (hasBraceLocation) {
             if (!locationAxesExistInTarget(location, context.targetAxisKeys)) {
                 skippedBraces += 1;
                 continue;
             }
             const width =
-                typeof sourceLayer.width === 'number' &&
-                Number.isFinite(sourceLayer.width)
-                    ? sourceLayer.width
+                typeof sourceDrawing.width === 'number' &&
+                Number.isFinite(sourceDrawing.width)
+                    ? sourceDrawing.width
                     : 500;
-            const targetLayer = context.targetGlyph.addLayer(width, {
+            const targetDrawing = context.targetGlyph.addDrawing(width, {
                 type: 'AssociatedWithMaster',
-                master: targetMaster.id
+                master: targetStation.id
             });
-            targetLayer.location = { ...location };
-            pasteLayerContent(sourceLayer, targetLayer, context);
+            targetDrawing.location = { ...location };
+            pasteDrawingContent(sourceDrawing, targetDrawing, context);
             continue;
         }
 
         const width =
-            typeof sourceLayer.width === 'number' &&
-            Number.isFinite(sourceLayer.width)
-                ? sourceLayer.width
+            typeof sourceDrawing.width === 'number' &&
+            Number.isFinite(sourceDrawing.width)
+                ? sourceDrawing.width
                 : 500;
-        const targetLayer = context.targetGlyph.addLayer(width, {
+        const targetDrawing = context.targetGlyph.addDrawing(width, {
             type: 'AssociatedWithMaster',
-            master: targetMaster.id
+            master: targetStation.id
         });
-        pasteLayerContent(sourceLayer, targetLayer, context);
+        pasteDrawingContent(sourceDrawing, targetDrawing, context);
     }
     return skippedBraces;
 }
 
 function pasteFeatureVariationOntoGlyph(
     featureVariation: PasteFeatureVariation,
-    context: Omit<PasteOntoGlyphContext, 'defaultLayersByMasterIndex'>
+    context: Omit<PasteOntoGlyphContext, 'defaultDrawingsByStationIndex'>
 ): number {
     let skippedBraces = 0;
     const GLYPHS_ATTR_KEY = 'com.schriftgestalt.Glyphs.attr';
 
-    for (const sourceLayer of featureVariation.layers) {
-        const master = sourceLayer.master;
-        if (master.type === 'FreeFloating') {
+    for (const sourceDrawing of featureVariation.layers) {
+        const station = sourceDrawing.master;
+        if (station.type === 'FreeFloating') {
             continue;
         }
-        const targetMaster = context.targetMasters[master.masterIndex];
-        if (!targetMaster?.id) {
+        const targetStation = context.targetStations[station.masterIndex];
+        if (!targetStation?.id) {
             continue;
         }
 
-        const location = sourceLayer.location;
+        const location = sourceDrawing.location;
         const hasBraceLocation = !!location && Object.keys(location).length > 0;
         if (
             hasBraceLocation &&
@@ -1008,24 +1008,24 @@ function pasteFeatureVariationOntoGlyph(
         }
 
         const width =
-            typeof sourceLayer.width === 'number' &&
-            Number.isFinite(sourceLayer.width)
-                ? sourceLayer.width
+            typeof sourceDrawing.width === 'number' &&
+            Number.isFinite(sourceDrawing.width)
+                ? sourceDrawing.width
                 : 500;
-        const targetLayer = context.targetGlyph.addLayer(width, {
+        const targetDrawing = context.targetGlyph.addDrawing(width, {
             type: 'AssociatedWithMaster',
-            master: targetMaster.id
+            master: targetStation.id
         });
         if (hasBraceLocation) {
-            targetLayer.location = { ...location };
+            targetDrawing.location = { ...location };
         }
-        targetLayer.format_specific = {
-            ...(targetLayer.format_specific || {}),
+        targetDrawing.format_specific = {
+            ...(targetDrawing.format_specific || {}),
             [GLYPHS_ATTR_KEY]: {
                 axisRules: featureVariation.axisRules
             }
         };
-        pasteLayerContent(sourceLayer, targetLayer, {
+        pasteDrawingContent(sourceDrawing, targetDrawing, {
             ...context,
             aggregate: context.aggregate
         });
@@ -1033,9 +1033,9 @@ function pasteFeatureVariationOntoGlyph(
     return skippedBraces;
 }
 
-function pasteLayerContent(
-    sourceLayer: PasteGlyphLayer,
-    targetLayer: Layer,
+function pasteDrawingContent(
+    sourceDrawing: PasteGlyphDrawing,
+    targetDrawing: Drawing,
     context: {
         glyphExists: (name: string) => boolean;
         aggregate: ApplyPasteGlyphsResult;
@@ -1043,15 +1043,15 @@ function pasteLayerContent(
 ): void {
     const fragment: PasteFragment = {
         format: 'counterpunch-json',
-        paths: sourceLayer.paths,
-        components: sourceLayer.components,
-        anchors: sourceLayer.anchors,
-        guides: sourceLayer.guides,
+        paths: sourceDrawing.paths,
+        components: sourceDrawing.components,
+        anchors: sourceDrawing.anchors,
+        guides: sourceDrawing.guides,
         keepAbsoluteCoords: true
     };
 
     for (const path of fragment.paths) {
-        appendPathToLayer(targetLayer, path);
+        appendPathToDrawing(targetDrawing, path);
     }
     context.aggregate.addedPathCount += fragment.paths.length;
     context.aggregate.fragment.paths.push(...fragment.paths);
@@ -1059,41 +1059,43 @@ function pasteLayerContent(
     context.aggregate.fragment.anchors.push(...fragment.anchors);
     context.aggregate.fragment.guides.push(...fragment.guides);
 
-    applyNonPathObjectsToLayers(
+    applyNonPathObjectsToDrawings(
         fragment,
-        [targetLayer],
-        targetLayer,
-        targetLayer.getMaster?.() ?? null,
+        [targetDrawing],
+        targetDrawing,
+        targetDrawing.getStation?.() ?? null,
         context.glyphExists,
         context.aggregate,
         { fanOutAnchors: false }
     );
 
     if (
-        typeof sourceLayer.width === 'number' &&
-        Number.isFinite(sourceLayer.width)
+        typeof sourceDrawing.width === 'number' &&
+        Number.isFinite(sourceDrawing.width)
     ) {
-        targetLayer.width = sourceLayer.width;
+        targetDrawing.width = sourceDrawing.width;
     }
-    if (sourceLayer.leftMetricsKey) {
-        targetLayer.leftMetricsKey = sourceLayer.leftMetricsKey;
+    if (sourceDrawing.leftMetricsKey) {
+        targetDrawing.leftMetricsKey = sourceDrawing.leftMetricsKey;
     }
-    if (sourceLayer.rightMetricsKey) {
-        targetLayer.rightMetricsKey = sourceLayer.rightMetricsKey;
+    if (sourceDrawing.rightMetricsKey) {
+        targetDrawing.rightMetricsKey = sourceDrawing.rightMetricsKey;
     }
 }
 
-function getDefaultLayersByMasterIndex(
+function getDefaultDrawingsByStationIndex(
     glyph: Glyph,
-    masters: Master[]
-): Layer[] {
-    const layers = (glyph.layers || []).filter((layer) => !layer.is_background);
-    return masters.map((master) => {
-        const match = layers.find((layer) => {
-            const layerMaster = layer.master;
+    stations: Station[]
+): Drawing[] {
+    const drawings = (glyph.drawings || []).filter(
+        (drawing) => !drawing.is_background
+    );
+    return stations.map((station) => {
+        const match = drawings.find((drawing) => {
+            const drawingStation = drawing.station;
             return (
-                layerMaster?.type === 'DefaultForMaster' &&
-                layerMaster.master === master.id
+                drawingStation?.type === 'DefaultForMaster' &&
+                drawingStation.master === station.id
             );
         });
         return match!;
@@ -1120,11 +1122,11 @@ function locationAxesExistInTarget(
     return Object.keys(location).every((key) => targetAxisKeys.has(key));
 }
 
-function applyNonPathObjectsToLayers(
+function applyNonPathObjectsToDrawings(
     working: PasteFragment,
-    targetLayers: Layer[],
-    activeLayer: Layer,
-    master: Master | null,
+    targetDrawings: Drawing[],
+    activeDrawing: Drawing,
+    station: Station | null,
     glyphExists: (name: string) => boolean,
     result: ApplyPasteResult,
     options: { fanOutAnchors: boolean; includeAnchorsAndGuides?: boolean }
@@ -1144,11 +1146,11 @@ function applyNonPathObjectsToLayers(
             component.x,
             component.y
         ];
-        for (const layer of targetLayers) {
-            const added = layer.addComponent(component.reference, [
+        for (const drawing of targetDrawings) {
+            const added = drawing.addComponent(component.reference, [
                 ...transform
             ]);
-            if (component.alignment === 1 && !layer.is_background) {
+            if (component.alignment === 1 && !drawing.is_background) {
                 added.automaticAlignment = true;
             }
             if (component.anchor) {
@@ -1158,7 +1160,7 @@ function applyNonPathObjectsToLayers(
                 added.format_specific = component.format_specific;
             }
         }
-        result.addedComponentCount += targetLayers.length;
+        result.addedComponentCount += targetDrawings.length;
     }
 
     if (options.includeAnchorsAndGuides === false) {
@@ -1166,7 +1168,7 @@ function applyNonPathObjectsToLayers(
     }
 
     for (const anchor of working.anchors) {
-        const existingOnActive = findAnchorByName(activeLayer, anchor.name);
+        const existingOnActive = findAnchorByName(activeDrawing, anchor.name);
         if (existingOnActive) {
             existingOnActive.x = anchor.x;
             existingOnActive.y = anchor.y;
@@ -1176,20 +1178,24 @@ function applyNonPathObjectsToLayers(
 
         if (options.fanOutAnchors) {
             let blocked = false;
-            for (const layer of targetLayers) {
-                if (findAnchorByName(layer, anchor.name)) {
+            for (const drawing of targetDrawings) {
+                if (findAnchorByName(drawing, anchor.name)) {
                     blocked = true;
                     break;
                 }
             }
             if (blocked) {
                 console.warn(
-                    `Skipped paste of anchor "${anchor.name}" because it exists on a linked layer.`
+                    `Skipped paste of anchor "${anchor.name}" because it exists on a linked drawing.`
                 );
                 continue;
             }
-            for (const layer of targetLayers) {
-                const added = layer.addAnchor(anchor.x, anchor.y, anchor.name);
+            for (const drawing of targetDrawings) {
+                const added = drawing.addAnchor(
+                    anchor.x,
+                    anchor.y,
+                    anchor.name
+                );
                 if (anchor.format_specific !== undefined) {
                     added.format_specific = anchor.format_specific;
                 }
@@ -1198,10 +1204,10 @@ function applyNonPathObjectsToLayers(
             continue;
         }
 
-        if (findAnchorByName(activeLayer, anchor.name)) {
+        if (findAnchorByName(activeDrawing, anchor.name)) {
             continue;
         }
-        const added = activeLayer.addAnchor(anchor.x, anchor.y, anchor.name);
+        const added = activeDrawing.addAnchor(anchor.x, anchor.y, anchor.name);
         if (anchor.format_specific !== undefined) {
             added.format_specific = anchor.format_specific;
         }
@@ -1210,8 +1216,8 @@ function applyNonPathObjectsToLayers(
 
     for (const guide of working.guides) {
         if (guide.global) {
-            if (master) {
-                const added = master.addGuide(
+            if (station) {
+                const added = station.addGuide(
                     { x: guide.x, y: guide.y, angle: guide.angle },
                     guide.name
                 );
@@ -1222,8 +1228,8 @@ function applyNonPathObjectsToLayers(
             }
             continue;
         }
-        for (const layer of targetLayers) {
-            const added = layer.addGuide(
+        for (const drawing of targetDrawings) {
+            const added = drawing.addGuide(
                 { x: guide.x, y: guide.y, angle: guide.angle },
                 guide.name
             );
@@ -1269,8 +1275,8 @@ function emptyResult(fragment: PasteFragment): ApplyPasteResult {
     };
 }
 
-function appendPathToLayer(layer: Layer, path: PastePath): void {
-    const added = layer.addPath(path.closed);
+function appendPathToDrawing(drawing: Drawing, path: PastePath): void {
+    const added = drawing.addPath(path.closed);
     added.nodes = path.nodes.map((node) => ({
         x: node.x,
         y: node.y,
@@ -1285,8 +1291,8 @@ function appendPathToLayer(layer: Layer, path: PastePath): void {
     }
 }
 
-function findAnchorByName(layer: Layer, name: string) {
-    const anchors = layer.anchors || [];
+function findAnchorByName(drawing: Drawing, name: string) {
+    const anchors = drawing.anchors || [];
     for (const anchor of anchors) {
         if (anchor.name === name) {
             return anchor;
@@ -1295,9 +1301,9 @@ function findAnchorByName(layer: Layer, name: string) {
     return null;
 }
 
-function centerFragmentInLayer(
+function centerFragmentInDrawing(
     fragment: PasteFragment,
-    layerWidth: number,
+    drawingWidth: number,
     verticalMetrics?: Record<string, number> | null
 ): PasteFragment {
     const bounds = computeFragmentBounds(fragment);
@@ -1308,7 +1314,7 @@ function centerFragmentInLayer(
     const highest =
         getHighestVisibleVerticalMetricValue(verticalMetrics) ?? bounds.maxY;
     const lowest = getLowestMetricFallback(verticalMetrics, bounds.minY);
-    const targetMidX = (Number.isFinite(layerWidth) ? layerWidth : 0) / 2;
+    const targetMidX = (Number.isFinite(drawingWidth) ? drawingWidth : 0) / 2;
     const targetMidY = (highest + lowest) / 2;
     const tx = targetMidX - (bounds.minX + bounds.maxX) / 2;
     const ty = targetMidY - (bounds.minY + bounds.maxY) / 2;

@@ -6,7 +6,7 @@ const { Font } = require('../js/babelfont-model');
 const { loadSparseRenameDependents } = require('../js/sparse-rename');
 
 function fontData() {
-    const layer = (shapes = []) => ({
+    const drawing = (shapes = []) => ({
         id: 'L1',
         master: { type: 'DefaultForMaster', master: 'm1' },
         width: 500,
@@ -19,12 +19,17 @@ function fontData() {
         axes: [],
         masters: [{ id: 'm1', name: { dflt: 'Regular' }, location: {} }],
         glyphs: [
-            { name: 'a', category: 'Base', exported: true, layers: [layer()] },
+            {
+                name: 'a',
+                category: 'Base',
+                exported: true,
+                layers: [drawing()]
+            },
             {
                 name: 'adieresis',
                 category: 'Base',
                 exported: true,
-                layers: [layer([{ Component: { reference: 'a' } }])]
+                layers: [drawing([{ Component: { reference: 'a' } }])]
             }
         ],
         names: {},

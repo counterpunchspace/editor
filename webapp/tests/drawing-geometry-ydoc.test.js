@@ -16,13 +16,13 @@ const {
     decodeGeometryTopology,
     splitShapesForYDoc,
     reconstructShapesFromGeometry,
-    writeLayerGeometry,
-    repairLayerGeometryOrphans,
-    readLayerGeometry,
+    writeDrawingGeometry,
+    repairDrawingGeometryOrphans,
+    readDrawingGeometry,
     writeNodePosition,
     topologyEqualsForNodes,
-    LAYER_GEOMETRY_TOPOLOGY_KEY
-} = require('../js/layer-geometry-ydoc');
+    DRAWING_GEOMETRY_TOPOLOGY_KEY
+} = require('../js/drawing-geometry-ydoc');
 
 describe('layer geometry Y.Doc encoding', () => {
     test('packs coordinates as one scalar pair', () => {
@@ -166,15 +166,19 @@ describe('layer geometry Y.Doc encoding', () => {
         expect(reconstructed[1].reference).toBe('acutecomb');
 
         const doc = new Y.Doc();
-        const layer = doc.getMap('layer');
-        writeLayerGeometry(layer, shapes);
-        expect(layer.has('shapes')).toBe(false);
-        expect(typeof layer.get(LAYER_GEOMETRY_TOPOLOGY_KEY)).toBe('string');
-        expect(readLayerGeometry(layer)[0].nodes[0].x).toBe(0);
-        expect(JSON.parse(layer.get(LAYER_GEOMETRY_TOPOLOGY_KEY)).g).toBe(1);
+        const drawing = doc.getMap('layer');
+        writeDrawingGeometry(drawing, shapes);
+        expect(drawing.has('shapes')).toBe(false);
+        expect(typeof drawing.get(DRAWING_GEOMETRY_TOPOLOGY_KEY)).toBe(
+            'string'
+        );
+        expect(readDrawingGeometry(drawing)[0].nodes[0].x).toBe(0);
+        expect(JSON.parse(drawing.get(DRAWING_GEOMETRY_TOPOLOGY_KEY)).g).toBe(
+            1
+        );
 
-        writeNodePosition(layer, 'n1', 7, 8);
-        expect(readLayerGeometry(layer)[0].nodes[0]).toMatchObject({
+        writeNodePosition(drawing, 'n1', 7, 8);
+        expect(readDrawingGeometry(drawing)[0].nodes[0]).toMatchObject({
             x: 7,
             y: 8
         });
@@ -182,12 +186,12 @@ describe('layer geometry Y.Doc encoding', () => {
 
     test('structural geometry is one transaction and advances generation', () => {
         const doc = new Y.Doc();
-        const layer = doc.getMap('layer');
+        const drawing = doc.getMap('layer');
         let transactionCount = 0;
         doc.on('afterTransaction', () => {
             transactionCount++;
         });
-        writeLayerGeometry(layer, [
+        writeDrawingGeometry(drawing, [
             {
                 id: 'path-1',
                 closed: true,
@@ -197,9 +201,11 @@ describe('layer geometry Y.Doc encoding', () => {
             }
         ]);
         expect(transactionCount).toBe(1);
-        expect(JSON.parse(layer.get(LAYER_GEOMETRY_TOPOLOGY_KEY)).g).toBe(1);
+        expect(JSON.parse(drawing.get(DRAWING_GEOMETRY_TOPOLOGY_KEY)).g).toBe(
+            1
+        );
 
-        writeLayerGeometry(layer, [
+        writeDrawingGeometry(drawing, [
             {
                 id: 'path-1',
                 closed: false,
@@ -209,7 +215,9 @@ describe('layer geometry Y.Doc encoding', () => {
             }
         ]);
         expect(transactionCount).toBe(2);
-        expect(JSON.parse(layer.get(LAYER_GEOMETRY_TOPOLOGY_KEY)).g).toBe(2);
+        expect(JSON.parse(drawing.get(DRAWING_GEOMETRY_TOPOLOGY_KEY)).g).toBe(
+            2
+        );
     });
 
     test('converged orphan repair deletes unreferenced position and shape-data keys', () => {
@@ -224,9 +232,9 @@ describe('layer geometry Y.Doc encoding', () => {
             }
         ];
         const doc = new Y.Doc();
-        const layer = doc.getMap('layer');
-        writeLayerGeometry(layer, shapes);
-        writeLayerGeometry(layer, [
+        const drawing = doc.getMap('layer');
+        writeDrawingGeometry(drawing, shapes);
+        writeDrawingGeometry(drawing, [
             {
                 id: 'path-1',
                 closed: true,
@@ -235,14 +243,14 @@ describe('layer geometry Y.Doc encoding', () => {
                 ]
             }
         ]);
-        const positions = layer.get('nodePositionsById');
+        const positions = drawing.get('nodePositionsById');
         // Structural writes retain orphans until convergence so a concurrent
         // topology can still retain the node without losing its coordinate.
         expect(positions.get('n2')).toBe('10 10');
-        repairLayerGeometryOrphans(layer);
+        repairDrawingGeometryOrphans(drawing);
         expect(positions.get('n2')).toBeUndefined();
         expect(positions.get('n1')).toBe('0 0');
-        writeLayerGeometry(layer, shapes);
+        writeDrawingGeometry(drawing, shapes);
         expect(positions.get('n2')).toBe('10 10');
     });
 

@@ -39,7 +39,7 @@ describe('history view', () => {
         collaborationItems,
         changeLogEntries,
         glyphName = 'A',
-        layerId = 'layer-1',
+        layerId: drawingId = 'layer-1',
         showUnreachable = false,
         focusedMainView = 'view-editor',
         fontModel = null
@@ -87,7 +87,7 @@ describe('history view', () => {
         window.glyphCanvas = {
             outlineEditor: {
                 active: true,
-                selectedLayerId: layerId,
+                selectedDrawingId: drawingId,
                 parseGlyphStack: jest.fn(() => [{ glyphName }]),
                 currentGlyphName: glyphName
             },
@@ -197,7 +197,7 @@ describe('history view', () => {
         expect(rows).toHaveLength(2);
         expect(document.body.textContent).toContain('Resize glyph');
         expect(document.body.textContent).toContain('Undo');
-        expect(document.body.textContent).toContain('Layer · A / layer-1');
+        expect(document.body.textContent).toContain('Drawing · A / layer-1');
         expect(document.body.textContent).toContain('edit');
         expect(document.body.textContent).toContain('undo');
         expect(document.body.textContent).not.toContain('42.5 ms');
@@ -366,18 +366,18 @@ describe('history view', () => {
             changeLogEntries: [],
             showUnreachable: true,
             fontModel: {
-                masters: [{ id: 'master-regular', name: { dflt: 'Regular' } }],
-                findMaster: (id) =>
+                stations: [{ id: 'master-regular', name: { dflt: 'Regular' } }],
+                findStation: (id) =>
                     id === 'master-regular'
                         ? { id: 'master-regular', name: { dflt: 'Regular' } }
                         : null,
                 getGlyph: () => ({
                     name: 'A',
-                    layers: [
+                    drawings: [
                         {
                             id: 'layer-1',
                             name: 'layer-1',
-                            master: {
+                            station: {
                                 type: 'DefaultForMaster',
                                 master: 'master-regular'
                             }
@@ -387,8 +387,10 @@ describe('history view', () => {
             }
         });
 
-        expect(document.body.textContent).toContain('Layer · A / Regular');
-        expect(document.body.textContent).not.toContain('Layer · A / layer-1');
+        expect(document.body.textContent).toContain('Drawing · A / Regular');
+        expect(document.body.textContent).not.toContain(
+            'Drawing · A / layer-1'
+        );
     });
 
     test('labels font-scoped master topology edits as Font even with layer paths', () => {
@@ -435,7 +437,7 @@ describe('history view', () => {
 
         expect(document.body.textContent).toContain('Add master');
         expect(document.body.textContent).toContain('Font');
-        expect(document.body.textContent).not.toContain('Layer · u /');
+        expect(document.body.textContent).not.toContain('Drawing · u /');
     });
 
     test('labels glyph-scoped edits as Overview', () => {
@@ -471,7 +473,7 @@ describe('history view', () => {
 
         expect(document.body.textContent).toContain('Rename glyph');
         expect(document.body.textContent).toContain('Overview');
-        expect(document.body.textContent).not.toContain('Layer ·');
+        expect(document.body.textContent).not.toContain('Drawing ·');
     });
 
     test('keeps the previous main-view undo context when History becomes focused', async () => {

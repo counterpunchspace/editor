@@ -416,9 +416,9 @@ async function navigateToGlyphA(page: Page) {
         outlineEditor.active = true;
         outlineEditor.currentGlyphName = 'A';
         await gc.doUIUpdateAsync?.();
-        await outlineEditor.fetchLayerData?.(true, 'A');
+        await outlineEditor.fetchDrawingData?.(true, 'A');
 
-        const glyphStack = `A@${outlineEditor.selectedLayerId || 'L1'}`;
+        const glyphStack = `A@${outlineEditor.selectedDrawingId || 'L1'}`;
         outlineEditor.glyphStack = glyphStack;
         if ((window as any).stateManager) {
             (window as any).stateManager.editor_glyph_stack = glyphStack;
@@ -436,12 +436,12 @@ async function navigateToGlyphA(page: Page) {
 }
 
 /** Select the first matching master layer for editing */
-async function selectFirstMasterLayer(page: Page) {
+async function selectFirstStationDrawing(page: Page) {
     await page.evaluate(async () => {
         const oe = (window as any).glyphCanvas.outlineEditor;
         // Auto-select the first Default layer
-        if (!oe.selectedLayerId) {
-            await oe.autoSelectMatchingLayer();
+        if (!oe.selectedDrawingId) {
+            await oe.autoSelectMatchingDrawing();
         }
         // Render so hit detection is against the correct layer
         (window as any).glyphCanvas.render();
@@ -460,12 +460,12 @@ async function getCompatibility(page: Page) {
 }
 
 /** Get current outline state for glyph A's active layer */
-async function getActiveLayerOutlineState(page: Page) {
+async function getActiveDrawingOutlineState(page: Page) {
     return page.evaluate(() => {
         const oe = (window as any).glyphCanvas.outlineEditor;
-        const layerData = oe.getCurrentLayerDataFromStack();
-        if (!layerData?.shapes?.[0]) return null;
-        const shape = layerData.shapes[0];
+        const drawingData = oe.getCurrentDrawingDataFromStack();
+        if (!drawingData?.shapes?.[0]) return null;
+        const shape = drawingData.shapes[0];
         const contour = shape.Path ? shape.Path : shape;
         const nodes = contour.nodes;
         return {
@@ -484,7 +484,7 @@ async function getSelectionState(page: Page) {
         const oe = (window as any).glyphCanvas.outlineEditor;
         return {
             selectedPoints: JSON.parse(JSON.stringify(oe.selectedPoints)),
-            layerId: oe.selectedLayerId
+            layerId: oe.selectedDrawingId
         };
     });
 }
@@ -618,13 +618,17 @@ async function performUndo(page: Page) {
             throw new Error('Undo bridge helpers are unavailable');
         }
 
-        const { rootGlyphName, undoGlyphName, undoLayerId, historyTargetKey } =
-            getContext();
+        const {
+            rootGlyphName,
+            undoGlyphName,
+            undoDrawingId: undoDrawingId,
+            historyTargetKey
+        } = getContext();
         await runUndoRedo(
             'undo',
             undoGlyphName,
             rootGlyphName,
-            undoLayerId,
+            undoDrawingId,
             historyTargetKey
         );
     });
@@ -682,8 +686,8 @@ async function waitForOutlineState(
     await page.waitForFunction(
         ({ closed, nodeCount }) => {
             const oe = (window as any).glyphCanvas?.outlineEditor;
-            const layerData = oe?.getCurrentLayerDataFromStack?.();
-            const shape = layerData?.shapes?.[0];
+            const drawingData = oe?.getCurrentDrawingDataFromStack?.();
+            const shape = drawingData?.shapes?.[0];
             const contour = shape?.Path ? shape.Path : shape;
             const nodes = contour?.nodes;
             if (!contour || !Array.isArray(nodes)) {
@@ -719,12 +723,12 @@ test.describe('Open/Close Path across linked masters', () => {
         await waitForBridgeReady(page);
         await waitForEditingFontCompiled(page);
         await navigateToGlyphA(page);
-        await selectFirstMasterLayer(page);
+        await selectFirstStationDrawing(page);
 
         const topology = await page.evaluate(async () => {
             const outlineEditor = (window as any).glyphCanvas.outlineEditor;
-            const activeLayer = outlineEditor.getCurrentLayerModel();
-            const activePath = activeLayer.paths[0];
+            const activeDrawing = outlineEditor.getCurrentDrawingModel();
+            const activePath = activeDrawing.paths[0];
             const beforeNodeCount = activePath.nodes.length;
             const bridge = (window as any).patchSyncEngine;
             const changeLogStart = bridge.getChangeLog().length;
@@ -748,9 +752,9 @@ test.describe('Open/Close Path across linked masters', () => {
                             entry.op === 'remove' &&
                             entry.path.includes('guides.0.format_specific')
                     ),
-                layers: glyph.layers.map((layer: any) => ({
-                    id: layer.id,
-                    nodeTypes: layer.paths[0].nodes.map(
+                layers: glyph.drawings.map((drawing: any) => ({
+                    id: drawing.id,
+                    nodeTypes: drawing.paths[0].nodes.map(
                         (node: any) => node.nodetype
                     )
                 }))
@@ -764,8 +768,8 @@ test.describe('Open/Close Path across linked masters', () => {
         );
         expect(
             topology.layers.every(
-                (layer: { nodeTypes: string[] }) =>
-                    layer.nodeTypes.join(',') ===
+                (drawing: { nodeTypes: string[] }) =>
+                    drawing.nodeTypes.join(',') ===
                     topology.layers[0].nodeTypes.join(',')
             )
         ).toBe(true);
@@ -780,7 +784,7 @@ test.describe('Open/Close Path across linked masters', () => {
         await waitForBridgeReady(page);
         await waitForEditingFontCompiled(page);
         await navigateToGlyphA(page);
-        await selectFirstMasterLayer(page);
+        await selectFirstStationDrawing(page);
 
         const before = await page.evaluate(() => {
             const gc = (window as any).glyphCanvas;
@@ -840,7 +844,7 @@ test.describe('Open/Close Path across linked masters', () => {
                 advances: gc.textRunEditor.shapedGlyphs.map(
                     (glyph: any) => glyph.ax
                 ),
-                widths: glyph.layers.map((layer: any) => layer.width)
+                widths: glyph.drawings.map((drawing: any) => drawing.width)
             };
         });
 
@@ -883,7 +887,7 @@ test.describe('Open/Close Path across linked masters', () => {
                     ).glyphCanvas.textRunEditor.shapedGlyphs.map(
                         (glyph: any) => glyph.ax
                     ),
-                    widths: glyph.layers.map((layer: any) => layer.width),
+                    widths: glyph.drawings.map((drawing: any) => drawing.width),
                     advanceSamples: (window as any).__openCloseAdvanceTest
                         .advanceSamples,
                     compilationModes: (window as any).__openCloseAdvanceTest
@@ -945,7 +949,7 @@ test.describe('Open/Close Path across linked masters', () => {
 
         // Navigate to glyph A and enter edit mode
         await navigateToGlyphA(page);
-        await selectFirstMasterLayer(page);
+        await selectFirstStationDrawing(page);
 
         // Wait for shaped glyphs to appear (HarfBuzz needs the editing font)
         await page.waitForFunction(
@@ -959,7 +963,7 @@ test.describe('Open/Close Path across linked masters', () => {
         await page.waitForTimeout(300);
         // Verify initial state: 4-node closed quad, compatible
         await waitForOutlineState(page, { closed: true, nodeCount: 4 }, 15000);
-        const initialOutline = await getActiveLayerOutlineState(page);
+        const initialOutline = await getActiveDrawingOutlineState(page);
         expect(initialOutline).not.toBeNull();
         expect(initialOutline!.closed).toBe(true);
         expect(initialOutline!.nodeCount).toBe(4);
@@ -974,8 +978,8 @@ test.describe('Open/Close Path across linked masters', () => {
         // Get the active layer's node 2 coordinates while path is still closed
         const node2Coords = await page.evaluate(() => {
             const oe = (window as any).glyphCanvas.outlineEditor;
-            const layerData = oe.getCurrentLayerDataFromStack();
-            const shape = layerData?.shapes?.[0];
+            const drawingData = oe.getCurrentDrawingDataFromStack();
+            const shape = drawingData?.shapes?.[0];
             const contour = shape?.Path ? shape.Path : shape;
             const nodes = contour?.nodes;
             if (!Array.isArray(nodes)) return null;
@@ -1039,14 +1043,14 @@ test.describe('Open/Close Path across linked masters', () => {
                 page.evaluate(() => {
                     const outlineEditor = (window as any).glyphCanvas
                         .outlineEditor;
-                    const layer = outlineEditor.getCurrentLayerModel();
-                    return layer.paths[0].closed;
+                    const drawing = outlineEditor.getCurrentDrawingModel();
+                    return drawing.paths[0].closed;
                 })
             )
             .toBe(false);
 
         // After opening at node 2, path should now be open with 5 nodes
-        const afterOpenOutline = await getActiveLayerOutlineState(page);
+        const afterOpenOutline = await getActiveDrawingOutlineState(page);
         expect(afterOpenOutline).not.toBeNull();
         expect(afterOpenOutline!.closed).toBe(false);
         expect(afterOpenOutline!.nodeCount).toBe(5);
@@ -1076,8 +1080,8 @@ test.describe('Open/Close Path across linked masters', () => {
         // Get the coordinates of node 0 / node 4 (they overlap after open)
         const overlapCoords = await page.evaluate(() => {
             const oe = (window as any).glyphCanvas.outlineEditor;
-            const layerData = oe.getCurrentLayerDataFromStack();
-            const shape = layerData?.shapes?.[0];
+            const drawingData = oe.getCurrentDrawingDataFromStack();
+            const shape = drawingData?.shapes?.[0];
             const contour = shape?.Path ? shape.Path : shape;
             const nodes = contour?.nodes;
             if (!Array.isArray(nodes)) return null;
@@ -1163,8 +1167,8 @@ test.describe('Open/Close Path across linked masters', () => {
         // Verify the node moved — it should no longer overlap with node 0
         const afterDragOutline = await page.evaluate(() => {
             const oe = (window as any).glyphCanvas.outlineEditor;
-            const layerData = oe.getCurrentLayerDataFromStack();
-            const shape = layerData?.shapes?.[0];
+            const drawingData = oe.getCurrentDrawingDataFromStack();
+            const shape = drawingData?.shapes?.[0];
             const contour = shape?.Path ? shape.Path : shape;
             const nodes = contour?.nodes;
             if (!Array.isArray(nodes)) return null;
@@ -1199,8 +1203,8 @@ test.describe('Open/Close Path across linked masters', () => {
         // Get current positions of node 0 and node 4
         const preCloseCoords = await page.evaluate(() => {
             const oe = (window as any).glyphCanvas.outlineEditor;
-            const layerData = oe.getCurrentLayerDataFromStack();
-            const shape = layerData?.shapes?.[0];
+            const drawingData = oe.getCurrentDrawingDataFromStack();
+            const shape = drawingData?.shapes?.[0];
             const contour = shape?.Path ? shape.Path : shape;
             const nodes = contour?.nodes;
             if (!Array.isArray(nodes)) return null;
@@ -1273,7 +1277,7 @@ test.describe('Open/Close Path across linked masters', () => {
         await waitForOutlineState(page, { closed: true, nodeCount: 4 });
 
         // After close, the path should be closed with 4 nodes again
-        const afterCloseOutline = await getActiveLayerOutlineState(page);
+        const afterCloseOutline = await getActiveDrawingOutlineState(page);
         expect(afterCloseOutline).not.toBeNull();
         expect(afterCloseOutline!.closed).toBe(true);
         expect(afterCloseOutline!.nodeCount).toBe(4);
@@ -1299,7 +1303,7 @@ test.describe('Open/Close Path across linked masters', () => {
 
         // Undo 1: Undo the close (should re-open the path with node4 away from node0)
         await performUndo(page);
-        const afterUndo1 = await getActiveLayerOutlineState(page);
+        const afterUndo1 = await getActiveDrawingOutlineState(page);
         expect(afterUndo1).not.toBeNull();
         expect(afterUndo1!.closed).toBe(false);
         expect(afterUndo1!.nodeCount).toBe(5);
@@ -1313,11 +1317,11 @@ test.describe('Open/Close Path across linked masters', () => {
         // then verify undo still works and we can continue back in history.
         const branchDragInfo = await page.evaluate(() => {
             const oe = (window as any).glyphCanvas.outlineEditor;
-            const layerData = oe.getCurrentLayerDataFromStack();
+            const drawingData = oe.getCurrentDrawingDataFromStack();
             const selected = oe.selectedPoints?.[0];
             if (!selected) return null;
 
-            const shape = layerData?.shapes?.[selected.contourIndex];
+            const shape = drawingData?.shapes?.[selected.contourIndex];
             const contour = shape?.Path ? shape.Path : shape;
             const nodes = contour?.nodes;
             if (!Array.isArray(nodes)) return null;
@@ -1364,7 +1368,7 @@ test.describe('Open/Close Path across linked masters', () => {
         await page.waitForTimeout(400);
         await waitForCompilation(page);
 
-        const afterBranchDrag = await getActiveLayerOutlineState(page);
+        const afterBranchDrag = await getActiveDrawingOutlineState(page);
         expect(afterBranchDrag).not.toBeNull();
         expect(afterBranchDrag!.closed).toBe(false);
         expect(afterBranchDrag!.nodeCount).toBe(5);
@@ -1375,7 +1379,7 @@ test.describe('Open/Close Path across linked masters', () => {
             if (!ctx || !bridge) return false;
             return bridge.canUndo(
                 ctx.undoGlyphName,
-                ctx.undoLayerId,
+                ctx.undoDrawingId,
                 ctx.historyTargetKey
             );
         });
@@ -1383,7 +1387,7 @@ test.describe('Open/Close Path across linked masters', () => {
 
         // Undo the branched drag; undo must still be functional after branch.
         await performUndo(page);
-        const afterBranchUndo = await getActiveLayerOutlineState(page);
+        const afterBranchUndo = await getActiveDrawingOutlineState(page);
         expect(afterBranchUndo).not.toBeNull();
         expect(afterBranchUndo!.closed).toBe(false);
         expect(afterBranchUndo!.nodeCount).toBe(5);
@@ -1401,7 +1405,7 @@ test.describe('Open/Close Path across linked masters', () => {
             return {
                 layer: bridge.canUndo(
                     ctx.undoGlyphName,
-                    ctx.undoLayerId,
+                    ctx.undoDrawingId,
                     ctx.historyTargetKey
                 ),
                 glyph: bridge.canUndo(
@@ -1419,7 +1423,7 @@ test.describe('Open/Close Path across linked masters', () => {
         // Continue undoing back to the original contour state.
         await performUndo(page);
         await performUndo(page);
-        const afterUndoToOrigin = await getActiveLayerOutlineState(page);
+        const afterUndoToOrigin = await getActiveDrawingOutlineState(page);
         expect(afterUndoToOrigin).not.toBeNull();
         expect(afterUndoToOrigin!.closed).toBe(true);
         expect(afterUndoToOrigin!.nodeCount).toBe(4);
@@ -1444,7 +1448,7 @@ test.describe('Cut title-bar tool', () => {
         await waitForBridgeReady(page);
         await waitForEditingFontCompiled(page);
         await navigateToGlyphA(page);
-        await selectFirstMasterLayer(page);
+        await selectFirstStationDrawing(page);
         await waitForOutlineState(page, { closed: true, nodeCount: 4 }, 15000);
 
         const availability = await page.evaluate(() => {
@@ -1468,7 +1472,7 @@ test.describe('Cut title-bar tool', () => {
                 contourIndex: 0,
                 nodeIndex: 2
             });
-            const path = outlineEditor.getCurrentLayerModel().paths[0];
+            const path = outlineEditor.getCurrentDrawingModel().paths[0];
             return {
                 selected,
                 highlightedTool: snapshot.highlightedTool,
@@ -1500,7 +1504,7 @@ test.describe('Cut title-bar tool', () => {
             };
             const historyBefore = bridge.getChangeLog().length;
             const cut = await outlineEditor.commitCutAtHoveredAddPointPreview();
-            const path = outlineEditor.getCurrentLayerModel().paths[0];
+            const path = outlineEditor.getCurrentDrawingModel().paths[0];
             return {
                 cut,
                 closed: path.closed,

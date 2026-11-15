@@ -363,7 +363,7 @@ describe('live font-deps updates', () => {
         window.cloudPlugin = previousCloudPlugin;
     });
 
-    function liveLayer(shapes = []) {
+    function liveDrawing(shapes = []) {
         return { id: 'layer-1', width: 600, shapes };
     }
 
@@ -407,7 +407,7 @@ describe('live font-deps updates', () => {
     it('an unavailable cloud WAL makes the font read-only and refuses glyph syncs', async () => {
         const { bridge, plugin } = startLiveSession({
             upm: 1000,
-            glyphs: [{ name: 'a', layers: [liveLayer()] }]
+            glyphs: [{ name: 'a', layers: [liveDrawing()] }]
         });
         // Use the real check instead of the session helper's stub.
         delete plugin.canMutateCurrentAsset;
@@ -446,11 +446,11 @@ describe('live font-deps updates', () => {
         const fontJson = {
             upm: 1000,
             glyphs: [
-                { name: 'a', layers: [liveLayer()] },
-                { name: 'n', layers: [liveLayer()] },
+                { name: 'a', layers: [liveDrawing()] },
+                { name: 'n', layers: [liveDrawing()] },
                 {
                     name: 'adieresis',
-                    layers: [liveLayer([liveComponent('n')])]
+                    layers: [liveDrawing([liveComponent('n')])]
                 }
             ]
         };
@@ -507,8 +507,8 @@ describe('live font-deps updates', () => {
         } = startLiveSession({
             upm: 1000,
             glyphs: [
-                { name: 'a', layers: [liveLayer()] },
-                { name: 'x', layers: [liveLayer()] }
+                { name: 'a', layers: [liveDrawing()] },
+                { name: 'x', layers: [liveDrawing()] }
             ]
         });
         const xId = live.glyphs.find((glyph) => glyph.name === 'x').id;
@@ -536,15 +536,15 @@ describe('live font-deps updates', () => {
             glyphs: [
                 {
                     name: 'a',
-                    layers: [liveLayer()]
+                    layers: [liveDrawing()]
                 },
                 {
                     name: 'n',
-                    layers: [liveLayer()]
+                    layers: [liveDrawing()]
                 },
                 {
                     name: 'adieresis',
-                    layers: [liveLayer([liveComponent('n')])]
+                    layers: [liveDrawing([liveComponent('n')])]
                 }
             ]
         };
@@ -598,11 +598,11 @@ describe('live font-deps updates', () => {
             glyphs: [
                 {
                     name: 'a',
-                    layers: [liveLayer()]
+                    layers: [liveDrawing()]
                 },
                 {
                     name: 'n',
-                    layers: [liveLayer()]
+                    layers: [liveDrawing()]
                 }
             ]
         };
@@ -629,15 +629,19 @@ describe('live font-deps updates', () => {
         const fontJson = {
             upm: 1000,
             glyphs: [
-                { name: 'a', layers: [liveLayer()] },
-                { name: 'a.wide', leftMetricsKey: '=a', layers: [liveLayer()] },
-                { name: 'a.wide.sc', layers: [liveLayer()] },
+                { name: 'a', layers: [liveDrawing()] },
+                {
+                    name: 'a.wide',
+                    leftMetricsKey: '=a',
+                    layers: [liveDrawing()]
+                },
+                { name: 'a.wide.sc', layers: [liveDrawing()] },
                 {
                     name: 'adieresis.wide',
-                    layers: [liveLayer([liveComponent('a.wide')])]
+                    layers: [liveDrawing([liveComponent('a.wide')])]
                 },
-                { name: 'h', leftMetricsKey: '=n', layers: [liveLayer()] },
-                { name: 'n', layers: [liveLayer()] }
+                { name: 'h', leftMetricsKey: '=n', layers: [liveDrawing()] },
+                { name: 'n', layers: [liveDrawing()] }
             ]
         };
         const { bridge, plugin, fontJson: live } = startLiveSession(fontJson);
@@ -685,12 +689,12 @@ describe('live font-deps updates', () => {
         const fontJson = {
             upm: 1000,
             glyphs: [
-                { name: 'a', layers: [liveLayer()] },
-                { name: 'acutecomb', layers: [liveLayer()] },
+                { name: 'a', layers: [liveDrawing()] },
+                { name: 'acutecomb', layers: [liveDrawing()] },
                 {
                     name: 'aacute',
                     layers: [
-                        liveLayer([
+                        liveDrawing([
                             liveComponent('a'),
                             liveComponent('acutecomb')
                         ])
@@ -698,9 +702,9 @@ describe('live font-deps updates', () => {
                 },
                 {
                     name: 'eacute',
-                    layers: [liveLayer([liveComponent('acutecomb')])]
+                    layers: [liveDrawing([liveComponent('acutecomb')])]
                 },
-                { name: 'z', layers: [liveLayer()] }
+                { name: 'z', layers: [liveDrawing()] }
             ]
         };
         const { bridge, plugin, fontJson: live } = startLiveSession(fontJson);
@@ -766,15 +770,15 @@ describe('live font-deps updates', () => {
                 {
                     name: 'a',
                     rightMetricsKey: 'n',
-                    layers: [liveLayer()]
+                    layers: [liveDrawing()]
                 },
                 {
                     name: 'n',
-                    layers: [liveLayer()]
+                    layers: [liveDrawing()]
                 },
                 {
                     name: 'adieresis',
-                    layers: [liveLayer([liveComponent('a')])]
+                    layers: [liveDrawing([liveComponent('a')])]
                 }
             ]
         };
@@ -814,11 +818,11 @@ describe('live font-deps updates', () => {
             glyphs: [
                 {
                     name: 'a',
-                    layers: [liveLayer()]
+                    layers: [liveDrawing()]
                 },
                 {
                     name: 'adieresis',
-                    layers: [liveLayer()]
+                    layers: [liveDrawing()]
                 }
             ]
         };

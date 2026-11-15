@@ -5,7 +5,7 @@ describe('editor View menu', () => {
             outlineEditor: {
                 active: false,
                 guidelinesVisible: true,
-                isPairedLayerVisible: () => false
+                isPairedDrawingVisible: () => false
             },
             stackPreviewAnimator: {
                 isActive: false,
@@ -32,7 +32,7 @@ describe('editor View menu', () => {
             /data-action="toggle-guidelines"[^>]*aria-disabled="true"/
         );
         expect(html).toMatch(
-            /data-action="toggle-paired-layer"[^>]*aria-disabled="true"/
+            /data-action="toggle-paired-drawing"[^>]*aria-disabled="true"/
         );
         expect(html).toMatch(
             /data-action="toggle-show-all-metrics"[^>]*aria-disabled="true"/

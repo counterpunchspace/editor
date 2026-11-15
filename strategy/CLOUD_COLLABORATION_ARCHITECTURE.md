@@ -233,7 +233,7 @@ asset:<assetId>:glyph:<glyphId>    one glyph's editable CRDT state
 
 The compactor decodes a whole room in a 128 MB isolate, and its memory grows
 with the room's Yjs struct count (about 265 bytes each), not its byte size.
-A font-core that held the catalog, every master's kerning and the feature
+A font-core that held the catalog, every station’s kerning and the feature
 code reached 17–77 MB on large Google Fonts sources and could not be
 compacted. Room layout 2 moves those out:
 
@@ -241,7 +241,7 @@ compacted. Room layout 2 moves those out:
 - `catalog:<n>`: root map `catalog`, glyphId → catalog entry. The
   codepoint → glyph index is derived in memory and no longer stored.
 - `kerning:<n>`: root map `kerning`, key `<masterId>|<l|r>|<first>:<second>`
-  → value, every master together, bucketed by FNV-1a of the first side.
+  → value, every station together, bucketed by FNV-1a of the first side.
 - font-core keeps the rest and a root map `layout` =
   `{ version: 2, catalogBuckets, kerningBuckets }`.
 
@@ -331,7 +331,7 @@ Renames update the catalog; they do not move the shard.
 
 Always loaded for an editing session. Contains:
 
-- True font-wide fields: UPM, names, axes, masters (without assuming huge
+- True font-wide fields: UPM, names, axes, stations (without assuming huge
   kerning stays forever), instances, notes, features, etc.
 - A **lean glyph catalog** for browse/search/order — not outline data.
 - Enough encoding data to resolve characters → glyphs **without hydrating
@@ -417,7 +417,7 @@ edgeKind = component | metrics-key | both
 Patch one catalog/cmap entry and one source edge map on identity/reference
 edits. Do not rebuild every glyph Y.Doc from `initFromFontJson` on catalog
 churn. Narrow `depsNeedUpdate` to component add/remove/`reference` and
-metrics-key fields — not arbitrary layers, nodes, or `format_specific`.
+metrics-key fields — not arbitrary drawings, nodes, or `format_specific`.
 
 Component and metrics-key closure walks this index without opening glyph
 Y.Docs. OpenType layout closure is a separate step (`close_layout`) and does
@@ -425,7 +425,7 @@ not live in `font-deps`.
 
 ### Glyph shards
 
-Each `glyph:<glyphId>` document holds that glyph’s editable state: layers,
+Each `glyph:<glyphId>` document holds that glyph’s editable state: drawings,
 components, anchors, local metrics, and **normalized outlines**:
 
 ```text
@@ -697,16 +697,16 @@ this against each room’s own update counters (debug status, local stack;
 on staging, against what the sender sent).
 
 **Collaborator cascades ahead of catch-up.** A collaborator’s edit of a
-glyph a window holds live arrives at once, but the layers it recomposes in
+glyph a window holds live arrives at once, but the drawings it recomposes in
 other glyphs (automatically aligned composites, metrics-key widths) only come
 by catch-up, after the sender has posted them and its core stamp has gone
 out. So the receiving window (main and linked alike) runs the same cascade
 itself on a collaborator’s live packet (`remote-cascade-preview.ts`): in its
 model with recording off, and in its worker as a preview overlay for the
 compile. Nothing reaches its documents, history or the rooms. The stored
-layers stay the authority: a catch-up or packet that brings a previewed
-layer replaces the preview, and the cascade is run again from the current
-base in case a newer edit is still ahead of it. A preview whose stored layer
+drawings stay the authority: a catch-up or packet that brings a previewed
+drawing replaces the preview, and the cascade is run again from the current
+base in case a newer edit is still ahead of it. A preview whose stored drawing
 does not arrive within 10 seconds goes back to the documents. A window busy
 with its own drag or key burst skips the preview and keeps its state. The
 three-window spec holds the invitee’s catch-up of the recomposed glyph back
@@ -792,7 +792,7 @@ in babelfont tests — outlines are irrelevant.
 transitive component and metrics-key prerequisites via `font-deps`, matching
 what the WASM path today does with `expand_closure_with_component_deps` after
 `close_layout` — except the sharded world reads the deps index instead of
-walking hydrated layers.
+walking hydrated drawings.
 
 Prefer computing this on the client once core + deps are loaded. A Worker may
 run the same algorithm if given seeds, core features/catalog names, and the
@@ -989,10 +989,10 @@ which Yjs then holds back for good. A MetadataFree glyph packet
 
 A client's updates to one glyph must reach the room in order: an update
 that arrives before the one it builds on is held back (its deletions apply,
-its inserts wait), so a layer briefly reads without a width or anchor
+its inserts wait), so a drawing briefly reads without a width or anchor
 position. HTTP publishes therefore carry the glyph's earlier
 unacknowledged WAL rows, merged; receivers keep the last good value of such
-a layer instead of throwing, so the socket stays up until the missing part
+a drawing instead of throwing, so the socket stays up until the missing part
 arrives. Catch-up retries until the glyph has the revision the feed named.
 
 Undo stays with the author of the edit. A main window and its linked
@@ -1102,7 +1102,7 @@ compactor.
 | --- | --- | --- |
 | **Interactive proofing (default)** | **Session-scoped Fly Machine** (or equivalent microVM): start when a proofing client attaches, stop/suspend after idle | Needs the full font resident for the editing session |
 | One-shot export / offline build | Same image as a queue job; scale to zero after publish | No live listen required |
-| Cloudflare Containers | Acceptable CF-native alternative for lighter fonts | Max instance is **12 GiB**; fine for Plangothic-class, tight for heavy multi-master peaks |
+| Cloudflare Containers | Acceptable CF-native alternative for lighter fonts | Max instance is **12 GiB**; fine for Plangothic-class, tight for heavy multi-station peaks |
 
 **Session model (interactive).** One machine per active proofing session (or
 per asset while proofing is open), sized from the RAM table below (**8 GB**
@@ -1132,14 +1132,14 @@ Measured compact JSON from the sibling CJK sizing experiment
 
 | Source (compact JSON) | Glyphs | Glyphs JSON | Core JSON | Notes |
 | --- | ---: | ---: | ---: | --- |
-| Plangothic P1 | 64,579 | ~100 MB | ~6 MB | Single master; sane core |
+| Plangothic P1 | 64,579 | ~100 MB | ~6 MB | Single station; sane core |
 | Plangothic P2 | 41,994 | ~59 MB | ~4 MB | |
 | Source Han Sans SC VF (TTF round-trip) | 65,535 | ~218 MB | ~133 MB | Core almost all enumerated FEA artifact; **not** target shape |
 | SHS-like with class kerning (est.) | ~65k | ~218 MB | ~6–10 MB | Source-shaped features; glyphs still heavy |
 
 In-process budgets are larger than compact JSON:
 
-| Stage | Plangothic-like (~65k, 1 master) | Heavy CJK VF (~65k, multi-master, sane FEA) |
+| Stage | Plangothic-like (~65k, 1 station) | Heavy CJK VF (~65k, multi-station, sane FEA) |
 | --- | --- | --- |
 | Shard payloads on disk / R2 | ~100–160 MB | ~200–450 MB |
 | Hydrated source IR in builder | ~0.3–0.8 GB | ~0.8–2 GB |
@@ -1147,7 +1147,7 @@ In-process budgets are larger than compact JSON:
 | Output OTF/TTF (order of mag.) | tens of MB | tens–low hundreds of MB |
 | **Suggested VM RAM** | **4–8 GB** | **8–16 GB** |
 
-Factors that move the peak: master count, contour density, feature/kerning
+Factors that move the peak: station count, contour density, feature/kerning
 complexity, concurrent builds, and whether two revisions overlap in memory.
 **Do not** size from TTF-uncompiled feature dumps (~129 MB FEA prefixes alone);
 keep source-shaped features in core.
@@ -1357,7 +1357,7 @@ Run in the collab repo (`counterpunchspace/collab`):
 
 Editor production graph samples:
 `webapp/tests/section5-capacity.test.js` (`jsonToCoreFontMap`,
-`writeFontDepsYMap` component/metrics-key/both, `writeLayerGeometry`,
+`writeFontDepsYMap` component/metrics-key/both, `writeDrawingGeometry`,
 `{gc:false}` undo/merge/unsent rebaseline). Seed `POST /state` calls
 `validator` before R2 put. Preferences shows a live CRDT warning and an
 explicit **Clear undo history** control (`truncateUndoHistory()`).
@@ -1430,7 +1430,7 @@ Checked-in coverage (not a second spec):
 | No Yjs in the room DO | `FontRoomDO source does not import yjs` |
 | Hostile / oversize Yjs pre-ACK | `validator/test`, `validator failure never journals or ACKs` |
 | Pinned compact, malformed/incomplete tail, digest mismatch, CAS 409, mutation-history abort, 413 fat-compactor | `workers/compactor/test/index.test.js`; promote dirty recount + crash-before-`current.json` in FontRoomDO tests |
-| Nested writes, outline topology, last-good compile cache | `webapp/tests/nested-json-leaf-writes.test.js`, `layer-geometry-ydoc.test.js`, `babelfont-fontc-build` last-good shapes test |
+| Nested writes, outline topology, last-good compile cache | `webapp/tests/nested-json-leaf-writes.test.js`, `drawing-geometry-ydoc.test.js`, `babelfont-fontc-build` last-good shapes test |
 | Deps repair, over-hydrate never under-hydrate, core has no deps | `webapp/tests/cloud-glyph-catalog.test.js` |
 | `appliedLogId` only after apply | `webapp/tests/cloud-adapter.test.js` |
 | 256 KiB packet / 5 MiB shard reject + rollback (`settings.ts`) | `webapp/tests/collab-submit-limits.test.js`, `webapp/tests/settings.test.js` |

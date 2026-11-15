@@ -14,8 +14,8 @@ function cloneValue(value) {
     return JSON.parse(JSON.stringify(value));
 }
 
-function getLayerNodes(layerJson) {
-    const shape = layerJson?.shapes?.[0];
+function getDrawingNodes(drawingJson) {
+    const shape = drawingJson?.shapes?.[0];
     const nodes = shape?.nodes || shape?.Path?.nodes || [];
     return nodes.map(({ smooth, id, ...node }) =>
         smooth === false ? node : { ...node, smooth }
@@ -46,10 +46,10 @@ describe('metrics-key point drag regression', () => {
             bridge.initFromJson(JSON.parse(font.toJSONString()));
             window.changeBridge = bridge;
 
-            const layer = glyph.layers[0];
-            const originalSnapshot = cloneValue(layer.toJSON());
-            const originalNodes = getLayerNodes(originalSnapshot);
-            const leftmostNode = layer.paths[0].nodes.reduce((left, node) =>
+            const drawing = glyph.drawings[0];
+            const originalSnapshot = cloneValue(drawing.toJSON());
+            const originalNodes = getDrawingNodes(originalSnapshot);
+            const leftmostNode = drawing.paths[0].nodes.reduce((left, node) =>
                 node.x < left.x ? node : left
             );
             const originalNode = { x: leftmostNode.x, y: leftmostNode.y };
@@ -60,8 +60,8 @@ describe('metrics-key point drag regression', () => {
                 font.recomputeMetricsKeys(new Set(['a']));
             });
 
-            const changedSnapshot = cloneValue(layer.toJSON());
-            const changedNodes = getLayerNodes(changedSnapshot);
+            const changedSnapshot = cloneValue(drawing.toJSON());
+            const changedNodes = getDrawingNodes(changedSnapshot);
 
             bridge.setFontJson(JSON.parse(font.toJSONString()));
             bridge.syncGlyphFromJson(
@@ -69,7 +69,7 @@ describe('metrics-key point drag regression', () => {
                 'Drag point',
                 `node '(${Math.round(originalNode.x)}, ${Math.round(originalNode.y)})'`,
                 `LEFT (${Math.round(originalNode.x + deltaX)}, ${Math.round(originalNode.y + deltaY)})`,
-                layer.id,
+                drawing.id,
                 undefined,
                 undefined,
                 undefined,
@@ -77,26 +77,26 @@ describe('metrics-key point drag regression', () => {
                 null
             );
 
-            expect(bridge.canUndo('a', layer.id)).toBe(true);
+            expect(bridge.canUndo('a', drawing.id)).toBe(true);
             expect(changedNodes).not.toEqual(originalNodes);
 
-            expect(bridge.undo('a', layer.id)).toEqual(
+            expect(bridge.undo('a', drawing.id)).toEqual(
                 expect.objectContaining({
                     scope: 'layer',
                     glyphName: 'a',
-                    layerId: layer.id
+                    layerId: drawing.id
                 })
             );
 
             const undoneGlyph = bridge
                 .getFontJsonSnapshot()
                 .glyphs.find((entry) => entry.name === 'a');
-            const undoneLayer = undoneGlyph.layers.find(
-                (entry) => entry.id === layer.id
+            const undoneDrawing = undoneGlyph.layers.find(
+                (entry) => entry.id === drawing.id
             );
 
-            expect(undoneLayer.width).toBe(originalSnapshot.width);
-            expect(getLayerNodes(undoneLayer)).toEqual(originalNodes);
+            expect(undoneDrawing.width).toBe(originalSnapshot.width);
+            expect(getDrawingNodes(undoneDrawing)).toEqual(originalNodes);
         }
     );
 });

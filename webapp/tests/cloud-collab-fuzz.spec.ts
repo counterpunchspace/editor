@@ -29,7 +29,7 @@ import {
 } from './helpers/snapshot-helper';
 import {
     alignEditorCanvas,
-    extractYDocLayerKeys,
+    extractYDocDrawingKeys,
     installCrossWindowTrackersOnContext,
     installEditingFontCompileTracker,
     openLinkedEditorWindow,
@@ -80,11 +80,11 @@ import {
     FUZZ_ROOM_LAYOUT,
     FUZZ_UNICODE_GLYPH,
     FUZZ_MARKS,
-    FUZZ_MASTERS,
+    FUZZ_STATIONS,
     FUZZ_OUTLINE_GLYPHS,
     FUZZ_WIDTH_GLYPHS,
     type FuzzEdit,
-    type FuzzMasterId,
+    type FuzzStationId,
     type FuzzSnapshot,
     applyFuzzEdit,
     describeFuzzEdit,
@@ -131,7 +131,7 @@ type HistoryItem = {
      * toggle can write kerning groups): undo reaches it from any glyph.
      */
     fontWide?: boolean;
-    master: FuzzMasterId;
+    master: FuzzStationId;
     description: string;
     changed: string[];
     before: Record<string, string>;
@@ -151,12 +151,15 @@ type HistoryItem = {
 function flatten(snapshot: FuzzSnapshot): Record<string, string> {
     const values: Record<string, string> = {};
     for (const name of FUZZ_GLYPHS) {
-        const layers = (snapshot.glyphs[name] ?? {}) as Record<string, unknown>;
-        for (const { id } of FUZZ_MASTERS) {
-            values[`${name}/${id}`] = JSON.stringify(layers[id] ?? null);
+        const drawings = (snapshot.glyphs[name] ?? {}) as Record<
+            string,
+            unknown
+        >;
+        for (const { id } of FUZZ_STATIONS) {
+            values[`${name}/${id}`] = JSON.stringify(drawings[id] ?? null);
         }
     }
-    for (const { id } of FUZZ_MASTERS) {
+    for (const { id } of FUZZ_STATIONS) {
         values[`kern:${id}`] = JSON.stringify(snapshot.kerning[id] ?? {});
     }
     for (const name of FUZZ_GLYPHS) {
@@ -176,8 +179,8 @@ function withoutDerived(value: string | undefined): string | undefined {
     if (!value) {
         return value;
     }
-    const layer = JSON.parse(value);
-    const shapes = layer?.shapes ?? [];
+    const drawing = JSON.parse(value);
+    const shapes = drawing?.shapes ?? [];
     if (
         !shapes.length ||
         !shapes.every((shape: any) => shape.reference && shape.automatic)
@@ -185,7 +188,7 @@ function withoutDerived(value: string | undefined): string | undefined {
         return value;
     }
     return JSON.stringify({
-        ...layer,
+        ...drawing,
         width: null,
         shapes: shapes.map((shape: any) => ({ ...shape, translation: null }))
     });
@@ -341,11 +344,11 @@ test.describe('cloud collaboration fuzz', () => {
             const openEditor = async (page: Page) => {
                 await focusView(page, 'ControlOrMeta+Shift+E', 'view-editor');
                 await alignEditorCanvas(page, 'a', {
-                    wght: FUZZ_MASTERS[0].wght
+                    wght: FUZZ_STATIONS[0].wght
                 });
                 // The editing font holds the glyphs of the window’s text:
                 // every window shows all fuzz glyphs.
-                await openFuzzGlyph(page, 'a', FUZZ_MASTERS[0].id);
+                await openFuzzGlyph(page, 'a', FUZZ_STATIONS[0].id);
                 await waitForEditingCompile(page);
             };
             const openLinked = async (main: Page) => {
@@ -537,8 +540,8 @@ test.describe('cloud collaboration fuzz', () => {
                         // document, or was it only an in-between state?
                         const missing: string[] = [];
                         for (const name of FUZZ_GLYPHS) {
-                            for (const { id } of FUZZ_MASTERS) {
-                                const keys = await extractYDocLayerKeys(
+                            for (const { id } of FUZZ_STATIONS) {
+                                const keys = await extractYDocDrawingKeys(
                                     window.page,
                                     name,
                                     id
@@ -551,7 +554,7 @@ test.describe('cloud collaboration fuzz', () => {
                             }
                         }
                         record(
-                            `${window.name} page errors; layers without width now: ${missing.join('; ') || 'none'}; console:\n  ${(consoleTails.get(window.page) ?? []).slice(-15).join('\n  ')}`
+                            `${window.name} page errors; drawings without width now: ${missing.join('; ') || 'none'}; console:\n  ${(consoleTails.get(window.page) ?? []).slice(-15).join('\n  ')}`
                         );
                     }
                     expect(
@@ -641,13 +644,13 @@ test.describe('cloud collaboration fuzz', () => {
 
             // ── Edit generators ──────────────────────────────────────────
             const outlineEdit = (glyph: string): FuzzEdit => {
-                const master = pick(FUZZ_MASTERS).id;
-                const shapes = (snapshot.glyphs[glyph] as any)[master].shapes;
+                const station = pick(FUZZ_STATIONS).id;
+                const shapes = (snapshot.glyphs[glyph] as any)[station].shapes;
                 const shape = Math.floor(random() * shapes.length);
                 return {
                     kind: 'outline',
                     glyph,
-                    master,
+                    master: station,
                     shape,
                     node: Math.floor(random() * shapes[shape].nodes.length),
                     // A keyed glyph’s sidebearings follow its key, so its
@@ -659,7 +662,7 @@ test.describe('cloud collaboration fuzz', () => {
             const anchorEdit = (glyph: string): FuzzEdit => ({
                 kind: 'anchor',
                 glyph,
-                master: pick(FUZZ_MASTERS).id,
+                master: pick(FUZZ_STATIONS).id,
                 anchor: FUZZ_MARKS.includes(glyph) ? '_top' : 'top',
                 dx: delta(40),
                 dy: delta(40)
@@ -667,34 +670,38 @@ test.describe('cloud collaboration fuzz', () => {
             const widthEdit = (glyph: string): FuzzEdit => ({
                 kind: 'width',
                 glyph,
-                master: pick(FUZZ_MASTERS).id,
+                master: pick(FUZZ_STATIONS).id,
                 dw: delta(40)
             });
             const kernEdit = (): FuzzEdit => {
-                const master = pick(FUZZ_MASTERS).id;
+                const station = pick(FUZZ_STATIONS).id;
                 const pair = pick(FUZZ_KERN_PAIRS);
-                const current = snapshot.kerning[master]?.[pair] ?? 0;
+                const current = snapshot.kerning[station]?.[pair] ?? 0;
                 return {
                     kind: 'kern',
-                    master,
+                    master: station,
                     pair,
                     value: current + delta(8) * 10
                 };
             };
             const kernDeleteEdit = (): FuzzEdit => {
-                const master = pick(FUZZ_MASTERS).id;
-                const pairs = Object.keys(snapshot.kerning[master] ?? {});
+                const station = pick(FUZZ_STATIONS).id;
+                const pairs = Object.keys(snapshot.kerning[station] ?? {});
                 if (!pairs.length) {
                     return kernEdit();
                 }
-                return { kind: 'kern-delete', master, pair: pick(pairs) };
+                return {
+                    kind: 'kern-delete',
+                    master: station,
+                    pair: pick(pairs)
+                };
             };
             const kernGroupEdit = (): FuzzEdit => {
                 const glyph = pick(FUZZ_GROUP_GLYPHS);
                 const members = snapshot.groups.first?.L ?? [];
                 return {
                     kind: 'kern-group',
-                    master: FUZZ_MASTERS[0].id,
+                    master: FUZZ_STATIONS[0].id,
                     glyph,
                     group: 'L',
                     include: !members.includes(glyph)
@@ -702,12 +709,12 @@ test.describe('cloud collaboration fuzz', () => {
             };
             const featureEdit = (): FuzzEdit => ({
                 kind: 'feature',
-                master: FUZZ_MASTERS[0].id,
+                master: FUZZ_STATIONS[0].id,
                 value: Math.floor(random() * 1_000_000)
             });
             const unicodeEdit = (): FuzzEdit => ({
                 kind: 'unicode',
-                master: FUZZ_MASTERS[0].id,
+                master: FUZZ_STATIONS[0].id,
                 glyph: FUZZ_UNICODE_GLYPH,
                 add: !(snapshot.catalog[FUZZ_UNICODE_GLYPH] ?? []).includes(
                     FUZZ_EXTRA_CODEPOINT
@@ -715,12 +722,12 @@ test.describe('cloud collaboration fuzz', () => {
             });
             const alignEdit = (): FuzzEdit => {
                 const glyph = pick(FUZZ_COMPOSITES);
-                const master = pick(FUZZ_MASTERS).id;
-                const shapes = (snapshot.glyphs[glyph] as any)[master].shapes;
+                const station = pick(FUZZ_STATIONS).id;
+                const shapes = (snapshot.glyphs[glyph] as any)[station].shapes;
                 return {
                     kind: 'align',
                     glyph,
-                    master,
+                    master: station,
                     automatic: !shapes.every((shape: any) => shape.automatic)
                 };
             };
@@ -808,25 +815,25 @@ test.describe('cloud collaboration fuzz', () => {
             const onSurface = (
                 item: HistoryItem,
                 glyph: string,
-                master: FuzzMasterId
+                station: FuzzStationId
             ) =>
-                (item.historyGlyph === glyph && item.master === master) ||
+                (item.historyGlyph === glyph && item.master === station) ||
                 item.historyGlyph === null ||
                 item.fontWide === true;
             const redoableFrom = (
                 group: HistoryGroup,
                 glyph: string,
-                master: FuzzMasterId
+                station: FuzzStationId
             ) =>
                 (redoStacks.get(group) ?? [])
                     .filter(
                         (undone) =>
-                            onSurface(undone, glyph, master) &&
+                            onSurface(undone, glyph, station) &&
                             !items.some(
                                 (other) =>
                                     other.group === group &&
                                     other.step > (undone.undoneAt ?? -1) &&
-                                    onSurface(other, glyph, master)
+                                    onSurface(other, glyph, station)
                             )
                     )
                     .sort((a, b) => (a.undoneAt ?? 0) - (b.undoneAt ?? 0));
@@ -1301,30 +1308,44 @@ test.describe('cloud collaboration fuzz', () => {
             // Meanwhile another window deletes a pair, and the linked
             // windows edit feature code and the catalog.
             {
-                const master = pick(FUZZ_MASTERS).id;
+                const station = pick(FUZZ_STATIONS).id;
                 const pair = pick(FUZZ_KERN_PAIRS);
-                const current = snapshot.kerning[master]?.[pair] ?? 0;
+                const current = snapshot.kerning[station]?.[pair] ?? 0;
                 // A third window deletes (or sets) a different pair.
                 const otherPair = pick(
                     FUZZ_KERN_PAIRS.filter((other) => other !== pair)
                 );
                 const otherPairEdit: FuzzEdit =
-                    snapshot.kerning[master]?.[otherPair] !== undefined
-                        ? { kind: 'kern-delete', master, pair: otherPair }
+                    snapshot.kerning[station]?.[otherPair] !== undefined
+                        ? {
+                              kind: 'kern-delete',
+                              master: station,
+                              pair: otherPair
+                          }
                         : {
                               kind: 'kern',
-                              master,
+                              master: station,
                               pair: otherPair,
                               value: delta(8) * 10
                           };
                 const plan: Array<[FuzzWindow, FuzzEdit]> = [
                     [
                         windows[0],
-                        { kind: 'kern', master, pair, value: current + 30 }
+                        {
+                            kind: 'kern',
+                            master: station,
+                            pair,
+                            value: current + 30
+                        }
                     ],
                     [
                         windows[3],
-                        { kind: 'kern', master, pair, value: current - 30 }
+                        {
+                            kind: 'kern',
+                            master: station,
+                            pair,
+                            value: current - 30
+                        }
                     ],
                     [windows[2], otherPairEdit],
                     [windows[1], featureEdit()],
@@ -1342,10 +1363,10 @@ test.describe('cloud collaboration fuzz', () => {
                     )
                 );
                 snapshot = await checkAll('same kerning pair at once');
-                const settled = snapshot.kerning[master]?.[pair] ?? 0;
+                const settled = snapshot.kerning[station]?.[pair] ?? 0;
                 expect(
                     [current + 30, current - 30],
-                    `same pair: ${pair}/${master} settles on one of the two values`
+                    `same pair: ${pair}/${station} settles on one of the two values`
                 ).toContain(settled);
                 step++;
             }
@@ -1404,12 +1425,12 @@ test.describe('cloud collaboration fuzz', () => {
                 );
                 await expectPresence('renamed', [false, true]);
                 const width = 400 + delta(50);
-                const master = pick(FUZZ_MASTERS).id;
+                const station = pick(FUZZ_STATIONS).id;
                 record(
-                    `glyph lifecycle: O2 sets ${renamed}/${master} width ${width}`
+                    `glyph lifecycle: O2 sets ${renamed}/${station} width ${width}`
                 );
                 await ownerSecondPage.evaluate(
-                    ({ name, layerId, value }) => {
+                    ({ name, layerId: drawingId, value }) => {
                         const w = window as any;
                         const bridge = w.patchSyncEngine;
                         bridge.beginTransaction('Set width', null, {
@@ -1419,12 +1440,12 @@ test.describe('cloud collaboration fuzz', () => {
                         try {
                             w.currentFontModel
                                 .findGlyph(name)
-                                .findLayerById(layerId).width = value;
+                                .findDrawingById(drawingId).width = value;
                         } finally {
                             bridge.endTransaction();
                         }
                     },
-                    { name: renamed, layerId: master, value: width }
+                    { name: renamed, layerId: station, value: width }
                 );
                 await expect
                     .poll(
@@ -1433,12 +1454,13 @@ test.describe('cloud collaboration fuzz', () => {
                                 await Promise.all(
                                     windows.map((window) =>
                                         window.page.evaluate(
-                                            ({ name, layerId }) =>
+                                            ({ name, layerId: drawingId }) =>
                                                 (window as any).currentFontModel
                                                     ?.findGlyph?.(name)
-                                                    ?.findLayerById?.(layerId)
-                                                    ?.width ?? null,
-                                            { name: renamed, layerId: master }
+                                                    ?.findDrawingById?.(
+                                                        drawingId
+                                                    )?.width ?? null,
+                                            { name: renamed, layerId: station }
                                         )
                                     )
                                 )
@@ -1496,15 +1518,15 @@ test.describe('cloud collaboration fuzz', () => {
 
             // ── Phase 3b: the network drops while an edit is on its way ──
             {
-                const master = pick(FUZZ_MASTERS).id;
+                const station = pick(FUZZ_STATIONS).id;
                 const pair = pick(FUZZ_KERN_PAIRS);
                 const value = delta(8) * 10 + 3;
                 record(
-                    `network cut: O2 sets ${pair}/${master} ${value}, then goes offline`
+                    `network cut: O2 sets ${pair}/${station} ${value}, then goes offline`
                 );
                 await applyFuzzEdit(
                     ownerSecondPage,
-                    { kind: 'kern', master, pair, value },
+                    { kind: 'kern', master: station, pair, value },
                     { awaitCloud: false }
                 );
                 await ownerSecondContext.setOffline(true);
@@ -1520,7 +1542,7 @@ test.describe('cloud collaboration fuzz', () => {
                 await converge('after the network came back', 180000);
                 snapshot = await checkAll('after a network cut mid-send');
                 expect(
-                    snapshot.kerning[master]?.[pair],
+                    snapshot.kerning[station]?.[pair],
                     'network cut: the edit on its way survived'
                 ).toBe(value);
                 step++;
@@ -1530,15 +1552,15 @@ test.describe('cloud collaboration fuzz', () => {
             // Offline, so the edits are only in this browser's outbox on
             // disk when the tab closes; the reopened tab must send them.
             {
-                const master = pick(FUZZ_MASTERS).id;
+                const station = pick(FUZZ_STATIONS).id;
                 const pair = pick(FUZZ_KERN_PAIRS);
                 const value = delta(8) * 10 + 7;
                 record('tab close: O2 offline');
                 await ownerSecondContext.setOffline(true);
-                record(`tab close: O2 sets ${pair}/${master} ${value}`);
+                record(`tab close: O2 sets ${pair}/${station} ${value}`);
                 await applyFuzzEdit(
                     windows[2].page,
-                    { kind: 'kern', master, pair, value },
+                    { kind: 'kern', master: station, pair, value },
                     { awaitCloud: false }
                 );
                 await expect
@@ -1572,7 +1594,7 @@ test.describe('cloud collaboration fuzz', () => {
                 await converge('after O2 reopened', 180000);
                 snapshot = await checkAll('after O2 reopened');
                 expect(
-                    snapshot.kerning[master]?.[pair],
+                    snapshot.kerning[station]?.[pair],
                     'tab close: the unsent edit was sent by the reopened tab'
                 ).toBe(value);
                 step++;

@@ -31,20 +31,25 @@ describe('Font.addGlyph', () => {
 
         const glyph = font.addGlyph('newGlyph');
 
-        expect(glyph.layers).toHaveLength(2);
-        expect(glyph.layers.map((layer) => layer.id)).toEqual([
+        expect(glyph.drawings).toHaveLength(2);
+        expect(glyph.drawings.map((drawing) => drawing.id)).toEqual([
             'master-regular',
             'master-bold'
         ]);
-        expect(glyph.layers.map((layer) => layer.master)).toEqual([
+        expect(glyph.drawings.map((drawing) => drawing.station)).toEqual([
             { type: 'DefaultForMaster', master: 'master-regular' },
             { type: 'DefaultForMaster', master: 'master-bold' }
         ]);
-        expect(glyph.layers.map((layer) => layer.width)).toEqual([500, 500]);
-        expect(glyph.layers.map((layer) => layer.shapes)).toEqual([[], []]);
+        expect(glyph.drawings.map((drawing) => drawing.width)).toEqual([
+            500, 500
+        ]);
+        expect(glyph.drawings.map((drawing) => drawing.shapes)).toEqual([
+            [],
+            []
+        ]);
     });
 
-    test('addLayer DefaultForMaster uses the master id as the layer id', () => {
+    test('addDrawing DefaultForMaster uses the master id as the layer id', () => {
         const font = Font.fromData({
             upm: 1000,
             version: [1, 0],
@@ -65,19 +70,19 @@ describe('Font.addGlyph', () => {
         });
 
         const glyph = font.addGlyph('newGlyph');
-        while (glyph.layers.length > 0) {
-            glyph.removeLayer(0);
+        while (glyph.drawings.length > 0) {
+            glyph.removeDrawing(0);
         }
 
-        const layer = glyph.addLayer(600, {
+        const drawing = glyph.addDrawing(600, {
             type: 'DefaultForMaster',
             master: 'master-regular'
         });
 
-        expect(layer.id).toBe('master-regular');
-        expect(layer.width).toBe(600);
-        expect(layer.shapes).toEqual([]);
-        expect(layer.master).toEqual({
+        expect(drawing.id).toBe('master-regular');
+        expect(drawing.width).toBe(600);
+        expect(drawing.shapes).toEqual([]);
+        expect(drawing.station).toEqual({
             type: 'DefaultForMaster',
             master: 'master-regular'
         });
@@ -89,7 +94,7 @@ describe('Font glyph quota plugin hook', () => {
         delete window.fontManager;
     });
 
-    function fontWithMasters() {
+    function fontWithStations() {
         return Font.fromData({
             upm: 1000,
             version: [1, 0],
@@ -123,7 +128,7 @@ describe('Font glyph quota plugin hook', () => {
                 }
             }
         };
-        const font = fontWithMasters();
+        const font = fontWithStations();
         expect(() =>
             font.addGlyphs([
                 { name: 'A', codepoints: [65] },
@@ -146,7 +151,7 @@ describe('Font glyph quota plugin hook', () => {
                 }
             }
         };
-        const font = fontWithMasters();
+        const font = fontWithStations();
         expect(() => font.addGlyph('A')).toThrow(
             'Glyph limit reached (1000/1000)'
         );

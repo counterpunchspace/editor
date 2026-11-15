@@ -219,8 +219,8 @@ test('arabic add glyphs can stay empty or copy composition outlines', async ({
                 page.evaluate(() => {
                     const glyph =
                         window.currentFontModel?.findGlyphByCodepoint(0x08a8);
-                    const components = (glyph?.layers || []).reduce(
-                        (count, layer) => count + layer.components.length,
+                    const components = (glyph?.drawings || []).reduce(
+                        (count, drawing) => count + drawing.components.length,
                         0
                     );
                     return {
@@ -263,20 +263,20 @@ test('arabic add glyphs can stay empty or copy composition outlines', async ({
                     const font = window.currentFontModel;
                     const glyph = font?.findGlyphByCodepoint(0x08a8);
                     const name = glyph?.name || '';
-                    const components = (glyph?.layers || []).some(
-                        (layer) => layer.components.length > 0
+                    const components = (glyph?.drawings || []).some(
+                        (drawing) => drawing.components.length > 0
                     );
                     const form = name
                         ? font?.findGlyph(`${name}.init`)
                         : undefined;
                     const dot = font?.findGlyph('twoDotsHorizontalBelow-ar');
                     const scale = (font?.upm || 1000) / 1000;
-                    const dotLayers = dot?.layers || [];
-                    const dotDrawn = dotLayers.every(
-                        (layer) =>
-                            Math.abs(layer.width - 206 * scale) < 0.5 &&
-                            (layer.anchors || []).length > 0 &&
-                            (layer.shapes || []).every(
+                    const dotDrawings = dot?.drawings || [];
+                    const dotDrawn = dotDrawings.every(
+                        (drawing) =>
+                            Math.abs(drawing.width - 206 * scale) < 0.5 &&
+                            (drawing.anchors || []).length > 0 &&
+                            (drawing.shapes || []).every(
                                 (shape) => !shape.isPath()
                             )
                     );
@@ -305,7 +305,7 @@ test('arabic add glyphs can stay empty or copy composition outlines', async ({
                         components,
                         form: Boolean(form),
                         dotDrawn:
-                            Boolean(dot) && dotLayers.length > 1 && dotDrawn,
+                            Boolean(dot) && dotDrawings.length > 1 && dotDrawn,
                         init: (init?.[1].code || '').includes(
                             `sub ${name} by ${name}.init;`
                         ),
@@ -453,8 +453,8 @@ test('arabic add glyphs can stay empty or copy composition outlines', async ({
                     );
                     return {
                         name,
-                        shell: (glyph?.layers || []).every(
-                            (layer) => layer.components.length === 0
+                        shell: (glyph?.drawings || []).every(
+                            (drawing) => drawing.components.length === 0
                         ),
                         forms: Boolean(font?.findGlyph(`${name}.init`)),
                         dot: Boolean(
@@ -483,8 +483,8 @@ test('arabic add glyphs can stay empty or copy composition outlines', async ({
                         const form = font?.findGlyph(`${name}.${suffix}`);
                         return Boolean(
                             form &&
-                            (form.layers || []).some(
-                                (layer) => layer.components.length > 0
+                            (form.drawings || []).some(
+                                (drawing) => drawing.components.length > 0
                             )
                         );
                     });
@@ -566,9 +566,9 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
             if (!glyph) {
                 continue;
             }
-            for (const layer of glyph.layers || []) {
-                while ((layer.paths || []).length > 0) {
-                    layer.removeShape(layer.paths[0]);
+            for (const drawing of glyph.drawings || []) {
+                while ((drawing.paths || []).length > 0) {
+                    drawing.removeShape(drawing.paths[0]);
                 }
             }
         }
@@ -613,18 +613,19 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
                     const base = font?.findGlyph('a');
                     const mark = font?.findGlyph('dieresiscomb');
                     const composed = font?.findGlyph('adieresis');
-                    const pieces = (composed?.layers || []).flatMap((layer) =>
-                        (layer.components || []).map((component) => {
-                            const transform = component.transform;
-                            const translation = Array.isArray(transform)
-                                ? [transform[4], transform[5]]
-                                : transform?.translation || [0, 0];
-                            return {
-                                name: String(component.reference || ''),
-                                x: Number(translation[0] || 0),
-                                y: Number(translation[1] || 0)
-                            };
-                        })
+                    const pieces = (composed?.drawings || []).flatMap(
+                        (drawing) =>
+                            (drawing.components || []).map((component) => {
+                                const transform = component.transform;
+                                const translation = Array.isArray(transform)
+                                    ? [transform[4], transform[5]]
+                                    : transform?.translation || [0, 0];
+                                return {
+                                    name: String(component.reference || ''),
+                                    x: Number(translation[0] || 0),
+                                    y: Number(translation[1] || 0)
+                                };
+                            })
                     );
                     const basePiece = pieces.find(
                         (piece) => piece.name === 'a'
@@ -632,17 +633,17 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
                     const markPiece = pieces.find(
                         (piece) => piece.name === 'dieresiscomb'
                     );
-                    const basePaths = (base?.layers || []).some(
-                        (layer) => (layer.paths || []).length > 0
+                    const basePaths = (base?.drawings || []).some(
+                        (drawing) => (drawing.paths || []).length > 0
                     );
-                    const markPaths = (mark?.layers || []).some(
-                        (layer) => (layer.paths || []).length > 0
+                    const markPaths = (mark?.drawings || []).some(
+                        (drawing) => (drawing.paths || []).length > 0
                     );
-                    const baseAnchors = (base?.layers || []).some(
-                        (layer) => (layer.anchors || []).length > 0
+                    const baseAnchors = (base?.drawings || []).some(
+                        (drawing) => (drawing.anchors || []).length > 0
                     );
-                    const markAnchors = (mark?.layers || []).some(
-                        (layer) => (layer.anchors || []).length > 0
+                    const markAnchors = (mark?.drawings || []).some(
+                        (drawing) => (drawing.anchors || []).length > 0
                     );
                     const separated = Boolean(
                         basePiece &&
@@ -812,15 +813,15 @@ test('placeholder sample outlines punch counters with the nonzero rule', async (
         if (!glyph) {
             return { ok: false, reason: 'missing heh-ar', shapes: '' };
         }
-        for (const layer of glyph.layers || []) {
+        for (const drawing of glyph.drawings || []) {
             let guard = 0;
-            while ((layer.shapes || []).length > 0 && guard < 80) {
-                layer.removeShape(0);
+            while ((drawing.shapes || []).length > 0 && guard < 80) {
+                drawing.removeShape(0);
                 guard += 1;
             }
         }
-        const shapes = (glyph.layers || [])
-            .map((layer) => (layer.shapes || []).length)
+        const shapes = (glyph.drawings || [])
+            .map((drawing) => (drawing.shapes || []).length)
             .join(',');
         window.glyphCanvas?.textRunEditor?.setTextBuffer('/heh-ar ');
         window.glyphOverviewInstance?.selectAndRevealGlyphNames?.(['heh-ar']);

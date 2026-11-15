@@ -78,14 +78,14 @@ async function prepareAnchorSelection(
         ({ expectedIndex, expectedAnchor }) => {
             const glyphCanvas = window.glyphCanvas;
             const outlineEditor = glyphCanvas?.outlineEditor;
-            const layer = outlineEditor?.getCurrentLayerDataFromStack?.();
+            const drawing = outlineEditor?.getCurrentDrawingDataFromStack?.();
             return (
                 !!outlineEditor?.active &&
                 glyphCanvas?.getCurrentGlyphName?.() === 'a' &&
                 glyphCanvas?.textRunEditor?.selectedGlyphIndex ===
                     expectedIndex &&
-                Array.isArray(layer?.anchors) &&
-                layer.anchors.some(
+                Array.isArray(drawing?.anchors) &&
+                drawing.anchors.some(
                     (anchor: { name?: string }) =>
                         anchor?.name === expectedAnchor
                 )
@@ -103,9 +103,9 @@ async function selectAnchorByName(page: Page, expectedAnchor: string) {
             throw new Error('glyphCanvas missing');
         }
 
-        const layerData =
-            glyphCanvas.outlineEditor.getCurrentLayerDataFromStack();
-        const anchorIndex = (layerData?.anchors || []).findIndex(
+        const drawingData =
+            glyphCanvas.outlineEditor.getCurrentDrawingDataFromStack();
+        const anchorIndex = (drawingData?.anchors || []).findIndex(
             (anchor: { name?: string }) => anchor?.name === anchorName
         );
         if (anchorIndex < 0) {
@@ -129,8 +129,8 @@ async function selectAnchorByName(page: Page, expectedAnchor: string) {
 async function getSelectionState(page: Page) {
     return await page.evaluate(() => {
         const glyphCanvas = window.glyphCanvas;
-        const currentLayerData =
-            glyphCanvas.outlineEditor.getCurrentLayerDataFromStack();
+        const currentDrawingData =
+            glyphCanvas.outlineEditor.getCurrentDrawingDataFromStack();
         const selectedAnchors = glyphCanvas.outlineEditor.selectedAnchors;
 
         return {
@@ -141,13 +141,13 @@ async function getSelectionState(page: Page) {
                 glyphCanvas.getCurrentGlyphName(),
             glyphStack: glyphCanvas.outlineEditor.glyphStack,
             selectedGlyphIndex: glyphCanvas.textRunEditor.selectedGlyphIndex,
-            selectedLayerId: glyphCanvas.outlineEditor.selectedLayerId,
+            selectedDrawingId: glyphCanvas.outlineEditor.selectedDrawingId,
             selectedPoints: glyphCanvas.outlineEditor.selectedPoints,
             selectedAnchors,
             selectedAnchorNames: selectedAnchors
                 .map(
                     (index: number) =>
-                        currentLayerData?.anchors?.[index]?.name || null
+                        currentDrawingData?.anchors?.[index]?.name || null
                 )
                 .filter((name: string | null): name is string => !!name),
             selectedComponents: glyphCanvas.outlineEditor.selectedComponents
@@ -234,8 +234,9 @@ test.describe('Glyph selection restore in browser', () => {
             () => {
                 const glyphCanvas = window.glyphCanvas;
                 const outlineEditor = glyphCanvas?.outlineEditor;
-                const layer = outlineEditor?.getCurrentLayerDataFromStack?.();
-                const refs = (layer?.shapes || []).map(
+                const drawing =
+                    outlineEditor?.getCurrentDrawingDataFromStack?.();
+                const refs = (drawing?.shapes || []).map(
                     (shape: { reference?: string }) => shape?.reference || null
                 );
                 return (
@@ -249,9 +250,9 @@ test.describe('Glyph selection restore in browser', () => {
         );
 
         const componentIndex = await page.evaluate(() => {
-            const layerData =
-                window.glyphCanvas.outlineEditor.getCurrentLayerDataFromStack();
-            return (layerData?.shapes || []).findIndex(
+            const drawingData =
+                window.glyphCanvas.outlineEditor.getCurrentDrawingDataFromStack();
+            return (drawingData?.shapes || []).findIndex(
                 (shape: { reference?: string }) => shape?.reference === 'a'
             );
         });
@@ -266,10 +267,13 @@ test.describe('Glyph selection restore in browser', () => {
             () => {
                 const outlineEditor = window.glyphCanvas?.outlineEditor;
                 const stack = outlineEditor?.parseGlyphStack?.() || [];
-                const layer = outlineEditor?.getCurrentLayerDataFromStack?.();
+                const drawing =
+                    outlineEditor?.getCurrentDrawingDataFromStack?.();
                 const selectedNames = (
                     outlineEditor?.selectedAnchors || []
-                ).map((index: number) => layer?.anchors?.[index]?.name || null);
+                ).map(
+                    (index: number) => drawing?.anchors?.[index]?.name || null
+                );
                 return (
                     stack[0]?.glyphName === 'adieresis' &&
                     stack.at(-1)?.glyphName === 'a' &&

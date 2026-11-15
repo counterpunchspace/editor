@@ -23,10 +23,10 @@ import * as Y from 'yjs';
 import { fromYType } from './change-bridge-ydoc';
 import {
     decodePackedXY,
-    LAYER_GEOMETRY_TOPOLOGY_KEY,
-    LAYER_NODE_POSITIONS_KEY,
-    LAYER_SHAPE_DATA_KEY
-} from './layer-geometry-ydoc';
+    DRAWING_GEOMETRY_TOPOLOGY_KEY,
+    DRAWING_NODE_POSITIONS_KEY,
+    DRAWING_SHAPE_DATA_KEY
+} from './drawing-geometry-ydoc';
 import {
     FONT_CORE_DOCUMENT_ID,
     isGlyphRevisionPath
@@ -45,7 +45,7 @@ import {
 } from './linked-live-preview';
 import {
     RemoteCascadePreview,
-    type CascadeLayerTarget,
+    type CascadeDrawingTarget,
     type CascadeSource,
     type RemoteCascadePreviewHost
 } from './remote-cascade-preview';
@@ -59,7 +59,7 @@ import {
     type CompileEditStamp
 } from './edit-intent';
 import {
-    computeLayerRecompositionClosure,
+    computeDrawingRecompositionClosure,
     deriveEditKindsFromOperations
 } from './recomposition-closure';
 import { sidebarErrorDisplay } from './sidebar-error-display';
@@ -68,8 +68,8 @@ import { markQaGlyphsChanged } from './auto-qa/auto-qa-matcher';
 import {
     deriveGlyphNamesFromPaths,
     deriveGlyphName,
-    deriveLayerId,
-    deriveLayerIdFromPath,
+    deriveDrawingId,
+    deriveDrawingIdFromPath,
     getPathSegments,
     normalizeWorkerReplayTargets,
     type ChangeLogEntry,
@@ -116,7 +116,7 @@ let pendingCatchUpRefresh: {
 } | null = null;
 
 /**
- * Catch-ups arrive one shard at a time (a master added elsewhere touches
+ * Catch-ups arrive one shard at a time (a station added elsewhere touches
  * every glyph). They all compile full, so the ones still queued behind a
  * running refresh merge into one refresh instead of one compile each.
  */
@@ -200,13 +200,13 @@ function isWidthPath(path: (string | number)[]): boolean {
     );
 }
 
-function layerSnapshotTouchesCascade(snapshot: unknown): boolean {
+function drawingSnapshotTouchesCascade(snapshot: unknown): boolean {
     if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
         return false;
     }
 
-    const layerSnapshot = snapshot as Record<string, unknown>;
-    return 'width' in layerSnapshot || 'anchors' in layerSnapshot;
+    const drawingSnapshot = snapshot as Record<string, unknown>;
+    return 'width' in drawingSnapshot || 'anchors' in drawingSnapshot;
 }
 
 function collectGlyphSnapshotCascadeTargets(
@@ -217,40 +217,40 @@ function collectGlyphSnapshotCascadeTargets(
         return [];
     }
 
-    const beforeLayers = Array.isArray(
+    const beforeDrawings = Array.isArray(
         (operation.applyOldValue as Unsafe)?.layers
     )
         ? ((operation.applyOldValue as Unsafe)?.layers as Unsafe[]) || []
         : [];
-    const afterLayers = Array.isArray(
+    const afterDrawings = Array.isArray(
         (operation.applyNewValue as Unsafe)?.layers
     )
         ? ((operation.applyNewValue as Unsafe)?.layers as Unsafe[]) || []
         : [];
-    const beforeLayerMap = new Map(
-        beforeLayers
-            .filter((layer) => typeof layer?.id === 'string')
-            .map((layer) => [String(layer.id), layer] as const)
+    const beforeDrawingMap = new Map(
+        beforeDrawings
+            .filter((drawing) => typeof drawing?.id === 'string')
+            .map((drawing) => [String(drawing.id), drawing] as const)
     );
-    const afterLayerMap = new Map(
-        afterLayers
-            .filter((layer) => typeof layer?.id === 'string')
-            .map((layer) => [String(layer.id), layer] as const)
+    const afterDrawingMap = new Map(
+        afterDrawings
+            .filter((drawing) => typeof drawing?.id === 'string')
+            .map((drawing) => [String(drawing.id), drawing] as const)
     );
-    const layerIds = new Set<string>([
-        ...beforeLayerMap.keys(),
-        ...afterLayerMap.keys()
+    const drawingIds = new Set<string>([
+        ...beforeDrawingMap.keys(),
+        ...afterDrawingMap.keys()
     ]);
 
     const targets: WorkerReplayTarget[] = [];
-    for (const layerId of layerIds) {
-        const beforeLayer = beforeLayerMap.get(layerId);
-        const afterLayer = afterLayerMap.get(layerId);
+    for (const drawingId of drawingIds) {
+        const beforeDrawing = beforeDrawingMap.get(drawingId);
+        const afterDrawing = afterDrawingMap.get(drawingId);
         if (
-            layerSnapshotTouchesCascade(beforeLayer) ||
-            layerSnapshotTouchesCascade(afterLayer)
+            drawingSnapshotTouchesCascade(beforeDrawing) ||
+            drawingSnapshotTouchesCascade(afterDrawing)
         ) {
-            targets.push({ glyphName, layerId });
+            targets.push({ glyphName, layerId: drawingId });
         }
     }
 
@@ -266,20 +266,20 @@ function collectCascadeTriggerSourceTargets(
         const applyPath = operation.applyPath ?? operation.path;
         if (isWidthPath(applyPath) || isAnchorPath(applyPath)) {
             const glyphName = deriveGlyphName(applyPath);
-            const layerId = deriveLayerId(applyPath);
-            if (glyphName && layerId) {
-                targets.push({ glyphName, layerId });
+            const drawingId = deriveDrawingId(applyPath);
+            if (glyphName && drawingId) {
+                targets.push({ glyphName, layerId: drawingId });
             }
             continue;
         }
 
         if (
-            operation.applyMode === 'layer-snapshot' &&
+            operation.applyMode === 'drawing-snapshot' &&
             applyPath.length === 4 &&
             applyPath[0] === 'glyphs' &&
             applyPath[2] === 'layers' &&
-            (layerSnapshotTouchesCascade(operation.applyOldValue) ||
-                layerSnapshotTouchesCascade(operation.applyNewValue))
+            (drawingSnapshotTouchesCascade(operation.applyOldValue) ||
+                drawingSnapshotTouchesCascade(operation.applyNewValue))
         ) {
             targets.push({
                 glyphName: String(applyPath[1]),
@@ -300,24 +300,24 @@ function collectCascadeTriggerSourceTargets(
     return normalizeWorkerReplayTargets(targets);
 }
 
-function collectWorkerLayerTargetsFromChangeLogEntries(
+function collectWorkerDrawingTargetsFromChangeLogEntries(
     changeLogEntries: ChangeLogEntry[]
 ): WorkerReplayTarget[] {
     const targets: WorkerReplayTarget[] = [];
 
     for (const entry of changeLogEntries) {
         // workerReplayTargets describe redraw/subset invalidation closure.
-        // They may contain invalidate-only manual composites with no Yjs layer
-        // snapshot. Rust may only patch its logical layer cache for targets
+        // They may contain invalidate-only manual composites with no Yjs drawing
+        // snapshot. Rust may only patch its logical drawing cache for targets
         // represented by this actual change-log entry.
         const entryPath =
             typeof entry.path === 'string' && entry.path.length > 0
                 ? getPathSegments(entry.path)
                 : [];
         const glyphName = deriveGlyphName(entryPath);
-        const layerId = deriveLayerId(entryPath);
-        if (glyphName && layerId) {
-            targets.push({ glyphName, layerId });
+        const drawingId = deriveDrawingId(entryPath);
+        if (glyphName && drawingId) {
+            targets.push({ glyphName, layerId: drawingId });
         }
     }
 
@@ -336,7 +336,7 @@ export function shouldInvalidateLayoutClosureForCommittedEntries(
         }
 
         if (
-            entry.transactionLabel === 'Reinterpolate layer batch sync' &&
+            entry.transactionLabel === 'Reinterpolate drawing batch sync' &&
             hasReplayTargets
         ) {
             continue;
@@ -348,9 +348,9 @@ export function shouldInvalidateLayoutClosureForCommittedEntries(
             return true;
         }
 
-        // Visual layer-scoped paths must NOT invalidate layout closure.
+        // Visual drawing-scoped paths must NOT invalidate layout closure.
         // This covers outline, anchor, sidebearing, component transforms,
-        // guide, and layer-visual edits that only change data inside the
+        // guide, and drawing-visual edits that only change data inside the
         // existing closed glyph set.
         if (path.includes('.layers.') || path.includes(':layers.')) {
             continue;
@@ -378,7 +378,7 @@ export function shouldInvalidateLayoutClosureForCommittedEntries(
     return false;
 }
 
-function collectLayerTargetsForAffectedGlyphNames(
+function collectDrawingTargetsForAffectedGlyphNames(
     affectedGlyphNames: Iterable<string>,
     sourceTargets: WorkerReplayTarget[]
 ): WorkerReplayTarget[] {
@@ -390,10 +390,10 @@ function collectLayerTargetsForAffectedGlyphNames(
 
     const targets: WorkerReplayTarget[] = [];
     for (const sourceTarget of sourceTargets) {
-        const sourceLayer = fontModel
+        const sourceDrawing = fontModel
             .findGlyph(sourceTarget.glyphName)
-            ?.findLayerById(sourceTarget.layerId);
-        if (!sourceLayer) {
+            ?.findDrawingById(sourceTarget.layerId);
+        if (!sourceDrawing) {
             continue;
         }
 
@@ -403,11 +403,11 @@ function collectLayerTargetsForAffectedGlyphNames(
             }
 
             const glyph = fontModel.findGlyph(glyphName);
-            const matchedLayer =
-                glyph?.findLayerById(sourceTarget.layerId) ??
-                sourceLayer.getMatchingLayerOnGlyph?.(glyphName);
-            if (matchedLayer?.id) {
-                targets.push({ glyphName, layerId: matchedLayer.id });
+            const matchedDrawing =
+                glyph?.findDrawingById(sourceTarget.layerId) ??
+                sourceDrawing.getMatchingDrawingOnGlyph?.(glyphName);
+            if (matchedDrawing?.id) {
+                targets.push({ glyphName, layerId: matchedDrawing.id });
             }
         }
     }
@@ -415,7 +415,7 @@ function collectLayerTargetsForAffectedGlyphNames(
     return normalizeWorkerReplayTargets(targets);
 }
 
-function resolveLayerArrayIndex(
+function resolveDrawingArrayIndex(
     items: unknown[],
     segment: string | number
 ): number | null {
@@ -442,22 +442,22 @@ function resolveLayerArrayIndex(
     return found >= 0 ? found : null;
 }
 
-function applyDirectLayerOperationToSnapshot(
+function applyDirectDrawingOperationToSnapshot(
     snapshot: Record<string, unknown>,
     operation: TransactionBufferedOperation,
     glyphName: string,
-    layerId: string
+    drawingId: string
 ): Record<string, unknown> {
     const applyPath = operation.applyPath ?? operation.path;
     if (
         deriveGlyphName(applyPath) !== glyphName ||
-        deriveLayerId(applyPath) !== layerId
+        deriveDrawingId(applyPath) !== drawingId
     ) {
         return snapshot;
     }
 
     if (
-        operation.applyMode === 'layer-snapshot' &&
+        operation.applyMode === 'drawing-snapshot' &&
         operation.applyNewValue &&
         typeof operation.applyNewValue === 'object' &&
         !Array.isArray(operation.applyNewValue)
@@ -481,16 +481,16 @@ function applyDirectLayerOperationToSnapshot(
         typeof operation.applyNewValue === 'object' &&
         !Array.isArray(operation.applyNewValue)
     ) {
-        const glyphLayers = Array.isArray(
+        const glyphDrawings = Array.isArray(
             (operation.applyNewValue as Unsafe).layers
         )
             ? ((operation.applyNewValue as Unsafe).layers as Unsafe[])
             : [];
-        const nextLayerSnapshot = glyphLayers.find(
-            (layer) => layer?.id === layerId
+        const nextDrawingSnapshot = glyphDrawings.find(
+            (drawing) => drawing?.id === drawingId
         );
-        return nextLayerSnapshot && typeof nextLayerSnapshot === 'object'
-            ? cloneBridgeValue(nextLayerSnapshot)
+        return nextDrawingSnapshot && typeof nextDrawingSnapshot === 'object'
+            ? cloneBridgeValue(nextDrawingSnapshot)
             : snapshot;
     }
 
@@ -521,7 +521,7 @@ function applyDirectLayerOperationToSnapshot(
             const nextSegment = path[index + 1];
 
             if (Array.isArray(cursor)) {
-                const arrayIndex = resolveLayerArrayIndex(cursor, segment);
+                const arrayIndex = resolveDrawingArrayIndex(cursor, segment);
                 if (arrayIndex === null) {
                     return;
                 }
@@ -560,7 +560,10 @@ function applyDirectLayerOperationToSnapshot(
 
         const terminalSegment = path[path.length - 1];
         if (Array.isArray(cursor)) {
-            const arrayIndex = resolveLayerArrayIndex(cursor, terminalSegment);
+            const arrayIndex = resolveDrawingArrayIndex(
+                cursor,
+                terminalSegment
+            );
             if (arrayIndex === null) {
                 return;
             }
@@ -586,22 +589,22 @@ function applyDirectLayerOperationToSnapshot(
             ? operation.newValue
             : operation.applyNewValue;
 
-    // The snapshot is resting layer JSON, but point and shape writes address
+    // The snapshot is resting drawing JSON, but point and shape writes address
     // the stored geometry by id. Copying those storage paths into it would
-    // make the cascade delta delete them from the layer, so apply them to the
+    // make the cascade delta delete them from the drawing, so apply them to the
     // node or shape they name instead.
     const storageKey = String(propertyPath[0]);
     if (
-        storageKey === LAYER_NODE_POSITIONS_KEY ||
-        storageKey === LAYER_SHAPE_DATA_KEY ||
-        storageKey === LAYER_GEOMETRY_TOPOLOGY_KEY
+        storageKey === DRAWING_NODE_POSITIONS_KEY ||
+        storageKey === DRAWING_SHAPE_DATA_KEY ||
+        storageKey === DRAWING_GEOMETRY_TOPOLOGY_KEY
     ) {
         const shapes = Array.isArray(nextSnapshot.shapes)
             ? (nextSnapshot.shapes as Unsafe[])
             : [];
         const elementId = String(propertyPath[1] ?? '');
         if (
-            storageKey === LAYER_NODE_POSITIONS_KEY &&
+            storageKey === DRAWING_NODE_POSITIONS_KEY &&
             propertyPath.length === 2 &&
             operation.op !== 'remove'
         ) {
@@ -618,7 +621,7 @@ function applyDirectLayerOperationToSnapshot(
                 }
             }
         } else if (
-            storageKey === LAYER_SHAPE_DATA_KEY &&
+            storageKey === DRAWING_SHAPE_DATA_KEY &&
             propertyPath.length >= 3
         ) {
             const shape = shapes.find(
@@ -646,34 +649,34 @@ function applyDirectLayerOperationToSnapshot(
     return nextSnapshot;
 }
 
-function buildPostDirectLayerSnapshot(
-    yLayerJson: Record<string, unknown>,
+function buildPostDirectDrawingSnapshot(
+    yDrawingJson: Record<string, unknown>,
     operations: TransactionBufferedOperation[],
     glyphName: string,
-    layerId: string
+    drawingId: string
 ): Record<string, unknown> {
     return operations.reduce(
         (snapshot, operation) =>
-            applyDirectLayerOperationToSnapshot(
+            applyDirectDrawingOperationToSnapshot(
                 snapshot,
                 operation,
                 glyphName,
-                layerId
+                drawingId
             ),
-        cloneBridgeValue(yLayerJson)
+        cloneBridgeValue(yDrawingJson)
     );
 }
 
-function buildCascadeLayerOperations(
+function buildCascadeDrawingOperations(
     bridge: PatchSyncEngine,
-    layerTargets: WorkerReplayTarget[],
+    drawingTargets: WorkerReplayTarget[],
     directOperations: TransactionBufferedOperation[]
 ): TransactionBufferedOperation[] {
     const fontJson = bridge.getFontJsonSnapshot();
     const glyphs = Array.isArray((fontJson as Unsafe)?.glyphs)
         ? ((fontJson as Unsafe).glyphs as Unsafe[])
         : [];
-    if (!layerTargets.length) {
+    if (!drawingTargets.length) {
         return [];
     }
 
@@ -687,52 +690,52 @@ function buildCascadeLayerOperations(
         originOperation?.originatingGlyphName ??
         sourceTarget?.glyphName ??
         null;
-    const originatingLayerId =
+    const originatingDrawingId =
         originOperation?.originatingLayerId ?? sourceTarget?.layerId ?? null;
 
     const operations: TransactionBufferedOperation[] = [];
-    for (const { glyphName, layerId } of layerTargets) {
+    for (const { glyphName, layerId: drawingId } of drawingTargets) {
         const glyphJson = glyphs.find((glyph) => glyph?.name === glyphName);
-        const layerJson = Array.isArray(glyphJson?.layers)
+        const drawingJson = Array.isArray(glyphJson?.layers)
             ? (glyphJson.layers as Unsafe[]).find(
-                  (layer) => layer?.id === layerId
+                  (drawing) => drawing?.id === drawingId
               )
             : null;
-        if (!layerJson) {
+        if (!drawingJson) {
             continue;
         }
 
         const glyphMap = bridge.getYValue(['glyphs', glyphName]) as
             { get?: (key: string) => unknown } | undefined;
-        const yLayersMap = glyphMap?.get?.('layers') as
+        const yDrawingsMap = glyphMap?.get?.('layers') as
             { get?: (key: string) => unknown } | undefined;
-        const yLayerMap = yLayersMap?.get?.(layerId);
-        if (!yLayerMap) {
+        const yDrawingMap = yDrawingsMap?.get?.(drawingId);
+        if (!yDrawingMap) {
             continue;
         }
 
-        const yLayerJson = fromYType(yLayerMap as never) as Record<
+        const yDrawingJson = fromYType(yDrawingMap as never) as Record<
             string,
             unknown
         >;
-        const baseLayerSnapshot = buildPostDirectLayerSnapshot(
-            yLayerJson,
+        const baseDrawingSnapshot = buildPostDirectDrawingSnapshot(
+            yDrawingJson,
             directOperations,
             glyphName,
-            layerId
+            drawingId
         );
-        const delta: Record<string, unknown> = { id: layerId };
+        const delta: Record<string, unknown> = { id: drawingId };
         let hasChanges = false;
         const isRuntimeGeometryFlag = (key: string) =>
             key === '_geometryCoherent' || key === '_geometryPreviewStale';
 
-        for (const [key, value] of Object.entries(layerJson)) {
+        for (const [key, value] of Object.entries(drawingJson)) {
             if (isRuntimeGeometryFlag(key)) {
                 continue;
             }
             if (
                 JSON.stringify(value) ===
-                JSON.stringify(baseLayerSnapshot?.[key])
+                JSON.stringify(baseDrawingSnapshot?.[key])
             ) {
                 continue;
             }
@@ -741,11 +744,11 @@ function buildCascadeLayerOperations(
             hasChanges = true;
         }
 
-        for (const key of Object.keys(baseLayerSnapshot || {})) {
+        for (const key of Object.keys(baseDrawingSnapshot || {})) {
             if (
                 key === 'id' ||
                 isRuntimeGeometryFlag(key) ||
-                key in (layerJson as Record<string, unknown>)
+                key in (drawingJson as Record<string, unknown>)
             ) {
                 continue;
             }
@@ -760,15 +763,15 @@ function buildCascadeLayerOperations(
 
         operations.push({
             op: 'set',
-            path: ['glyphs', glyphName, 'layers', layerId],
-            oldValue: cloneBridgeValue(baseLayerSnapshot),
+            path: ['glyphs', glyphName, 'layers', drawingId],
+            oldValue: cloneBridgeValue(baseDrawingSnapshot),
             newValue: cloneBridgeValue(delta),
-            applyPath: ['glyphs', glyphName, 'layers', layerId],
+            applyPath: ['glyphs', glyphName, 'layers', drawingId],
             applyNewValue: cloneBridgeValue(delta),
-            applyMode: 'layer-snapshot',
-            workerReplayTargets: [{ glyphName, layerId }],
+            applyMode: 'drawing-snapshot',
+            workerReplayTargets: [{ glyphName, layerId: drawingId }],
             originatingGlyphName,
-            originatingLayerId
+            originatingLayerId: originatingDrawingId
         });
     }
 
@@ -777,22 +780,22 @@ function buildCascadeLayerOperations(
 
 /**
  * Check whether a cascade-triggering operation already carries complete
- * GUI recomposed layer snapshots, so the bridge finalizer can skip
+ * GUI recomposed drawing snapshots, so the bridge finalizer can skip
  * duplicate recomposition.
  *
  * A transaction is considered complete when all cascade-triggering
- * operations are layer-scoped snapshot operations that already carry
+ * operations are drawing-scoped snapshot operations that already carry
  * explicit `workerReplayTargets` including the source and downstream
- * layers.
+ * drawings.
  */
 /**
  * GUI-complete packets must carry replay targets that claim the operation's own
  * glyph.
  *
- * The layer identity is deliberately NOT required to match. Producers run the
- * shared recomposition closure with per-glyph layer matching, so a dependent's
- * recomposed layer legitimately carries a sibling `layerId` that differs from
- * the source layer the replay metadata was keyed on. Requiring an exact
+ * The drawing identity is deliberately NOT required to match. Producers run the
+ * shared recomposition closure with per-glyph drawing matching, so a dependent's
+ * recomposed drawing legitimately carries a sibling `layerId` that differs from
+ * the source drawing the replay metadata was keyed on. Requiring an exact
  * `layerId` match made those packets look incomplete and forced the finalizer
  * to run a second, redundant recomposition pass over an already-final model.
  * Claiming the glyph is the meaningful completeness signal; a producer that
@@ -811,8 +814,8 @@ function operationCarriesCompleteGuiReplayTargets(
     }
 
     const glyphName = deriveGlyphName(applyPath);
-    const layerId = deriveLayerId(applyPath);
-    if (!glyphName || !layerId) {
+    const drawingId = deriveDrawingId(applyPath);
+    if (!glyphName || !drawingId) {
         return false;
     }
 
@@ -821,9 +824,9 @@ function operationCarriesCompleteGuiReplayTargets(
 
 /**
  * Cascade producers that stamp multi-target workerReplayTargets must also
- * write at least one claimed downstream layer in the same transaction.
+ * write at least one claimed downstream drawing in the same transaction.
  * Source-only replay stamps are incomplete when dependents were claimed in
- * replay metadata. The downstream write may be granular or a layer snapshot.
+ * replay metadata. The downstream write may be granular or a drawing snapshot.
  */
 function operationsIncludeSnapshotsForClaimedCascade(
     operations: TransactionBufferedOperation[]
@@ -837,24 +840,24 @@ function operationsIncludeSnapshotsForClaimedCascade(
 
     const sourceTargetKeys = new Set(
         collectCascadeTriggerSourceTargets(operations).map(
-            ({ glyphName, layerId }) => `${glyphName}@@${layerId}`
+            ({ glyphName, layerId: drawingId }) => `${glyphName}@@${drawingId}`
         )
     );
     const replayTargetKeys = new Set(
         replayTargets.map(
-            ({ glyphName, layerId }) => `${glyphName}@@${layerId}`
+            ({ glyphName, layerId: drawingId }) => `${glyphName}@@${drawingId}`
         )
     );
 
     return operations.some((op) => {
         const applyPath = op.applyPath ?? op.path ?? [];
         const glyphName = deriveGlyphName(applyPath);
-        const layerId = deriveLayerId(applyPath);
-        if (!glyphName || !layerId) {
+        const drawingId = deriveDrawingId(applyPath);
+        if (!glyphName || !drawingId) {
             return false;
         }
 
-        const targetKey = `${glyphName}@@${layerId}`;
+        const targetKey = `${glyphName}@@${drawingId}`;
         return (
             replayTargetKeys.has(targetKey) && !sourceTargetKeys.has(targetKey)
         );
@@ -870,21 +873,21 @@ export function buildCascadingRecompositionOperations(
         return [];
     }
 
-    // Layer-snapshot writes are the authoritative producer output. A bare
-    // width/anchor property `set` for a (glyph, layer) that also has a
-    // layer-snapshot in the same transaction is a by-product of the producer's
+    // Drawing-snapshot writes are the authoritative producer output. A bare
+    // width/anchor property `set` for a (glyph, drawing) that also has a
+    // drawing snapshot in the same transaction is a by-product of the producer's
     // own model mutation, not an independent cascade trigger — it must not
     // defeat the Rule 18 skip and cause a second recomposition pass.
-    const snapshotCoveredLayers = new Set<string>();
+    const snapshotCoveredDrawings = new Set<string>();
     for (const op of operations) {
         const applyPath = op.applyPath ?? op.path ?? [];
         if (
-            op.applyMode === 'layer-snapshot' &&
+            op.applyMode === 'drawing-snapshot' &&
             applyPath.length === 4 &&
             applyPath[0] === 'glyphs' &&
             applyPath[2] === 'layers'
         ) {
-            snapshotCoveredLayers.add(
+            snapshotCoveredDrawings.add(
                 `${String(applyPath[1])}@@${String(applyPath[3])}`
             );
         }
@@ -892,25 +895,25 @@ export function buildCascadingRecompositionOperations(
 
     // Check if every cascade-triggering operation already carries complete
     // GUI replay targets. If so, the producer already recomposed and
-    // included the downstream layer snapshots — skip duplicate recomposition.
+    // included the downstream drawing snapshots — skip duplicate recomposition.
     const allOperationsComplete = operations.every((op) => {
         const applyPath = op.applyPath ?? op.path;
-        const isLayerSnapshot =
-            op.applyMode === 'layer-snapshot' &&
+        const isDrawingSnapshot =
+            op.applyMode === 'drawing-snapshot' &&
             applyPath.length === 4 &&
             applyPath[0] === 'glyphs' &&
             applyPath[2] === 'layers';
 
         if (
-            !isLayerSnapshot &&
+            !isDrawingSnapshot &&
             (isWidthPath(applyPath) || isAnchorPath(applyPath))
         ) {
             const glyphName = deriveGlyphName(applyPath);
-            const layerId = deriveLayerId(applyPath);
+            const drawingId = deriveDrawingId(applyPath);
             if (
                 glyphName &&
-                layerId &&
-                snapshotCoveredLayers.has(`${glyphName}@@${layerId}`)
+                drawingId &&
+                snapshotCoveredDrawings.has(`${glyphName}@@${drawingId}`)
             ) {
                 return true;
             }
@@ -921,9 +924,9 @@ export function buildCascadingRecompositionOperations(
             !isWidthPath(applyPath) &&
             !isAnchorPath(applyPath) &&
             !(
-                isLayerSnapshot &&
-                (layerSnapshotTouchesCascade(op.applyOldValue) ||
-                    layerSnapshotTouchesCascade(op.applyNewValue))
+                isDrawingSnapshot &&
+                (drawingSnapshotTouchesCascade(op.applyOldValue) ||
+                    drawingSnapshotTouchesCascade(op.applyNewValue))
             ) &&
             !(
                 op.applyMode === 'glyph-snapshot' &&
@@ -948,13 +951,13 @@ export function buildCascadingRecompositionOperations(
 
     // Use the shared recomposition closure. Infer edit kinds from the actual
     // buffered ops — never a universal outline+anchor+sidebearing+component
-    // hammer — and only write cascade layer snapshots for recomposeTargets.
+    // hammer — and only write cascade drawing snapshots for recomposeTargets.
     const fontModel = window.fontManager?.currentFont?.fontModel ?? null;
     if (!fontModel) {
         return [];
     }
 
-    const activeLayerId = sourceTargets[0]?.layerId ?? null;
+    const activeDrawingId = sourceTargets[0]?.layerId ?? null;
     const sourceGlyphName = sourceTargets[0]?.glyphName ?? null;
     const editKinds = deriveEditKindsFromOperations(operations);
     if (editKinds.size === 0) {
@@ -975,12 +978,12 @@ export function buildCascadingRecompositionOperations(
         return [];
     }
 
-    const closure = computeLayerRecompositionClosure({
+    const closure = computeDrawingRecompositionClosure({
         sourceTargets,
         editKinds,
         scope: 'all',
         fontModel,
-        activeLayerId,
+        activeDrawingId,
         sourceGlyphName,
         suppressor: bridge
     });
@@ -989,8 +992,8 @@ export function buildCascadingRecompositionOperations(
         return [];
     }
 
-    // Source layers stay in the write set so buildCascadeLayerOperations can
-    // capture extra source-layer mutations (e.g. metrics clearing anchors).
+    // Source drawings stay in the write set so buildCascadeLayerOperations can
+    // capture extra source-drawing mutations (e.g. metrics clearing anchors).
     // Invalidate-only component dependents are intentionally excluded.
     const allCascadeTargets = normalizeWorkerReplayTargets([
         ...sourceTargets,
@@ -1000,7 +1003,7 @@ export function buildCascadingRecompositionOperations(
         return [];
     }
 
-    return buildCascadeLayerOperations(bridge, allCascadeTargets, operations);
+    return buildCascadeDrawingOperations(bridge, allCascadeTargets, operations);
 }
 
 /**
@@ -1018,7 +1021,7 @@ type NonGlyphChangeHint =
     | 'masters'
     | `top-level:${string}`;
 
-function pathTouchesMasterKerning(path: string): boolean {
+function pathTouchesStationKerning(path: string): boolean {
     return /(^|\.)masters\.[^.]+\.kerning(_rtl)?(\.|$)/.test(path);
 }
 
@@ -1045,7 +1048,7 @@ function pathTouchesKerningGroups(path: string): boolean {
     );
 }
 
-function pathTouchesGlyphOrLayer(path: string): boolean {
+function pathTouchesGlyphOrDrawing(path: string): boolean {
     return (
         path === 'glyphs' ||
         path.startsWith('glyphs.') ||
@@ -1056,7 +1059,7 @@ function pathTouchesGlyphOrLayer(path: string): boolean {
 
 function packetMixesKerningAndGlyphEdits(entries: ChangeLogEntry[]): boolean {
     let hasKerningChange = false;
-    let hasGlyphOrLayerChange = false;
+    let hasGlyphOrDrawingChange = false;
     for (const entry of entries) {
         const path = entry.path ?? '';
         if (
@@ -1066,10 +1069,10 @@ function packetMixesKerningAndGlyphEdits(entries: ChangeLogEntry[]): boolean {
         ) {
             hasKerningChange = true;
         }
-        if (pathTouchesGlyphOrLayer(path)) {
-            hasGlyphOrLayerChange = true;
+        if (pathTouchesGlyphOrDrawing(path)) {
+            hasGlyphOrDrawingChange = true;
         }
-        if (hasKerningChange && hasGlyphOrLayerChange) {
+        if (hasKerningChange && hasGlyphOrDrawingChange) {
             return true;
         }
     }
@@ -1081,7 +1084,7 @@ function kerningHintFromPath(path: string): CommittedCompileEditType {
         return 'kerning-groups';
     }
     if (
-        pathTouchesMasterKerning(path) ||
+        pathTouchesStationKerning(path) ||
         pathTouchesRtlKerningFormatSpecific(path)
     ) {
         return 'kerning-value';
@@ -1219,7 +1222,7 @@ function inferLocalCompileContextFromHistoryItem(
 
 /**
  * Collect all workerReplayTargets from remote change log entries,
- * so the linked window can do incremental layer updates to its
+ * so the linked window can do incremental drawing updates to its
  * WASM worker cache instead of a full JSON resync.
  */
 function collectReplayTargetsFromEntries(
@@ -1242,7 +1245,7 @@ function collectReplayTargetsBeyondDirectEntryPaths(
         return [];
     }
 
-    const directLayerKeys = new Set<string>();
+    const directDrawingKeys = new Set<string>();
     const directGlyphNames = new Set<string>();
     for (const entry of entries) {
         const entryPath =
@@ -1253,9 +1256,9 @@ function collectReplayTargetsBeyondDirectEntryPaths(
         if (!glyphName) {
             continue;
         }
-        const layerId = deriveLayerId(entryPath);
-        if (layerId) {
-            directLayerKeys.add(`${glyphName}@@${layerId}`);
+        const drawingId = deriveDrawingId(entryPath);
+        if (drawingId) {
+            directDrawingKeys.add(`${glyphName}@@${drawingId}`);
         } else {
             directGlyphNames.add(glyphName);
         }
@@ -1264,7 +1267,7 @@ function collectReplayTargetsBeyondDirectEntryPaths(
     return replayTargets.filter(
         (target) =>
             !directGlyphNames.has(target.glyphName) &&
-            !directLayerKeys.has(`${target.glyphName}@@${target.layerId}`)
+            !directDrawingKeys.has(`${target.glyphName}@@${target.layerId}`)
     );
 }
 
@@ -1274,35 +1277,36 @@ function hasReplayTargetsBeyondDirectEntryPaths(
     return collectReplayTargetsBeyondDirectEntryPaths(entries).length > 0;
 }
 
-function normalizeLayerDataForWorkerDriftCheck(layerData: unknown): string {
-    if (!layerData) {
+function normalizeDrawingDataForWorkerDriftCheck(drawingData: unknown): string {
+    if (!drawingData) {
         return 'null';
     }
 
-    const normalizeLayerForRust = (window.fontManager as any)
-        ?.normalizeLayerForRust as ((layer: unknown) => unknown) | undefined;
-    const normalizedLayerData =
-        typeof normalizeLayerForRust === 'function'
-            ? normalizeLayerForRust.call(window.fontManager, layerData)
-            : layerData;
+    const normalizeDrawingForRust = (window.fontManager as any)
+        ?.normalizeDrawingForRust as
+        ((drawing: unknown) => unknown) | undefined;
+    const normalizedDrawingData =
+        typeof normalizeDrawingForRust === 'function'
+            ? normalizeDrawingForRust.call(window.fontManager, drawingData)
+            : drawingData;
 
     return stableStringifyForWorkerDriftCheck(
-        pruneSemanticallyEmptyOptionalLayerFields(normalizedLayerData)
+        pruneSemanticallyEmptyOptionalDrawingFields(normalizedDrawingData)
     );
 }
 
-function pruneSemanticallyEmptyOptionalLayerFields(value: unknown): unknown {
-    return pruneSemanticallyEmptyOptionalLayerFieldsInternal(value, false);
+function pruneSemanticallyEmptyOptionalDrawingFields(value: unknown): unknown {
+    return pruneSemanticallyEmptyOptionalDrawingFieldsInternal(value, false);
 }
 
-function pruneSemanticallyEmptyOptionalLayerFieldsInternal(
+function pruneSemanticallyEmptyOptionalDrawingFieldsInternal(
     value: unknown,
     insideFormatSpecific: boolean
 ): unknown {
     if (Array.isArray(value)) {
         return value
             .map((entry) =>
-                pruneSemanticallyEmptyOptionalLayerFieldsInternal(
+                pruneSemanticallyEmptyOptionalDrawingFieldsInternal(
                     entry,
                     insideFormatSpecific
                 )
@@ -1319,7 +1323,7 @@ function pruneSemanticallyEmptyOptionalLayerFieldsInternal(
     for (const [key, entryValue] of Object.entries(record)) {
         const pruneWithinFormatSpecific =
             insideFormatSpecific || key === 'format_specific';
-        const prunedValue = pruneSemanticallyEmptyOptionalLayerFieldsInternal(
+        const prunedValue = pruneSemanticallyEmptyOptionalDrawingFieldsInternal(
             entryValue,
             pruneWithinFormatSpecific
         );
@@ -1419,21 +1423,22 @@ async function showCommittedWorkerDriftIfNeeded(
 
     const expectedSnapshots = replayTargets
         .map((target) => {
-            const layer = fontModel
+            const drawing = fontModel
                 .findGlyph(target.glyphName)
-                ?.findLayerById(target.layerId);
-            const layerData =
-                typeof layer?.toJSON === 'function'
-                    ? layer.toJSON()
-                    : (layer as unknown);
-            if (!layerData) {
+                ?.findDrawingById(target.layerId);
+            const drawingData =
+                typeof drawing?.toJSON === 'function'
+                    ? drawing.toJSON()
+                    : (drawing as unknown);
+            if (!drawingData) {
                 return null;
             }
 
             return {
                 glyphName: target.glyphName,
                 layerId: target.layerId,
-                fingerprint: normalizeLayerDataForWorkerDriftCheck(layerData)
+                fingerprint:
+                    normalizeDrawingDataForWorkerDriftCheck(drawingData)
             };
         })
         .filter(
@@ -1451,7 +1456,7 @@ async function showCommittedWorkerDriftIfNeeded(
     }
 
     const response = await fontCompilation.sendMessage({
-        type: 'dumpLayerState',
+        type: 'dumpDrawingState',
         layerTargets: replayTargets
     });
 
@@ -1481,23 +1486,22 @@ async function showCommittedWorkerDriftIfNeeded(
     for (const target of dumpTargets) {
         const glyphName =
             typeof target?.glyphName === 'string' ? target.glyphName : null;
-        const layerId =
+        const drawingId =
             typeof target?.layerId === 'string' ? target.layerId : null;
-        if (!glyphName || !layerId) {
+        if (!glyphName || !drawingId) {
             continue;
         }
 
-        const targetKey = `${glyphName}@@${layerId}`;
+        const targetKey = `${glyphName}@@${drawingId}`;
         seenTargets.add(targetKey);
 
         const expectedFingerprint = expectedByTarget.get(targetKey) ?? 'null';
-        const rustCanonicalFingerprint = normalizeLayerDataForWorkerDriftCheck(
-            target?.canonicalLayer
-        );
-        const rustSubsetFingerprint = normalizeLayerDataForWorkerDriftCheck(
+        const rustCanonicalFingerprint =
+            normalizeDrawingDataForWorkerDriftCheck(target?.canonicalLayer);
+        const rustSubsetFingerprint = normalizeDrawingDataForWorkerDriftCheck(
             target?.subsetLayer
         );
-        const rustYDocFingerprint = normalizeLayerDataForWorkerDriftCheck(
+        const rustYDocFingerprint = normalizeDrawingDataForWorkerDriftCheck(
             target?.ydocLayer
         );
         const subsetMatchesIfPresent =
@@ -1510,7 +1514,7 @@ async function showCommittedWorkerDriftIfNeeded(
             expectedFingerprint !== rustYDocFingerprint
         ) {
             mismatches.push(
-                `${glyphName}/${layerId}: expected=${expectedFingerprint} rustCanonical=${rustCanonicalFingerprint} rustSubset=${rustSubsetFingerprint} rustYDoc=${rustYDocFingerprint}`
+                `${glyphName}/${drawingId}: expected=${expectedFingerprint} rustCanonical=${rustCanonicalFingerprint} rustSubset=${rustSubsetFingerprint} rustYDoc=${rustYDocFingerprint}`
             );
         }
     }
@@ -1530,7 +1534,7 @@ async function showCommittedWorkerDriftIfNeeded(
 
     const error = new Error(
         'Committed glyph data did not reach the compiled worker state after the authoritative commit.\n' +
-            'Layer edits are no longer recompiling the editing font on fresh data.\n' +
+            'Drawing edits are no longer recompiling the editing font on fresh data.\n' +
             'Reload the font or app before continuing.\n\n' +
             mismatches.join('\n')
     );
@@ -1542,22 +1546,22 @@ async function showCommittedWorkerDriftIfNeeded(
     return true;
 }
 
-function getLayerWidth(
+function getDrawingWidth(
     glyphName?: string | null,
-    layerId?: string | null
+    drawingId?: string | null
 ): number | null {
-    if (!glyphName || !layerId) {
+    if (!glyphName || !drawingId) {
         return null;
     }
 
-    const layer = window.fontManager?.currentFont?.fontModel
+    const drawing = window.fontManager?.currentFont?.fontModel
         ?.findGlyph(glyphName)
-        ?.findLayerById(layerId);
-    if (!layer) {
+        ?.findDrawingById(drawingId);
+    if (!drawing) {
         return null;
     }
 
-    return Number.isFinite(layer.width) ? layer.width : null;
+    return Number.isFinite(drawing.width) ? drawing.width : null;
 }
 
 function getEntryWidth(
@@ -1580,10 +1584,10 @@ function getEntryWidth(
 
 function collectLiveAdvanceDeltas(
     entries: ChangeLogEntry[],
-    visibleLayerId?: string | null,
+    visibleDrawingId?: string | null,
     visibleGlyphName?: string | null
 ): Record<string, number> {
-    if (!visibleLayerId || !visibleGlyphName) {
+    if (!visibleDrawingId || !visibleGlyphName) {
         return {};
     }
 
@@ -1592,9 +1596,9 @@ function collectLiveAdvanceDeltas(
         fontModel && typeof fontModel.findGlyph === 'function'
             ? fontModel.findGlyph.bind(fontModel)
             : null;
-    const visibleLayer = findGlyph
+    const visibleDrawing = findGlyph
         ?.call(null, visibleGlyphName)
-        ?.findLayerById(visibleLayerId);
+        ?.findDrawingById(visibleDrawingId);
     const deltas: Record<string, number> = {};
     for (const outerEntry of entries) {
         const semanticEntries = outerEntry.semanticChangeLogEntries?.length
@@ -1612,16 +1616,17 @@ function collectLiveAdvanceDeltas(
                 continue;
             }
 
-            const targetLayerId =
+            const targetDrawingId =
                 glyphName === visibleGlyphName
-                    ? visibleLayerId
-                    : visibleLayer?.getMatchingLayerOnGlyph?.(glyphName)?.id ||
+                    ? visibleDrawingId
+                    : visibleDrawing?.getMatchingDrawingOnGlyph?.(glyphName)
+                          ?.id ||
                       findGlyph
                           ?.call(null, glyphName)
-                          ?.findLayerById(visibleLayerId)?.id;
+                          ?.findDrawingById(visibleDrawingId)?.id;
             if (
-                !targetLayerId ||
-                deriveLayerId(pathSegments) !== targetLayerId
+                !targetDrawingId ||
+                deriveDrawingId(pathSegments) !== targetDrawingId
             ) {
                 continue;
             }
@@ -1735,7 +1740,7 @@ function getActiveEditedGlyphName(): string | null {
 
 /**
  * Wait for the already-forwarded authoritative worker Yjs update to settle.
- * Does not encode or submit whole-layer repair traffic — the bridge packet is
+ * Does not encode or submit whole-drawing repair traffic — the bridge packet is
  * the only steady-state worker mutation (COMPILATION_EDIT_POLICY §19).
  */
 async function refreshRustWorkerCache(
@@ -1743,7 +1748,7 @@ async function refreshRustWorkerCache(
     _editedGlyphName?: string,
     _options?: {
         workerReplayTargets?: WorkerReplayTarget[];
-        allowSelectedLayerFallback?: boolean;
+        allowSelectedDrawingFallback?: boolean;
     }
 ): Promise<void> {
     if (!window.fontManager?.currentFont || !fontCompilation?.isInitialized) {
@@ -1764,7 +1769,7 @@ export async function syncRustCacheAndRefreshCanvas(
     options?: {
         skipDeferredCanvasRepaint?: boolean;
         workerReplayTargets?: WorkerReplayTarget[];
-        allowSelectedLayerFallback?: boolean;
+        allowSelectedDrawingFallback?: boolean;
     }
 ): Promise<void> {
     const gc = window.glyphCanvas;
@@ -1788,7 +1793,7 @@ async function refreshCanvasFromCommittedModelSync(
     options?: {
         skipDeferredCanvasRepaint?: boolean;
         skipLayerDataFetch?: boolean;
-        preferExactLayerDataRefresh?: boolean;
+        preferExactDrawingDataRefresh?: boolean;
         workerReplayTargets?: WorkerReplayTarget[];
         liveAdvanceDeltas?: Record<string, number>;
     }
@@ -1798,10 +1803,10 @@ async function refreshCanvasFromCommittedModelSync(
     const parsedStack = oe?.parseGlyphStack?.() || [];
     const refreshRootGlyphName =
         rootGlyphName ?? parsedStack[0]?.glyphName ?? undefined;
-    let selectedLayerId = oe?.selectedLayerId ?? undefined;
+    let selectedDrawingId = oe?.selectedDrawingId ?? undefined;
 
     if (gc) {
-        // If a drag is in progress, loading layer data from the model would
+        // If a drag is in progress, loading drawing data from the model would
         // reset layerData to the pre-drag (Y.Doc) state, corrupting the drag
         // baseline and producing wrong undo history. Defer the refresh until
         // the drag ends (onMouseUp checks pendingRemoteRefreshAfterDrag).
@@ -1817,30 +1822,30 @@ async function refreshCanvasFromCommittedModelSync(
                 skipRender: true
             })) === true;
 
-        selectedLayerId = oe?.selectedLayerId ?? undefined;
+        selectedDrawingId = oe?.selectedDrawingId ?? undefined;
 
         const refreshOutlineEditor = async () => {
             const shouldInterpolateActiveGlyph =
-                gc.outlineEditor?.active && !selectedLayerId;
+                gc.outlineEditor?.active && !selectedDrawingId;
 
             if (shouldInterpolateActiveGlyph) {
                 await gc.outlineEditor?.interpolateCurrentGlyph(true);
                 return;
             }
 
-            const refreshedExactLayerData =
+            const refreshedExactDrawingData =
                 !selectionReconciled &&
-                options?.preferExactLayerDataRefresh === true &&
-                gc.outlineEditor?.canRefreshSelectedLayerFromModelExactly?.() ===
+                options?.preferExactDrawingDataRefresh === true &&
+                gc.outlineEditor?.canRefreshSelectedDrawingFromModelExactly?.() ===
                     true &&
-                gc.outlineEditor?.refreshSelectedLayerFromModel?.() === true;
+                gc.outlineEditor?.refreshSelectedDrawingFromModel?.() === true;
 
             if (
-                !refreshedExactLayerData &&
+                !refreshedExactDrawingData &&
                 (!options?.skipLayerDataFetch || selectionReconciled) &&
-                typeof gc.outlineEditor?.fetchLayerData === 'function'
+                typeof gc.outlineEditor?.fetchDrawingData === 'function'
             ) {
-                await gc.outlineEditor.fetchLayerData(
+                await gc.outlineEditor.fetchDrawingData(
                     true,
                     refreshRootGlyphName
                 );
@@ -1869,7 +1874,7 @@ async function refreshCanvasFromCommittedModelSync(
 }
 
 /**
- * Compile with the worker’s preview overlay, for layers this window shows
+ * Compile with the worker’s preview overlay, for drawings this window shows
  * ahead of its documents (a linked window’s live preview, a collaborator’s
  * cascade).
  */
@@ -1914,19 +1919,19 @@ function isBusyWithOwnEdit(): boolean {
     );
 }
 
-function cascadeTargetKey(target: CascadeLayerTarget): string {
+function cascadeTargetKey(target: CascadeDrawingTarget): string {
     return `${target.glyphName}\u0000${target.layerId}`;
 }
 
 /**
  * Recompose what a collaborator’s edit changes in other glyphs, the way the
  * sender did, in this window’s model and without recording. Returns the
- * resident layers whose data changed: those now run ahead of the documents.
+ * resident drawings whose data changed: those now run ahead of the documents.
  */
 export function recomposeCollaboratorCascade(
     bridge: PatchSyncEngine,
     sources: CascadeSource[]
-): CascadeLayerTarget[] {
+): CascadeDrawingTarget[] {
     const fontModel = window.fontManager?.currentFont?.fontModel as any;
     if (!fontModel || !sources.length) {
         return [];
@@ -1937,16 +1942,21 @@ export function recomposeCollaboratorCascade(
         const documentId = bridge.glyphDocumentIdForName(glyphName);
         return !!documentId && bridge.hasResidentGlyphDocument(documentId);
     };
-    const fingerprint = (glyphName: string, layerId: string): string | null => {
-        const layer = fontModel
+    const fingerprint = (
+        glyphName: string,
+        drawingId: string
+    ): string | null => {
+        const drawing = fontModel
             .findGlyph?.(glyphName)
-            ?.findLayerById?.(layerId);
-        if (!layer) {
+            ?.findDrawingById?.(drawingId);
+        if (!drawing) {
             return null;
         }
         try {
             return JSON.stringify(
-                typeof layer.toJSON === 'function' ? layer.toJSON() : layer
+                typeof drawing.toJSON === 'function'
+                    ? drawing.toJSON()
+                    : drawing
             );
         } catch {
             return null;
@@ -1965,27 +1975,28 @@ export function recomposeCollaboratorCascade(
         if (sourceGlyphNames.has(glyphName) || !isResident(glyphName)) {
             continue;
         }
-        for (const layer of fontModel.findGlyph?.(glyphName)?.layers ?? []) {
-            const layerId = (layer as { id?: string })?.id;
-            if (layerId) {
+        for (const drawing of fontModel.findGlyph?.(glyphName)?.drawings ??
+            []) {
+            const drawingId = (drawing as { id?: string })?.id;
+            if (drawingId) {
                 before.set(
-                    cascadeTargetKey({ glyphName, layerId }),
-                    fingerprint(glyphName, layerId)
+                    cascadeTargetKey({ glyphName, layerId: drawingId }),
+                    fingerprint(glyphName, drawingId)
                 );
             }
         }
     }
 
-    const recomposed = new Map<string, CascadeLayerTarget>();
+    const recomposed = new Map<string, CascadeDrawingTarget>();
     for (const source of sources) {
-        const closure = computeLayerRecompositionClosure({
+        const closure = computeDrawingRecompositionClosure({
             sourceTargets: [
                 { glyphName: source.glyphName, layerId: source.layerId }
             ],
             editKinds: source.editKinds,
             scope: 'all',
             fontModel,
-            activeLayerId: source.layerId,
+            activeDrawingId: source.layerId,
             sourceGlyphName: source.glyphName,
             suppressor: bridge
         });
@@ -2008,7 +2019,7 @@ export function recomposeCollaboratorCascade(
             return false;
         }
         const key = cascadeTargetKey(target);
-        // A layer the snapshot missed is kept: better a preview that
+        // A drawing the snapshot missed is kept: better a preview that
         // reverts to the documents than a change nobody tracks.
         return (
             !before.has(key) ||
@@ -2047,7 +2058,7 @@ export function createRemoteCascadePreviewHost(
             }),
         repaint: notifyGlyphs,
         revert: (targets) => {
-            bridge.revertLivePreviewLayers(targets);
+            bridge.revertLivePreviewDrawings(targets);
             window.fontManager?.currentFont?.requestRecompileWithoutDataChange();
             window.autoCompileManager?.checkAndSchedule?.();
             notifyGlyphs([...new Set(targets.map((t) => t.glyphName))]);
@@ -2065,8 +2076,10 @@ export function createLinkedPreviewHost(
 ): LinkedPreviewHost {
     return {
         isBusyLocally: isBusyWithOwnEdit,
-        applyModelLayers: (records) => bridge.applyLivePreviewLayers(records),
-        revertModelLayers: (targets) => bridge.revertLivePreviewLayers(targets),
+        applyModelDrawings: (records) =>
+            bridge.applyLivePreviewDrawings(records),
+        revertModelDrawings: (targets) =>
+            bridge.revertLivePreviewDrawings(targets),
         stageOverlay: (records) =>
             window.fontManager?.stageLinkedLivePreviewOverlay(records) ??
             Promise.resolve(false),
@@ -2081,7 +2094,7 @@ export function createLinkedPreviewHost(
                 })
             );
             await refreshCanvasFromCommittedModelSync(undefined, undefined, {
-                preferExactLayerDataRefresh: true
+                preferExactDrawingDataRefresh: true
             });
         },
         clearOverlay: () =>
@@ -2125,38 +2138,38 @@ function historyItemTouchesAnchors(
     );
 }
 
-function syncImmediateUndoOutlineLayerFromModel(
+function syncImmediateUndoOutlineDrawingFromModel(
     glyphName: string | null,
-    layerId: string | null,
+    drawingId: string | null,
     deferRender: boolean = false
 ): boolean {
     const gc = window.glyphCanvas;
     const outlineEditor = gc?.outlineEditor as unknown as {
-        cancelPendingLayerSwitchAnimation?: () => void;
-        canRefreshSelectedLayerFromModelExactly?: () => boolean;
-        refreshSelectedLayerFromModel?: () => boolean;
+        cancelPendingDrawingSwitchAnimation?: () => void;
+        canRefreshSelectedDrawingFromModelExactly?: () => boolean;
+        refreshSelectedDrawingFromModel?: () => boolean;
         performHitDetection?: (event: MouseEvent | null) => void;
     } | null;
-    if (!gc || !outlineEditor || !glyphName || !layerId) {
+    if (!gc || !outlineEditor || !glyphName || !drawingId) {
         return false;
     }
 
-    const layer = window.fontManager?.currentFont?.fontModel
+    const drawing = window.fontManager?.currentFont?.fontModel
         ?.findGlyph(glyphName)
-        ?.findLayerById(layerId);
+        ?.findDrawingById(drawingId);
     if (
-        layer?.is_background === true ||
-        layerId.startsWith('background-') ||
-        layer?.isAutomaticAlignedLayer?.() === true
+        drawing?.is_background === true ||
+        drawingId.startsWith('background-') ||
+        drawing?.isAutomaticAlignedDrawing?.() === true
     ) {
         return false;
     }
 
-    outlineEditor?.cancelPendingLayerSwitchAnimation?.();
-    if (!outlineEditor.canRefreshSelectedLayerFromModelExactly?.()) {
+    outlineEditor?.cancelPendingDrawingSwitchAnimation?.();
+    if (!outlineEditor.canRefreshSelectedDrawingFromModelExactly?.()) {
         return false;
     }
-    if (!outlineEditor.refreshSelectedLayerFromModel?.()) {
+    if (!outlineEditor.refreshSelectedDrawingFromModel?.()) {
         return false;
     }
     gc.updatePropertyPanel?.();
@@ -2378,7 +2391,7 @@ function hasLocalLiveAdvancePreview(entries: ChangeLogEntry[]): boolean {
 /**
  * Committed live advance patches are only safe when the following editing
  * compile will stay outline-only (no reshape with kerning). Full / null,
- * anchor, and kerning commits reshape authoritatively — patching layer.width
+ * anchor, and kerning commits reshape authoritatively — patching drawing.width
  * into a shaped run first strips pair kerning until that reshape lands.
  */
 function shouldApplyCommittedLiveAdvanceRefresh(
@@ -2411,7 +2424,7 @@ function getFallbackUndoRedoCommittedEntries(
         );
     }
     const fallbackTouchedPath = historyItem?.touchedPaths?.[0];
-    const fallbackLayerTarget =
+    const fallbackDrawingTarget =
         fallbackTargets[0] ??
         (context?.editedGlyphName && context?.layerId
             ? {
@@ -2419,10 +2432,10 @@ function getFallbackUndoRedoCommittedEntries(
                   layerId: context.layerId
               }
             : null);
-    const fallbackLayerPath =
+    const fallbackDrawingPath =
         fallbackTouchedPath ??
-        (fallbackLayerTarget
-            ? `glyphs.${fallbackLayerTarget.glyphName}.layers.${fallbackLayerTarget.layerId}`
+        (fallbackDrawingTarget
+            ? `glyphs.${fallbackDrawingTarget.glyphName}.layers.${fallbackDrawingTarget.layerId}`
             : undefined);
 
     return sourceEntries.map((entry) => {
@@ -2433,7 +2446,7 @@ function getFallbackUndoRedoCommittedEntries(
             ...entry,
             transactionLabel:
                 entry.transactionLabel ?? historyItem?.transactionLabel ?? null,
-            path: entry.path ?? fallbackLayerPath,
+            path: entry.path ?? fallbackDrawingPath,
             workerReplayTargets: entryTargets.length
                 ? entryTargets
                 : fallbackTargets,
@@ -2482,11 +2495,11 @@ function applyLocalUndoRedoVisualSync(
         context?.requestedGlyphName ??
         deriveGlyphNamesFromPaths(entryPaths)[0] ??
         null;
-    const layerId =
+    const drawingId =
         context?.layerId ??
         entries
             .map((entry) =>
-                entry.path ? deriveLayerId(getPathSegments(entry.path)) : null
+                entry.path ? deriveDrawingId(getPathSegments(entry.path)) : null
             )
             .find((candidate): candidate is string => !!candidate) ??
         null;
@@ -2502,23 +2515,24 @@ function applyLocalUndoRedoVisualSync(
 
     // Live advances are only for outline-only commits that will not reshape
     // with kerning. Full (editType null) undo/redo waits for the authoritative
-    // reshape; comparing layer.width to kern-contaminated intrinsics here was
+    // reshape; comparing drawing.width to kern-contaminated intrinsics here was
     // the post-undo no-kerning flash. Sidebearing undo/redo must not patch
     // advances or pan here — the idle bbox lock owns the view.
     const deferAdvanceRefreshUntilCommittedCanvas =
         localCompileContext?.editType === 'outline' &&
-        Object.keys(collectLiveAdvanceDeltas(entries, layerId, editedGlyphName))
-            .length > 0;
+        Object.keys(
+            collectLiveAdvanceDeltas(entries, drawingId, editedGlyphName)
+        ).length > 0;
 
     const deferUndoCanvasPaint =
         isSidebearingUndoRedo || deferAdvanceRefreshUntilCommittedCanvas;
-    const refreshedExactLayer = syncImmediateUndoOutlineLayerFromModel(
+    const refreshedExactDrawing = syncImmediateUndoOutlineDrawingFromModel(
         editedGlyphName,
-        layerId,
+        drawingId,
         deferUndoCanvasPaint
     );
     const skipLayerDataFetch =
-        refreshedExactLayer &&
+        refreshedExactDrawing &&
         (isSidebearingUndoRedo ||
             historyItem.transactionLabel?.startsWith('Drag ') === true ||
             (localCompileContext?.changeSource === 'keyboard-outline' &&
@@ -2870,7 +2884,7 @@ export async function handleCommittedChangeRefresh(
             options?: {
                 skipDeferredCanvasRepaint?: boolean;
                 workerReplayTargets?: WorkerReplayTarget[];
-                allowSelectedLayerFallback?: boolean;
+                allowSelectedDrawingFallback?: boolean;
             }
         ) => Promise<void>;
         awaitWorkerSync?: () => Promise<void>;
@@ -2938,7 +2952,7 @@ export async function handleCommittedChangeRefresh(
         )
             ? collectLiveAdvanceDeltas(
                   entries,
-                  window.glyphCanvas?.outlineEditor?.selectedLayerId,
+                  window.glyphCanvas?.outlineEditor?.selectedDrawingId,
                   getActiveEditedGlyphName()
               )
             : {};
@@ -2982,8 +2996,8 @@ export async function handleCommittedChangeRefresh(
         }
 
         const replayTargets = collectReplayTargetsFromEntries(entries);
-        const selectedLayerId =
-            window.glyphCanvas?.outlineEditor?.selectedLayerId;
+        const selectedDrawingId =
+            window.glyphCanvas?.outlineEditor?.selectedDrawingId;
         const selectedGlyphName = getActiveEditedGlyphName();
         const { editType, changeSource } =
             localCompileContext ?? resolveLocalCommittedCompileContext(entries);
@@ -2992,25 +3006,25 @@ export async function handleCommittedChangeRefresh(
             !isSidebearingCommit
                 ? collectLiveAdvanceDeltas(
                       entries,
-                      selectedLayerId,
+                      selectedDrawingId,
                       selectedGlyphName
                   )
                 : {};
-        const selectedLayer =
-            selectedGlyphName && selectedLayerId
+        const selectedDrawing =
+            selectedGlyphName && selectedDrawingId
                 ? window.fontManager?.currentFont?.fontModel
                       ?.findGlyph(selectedGlyphName)
-                      ?.findLayerById(selectedLayerId)
+                      ?.findDrawingById(selectedDrawingId)
                 : null;
-        const requiresBackgroundLayerRefresh =
-            selectedLayer?.is_background === true ||
-            (selectedLayerId?.startsWith('background-') ?? false);
+        const requiresBackgroundDrawingRefresh =
+            selectedDrawing?.is_background === true ||
+            (selectedDrawingId?.startsWith('background-') ?? false);
         const canPreferExactLocalVisualRefresh =
             !isUndoRedoPacket &&
-            !requiresBackgroundLayerRefresh &&
+            !requiresBackgroundDrawingRefresh &&
             (localCompileContext?.editType === 'outline' ||
                 localCompileContext?.editType === 'anchor') &&
-            selectedLayer?.isAutomaticAlignedLayer?.() !== true;
+            selectedDrawing?.isAutomaticAlignedDrawing?.() !== true;
         const hasLiveAdvancePreview =
             !isUndoRedoPacket && hasLocalLiveAdvancePreview(entries);
         await refreshCanvasFromCommittedModelSync(undefined, undefined, {
@@ -3018,11 +3032,11 @@ export async function handleCommittedChangeRefresh(
                 (appliedIdleViewLock ||
                     isUndoRedoPacket ||
                     isSidebearingCommit) &&
-                !requiresBackgroundLayerRefresh &&
+                !requiresBackgroundDrawingRefresh &&
                 !localUndoRedoVisualSync.deferAdvanceRefreshUntilCommittedCanvas,
             skipLayerDataFetch: localUndoRedoVisualSync.skipLayerDataFetch,
-            preferExactLayerDataRefresh: canPreferExactLocalVisualRefresh,
-            // A sidebearing packet's raw layer-width entries are not shaped
+            preferExactDrawingDataRefresh: canPreferExactLocalVisualRefresh,
+            // A sidebearing packet's raw drawing-width entries are not shaped
             // advances. Its committed font result reshapes authoritatively;
             // applying these deltas first can transiently move text to an
             // impossible layout. The same rule applies to full (editType null)
@@ -3069,7 +3083,7 @@ export async function handleRemoteChangeRefresh(
             options?: {
                 skipDeferredCanvasRepaint?: boolean;
                 workerReplayTargets?: WorkerReplayTarget[];
-                allowSelectedLayerFallback?: boolean;
+                allowSelectedDrawingFallback?: boolean;
             }
         ) => Promise<void>;
         awaitWorkerSync?: () => Promise<void>;
@@ -3110,7 +3124,7 @@ export function runBridgeUndoRedo(
     action: 'undo' | 'redo',
     glyphName?: string,
     refreshRootGlyphName?: string,
-    layerId?: string | null,
+    drawingId?: string | null,
     historyTargetKey?: string | null,
     surface?: HistoryUndoSurface | null
 ): Promise<void> {
@@ -3208,15 +3222,15 @@ export function runBridgeUndoRedo(
             // This is the last glyph in glyph stack, passed as glyphName.
             const targetGlyph = glyphName;
             const editedGlyphName = getActiveEditedGlyphName() ?? targetGlyph;
-            const previousWidth = getLayerWidth(
+            const previousWidth = getDrawingWidth(
                 editedGlyphName,
-                layerId ?? null
+                drawingId ?? null
             );
             const localUndoRedoContext: LocalUndoRedoVisualContext = {
                 rootGlyphName: refreshRootGlyphName,
                 requestedGlyphName: glyphName,
                 editedGlyphName,
-                layerId: layerId ?? null,
+                layerId: drawingId ?? null,
                 previousWidth
             };
             const committedGenerationBefore = committedChangeRefreshGeneration;
@@ -3226,13 +3240,13 @@ export function runBridgeUndoRedo(
                 action === 'redo'
                     ? bridge.redo(
                           targetGlyph,
-                          layerId,
+                          drawingId,
                           historyTargetKey,
                           surface
                       )
                     : bridge.undo(
                           targetGlyph,
-                          layerId,
+                          drawingId,
                           historyTargetKey,
                           surface
                       );
@@ -3389,13 +3403,13 @@ function initializeBridge(detail: {
     // Called after _syncJsonFromYDoc in undo/redo/remote.
     // Rebuilds the Font model from the already-patched babelfontData.
     // babelfontJson is marked stale and rebuilt lazily:
-    //   • For layer-scoped undo/redo, syncRustCacheAndRefreshCanvas uses the
-    //     incremental layer-update batch path which reads directly from the model
+    //   • For drawing-scoped undo/redo, syncRustCacheAndRefreshCanvas uses the
+    //     incremental drawing-update batch path which reads directly from the model
     //     (no babelfontJson needed).
     //   • The forceFullRustSync/storeFontJson fallback has been eliminated —
     //     the worker's seedYdoc handler (init_ydoc_from_state) populates all
     //     caches from binary Yjs state, and incremental replay-target or
-    //     selected-layer paths handle all post-edit/undo/redo cache refreshes.
+    //     selected-drawing paths handle all post-edit/undo/redo cache refreshes.
     //   • For the next full compile, compileEditingFont rebuilds babelfontJson
     //     via syncBabelfontJsonFromCurrentModel() before invoking fontc.
     bridge.onAfterSync(() => {
@@ -3452,7 +3466,7 @@ function initializeBridge(detail: {
     // post-commit reaction funnel. Local edits enter immediately after the
     // authoritative Yjs packet is emitted; remote edits enter after apply.
     // YJS_ONLY: This funnel processes Yjs binary updates, not full
-    // JSON. Entries carry workerReplayTargets for incremental layer cache updates.
+    // JSON. Entries carry workerReplayTargets for incremental drawing cache updates.
     bridge.onCommittedChange((allEntries, context) => {
         // Font-deps packets and glyph-revision stamps are derived data:
         // nothing to refresh or compile. A revision stamp only announces a
@@ -3653,8 +3667,10 @@ function initializeBridge(detail: {
             );
             const nonGlyphChangeHints =
                 collectNonGlyphChangeHints(changeLogEntries);
-            const layerTargets =
-                collectWorkerLayerTargetsFromChangeLogEntries(changeLogEntries);
+            const drawingTargets =
+                collectWorkerDrawingTargetsFromChangeLogEntries(
+                    changeLogEntries
+                );
             const glyphRenames = changeLogEntries.flatMap(
                 (entry) => entry.glyphRenames
             );
@@ -3665,7 +3681,7 @@ function initializeBridge(detail: {
             const hasWorkerCacheMetadata =
                 changedGlyphs.length > 0 ||
                 nonGlyphChangeHints.length > 0 ||
-                layerTargets.length > 0 ||
+                drawingTargets.length > 0 ||
                 glyphRenames.length > 0;
             const heldKey = documentId ?? FONT_CORE_DOCUMENT_ID;
             if (!hasWorkerCacheMetadata) {
@@ -3683,7 +3699,9 @@ function initializeBridge(detail: {
                         invalidateLayoutClosure,
                         nonGlyphChangeHints,
                         ...(glyphRenames.length ? { glyphRenames } : undefined),
-                        ...(layerTargets.length ? { layerTargets } : undefined),
+                        ...(drawingTargets.length
+                            ? { layerTargets: drawingTargets }
+                            : undefined),
                         documentId
                     }
                 ) ?? Promise.resolve(false);
@@ -3697,7 +3715,9 @@ function initializeBridge(detail: {
                         changedGlyphs,
                         nonGlyphChangeHints,
                         ...(glyphRenames.length ? { glyphRenames } : undefined),
-                        ...(layerTargets.length ? { layerTargets } : undefined),
+                        ...(drawingTargets.length
+                            ? { layerTargets: drawingTargets }
+                            : undefined),
                         invalidateLayoutClosure,
                         documentId
                     })
@@ -3764,17 +3784,17 @@ function initializeBridge(detail: {
         } else {
             remoteCascadePreview.noteStoredChange(entries);
         }
-        const touchedLayerIds = new Set<string>();
+        const touchedDrawingIds = new Set<string>();
         for (const entry of entries) {
             for (const target of entry.workerReplayTargets ?? []) {
-                touchedLayerIds.add(target.layerId);
+                touchedDrawingIds.add(target.layerId);
             }
-            const layerId = deriveLayerIdFromPath(entry.path);
-            if (layerId) {
-                touchedLayerIds.add(layerId);
+            const drawingId = deriveDrawingIdFromPath(entry.path);
+            if (drawingId) {
+                touchedDrawingIds.add(drawingId);
             }
         }
-        livePreviewReceiver.settle(touchedLayerIds);
+        livePreviewReceiver.settle(touchedDrawingIds);
     });
     if (linkedPeerBootstrapActive && linkedPeerOpenDetail) {
         const openDetail = linkedPeerOpenDetail;

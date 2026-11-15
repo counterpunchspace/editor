@@ -227,10 +227,10 @@ function boundsOfPoints(points: FontPoint[]): FontRect {
     };
 }
 
-function getMasterDisplayName(master: {
+function getStationDisplayName(station: {
     name?: string | { dflt?: string; en?: string };
 }): string {
-    const name = master.name;
+    const name = station.name;
     if (typeof name === 'string') {
         return name;
     }
@@ -337,32 +337,34 @@ function pathFromRaw(raw: {
     return { vertices, onCurves, offCurveCount, closed: raw.closed };
 }
 
-type TourLayer = {
+type TourDrawing = {
     id?: string;
     is_background?: boolean;
-    master?: unknown;
+    station?: unknown;
     background_layer_id?: string;
-    backgroundLayer?: TourLayer;
+    backgroundDrawing?: TourDrawing;
     paths?: unknown[];
     shapes?: unknown[];
 };
 
-function getLayerPathList(layer: TourLayer | null | undefined): unknown[] {
-    if (!layer) {
+function getDrawingPathList(
+    drawing: TourDrawing | null | undefined
+): unknown[] {
+    if (!drawing) {
         return [];
     }
-    const paths = asList<unknown>(layer.paths);
+    const paths = asList<unknown>(drawing.paths);
     if (paths && paths.length > 0) {
         return paths;
     }
-    return asList<unknown>(layer.shapes) || [];
+    return asList<unknown>(drawing.shapes) || [];
 }
 
-function getLayerMasterId(master: unknown): string | null {
-    if (!master || typeof master !== 'object') {
+function getDrawingStationId(station: unknown): string | null {
+    if (!station || typeof station !== 'object') {
         return null;
     }
-    const record = master as Record<string, unknown>;
+    const record = station as Record<string, unknown>;
     if (typeof record.master === 'string' && record.master) {
         return record.master;
     }
@@ -381,39 +383,42 @@ function getLayerMasterId(master: unknown): string | null {
     return null;
 }
 
-function getFontMasters(): Array<{
+function getFontStations(): Array<{
     id?: string;
     name?: string | { dflt?: string; en?: string };
 }> {
     const font =
         window.currentFontModel || window.fontManager?.currentFont?.fontModel;
-    return font?.masters || [];
+    return font?.stations || [];
 }
 
-function isExtraBoldLayer(layer: {
+function isExtraBoldDrawing(drawing: {
     is_background?: boolean;
-    master?: unknown;
+    station?: unknown;
     id?: string;
 }): boolean {
-    if (layer?.is_background) {
+    if (drawing?.is_background) {
         return false;
     }
     if (
-        getMasterDisplayName((layer.master || {}) as { name?: string }) ===
+        getStationDisplayName((drawing.station || {}) as { name?: string }) ===
         'ExtraBold'
     ) {
         return true;
     }
-    const masterId = getLayerMasterId(layer.master) || layer.id || null;
-    if (!masterId) {
+    const stationId =
+        getDrawingStationId(drawing.station) || drawing.id || null;
+    if (!stationId) {
         return false;
     }
-    const master = getFontMasters().find((entry) => entry.id === masterId);
-    return getMasterDisplayName(master || {}) === 'ExtraBold';
+    const station = getFontStations().find((entry) => entry.id === stationId);
+    return getStationDisplayName(station || {}) === 'ExtraBold';
 }
 
-function pathFromLayer(layer: TourLayer | null | undefined): TourPath | null {
-    for (const shape of getLayerPathList(layer)) {
+function pathFromDrawing(
+    drawing: TourDrawing | null | undefined
+): TourPath | null {
+    for (const shape of getDrawingPathList(drawing)) {
         const raw = asPath(shape);
         if (!raw || raw.nodes.length < 4) {
             continue;
@@ -429,31 +434,33 @@ function readExtraBoldBackgroundPath(): TourPath | null {
     const glyphName =
         window.glyphCanvas?.outlineEditor?.currentGlyphName || 'l.ss04';
     const glyph = font?.findGlyph?.(glyphName) || font?.findGlyph?.('l.ss04');
-    const layerList = asList<TourLayer>(glyph?.layers) || [];
-    if (layerList.length === 0) {
+    const drawingList = asList<TourDrawing>(glyph?.drawings) || [];
+    if (drawingList.length === 0) {
         return null;
     }
-    const extraBold = layerList.find((layer) => isExtraBoldLayer(layer));
-    const fromPaired = pathFromLayer(extraBold?.backgroundLayer);
+    const extraBold = drawingList.find((drawing) =>
+        isExtraBoldDrawing(drawing)
+    );
+    const fromPaired = pathFromDrawing(extraBold?.backgroundDrawing);
     if (fromPaired) {
         return fromPaired;
     }
     const backgroundId = extraBold?.background_layer_id;
     const sibling =
         (backgroundId &&
-            layerList.find(
-                (layer) =>
-                    layer?.is_background &&
-                    (layer.id === backgroundId ||
-                        layer.background_layer_id === extraBold?.id)
+            drawingList.find(
+                (drawing) =>
+                    drawing?.is_background &&
+                    (drawing.id === backgroundId ||
+                        drawing.background_layer_id === extraBold?.id)
             )) ||
-        layerList.find(
-            (layer) =>
-                layer?.is_background &&
-                getLayerMasterId(layer.master) ===
-                    getLayerMasterId(extraBold?.master)
+        drawingList.find(
+            (drawing) =>
+                drawing?.is_background &&
+                getDrawingStationId(drawing.station) ===
+                    getDrawingStationId(extraBold?.station)
         );
-    return pathFromLayer(sibling);
+    return pathFromDrawing(sibling);
 }
 
 function localToWorld(point: FontPoint): FontPoint {
@@ -466,7 +473,7 @@ function localToWorld(point: FontPoint): FontPoint {
 
 function readDrawnPath(minOnCurves: number): TourPath | null {
     const area = getDrawAreaFontRect();
-    const shapes = window.glyphCanvas?.outlineEditor?.layerData?.shapes;
+    const shapes = window.glyphCanvas?.outlineEditor?.drawingData?.shapes;
     if (!Array.isArray(shapes)) {
         return null;
     }
@@ -516,7 +523,7 @@ function getForegroundPath(): TourPath | null {
     if (drawn) {
         return drawn;
     }
-    const shapes = window.glyphCanvas?.outlineEditor?.layerData?.shapes;
+    const shapes = window.glyphCanvas?.outlineEditor?.drawingData?.shapes;
     if (!Array.isArray(shapes) || shapes.length === 0) {
         return null;
     }
@@ -1109,7 +1116,7 @@ function isContourSelected(): boolean {
     if (typeof contourIndex !== 'number') {
         return false;
     }
-    const shape = editor?.layerData?.shapes?.[contourIndex];
+    const shape = editor?.drawingData?.shapes?.[contourIndex];
     const raw = asPath(shape);
     if (!raw?.nodes.length) {
         return false;
@@ -1121,7 +1128,7 @@ function isContourSelected(): boolean {
 }
 
 function isForegroundPathDeleted(): boolean {
-    const shapes = window.glyphCanvas?.outlineEditor?.layerData?.shapes;
+    const shapes = window.glyphCanvas?.outlineEditor?.drawingData?.shapes;
     if (!Array.isArray(shapes) || shapes.length === 0) {
         return true;
     }

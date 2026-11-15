@@ -1,4 +1,4 @@
-import type { Master } from './babelfont-model';
+import type { Station } from './babelfont-model';
 import { flattenKerningMap } from './delete-glyphs-preflight';
 
 export type KerningRow = Map<string, number> | Record<string, number>;
@@ -241,7 +241,7 @@ type KerningLigatureRebuildHost = {
 };
 
 function rebuildAutomaticLigaturesAfterKerningPair(
-    master: Master,
+    station: Station,
     firstKey: string,
     secondKey: string,
     isRTL: boolean
@@ -249,13 +249,13 @@ function rebuildAutomaticLigaturesAfterKerningPair(
     if (isRTL) {
         return;
     }
-    const parent = (master as KerningLigatureRebuildHost).parent?.();
+    const parent = (station as KerningLigatureRebuildHost).parent?.();
     const host = parent as KerningLigatureRebuildHost | undefined;
     host?.rebuildAutomaticCompositesForKerningPair?.(firstKey, secondKey);
 }
 
-export function setKerningPairValueOnMaster(
-    master: Master,
+export function setKerningPairValueOnStation(
+    station: Station,
     firstKey: string,
     secondKey: string,
     nextValue: number | null,
@@ -263,13 +263,13 @@ export function setKerningPairValueOnMaster(
 ): void {
     try {
         const flatKey = getFlatKerningPairKey(firstKey, secondKey);
-        const liveKerning = isRTL ? master.kerning_rtl : master.kerning;
+        const liveKerning = isRTL ? station.kerning_rtl : station.kerning;
         if (
             liveKerning &&
             typeof liveKerning === 'object' &&
             !(liveKerning instanceof Map)
         ) {
-            // Both directions are stored flat per master: change just this
+            // Both directions are stored flat per station: change just this
             // pair, so the edit (and its undo and sync packet) is one key,
             // not the whole map.
             if (nextValue === null) {
@@ -280,7 +280,7 @@ export function setKerningPairValueOnMaster(
             return;
         }
         const nextKerning = flattenKerningMap(
-            isRTL ? master.kerning_rtl : master.kerning
+            isRTL ? station.kerning_rtl : station.kerning
         );
         if (nextValue === null) {
             delete nextKerning[flatKey];
@@ -288,13 +288,13 @@ export function setKerningPairValueOnMaster(
             nextKerning[flatKey] = nextValue;
         }
         if (isRTL) {
-            master.kerning_rtl = nextKerning;
+            station.kerning_rtl = nextKerning;
         } else {
-            master.kerning = nextKerning;
+            station.kerning = nextKerning;
         }
     } finally {
         rebuildAutomaticLigaturesAfterKerningPair(
-            master,
+            station,
             firstKey,
             secondKey,
             isRTL
@@ -302,8 +302,8 @@ export function setKerningPairValueOnMaster(
     }
 }
 
-export function getMasterDisplayLabel(master: Master): string {
-    const name = master.name;
+export function getStationDisplayLabel(station: Station): string {
+    const name = station.name;
     if (typeof name === 'string') {
         return name;
     }
@@ -312,8 +312,8 @@ export function getMasterDisplayLabel(master: Master): string {
             (name as { dflt?: string; en?: string }).dflt ||
                 (name as { en?: string }).en ||
                 Object.values(name)[0] ||
-                master.id
+                station.id
         );
     }
-    return master.id;
+    return station.id;
 }

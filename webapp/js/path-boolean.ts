@@ -88,7 +88,7 @@ export function booleanResultSignature(paths: BooleanPathJson[]): string {
         .join('|');
 }
 
-/** True when every layer's result has the same contour structure. */
+/** True when every drawing's result has the same contour structure. */
 export function booleanResultsMatch(results: BooleanPathJson[][]): boolean {
     if (results.length <= 1) {
         return true;

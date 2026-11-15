@@ -1,13 +1,13 @@
-import { LayerDataNormalizer } from '../layer-data-normalizer';
+import { DrawingDataNormalizer } from '../drawing-data-normalizer';
 import {
     commitTransientAnchor,
     queryTransientAnchors
 } from '../compile-filter-host';
 import {
-    applyRestingShapeGeometryToEditorLayer,
+    applyRestingShapeGeometryToEditorDrawing,
     stripInterpolatorRequestId,
-    toRestingLayerJson
-} from '../resting-layer-json';
+    toRestingDrawingJson
+} from '../resting-drawing-json';
 import { fontInterpolation } from '../font-interpolation';
 import { GlyphCanvas } from '../glyph-canvas';
 import fontManager from '../font-manager';
@@ -18,7 +18,7 @@ import { isPointerCommandModifier } from '../keyboard-shortcut-display';
 import { normalizeWorkerReplayTargets } from '../change-log';
 import { recordLiveTextDiagnostic } from '../live-text-diagnostics';
 import {
-    Layer,
+    Drawing,
     FeatureVariationGlyph,
     Glyph,
     Path,
@@ -110,11 +110,11 @@ import {
 import { LiveDragEditFunnel } from '../live-drag-edit-funnel';
 import { KeyboardPreviewEditFunnel } from '../keyboard-preview-edit-funnel';
 import {
-    computeLayerRecompositionClosure,
+    computeDrawingRecompositionClosure,
     deriveEditKindsFromDrag,
-    resolveLayerSyncTargetsFromClosure
+    resolveDrawingSyncTargetsFromClosure
 } from '../recomposition-closure';
-import { translateLayerContentsX } from '../x-translation-utils';
+import { translateDrawingContentsX } from '../x-translation-utils';
 import {
     queueCanvasRefreshFromCommittedModel,
     refreshGlyphOverviewFromGlyphNames
@@ -130,6 +130,21 @@ import {
 } from '../tippy-utils';
 
 let console: Logger = new Logger('OutlineEditor');
+
+/**
+ * Station reference of a drawing that may be a model `Drawing` (`station`)
+ * or raw Babelfont `layers` JSON (`master`).
+ */
+function drawingStationRef(drawing: unknown): Babelfont.LayerType | undefined {
+    if (!drawing || typeof drawing !== 'object') {
+        return undefined;
+    }
+    const record = drawing as {
+        station?: Babelfont.LayerType;
+        master?: Babelfont.LayerType;
+    };
+    return 'station' in record ? record.station : record.master;
+}
 
 type Point = { contourIndex: number; nodeIndex: number };
 type SnapCandidate = {
@@ -168,9 +183,9 @@ type SnapCandidateCache = {
     edgeXValues: number[];
     metricsYValues: number[];
 };
-type GuideHandle = { scope: 'master' | 'layer'; index: number };
+type GuideHandle = { scope: 'station' | 'drawing'; index: number };
 type SidebearingHandle = { side: SidebearingSide; editable?: boolean };
-type LayerSelectionState = {
+type DrawingSelectionState = {
     points: Point[];
     anchors: number[];
     anchorNames: string[];
@@ -190,7 +205,7 @@ type VisibleSidebearingHandle = SidebearingHandle & {
     metricY: number;
     editable: boolean;
 };
-type ExplicitLayerCacheInput = {
+type ExplicitDrawingCacheInput = {
     glyphName: string;
     layerId: string;
     layerData: Babelfont.Layer;
@@ -229,7 +244,7 @@ type HoveredPathSegment = {
 type PathSegmentHit = {
     shapeIndex: number;
     pathIndex: number;
-    descriptor: ReturnType<typeof Layer.getPathSegmentDescriptors>[number];
+    descriptor: ReturnType<typeof Drawing.getPathSegmentDescriptors>[number];
     projection: { x: number; y: number; t: number; distance: number };
 };
 
@@ -369,7 +384,7 @@ const getComponentShapeData = (shape: any): any => {
     return shape;
 };
 
-const LAYER_LOCATION_MATCH_EPSILON = 0.01;
+const DRAWING_LOCATION_MATCH_EPSILON = 0.01;
 
 function locationsMatchWithinTolerance(
     left: DesignspaceLocation | undefined,
@@ -389,7 +404,7 @@ function locationsMatchWithinTolerance(
     for (const tag of tags) {
         if (
             Math.abs(Number(left[tag] ?? 0) - Number(right[tag] ?? 0)) >
-            LAYER_LOCATION_MATCH_EPSILON
+            DRAWING_LOCATION_MATCH_EPSILON
         ) {
             return false;
         }
@@ -1408,11 +1423,11 @@ export class OutlineEditor {
         return this._snapDragStartNodePos;
     }
     private _snapCandidateCache: SnapCandidateCache | null = null;
-    private _adjacentSnapInterpolatedLayerCache: Map<
+    private _adjacentSnapInterpolatedDrawingCache: Map<
         string,
         Babelfont.Layer | null
     > = new Map();
-    private _pendingAdjacentSnapInterpolatedLayerRequests: Set<string> =
+    private _pendingAdjacentSnapInterpolatedDrawingRequests: Set<string> =
         new Set();
     private _adjacentSnapInterpolationSessionId: number = 0;
     private _lastDragSaveTime: number = 0;
@@ -1463,7 +1478,7 @@ export class OutlineEditor {
         layerId: string;
     }> = [];
     /**
-     * Exact visible layers that the canonical live closure mutated. Commit
+     * Exact visible drawings that the canonical live closure mutated. Commit
      * reuses these identities for Yjs snapshots when its all-scope pass is a
      * no-op for already-converged visible glyphs.
      */
@@ -1488,7 +1503,7 @@ export class OutlineEditor {
      * mouseup sync — avoids a second full recomposition on commit.
      */
     private _pendingSidebearingCommitSync: {
-        changedLayerTargets: Array<{ glyphName: string; layerId: string }>;
+        changedDrawingTargets: Array<{ glyphName: string; layerId: string }>;
         workerReplayTargets: Array<{ glyphName: string; layerId: string }>;
         affectedGlyphNames: Set<string>;
         recomposeTargets: Array<{ glyphName: string; layerId: string }>;
@@ -1500,8 +1515,8 @@ export class OutlineEditor {
     /**
      * Automatic composites (and other model-mutated dependents) touched during
      * the live anchor drag. Commit-time `scope:'all'` rebuild is often a no-op
-     * for those layers because live already converged them; without this stash
-     * they are omitted from `changedLayerTargets` and the worker keeps pre-drag
+     * for those drawings because live already converged them; without this stash
+     * they are omitted from `changedDrawingTargets` and the worker keeps pre-drag
      * composite transforms (stale compiled Adieresis mark).
      */
     private _lastLiveAnchorRecomposeTargets: Array<{
@@ -1589,8 +1604,8 @@ export class OutlineEditor {
         y: number;
         defaultX: number;
         glyphName: string;
-        layerId: string;
-        masterId: string;
+        drawingId: string;
+        stationId: string;
     } | null = null;
     isResizingSelection: boolean = false;
     isMarqueeSelecting: boolean = false;
@@ -1616,7 +1631,7 @@ export class OutlineEditor {
     } | null = null;
     glyphCanvas: GlyphCanvas;
     guidelinesVisible: boolean;
-    pairedLayerVisible: boolean;
+    pairedDrawingVisible: boolean;
 
     selectedAnchors: number[] = [];
     selectedPoints: Point[] = [];
@@ -1636,40 +1651,40 @@ export class OutlineEditor {
     hoveredCommandCurvePreview: HoveredSegmentPreview | null = null;
     selectedPointIndex: any = null;
 
-    layerDataDirty: boolean = false;
+    drawingDataDirty: boolean = false;
     escapeState: SavedVariationState = new SavedVariationState();
-    braceLayerNeighborAboveMasterId: string | null = null;
-    braceLayerNeighborBelowMasterId: string | null = null;
-    layerData: Babelfont.Layer | null = null;
+    freeDrawingNeighborAboveStationId: string | null = null;
+    freeDrawingNeighborBelowStationId: string | null = null;
+    drawingData: Babelfont.Layer | null = null;
     renderVerticalMetrics: Record<string, number> | null = null;
-    targetLayerData: Babelfont.Layer | null = null;
-    selectedLayerId: string | null = null;
-    private _layerDataFetchGeneration = 0;
+    targetDrawingData: Babelfont.Layer | null = null;
+    selectedDrawingId: string | null = null;
+    private _drawingDataFetchGeneration = 0;
     isInterpolating: boolean = false;
-    isLayerSwitchAnimating: boolean = false;
+    isDrawingSwitchAnimating: boolean = false;
 
     /**
      * True when outlines should paint as a temporary interpolated preview
-     * (monochrome). Exact stored layers stay in object-model color even while
+     * (monochrome). Exact stored drawings stay in object-model color even while
      * a slider drag is still interpolating through that location.
      */
     isPaintingInterpolatedPreview(): boolean {
-        if (this.isLayerSwitchAnimating) {
+        if (this.isDrawingSwitchAnimating) {
             return false;
         }
         if (
-            this.selectedLayerId !== null &&
-            this.layerData?.isInterpolated !== true
+            this.selectedDrawingId !== null &&
+            this.drawingData?.isInterpolated !== true
         ) {
             return false;
         }
         return (
             this.isInterpolating ||
-            (this.selectedLayerId === null &&
-                this.layerData?.isInterpolated === true)
+            (this.selectedDrawingId === null &&
+                this.drawingData?.isInterpolated === true)
         );
     }
-    suppressAutoLayerMatching: boolean = false;
+    suppressAutoDrawingMatching: boolean = false;
     currentInterpolationId: number = 0;
     private interpolationRequestInFlight: boolean = false;
     private interpolationNeeded: boolean = false;
@@ -1690,7 +1705,7 @@ export class OutlineEditor {
     canvas: HTMLCanvasElement | null = null;
 
     glyphStack: string = '';
-    private static readonly MISSING_INTERPOLATION_LAYER_ID =
+    private static readonly MISSING_INTERPOLATION_DRAWING_ID =
         'missing_interpolation';
     marqueeSelectionStart: { glyphX: number; glyphY: number } | null = null;
     marqueeSelectionCurrent: { glyphX: number; glyphY: number } | null = null;
@@ -1717,10 +1732,13 @@ export class OutlineEditor {
         this.interpolationBboxCenterAnchorScreen = null;
     }
     marqueeInitialPoints: Point[] = [];
-    private layerSelectionStateByKey = new Map<string, LayerSelectionState>();
-    private unlinkedLayerIdsByGlyphName = new Map<string, Set<string>>();
-    private pendingGlyphSwitchSourceLayerKey: string | null = null;
-    private pendingGlyphSwitchSourceLayer: any | null = null;
+    private drawingSelectionStateByKey = new Map<
+        string,
+        DrawingSelectionState
+    >();
+    private unlinkedDrawingIdsByGlyphName = new Map<string, Set<string>>();
+    private pendingGlyphSwitchSourceDrawingKey: string | null = null;
+    private pendingGlyphSwitchSourceDrawing: any | null = null;
     private activePathDrawingSession: ActivePathDrawingSession | null = null;
     private suppressSelectedEndpointCommandSeedUntilCommandRelease: boolean = false;
     private pendingCommandPathEdit: PendingCommandPathEdit | null = null;
@@ -1730,10 +1748,10 @@ export class OutlineEditor {
     private selectionResizeSnapshot: SelectionResizeSnapshot | null = null;
 
     /**
-     * Preference: show master and layer guidelines on the canvas.
+     * Preference: show station and drawing guidelines on the canvas.
      * Default false — opt in via Editing View → View menu → Guidelines.
      */
-    private readonly PAIRED_LAYER_VISIBILITY_STORAGE_KEY =
+    private readonly PAIRED_DRAWING_VISIBILITY_STORAGE_KEY =
         'editorPairedLayerVisible';
 
     private readonly CANVAS_CONTEXT_MENU_BACKDROP_CLASS =
@@ -1742,10 +1760,10 @@ export class OutlineEditor {
     constructor(glyphCanvas: GlyphCanvas) {
         this.glyphCanvas = glyphCanvas;
         this.guidelinesVisible = this.loadGuidelinesVisible();
-        this.pairedLayerVisible = this.loadPairedLayerVisible();
+        this.pairedDrawingVisible = this.loadPairedDrawingVisible();
     }
 
-    getLayerLinkGlyphName(glyphName: string | null = null): string | null {
+    getDrawingLinkGlyphName(glyphName: string | null = null): string | null {
         const parsed = this.parseGlyphStack();
         const stackGlyphName = parsed.length
             ? parsed[parsed.length - 1].glyphName
@@ -1764,167 +1782,175 @@ export class OutlineEditor {
         return resolvedName;
     }
 
-    private normalizeGlyphStackLayerId(
-        layerId: string | null | undefined
+    private normalizeGlyphStackDrawingId(
+        drawingId: string | null | undefined
     ): string {
-        if (!layerId) {
-            return OutlineEditor.MISSING_INTERPOLATION_LAYER_ID;
+        if (!drawingId) {
+            return OutlineEditor.MISSING_INTERPOLATION_DRAWING_ID;
         }
 
-        return layerId;
+        return drawingId;
     }
 
-    private isMissingInterpolationLayerId(
-        layerId: string | null | undefined
+    private isMissingInterpolationDrawingId(
+        drawingId: string | null | undefined
     ): boolean {
-        return layerId === OutlineEditor.MISSING_INTERPOLATION_LAYER_ID;
+        return drawingId === OutlineEditor.MISSING_INTERPOLATION_DRAWING_ID;
     }
 
-    private denormalizeGlyphStackLayerId(
-        layerId: string | null | undefined
+    private denormalizeGlyphStackDrawingId(
+        drawingId: string | null | undefined
     ): string | null {
-        if (!layerId || this.isMissingInterpolationLayerId(layerId)) {
+        if (!drawingId || this.isMissingInterpolationDrawingId(drawingId)) {
             return null;
         }
 
-        return layerId;
+        return drawingId;
     }
 
-    private getRootLayerStackToken(): string | null {
+    private getRootDrawingStackToken(): string | null {
         const parsed = this.parseGlyphStack();
         return (
             parsed[0]?.layerId ??
-            (this.isEditingComponent() ? null : this.selectedLayerId)
+            (this.isEditingComponent() ? null : this.selectedDrawingId)
         );
     }
 
-    private resolveLayerLinkGlyphName(
+    private resolveDrawingLinkGlyphName(
         glyphName: string | null = null
     ): string | null {
-        return this.getLayerLinkGlyphName(glyphName);
+        return this.getDrawingLinkGlyphName(glyphName);
     }
 
-    isLayerLinked(
-        layerId: string | null | undefined,
+    isDrawingLinked(
+        drawingId: string | null | undefined,
         glyphName: string | null = null
     ): boolean {
-        if (!layerId) {
+        if (!drawingId) {
             return true;
         }
 
-        const resolvedGlyphName = this.resolveLayerLinkGlyphName(glyphName);
+        const resolvedGlyphName = this.resolveDrawingLinkGlyphName(glyphName);
         if (!resolvedGlyphName) {
             return true;
         }
 
-        return !this.unlinkedLayerIdsByGlyphName
+        return !this.unlinkedDrawingIdsByGlyphName
             .get(resolvedGlyphName)
-            ?.has(layerId);
+            ?.has(drawingId);
     }
 
-    getUnlinkedLayerIdsForGlyph(glyphName: string | null = null): Set<string> {
-        const resolvedGlyphName = this.resolveLayerLinkGlyphName(glyphName);
+    getUnlinkedDrawingIdsForGlyph(
+        glyphName: string | null = null
+    ): Set<string> {
+        const resolvedGlyphName = this.resolveDrawingLinkGlyphName(glyphName);
         if (!resolvedGlyphName) {
             return new Set<string>();
         }
 
         return new Set(
-            this.unlinkedLayerIdsByGlyphName.get(resolvedGlyphName) || []
+            this.unlinkedDrawingIdsByGlyphName.get(resolvedGlyphName) || []
         );
     }
 
-    areAllLayersLinked(
-        layerIds: string[],
+    areAllDrawingsLinked(
+        drawingIds: string[],
         glyphName: string | null = null
     ): boolean {
-        return layerIds.every((layerId) =>
-            this.isLayerLinked(layerId, glyphName)
+        return drawingIds.every((drawingId) =>
+            this.isDrawingLinked(drawingId, glyphName)
         );
     }
 
-    setLayerLinked(
-        layerId: string | null | undefined,
+    setDrawingLinked(
+        drawingId: string | null | undefined,
         linked: boolean,
         glyphName: string | null = null
     ): void {
-        if (!layerId) {
+        if (!drawingId) {
             return;
         }
 
-        const resolvedGlyphName = this.resolveLayerLinkGlyphName(glyphName);
+        const resolvedGlyphName = this.resolveDrawingLinkGlyphName(glyphName);
         if (!resolvedGlyphName) {
             return;
         }
 
-        const unlinkedLayerIds = new Set(
-            this.unlinkedLayerIdsByGlyphName.get(resolvedGlyphName) || []
+        const unlinkedDrawingIds = new Set(
+            this.unlinkedDrawingIdsByGlyphName.get(resolvedGlyphName) || []
         );
 
         if (linked) {
-            unlinkedLayerIds.delete(layerId);
+            unlinkedDrawingIds.delete(drawingId);
         } else {
-            unlinkedLayerIds.add(layerId);
+            unlinkedDrawingIds.add(drawingId);
         }
 
-        if (unlinkedLayerIds.size === 0) {
-            this.unlinkedLayerIdsByGlyphName.delete(resolvedGlyphName);
+        if (unlinkedDrawingIds.size === 0) {
+            this.unlinkedDrawingIdsByGlyphName.delete(resolvedGlyphName);
             return;
         }
 
-        this.unlinkedLayerIdsByGlyphName.set(
+        this.unlinkedDrawingIdsByGlyphName.set(
             resolvedGlyphName,
-            unlinkedLayerIds
+            unlinkedDrawingIds
         );
     }
 
-    setAllLayersLinked(
-        layerIds: string[],
+    setAllDrawingsLinked(
+        drawingIds: string[],
         linked: boolean,
         glyphName: string | null = null
     ): void {
-        const resolvedGlyphName = this.resolveLayerLinkGlyphName(glyphName);
+        const resolvedGlyphName = this.resolveDrawingLinkGlyphName(glyphName);
         if (!resolvedGlyphName) {
             return;
         }
 
-        const uniqueLayerIds = Array.from(
-            new Set(layerIds.filter((layerId): layerId is string => !!layerId))
+        const uniqueDrawingIds = Array.from(
+            new Set(
+                drawingIds.filter(
+                    (drawingId): drawingId is string => !!drawingId
+                )
+            )
         );
 
-        if (uniqueLayerIds.length === 0) {
+        if (uniqueDrawingIds.length === 0) {
             return;
         }
 
         if (linked) {
-            const unlinkedLayerIds = new Set(
-                this.unlinkedLayerIdsByGlyphName.get(resolvedGlyphName) || []
+            const unlinkedDrawingIds = new Set(
+                this.unlinkedDrawingIdsByGlyphName.get(resolvedGlyphName) || []
             );
 
-            uniqueLayerIds.forEach((layerId) =>
-                unlinkedLayerIds.delete(layerId)
+            uniqueDrawingIds.forEach((drawingId) =>
+                unlinkedDrawingIds.delete(drawingId)
             );
 
-            if (unlinkedLayerIds.size === 0) {
-                this.unlinkedLayerIdsByGlyphName.delete(resolvedGlyphName);
+            if (unlinkedDrawingIds.size === 0) {
+                this.unlinkedDrawingIdsByGlyphName.delete(resolvedGlyphName);
                 return;
             }
 
-            this.unlinkedLayerIdsByGlyphName.set(
+            this.unlinkedDrawingIdsByGlyphName.set(
                 resolvedGlyphName,
-                unlinkedLayerIds
+                unlinkedDrawingIds
             );
             return;
         }
 
-        const unlinkedLayerIds = new Set(
-            this.unlinkedLayerIdsByGlyphName.get(resolvedGlyphName) || []
+        const unlinkedDrawingIds = new Set(
+            this.unlinkedDrawingIdsByGlyphName.get(resolvedGlyphName) || []
         );
 
-        uniqueLayerIds.forEach((layerId) => unlinkedLayerIds.add(layerId));
+        uniqueDrawingIds.forEach((drawingId) =>
+            unlinkedDrawingIds.add(drawingId)
+        );
 
-        this.unlinkedLayerIdsByGlyphName.set(
+        this.unlinkedDrawingIdsByGlyphName.set(
             resolvedGlyphName,
-            unlinkedLayerIds
+            unlinkedDrawingIds
         );
     }
 
@@ -1932,11 +1958,11 @@ export class OutlineEditor {
         return isGuidelinesVisible();
     }
 
-    private loadPairedLayerVisible(): boolean {
+    private loadPairedDrawingVisible(): boolean {
         try {
             return (
                 localStorage.getItem(
-                    this.PAIRED_LAYER_VISIBILITY_STORAGE_KEY
+                    this.PAIRED_DRAWING_VISIBILITY_STORAGE_KEY
                 ) === 'true'
             );
         } catch (_error) {
@@ -1992,7 +2018,7 @@ export class OutlineEditor {
         );
     }
 
-    private getFeatureVariationLayerIdsForGlyphName(
+    private getFeatureVariationDrawingIdsForGlyphName(
         glyphName: string
     ): string[] | undefined {
         const glyph = this.getGlyphViewByName(glyphName);
@@ -2000,10 +2026,10 @@ export class OutlineEditor {
             return undefined;
         }
 
-        const layerIds = glyph.layers
-            .map((layer) => layer.id)
-            .filter((layerId): layerId is string => !!layerId);
-        return layerIds.length ? layerIds : undefined;
+        const drawingIds = glyph.drawings
+            .map((drawing) => drawing.id)
+            .filter((drawingId): drawingId is string => !!drawingId);
+        return drawingIds.length ? drawingIds : undefined;
     }
 
     getAuthoringGlyphName(glyphName: string | null | undefined): string {
@@ -2024,7 +2050,7 @@ export class OutlineEditor {
             return glyphName;
         }
 
-        // Babelfont materializes bracket layers as *.VAR.n glyphs. That compiled
+        // Babelfont materializes variations (bracket layers) as *.VAR.n glyphs. That compiled
         // name is never a feature-family selection; it only recovers its source glyph.
         const compiledSourceName = glyphName.replace(/\.VAR\.\d+$/, '');
         if (this.getGlyphModelByName(compiledSourceName)) {
@@ -2058,15 +2084,17 @@ export class OutlineEditor {
 
     private replaceRootGlyphStackName(rootGlyphName: string): void {
         if (!this.glyphStack) {
-            this.buildGlyphStack(rootGlyphName, this.selectedLayerId, []);
+            this.buildGlyphStack(rootGlyphName, this.selectedDrawingId, []);
             return;
         }
 
         const segments = this.glyphStack.split('>');
-        const layerIndex = segments[0].lastIndexOf('@');
-        const layerToken =
-            layerIndex >= 0 ? segments[0].substring(layerIndex) : '@undefined';
-        segments[0] = `${rootGlyphName}${layerToken}`;
+        const drawingIndex = segments[0].lastIndexOf('@');
+        const drawingToken =
+            drawingIndex >= 0
+                ? segments[0].substring(drawingIndex)
+                : '@undefined';
+        segments[0] = `${rootGlyphName}${drawingToken}`;
         this.glyphStack = segments.join('>');
         window.dispatchEvent(
             new CustomEvent('glyphStackChanged', {
@@ -2079,7 +2107,7 @@ export class OutlineEditor {
     setRootFeatureVariationSelection(
         featureVariationId: string | null,
         options?: {
-            clearLayerSelection?: boolean;
+            clearDrawingSelection?: boolean;
         }
     ): void {
         const glyph = this.getRootGlyphModel();
@@ -2100,21 +2128,22 @@ export class OutlineEditor {
                 ? { glyphName: rootGlyphName, featureVariationId }
                 : null;
         this.replaceRootGlyphStackName(stackGlyphName);
-        if (options?.clearLayerSelection) {
-            this.selectedLayerId = null;
-            this.rebuildGlyphStackWithNewLayer(
-                OutlineEditor.MISSING_INTERPOLATION_LAYER_ID,
-                { rootLayerId: null }
+        if (options?.clearDrawingSelection) {
+            this.selectedDrawingId = null;
+            this.rebuildGlyphStackWithNewDrawing(
+                OutlineEditor.MISSING_INTERPOLATION_DRAWING_ID,
+                { rootDrawingId: null }
             );
         }
     }
 
-    selectRootFeatureVariationForLayer(
-        layerId: string | null | undefined
+    selectRootFeatureVariationForDrawing(
+        drawingId: string | null | undefined
     ): void {
         const glyph = this.getRootGlyphModel();
         const featureVariation = glyph?.featureVariations?.find(
-            (candidate: any) => !!layerId && candidate.findLayerById(layerId)
+            (candidate: any) =>
+                !!drawingId && candidate.findDrawingById(drawingId)
         );
         this.setRootFeatureVariationSelection(featureVariation?.id || null);
     }
@@ -2153,11 +2182,11 @@ export class OutlineEditor {
         return this.getGlyphModelByName(glyphName);
     }
 
-    private resolveOwningGlyphForLayer(
-        layerId: string,
+    private resolveOwningGlyphForDrawing(
+        drawingId: string,
         preferredGlyphName?: string | null
     ): { glyphName: string; glyph: any } | null {
-        if (!layerId) {
+        if (!drawingId) {
             return null;
         }
 
@@ -2180,12 +2209,13 @@ export class OutlineEditor {
 
         for (const glyphName of candidateGlyphNames) {
             const glyph = this.getGlyphViewByName(glyphName);
-            const layer = glyph?.findLayerById?.(layerId);
-            const virtualBackground = layerId.startsWith('background-')
-                ? glyph?.findLayerById?.(layerId.slice('background-'.length))
-                      ?.backgroundLayer
+            const drawing = glyph?.findDrawingById?.(drawingId);
+            const virtualBackground = drawingId.startsWith('background-')
+                ? glyph?.findDrawingById?.(
+                      drawingId.slice('background-'.length)
+                  )?.backgroundDrawing
                 : null;
-            if (layer || virtualBackground?.id === layerId) {
+            if (drawing || virtualBackground?.id === drawingId) {
                 return { glyphName, glyph };
             }
         }
@@ -2193,24 +2223,24 @@ export class OutlineEditor {
         return null;
     }
 
-    private getRootLayerId(): string | null {
+    private getRootDrawingId(): string | null {
         const parsed = this.parseGlyphStack();
-        return this.denormalizeGlyphStackLayerId(
+        return this.denormalizeGlyphStackDrawingId(
             parsed[0]?.layerId ??
-                (this.isEditingComponent() ? null : this.selectedLayerId)
+                (this.isEditingComponent() ? null : this.selectedDrawingId)
         );
     }
 
-    private getCurrentLayerId(): string | null {
+    private getCurrentDrawingId(): string | null {
         const parsed = this.parseGlyphStack();
-        return this.denormalizeGlyphStackLayerId(
-            parsed[parsed.length - 1]?.layerId ?? this.selectedLayerId
+        return this.denormalizeGlyphStackDrawingId(
+            parsed[parsed.length - 1]?.layerId ?? this.selectedDrawingId
         );
     }
 
-    private getRootLayerModel(): any | null {
-        const layerId = this.getRootLayerId();
-        if (!layerId) {
+    private getRootDrawingModel(): any | null {
+        const drawingId = this.getRootDrawingId();
+        if (!drawingId) {
             return null;
         }
 
@@ -2219,22 +2249,23 @@ export class OutlineEditor {
             return null;
         }
 
-        const layer = glyph.findLayerById?.(layerId);
-        if (layer) {
-            return layer;
+        const drawing = glyph.findDrawingById?.(drawingId);
+        if (drawing) {
+            return drawing;
         }
 
-        if (layerId.startsWith('background-')) {
-            return glyph.findLayerById?.(layerId.slice('background-'.length))
-                ?.backgroundLayer;
+        if (drawingId.startsWith('background-')) {
+            return glyph.findDrawingById?.(
+                drawingId.slice('background-'.length)
+            )?.backgroundDrawing;
         }
 
         return null;
     }
 
-    private getCurrentLayerModel(): any | null {
-        const layerId = this.getCurrentLayerId();
-        if (!layerId) {
+    private getCurrentDrawingModel(): any | null {
+        const drawingId = this.getCurrentDrawingId();
+        if (!drawingId) {
             return null;
         }
 
@@ -2243,44 +2274,45 @@ export class OutlineEditor {
             return null;
         }
 
-        const layer = glyph.findLayerById?.(layerId);
-        if (layer) {
-            return layer;
+        const drawing = glyph.findDrawingById?.(drawingId);
+        if (drawing) {
+            return drawing;
         }
 
-        if (layerId.startsWith('background-')) {
-            return glyph.findLayerById?.(layerId.slice('background-'.length))
-                ?.backgroundLayer;
+        if (drawingId.startsWith('background-')) {
+            return glyph.findDrawingById?.(
+                drawingId.slice('background-'.length)
+            )?.backgroundDrawing;
         }
 
         return null;
     }
 
-    isEditingBackgroundLayer(): boolean {
-        return !!this.getCurrentLayerModel()?.is_background;
+    isEditingBackgroundDrawing(): boolean {
+        return !!this.getCurrentDrawingModel()?.is_background;
     }
 
-    isPairedLayerVisible(): boolean {
-        return this.pairedLayerVisible;
+    isPairedDrawingVisible(): boolean {
+        return this.pairedDrawingVisible;
     }
 
-    getPairedLayerModel(): any | null {
-        const currentLayer = this.getCurrentLayerModel();
-        return currentLayer?.backgroundLayer || null;
+    getPairedDrawingModel(): any | null {
+        const currentDrawing = this.getCurrentDrawingModel();
+        return currentDrawing?.backgroundDrawing || null;
     }
 
-    getPairedLayerGhostPaths(): Array<{
+    getPairedDrawingGhostPaths(): Array<{
         nodes: Babelfont.Node[];
         closed: boolean;
     }> {
-        const pairedLayer = this.getPairedLayerModel();
-        if (!pairedLayer) {
+        const pairedDrawing = this.getPairedDrawingModel();
+        if (!pairedDrawing) {
             return [];
         }
 
-        const shapes = Array.isArray(pairedLayer.shapes)
-            ? pairedLayer.shapes
-            : pairedLayer.toJSON?.()?.shapes;
+        const shapes = Array.isArray(pairedDrawing.shapes)
+            ? pairedDrawing.shapes
+            : pairedDrawing.toJSON?.()?.shapes;
         if (!Array.isArray(shapes) || shapes.length === 0) {
             return [];
         }
@@ -2300,7 +2332,7 @@ export class OutlineEditor {
                     typeof nodetype !== 'string'
                 ) {
                     throw new TypeError(
-                        `Invalid paired-layer node at index ${index}.`
+                        `Invalid paired-drawing node at index ${index}.`
                     );
                 }
                 return {
@@ -2337,59 +2369,59 @@ export class OutlineEditor {
         return paths;
     }
 
-    async toggleBackgroundLayerEditing(): Promise<boolean> {
-        const currentLayer = this.getCurrentLayerModel();
-        if (!currentLayer) {
+    async toggleBackgroundDrawingEditing(): Promise<boolean> {
+        const currentDrawing = this.getCurrentDrawingModel();
+        if (!currentDrawing) {
             return false;
         }
 
-        await this.refreshSelectedLayerWithoutAnimation(
-            currentLayer.backgroundLayer
+        await this.refreshSelectedDrawingWithoutAnimation(
+            currentDrawing.backgroundDrawing
         );
-        const isEditingBackground = this.isEditingBackgroundLayer();
+        const isEditingBackground = this.isEditingBackgroundDrawing();
         this.glyphCanvas.canvas?.classList.toggle(
             'glyph-canvas-background-editing',
             isEditingBackground
         );
         window.dispatchEvent(
-            new CustomEvent('outlineBackgroundLayerModeChanged', {
+            new CustomEvent('outlineBackgroundDrawingModeChanged', {
                 detail: { isEditingBackground }
             })
         );
         return isEditingBackground;
     }
 
-    setPairedLayerVisible(visible: boolean): void {
-        this.pairedLayerVisible = visible;
+    setPairedDrawingVisible(visible: boolean): void {
+        this.pairedDrawingVisible = visible;
         try {
             localStorage.setItem(
-                this.PAIRED_LAYER_VISIBILITY_STORAGE_KEY,
+                this.PAIRED_DRAWING_VISIBILITY_STORAGE_KEY,
                 visible ? 'true' : 'false'
             );
         } catch (_error) {
             // Ignore localStorage access failures.
         }
         window.dispatchEvent(
-            new CustomEvent('outlinePairedLayerVisibilityChanged', {
+            new CustomEvent('outlinePairedDrawingVisibilityChanged', {
                 detail: { visible }
             })
         );
         this.glyphCanvas.render();
     }
 
-    togglePairedLayerVisible(): boolean {
-        const nextVisible = !this.pairedLayerVisible;
-        this.setPairedLayerVisible(nextVisible);
+    togglePairedDrawingVisible(): boolean {
+        const nextVisible = !this.pairedDrawingVisible;
+        this.setPairedDrawingVisible(nextVisible);
         return nextVisible;
     }
 
-    private copySelectedShapesToPairedLayer(): boolean {
-        const sourceLayer = this.getCurrentLayerModel();
-        if (!sourceLayer) {
+    private copySelectedShapesToPairedDrawing(): boolean {
+        const sourceDrawing = this.getCurrentDrawingModel();
+        if (!sourceDrawing) {
             return false;
         }
 
-        const targetLayer = sourceLayer.backgroundLayer;
+        const targetDrawing = sourceDrawing.backgroundDrawing;
         const selectedShapeIndexes = new Set(
             this.selectedPoints.map((point) => point.contourIndex)
         );
@@ -2408,7 +2440,7 @@ export class OutlineEditor {
             automaticAlignment: boolean;
         }> = [];
         selectedShapeIndexes.forEach((shapeIndex) => {
-            const shape = sourceLayer.shapes?.[shapeIndex];
+            const shape = sourceDrawing.shapes?.[shapeIndex];
             if (!shape) {
                 return;
             }
@@ -2426,11 +2458,11 @@ export class OutlineEditor {
         });
 
         pathData.forEach((copiedPath) => {
-            const path = targetLayer.addPath(Boolean(copiedPath.closed));
+            const path = targetDrawing.addPath(Boolean(copiedPath.closed));
             path.nodes = JSON.parse(JSON.stringify(copiedPath.nodes || []));
         });
         componentShapes.forEach((componentShape) => {
-            const added = targetLayer.addComponent(
+            const added = targetDrawing.addComponent(
                 componentShape.reference,
                 componentShape.transform
             );
@@ -2438,7 +2470,7 @@ export class OutlineEditor {
                 added.anchor = componentShape.anchor;
             }
             if (
-                !targetLayer.is_background &&
+                !targetDrawing.is_background &&
                 componentShape.automaticAlignment
             ) {
                 added.automaticAlignment = true;
@@ -2481,8 +2513,8 @@ export class OutlineEditor {
         if (!this.active) {
             return false;
         }
-        const layerData = this.getCurrentLayerDataFromStack();
-        if (!layerData || layerData.isInterpolated) {
+        const drawingData = this.getCurrentDrawingDataFromStack();
+        if (!drawingData || drawingData.isInterpolated) {
             return false;
         }
         return this.getSelectedShapeIndexes().length > 0;
@@ -2492,9 +2524,9 @@ export class OutlineEditor {
         if (!this.canReorderSelectedShapes()) {
             return false;
         }
-        const currentLayer = this.getCurrentLayerModel();
+        const currentDrawing = this.getCurrentDrawingModel();
         const currentGlyph = this.getCurrentGlyphModel();
-        if (!currentLayer || !currentGlyph) {
+        if (!currentDrawing || !currentGlyph) {
             return false;
         }
         const indexes = this.getSelectedShapeIndexes();
@@ -2505,11 +2537,11 @@ export class OutlineEditor {
             back: 'Send to Back'
         };
         const label = labels[command];
-        const linkedLayers = currentLayer._getLinkedLayers?.() || [];
-        const layerTargets = normalizeWorkerReplayTargets(
-            [currentLayer, ...linkedLayers].map((layer) => ({
+        const linkedDrawings = currentDrawing._getLinkedDrawings?.() || [];
+        const drawingTargets = normalizeWorkerReplayTargets(
+            [currentDrawing, ...linkedDrawings].map((drawing) => ({
                 glyphName: currentGlyph.name,
-                layerId: String(layer?.id || '')
+                layerId: String(drawing?.id || '')
             }))
         );
         const bridge = window.patchSyncEngine;
@@ -2520,7 +2552,7 @@ export class OutlineEditor {
         let mapping: Map<number, number> = new Map();
         try {
             withSuppressedModelRecording(() => {
-                mapping = currentLayer.moveShapes(indexes, command);
+                mapping = currentDrawing.moveShapes(indexes, command);
             });
             const changed = [...mapping.entries()].some(
                 ([from, to]) => from !== to
@@ -2529,10 +2561,10 @@ export class OutlineEditor {
                 return false;
             }
             this.remapSelectionAfterShapeMove(mapping);
-            this.syncCurrentExactLayerDataFromModel();
+            this.syncCurrentExactDrawingDataFromModel();
             this.commitStructuralOutlineChange(label, {
                 reuseTransaction: true,
-                layerTargets: layerTargets.length ? layerTargets : undefined
+                layerTargets: drawingTargets.length ? drawingTargets : undefined
             });
         } finally {
             bridge?.endTransaction();
@@ -2544,10 +2576,10 @@ export class OutlineEditor {
     }
 
     setSelectedPathsSubtraction(enabled: boolean): boolean {
-        const currentLayer = this.getCurrentLayerModel();
+        const currentDrawing = this.getCurrentDrawingModel();
         const currentGlyph = this.getCurrentGlyphModel();
-        const layerData = this.getCurrentLayerDataFromStack();
-        if (!currentLayer || !currentGlyph || layerData?.isInterpolated) {
+        const drawingData = this.getCurrentDrawingDataFromStack();
+        if (!currentDrawing || !currentGlyph || drawingData?.isInterpolated) {
             return false;
         }
         const pathShapeIndexes = [
@@ -2555,7 +2587,7 @@ export class OutlineEditor {
                 this.selectedPoints
                     .map((point) => point.contourIndex)
                     .filter((index) => {
-                        const shape = currentLayer.shapes?.[index];
+                        const shape = currentDrawing.shapes?.[index];
                         return !!shape?.isPath?.();
                     })
             )
@@ -2563,8 +2595,8 @@ export class OutlineEditor {
         if (pathShapeIndexes.length === 0) {
             return false;
         }
-        const linkedLayers = currentLayer._getLinkedLayers?.() || [];
-        const layers = [currentLayer, ...linkedLayers];
+        const linkedDrawings = currentDrawing._getLinkedDrawings?.() || [];
+        const drawings = [currentDrawing, ...linkedDrawings];
         const label = enabled ? 'Subtract paths' : 'Clear path subtraction';
         const bridge = window.patchSyncEngine;
         let changed = false;
@@ -2573,9 +2605,9 @@ export class OutlineEditor {
             compileEditType: null
         });
         try {
-            for (const layer of layers) {
+            for (const drawing of drawings) {
                 for (const shapeIndex of pathShapeIndexes) {
-                    const shape = layer.shapes?.[shapeIndex];
+                    const shape = drawing.shapes?.[shapeIndex];
                     if (!shape?.isPath?.()) {
                         continue;
                     }
@@ -2590,13 +2622,13 @@ export class OutlineEditor {
             if (!changed) {
                 return false;
             }
-            this.syncCurrentExactLayerDataFromModel();
+            this.syncCurrentExactDrawingDataFromModel();
             this.commitStructuralOutlineChange(label, {
                 reuseTransaction: true,
                 layerTargets: normalizeWorkerReplayTargets(
-                    layers.map((layer) => ({
+                    drawings.map((drawing) => ({
                         glyphName: currentGlyph.name,
-                        layerId: String(layer?.id || '')
+                        layerId: String(drawing?.id || '')
                     }))
                 )
             });
@@ -2610,17 +2642,21 @@ export class OutlineEditor {
 
     /**
      * Replace the selected closed paths with a linesweeper boolean.
-     * Runs on the active layer and every linked sibling. Asks first when the
+     * Runs on the active drawing and every linked sibling. Asks first when the
      * results would not share a contour structure.
      */
     async applySelectedPathBoolean(op: PathBooleanOp): Promise<boolean> {
         if (this.pathBooleanInFlight || !this.active) {
             return false;
         }
-        const currentLayer = this.getCurrentLayerModel();
+        const currentDrawing = this.getCurrentDrawingModel();
         const currentGlyph = this.getCurrentGlyphModel();
-        const layerData = this.getCurrentLayerDataFromStack();
-        if (!currentLayer || !currentGlyph?.name || layerData?.isInterpolated) {
+        const drawingData = this.getCurrentDrawingDataFromStack();
+        if (
+            !currentDrawing ||
+            !currentGlyph?.name ||
+            drawingData?.isInterpolated
+        ) {
             return false;
         }
 
@@ -2629,7 +2665,7 @@ export class OutlineEditor {
                 this.selectedPoints
                     .map((point) => point.contourIndex)
                     .filter((index) => {
-                        const shape = currentLayer.shapes?.[index];
+                        const shape = currentDrawing.shapes?.[index];
                         return !!shape?.isPath?.();
                     })
             )
@@ -2640,20 +2676,20 @@ export class OutlineEditor {
         if (
             pathShapeIndexes.some(
                 (index) =>
-                    currentLayer.shapes?.[index]?.asPath?.().closed === false
+                    currentDrawing.shapes?.[index]?.asPath?.().closed === false
             )
         ) {
             return false;
         }
 
-        const linkedLayers = currentLayer._getLinkedLayers?.() || [];
-        const layers = [currentLayer, ...linkedLayers];
-        const serialized = layers.map((layer) =>
-            this.serializeBooleanPaths(layer, pathShapeIndexes)
+        const linkedDrawings = currentDrawing._getLinkedDrawings?.() || [];
+        const drawings = [currentDrawing, ...linkedDrawings];
+        const serialized = drawings.map((drawing) =>
+            this.serializeBooleanPaths(drawing, pathShapeIndexes)
         );
         if (serialized.some((paths) => paths === null)) {
             window.alert?.(
-                'A linked layer does not have closed paths at the same indexes.'
+                'A linked drawing does not have closed paths at the same indexes.'
             );
             return false;
         }
@@ -2677,7 +2713,7 @@ export class OutlineEditor {
             if (!booleanResultsMatch(results)) {
                 const proceed = await showProceedDialog(
                     'Incompatible outlines',
-                    'This boolean will make the linked layers incompatible, so they will no longer interpolate.'
+                    'This boolean will make the linked drawings incompatible, so they will no longer interpolate.'
                 );
                 if (!proceed) {
                     return false;
@@ -2693,22 +2729,22 @@ export class OutlineEditor {
             });
             try {
                 withSuppressedModelRecording(() => {
-                    layers.forEach((layer, layerIndex) => {
-                        const produced = results[layerIndex] || [];
+                    drawings.forEach((drawing, drawingIndex) => {
+                        const produced = results[drawingIndex] || [];
                         for (const shapeIndex of [
                             ...pathShapeIndexes
                         ].reverse()) {
-                            layer.removeShape(shapeIndex);
+                            drawing.removeShape(shapeIndex);
                         }
                         produced.forEach((path, offset) => {
-                            layer.insertShapeAt(
+                            drawing.insertShapeAt(
                                 insertAt + offset,
                                 this.booleanPathToShape(path)
                             );
                         });
                     });
                 });
-                this.syncCurrentExactLayerDataFromModel();
+                this.syncCurrentExactDrawingDataFromModel();
                 this.selectedPoints = [];
                 const activeResult = results[0] || [];
                 activeResult.forEach((path, offset) => {
@@ -2720,9 +2756,9 @@ export class OutlineEditor {
                 this.commitStructuralOutlineChange(label, {
                     reuseTransaction: true,
                     layerTargets: normalizeWorkerReplayTargets(
-                        layers.map((layer) => ({
+                        drawings.map((drawing) => ({
                             glyphName: currentGlyph.name,
-                            layerId: String(layer?.id || '')
+                            layerId: String(drawing?.id || '')
                         }))
                     )
                 });
@@ -2752,12 +2788,12 @@ export class OutlineEditor {
     }
 
     private serializeBooleanPaths(
-        layer: Layer,
+        drawing: Drawing,
         shapeIndexes: number[]
     ): BooleanPathJson[] | null {
         const paths: BooleanPathJson[] = [];
         for (const shapeIndex of shapeIndexes) {
-            const shape = layer.shapes?.[shapeIndex];
+            const shape = drawing.shapes?.[shapeIndex];
             if (!shape?.isPath?.()) {
                 return null;
             }
@@ -2787,13 +2823,13 @@ export class OutlineEditor {
         if (!this.active) {
             return false;
         }
-        const activeLayer = this.getCurrentLayerModel();
+        const activeDrawing = this.getCurrentDrawingModel();
         const glyph = this.getCurrentGlyphModel();
-        if (!activeLayer || !glyph?.name) {
+        if (!activeDrawing || !glyph?.name) {
             return false;
         }
         return !!this.buildSelectionClipboardDocumentFromEditor(
-            activeLayer,
+            activeDrawing,
             glyph.name
         );
     }
@@ -2890,7 +2926,7 @@ export class OutlineEditor {
         document: CounterpunchSelectionClipboard;
         fontraOptions: {
             layerId: string;
-            layerWidth: number;
+            drawingWidth: number;
             codePoints: number[];
         };
     } | null {
@@ -2898,14 +2934,14 @@ export class OutlineEditor {
             return null;
         }
 
-        const activeLayer = this.getCurrentLayerModel();
+        const activeDrawing = this.getCurrentDrawingModel();
         const glyph = this.getCurrentGlyphModel();
-        if (!activeLayer || !glyph?.name) {
+        if (!activeDrawing || !glyph?.name) {
             return null;
         }
 
         const document = this.buildSelectionClipboardDocumentFromEditor(
-            activeLayer,
+            activeDrawing,
             glyph.name
         );
         if (!document) {
@@ -2915,8 +2951,8 @@ export class OutlineEditor {
         return {
             document,
             fontraOptions: {
-                layerId: activeLayer.id || 'clipboard',
-                layerWidth: Number(activeLayer.width) || 0,
+                layerId: activeDrawing.id || 'clipboard',
+                drawingWidth: Number(activeDrawing.width) || 0,
                 codePoints: Array.isArray(glyph.codepoints)
                     ? [...glyph.codepoints]
                     : []
@@ -2929,8 +2965,8 @@ export class OutlineEditor {
      * so delete removes the same objects that landed on the clipboard.
      */
     private expandTouchedPathsToFullContours(): void {
-        const activeLayer = this.getCurrentLayerModel();
-        const shapes = activeLayer?.shapes || [];
+        const activeDrawing = this.getCurrentDrawingModel();
+        const shapes = activeDrawing?.shapes || [];
         if (shapes.length === 0 || this.selectedPoints.length === 0) {
             return;
         }
@@ -2970,10 +3006,10 @@ export class OutlineEditor {
     }
 
     private buildSelectionClipboardDocumentFromEditor(
-        activeLayer: Layer,
+        activeDrawing: Drawing,
         glyphName: string
     ) {
-        const shapes = activeLayer.shapes || [];
+        const shapes = activeDrawing.shapes || [];
         const selectedPathIndexes = new Set<number>();
         for (const point of this.selectedPoints) {
             if (
@@ -3007,25 +3043,25 @@ export class OutlineEditor {
             .filter(
                 (index) =>
                     index >= 0 &&
-                    index < (activeLayer.anchors?.length || 0) &&
-                    !!activeLayer.anchors![index]?.name
+                    index < (activeDrawing.anchors?.length || 0) &&
+                    !!activeDrawing.anchors![index]?.name
             )
             .sort((a, b) => a - b)
             .map((index) =>
-                serializeAnchorForClipboard(activeLayer.anchors![index])
+                serializeAnchorForClipboard(activeDrawing.anchors![index])
             );
 
         const guides = [];
         if (this.selectedGuideHandle) {
             const { scope, index } = this.selectedGuideHandle;
-            if (scope === 'layer') {
-                const guide = activeLayer.guides?.[index];
+            if (scope === 'drawing') {
+                const guide = activeDrawing.guides?.[index];
                 if (guide) {
                     guides.push(serializeGuideForClipboard(guide, false));
                 }
-            } else if (scope === 'master') {
-                const master = this.getCurrentMasterModel();
-                const guide = master?.guides?.[index];
+            } else if (scope === 'station') {
+                const station = this.getCurrentStationModel();
+                const guide = station?.guides?.[index];
                 if (guide) {
                     guides.push(serializeMasterGuideForClipboard(guide));
                 }
@@ -3034,7 +3070,7 @@ export class OutlineEditor {
 
         return buildSelectionClipboardDocument({
             glyphName,
-            layerId: activeLayer.id ?? null,
+            layerId: activeDrawing.id ?? null,
             paths,
             components,
             anchors,
@@ -3064,9 +3100,9 @@ export class OutlineEditor {
             return false;
         }
 
-        const activeLayer = this.getCurrentLayerModel();
+        const activeDrawing = this.getCurrentDrawingModel();
         const glyph = this.getCurrentGlyphModel();
-        if (!activeLayer || !glyph?.name) {
+        if (!activeDrawing || !glyph?.name) {
             return false;
         }
 
@@ -3080,13 +3116,13 @@ export class OutlineEditor {
         this.clearAllSelections();
 
         const fontModel = fontManager.currentFont?.fontModel;
-        const master = this.getCurrentMasterModel();
+        const station = this.getCurrentStationModel();
         const glyphExists = (name: string) => !!fontModel?.findGlyph?.(name);
 
-        const shapesBefore = activeLayer.shapes?.length ?? 0;
-        const anchorsBefore = activeLayer.anchors?.length ?? 0;
-        const layerGuidesBefore = activeLayer.guides?.length ?? 0;
-        const masterGuidesBefore = master?.guides?.length ?? 0;
+        const shapesBefore = activeDrawing.shapes?.length ?? 0;
+        const anchorsBefore = activeDrawing.anchors?.length ?? 0;
+        const drawingGuidesBefore = activeDrawing.guides?.length ?? 0;
+        const stationGuidesBefore = station?.guides?.length ?? 0;
 
         const bridge = window.patchSyncEngine;
         bridge?.beginTransaction('Paste', null, {
@@ -3096,39 +3132,39 @@ export class OutlineEditor {
         let result;
         let activePasteAnchorNames: string[] = [];
         try {
-            const linkedLayers = activeLayer._getLinkedLayers?.() || [];
-            const verticalMetrics = this.getVerticalMetricsForLayer(
-                activeLayer,
+            const linkedDrawings = activeDrawing._getLinkedDrawings?.() || [];
+            const verticalMetrics = this.getVerticalMetricsForDrawing(
+                activeDrawing,
                 fontModel
             );
-            const layerWidth = Number(activeLayer.width) || 0;
+            const drawingWidth = Number(activeDrawing.width) || 0;
             activePasteAnchorNames = parsed.fragment.anchors.map(
                 (anchor) => anchor.name
             );
             result = applyPasteFragment(parsed.fragment, {
-                activeLayer,
-                linkedLayers,
-                master,
-                layerWidth,
+                activeDrawing,
+                linkedDrawings,
+                station: station,
+                drawingWidth,
                 verticalMetrics,
                 glyphExists
             });
             if (
-                activeLayer.is_background &&
-                activeLayer.id &&
-                this.selectedLayerId !== activeLayer.id
+                activeDrawing.is_background &&
+                activeDrawing.id &&
+                this.selectedDrawingId !== activeDrawing.id
             ) {
-                this.selectedLayerId = activeLayer.id;
-                this.rebuildGlyphStackWithNewLayer(activeLayer.id);
+                this.selectedDrawingId = activeDrawing.id;
+                this.rebuildGlyphStackWithNewDrawing(activeDrawing.id);
             }
-            const structuralLayerTargets = [activeLayer, ...linkedLayers]
-                .filter((layerModel: Layer) => !!layerModel.id)
-                .map((layerModel: Layer) => ({
+            const structuralDrawingTargets = [activeDrawing, ...linkedDrawings]
+                .filter((drawingModel: Drawing) => !!drawingModel.id)
+                .map((drawingModel: Drawing) => ({
                     glyphName: glyph.name,
-                    layerId: layerModel.id!
+                    layerId: drawingModel.id!
                 }));
             this.prepareCommittedStructuralOutlineChange('keyboard', {
-                layerTargets: structuralLayerTargets
+                layerTargets: structuralDrawingTargets
             });
         } finally {
             bridge?.endTransaction();
@@ -3140,15 +3176,15 @@ export class OutlineEditor {
             return true;
         }
 
-        this.selectPastedClipboardObjects(activeLayer, master, {
+        this.selectPastedClipboardObjects(activeDrawing, station, {
             shapesBefore,
             anchorsBefore,
-            layerGuidesBefore,
-            masterGuidesBefore,
+            drawingGuidesBefore,
+            stationGuidesBefore,
             activePasteAnchorNames
         });
 
-        this.syncCurrentExactLayerDataFromModel();
+        this.syncCurrentExactDrawingDataFromModel();
         this.performHitDetection(null);
         this.glyphCanvas.updatePropertyPanel();
         this.glyphCanvas.render();
@@ -3167,8 +3203,8 @@ export class OutlineEditor {
     private replaceSelectedPathsInFlight = false;
 
     /**
-     * Replace selected path geometry from the clipboard on the active layer
-     * only (never fans out to linked layers). Requires a structurally
+     * Replace selected path geometry from the clipboard on the active drawing
+     * only (never fans out to linked drawings). Requires a structurally
      * compatible selection/clipboard path match. Selected anchors whose names
      * appear in the clipboard are repositioned; unselected anchors are left
      * alone and no new anchors are created.
@@ -3203,13 +3239,13 @@ export class OutlineEditor {
             return false;
         }
 
-        const activeLayer = this.getCurrentLayerModel();
+        const activeDrawing = this.getCurrentDrawingModel();
         const glyph = this.getCurrentGlyphModel();
-        if (!activeLayer || !glyph?.name) {
+        if (!activeDrawing || !glyph?.name) {
             return false;
         }
 
-        const shapes = activeLayer.shapes || [];
+        const shapes = activeDrawing.shapes || [];
         const selectedPointKeys = new Set(
             this.selectedPoints.map(
                 (point) => `${point.contourIndex}:${point.nodeIndex}`
@@ -3253,10 +3289,10 @@ export class OutlineEditor {
             .filter(
                 (index) =>
                     index >= 0 &&
-                    index < (activeLayer.anchors?.length || 0) &&
-                    !!activeLayer.anchors![index]?.name
+                    index < (activeDrawing.anchors?.length || 0) &&
+                    !!activeDrawing.anchors![index]?.name
             )
-            .map((index) => activeLayer.anchors![index].name as string);
+            .map((index) => activeDrawing.anchors![index].name as string);
 
         let payloads;
         try {
@@ -3276,7 +3312,7 @@ export class OutlineEditor {
         }
         if (parsed.kind === 'glyphs') {
             window.alert?.(
-                'Clipboard has whole glyphs. Replace Path(s) In-Place works with layer path data only.'
+                'Clipboard has whole glyphs. Replace Path(s) In-Place works with drawing path data only.'
             );
             return false;
         }
@@ -3289,15 +3325,15 @@ export class OutlineEditor {
         let result;
         try {
             result = applyReplaceSelectedPaths({
-                activeLayer,
+                activeDrawing,
                 selectedPaths,
                 selectedAnchorNames,
                 fragment: parsed.fragment
             });
-            if (!result.error && activeLayer.id) {
+            if (!result.error && activeDrawing.id) {
                 this.prepareCommittedStructuralOutlineChange('keyboard', {
                     layerTargets: [
-                        { glyphName: glyph.name, layerId: activeLayer.id }
+                        { glyphName: glyph.name, layerId: activeDrawing.id }
                     ]
                 });
             }
@@ -3311,7 +3347,7 @@ export class OutlineEditor {
             return false;
         }
 
-        this.syncCurrentExactLayerDataFromModel();
+        this.syncCurrentExactDrawingDataFromModel();
         this.performHitDetection(null);
         this.glyphCanvas.updatePropertyPanel();
         this.glyphCanvas.render();
@@ -3321,26 +3357,26 @@ export class OutlineEditor {
                 (result.updatedAnchorCount
                     ? `, updated ${result.updatedAnchorCount} selected anchor(s)`
                     : '') +
-                ' on the active layer only'
+                ' on the active drawing only'
         );
         return true;
     }
 
     /**
-     * Select objects appended by the latest clipboard paste on the active layer.
+     * Select objects appended by the latest clipboard paste on the active drawing.
      */
     private selectPastedClipboardObjects(
-        activeLayer: Layer,
-        master: ReturnType<OutlineEditor['getCurrentMasterModel']>,
+        activeDrawing: Drawing,
+        station: ReturnType<OutlineEditor['getCurrentStationModel']>,
         snapshot: {
             shapesBefore: number;
             anchorsBefore: number;
-            layerGuidesBefore: number;
-            masterGuidesBefore: number;
+            drawingGuidesBefore: number;
+            stationGuidesBefore: number;
             activePasteAnchorNames: string[];
         }
     ): void {
-        const shapes = activeLayer.shapes || [];
+        const shapes = activeDrawing.shapes || [];
         const points: Point[] = [];
         const components: number[] = [];
 
@@ -3362,7 +3398,7 @@ export class OutlineEditor {
             }
         }
 
-        const anchorSource = this.getAnchorsForSelectionLayer(activeLayer);
+        const anchorSource = this.getAnchorsForSelectionDrawing(activeDrawing);
         const pastedAnchorNameSet = new Set(snapshot.activePasteAnchorNames);
         const anchors: number[] = [];
         anchorSource.forEach((anchor: { name?: string }, index: number) => {
@@ -3378,24 +3414,24 @@ export class OutlineEditor {
         const hasOtherSelection =
             points.length > 0 || anchors.length > 0 || components.length > 0;
         if (!hasOtherSelection) {
-            const layerGuides = activeLayer.guides || [];
-            if (layerGuides.length > snapshot.layerGuidesBefore) {
+            const drawingGuides = activeDrawing.guides || [];
+            if (drawingGuides.length > snapshot.drawingGuidesBefore) {
                 guideHandle = {
-                    scope: 'layer',
-                    index: snapshot.layerGuidesBefore
+                    scope: 'drawing',
+                    index: snapshot.drawingGuidesBefore
                 };
             } else if (
-                master &&
-                (master.guides?.length || 0) > snapshot.masterGuidesBefore
+                station &&
+                (station.guides?.length || 0) > snapshot.stationGuidesBefore
             ) {
                 guideHandle = {
-                    scope: 'master',
-                    index: snapshot.masterGuidesBefore
+                    scope: 'station',
+                    index: snapshot.stationGuidesBefore
                 };
             }
         }
 
-        this.applySelectionStateForLayer(
+        this.applySelectionStateForDrawing(
             {
                 points,
                 anchors,
@@ -3406,17 +3442,17 @@ export class OutlineEditor {
                 components,
                 guideHandle
             },
-            activeLayer
+            activeDrawing
         );
     }
 
-    private isAutomaticComposedLayer(): boolean {
-        return !!this.getCurrentLayerModel()?.isAutomaticAlignedLayer?.();
+    private isAutomaticComposedDrawing(): boolean {
+        return !!this.getCurrentDrawingModel()?.isAutomaticAlignedDrawing?.();
     }
 
     private hasActiveMetricsKey(side: SidebearingSide): boolean {
         const resolution =
-            this.getCurrentLayerModel()?.resolveMetricsKey?.(side);
+            this.getCurrentDrawingModel()?.resolveMetricsKey?.(side);
         return !!resolution?.input && !resolution?.error;
     }
 
@@ -3454,8 +3490,10 @@ export class OutlineEditor {
         this._componentDragDeltaX += deltaX;
     }
 
-    private getSelectionScopeLayerModel(layerId: string | null): any | null {
-        if (!layerId) {
+    private getSelectionScopeDrawingModel(
+        drawingId: string | null
+    ): any | null {
+        if (!drawingId) {
             return null;
         }
 
@@ -3464,17 +3502,17 @@ export class OutlineEditor {
             return null;
         }
 
-        return glyph.findLayerById?.(layerId) || null;
+        return glyph.findDrawingById?.(drawingId) || null;
     }
 
-    private getTransitionPreviousLayerModel(
+    private getTransitionPreviousDrawingModel(
         nextRootGlyphName: string
     ): any | null {
-        if (this.pendingGlyphSwitchSourceLayer) {
-            return this.pendingGlyphSwitchSourceLayer;
+        if (this.pendingGlyphSwitchSourceDrawing) {
+            return this.pendingGlyphSwitchSourceDrawing;
         }
 
-        if (!this.selectedLayerId) {
+        if (!this.selectedDrawingId) {
             return null;
         }
 
@@ -3487,7 +3525,7 @@ export class OutlineEditor {
                 : nextRootGlyphName);
         const previousGlyph = this.getGlyphModelByName(previousRootGlyphName);
 
-        return previousGlyph?.findLayerById?.(this.selectedLayerId) || null;
+        return previousGlyph?.findDrawingById?.(this.selectedDrawingId) || null;
     }
 
     prepareForGlyphSwitch(nextRootGlyphName: string): void {
@@ -3500,17 +3538,17 @@ export class OutlineEditor {
             this.rootFeatureVariationSelection = null;
         }
         this.authoringRootGlyphName = nextAuthoringRootGlyphName;
-        const previousLayer =
-            this.getTransitionPreviousLayerModel(nextRootGlyphName);
+        const previousDrawing =
+            this.getTransitionPreviousDrawingModel(nextRootGlyphName);
 
-        if (previousLayer) {
-            this.storeSelectionStateForLayer(previousLayer);
-            this.pendingGlyphSwitchSourceLayerKey =
-                this.getLayerSelectionStorageKey(previousLayer);
-            this.pendingGlyphSwitchSourceLayer = previousLayer;
+        if (previousDrawing) {
+            this.storeSelectionStateForDrawing(previousDrawing);
+            this.pendingGlyphSwitchSourceDrawingKey =
+                this.getDrawingSelectionStorageKey(previousDrawing);
+            this.pendingGlyphSwitchSourceDrawing = previousDrawing;
         } else {
-            this.pendingGlyphSwitchSourceLayerKey = null;
-            this.pendingGlyphSwitchSourceLayer = null;
+            this.pendingGlyphSwitchSourceDrawingKey = null;
+            this.pendingGlyphSwitchSourceDrawing = null;
         }
 
         this.clearAllSelections();
@@ -3518,8 +3556,8 @@ export class OutlineEditor {
 
     private collectLiveAdvanceWidths(
         glyphNames: Iterable<string>,
-        layerId: string,
-        masterId: string | null
+        drawingId: string,
+        stationId: string | null
     ): Record<string, number> {
         const fontModel = fontManager.currentFont?.fontModel;
         if (!fontModel) {
@@ -3534,11 +3572,11 @@ export class OutlineEditor {
                 )
             )
         );
-        const sourceLayer = uniqueGlyphNames
+        const sourceDrawing = uniqueGlyphNames
             .map((glyphName) =>
-                fontModel.findGlyph(glyphName)?.findLayerById(layerId)
+                fontModel.findGlyph(glyphName)?.findDrawingById(drawingId)
             )
-            .find((layer) => layer !== undefined);
+            .find((drawing) => drawing !== undefined);
 
         const glyphAdvances: Record<string, number> = {};
         for (const glyphName of uniqueGlyphNames) {
@@ -3547,15 +3585,17 @@ export class OutlineEditor {
             }
 
             const glyph = fontModel.findGlyph(glyphName);
-            const layer =
-                glyph?.findLayerById(layerId) ||
-                sourceLayer?.getMatchingLayerOnGlyph?.(glyphName) ||
-                (masterId ? glyph?.findLayerByMasterId(masterId) : undefined);
-            if (!layer || !Number.isFinite(layer.width)) {
+            const drawing =
+                glyph?.findDrawingById(drawingId) ||
+                sourceDrawing?.getMatchingDrawingOnGlyph?.(glyphName) ||
+                (stationId
+                    ? glyph?.findDrawingByStationId(stationId)
+                    : undefined);
+            if (!drawing || !Number.isFinite(drawing.width)) {
                 continue;
             }
 
-            glyphAdvances[glyphName] = layer.width;
+            glyphAdvances[glyphName] = drawing.width;
         }
 
         return glyphAdvances;
@@ -3651,7 +3691,7 @@ export class OutlineEditor {
         return affectedGlyphNames;
     }
 
-    private applyMetricsKeysToCurrentEditedLayer(
+    private applyMetricsKeysToCurrentEditedDrawing(
         refreshGlyphAdvances: boolean = true,
         options?: {
             useVisibleDragScope?: boolean;
@@ -3664,12 +3704,12 @@ export class OutlineEditor {
         advancesRefreshed: boolean;
         affectedGlyphNames: Set<string>;
     } | null {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        const currentLayerId = this.getCurrentLayerId();
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        const currentDrawingId = this.getCurrentDrawingId();
         if (
-            !currentLayerData ||
-            currentLayerData.isInterpolated ||
-            !currentLayerId
+            !currentDrawingData ||
+            currentDrawingData.isInterpolated ||
+            !currentDrawingId
         ) {
             return null;
         }
@@ -3685,62 +3725,62 @@ export class OutlineEditor {
         }
 
         const glyph = fontModel.findGlyph(glyphName);
-        const layerModel = glyph?.findLayerById(currentLayerId);
-        const rawLayer = layerModel?.toJSON?.();
-        if (!glyph || !layerModel || !rawLayer) {
+        const drawingModel = glyph?.findDrawingById(currentDrawingId);
+        const rawDrawing = drawingModel?.toJSON?.();
+        if (!glyph || !drawingModel || !rawDrawing) {
             return null;
         }
 
-        const previousWidth = Number(currentLayerData.width) || 0;
+        const previousWidth = Number(currentDrawingData.width) || 0;
         const previousSidebearings =
-            this.getDirectSidebearingsForLayerData(currentLayerData);
+            this.getDirectSidebearingsForDrawingData(currentDrawingData);
         const rightEdgeAnchorScreen =
             this.getEditModeAdvanceRightLockScreenPosition();
 
-        const restingLayer = toRestingLayerJson(
+        const restingDrawing = toRestingDrawingJson(
             {
-                width: currentLayerData.width,
-                height: currentLayerData.height,
-                vertWidth: currentLayerData.vertWidth,
-                shapes: currentLayerData.shapes,
-                anchors: currentLayerData.anchors,
-                guides: currentLayerData.guides,
-                format_specific: currentLayerData.format_specific
+                width: currentDrawingData.width,
+                height: currentDrawingData.height,
+                vertWidth: currentDrawingData.vertWidth,
+                shapes: currentDrawingData.shapes,
+                anchors: currentDrawingData.anchors,
+                guides: currentDrawingData.guides,
+                format_specific: currentDrawingData.format_specific
             },
             {
-                existing: rawLayer,
+                existing: rawDrawing,
                 mode: 'delta',
                 allowWrapped: true,
                 context: 'metrics key writeback'
             }
         );
-        rawLayer.width =
-            typeof restingLayer.width === 'number'
-                ? restingLayer.width
-                : currentLayerData.width;
-        if (restingLayer.height !== undefined) {
-            rawLayer.height = restingLayer.height;
+        rawDrawing.width =
+            typeof restingDrawing.width === 'number'
+                ? restingDrawing.width
+                : currentDrawingData.width;
+        if (restingDrawing.height !== undefined) {
+            rawDrawing.height = restingDrawing.height;
         }
-        if (restingLayer.vertWidth !== undefined) {
-            rawLayer.vertWidth = restingLayer.vertWidth;
+        if (restingDrawing.vertWidth !== undefined) {
+            rawDrawing.vertWidth = restingDrawing.vertWidth;
         }
-        if (Array.isArray(restingLayer.shapes)) {
-            rawLayer.shapes = restingLayer.shapes;
+        if (Array.isArray(restingDrawing.shapes)) {
+            rawDrawing.shapes = restingDrawing.shapes;
         }
 
-        if (restingLayer.anchors !== undefined) {
-            rawLayer.anchors = restingLayer.anchors;
+        if (restingDrawing.anchors !== undefined) {
+            rawDrawing.anchors = restingDrawing.anchors;
         }
-        if (restingLayer.guides !== undefined) {
-            rawLayer.guides = restingLayer.guides;
+        if (restingDrawing.guides !== undefined) {
+            rawDrawing.guides = restingDrawing.guides;
         }
-        if (restingLayer.format_specific !== undefined) {
-            rawLayer.format_specific = restingLayer.format_specific;
+        if (restingDrawing.format_specific !== undefined) {
+            rawDrawing.format_specific = restingDrawing.format_specific;
         }
 
         // Force shape wrapper rebuild so setDirectSidebearing operates
         // on the current editing shapes (not stale cached wrappers).
-        layerModel.invalidateShapeCache();
+        drawingModel.invalidateShapeCache();
 
         const allowedGlyphNames = options?.useVisibleDragScope
             ? new Set([
@@ -3753,9 +3793,9 @@ export class OutlineEditor {
                       : [])
               ])
             : undefined;
-        const masterId =
-            typeof rawLayer.master === 'object' && rawLayer.master
-                ? rawLayer.master.master || null
+        const stationId =
+            typeof rawDrawing.master === 'object' && rawDrawing.master
+                ? rawDrawing.master.master || null
                 : null;
         const advanceSnapshotGlyphNames = new Set<string>(
             allowedGlyphNames || [glyphName]
@@ -3772,8 +3812,8 @@ export class OutlineEditor {
         }
         const previousGlyphAdvances = this.collectLiveAdvanceWidths(
             advanceSnapshotGlyphNames,
-            currentLayerId,
-            masterId
+            currentDrawingId,
+            stationId
         );
         const extendAutomaticCompositionDragScope = (
             sourceGlyphNames: Iterable<string>
@@ -3871,19 +3911,22 @@ export class OutlineEditor {
             }
         }
 
-        currentLayerData.width = rawLayer.width;
-        currentLayerData.height = rawLayer.height;
-        currentLayerData.vertWidth = rawLayer.vertWidth;
-        applyRestingShapeGeometryToEditorLayer(currentLayerData, rawLayer);
-        if (rawLayer.anchors !== undefined) {
-            currentLayerData.anchors = rawLayer.anchors;
+        currentDrawingData.width = rawDrawing.width;
+        currentDrawingData.height = rawDrawing.height;
+        currentDrawingData.vertWidth = rawDrawing.vertWidth;
+        applyRestingShapeGeometryToEditorDrawing(
+            currentDrawingData,
+            rawDrawing
+        );
+        if (rawDrawing.anchors !== undefined) {
+            currentDrawingData.anchors = rawDrawing.anchors;
         }
-        if (rawLayer.guides !== undefined) {
-            currentLayerData.guides = rawLayer.guides;
+        if (rawDrawing.guides !== undefined) {
+            currentDrawingData.guides = rawDrawing.guides;
         }
 
         const nextSidebearings =
-            this.getDirectSidebearingsForLayerData(currentLayerData);
+            this.getDirectSidebearingsForDrawingData(currentDrawingData);
         const editedSide = this.inferEditedSideFromSidebearingDelta(
             previousSidebearings,
             nextSidebearings
@@ -3894,7 +3937,7 @@ export class OutlineEditor {
             this._metricsKeyInteractionSide = editedSide;
         }
 
-        const nextWidth = Number(currentLayerData.width) || 0;
+        const nextWidth = Number(currentDrawingData.width) || 0;
         const widthDelta = nextWidth - previousWidth;
 
         if (editedSide === 'left') {
@@ -3911,8 +3954,8 @@ export class OutlineEditor {
 
         const glyphAdvances = this.collectLiveAdvanceWidths(
             affectedGlyphNames,
-            currentLayerId,
-            masterId
+            currentDrawingId,
+            stationId
         );
         const glyphAdvanceDeltas = this.computeLiveAdvanceDeltas(
             previousGlyphAdvances,
@@ -3962,7 +4005,7 @@ export class OutlineEditor {
 
         return {
             glyphName,
-            nextWidth: currentLayerData.width || 0,
+            nextWidth: currentDrawingData.width || 0,
             glyphAdvances,
             advancesRefreshed,
             affectedGlyphNames
@@ -4009,7 +4052,7 @@ export class OutlineEditor {
     private flushPendingDragMetricsUpdate(
         changeSource: string,
         forceMetricsRecompute: boolean = false,
-        persistLayerData: boolean = false
+        persistDrawingData: boolean = false
     ): Promise<void> | void {
         this._pendingDragMetricsUpdate = false;
         this._lastDragSaveTime = performance.now();
@@ -4027,7 +4070,7 @@ export class OutlineEditor {
             this.isResizingSelection ||
             (this.isDraggingPoint && !this.isSlidingSmoothPointAlongCurve)
         ) {
-            metricsUpdate = this.applyMetricsKeysToCurrentEditedLayer(true, {
+            metricsUpdate = this.applyMetricsKeysToCurrentEditedDrawing(true, {
                 useVisibleDragScope: !forceMetricsRecompute,
                 rebuildAutomaticComposites: true
             });
@@ -4045,8 +4088,8 @@ export class OutlineEditor {
             metricsUpdate?.affectedGlyphNames || []
         );
 
-        if (persistLayerData) {
-            return this.saveLayerData(changeSource);
+        if (persistDrawingData) {
+            return this.saveDrawingData(changeSource);
         }
 
         if (metricsUpdate) {
@@ -4071,13 +4114,13 @@ export class OutlineEditor {
         this._liveOutlineRefreshChangeSource = null;
     }
 
-    private getCurrentExplicitLayerCacheInput(): {
+    private getCurrentExplicitDrawingCacheInput(): {
         glyphName: string;
         layerId: string;
         layerData: Babelfont.Layer;
     } | null {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        const currentLayerId = this.getCurrentLayerId();
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        const currentDrawingId = this.getCurrentDrawingId();
         const parsed = this.parseGlyphStack();
         const glyphName =
             parsed.length > 0
@@ -4085,9 +4128,9 @@ export class OutlineEditor {
                 : this.glyphCanvas.getCurrentGlyphName();
 
         if (
-            !currentLayerData ||
-            currentLayerData.isInterpolated ||
-            !currentLayerId ||
+            !currentDrawingData ||
+            currentDrawingData.isInterpolated ||
+            !currentDrawingId ||
             !glyphName
         ) {
             return null;
@@ -4095,8 +4138,8 @@ export class OutlineEditor {
 
         return {
             glyphName,
-            layerId: currentLayerId,
-            layerData: currentLayerData
+            layerId: currentDrawingId,
+            layerData: currentDrawingData
         };
     }
 
@@ -4120,7 +4163,7 @@ export class OutlineEditor {
             isActive: () => this.draggingSomething && !this.isDraggingGuide,
             run: async () => {
                 const currentFont = fontManager.currentFont;
-                const currentLayerId = this.getCurrentLayerId();
+                const currentDrawingId = this.getCurrentDrawingId();
                 const glyphNames = Array.from(
                     this._liveOutlineRefreshGlyphNames
                 );
@@ -4132,23 +4175,23 @@ export class OutlineEditor {
                     return false;
                 }
 
-                const explicitLayerInput =
-                    this.getCurrentExplicitLayerCacheInput();
-                const layerTargets =
-                    this.collectMatchingLayerWorkerReplayTargets(
+                const explicitDrawingInput =
+                    this.getCurrentExplicitDrawingCacheInput();
+                const drawingTargets =
+                    this.collectMatchingDrawingWorkerReplayTargets(
                         glyphNames,
-                        currentLayerId
+                        currentDrawingId
                     );
                 await fontManager.stageLiveDragPreviewFromModel(
-                    layerTargets.length > 0 ? layerTargets : glyphNames,
-                    currentLayerId,
+                    drawingTargets.length > 0 ? drawingTargets : glyphNames,
+                    currentDrawingId,
                     {
                         dispatchGlyphChanged: false,
-                        ...(layerTargets.length > 0
-                            ? { layerTargets }
+                        ...(drawingTargets.length > 0
+                            ? { layerTargets: drawingTargets }
                             : undefined),
-                        ...(explicitLayerInput
-                            ? { explicitLayerData: [explicitLayerInput] }
+                        ...(explicitDrawingInput
+                            ? { explicitDrawingData: [explicitDrawingInput] }
                             : undefined)
                     }
                 );
@@ -4169,7 +4212,7 @@ export class OutlineEditor {
         affectedGlyphNames: Set<string>,
         options?: {
             liveVisibleOnly?: boolean;
-            explicitLayerInput?: {
+            explicitDrawingInput?: {
                 glyphName: string;
                 layerId: string;
                 layerData: Babelfont.Layer;
@@ -4192,7 +4235,7 @@ export class OutlineEditor {
             return;
         }
 
-        const currentLayerId = this.getCurrentLayerId();
+        const currentDrawingId = this.getCurrentDrawingId();
 
         if (options?.liveVisibleOnly) {
             // Live drag compiles use a transient preview JSON snapshot rather
@@ -4204,19 +4247,24 @@ export class OutlineEditor {
             if (allGlyphNames.length === 0) {
                 return;
             }
-            const layerTargets = this.collectMatchingLayerWorkerReplayTargets(
-                allGlyphNames,
-                currentLayerId
-            );
+            const drawingTargets =
+                this.collectMatchingDrawingWorkerReplayTargets(
+                    allGlyphNames,
+                    currentDrawingId
+                );
             await fontManager.stageLiveDragPreviewFromModel(
-                layerTargets.length > 0 ? layerTargets : allGlyphNames,
-                currentLayerId,
+                drawingTargets.length > 0 ? drawingTargets : allGlyphNames,
+                currentDrawingId,
                 {
                     dispatchGlyphChanged: false,
-                    ...(layerTargets.length > 0 ? { layerTargets } : undefined),
-                    ...(options.explicitLayerInput
+                    ...(drawingTargets.length > 0
+                        ? { layerTargets: drawingTargets }
+                        : undefined),
+                    ...(options.explicitDrawingInput
                         ? {
-                              explicitLayerData: [options.explicitLayerInput]
+                              explicitDrawingData: [
+                                  options.explicitDrawingInput
+                              ]
                           }
                         : undefined)
                 }
@@ -4236,7 +4284,7 @@ export class OutlineEditor {
         return fontManager
             .refreshGlyphsAfterModelBatch(
                 [...(glyphName ? [glyphName] : []), ...downstreamGlyphNames],
-                currentLayerId
+                currentDrawingId
             )
             .then(() => {
                 currentFont.requestRecompileWithoutDataChange();
@@ -4291,7 +4339,7 @@ export class OutlineEditor {
     private async runKeyboardOutlinePreview(
         affectedGlyphNames: Set<string>
     ): Promise<boolean> {
-        const currentLayerId = this.getCurrentLayerId();
+        const currentDrawingId = this.getCurrentDrawingId();
         const fallbackGlyphName = this.getCurrentGlyphModel()?.name;
         const previewGlyphNames = Array.from(
             new Set([
@@ -4300,23 +4348,25 @@ export class OutlineEditor {
             ])
         );
 
-        if (!currentLayerId || previewGlyphNames.length === 0) {
+        if (!currentDrawingId || previewGlyphNames.length === 0) {
             return false;
         }
 
-        const explicitLayerInput = this.getCurrentExplicitLayerCacheInput();
-        const layerTargets = this.collectMatchingLayerWorkerReplayTargets(
+        const explicitDrawingInput = this.getCurrentExplicitDrawingCacheInput();
+        const drawingTargets = this.collectMatchingDrawingWorkerReplayTargets(
             previewGlyphNames,
-            currentLayerId
+            currentDrawingId
         );
         await fontManager.stageLiveDragPreviewFromModel(
-            layerTargets.length > 0 ? layerTargets : previewGlyphNames,
-            currentLayerId,
+            drawingTargets.length > 0 ? drawingTargets : previewGlyphNames,
+            currentDrawingId,
             {
                 dispatchGlyphChanged: false,
-                ...(layerTargets.length > 0 ? { layerTargets } : undefined),
-                ...(explicitLayerInput
-                    ? { explicitLayerData: [explicitLayerInput] }
+                ...(drawingTargets.length > 0
+                    ? { layerTargets: drawingTargets }
+                    : undefined),
+                ...(explicitDrawingInput
+                    ? { explicitDrawingData: [explicitDrawingInput] }
                     : undefined)
             }
         );
@@ -4346,8 +4396,8 @@ export class OutlineEditor {
             this._anchorAffectedGlyphNames,
             {
                 liveVisibleOnly: true,
-                explicitLayerInput:
-                    this.getCurrentExplicitLayerCacheInput() ?? undefined
+                explicitDrawingInput:
+                    this.getCurrentExplicitDrawingCacheInput() ?? undefined
             }
         );
 
@@ -4372,8 +4422,8 @@ export class OutlineEditor {
             affectedGlyphNames,
             {
                 liveVisibleOnly: true,
-                explicitLayerInput:
-                    this.getCurrentExplicitLayerCacheInput() ?? undefined
+                explicitDrawingInput:
+                    this.getCurrentExplicitDrawingCacheInput() ?? undefined
             }
         );
 
@@ -4488,15 +4538,15 @@ export class OutlineEditor {
                     await this.refreshFinalSidebearingWorkerStateBeforeCommit();
                 }
 
-                await this.saveLayerData(committedChangeSource);
+                await this.saveDrawingData(committedChangeSource);
 
-                const activeLayerId = this.getCurrentLayerId();
+                const activeDrawingId = this.getCurrentDrawingId();
                 const glyphName =
                     this.parseGlyphStack().slice(-1)[0]?.glyphName ??
                     this.glyphCanvas.getCurrentGlyphName();
                 const sourceTargets =
-                    activeLayerId && glyphName
-                        ? [{ glyphName, layerId: activeLayerId }]
+                    activeDrawingId && glyphName
+                        ? [{ glyphName, layerId: activeDrawingId }]
                         : [];
                 const editKinds = this.getCurrentSelectionEditKinds();
                 if (editKinds.size === 0) {
@@ -4505,14 +4555,14 @@ export class OutlineEditor {
                 const pendingSidebearingSync = isKeyboardSidebearing
                     ? this._pendingSidebearingCommitSync
                     : null;
-                const { changedLayerTargets, workerReplayTargets } =
+                const { changedDrawingTargets, workerReplayTargets } =
                     pendingSidebearingSync ??
-                    resolveLayerSyncTargetsFromClosure(
+                    resolveDrawingSyncTargetsFromClosure(
                         this.computeRecompositionClosure({
                             sourceTargets,
                             editKinds,
                             scope: 'all',
-                            activeLayerId
+                            activeDrawingId
                         }),
                         sourceTargets
                     );
@@ -4526,9 +4576,9 @@ export class OutlineEditor {
                         this._metricsKeyInteractionSide ??
                         null,
                     {
-                        changedLayerTargets,
+                        changedDrawingTargets,
                         workerReplayTargets,
-                        sourceLayerIsRecomposed: !!pendingSidebearingSync
+                        sourceDrawingIsRecomposed: !!pendingSidebearingSync
                     },
                     this.getCommittedCompileMetadata(committedChangeSource)
                 );
@@ -4587,24 +4637,24 @@ export class OutlineEditor {
     }
 
     private async refreshFinalSidebearingWorkerStateBeforeCommit(): Promise<void> {
-        const currentLayerId = this.getCurrentLayerId();
-        const currentLayerData = this.getCurrentLayerDataFromStack();
+        const currentDrawingId = this.getCurrentDrawingId();
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
         const sourceGlyphName =
             this.getCurrentGlyphModel()?.name ||
             this.glyphCanvas.getCurrentGlyphName();
-        if (!currentLayerId || !sourceGlyphName || !currentLayerData) {
+        if (!currentDrawingId || !sourceGlyphName || !currentDrawingData) {
             return;
         }
 
         // Single full-scope closure for the whole commit — mouseup reuses the
         // stashed sync targets instead of recomputing.
-        this.syncEditorLayerIntoModelForRecomposition(
+        this.syncEditorDrawingIntoModelForRecomposition(
             sourceGlyphName,
-            currentLayerId,
-            currentLayerData
+            currentDrawingId,
+            currentDrawingData
         );
         const sourceTargets = [
-            { glyphName: sourceGlyphName, layerId: currentLayerId }
+            { glyphName: sourceGlyphName, layerId: currentDrawingId }
         ];
         // Live drag already recomposed every *visible* glyph with the same
         // engine. The commit pass therefore MUST be a no-op for those glyphs
@@ -4617,15 +4667,15 @@ export class OutlineEditor {
             scope: 'all'
         });
         this.assertCommitRecompositionNoOpForVisibleGlyphs(visibleBaseline);
-        const { changedLayerTargets, workerReplayTargets } =
-            resolveLayerSyncTargetsFromClosure(
+        const { changedDrawingTargets, workerReplayTargets } =
+            resolveDrawingSyncTargetsFromClosure(
                 closure,
                 sourceTargets,
                 this._lastLiveSidebearingRecomposeTargets
             );
         this._sidebearingAffectedGlyphNames = closure.affectedGlyphNames;
         this._pendingSidebearingCommitSync = {
-            changedLayerTargets,
+            changedDrawingTargets,
             workerReplayTargets,
             affectedGlyphNames: closure.affectedGlyphNames,
             recomposeTargets: closure.recomposeTargets
@@ -4633,25 +4683,25 @@ export class OutlineEditor {
 
         // The closure is the only writer of recomposed metrics. Refresh the
         // editor working copy from that recomposed model — width *and* shapes —
-        // so the later saveLayerData() serializes post-recomposition state
+        // so the later saveDrawingData() serializes post-recomposition state
         // instead of clobbering it with pre-recomposition editor geometry.
-        this.syncCurrentExactLayerDataFromModel();
+        this.syncCurrentExactDrawingDataFromModel();
 
         const widthGlyphNames = new Set<string>([
             sourceGlyphName,
             ...this._lastLiveSidebearingWidthGlyphNames,
             ...closure.recomposeTargets.map((target) => target.glyphName)
         ]);
-        const masterId =
-            typeof currentLayerData.master === 'object' &&
-            currentLayerData.master
-                ? (currentLayerData.master as { master?: string }).master ||
+        const stationId =
+            typeof currentDrawingData.master === 'object' &&
+            currentDrawingData.master
+                ? (currentDrawingData.master as { master?: string }).master ||
                   null
                 : null;
         const finalAdvances = this.collectLiveAdvanceWidths(
             widthGlyphNames,
-            currentLayerId,
-            masterId
+            currentDrawingId,
+            stationId
         );
         this.ensureLiveSidebearingSessionBaselines(
             Object.keys(this._lastLiveSidebearingAdvances).length > 0
@@ -4670,36 +4720,36 @@ export class OutlineEditor {
         this._lastLiveSidebearingAdvances = { ...finalAdvances };
     }
 
-    private syncEditorLayerIntoModelForRecomposition(
+    private syncEditorDrawingIntoModelForRecomposition(
         glyphName: string,
-        layerId: string,
-        currentLayerData: Babelfont.Layer
+        drawingId: string,
+        currentDrawingData: Babelfont.Layer
     ): void {
         const fontModel = fontManager.currentFont?.fontModel;
-        const layerModel = fontModel
+        const drawingModel = fontModel
             ?.findGlyph(glyphName)
-            ?.findLayerById(layerId);
+            ?.findDrawingById(drawingId);
         if (
-            !layerModel ||
-            typeof layerModel.syncFromEditorLayerData !== 'function'
+            !drawingModel ||
+            typeof drawingModel.syncFromEditorDrawingData !== 'function'
         ) {
             return;
         }
         withSuppressedModelRecording(() => {
-            layerModel.invalidateShapeCache?.();
-            layerModel.syncFromEditorLayerData({
-                width: currentLayerData.width,
-                height: currentLayerData.height,
-                vertWidth: currentLayerData.vertWidth,
-                shapes: currentLayerData.shapes,
-                ...(currentLayerData.anchors !== undefined && {
-                    anchors: currentLayerData.anchors
+            drawingModel.invalidateShapeCache?.();
+            drawingModel.syncFromEditorDrawingData({
+                width: currentDrawingData.width,
+                height: currentDrawingData.height,
+                vertWidth: currentDrawingData.vertWidth,
+                shapes: currentDrawingData.shapes,
+                ...(currentDrawingData.anchors !== undefined && {
+                    anchors: currentDrawingData.anchors
                 }),
-                ...(currentLayerData.guides !== undefined && {
-                    guides: currentLayerData.guides
+                ...(currentDrawingData.guides !== undefined && {
+                    guides: currentDrawingData.guides
                 }),
-                ...(currentLayerData.format_specific !== undefined && {
-                    format_specific: currentLayerData.format_specific
+                ...(currentDrawingData.format_specific !== undefined && {
+                    format_specific: currentDrawingData.format_specific
                 })
             });
         });
@@ -4722,24 +4772,25 @@ export class OutlineEditor {
         return deltas;
     }
 
-    private normalizeLayerDataForDriftCheck(layerData: unknown): string {
-        if (!layerData) {
+    private normalizeDrawingDataForDriftCheck(drawingData: unknown): string {
+        if (!drawingData) {
             return 'null';
         }
 
-        const normalizeLayerForRust = (fontManager as any)
-            .normalizeLayerForRust as ((layer: unknown) => unknown) | undefined;
-        if (typeof normalizeLayerForRust !== 'function') {
-            return JSON.stringify(layerData);
+        const normalizeDrawingForRust = (fontManager as any)
+            .normalizeDrawingForRust as
+            ((drawing: unknown) => unknown) | undefined;
+        if (typeof normalizeDrawingForRust !== 'function') {
+            return JSON.stringify(drawingData);
         }
 
         return JSON.stringify(
-            normalizeLayerForRust.call(fontManager, layerData)
+            normalizeDrawingForRust.call(fontManager, drawingData)
         );
     }
 
     /**
-     * Fingerprint every currently visible glyph layer that automatic
+     * Fingerprint every currently visible glyph drawing that automatic
      * composition / metrics-key inheritance could rewrite. Used to prove the
      * commit recomposition pass is a no-op for glyphs the live drag already
      * recomposed with the same engine.
@@ -4751,8 +4802,8 @@ export class OutlineEditor {
         }
 
         const fontModel = fontManager.currentFont?.fontModel;
-        const layerId = this.getCurrentLayerId();
-        if (!fontModel || !layerId) {
+        const drawingId = this.getCurrentDrawingId();
+        if (!fontModel || !drawingId) {
             return baseline;
         }
 
@@ -4763,13 +4814,13 @@ export class OutlineEditor {
 
         for (const glyphName of visibleGlyphNames) {
             const glyph = fontModel.findGlyph?.(glyphName);
-            const layer = glyph?.findLayerById?.(layerId);
-            if (!layer || typeof layer.toJSON !== 'function') {
+            const drawing = glyph?.findDrawingById?.(drawingId);
+            if (!drawing || typeof drawing.toJSON !== 'function') {
                 continue;
             }
             baseline.set(
-                `${glyphName}@@${layerId}`,
-                this.normalizeLayerDataForDriftCheck(layer.toJSON())
+                `${glyphName}@@${drawingId}`,
+                this.normalizeDrawingDataForDriftCheck(drawing.toJSON())
             );
         }
 
@@ -4795,8 +4846,8 @@ export class OutlineEditor {
         }
 
         const fontModel = fontManager.currentFont?.fontModel;
-        const layerId = this.getCurrentLayerId();
-        if (!fontModel || !layerId) {
+        const drawingId = this.getCurrentDrawingId();
+        if (!fontModel || !drawingId) {
             return;
         }
 
@@ -4804,16 +4855,16 @@ export class OutlineEditor {
         for (const [key, expectedFingerprint] of baseline) {
             const glyphName = key.slice(0, key.indexOf('@@'));
             const glyph = fontModel.findGlyph?.(glyphName);
-            const layer = glyph?.findLayerById?.(layerId);
-            if (!layer || typeof layer.toJSON !== 'function') {
+            const drawing = glyph?.findDrawingById?.(drawingId);
+            if (!drawing || typeof drawing.toJSON !== 'function') {
                 continue;
             }
-            const actualFingerprint = this.normalizeLayerDataForDriftCheck(
-                layer.toJSON()
+            const actualFingerprint = this.normalizeDrawingDataForDriftCheck(
+                drawing.toJSON()
             );
             if (actualFingerprint !== expectedFingerprint) {
                 drifted.push(
-                    `${glyphName}/${layerId}: live=${expectedFingerprint} commit=${actualFingerprint}`
+                    `${glyphName}/${drawingId}: live=${expectedFingerprint} commit=${actualFingerprint}`
                 );
             }
         }
@@ -4835,8 +4886,8 @@ export class OutlineEditor {
         changedGlyphNames?: Iterable<string>;
         rebuiltGlyphNames?: Set<string>;
     }): Set<string> {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        const currentLayerId = this.getCurrentLayerId();
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        const currentDrawingId = this.getCurrentDrawingId();
         const parsed = this.parseGlyphStack();
         const glyphName =
             parsed.length > 0
@@ -4845,9 +4896,9 @@ export class OutlineEditor {
         const fontModel = fontManager.currentFont?.fontModel;
 
         if (
-            !currentLayerData ||
-            currentLayerData.isInterpolated ||
-            !currentLayerId ||
+            !currentDrawingData ||
+            currentDrawingData.isInterpolated ||
+            !currentDrawingId ||
             !glyphName ||
             !fontModel
         ) {
@@ -4855,8 +4906,8 @@ export class OutlineEditor {
         }
 
         const glyph = fontModel.findGlyph(glyphName);
-        const layerModel = glyph?.findLayerById(currentLayerId);
-        if (!glyph || !layerModel) {
+        const drawingModel = glyph?.findDrawingById(currentDrawingId);
+        if (!glyph || !drawingModel) {
             return new Set();
         }
 
@@ -4873,23 +4924,23 @@ export class OutlineEditor {
         }
 
         if (
-            typeof layerModel.syncFromEditorLayerData !== 'function' ||
+            typeof drawingModel.syncFromEditorDrawingData !== 'function' ||
             typeof fontModel.rebuildAutomaticCompositesForGlyphs !== 'function'
         ) {
             return new Set(changedGlyphNames);
         }
 
-        // Bulk-sync the editor's working copy into the model layer,
+        // Bulk-sync the editor's working copy into the model drawing,
         // avoiding the expensive toJSON() round-trip that would
-        // trigger layout recomputation for automatic-aligned layers.
-        layerModel.syncFromEditorLayerData({
-            width: currentLayerData.width,
-            height: currentLayerData.height,
-            vertWidth: currentLayerData.vertWidth,
-            shapes: currentLayerData.shapes,
-            anchors: currentLayerData.anchors,
-            guides: currentLayerData.guides,
-            format_specific: currentLayerData.format_specific
+        // trigger layout recomputation for automatic-aligned drawings.
+        drawingModel.syncFromEditorDrawingData({
+            width: currentDrawingData.width,
+            height: currentDrawingData.height,
+            vertWidth: currentDrawingData.vertWidth,
+            shapes: currentDrawingData.shapes,
+            anchors: currentDrawingData.anchors,
+            guides: currentDrawingData.guides,
+            format_specific: currentDrawingData.format_specific
         });
 
         const affectedGlyphNames = new Set<string>([glyphName]);
@@ -4906,9 +4957,9 @@ export class OutlineEditor {
                 changedGlyphNames,
                 {
                     ...(allowedGlyphNames ? { allowedGlyphNames } : undefined),
-                    ...(currentLayerId
+                    ...(currentDrawingId
                         ? {
-                              preferredLayerId: currentLayerId,
+                              preferredDrawingId: currentDrawingId,
                               preferredSourceGlyphName: glyphName
                           }
                         : undefined)
@@ -4979,10 +5030,10 @@ export class OutlineEditor {
         affectedGlyphNames: Set<string>,
         options?: {
             liveVisibleOnly?: boolean;
-            explicitLayerInput?: ExplicitLayerCacheInput;
+            explicitDrawingInput?: ExplicitDrawingCacheInput;
         }
     ): Promise<void> {
-        const currentLayerId = this.getCurrentLayerId();
+        const currentDrawingId = this.getCurrentDrawingId();
         const downstreamGlyphNames = Array.from(
             new Set(
                 Array.from(affectedGlyphNames || []).filter(
@@ -5004,23 +5055,25 @@ export class OutlineEditor {
                 ...downstreamGlyphNames
             ];
             if (previewGlyphNames.length > 0) {
-                const layerTargets =
-                    this.collectMatchingLayerWorkerReplayTargets(
+                const drawingTargets =
+                    this.collectMatchingDrawingWorkerReplayTargets(
                         previewGlyphNames,
-                        currentLayerId
+                        currentDrawingId
                     );
                 await fontManager.stageLiveDragPreviewFromModel(
-                    layerTargets.length > 0 ? layerTargets : previewGlyphNames,
-                    currentLayerId,
+                    drawingTargets.length > 0
+                        ? drawingTargets
+                        : previewGlyphNames,
+                    currentDrawingId,
                     {
                         dispatchGlyphChanged: false,
-                        ...(layerTargets.length > 0
-                            ? { layerTargets }
+                        ...(drawingTargets.length > 0
+                            ? { layerTargets: drawingTargets }
                             : undefined),
-                        ...(options.explicitLayerInput
+                        ...(options.explicitDrawingInput
                             ? {
-                                  explicitLayerData: [
-                                      options.explicitLayerInput
+                                  explicitDrawingData: [
+                                      options.explicitDrawingInput
                                   ]
                               }
                             : undefined)
@@ -5031,11 +5084,11 @@ export class OutlineEditor {
         }
 
         const refreshSourceGlyphPromise =
-            glyphName && currentLayerId
+            glyphName && currentDrawingId
                 ? fontManager.refreshWorkerCacheForReplayTargets([
                       {
                           glyphName,
-                          layerId: currentLayerId
+                          layerId: currentDrawingId
                       }
                   ])
                 : Promise.resolve(false);
@@ -5045,23 +5098,23 @@ export class OutlineEditor {
         }
 
         if (Array.isArray(currentFont.babelfontData?.glyphs)) {
-            const layerSyncTargets =
-                this.collectMatchingLayerWorkerReplayTargets(
+            const drawingSyncTargets =
+                this.collectMatchingDrawingWorkerReplayTargets(
                     affectedGlyphNames,
-                    currentLayerId
+                    currentDrawingId
                 );
             if (
-                layerSyncTargets.length === 0 ||
-                layerSyncTargets.some(
+                drawingSyncTargets.length === 0 ||
+                drawingSyncTargets.some(
                     (target) =>
-                        !fontManager.syncLayerFromModelToStorage(
+                        !fontManager.syncDrawingFromModelToStorage(
                             target.glyphName,
                             target.layerId
                         )
                 )
             ) {
                 console.error(
-                    '[OutlineEditor] Unable to sync anchor cascade layers into canonical storage.'
+                    '[OutlineEditor] Unable to sync anchor cascade drawings into canonical storage.'
                 );
                 return;
             }
@@ -5070,7 +5123,7 @@ export class OutlineEditor {
         await refreshSourceGlyphPromise;
         await fontManager.refreshGlyphsAfterModelBatch(
             downstreamGlyphNames,
-            currentLayerId
+            currentDrawingId
         );
         fontManager.forceFullEditingCacheRefresh = true;
         currentFont.requestRecompileWithoutDataChange();
@@ -5122,27 +5175,27 @@ export class OutlineEditor {
     private prepareLiveVisibleAnchorDependentRefresh(): boolean {
         const fontModel = fontManager.currentFont?.fontModel;
         const sourceGlyphName = this.getCurrentGlyphModel()?.name;
-        const currentLayerId = this.getCurrentLayerId();
-        const currentLayerData = this.getCurrentLayerDataFromStack();
+        const currentDrawingId = this.getCurrentDrawingId();
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
         if (
             !fontModel ||
             !sourceGlyphName ||
-            !currentLayerId ||
-            !currentLayerData
+            !currentDrawingId ||
+            !currentDrawingData
         ) {
             return false;
         }
 
-        this.syncEditorLayerIntoModelForRecomposition(
+        this.syncEditorDrawingIntoModelForRecomposition(
             sourceGlyphName,
-            currentLayerId,
-            currentLayerData
+            currentDrawingId,
+            currentDrawingData
         );
         const closure = this.computeRecompositionClosure({
             sourceTargets: [
                 {
                     glyphName: sourceGlyphName,
-                    layerId: currentLayerId
+                    layerId: currentDrawingId
                 }
             ],
             editKinds: new Set(['anchor']),
@@ -5166,8 +5219,8 @@ export class OutlineEditor {
             return;
         }
         const previewTargets = [...this._lastLiveAnchorPreviewTargets];
-        const currentLayerId = this.getCurrentLayerId();
-        if (!currentLayerId || previewTargets.length === 0) {
+        const currentDrawingId = this.getCurrentDrawingId();
+        if (!currentDrawingId || previewTargets.length === 0) {
             return;
         }
 
@@ -5189,13 +5242,14 @@ export class OutlineEditor {
                     this._lastLiveAnchorPreviewTargets.length > 0
                         ? this._lastLiveAnchorPreviewTargets
                         : previewTargets;
-                const layerId = this.getCurrentLayerId() || currentLayerId;
+                const drawingId =
+                    this.getCurrentDrawingId() || currentDrawingId;
                 if (latestTargets.length === 0) {
                     return false;
                 }
                 await fontManager.stageLiveDragPreviewFromModel(
                     latestTargets,
-                    layerId,
+                    drawingId,
                     {
                         dispatchGlyphChanged: false,
                         layerTargets: latestTargets
@@ -5212,11 +5266,11 @@ export class OutlineEditor {
         });
     }
 
-    private collectMatchingLayerWorkerReplayTargets(
+    private collectMatchingDrawingWorkerReplayTargets(
         glyphNames: Iterable<string>,
-        layerId?: string | null
+        drawingId?: string | null
     ): Array<{ glyphName: string; layerId: string }> {
-        if (!layerId) {
+        if (!drawingId) {
             return [];
         }
 
@@ -5226,18 +5280,18 @@ export class OutlineEditor {
         }
 
         const sourceGlyphName = this.getCurrentGlyphModel()?.name;
-        const sourceLayer = sourceGlyphName
-            ? fontModel.findGlyph(sourceGlyphName)?.findLayerById(layerId)
+        const sourceDrawing = sourceGlyphName
+            ? fontModel.findGlyph(sourceGlyphName)?.findDrawingById(drawingId)
             : null;
 
         return normalizeWorkerReplayTargets(
             Array.from(new Set(glyphNames)).map((glyphName) => {
                 const glyph = fontModel.findGlyph(glyphName);
-                const matchedLayer =
-                    glyph?.findLayerById(layerId) ??
-                    sourceLayer?.getMatchingLayerOnGlyph?.(glyphName);
-                return matchedLayer?.id
-                    ? { glyphName, layerId: matchedLayer.id }
+                const matchedDrawing =
+                    glyph?.findDrawingById(drawingId) ??
+                    sourceDrawing?.getMatchingDrawingOnGlyph?.(glyphName);
+                return matchedDrawing?.id
+                    ? { glyphName, layerId: matchedDrawing.id }
                     : null;
             })
         );
@@ -5245,7 +5299,7 @@ export class OutlineEditor {
 
     /**
      * Unified recomposition closure: delegates to the shared
-     * `computeLayerRecompositionClosure` in recomposition-closure.ts.
+     * `computeDrawingRecompositionClosure` in recomposition-closure.ts.
      *
      * Every committed edit path MUST call this before emitting a Yjs packet.
      * Live drag paths use `scope: 'visible'`; all committed edits (keyboard,
@@ -5253,13 +5307,13 @@ export class OutlineEditor {
      *
      * The returned `allTargets` is the authoritative replay superset that
      * should be stamped as `workerReplayTargets`. `recomposeTargets` (plus
-     * the source) are the only layers that may be written as Yjs snapshots.
+     * the source) are the only drawings that may be written as Yjs snapshots.
      */
     private computeRecompositionClosure(options: {
         sourceTargets: Array<{ glyphName: string; layerId: string }>;
         editKinds: Set<'outline' | 'anchor' | 'sidebearing' | 'component'>;
         scope: 'visible' | 'all';
-        activeLayerId?: string | null;
+        activeDrawingId?: string | null;
     }): {
         allTargets: Array<{ glyphName: string; layerId: string }>;
         recomposeTargets: Array<{ glyphName: string; layerId: string }>;
@@ -5286,8 +5340,8 @@ export class OutlineEditor {
             };
         }
 
-        const effectiveLayerId =
-            options.activeLayerId ?? this.getCurrentLayerId();
+        const effectiveDrawingId =
+            options.activeDrawingId ?? this.getCurrentDrawingId();
 
         // Derive visible glyph names from the live canvas text run and the
         // font-manager subset snapshot. Prefer this.glyphCanvas over
@@ -5305,12 +5359,12 @@ export class OutlineEditor {
                   ])
                 : undefined;
 
-        return computeLayerRecompositionClosure({
+        return computeDrawingRecompositionClosure({
             sourceTargets: options.sourceTargets,
             editKinds: options.editKinds,
             scope: options.scope,
             fontModel: fontModel as any,
-            activeLayerId: effectiveLayerId,
+            activeDrawingId: effectiveDrawingId,
             sourceGlyphName: this.getCurrentGlyphModel()?.name,
             suppressor: window.patchSyncEngine ?? undefined,
             visibleGlyphNames
@@ -5355,7 +5409,7 @@ export class OutlineEditor {
         return kinds;
     }
 
-    private getAuthoritativeOptionalLayerFields(
+    private getAuthoritativeOptionalDrawingFields(
         editKinds: ReadonlySet<
             'outline' | 'anchor' | 'sidebearing' | 'component'
         >,
@@ -5433,7 +5487,7 @@ export class OutlineEditor {
 
     /**
      * Advance-width overlay for metrics drawing during a live sidebearing
-     * session. Returns null when idle so canvas uses `layerData.width`.
+     * session. Returns null when idle so canvas uses `drawingData.width`.
      */
     getLiveSidebearingOverlayWidth(): number | null {
         if (!this.isLiveSidebearingInteractionActive()) {
@@ -5504,7 +5558,7 @@ export class OutlineEditor {
         // Outline-only preview swaps must not reshape. Drag ticks already
         // applied width→width deltas onto the kerned run; restore from the
         // session shaped snapshot plus cumulative model-width deltas so we
-        // never retarget ax toward absolute layer.width via kern-contaminated
+        // never retarget ax toward absolute drawing.width via kern-contaminated
         // intrinsicGlyphAdvances (that was the mid-drag kerning flash).
         let metricsChanged = false;
         const limit = Math.min(shapedGlyphs.length, startAx.length);
@@ -5611,8 +5665,8 @@ export class OutlineEditor {
 
     private queueLiveVisibleSidebearingDependentRefresh(): void {
         const previewTargets = [...this._lastLiveSidebearingPreviewTargets];
-        const currentLayerId = this.getCurrentLayerId();
-        if (!currentLayerId || previewTargets.length === 0) {
+        const currentDrawingId = this.getCurrentDrawingId();
+        if (!currentDrawingId || previewTargets.length === 0) {
             return;
         }
 
@@ -5647,21 +5701,22 @@ export class OutlineEditor {
                     this._lastLiveSidebearingPreviewTargets.length > 0
                         ? this._lastLiveSidebearingPreviewTargets
                         : previewTargets;
-                const layerId = this.getCurrentLayerId() || currentLayerId;
+                const drawingId =
+                    this.getCurrentDrawingId() || currentDrawingId;
                 if (latestTargets.length === 0) {
                     return false;
                 }
-                const explicitLayerInput =
-                    this.getCurrentExplicitLayerCacheInput();
+                const explicitDrawingInput =
+                    this.getCurrentExplicitDrawingCacheInput();
                 await fontManager.stageLiveDragPreviewFromModel(
                     latestTargets,
-                    layerId,
+                    drawingId,
                     {
                         dispatchGlyphChanged: false,
                         layerTargets: latestTargets,
-                        ...(explicitLayerInput
+                        ...(explicitDrawingInput
                             ? {
-                                  explicitLayerData: [explicitLayerInput]
+                                  explicitDrawingData: [explicitDrawingInput]
                               }
                             : undefined)
                     }
@@ -5711,7 +5766,7 @@ export class OutlineEditor {
         }
         this._sidebearingDragFrame = requestAnimationFrame(() => {
             this._sidebearingDragFrame = null;
-            if (!this.isDraggingSidebearing || !this.layerData) {
+            if (!this.isDraggingSidebearing || !this.drawingData) {
                 return;
             }
             this.processSidebearingDragFrame();
@@ -5756,7 +5811,7 @@ export class OutlineEditor {
         }
         cancelAnimationFrame(this._sidebearingDragFrame);
         this._sidebearingDragFrame = null;
-        if (this.isDraggingSidebearing && this.layerData) {
+        if (this.isDraggingSidebearing && this.drawingData) {
             this.processSidebearingDragFrame();
         }
     }
@@ -5773,7 +5828,7 @@ export class OutlineEditor {
         }
         cancelAnimationFrame(this._sidebearingDragFrame);
         this._sidebearingDragFrame = null;
-        if (this.isDraggingSidebearing && this.layerData) {
+        if (this.isDraggingSidebearing && this.drawingData) {
             this.processSidebearingDragFrame();
         }
     }
@@ -5801,7 +5856,7 @@ export class OutlineEditor {
             this.glyphCanvas.updatePropertyPanel();
         }
 
-        // The source layer mutates synchronously, while automatic component
+        // The source drawing mutates synchronously, while automatic component
         // outlines arrive in the live preview. Wait for that preview before
         // presenting this frame so both appearances change together.
         if (!this._sidebearingPreviewPending) {
@@ -5821,9 +5876,9 @@ export class OutlineEditor {
         x: number;
         y: number;
     } | null {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        const bbox = currentLayerData
-            ? Layer.calculateBoundingBox(currentLayerData, true)
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        const bbox = currentDrawingData
+            ? Drawing.calculateBoundingBox(currentDrawingData, true)
             : null;
         if (!bbox) {
             return null;
@@ -5890,10 +5945,10 @@ export class OutlineEditor {
         const cluster = shapedGlyph?.cl ?? 0;
         const isRTL = textRun.isPositionRTL(cluster);
         const shapedAdvance = shapedGlyph?.ax;
-        const layerWidth = this.getCurrentLayerDataFromStack()?.width;
+        const drawingWidth = this.getCurrentDrawingDataFromStack()?.width;
         const advance = lockAdvanceEdge
-            ? typeof layerWidth === 'number' && Number.isFinite(layerWidth)
-                ? layerWidth
+            ? typeof drawingWidth === 'number' && Number.isFinite(drawingWidth)
+                ? drawingWidth
                 : typeof shapedAdvance === 'number' &&
                     Number.isFinite(shapedAdvance)
                   ? shapedAdvance
@@ -5901,8 +5956,9 @@ export class OutlineEditor {
             : typeof shapedAdvance === 'number' &&
                 Number.isFinite(shapedAdvance)
               ? shapedAdvance
-              : typeof layerWidth === 'number' && Number.isFinite(layerWidth)
-                ? layerWidth
+              : typeof drawingWidth === 'number' &&
+                  Number.isFinite(drawingWidth)
+                ? drawingWidth
                 : 0;
         const lockAtAdvance = lockAdvanceEdge ? !isRTL : isRTL;
 
@@ -6016,11 +6072,11 @@ export class OutlineEditor {
         } | null
     ): void {
         // Structural commits stamp editType null and queue a full editing
-        // compile that reshapes with kerning. Patching layer.width into the
+        // compile that reshapes with kerning. Patching drawing.width into the
         // already-shaped run here would strip pair kerning until that reshape
         // lands (intrinsic cache often holds kern-contaminated ax). Keep the
         // bbox-center anchor; leave advances to the authoritative reshape.
-        this.syncCurrentExactLayerDataFromModel();
+        this.syncCurrentExactDrawingDataFromModel();
         this.applyBoundingBoxCenterScreenAnchor(anchorScreen);
     }
 
@@ -6044,8 +6100,9 @@ export class OutlineEditor {
         const glyphName =
             this.getCurrentGlyphModel()?.name ||
             this.glyphCanvas.getCurrentGlyphName();
-        const activeLayerId = this.getCurrentLayerId() ?? this.selectedLayerId;
-        if (!bridge || !glyphName || !activeLayerId) {
+        const activeDrawingId =
+            this.getCurrentDrawingId() ?? this.selectedDrawingId;
+        if (!bridge || !glyphName || !activeDrawingId) {
             return;
         }
 
@@ -6054,7 +6111,7 @@ export class OutlineEditor {
         const structuralTargets = normalizeWorkerReplayTargets(
             options?.layerTargets?.length
                 ? options.layerTargets
-                : this.getCurrentGlyphStructuralLayerTargets()
+                : this.getCurrentGlyphStructuralDrawingTargets()
         );
 
         if (
@@ -6067,7 +6124,7 @@ export class OutlineEditor {
             return;
         }
 
-        const closureSourceTargets = [{ glyphName, layerId: activeLayerId }];
+        const closureSourceTargets = [{ glyphName, layerId: activeDrawingId }];
         const closure = this.computeRecompositionClosure({
             sourceTargets: closureSourceTargets,
             editKinds: new Set(
@@ -6076,16 +6133,16 @@ export class OutlineEditor {
                     : ['outline']
             ),
             scope: 'all',
-            activeLayerId
+            activeDrawingId
         });
-        const { changedLayerTargets, workerReplayTargets } =
-            resolveLayerSyncTargetsFromClosure(closure, closureSourceTargets);
+        const { changedDrawingTargets, workerReplayTargets } =
+            resolveDrawingSyncTargetsFromClosure(closure, closureSourceTargets);
 
-        // Linked structural layers on the edited glyph must be snapshotted
+        // Linked structural drawings on the edited glyph must be snapshotted
         // alongside cascade recomposes; invalidate-only manuals stay replay-only.
-        const finalChangedLayerTargets = normalizeWorkerReplayTargets([
+        const finalChangedDrawingTargets = normalizeWorkerReplayTargets([
             ...structuralTargets,
-            ...changedLayerTargets
+            ...changedDrawingTargets
         ]);
         const finalWorkerReplayTargets = normalizeWorkerReplayTargets([
             ...structuralTargets,
@@ -6106,7 +6163,7 @@ export class OutlineEditor {
                 undefined,
                 null,
                 {
-                    changedLayerTargets: finalChangedLayerTargets,
+                    changedDrawingTargets: finalChangedDrawingTargets,
                     workerReplayTargets: finalWorkerReplayTargets
                 },
                 this.getCommittedCompileMetadata(compileChangeSource)
@@ -6120,27 +6177,30 @@ export class OutlineEditor {
         this.syncEditToolAvailability();
     }
 
-    private getCurrentGlyphStructuralLayerTargets(): Array<{
+    private getCurrentGlyphStructuralDrawingTargets(): Array<{
         glyphName: string;
         layerId: string;
     }> {
         const currentGlyphModel = this.getCurrentGlyphModel();
-        const currentLayerModel = this.getCurrentLayerModel();
-        if (!currentGlyphModel?.name || !currentLayerModel?.id) {
+        const currentDrawingModel = this.getCurrentDrawingModel();
+        if (!currentGlyphModel?.name || !currentDrawingModel?.id) {
             return [];
         }
 
         const targets = [
-            { glyphName: currentGlyphModel.name, layerId: currentLayerModel.id }
+            {
+                glyphName: currentGlyphModel.name,
+                layerId: currentDrawingModel.id
+            }
         ];
-        for (const linkedLayer of currentLayerModel._getLinkedLayers?.() ||
+        for (const linkedDrawing of currentDrawingModel._getLinkedDrawings?.() ||
             []) {
-            if (!linkedLayer?.id) {
+            if (!linkedDrawing?.id) {
                 continue;
             }
             targets.push({
                 glyphName: currentGlyphModel.name,
-                layerId: linkedLayer.id
+                layerId: linkedDrawing.id
             });
         }
 
@@ -6177,26 +6237,26 @@ export class OutlineEditor {
 
     /** Persist all linked structural component targets before committing Yjs. */
     prepareComponentStructuralChange(
-        layerTargets: Array<{ glyphName: string; layerId: string }>
+        drawingTargets: Array<{ glyphName: string; layerId: string }>
     ): boolean {
         const currentFont = fontManager.currentFont;
         if (currentFont?.babelfontData?.glyphs) {
             try {
-                for (const target of layerTargets) {
+                for (const target of drawingTargets) {
                     if (
-                        !fontManager.syncLayerFromModelToStorage(
+                        !fontManager.syncDrawingFromModelToStorage(
                             target.glyphName,
                             target.layerId
                         )
                     ) {
                         throw new Error(
-                            `Unable to sync structural component layer ${target.glyphName}/${target.layerId} into canonical storage.`
+                            `Unable to sync structural component drawing ${target.glyphName}/${target.layerId} into canonical storage.`
                         );
                     }
                 }
             } catch (error) {
                 console.error(
-                    '[OutlineEditor] Error syncing structural component layer:',
+                    '[OutlineEditor] Error syncing structural component drawing:',
                     error
                 );
                 return false;
@@ -6206,47 +6266,51 @@ export class OutlineEditor {
         return this.prepareCommittedStructuralOutlineChange(
             'keyboard-outline',
             {
-                layerTargets
+                layerTargets: drawingTargets
             }
         );
     }
 
     /** Persist linked structural anchor targets before committing Yjs. */
     prepareAnchorStructuralChange(
-        layerTargets: Array<{ glyphName: string; layerId: string }>
+        drawingTargets: Array<{ glyphName: string; layerId: string }>
     ): boolean {
         return this.prepareCommittedStructuralOutlineChange('keyboard-anchor', {
-            layerTargets
+            layerTargets: drawingTargets
         });
     }
 
-    private getCurrentMasterModel(): any | null {
+    private getCurrentStationModel(): any | null {
         const fontModel = fontManager.currentFont?.fontModel;
-        const layer = this.getCurrentLayerModel();
-        const masterId = layer?.master?.master;
+        const drawing = this.getCurrentDrawingModel();
+        const stationId = drawing?.station?.master;
 
-        if (!fontModel || !masterId) {
+        if (!fontModel || !stationId) {
             return null;
         }
 
-        const masters = fontModel.masters || [];
-        return masters.find((master: any) => master.id === masterId) || null;
+        const stations = fontModel.stations || [];
+        return (
+            stations.find((station: any) => station.id === stationId) || null
+        );
     }
 
-    private getRootMasterModel(): any | null {
+    private getRootStationModel(): any | null {
         const fontModel = fontManager.currentFont?.fontModel;
-        const rootLayer = this.getRootLayerModel();
-        const layer = rootLayer?.is_background
-            ? rootLayer.backgroundLayer
-            : rootLayer;
-        const masterId = layer?.master?.master;
+        const rootDrawing = this.getRootDrawingModel();
+        const drawing = rootDrawing?.is_background
+            ? rootDrawing.backgroundDrawing
+            : rootDrawing;
+        const stationId = drawing?.station?.master;
 
-        if (!fontModel || !masterId) {
+        if (!fontModel || !stationId) {
             return null;
         }
 
-        const masters = fontModel.masters || [];
-        return masters.find((master: any) => master.id === masterId) || null;
+        const stations = fontModel.stations || [];
+        return (
+            stations.find((station: any) => station.id === stationId) || null
+        );
     }
 
     private transformGuideToRootSpace(
@@ -6283,16 +6347,16 @@ export class OutlineEditor {
     }
 
     getVisibleGuides(): VisibleGuide[] {
-        if (!this.guidelinesVisible || !this.getCurrentLayerId()) {
+        if (!this.guidelinesVisible || !this.getCurrentDrawingId()) {
             return [];
         }
 
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        const currentLayerModel = this.getCurrentLayerModel();
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        const currentDrawingModel = this.getCurrentDrawingModel();
         if (
-            !currentLayerData ||
-            (currentLayerData.isInterpolated &&
-                !currentLayerModel?.is_background)
+            !currentDrawingData ||
+            (currentDrawingData.isInterpolated &&
+                !currentDrawingModel?.is_background)
         ) {
             return [];
         }
@@ -6300,12 +6364,12 @@ export class OutlineEditor {
         const guides: VisibleGuide[] = [];
         const accumulatedTransform = this.getAccumulatedTransform();
 
-        const guideLayer = currentLayerModel?.is_background
-            ? currentLayerModel.backgroundLayer
-            : currentLayerModel;
-        guideLayer?.guides?.forEach((guide: any, index: number) => {
+        const guideDrawing = currentDrawingModel?.is_background
+            ? currentDrawingModel.backgroundDrawing
+            : currentDrawingModel;
+        guideDrawing?.guides?.forEach((guide: any, index: number) => {
             guides.push({
-                scope: 'layer',
+                scope: 'drawing',
                 index,
                 guide,
                 ...this.transformGuideToRootSpace(
@@ -6317,10 +6381,10 @@ export class OutlineEditor {
             });
         });
 
-        const master = this.getRootMasterModel();
-        master?.guides?.forEach((guide: any, index: number) => {
+        const station = this.getRootStationModel();
+        station?.guides?.forEach((guide: any, index: number) => {
             guides.push({
-                scope: 'master',
+                scope: 'station',
                 index,
                 guide,
                 rootX: guide.pos.x,
@@ -6376,32 +6440,32 @@ export class OutlineEditor {
         return Object.keys(result).length ? result : null;
     }
 
-    private setRenderVerticalMetrics(layerData: any): void {
+    private setRenderVerticalMetrics(drawingData: any): void {
         this.renderVerticalMetrics = this.normalizeAndRoundVerticalMetrics(
-            layerData?._verticalMetrics
+            drawingData?._verticalMetrics
         );
     }
 
     private remapSelectedAnchors(
-        previousLayer: Babelfont.Layer | null,
-        nextLayer: Babelfont.Layer | null
+        previousDrawing: Babelfont.Layer | null,
+        nextDrawing: Babelfont.Layer | null
     ): number[] {
         const selectedAnchorNames = this.getAnchorNamesForSelectionIndices(
             this.selectedAnchors,
-            previousLayer?.anchors || []
+            previousDrawing?.anchors || []
         );
 
         if (selectedAnchorNames.length) {
             return this.remapAnchorSelectionNames(
                 selectedAnchorNames,
-                nextLayer?.anchors || []
+                nextDrawing?.anchors || []
             );
         }
 
         return this.remapAnchorSelectionIndices(
             this.selectedAnchors,
-            previousLayer?.anchors || [],
-            nextLayer?.anchors || []
+            previousDrawing?.anchors || [],
+            nextDrawing?.anchors || []
         );
     }
 
@@ -6516,34 +6580,37 @@ export class OutlineEditor {
         return mapped;
     }
 
-    private resolveLayerModel(layer: any): any {
-        if (!layer?.id) {
-            return layer;
+    private resolveDrawingModel(drawing: any): any {
+        if (!drawing?.id) {
+            return drawing;
         }
 
-        if (typeof layer.parent === 'function') {
-            return layer;
+        if (typeof drawing.parent === 'function') {
+            return drawing;
         }
 
         return (
-            this.getCurrentGlyphModel()?.findLayerById?.(layer.id) ||
-            this.getRootGlyphModel()?.findLayerById?.(layer.id) ||
-            layer
+            this.getCurrentGlyphModel()?.findDrawingById?.(drawing.id) ||
+            this.getRootGlyphModel()?.findDrawingById?.(drawing.id) ||
+            drawing
         );
     }
 
-    private resolveLayerForSelection(layer: any): any {
-        const resolvedLayer = this.resolveLayerModel(layer);
-        if (!this.isEditingBackgroundLayer() || resolvedLayer?.is_background) {
-            return resolvedLayer;
+    private resolveDrawingForSelection(drawing: any): any {
+        const resolvedDrawing = this.resolveDrawingModel(drawing);
+        if (
+            !this.isEditingBackgroundDrawing() ||
+            resolvedDrawing?.is_background
+        ) {
+            return resolvedDrawing;
         }
 
-        return resolvedLayer?.backgroundLayer || resolvedLayer;
+        return resolvedDrawing?.backgroundDrawing || resolvedDrawing;
     }
 
     private cloneSelectionState(
-        state: LayerSelectionState | null | undefined
-    ): LayerSelectionState {
+        state: DrawingSelectionState | null | undefined
+    ): DrawingSelectionState {
         return {
             points: (state?.points || []).map((point) => ({ ...point })),
             anchors: [...(state?.anchors || [])],
@@ -6554,15 +6621,15 @@ export class OutlineEditor {
     }
 
     private getCurrentSelectionAnchorSource(): Array<any> {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        if (Array.isArray(currentLayerData?.anchors)) {
-            return currentLayerData.anchors;
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        if (Array.isArray(currentDrawingData?.anchors)) {
+            return currentDrawingData.anchors;
         }
 
-        return this.getCurrentLayerModel()?.anchors || [];
+        return this.getCurrentDrawingModel()?.anchors || [];
     }
 
-    private getCurrentSelectionState(): LayerSelectionState {
+    private getCurrentSelectionState(): DrawingSelectionState {
         const anchors = this.getCurrentSelectionAnchorSource();
         return this.cloneSelectionState({
             points: this.selectedPoints,
@@ -6585,59 +6652,59 @@ export class OutlineEditor {
         return this.currentGlyphName || this.glyphCanvas.getCurrentGlyphName();
     }
 
-    private getLayerSelectionStorageKey(
-        layer: any,
+    private getDrawingSelectionStorageKey(
+        drawing: any,
         glyphNameOverride?: string | null
     ): string | null {
-        const resolvedLayer = this.resolveLayerModel(layer);
-        const layerId = resolvedLayer?.id || layer?.id;
-        if (!layerId) {
+        const resolvedDrawing = this.resolveDrawingModel(drawing);
+        const drawingId = resolvedDrawing?.id || drawing?.id;
+        if (!drawingId) {
             return null;
         }
 
         const parentGlyph =
-            typeof resolvedLayer?.parent === 'function'
-                ? resolvedLayer.parent()
+            typeof resolvedDrawing?.parent === 'function'
+                ? resolvedDrawing.parent()
                 : null;
         const glyphName =
             glyphNameOverride ||
             parentGlyph?.name ||
             this.getActiveSelectionScopeGlyphName();
-        return glyphName ? `${glyphName}@${layerId}` : String(layerId);
+        return glyphName ? `${glyphName}@${drawingId}` : String(drawingId);
     }
 
-    private getLayerGlyphName(layer: any): string | null {
-        const resolvedLayer = this.resolveLayerModel(layer);
+    private getDrawingGlyphName(drawing: any): string | null {
+        const resolvedDrawing = this.resolveDrawingModel(drawing);
         const parentGlyph =
-            typeof resolvedLayer?.parent === 'function'
-                ? resolvedLayer.parent()
+            typeof resolvedDrawing?.parent === 'function'
+                ? resolvedDrawing.parent()
                 : null;
         return parentGlyph?.name || null;
     }
 
-    private getAnchorsForSelectionLayer(layer: any): Array<any> {
-        const resolvedLayer = this.resolveLayerModel(layer);
-        const currentLayer = this.getCurrentLayerModel();
+    private getAnchorsForSelectionDrawing(drawing: any): Array<any> {
+        const resolvedDrawing = this.resolveDrawingModel(drawing);
+        const currentDrawing = this.getCurrentDrawingModel();
         const currentGlyphName = this.getActiveSelectionScopeGlyphName();
-        const targetGlyphName = this.getLayerGlyphName(resolvedLayer);
+        const targetGlyphName = this.getDrawingGlyphName(resolvedDrawing);
 
         if (
-            resolvedLayer?.id &&
-            currentLayer?.id === resolvedLayer.id &&
+            resolvedDrawing?.id &&
+            currentDrawing?.id === resolvedDrawing.id &&
             currentGlyphName &&
             (!targetGlyphName || targetGlyphName === currentGlyphName)
         ) {
-            const currentLayerData = this.getCurrentLayerDataFromStack();
-            if (Array.isArray(currentLayerData?.anchors)) {
-                return currentLayerData.anchors;
+            const currentDrawingData = this.getCurrentDrawingDataFromStack();
+            if (Array.isArray(currentDrawingData?.anchors)) {
+                return currentDrawingData.anchors;
             }
         }
 
-        return resolvedLayer?.anchors || layer?.anchors || [];
+        return resolvedDrawing?.anchors || drawing?.anchors || [];
     }
 
     private getSelectionStateAnchorNames(
-        state: LayerSelectionState,
+        state: DrawingSelectionState,
         anchors: Array<any>
     ): string[] {
         if (state.anchorNames?.length) {
@@ -6647,12 +6714,12 @@ export class OutlineEditor {
         return this.getAnchorNamesForSelectionIndices(state.anchors, anchors);
     }
 
-    private canTransferSelectionBetweenLayers(
-        previousLayer: any,
-        nextLayer: any
+    private canTransferSelectionBetweenDrawings(
+        previousDrawing: any,
+        nextDrawing: any
     ): boolean {
-        const previousGlyphName = this.getLayerGlyphName(previousLayer);
-        const nextGlyphName = this.getLayerGlyphName(nextLayer);
+        const previousGlyphName = this.getDrawingGlyphName(previousDrawing);
+        const nextGlyphName = this.getDrawingGlyphName(nextDrawing);
 
         if (!previousGlyphName || !nextGlyphName) {
             return true;
@@ -6661,7 +6728,7 @@ export class OutlineEditor {
         return previousGlyphName === nextGlyphName;
     }
 
-    private isEmptySelectionState(state: LayerSelectionState): boolean {
+    private isEmptySelectionState(state: DrawingSelectionState): boolean {
         return (
             state.points.length === 0 &&
             state.anchors.length === 0 &&
@@ -6671,40 +6738,40 @@ export class OutlineEditor {
         );
     }
 
-    private storeSelectionStateForLayer(
-        layer: any,
-        state: LayerSelectionState = this.getCurrentSelectionState(),
+    private storeSelectionStateForDrawing(
+        drawing: any,
+        state: DrawingSelectionState = this.getCurrentSelectionState(),
         glyphName?: string | null
     ): void {
-        const key = this.getLayerSelectionStorageKey(layer, glyphName);
+        const key = this.getDrawingSelectionStorageKey(drawing, glyphName);
         if (!key) {
             return;
         }
 
         const nextState = this.cloneSelectionState(state);
-        const existingState = this.layerSelectionStateByKey.get(key);
+        const existingState = this.drawingSelectionStateByKey.get(key);
         if (
             existingState &&
             this.isEmptySelectionState(nextState) &&
             !this.isEmptySelectionState(existingState) &&
-            this.pendingGlyphSwitchSourceLayerKey === key
+            this.pendingGlyphSwitchSourceDrawingKey === key
         ) {
             return;
         }
 
-        this.layerSelectionStateByKey.set(key, nextState);
+        this.drawingSelectionStateByKey.set(key, nextState);
     }
 
-    private getStoredSelectionStateForLayer(
-        layer: any,
+    private getStoredSelectionStateForDrawing(
+        drawing: any,
         glyphName?: string | null
-    ): LayerSelectionState | null {
-        const key = this.getLayerSelectionStorageKey(layer, glyphName);
+    ): DrawingSelectionState | null {
+        const key = this.getDrawingSelectionStorageKey(drawing, glyphName);
         if (!key) {
             return null;
         }
 
-        const storedState = this.layerSelectionStateByKey.get(key);
+        const storedState = this.drawingSelectionStateByKey.get(key);
         return storedState ? this.cloneSelectionState(storedState) : null;
     }
 
@@ -6748,18 +6815,19 @@ export class OutlineEditor {
         return Array.isArray(shape.nodes) ? shape.nodes.length : 0;
     }
 
-    private selectAllCurrentLayerObjects(): boolean {
-        if (!this.selectedLayerId) {
+    private selectAllCurrentDrawingObjects(): boolean {
+        if (!this.selectedDrawingId) {
             return false;
         }
 
-        const layer =
-            this.getCurrentLayerDataFromStack() || this.getCurrentLayerModel();
-        if (!layer) {
+        const drawing =
+            this.getCurrentDrawingDataFromStack() ||
+            this.getCurrentDrawingModel();
+        if (!drawing) {
             return false;
         }
 
-        const shapes = layer.shapes || [];
+        const shapes = drawing.shapes || [];
         const points: Point[] = [];
         const components: number[] = [];
 
@@ -6777,10 +6845,10 @@ export class OutlineEditor {
             }
         });
 
-        const anchorSource = this.getAnchorsForSelectionLayer(layer);
+        const anchorSource = this.getAnchorsForSelectionDrawing(drawing);
         const anchors = anchorSource.map((_anchor, index) => index);
 
-        this.applySelectionStateForLayer(
+        this.applySelectionStateForDrawing(
             {
                 points,
                 anchors,
@@ -6791,7 +6859,7 @@ export class OutlineEditor {
                 components,
                 guideHandle: null
             },
-            layer
+            drawing
         );
         this.glyphCanvas.updatePropertyPanel();
         this.glyphCanvas.render();
@@ -6808,8 +6876,8 @@ export class OutlineEditor {
     }
 
     private getSelectionTransformBounds(): SelectionTransformBounds | null {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        if (!currentLayerData || currentLayerData.isInterpolated) {
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        if (!currentDrawingData || currentDrawingData.isInterpolated) {
             return null;
         }
 
@@ -6831,7 +6899,7 @@ export class OutlineEditor {
 
         for (const { contourIndex, nodeIndex } of this.selectedPoints) {
             const contour = getEditableContour(
-                currentLayerData.shapes?.[contourIndex]
+                currentDrawingData.shapes?.[contourIndex]
             );
             const node = contour?.nodes?.[nodeIndex];
             if (node) {
@@ -6840,14 +6908,14 @@ export class OutlineEditor {
         }
 
         for (const anchorIndex of this.selectedAnchors) {
-            const anchor = currentLayerData.anchors?.[anchorIndex];
+            const anchor = currentDrawingData.anchors?.[anchorIndex];
             if (anchor) {
                 includePoint(anchor.x, anchor.y);
             }
         }
 
         for (const componentIndex of this.selectedComponents) {
-            const shape = currentLayerData.shapes?.[componentIndex];
+            const shape = currentDrawingData.shapes?.[componentIndex];
             if (!shape || !('reference' in shape) || !shape.layerData?.shapes) {
                 continue;
             }
@@ -6856,7 +6924,7 @@ export class OutlineEditor {
             const transform = normalizeAffineTransform(
                 transformRaw
             ) as Transform;
-            const bounds = Layer.calculateShapeBounds(
+            const bounds = Drawing.calculateShapeBounds(
                 shape.layerData.shapes,
                 transform
             );
@@ -6915,8 +6983,8 @@ export class OutlineEditor {
     getVisibleSelectionTransformBounds(): SelectionTransformBounds | null {
         if (
             !this.active ||
-            !this.selectedLayerId ||
-            !this.layerData ||
+            !this.selectedDrawingId ||
+            !this.drawingData ||
             this.isPreviewMode ||
             (this.selectedPoints.length === 0 &&
                 this.selectedAnchors.length === 0 &&
@@ -7030,8 +7098,8 @@ export class OutlineEditor {
         return `${point.contourIndex}:${point.nodeIndex}`;
     }
 
-    private getCurrentLayerSelectablePoints(layer: any): Point[] {
-        const shapes = layer?.shapes || [];
+    private getCurrentDrawingSelectablePoints(drawing: any): Point[] {
+        const shapes = drawing?.shapes || [];
         const points: Point[] = [];
 
         shapes.forEach((shape: any, contourIndex: number) => {
@@ -7157,35 +7225,35 @@ export class OutlineEditor {
     }
 
     private updateMarqueeSelection(): void {
-        const layer = this.getCurrentLayerDataFromStack();
+        const drawing = this.getCurrentDrawingDataFromStack();
         const rect = this.getMarqueeSelectionBox();
-        if (!layer || !rect) {
+        if (!drawing || !rect) {
             return;
         }
 
-        const pointsInRect = this.getCurrentLayerSelectablePoints(layer).filter(
-            (point) => {
-                const shape = layer.shapes?.[point.contourIndex];
-                const contour = getEditableContour(shape);
-                const node = contour?.nodes?.[point.nodeIndex];
-                if (!node) {
-                    return false;
-                }
-
-                return (
-                    node.x >= rect.minX &&
-                    node.x <= rect.maxX &&
-                    node.y >= rect.minY &&
-                    node.y <= rect.maxY
-                );
+        const pointsInRect = this.getCurrentDrawingSelectablePoints(
+            drawing
+        ).filter((point) => {
+            const shape = drawing.shapes?.[point.contourIndex];
+            const contour = getEditableContour(shape);
+            const node = contour?.nodes?.[point.nodeIndex];
+            if (!node) {
+                return false;
             }
-        );
+
+            return (
+                node.x >= rect.minX &&
+                node.x <= rect.maxX &&
+                node.y >= rect.minY &&
+                node.y <= rect.maxY
+            );
+        });
 
         const nextPoints = this.marqueeToggleMode
             ? this.getToggledMarqueeSelection(pointsInRect)
             : pointsInRect;
 
-        const sanitizedPoints = this.sanitizeSelectionStateForLayer(
+        const sanitizedPoints = this.sanitizeSelectionStateForDrawing(
             {
                 points: nextPoints,
                 anchors: [],
@@ -7193,28 +7261,28 @@ export class OutlineEditor {
                 components: [],
                 guideHandle: null
             },
-            layer
+            drawing
         ).points;
 
         this.selectedPoints = sanitizedPoints;
-        this.storeSelectionStateForLayer(layer);
+        this.storeSelectionStateForDrawing(drawing);
         this.glyphCanvas.updatePropertyPanel();
     }
 
-    private getLayerFingerprint(layer: any): string | null {
-        const resolvedLayer = this.resolveLayerModel(layer);
-        return typeof resolvedLayer?.fingerprint === 'string'
-            ? resolvedLayer.fingerprint
+    private getDrawingFingerprint(drawing: any): string | null {
+        const resolvedDrawing = this.resolveDrawingModel(drawing);
+        return typeof resolvedDrawing?.fingerprint === 'string'
+            ? resolvedDrawing.fingerprint
             : null;
     }
 
-    private remapSelectionStateBetweenLayers(
-        state: LayerSelectionState,
-        previousLayer: any,
-        nextLayer: any
-    ): LayerSelectionState | null {
-        const previousFingerprint = this.getLayerFingerprint(previousLayer);
-        const nextFingerprint = this.getLayerFingerprint(nextLayer);
+    private remapSelectionStateBetweenDrawings(
+        state: DrawingSelectionState,
+        previousDrawing: any,
+        nextDrawing: any
+    ): DrawingSelectionState | null {
+        const previousFingerprint = this.getDrawingFingerprint(previousDrawing);
+        const nextFingerprint = this.getDrawingFingerprint(nextDrawing);
         if (
             previousFingerprint &&
             nextFingerprint &&
@@ -7223,8 +7291,9 @@ export class OutlineEditor {
             return null;
         }
 
-        const previousAnchors = this.getAnchorsForSelectionLayer(previousLayer);
-        const nextAnchors = this.getAnchorsForSelectionLayer(nextLayer);
+        const previousAnchors =
+            this.getAnchorsForSelectionDrawing(previousDrawing);
+        const nextAnchors = this.getAnchorsForSelectionDrawing(nextDrawing);
         const anchorNames = this.getSelectionStateAnchorNames(
             state,
             previousAnchors
@@ -7249,24 +7318,24 @@ export class OutlineEditor {
         });
     }
 
-    private getMasterGuideCountForLayer(layer: any): number {
-        const masterId = layer?.master?.master;
-        if (!masterId) {
+    private getStationGuideCountForDrawing(drawing: any): number {
+        const stationId = drawingStationRef(drawing)?.master;
+        if (!stationId) {
             return 0;
         }
 
-        const master =
-            fontManager.currentFont?.fontModel?.findMaster?.(masterId);
-        return master?.guides?.length || 0;
+        const station =
+            fontManager.currentFont?.fontModel?.findStation?.(stationId);
+        return station?.guides?.length || 0;
     }
 
-    private sanitizeSelectionStateForLayer(
-        state: LayerSelectionState | null | undefined,
-        layer: any
-    ): LayerSelectionState {
-        const shapes = layer?.shapes || [];
-        const anchors = this.getAnchorsForSelectionLayer(layer);
-        const guides = layer?.guides || [];
+    private sanitizeSelectionStateForDrawing(
+        state: DrawingSelectionState | null | undefined,
+        drawing: any
+    ): DrawingSelectionState {
+        const shapes = drawing?.shapes || [];
+        const anchors = this.getAnchorsForSelectionDrawing(drawing);
+        const guides = drawing?.guides || [];
         const normalizedState = this.cloneSelectionState(state);
 
         const points = normalizedState.points.filter(
@@ -7295,14 +7364,15 @@ export class OutlineEditor {
         );
 
         let guideHandle = normalizedState.guideHandle;
-        if (guideHandle?.scope === 'layer') {
+        if (guideHandle?.scope === 'drawing') {
             if (guideHandle.index < 0 || guideHandle.index >= guides.length) {
                 guideHandle = null;
             }
-        } else if (guideHandle?.scope === 'master') {
+        } else if (guideHandle?.scope === 'station') {
             if (
                 guideHandle.index < 0 ||
-                guideHandle.index >= this.getMasterGuideCountForLayer(layer)
+                guideHandle.index >=
+                    this.getStationGuideCountForDrawing(drawing)
             ) {
                 guideHandle = null;
             }
@@ -7320,24 +7390,24 @@ export class OutlineEditor {
         };
     }
 
-    private isSelectionStateCompatibleWithLayer(
-        state: LayerSelectionState,
-        previousLayer: any,
-        layer: any
+    private isSelectionStateCompatibleWithDrawing(
+        state: DrawingSelectionState,
+        previousDrawing: any,
+        drawing: any
     ): boolean {
-        const remappedState = this.remapSelectionStateBetweenLayers(
+        const remappedState = this.remapSelectionStateBetweenDrawings(
             state,
-            previousLayer,
-            layer
+            previousDrawing,
+            drawing
         );
 
         if (!remappedState) {
             return false;
         }
 
-        const sanitizedState = this.sanitizeSelectionStateForLayer(
+        const sanitizedState = this.sanitizeSelectionStateForDrawing(
             remappedState,
-            layer
+            drawing
         );
 
         if (sanitizedState.points.length !== remappedState.points.length) {
@@ -7360,12 +7430,12 @@ export class OutlineEditor {
         );
     }
 
-    private applySelectionStateForLayer(
-        state: LayerSelectionState | null | undefined,
-        layer: any,
+    private applySelectionStateForDrawing(
+        state: DrawingSelectionState | null | undefined,
+        drawing: any,
         glyphName?: string | null
     ): void {
-        const nextState = this.sanitizeSelectionStateForLayer(state, layer);
+        const nextState = this.sanitizeSelectionStateForDrawing(state, drawing);
 
         this.selectedPoints = nextState.points;
         this.selectedAnchors = nextState.anchors;
@@ -7373,117 +7443,120 @@ export class OutlineEditor {
         this.selectedGuideHandle = nextState.guideHandle;
         this.selectedSidebearingHandle = null;
         this.hoveredResizeHandle = null;
-        this.storeSelectionStateForLayer(layer, nextState, glyphName);
+        this.storeSelectionStateForDrawing(drawing, nextState, glyphName);
     }
 
-    private getSelectionStateForLayerTransition(
-        previousLayer: any,
-        nextLayer: any
-    ): LayerSelectionState {
+    private getSelectionStateForDrawingTransition(
+        previousDrawing: any,
+        nextDrawing: any
+    ): DrawingSelectionState {
         const emptyState = this.cloneSelectionState(null);
-        if (!nextLayer) {
+        if (!nextDrawing) {
             return emptyState;
         }
 
-        if (!previousLayer) {
-            this.pendingGlyphSwitchSourceLayerKey = null;
-            this.pendingGlyphSwitchSourceLayer = null;
+        if (!previousDrawing) {
+            this.pendingGlyphSwitchSourceDrawingKey = null;
+            this.pendingGlyphSwitchSourceDrawing = null;
             return (
-                this.getStoredSelectionStateForLayer(
-                    nextLayer,
+                this.getStoredSelectionStateForDrawing(
+                    nextDrawing,
                     this.getActiveSelectionScopeGlyphName()
                 ) || emptyState
             );
         }
 
         const previousState = this.getCurrentSelectionState();
-        const isCrossGlyphTransition = !this.canTransferSelectionBetweenLayers(
-            previousLayer,
-            nextLayer
-        );
-        const previousLayerKey =
-            this.getLayerSelectionStorageKey(previousLayer);
+        const isCrossGlyphTransition =
+            !this.canTransferSelectionBetweenDrawings(
+                previousDrawing,
+                nextDrawing
+            );
+        const previousDrawingKey =
+            this.getDrawingSelectionStorageKey(previousDrawing);
         const shouldPreservePreparedPreviousSnapshot =
-            !!this.pendingGlyphSwitchSourceLayerKey &&
-            (previousLayerKey === this.pendingGlyphSwitchSourceLayerKey ||
-                previousLayer === this.pendingGlyphSwitchSourceLayer);
+            !!this.pendingGlyphSwitchSourceDrawingKey &&
+            (previousDrawingKey === this.pendingGlyphSwitchSourceDrawingKey ||
+                previousDrawing === this.pendingGlyphSwitchSourceDrawing);
 
         if (!shouldPreservePreparedPreviousSnapshot) {
-            this.storeSelectionStateForLayer(
-                previousLayer,
+            this.storeSelectionStateForDrawing(
+                previousDrawing,
                 previousState,
-                this.getLayerGlyphName(previousLayer)
+                this.getDrawingGlyphName(previousDrawing)
             );
         }
 
-        this.pendingGlyphSwitchSourceLayerKey = null;
-        this.pendingGlyphSwitchSourceLayer = null;
+        this.pendingGlyphSwitchSourceDrawingKey = null;
+        this.pendingGlyphSwitchSourceDrawing = null;
 
         const nextGlyphName = this.getActiveSelectionScopeGlyphName();
         if (isCrossGlyphTransition) {
             return (
-                this.getStoredSelectionStateForLayer(
-                    nextLayer,
+                this.getStoredSelectionStateForDrawing(
+                    nextDrawing,
                     nextGlyphName
                 ) || emptyState
             );
         }
 
         if (
-            this.isSelectionStateCompatibleWithLayer(
+            this.isSelectionStateCompatibleWithDrawing(
                 previousState,
-                previousLayer,
-                nextLayer
+                previousDrawing,
+                nextDrawing
             )
         ) {
             return (
-                this.remapSelectionStateBetweenLayers(
+                this.remapSelectionStateBetweenDrawings(
                     previousState,
-                    previousLayer,
-                    nextLayer
+                    previousDrawing,
+                    nextDrawing
                 ) || previousState
             );
         }
 
         return (
-            this.getStoredSelectionStateForLayer(nextLayer, nextGlyphName) ||
-            emptyState
+            this.getStoredSelectionStateForDrawing(
+                nextDrawing,
+                nextGlyphName
+            ) || emptyState
         );
     }
 
-    private assignLayerData(
-        layerData: Babelfont.Layer | null,
+    private assignDrawingData(
+        drawingData: Babelfont.Layer | null,
         verticalMetricsSource?: any
     ): void {
-        const previousLayerData = this.getCurrentLayerDataFromStack();
-        if (layerData && layerData.shapes) {
-            parseComponentNodes(layerData.shapes);
+        const previousDrawingData = this.getCurrentDrawingDataFromStack();
+        if (drawingData && drawingData.shapes) {
+            parseComponentNodes(drawingData.shapes);
         }
-        this.layerData = layerData;
-        if (this.layerData && this.layerData.isInterpolated !== true) {
-            stripInterpolatorRequestId(this.layerData);
+        this.drawingData = drawingData;
+        if (this.drawingData && this.drawingData.isInterpolated !== true) {
+            stripInterpolatorRequestId(this.drawingData);
         }
-        this.setRenderVerticalMetrics(verticalMetricsSource ?? layerData);
+        this.setRenderVerticalMetrics(verticalMetricsSource ?? drawingData);
 
-        const nextLayerData = this.getCurrentLayerDataFromStack();
+        const nextDrawingData = this.getCurrentDrawingDataFromStack();
         this.selectedAnchors = this.remapSelectedAnchors(
-            previousLayerData,
-            nextLayerData
+            previousDrawingData,
+            nextDrawingData
         );
     }
 
-    private replaceCurrentLayerDataInStack(
-        layerData: Babelfont.Layer
+    private replaceCurrentDrawingDataInStack(
+        drawingData: Babelfont.Layer
     ): boolean {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        if (!currentLayerData) {
-            return this.attachCurrentLayerDataInStack(layerData);
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        if (!currentDrawingData) {
+            return this.attachCurrentDrawingDataInStack(drawingData);
         }
 
-        Object.assign(currentLayerData, layerData);
-        currentLayerData.isInterpolated = false;
-        stripInterpolatorRequestId(currentLayerData);
-        parseComponentNodes(currentLayerData.shapes || []);
+        Object.assign(currentDrawingData, drawingData);
+        currentDrawingData.isInterpolated = false;
+        stripInterpolatorRequestId(currentDrawingData);
+        parseComponentNodes(currentDrawingData.shapes || []);
         return true;
     }
 
@@ -7491,8 +7564,10 @@ export class OutlineEditor {
      * Create the innermost component `layerData` when the stack can navigate
      * to the host shape but that shape has no nested snapshot yet.
      */
-    private attachCurrentLayerDataInStack(layerData: Babelfont.Layer): boolean {
-        if (!this.layerData || !this.glyphStack) {
+    private attachCurrentDrawingDataInStack(
+        drawingData: Babelfont.Layer
+    ): boolean {
+        if (!this.drawingData || !this.glyphStack) {
             return false;
         }
 
@@ -7504,10 +7579,10 @@ export class OutlineEditor {
             return false;
         }
 
-        let currentLayerData: Babelfont.Layer | null = this.layerData;
+        let currentDrawingData: Babelfont.Layer | null = this.drawingData;
         for (let index = 0; index < componentItems.length; index++) {
             const shapeIndex = componentItems[index].componentIndex!;
-            const hostShapes = (currentLayerData?.shapes ||
+            const hostShapes = (currentDrawingData?.shapes ||
                 []) as Babelfont.Shape[];
             const candidate = hostShapes[shapeIndex];
             if (!candidate || !('reference' in candidate)) {
@@ -7515,7 +7590,7 @@ export class OutlineEditor {
             }
 
             if (index === componentItems.length - 1) {
-                candidate.layerData = layerData;
+                candidate.layerData = drawingData;
                 candidate.layerData.isInterpolated = false;
                 stripInterpolatorRequestId(candidate.layerData);
                 parseComponentNodes(candidate.layerData.shapes || []);
@@ -7524,32 +7599,32 @@ export class OutlineEditor {
 
             if (!candidate.layerData) {
                 candidate.layerData = {
-                    width: currentLayerData?.width ?? 0,
+                    width: currentDrawingData?.width ?? 0,
                     shapes: []
                 };
             }
-            currentLayerData = candidate.layerData || null;
+            currentDrawingData = candidate.layerData || null;
         }
 
         return false;
     }
 
-    private preserveMissingLayerFields(
-        normalizedLayerData: any,
-        sourceLayerData: any
+    private preserveMissingDrawingFields(
+        normalizedDrawingData: any,
+        sourceDrawingData: any
     ): any {
         if (
-            !normalizedLayerData ||
-            typeof normalizedLayerData !== 'object' ||
-            Array.isArray(normalizedLayerData) ||
-            !sourceLayerData ||
-            typeof sourceLayerData !== 'object' ||
-            Array.isArray(sourceLayerData)
+            !normalizedDrawingData ||
+            typeof normalizedDrawingData !== 'object' ||
+            Array.isArray(normalizedDrawingData) ||
+            !sourceDrawingData ||
+            typeof sourceDrawingData !== 'object' ||
+            Array.isArray(sourceDrawingData)
         ) {
-            return normalizedLayerData;
+            return normalizedDrawingData;
         }
 
-        const preservedLayerData = { ...normalizedLayerData };
+        const preservedDrawingData = { ...normalizedDrawingData };
         for (const key of [
             'width',
             'shapes',
@@ -7558,18 +7633,18 @@ export class OutlineEditor {
             'format_specific',
             'name'
         ]) {
-            if (!(key in sourceLayerData)) {
-                delete preservedLayerData[key];
+            if (!(key in sourceDrawingData)) {
+                delete preservedDrawingData[key];
             }
         }
 
         if (
-            Array.isArray(preservedLayerData.shapes) &&
-            Array.isArray(sourceLayerData.shapes)
+            Array.isArray(preservedDrawingData.shapes) &&
+            Array.isArray(sourceDrawingData.shapes)
         ) {
-            preservedLayerData.shapes = preservedLayerData.shapes.map(
+            preservedDrawingData.shapes = preservedDrawingData.shapes.map(
                 (shape: any, index: number) => {
-                    const sourceShape = sourceLayerData.shapes[index];
+                    const sourceShape = sourceDrawingData.shapes[index];
                     if (
                         !shape ||
                         typeof shape !== 'object' ||
@@ -7585,7 +7660,7 @@ export class OutlineEditor {
 
                     return {
                         ...shape,
-                        layerData: this.preserveMissingLayerFields(
+                        layerData: this.preserveMissingDrawingFields(
                             shape.layerData,
                             sourceShape.layerData
                         )
@@ -7594,38 +7669,38 @@ export class OutlineEditor {
             );
         }
 
-        return preservedLayerData;
+        return preservedDrawingData;
     }
 
-    private mergeSelectedLayerComponentLayerData(
-        exactLayerData: Babelfont.Layer | null | undefined,
-        fallbackLayerData: Babelfont.Layer | null | undefined
+    private mergeSelectedDrawingComponentDrawingData(
+        exactDrawingData: Babelfont.Layer | null | undefined,
+        fallbackDrawingData: Babelfont.Layer | null | undefined
     ): Babelfont.Layer | null | undefined {
-        if (!exactLayerData) {
-            return fallbackLayerData;
+        if (!exactDrawingData) {
+            return fallbackDrawingData;
         }
 
-        if (!fallbackLayerData) {
-            return exactLayerData;
+        if (!fallbackDrawingData) {
+            return exactDrawingData;
         }
 
-        const mergedLayerData: Babelfont.Layer = {
-            ...fallbackLayerData,
-            ...exactLayerData,
+        const mergedDrawingData: Babelfont.Layer = {
+            ...fallbackDrawingData,
+            ...exactDrawingData,
             isInterpolated: false
         };
 
-        if (exactLayerData.shapes || fallbackLayerData.shapes) {
-            mergedLayerData.shapes = this.mergeSelectedLayerShapes(
-                exactLayerData.shapes || [],
-                fallbackLayerData.shapes || []
+        if (exactDrawingData.shapes || fallbackDrawingData.shapes) {
+            mergedDrawingData.shapes = this.mergeSelectedDrawingShapes(
+                exactDrawingData.shapes || [],
+                fallbackDrawingData.shapes || []
             );
         }
 
-        return mergedLayerData;
+        return mergedDrawingData;
     }
 
-    private mergeSelectedLayerShapes(
+    private mergeSelectedDrawingShapes(
         exactShapes: Babelfont.Shape[],
         interpolatedShapes: Babelfont.Shape[],
         preferExactComponentTransforms: boolean = false
@@ -7655,10 +7730,11 @@ export class OutlineEditor {
                 interpolatedComponentsByReference.get(exactShape.reference) ||
                 [];
             const interpolatedShape = componentQueue.shift();
-            const mergedLayerData = this.mergeSelectedLayerComponentLayerData(
-                exactShape.layerData,
-                interpolatedShape?.layerData
-            );
+            const mergedDrawingData =
+                this.mergeSelectedDrawingComponentDrawingData(
+                    exactShape.layerData,
+                    interpolatedShape?.layerData
+                );
 
             return {
                 ...interpolatedShape,
@@ -7668,20 +7744,20 @@ export class OutlineEditor {
                     : interpolatedShape?.transform || exactShape.transform) || [
                     1, 0, 0, 1, 0, 0
                 ],
-                ...(mergedLayerData ? { layerData: mergedLayerData } : {}),
+                ...(mergedDrawingData ? { layerData: mergedDrawingData } : {}),
                 isInterpolated: false
             };
         });
     }
 
-    private shouldPreferExactSelectedLayerComponentTransforms(
-        layer: Layer | null | undefined
+    private shouldPreferExactSelectedDrawingComponentTransforms(
+        drawing: Drawing | null | undefined
     ): boolean {
-        if (!layer?.isAutomaticAlignedLayer?.()) {
+        if (!drawing?.isAutomaticAlignedDrawing?.()) {
             return false;
         }
 
-        const leftResolution = layer.resolveMetricsKey?.('left');
+        const leftResolution = drawing.resolveMetricsKey?.('left');
         if (
             !leftResolution ||
             leftResolution.error ||
@@ -7698,21 +7774,21 @@ export class OutlineEditor {
         return Number.isFinite(delta) && Math.abs(delta) > 0.01;
     }
 
-    private applyExactSelectedLayerData(
-        exactLayerData: any,
+    private applyExactSelectedDrawingData(
+        exactDrawingData: any,
         interpolatedResult?: any | null
     ): void {
         const preferExactComponentTransforms =
-            exactLayerData?.__preferExactComponentTransforms === true;
-        const exactNormalized = LayerDataNormalizer.normalize(
-            exactLayerData,
+            exactDrawingData?.__preferExactComponentTransforms === true;
+        const exactNormalized = DrawingDataNormalizer.normalize(
+            exactDrawingData,
             false
         );
-        const preservedExactNormalized = this.preserveMissingLayerFields(
+        const preservedExactNormalized = this.preserveMissingDrawingFields(
             exactNormalized,
-            exactLayerData
+            exactDrawingData
         );
-        const interpolatedNormalized = LayerDataNormalizer.normalize(
+        const interpolatedNormalized = DrawingDataNormalizer.normalize(
             interpolatedResult,
             true
         );
@@ -7720,43 +7796,46 @@ export class OutlineEditor {
         if (this.isEditingComponent() && preservedExactNormalized) {
             const useInterpolatedRoot =
                 !!interpolatedNormalized &&
-                !this.getRootLayerModel()?.is_background;
-            const rootLayerData = useInterpolatedRoot
-                ? this.cloneLayerData(interpolatedNormalized)
-                : this.layerData
-                  ? this.cloneLayerData(this.layerData)
+                !this.getRootDrawingModel()?.is_background;
+            const rootDrawingData = useInterpolatedRoot
+                ? this.cloneDrawingData(interpolatedNormalized)
+                : this.drawingData
+                  ? this.cloneDrawingData(this.drawingData)
                   : null;
 
-            if (rootLayerData) {
-                this.assignLayerData(
-                    rootLayerData,
-                    interpolatedResult ?? rootLayerData
+            if (rootDrawingData) {
+                this.assignDrawingData(
+                    rootDrawingData,
+                    interpolatedResult ?? rootDrawingData
                 );
 
-                const currentLayerData = this.getCurrentLayerDataFromStack();
-                const exactCurrentLayerData = preferExactComponentTransforms
-                    ? this.cloneLayerData(preservedExactNormalized)
-                    : this.stripComponentTransformsFromLayerData(
+                const currentDrawingData =
+                    this.getCurrentDrawingDataFromStack();
+                const exactCurrentDrawingData = preferExactComponentTransforms
+                    ? this.cloneDrawingData(preservedExactNormalized)
+                    : this.stripComponentTransformsFromDrawingData(
                           preservedExactNormalized
                       );
 
                 if (
-                    exactCurrentLayerData.shapes &&
-                    currentLayerData?.shapes?.length
+                    exactCurrentDrawingData.shapes &&
+                    currentDrawingData?.shapes?.length
                 ) {
-                    exactCurrentLayerData.shapes =
-                        this.mergeSelectedLayerShapes(
-                            exactCurrentLayerData.shapes,
-                            currentLayerData.shapes,
+                    exactCurrentDrawingData.shapes =
+                        this.mergeSelectedDrawingShapes(
+                            exactCurrentDrawingData.shapes,
+                            currentDrawingData.shapes,
                             preferExactComponentTransforms
                         );
                 }
 
                 if (
-                    this.replaceCurrentLayerDataInStack(exactCurrentLayerData)
+                    this.replaceCurrentDrawingDataInStack(
+                        exactCurrentDrawingData
+                    )
                 ) {
-                    if (this.layerData) {
-                        this.layerData.isInterpolated = false;
+                    if (this.drawingData) {
+                        this.drawingData.isInterpolated = false;
                     }
                     return;
                 }
@@ -7765,40 +7844,40 @@ export class OutlineEditor {
 
         if (
             !this.isEditingComponent() &&
-            this.getCurrentLayerModel()?.is_background
+            this.getCurrentDrawingModel()?.is_background
         ) {
-            const backgroundLayerData = this.cloneLayerData(
+            const backgroundDrawingData = this.cloneDrawingData(
                 preservedExactNormalized || exactNormalized || {}
             );
-            backgroundLayerData.shapes = Array.isArray(
-                backgroundLayerData.shapes
+            backgroundDrawingData.shapes = Array.isArray(
+                backgroundDrawingData.shapes
             )
-                ? backgroundLayerData.shapes
+                ? backgroundDrawingData.shapes
                 : [];
-            backgroundLayerData.isInterpolated = false;
-            const pairedLayer = this.getPairedLayerModel();
-            const pairedVerticalMetrics = this.getVerticalMetricsForLayer(
-                pairedLayer,
+            backgroundDrawingData.isInterpolated = false;
+            const pairedDrawing = this.getPairedDrawingModel();
+            const pairedVerticalMetrics = this.getVerticalMetricsForDrawing(
+                pairedDrawing,
                 fontManager.currentFont?.fontModel
             );
-            this.assignLayerData(
-                backgroundLayerData,
+            this.assignDrawingData(
+                backgroundDrawingData,
                 pairedVerticalMetrics
                     ? { _verticalMetrics: pairedVerticalMetrics }
-                    : backgroundLayerData
+                    : backgroundDrawingData
             );
             return;
         }
 
-        const exactLayerBase = interpolatedNormalized
-            ? this.cloneLayerData(interpolatedNormalized)
-            : this.layerData
-              ? this.cloneLayerData(this.layerData)
+        const exactDrawingBase = interpolatedNormalized
+            ? this.cloneDrawingData(interpolatedNormalized)
+            : this.drawingData
+              ? this.cloneDrawingData(this.drawingData)
               : null;
         const mergedExactNormalized = preservedExactNormalized
             ? {
-                  ...(exactLayerBase || {}),
-                  ...this.cloneLayerData(preservedExactNormalized),
+                  ...(exactDrawingBase || {}),
+                  ...this.cloneDrawingData(preservedExactNormalized),
                   isInterpolated: false
               }
             : exactNormalized;
@@ -7806,27 +7885,29 @@ export class OutlineEditor {
         if (
             mergedExactNormalized?.shapes &&
             (interpolatedNormalized?.shapes?.length ||
-                exactLayerBase?.shapes?.length)
+                exactDrawingBase?.shapes?.length)
         ) {
             const exactShapesForMerge = preferExactComponentTransforms
                 ? mergedExactNormalized.shapes
-                : this.stripComponentTransformsFromLayerData({
+                : this.stripComponentTransformsFromDrawingData({
                       shapes: mergedExactNormalized.shapes
                   }).shapes;
-            mergedExactNormalized.shapes = this.mergeSelectedLayerShapes(
+            mergedExactNormalized.shapes = this.mergeSelectedDrawingShapes(
                 exactShapesForMerge,
-                interpolatedNormalized?.shapes || exactLayerBase?.shapes || [],
+                interpolatedNormalized?.shapes ||
+                    exactDrawingBase?.shapes ||
+                    [],
                 preferExactComponentTransforms
             );
         }
 
-        this.assignLayerData(
+        this.assignDrawingData(
             mergedExactNormalized,
             interpolatedResult ?? mergedExactNormalized
         );
     }
 
-    private cloneLayerData<T>(value: T): T {
+    private cloneDrawingData<T>(value: T): T {
         if (typeof structuredClone === 'function') {
             try {
                 return structuredClone(value);
@@ -7842,10 +7923,10 @@ export class OutlineEditor {
             }
         }
 
-        return this.cloneSerializableLayerValue(value) as T;
+        return this.cloneSerializableDrawingValue(value) as T;
     }
 
-    private cloneSerializableLayerValue(value: any): any {
+    private cloneSerializableDrawingValue(value: any): any {
         if (value === null || value === undefined) {
             return value;
         }
@@ -7868,7 +7949,9 @@ export class OutlineEditor {
         }
 
         if (Array.isArray(value)) {
-            return value.map((item) => this.cloneSerializableLayerValue(item));
+            return value.map((item) =>
+                this.cloneSerializableDrawingValue(item)
+            );
         }
 
         if (value instanceof Date) {
@@ -7893,7 +7976,7 @@ export class OutlineEditor {
             const clonedEntries = Object.entries(value).flatMap(
                 ([key, entryValue]) => {
                     const clonedValue =
-                        this.cloneSerializableLayerValue(entryValue);
+                        this.cloneSerializableDrawingValue(entryValue);
                     return clonedValue === undefined
                         ? []
                         : [[key, clonedValue] as const];
@@ -7935,16 +8018,16 @@ export class OutlineEditor {
         });
     }
 
-    private serializeLayerDataAsInterpolationPayload(layerData: any): any {
-        if (!layerData || typeof layerData !== 'object') {
-            return layerData;
+    private serializeDrawingDataAsInterpolationPayload(drawingData: any): any {
+        if (!drawingData || typeof drawingData !== 'object') {
+            return drawingData;
         }
 
-        const serializedLayerData: any = {
-            ...('width' in layerData ? { width: layerData.width } : {}),
-            ...('shapes' in layerData
+        const serializedDrawingData: any = {
+            ...('width' in drawingData ? { width: drawingData.width } : {}),
+            ...('shapes' in drawingData
                 ? {
-                      shapes: this.flattenNestedShapes(layerData.shapes).map(
+                      shapes: this.flattenNestedShapes(drawingData.shapes).map(
                           (shape) => {
                               if (!shape || typeof shape !== 'object') {
                                   return shape;
@@ -7957,7 +8040,7 @@ export class OutlineEditor {
                                       );
                                   }
                                   const serializedPath: Record<string, any> = {
-                                      nodes: this.cloneLayerData(shape.nodes)
+                                      nodes: this.cloneDrawingData(shape.nodes)
                                   };
 
                                   if (shape.closed !== undefined) {
@@ -8024,7 +8107,7 @@ export class OutlineEditor {
 
                                   if (shape.layerData) {
                                       serializedComponent.layerData =
-                                          this.serializeLayerDataAsInterpolationPayload(
+                                          this.serializeDrawingDataAsInterpolationPayload(
                                               shape.layerData
                                           );
                                   }
@@ -8039,8 +8122,8 @@ export class OutlineEditor {
                 : {})
         };
 
-        if ('anchors' in layerData) {
-            serializedLayerData.anchors = (layerData.anchors || []).map(
+        if ('anchors' in drawingData) {
+            serializedDrawingData.anchors = (drawingData.anchors || []).map(
                 (anchor: any) => ({
                     name: anchor.name,
                     x: anchor.x,
@@ -8049,98 +8132,102 @@ export class OutlineEditor {
             );
         }
 
-        delete serializedLayerData._verticalMetrics;
-        delete serializedLayerData._interpolationLocation;
+        delete serializedDrawingData._verticalMetrics;
+        delete serializedDrawingData._interpolationLocation;
 
-        return serializedLayerData;
+        return serializedDrawingData;
     }
 
-    private stripComponentTransformsFromLayerData(layerData: any): any {
-        if (!layerData || typeof layerData !== 'object') {
-            return layerData;
+    private stripComponentTransformsFromDrawingData(drawingData: any): any {
+        if (!drawingData || typeof drawingData !== 'object') {
+            return drawingData;
         }
 
-        const clonedLayerData = this.cloneLayerData(layerData);
-        if (!Array.isArray(clonedLayerData.shapes)) {
-            return clonedLayerData;
+        const clonedDrawingData = this.cloneDrawingData(drawingData);
+        if (!Array.isArray(clonedDrawingData.shapes)) {
+            return clonedDrawingData;
         }
 
-        clonedLayerData.shapes = clonedLayerData.shapes.map((shape: any) => {
-            if (
-                !shape ||
-                typeof shape !== 'object' ||
-                !('reference' in shape)
-            ) {
-                return shape;
+        clonedDrawingData.shapes = clonedDrawingData.shapes.map(
+            (shape: any) => {
+                if (
+                    !shape ||
+                    typeof shape !== 'object' ||
+                    !('reference' in shape)
+                ) {
+                    return shape;
+                }
+
+                const { transform: _transform, ...shapeWithoutTransform } =
+                    shape;
+                return {
+                    ...shapeWithoutTransform,
+                    ...(shape.layerData
+                        ? {
+                              layerData:
+                                  this.stripComponentTransformsFromDrawingData(
+                                      shape.layerData
+                                  )
+                          }
+                        : {})
+                };
             }
+        );
 
-            const { transform: _transform, ...shapeWithoutTransform } = shape;
-            return {
-                ...shapeWithoutTransform,
-                ...(shape.layerData
-                    ? {
-                          layerData: this.stripComponentTransformsFromLayerData(
-                              shape.layerData
-                          )
-                      }
-                    : {})
-            };
-        });
-
-        return clonedLayerData;
+        return clonedDrawingData;
     }
 
-    private getPreferredComponentLayer(
+    private getPreferredComponentDrawing(
         componentGlyph: any,
-        masterId: string | null | undefined
+        stationId: string | null | undefined
     ): any | null {
-        const layers = componentGlyph?.layers || [];
-        if (!layers.length) {
+        const drawings = componentGlyph?.drawings || [];
+        if (!drawings.length) {
             return null;
         }
 
-        if (masterId) {
-            const defaultLayer = layers.find(
+        if (stationId) {
+            const defaultDrawing = drawings.find(
                 (candidate: any) =>
-                    candidate.master?.master === masterId &&
-                    candidate.master?.type === 'DefaultForMaster'
+                    candidate.station?.master === stationId &&
+                    candidate.station?.type === 'DefaultForMaster'
             );
-            if (defaultLayer) {
-                return defaultLayer;
+            if (defaultDrawing) {
+                return defaultDrawing;
             }
 
-            const nonIntermediateSameMaster = layers.find(
+            const nonIntermediateSameStation = drawings.find(
                 (candidate: any) =>
-                    candidate.master?.master === masterId &&
+                    candidate.station?.master === stationId &&
                     (!candidate.location ||
                         Object.keys(candidate.location).length === 0) &&
                     (!candidate.smart_component_location ||
                         Object.keys(candidate.smart_component_location)
                             .length === 0)
             );
-            if (nonIntermediateSameMaster) {
-                return nonIntermediateSameMaster;
+            if (nonIntermediateSameStation) {
+                return nonIntermediateSameStation;
             }
         }
 
-        return layers[0] || null;
+        return drawings[0] || null;
     }
 
-    private getVerticalMetricsForLayer(
-        layer: any,
+    private getVerticalMetricsForDrawing(
+        drawing: any,
         fontModel: any
     ): Record<string, number> | null {
-        const masterId = layer?.master?.master;
-        if (!fontModel || !masterId) {
+        const stationId = drawing?.station?.master;
+        if (!fontModel || !stationId) {
             return null;
         }
 
-        const master =
-            fontModel.findMaster?.(masterId) ||
-            fontModel.masters?.find(
-                (candidate: any) => candidate.id === masterId
+        const station =
+            fontModel.findStation?.(stationId) ||
+            fontModel.stations?.find(
+                (candidate: any) => candidate.id === stationId
             );
-        const metrics = master?.metrics;
+        const metrics = station?.metrics;
 
         if (!metrics || typeof metrics !== 'object') {
             return null;
@@ -8163,10 +8250,10 @@ export class OutlineEditor {
         return verticalMetrics;
     }
 
-    private resolveComponentLayerDataFromModel(
+    private resolveComponentDrawingDataFromModel(
         shapes: any[] | undefined,
         fontModel: any,
-        hostLayer: any,
+        hostDrawing: any,
         visited: Set<string>
     ): any[] {
         const flattenedShapes = this.flattenNestedShapes(shapes);
@@ -8187,10 +8274,10 @@ export class OutlineEditor {
                 if (resolvedShape.layerData?.shapes) {
                     resolvedShape.layerData = {
                         ...resolvedShape.layerData,
-                        shapes: this.resolveComponentLayerDataFromModel(
+                        shapes: this.resolveComponentDrawingDataFromModel(
                             resolvedShape.layerData.shapes,
                             fontModel,
-                            hostLayer,
+                            hostDrawing,
                             visited
                         )
                     };
@@ -8204,120 +8291,122 @@ export class OutlineEditor {
                 fontModel.glyphs?.find(
                     (glyph: any) => glyph.name === reference
                 );
-            if (!componentGlyph?.layers?.length) {
+            if (!componentGlyph?.drawings?.length) {
                 return resolvedShape;
             }
 
             visited.add(reference);
 
-            const componentLayer =
-                hostLayer?.getMatchingLayerOnGlyph?.(reference) ||
-                this.getPreferredComponentLayer(
+            const componentDrawing =
+                hostDrawing?.getMatchingDrawingOnGlyph?.(reference) ||
+                this.getPreferredComponentDrawing(
                     componentGlyph,
-                    hostLayer?.master?.master
+                    hostDrawing?.station?.master
                 ) ||
-                componentGlyph.layers[0];
+                componentGlyph.drawings[0];
 
-            if (componentLayer?.isAutomaticAlignedLayer?.()) {
+            if (componentDrawing?.isAutomaticAlignedDrawing?.()) {
                 withSuppressedModelRecording(() => {
-                    componentLayer.rebuildAutomaticComposition?.();
+                    componentDrawing.rebuildAutomaticComposition?.();
                 });
             }
 
-            const rawLayerData =
-                (typeof componentLayer?.toCompileJSON === 'function'
-                    ? componentLayer.toCompileJSON()
-                    : componentLayer?.toJSON?.()) ||
-                componentLayer ||
+            const rawDrawingData =
+                (typeof componentDrawing?.toCompileJSON === 'function'
+                    ? componentDrawing.toCompileJSON()
+                    : componentDrawing?.toJSON?.()) ||
+                componentDrawing ||
                 null;
-            const nestedLayerData = rawLayerData
-                ? this.cloneLayerData(rawLayerData)
+            const nestedDrawingData = rawDrawingData
+                ? this.cloneDrawingData(rawDrawingData)
                 : resolvedShape.layerData
-                  ? this.cloneLayerData(resolvedShape.layerData)
+                  ? this.cloneDrawingData(resolvedShape.layerData)
                   : null;
 
-            if (nestedLayerData?.shapes) {
-                nestedLayerData.shapes =
-                    this.resolveComponentLayerDataFromModel(
-                        nestedLayerData.shapes,
+            if (nestedDrawingData?.shapes) {
+                nestedDrawingData.shapes =
+                    this.resolveComponentDrawingDataFromModel(
+                        nestedDrawingData.shapes,
                         fontModel,
-                        componentLayer,
+                        componentDrawing,
                         visited
                     );
             }
 
             visited.delete(reference);
 
-            if (!nestedLayerData) {
+            if (!nestedDrawingData) {
                 return resolvedShape;
             }
 
             return {
                 ...resolvedShape,
-                layerData: nestedLayerData
+                layerData: nestedDrawingData
             };
         });
     }
 
-    private buildExactLayerDataFromModel(
+    private buildExactDrawingDataFromModel(
         glyphName: string,
-        layerId: string
+        drawingId: string
     ): any | null {
         const fontModel = fontManager.currentFont?.fontModel;
         const glyph = this.getGlyphViewByName(glyphName);
-        const layer =
-            glyph?.findLayerById?.(layerId) ||
-            (layerId.startsWith('background-')
-                ? glyph?.findLayerById?.(layerId.slice('background-'.length))
-                      ?.backgroundLayer
+        const drawing =
+            glyph?.findDrawingById?.(drawingId) ||
+            (drawingId.startsWith('background-')
+                ? glyph?.findDrawingById?.(
+                      drawingId.slice('background-'.length)
+                  )?.backgroundDrawing
                 : null);
-        const rawLayerData =
-            (typeof layer?.toCompileJSON === 'function'
-                ? layer.toCompileJSON()
-                : layer?.toJSON?.()) || null;
+        const rawDrawingData =
+            (typeof drawing?.toCompileJSON === 'function'
+                ? drawing.toCompileJSON()
+                : drawing?.toJSON?.()) || null;
 
-        if (!fontModel || !rawLayerData) {
+        if (!fontModel || !rawDrawingData) {
             return null;
         }
 
-        const exactLayerData = this.cloneLayerData(rawLayerData);
-        exactLayerData.shapes = this.resolveComponentLayerDataFromModel(
-            exactLayerData.shapes,
+        const exactDrawingData = this.cloneDrawingData(rawDrawingData);
+        exactDrawingData.shapes = this.resolveComponentDrawingDataFromModel(
+            exactDrawingData.shapes,
             fontModel,
-            layer,
+            drawing,
             new Set([glyphName])
         );
 
-        const serializedLayerData =
-            this.serializeLayerDataAsInterpolationPayload(exactLayerData);
+        const serializedDrawingData =
+            this.serializeDrawingDataAsInterpolationPayload(exactDrawingData);
         const preferExactComponentTransforms =
-            this.shouldPreferExactSelectedLayerComponentTransforms(layer);
-        const preservedSerializedLayerData = this.preserveMissingLayerFields(
-            serializedLayerData,
-            rawLayerData
-        );
+            this.shouldPreferExactSelectedDrawingComponentTransforms(drawing);
+        const preservedSerializedDrawingData =
+            this.preserveMissingDrawingFields(
+                serializedDrawingData,
+                rawDrawingData
+            );
         if (preferExactComponentTransforms) {
-            preservedSerializedLayerData.__preferExactComponentTransforms = true;
+            preservedSerializedDrawingData.__preferExactComponentTransforms = true;
         }
 
-        const verticalMetrics = this.getVerticalMetricsForLayer(
-            layer,
+        const verticalMetrics = this.getVerticalMetricsForDrawing(
+            drawing,
             fontModel
         );
         if (verticalMetrics) {
-            preservedSerializedLayerData._verticalMetrics = verticalMetrics;
+            preservedSerializedDrawingData._verticalMetrics = verticalMetrics;
         }
 
-        const interpolationLocation = this.getUserspaceLocationForLayer(
-            layerId,
+        const interpolationLocation = this.getUserspaceLocationForDrawing(
+            drawingId,
             glyphName
         );
         if (interpolationLocation) {
-            preservedSerializedLayerData._interpolationLocation =
+            preservedSerializedDrawingData._interpolationLocation =
                 interpolationLocation;
         }
 
-        return preservedSerializedLayerData;
+        return preservedSerializedDrawingData;
     }
 
     private updateCurrentGlyphNameFromStack(glyphName: string): void {
@@ -8329,13 +8418,13 @@ export class OutlineEditor {
         }
     }
 
-    private finalizeFetchedLayerData(
+    private finalizeFetchedDrawingData(
         glyphName: string,
         skipRender: boolean
     ): void {
         this.updateCurrentGlyphNameFromStack(glyphName);
 
-        console.log('Fetched ROOT layer data:', this.layerData);
+        console.log('Fetched ROOT drawing data:', this.drawingData);
         console.log('Current position in stack:', this.glyphStack);
 
         this.glyphCanvas.updatePropertyPanel();
@@ -8348,32 +8437,35 @@ export class OutlineEditor {
         this.syncEditToolAvailability();
     }
 
-    private getExactLayerDataForSelection(
+    private getExactDrawingDataForSelection(
         glyphName: string,
-        layerId: string
+        drawingId: string
     ): any | null {
-        const owningGlyph = this.resolveOwningGlyphForLayer(layerId, glyphName);
-        return this.buildExactLayerDataFromModel(
+        const owningGlyph = this.resolveOwningGlyphForDrawing(
+            drawingId,
+            glyphName
+        );
+        return this.buildExactDrawingDataFromModel(
             owningGlyph?.glyphName || glyphName,
-            layerId
+            drawingId
         );
     }
 
-    canRefreshSelectedLayerFromModelExactly(): boolean {
-        const layer = this.getCurrentLayerModel();
+    canRefreshSelectedDrawingFromModelExactly(): boolean {
+        const drawing = this.getCurrentDrawingModel();
         if (
-            !layer ||
-            layer.is_background ||
-            layer.master?.type !== 'DefaultForMaster'
+            !drawing ||
+            drawing.is_background ||
+            drawing.station?.type !== 'DefaultForMaster'
         ) {
             return false;
         }
 
         const hasExplicitLocation =
-            !!layer.location && Object.keys(layer.location).length > 0;
+            !!drawing.location && Object.keys(drawing.location).length > 0;
         const hasSmartComponentLocation =
-            !!layer.smart_component_location &&
-            Object.keys(layer.smart_component_location).length > 0;
+            !!drawing.smart_component_location &&
+            Object.keys(drawing.smart_component_location).length > 0;
         return !hasExplicitLocation && !hasSmartComponentLocation;
     }
 
@@ -8381,9 +8473,9 @@ export class OutlineEditor {
      * Rebuild the active selection directly from the authoritative model.
      * Returns false when selection state cannot be reconstructed exactly.
      */
-    refreshSelectedLayerFromModel(): boolean {
-        const selectedLayerId = this.getCurrentLayerId();
-        if (!this.active || !selectedLayerId) {
+    refreshSelectedDrawingFromModel(): boolean {
+        const selectedDrawingId = this.getCurrentDrawingId();
+        if (!this.active || !selectedDrawingId) {
             return false;
         }
 
@@ -8397,64 +8489,64 @@ export class OutlineEditor {
         }
 
         try {
-            const exactLayerData = this.getExactLayerDataForSelection(
+            const exactDrawingData = this.getExactDrawingDataForSelection(
                 selectionGlyphName,
-                selectedLayerId
+                selectedDrawingId
             );
-            if (!exactLayerData) {
+            if (!exactDrawingData) {
                 return false;
             }
 
-            this.applyExactSelectedLayerData(
+            this.applyExactSelectedDrawingData(
                 {
-                    ...exactLayerData,
+                    ...exactDrawingData,
                     __preferExactComponentTransforms: true
                 },
                 null
             );
             return (
-                this.layerData !== null &&
-                this.getCurrentLayerDataFromStack() !== null
+                this.drawingData !== null &&
+                this.getCurrentDrawingDataFromStack() !== null
             );
         } catch (error) {
             console.warn(
-                '[OutlineEditor] Could not refresh selected layer from model',
+                '[OutlineEditor] Could not refresh selected drawing from model',
                 error
             );
             return false;
         }
     }
 
-    cancelPendingLayerSwitchAnimation(): void {
-        this.targetLayerData = null;
-        this.isLayerSwitchAnimating = false;
+    cancelPendingDrawingSwitchAnimation(): void {
+        this.targetDrawingData = null;
+        this.isDrawingSwitchAnimating = false;
         this.clearInterpolationBboxCenterAnchor();
     }
 
-    private syncAddLayerButtonForExplicitSelection(): void {
-        const addLayerButton =
+    private syncAddDrawingButtonForExplicitSelection(): void {
+        const addDrawingButton =
             this.glyphCanvas.propertiesSection?.querySelector<HTMLButtonElement>(
-                '.editor-layer-add-button'
+                '.editor-drawing-add-button'
             );
-        if (!addLayerButton) {
+        if (!addDrawingButton) {
             return;
         }
 
         if (
-            this.selectedLayerId &&
-            (this.isLayerSwitchAnimating || !this.layerData?.isInterpolated)
+            this.selectedDrawingId &&
+            (this.isDrawingSwitchAnimating || !this.drawingData?.isInterpolated)
         ) {
-            addLayerButton.disabled = true;
+            addDrawingButton.disabled = true;
         }
     }
 
-    private async refreshSelectedLayerWithoutAnimation(
-        layer: Babelfont.Layer | Layer,
+    private async refreshSelectedDrawingWithoutAnimation(
+        drawing: Babelfont.Layer | Drawing,
         rootGlyphName?: string
     ): Promise<void> {
-        const resolvedLayer = this.resolveLayerModel(layer);
-        const layerId = resolvedLayer.id;
-        if (!layerId) {
+        const resolvedDrawing = this.resolveDrawingModel(drawing);
+        const drawingId = resolvedDrawing.id;
+        if (!drawingId) {
             return;
         }
 
@@ -8462,41 +8554,42 @@ export class OutlineEditor {
             rootGlyphName ??
             this.parseGlyphStack()[0]?.glyphName ??
             this.glyphCanvas.getCurrentGlyphName();
-        const selectionTargetLayer =
-            this.isEditingComponent() && layerId
-                ? this.getSelectionScopeLayerModel(layerId) || resolvedLayer
-                : resolvedLayer;
-        const selectionState = selectionTargetLayer
-            ? this.getStoredSelectionStateForLayer(selectionTargetLayer)
+        const selectionTargetDrawing =
+            this.isEditingComponent() && drawingId
+                ? this.getSelectionScopeDrawingModel(drawingId) ||
+                  resolvedDrawing
+                : resolvedDrawing;
+        const selectionState = selectionTargetDrawing
+            ? this.getStoredSelectionStateForDrawing(selectionTargetDrawing)
             : null;
 
-        this.cancelPendingLayerSwitchAnimation();
-        this.selectedLayerId = layerId;
+        this.cancelPendingDrawingSwitchAnimation();
+        this.selectedDrawingId = drawingId;
 
         if (this.glyphStack && this.glyphStack !== '') {
-            this.rebuildGlyphStackWithNewLayer(layerId);
+            this.rebuildGlyphStackWithNewDrawing(drawingId);
         } else {
-            this.buildGlyphStack(glyphName, layerId, []);
+            this.buildGlyphStack(glyphName, drawingId, []);
         }
 
-        await this.fetchLayerData(true, glyphName);
+        await this.fetchDrawingData(true, glyphName);
 
-        if (selectionState && selectionTargetLayer) {
-            this.applySelectionStateForLayer(
+        if (selectionState && selectionTargetDrawing) {
+            this.applySelectionStateForDrawing(
                 selectionState,
-                selectionTargetLayer
+                selectionTargetDrawing
             );
         }
 
         this.performHitDetection(null);
-        this.updateLayerSelection();
+        this.updateDrawingSelection();
         this.glyphCanvas.updatePropertyPanel();
         this.glyphCanvas.render();
     }
 
-    getLayerListGlyphName(): string | null {
+    getDrawingListGlyphName(): string | null {
         return (
-            this.getLayerLinkGlyphName() ||
+            this.getDrawingLinkGlyphName() ||
             this.getActiveSelectionScopeGlyphName() ||
             this.glyphCanvas.getCurrentGlyphName()
         );
@@ -8508,22 +8601,22 @@ export class OutlineEditor {
         };
     }
 
-    private getUserspaceLocationForMaster(
-        masterId: string,
+    private getUserspaceLocationForStation(
+        stationId: string,
         fontModel: any
     ): UserspaceLocation | null {
-        const master = (fontModel?.masters || []).find(
-            (candidate: any) => candidate?.id === masterId
+        const station = (fontModel?.stations || []).find(
+            (candidate: any) => candidate?.id === stationId
         );
-        if (!master?.location) {
+        if (!station?.location) {
             return null;
         }
-        return designspaceToUserspace(master.location, fontModel.axes || []);
+        return designspaceToUserspace(station.location, fontModel.axes || []);
     }
 
-    findClosestMasterId(userspaceLocation: UserspaceLocation): string | null {
+    findClosestStationId(userspaceLocation: UserspaceLocation): string | null {
         const fontModel = fontManager.currentFont?.fontModel;
-        if (!fontModel?.masters?.length) {
+        if (!fontModel?.stations?.length) {
             return null;
         }
         const axisTags = (fontModel.axes || []).map((axis: any) => axis.tag);
@@ -8531,29 +8624,29 @@ export class OutlineEditor {
             userspaceLocation,
             fontModel.axes || []
         );
-        let closestMaster: any = null;
+        let closestStation: any = null;
         let closestDistance = Infinity;
-        for (const master of fontModel.masters || []) {
+        for (const station of fontModel.stations || []) {
             let distance = 0;
             for (const tag of axisTags) {
-                const masterVal = Number(master.location?.[tag] ?? 0);
+                const stationVal = Number(station.location?.[tag] ?? 0);
                 const currentVal = Number(designLocation?.[tag] ?? 0);
                 const axis = (fontModel.axes || []).find(
                     (a: any) => a.tag === tag
                 );
                 const range =
                     Number(axis?.max ?? 1000) - Number(axis?.min ?? 0) || 1;
-                distance += Math.pow((masterVal - currentVal) / range, 2);
+                distance += Math.pow((stationVal - currentVal) / range, 2);
             }
             if (distance < closestDistance) {
                 closestDistance = distance;
-                closestMaster = master;
+                closestStation = station;
             }
         }
-        return closestMaster?.id || null;
+        return closestStation?.id || null;
     }
 
-    private copyShapeForStoredLayer(shape: any): any {
+    private copyShapeForStoredDrawing(shape: any): any {
         if (!shape || typeof shape !== 'object') {
             return shape;
         }
@@ -8561,16 +8654,16 @@ export class OutlineEditor {
         if ('nodes' in shape) {
             if (!Array.isArray(shape.nodes)) {
                 throw new TypeError(
-                    '[OutlineEditor] Path shape nodes must be an array before stored-layer materialization.'
+                    '[OutlineEditor] Path shape nodes must be an array before stored-drawing materialization.'
                 );
             }
 
             return {
-                nodes: this.cloneLayerData(shape.nodes),
+                nodes: this.cloneDrawingData(shape.nodes),
                 closed: !!shape.closed,
                 ...(shape.format_specific
                     ? {
-                          format_specific: this.cloneLayerData(
+                          format_specific: this.cloneDrawingData(
                               shape.format_specific
                           )
                       }
@@ -8582,14 +8675,14 @@ export class OutlineEditor {
             return {
                 reference: shape.reference,
                 ...(shape.transform
-                    ? { transform: this.cloneLayerData(shape.transform) }
+                    ? { transform: this.cloneDrawingData(shape.transform) }
                     : {}),
                 ...(shape.location
-                    ? { location: this.cloneLayerData(shape.location) }
+                    ? { location: this.cloneDrawingData(shape.location) }
                     : {}),
                 ...(shape.format_specific
                     ? {
-                          format_specific: this.cloneLayerData(
+                          format_specific: this.cloneDrawingData(
                               shape.format_specific
                           )
                       }
@@ -8597,10 +8690,10 @@ export class OutlineEditor {
             };
         }
 
-        return this.cloneLayerData(shape);
+        return this.cloneDrawingData(shape);
     }
 
-    private copyLayerDataForStoredLayer(layerData: any): {
+    private copyDrawingDataForStoredDrawing(drawingData: any): {
         width: number;
         height?: number;
         vertWidth?: number;
@@ -8609,105 +8702,105 @@ export class OutlineEditor {
         guides?: any[];
         format_specific?: Record<string, any>;
     } {
-        const width = Number(layerData?.width);
+        const width = Number(drawingData?.width);
         if (!Number.isFinite(width)) {
             throw new Error(
-                '[OutlineEditor] Stored layer data has invalid width; refusing to materialize malformed layer data.'
+                '[OutlineEditor] Stored drawing data has invalid width; refusing to materialize malformed drawing data.'
             );
         }
 
         return {
             width,
-            ...(layerData?.height !== undefined
-                ? { height: Number(layerData.height) }
+            ...(drawingData?.height !== undefined
+                ? { height: Number(drawingData.height) }
                 : {}),
-            ...(layerData?.vertWidth !== undefined
-                ? { vertWidth: Number(layerData.vertWidth) }
+            ...(drawingData?.vertWidth !== undefined
+                ? { vertWidth: Number(drawingData.vertWidth) }
                 : {}),
-            ...(Array.isArray(layerData?.shapes)
+            ...(Array.isArray(drawingData?.shapes)
                 ? {
-                      shapes: layerData.shapes.map((shape: any) =>
-                          this.copyShapeForStoredLayer(shape)
+                      shapes: drawingData.shapes.map((shape: any) =>
+                          this.copyShapeForStoredDrawing(shape)
                       )
                   }
                 : {}),
-            ...(Array.isArray(layerData?.anchors)
+            ...(Array.isArray(drawingData?.anchors)
                 ? {
-                      anchors: this.cloneLayerData(layerData.anchors)
+                      anchors: this.cloneDrawingData(drawingData.anchors)
                   }
                 : {}),
-            ...(Array.isArray(layerData?.guides)
+            ...(Array.isArray(drawingData?.guides)
                 ? {
-                      guides: this.cloneLayerData(layerData.guides)
+                      guides: this.cloneDrawingData(drawingData.guides)
                   }
                 : {}),
-            ...(layerData?.format_specific
+            ...(drawingData?.format_specific
                 ? {
-                      format_specific: this.cloneLayerData(
-                          layerData.format_specific
+                      format_specific: this.cloneDrawingData(
+                          drawingData.format_specific
                       )
                   }
                 : {})
         };
     }
 
-    private materializeStoredInterpolatedLayer(
+    private materializeStoredInterpolatedDrawing(
         glyph: any,
         options: {
-            masterId: string;
+            stationId: string;
             designLocation?: DesignspaceLocation | null;
-            isMasterBound: boolean;
+            isStationBound: boolean;
             layerId?: string | null;
         },
-        layerPayload: any
+        drawingPayload: any
     ): any {
-        const layerType: Babelfont.LayerType = options.isMasterBound
-            ? { type: 'DefaultForMaster', master: options.masterId }
-            : { type: 'AssociatedWithMaster', master: options.masterId };
-        const targetLayerId =
+        const drawingType: Babelfont.LayerType = options.isStationBound
+            ? { type: 'DefaultForMaster', master: options.stationId }
+            : { type: 'AssociatedWithMaster', master: options.stationId };
+        const targetDrawingId =
             options.layerId ||
-            (options.isMasterBound ? options.masterId : null);
+            (options.isStationBound ? options.stationId : null);
 
-        const newLayer = glyph.addLayer(
-            layerPayload.width,
-            layerType,
-            targetLayerId
+        const newDrawing = glyph.addDrawing(
+            drawingPayload.width,
+            drawingType,
+            targetDrawingId
         );
 
-        if (targetLayerId) {
-            newLayer.id = targetLayerId;
+        if (targetDrawingId) {
+            newDrawing.id = targetDrawingId;
         }
 
         if (
-            !options.isMasterBound &&
+            !options.isStationBound &&
             options.designLocation &&
             Object.keys(options.designLocation).length > 0
         ) {
-            newLayer.location = this.cloneLayerData(options.designLocation);
+            newDrawing.location = this.cloneDrawingData(options.designLocation);
         }
 
         const featureVariationAttributes =
             glyph instanceof FeatureVariationGlyph
-                ? this.cloneLayerData(
-                      newLayer.format_specific?.[
+                ? this.cloneDrawingData(
+                      newDrawing.format_specific?.[
                           'com.schriftgestalt.Glyphs.attr'
                       ]
                   )
                 : null;
         withSuppressedModelRecording(() => {
-            newLayer.syncFromEditorLayerData(layerPayload);
+            newDrawing.syncFromEditorDrawingData(drawingPayload);
             if (featureVariationAttributes) {
-                newLayer.format_specific = {
-                    ...newLayer.format_specific,
+                newDrawing.format_specific = {
+                    ...newDrawing.format_specific,
                     'com.schriftgestalt.Glyphs.attr': featureVariationAttributes
                 };
             }
         });
 
-        return newLayer;
+        return newDrawing;
     }
 
-    private async refreshAfterStructuralLayerEdit(
+    private async refreshAfterStructuralDrawingEdit(
         _glyphName: string,
         changeSource: string,
         options: {
@@ -8734,8 +8827,8 @@ export class OutlineEditor {
         userspaceLocation: UserspaceLocation,
         glyphName: string
     ): Promise<void> {
-        this.cancelPendingLayerSwitchAnimation();
-        this.suppressAutoLayerMatching = false;
+        this.cancelPendingDrawingSwitchAnimation();
+        this.suppressAutoDrawingMatching = false;
         const componentPath = this.parseGlyphStack()
             .filter(
                 (item): item is typeof item & { componentIndex: number } =>
@@ -8743,34 +8836,34 @@ export class OutlineEditor {
             )
             .map((item) => item.componentIndex);
 
-        const previousLayer = this.getCurrentLayerModel();
-        if (this.selectedLayerId !== null && previousLayer) {
-            this.storeSelectionStateForLayer(previousLayer);
+        const previousDrawing = this.getCurrentDrawingModel();
+        if (this.selectedDrawingId !== null && previousDrawing) {
+            this.storeSelectionStateForDrawing(previousDrawing);
         }
 
-        this.selectedLayerId = null;
+        this.selectedDrawingId = null;
         this.currentGlyphName = glyphName;
-        this.layerData = null;
+        this.drawingData = null;
         this.renderVerticalMetrics = null;
         this.clearAllSelections();
         this.buildGlyphStack(glyphName, null, componentPath);
-        this.updateLayerSelection();
+        this.updateDrawingSelection();
         this.glyphCanvas.updatePropertyPanel();
 
         await this.glyphCanvas.animateToLocation(userspaceLocation, 10);
     }
 
-    async createInterpolatedLayer(options: {
+    async createInterpolatedDrawing(options: {
         glyphName?: string | null;
         userspaceLocation: UserspaceLocation;
-        masterId: string;
+        stationId: string;
         designLocation?: DesignspaceLocation | null;
-        isMasterBound: boolean;
+        isStationBound: boolean;
         changeSource?: string;
-        selectNewLayer?: boolean;
+        selectNewDrawing?: boolean;
         extrapolate?: boolean;
     }): Promise<any | null> {
-        const glyphName = options.glyphName || this.getLayerListGlyphName();
+        const glyphName = options.glyphName || this.getDrawingListGlyphName();
         const sourceGlyphName = this.getAuthoringGlyphName(glyphName);
         const currentFont = fontManager.currentFont;
         const glyph = this.getGlyphViewByName(glyphName);
@@ -8778,41 +8871,42 @@ export class OutlineEditor {
             return null;
         }
 
-        const featureVariationLayerIds =
-            this.getFeatureVariationLayerIdsForGlyphName(glyphName);
-        const interpolatedLayer = featureVariationLayerIds
+        const featureVariationDrawingIds =
+            this.getFeatureVariationDrawingIdsForGlyphName(glyphName);
+        const interpolatedDrawing = featureVariationDrawingIds
             ? await fontInterpolation.interpolateGlyph(
                   sourceGlyphName,
                   options.userspaceLocation,
                   options.extrapolate === true,
-                  featureVariationLayerIds
+                  featureVariationDrawingIds
               )
             : await fontInterpolation.interpolateGlyph(
                   sourceGlyphName,
                   options.userspaceLocation,
                   options.extrapolate === true
               );
-        const normalizedLayer = LayerDataNormalizer.normalize(
-            interpolatedLayer,
+        const normalizedDrawing = DrawingDataNormalizer.normalize(
+            interpolatedDrawing,
             true
         );
-        const layerPayload = this.copyLayerDataForStoredLayer(normalizedLayer);
-        const newLayer = this.materializeStoredInterpolatedLayer(
+        const drawingPayload =
+            this.copyDrawingDataForStoredDrawing(normalizedDrawing);
+        const newDrawing = this.materializeStoredInterpolatedDrawing(
             glyph,
             {
-                masterId: options.masterId,
+                stationId: options.stationId,
                 designLocation: options.designLocation,
-                isMasterBound: options.isMasterBound
+                isStationBound: options.isStationBound
             },
-            layerPayload
+            drawingPayload
         );
 
-        // Sync the complete layer data to the Y.Doc so undo can restore
+        // Sync the complete drawing data to the Y.Doc so undo can restore
         // all fields. The model setters ran inside withSuppressedModelRecording.
         const createBridge = window.patchSyncEngine;
         let preparedStructuralChange = false;
         if (createBridge) {
-            const changeSource = options.changeSource || 'layer-create';
+            const changeSource = options.changeSource || 'drawing-create';
             const compileMetadata =
                 this.getCommittedCompileMetadata(changeSource);
             preparedStructuralChange =
@@ -8821,10 +8915,10 @@ export class OutlineEditor {
                 });
             createBridge.syncGlyphFromJson(
                 sourceGlyphName,
-                'Create interpolated layer sync',
+                'Create interpolated drawing sync',
                 undefined,
                 undefined,
-                newLayer.id,
+                newDrawing.id,
                 undefined,
                 undefined,
                 compileMetadata.editSource,
@@ -8833,83 +8927,84 @@ export class OutlineEditor {
             );
         }
 
-        await this.refreshAfterStructuralLayerEdit(
+        await this.refreshAfterStructuralDrawingEdit(
             sourceGlyphName,
-            options.changeSource || 'layer-create',
+            options.changeSource || 'drawing-create',
             { scheduleCompile: !preparedStructuralChange }
         );
 
-        if (options.selectNewLayer !== false) {
-            await this.selectLayer(newLayer);
+        if (options.selectNewDrawing !== false) {
+            await this.selectDrawing(newDrawing);
         }
 
-        return newLayer;
+        return newDrawing;
     }
 
-    async deleteLayerById(
-        layerId: string,
+    async deleteDrawingById(
+        drawingId: string,
         options?: {
             glyphName?: string | null;
             changeSource?: string;
             preferInterpolationFallback?: boolean;
         }
     ): Promise<boolean> {
-        const glyphName = options?.glyphName || this.getLayerListGlyphName();
+        const glyphName = options?.glyphName || this.getDrawingListGlyphName();
         const sourceGlyphName = this.getAuthoringGlyphName(glyphName);
         const glyph = this.getGlyphViewByName(glyphName);
-        if (!glyphName || !glyph?.layers?.length) {
+        if (!glyphName || !glyph?.drawings?.length) {
             return false;
         }
 
-        const layer = glyph.findLayerById?.(layerId);
-        if (!layer) {
+        const drawing = glyph.findDrawingById?.(drawingId);
+        if (!drawing) {
             return false;
         }
 
-        const userspaceLocation = this.getUserspaceLocationForLayer(
-            layerId,
+        const userspaceLocation = this.getUserspaceLocationForDrawing(
+            drawingId,
             glyphName
         );
-        const masterId = layer?.master?.master || null;
-        const wasSelected = this.selectedLayerId === layerId;
-        const isMasterBound = layer?.master?.type === 'DefaultForMaster';
+        const stationId = drawing?.station?.master || null;
+        const wasSelected = this.selectedDrawingId === drawingId;
+        const isStationBound = drawing?.station?.type === 'DefaultForMaster';
 
         withSuppressedModelRecording(() => {
-            glyph.removeLayerById?.(layerId);
+            glyph.removeDrawingById?.(drawingId);
         });
 
         const currentFont = fontManager.currentFont;
-        const canonicalLayerWasRemoved = !currentFont?.babelfontData?.glyphs
+        const canonicalDrawingWasRemoved = !currentFont?.babelfontData?.glyphs
             ?.find(
                 (storedGlyph: Babelfont.Glyph) =>
                     storedGlyph.name === sourceGlyphName
             )
             ?.layers?.some(
-                (storedLayer: Babelfont.Layer) => storedLayer.id === layerId
+                (storedDrawing: Babelfont.Layer) =>
+                    storedDrawing.id === drawingId
             );
         if (
             Array.isArray(currentFont?.babelfontData?.glyphs) &&
-            !canonicalLayerWasRemoved &&
-            !fontManager.removeStoredLayerData(sourceGlyphName, layerId)
+            !canonicalDrawingWasRemoved &&
+            !fontManager.removeStoredDrawingData(sourceGlyphName, drawingId)
         ) {
             console.error(
-                `[OutlineEditor] Unable to remove ${sourceGlyphName}/${layerId} from canonical storage.`
+                `[OutlineEditor] Unable to remove ${sourceGlyphName}/${drawingId} from canonical storage.`
             );
             return false;
         }
 
         if (wasSelected) {
-            this.selectedLayerId = null;
-            this.layerData = null;
+            this.selectedDrawingId = null;
+            this.drawingData = null;
             this.renderVerticalMetrics = null;
             this.clearAllSelections();
-            this.updateLayerSelection();
+            this.updateDrawingSelection();
         }
 
         const deleteBridge = window.patchSyncEngine;
         let preparedStructuralChange = false;
         if (deleteBridge) {
-            const changeSource = options?.changeSource || 'layer-delete';
+            const changeSource = options?.changeSource || 'drawing-delete';
             const compileMetadata =
                 this.getCommittedCompileMetadata(changeSource);
             preparedStructuralChange =
@@ -8918,10 +9013,10 @@ export class OutlineEditor {
                 });
             deleteBridge.syncGlyphFromJson(
                 sourceGlyphName,
-                'Delete layer sync',
+                'Delete drawing sync',
                 undefined,
                 undefined,
-                layerId,
+                drawingId,
                 undefined,
                 undefined,
                 compileMetadata.editSource,
@@ -8930,9 +9025,9 @@ export class OutlineEditor {
             );
         }
 
-        await this.refreshAfterStructuralLayerEdit(
+        await this.refreshAfterStructuralDrawingEdit(
             sourceGlyphName,
-            options?.changeSource || 'layer-delete',
+            options?.changeSource || 'drawing-delete',
             { scheduleCompile: !preparedStructuralChange }
         );
 
@@ -8949,61 +9044,61 @@ export class OutlineEditor {
         return true;
     }
 
-    async reinterpolateLayerById(
-        layerId: string,
+    async reinterpolateDrawingById(
+        drawingId: string,
         options?: {
             glyphName?: string | null;
             changeSource?: string;
-            selectNewLayer?: boolean;
+            selectNewDrawing?: boolean;
         }
     ): Promise<any | null> {
-        const glyphName = options?.glyphName || this.getLayerListGlyphName();
+        const glyphName = options?.glyphName || this.getDrawingListGlyphName();
         const sourceGlyphName = this.getAuthoringGlyphName(glyphName);
         const glyph = this.getGlyphViewByName(glyphName);
         if (!glyphName || !glyph) {
             return null;
         }
 
-        const layer = glyph.findLayerById?.(layerId);
-        if (!layer) {
+        const drawing = glyph.findDrawingById?.(drawingId);
+        if (!drawing) {
             return null;
         }
 
-        const masterId = layer.master?.master;
-        const designLocation = layer.location
-            ? this.cloneLayerData(layer.location)
+        const stationId = drawing.station?.master;
+        const designLocation = drawing.location
+            ? this.cloneDrawingData(drawing.location)
             : null;
-        const isMasterBound = layer.master?.type === 'DefaultForMaster';
-        const shouldSelectNewLayer =
-            options?.selectNewLayer ?? this.selectedLayerId === layerId;
+        const isStationBound = drawing.station?.type === 'DefaultForMaster';
+        const shouldSelectNewDrawing =
+            options?.selectNewDrawing ?? this.selectedDrawingId === drawingId;
 
-        if (!masterId) {
+        if (!stationId) {
             return null;
         }
 
-        const changeSource = options?.changeSource || 'layer-reinterpolate';
+        const changeSource = options?.changeSource || 'drawing-reinterpolate';
         const bridge = window.patchSyncEngine;
 
         if (bridge?.applyLocalGeneratedYjsUpdate) {
             this.prepareStructuralOutlineCompile('keyboard-outline');
             const batchResult =
-                await fontManager.buildWorkerReinterpolateLayerBatch(
+                await fontManager.buildWorkerReinterpolateDrawingBatch(
                     sourceGlyphName,
-                    layerId
+                    drawingId
                 );
             if (batchResult.update.length || batchResult.updates?.length) {
                 applyWorkerGeneratedYjsUpdate(
                     bridge,
                     batchResult.update,
                     buildInterpolationRustBatchOperations(batchResult.metadata),
-                    'Reinterpolate layer sync',
+                    'Reinterpolate drawing sync',
                     batchResult.updates?.length
                         ? batchResult.updates
                         : undefined
                 );
             }
 
-            await this.refreshAfterStructuralLayerEdit(
+            await this.refreshAfterStructuralDrawingEdit(
                 sourceGlyphName,
                 changeSource,
                 {
@@ -9012,56 +9107,56 @@ export class OutlineEditor {
                 }
             );
 
-            const recreatedLayer = glyph.findLayerById?.(layerId) || null;
-            if (!recreatedLayer) {
+            const recreatedDrawing = glyph.findDrawingById?.(drawingId) || null;
+            if (!recreatedDrawing) {
                 return null;
             }
 
-            if (shouldSelectNewLayer) {
-                if (this.selectedLayerId === recreatedLayer.id) {
-                    await this.refreshSelectedLayerWithoutAnimation(
-                        recreatedLayer,
+            if (shouldSelectNewDrawing) {
+                if (this.selectedDrawingId === recreatedDrawing.id) {
+                    await this.refreshSelectedDrawingWithoutAnimation(
+                        recreatedDrawing,
                         glyphName
                     );
                 } else {
-                    await this.selectLayer(recreatedLayer);
+                    await this.selectDrawing(recreatedDrawing);
                 }
-            } else if (this.selectedLayerId === layerId) {
-                this.selectedLayerId = null;
-                this.layerData = null;
+            } else if (this.selectedDrawingId === drawingId) {
+                this.selectedDrawingId = null;
+                this.drawingData = null;
                 this.renderVerticalMetrics = null;
                 this.clearAllSelections();
-                this.updateLayerSelection();
+                this.updateDrawingSelection();
                 this.glyphCanvas.updatePropertyPanel();
                 this.glyphCanvas.render();
             }
 
-            return recreatedLayer;
+            return recreatedDrawing;
         }
 
-        const userspaceLocation = this.getUserspaceLocationForLayer(
-            layerId,
+        const userspaceLocation = this.getUserspaceLocationForDrawing(
+            drawingId,
             glyphName
         );
         if (!userspaceLocation) {
             return null;
         }
 
-        const originalLayerPayload = this.copyLayerDataForStoredLayer(
-            layer.toJSON()
+        const originalDrawingPayload = this.copyDrawingDataForStoredDrawing(
+            drawing.toJSON()
         );
 
-        bridge?.beginTransaction('Reinterpolate layer', null, {
-            compileChangeSource: 'master-reinterpolate-batch',
+        bridge?.beginTransaction('Reinterpolate drawing', null, {
+            compileChangeSource: 'station-reinterpolate-batch',
             compileEditType: null
         });
 
         try {
             withSuppressedModelRecording(() => {
-                glyph.removeLayerById?.(layerId);
+                glyph.removeDrawingById?.(drawingId);
             });
 
-            await this.refreshAfterStructuralLayerEdit(
+            await this.refreshAfterStructuralDrawingEdit(
                 glyphName,
                 changeSource,
                 {
@@ -9070,42 +9165,42 @@ export class OutlineEditor {
                 }
             );
 
-            const featureVariationLayerIds =
-                this.getFeatureVariationLayerIdsForGlyphName(glyphName);
-            const interpolatedLayer = featureVariationLayerIds
+            const featureVariationDrawingIds =
+                this.getFeatureVariationDrawingIdsForGlyphName(glyphName);
+            const interpolatedDrawing = featureVariationDrawingIds
                 ? await fontInterpolation.interpolateGlyph(
                       sourceGlyphName,
                       userspaceLocation,
                       true,
-                      featureVariationLayerIds
+                      featureVariationDrawingIds
                   )
                 : await fontInterpolation.interpolateGlyph(
                       sourceGlyphName,
                       userspaceLocation,
                       true
                   );
-            const normalizedLayer = LayerDataNormalizer.normalize(
-                interpolatedLayer,
+            const normalizedDrawing = DrawingDataNormalizer.normalize(
+                interpolatedDrawing,
                 true
             );
-            const layerPayload =
-                this.copyLayerDataForStoredLayer(normalizedLayer);
-            const newLayer = this.materializeStoredInterpolatedLayer(
+            const drawingPayload =
+                this.copyDrawingDataForStoredDrawing(normalizedDrawing);
+            const newDrawing = this.materializeStoredInterpolatedDrawing(
                 glyph,
                 {
-                    masterId,
+                    stationId,
                     designLocation,
-                    isMasterBound,
-                    layerId
+                    isStationBound,
+                    layerId: drawingId
                 },
-                layerPayload
+                drawingPayload
             );
 
-            // Sync the complete layer data to the Y.Doc so undo can restore
-            // all fields (id, master, location, shapes, etc.). The model
+            // Sync the complete drawing data to the Y.Doc so undo can restore
+            // all fields (id, station, location, shapes, etc.). The model
             // setters above ran inside withSuppressedModelRecording, so
-            // the Y.Doc only has the minimal addLayer data. Without this
-            // sync, undo would produce a layer missing most fields.
+            // the Y.Doc only has the minimal addDrawing data. Without this
+            // sync, undo would produce a drawing missing most fields.
             let preparedStructuralChange = false;
             if (bridge) {
                 const compileMetadata =
@@ -9116,10 +9211,10 @@ export class OutlineEditor {
                     });
                 bridge.syncGlyphFromJson(
                     sourceGlyphName,
-                    'Reinterpolate layer sync',
+                    'Reinterpolate drawing sync',
                     undefined,
                     undefined,
-                    newLayer.id,
+                    newDrawing.id,
                     undefined,
                     undefined,
                     compileMetadata.editSource,
@@ -9128,7 +9223,7 @@ export class OutlineEditor {
                 );
             }
 
-            await this.refreshAfterStructuralLayerEdit(
+            await this.refreshAfterStructuralDrawingEdit(
                 sourceGlyphName,
                 changeSource,
                 {
@@ -9136,52 +9231,53 @@ export class OutlineEditor {
                 }
             );
 
-            if (shouldSelectNewLayer) {
-                if (this.selectedLayerId === newLayer.id) {
-                    await this.refreshSelectedLayerWithoutAnimation(
-                        newLayer,
+            if (shouldSelectNewDrawing) {
+                if (this.selectedDrawingId === newDrawing.id) {
+                    await this.refreshSelectedDrawingWithoutAnimation(
+                        newDrawing,
                         glyphName
                     );
                 } else {
-                    await this.selectLayer(newLayer);
+                    await this.selectDrawing(newDrawing);
                 }
-            } else if (this.selectedLayerId === layerId) {
-                this.selectedLayerId = null;
-                this.layerData = null;
+            } else if (this.selectedDrawingId === drawingId) {
+                this.selectedDrawingId = null;
+                this.drawingData = null;
                 this.renderVerticalMetrics = null;
                 this.clearAllSelections();
-                this.updateLayerSelection();
+                this.updateDrawingSelection();
                 this.glyphCanvas.updatePropertyPanel();
                 this.glyphCanvas.render();
             }
 
-            return newLayer;
+            return newDrawing;
         } catch (error) {
-            if (!glyph.findLayerById?.(layerId)) {
-                const restoredLayer = this.materializeStoredInterpolatedLayer(
-                    glyph,
-                    {
-                        masterId,
-                        designLocation,
-                        isMasterBound,
-                        layerId
-                    },
-                    originalLayerPayload
-                );
+            if (!glyph.findDrawingById?.(drawingId)) {
+                const restoredDrawing =
+                    this.materializeStoredInterpolatedDrawing(
+                        glyph,
+                        {
+                            stationId,
+                            designLocation,
+                            isStationBound,
+                            layerId: drawingId
+                        },
+                        originalDrawingPayload
+                    );
 
-                await this.refreshAfterStructuralLayerEdit(
+                await this.refreshAfterStructuralDrawingEdit(
                     sourceGlyphName,
                     changeSource
                 );
 
-                if (shouldSelectNewLayer) {
-                    if (this.selectedLayerId === restoredLayer.id) {
-                        await this.refreshSelectedLayerWithoutAnimation(
-                            restoredLayer,
+                if (shouldSelectNewDrawing) {
+                    if (this.selectedDrawingId === restoredDrawing.id) {
+                        await this.refreshSelectedDrawingWithoutAnimation(
+                            restoredDrawing,
                             glyphName
                         );
                     } else {
-                        await this.selectLayer(restoredLayer);
+                        await this.selectDrawing(restoredDrawing);
                     }
                 }
             }
@@ -9193,7 +9289,7 @@ export class OutlineEditor {
     }
 
     /**
-     * Batch-reinterpolates all glyph layers bound to `masterId` in parallel.
+     * Batch-reinterpolates all glyph drawings bound to `stationId` in parallel.
      *
      * All interpolation requests are fired concurrently (one worker round-trip
      * covers all glyphs), then all model writes and Yjs syncs happen in a
@@ -9201,26 +9297,28 @@ export class OutlineEditor {
      * call at the end.  This is O(1) worker latency instead of O(N).
      *
      */
-    async reinterpolateAllLayersForMaster(masterId: string): Promise<void> {
+    async reinterpolateAllDrawingsForStation(stationId: string): Promise<void> {
         const bridge = window.patchSyncEngine as PatchSyncEngine | undefined;
         if (!bridge?.applyLocalGeneratedYjsUpdate) {
             const fontModel = fontManager.currentFont?.fontModel;
             const targets = (fontModel?.glyphs ?? []).flatMap((glyph: any) =>
-                (glyph.layers ?? [])
-                    .filter((layer: any) => layer?.master?.master === masterId)
-                    .map((layer: any) => ({
+                (glyph.drawings ?? [])
+                    .filter(
+                        (drawing: any) => drawing?.station?.master === stationId
+                    )
+                    .map((drawing: any) => ({
                         glyphName: glyph.name,
-                        layerId: layer.id || layer?.master?.master
+                        layerId: drawing.id || drawing?.station?.master
                     }))
             );
             for (const target of targets) {
                 if (!target.glyphName || !target.layerId) {
                     continue;
                 }
-                await this.reinterpolateLayerById(target.layerId, {
+                await this.reinterpolateDrawingById(target.layerId, {
                     glyphName: target.glyphName,
-                    changeSource: 'master-reinterpolate-batch',
-                    selectNewLayer: false
+                    changeSource: 'station-reinterpolate-batch',
+                    selectNewDrawing: false
                 });
             }
             return;
@@ -9231,8 +9329,8 @@ export class OutlineEditor {
         beginStartupInteractionLock();
         try {
             const batchResult =
-                await fontManager.buildWorkerReinterpolateMasterLayersBatch(
-                    masterId
+                await fontManager.buildWorkerReinterpolateStationDrawingsBatch(
+                    stationId
                 );
             if (!batchResult.update.length && !batchResult.updates?.length) {
                 return;
@@ -9242,13 +9340,13 @@ export class OutlineEditor {
                 bridge,
                 batchResult.update,
                 buildInterpolationRustBatchOperations(batchResult.metadata),
-                'Reinterpolate layer batch sync',
+                'Reinterpolate drawing batch sync',
                 batchResult.updates?.length ? batchResult.updates : undefined
             );
 
-            await this.refreshAfterStructuralLayerEdit(
+            await this.refreshAfterStructuralDrawingEdit(
                 'batch',
-                'master-reinterpolate-batch',
+                'station-reinterpolate-batch',
                 {
                     scheduleCompile: false,
                     dispatchGlyphChanged: false
@@ -9261,43 +9359,43 @@ export class OutlineEditor {
     }
 
     /**
-     * Look up the userspace location for a layer by its ID.
-     * Finds the layer in the current glyph's font model, resolves its
-     * design-space location (brace layer location or master location),
+     * Look up the userspace location for a drawing by its ID.
+     * Finds the drawing in the current glyph's font model, resolves its
+     * design-space location (free drawing location or station location),
      * and converts to userspace.
      */
-    private getUserspaceLocationForLayer(
-        layerId: string,
+    private getUserspaceLocationForDrawing(
+        drawingId: string,
         rootGlyphName?: string
     ): UserspaceLocation | null {
         const fontModel = fontManager.currentFont?.fontModel;
         if (!fontModel) return null;
 
-        const owningGlyph = this.resolveOwningGlyphForLayer(
-            layerId,
+        const owningGlyph = this.resolveOwningGlyphForDrawing(
+            drawingId,
             rootGlyphName ?? this.parseGlyphStack()[0]?.glyphName
         );
         const glyph = owningGlyph?.glyph;
-        if (!glyph?.layers) return null;
+        if (!glyph?.drawings) return null;
 
-        const layer =
-            glyph.findLayerById?.(layerId) ||
-            (layerId.startsWith('background-')
-                ? glyph.findLayerById?.(layerId.slice('background-'.length))
-                      ?.backgroundLayer
+        const drawing =
+            glyph.findDrawingById?.(drawingId) ||
+            (drawingId.startsWith('background-')
+                ? glyph.findDrawingById?.(drawingId.slice('background-'.length))
+                      ?.backgroundDrawing
                 : null);
-        if (!layer) return null;
+        if (!drawing) return null;
 
-        const locationLayer = this.getLayerLocationSource(layer);
-        const masters: Babelfont.Master[] = (fontModel.masters as any) || [];
-        const masterIdToFind = locationLayer?.master?.master;
-        const master = masters.find((m) => m.id === masterIdToFind);
-        const hasLayerLocation =
-            !!locationLayer?.location &&
-            Object.keys(locationLayer.location).length > 0;
-        const designLocation = hasLayerLocation
-            ? locationLayer.location
-            : master?.location;
+        const locationDrawing = this.getDrawingLocationSource(drawing);
+        const stations: Babelfont.Master[] = (fontModel.stations as any) || [];
+        const stationIdToFind = locationDrawing?.station?.master;
+        const station = stations.find((m) => m.id === stationIdToFind);
+        const hasDrawingLocation =
+            !!locationDrawing?.location &&
+            Object.keys(locationDrawing.location).length > 0;
+        const designLocation = hasDrawingLocation
+            ? locationDrawing.location
+            : station?.location;
 
         if (!designLocation) return null;
 
@@ -9305,30 +9403,31 @@ export class OutlineEditor {
         return designspaceToUserspace(designLocation, fontAxes as any);
     }
 
-    private getLayerLocationSource(layer: any): any {
-        return layer?.is_background ? layer.backgroundLayer || layer : layer;
+    private getDrawingLocationSource(drawing: any): any {
+        return drawing?.is_background
+            ? drawing.backgroundDrawing || drawing
+            : drawing;
     }
 
-    private getUserspaceLocationForLayerRecord(
-        layer: Partial<Babelfont.Layer> | Layer | null | undefined
+    private getUserspaceLocationForDrawingRecord(
+        drawing: Partial<Babelfont.Layer> | Drawing | null | undefined
     ): UserspaceLocation | null {
         const fontModel = fontManager.currentFont?.fontModel;
-        if (!fontModel || !layer) {
+        if (!fontModel || !drawing) {
             return null;
         }
 
-        const locationLayer = this.getLayerLocationSource(layer);
-        const masters: Babelfont.Master[] = (fontModel.masters as any) || [];
-        const masterIdToFind =
-            (locationLayer?.master as Babelfont.Layer['master'] | undefined)
-                ?.master || null;
-        const master = masters.find((m) => m.id === masterIdToFind);
-        const hasLayerLocation =
-            !!locationLayer?.location &&
-            Object.keys(locationLayer.location).length > 0;
-        const designLocation = hasLayerLocation
-            ? locationLayer.location
-            : master?.location;
+        const locationDrawing = this.getDrawingLocationSource(drawing);
+        const stations: Babelfont.Master[] = (fontModel.stations as any) || [];
+        const stationIdToFind =
+            drawingStationRef(locationDrawing)?.master || null;
+        const station = stations.find((m) => m.id === stationIdToFind);
+        const hasDrawingLocation =
+            !!locationDrawing?.location &&
+            Object.keys(locationDrawing.location).length > 0;
+        const designLocation = hasDrawingLocation
+            ? locationDrawing.location
+            : station?.location;
 
         if (!designLocation) {
             return null;
@@ -9410,17 +9509,17 @@ export class OutlineEditor {
     }
 
     /**
-     * True when an anchor sits on a path node (same layer), within delimiter
+     * True when an anchor sits on a path node (same drawing), within delimiter
      * tolerance. Those anchors keep the larger chrome so they stay pickable.
      */
     anchorSharesLocationWithNode(x: number, y: number): boolean {
         const tolerance =
             APP_SETTINGS.OUTLINE_EDITOR.NODE_ON_DELIMITER_TOLERANCE;
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        if (!currentLayerData?.shapes) {
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        if (!currentDrawingData?.shapes) {
             return false;
         }
-        for (const shape of currentLayerData.shapes) {
+        for (const shape of currentDrawingData.shapes) {
             const contour = getEditableContour(shape);
             if (!contour?.nodes?.length) {
                 continue;
@@ -9486,20 +9585,20 @@ export class OutlineEditor {
 
     getVisibleSidebearingHandles(): VisibleSidebearingHandle[] {
         if (
-            !this.selectedLayerId ||
-            this.isEditingBackgroundLayer() ||
+            !this.selectedDrawingId ||
+            this.isEditingBackgroundDrawing() ||
             this.glyphCanvas.viewportManager!.scale <
                 APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_HANDLES
         ) {
             return [];
         }
 
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        const currentLayerModel = this.getCurrentLayerModel();
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        const currentDrawingModel = this.getCurrentDrawingModel();
         if (
-            !currentLayerData ||
-            currentLayerData.isInterpolated ||
-            !currentLayerModel
+            !currentDrawingData ||
+            currentDrawingData.isInterpolated ||
+            !currentDrawingModel
         ) {
             return [];
         }
@@ -9548,22 +9647,23 @@ export class OutlineEditor {
             bottomClampedHandleScreenY
         );
         const handleY = screenYToFontY(clampedHandleScreenY);
-        const width = Number(currentLayerData.width);
+        const width = Number(currentDrawingData.width);
         const handles: VisibleSidebearingHandle[] = [];
-        const automaticLayer = currentLayerModel.isAutomaticAlignedLayer();
+        const automaticDrawing =
+            currentDrawingModel.isAutomaticAlignedDrawing();
 
-        const leftResolution = currentLayerModel.resolveMetricsKey('left');
+        const leftResolution = currentDrawingModel.resolveMetricsKey('left');
         if (!leftResolution.error && leftResolution.value !== null) {
             handles.push({
                 side: 'left',
                 x: 0,
                 y: handleY,
                 metricY: lowestMetricY,
-                editable: !automaticLayer && !leftResolution.input
+                editable: !automaticDrawing && !leftResolution.input
             });
         }
 
-        const rightResolution = currentLayerModel.resolveMetricsKey('right');
+        const rightResolution = currentDrawingModel.resolveMetricsKey('right');
         if (
             !rightResolution.error &&
             rightResolution.value !== null &&
@@ -9574,7 +9674,7 @@ export class OutlineEditor {
                 x: width,
                 y: handleY,
                 metricY: lowestMetricY,
-                editable: !automaticLayer && !rightResolution.input
+                editable: !automaticDrawing && !rightResolution.input
             });
         }
 
@@ -9582,20 +9682,23 @@ export class OutlineEditor {
     }
 
     /**
-     * Apply Rust-returned layer data (interpolated or on-layer) to the editor.
-     * Normalizes, parses component nodes, assigns layerData, and sets vertical metrics.
+     * Apply Rust-returned drawing data (interpolated or exact) to the editor.
+     * Normalizes, parses component nodes, assigns drawingData, and sets vertical metrics.
      */
-    private applyRustLayerData(rustResult: any, isInterpolated: boolean): void {
-        const normalized = LayerDataNormalizer.normalize(
+    private applyRustDrawingData(
+        rustResult: any,
+        isInterpolated: boolean
+    ): void {
+        const normalized = DrawingDataNormalizer.normalize(
             rustResult,
             isInterpolated
         );
-        this.assignLayerData(normalized, rustResult);
+        this.assignDrawingData(normalized, rustResult);
     }
 
     /**
      * Parse glyph_stack into structured components
-     * @returns Array of stack items, each with glyphName, layerId, and componentIndex
+     * @returns Array of stack items, each with glyphName, drawingId, and componentIndex
      */
     parseGlyphStack(): Array<{
         glyphName: string;
@@ -9613,24 +9716,24 @@ export class OutlineEditor {
 
         for (let i = 0; i < segments.length; i++) {
             const segment = segments[i];
-            let glyphAndLayer: string;
+            let glyphAndDrawing: string;
             let componentIndex: number | undefined;
 
-            // Check if this segment has a component index (format: componentIndex:glyphName@layerId)
+            // Check if this segment has a component index (format: componentIndex:glyphName@drawingId)
             if (segment.includes(':')) {
                 const parts = segment.split(':');
                 componentIndex = parseInt(parts[0], 10);
-                glyphAndLayer = parts[1];
+                glyphAndDrawing = parts[1];
             } else {
-                glyphAndLayer = segment;
+                glyphAndDrawing = segment;
             }
 
-            // Split glyphName@layerId
-            const [glyphName, layerId] = glyphAndLayer.split('@');
+            // Split glyphName@drawingId
+            const [glyphName, drawingId] = glyphAndDrawing.split('@');
 
             result.push({
                 glyphName,
-                layerId,
+                layerId: drawingId,
                 componentIndex
             });
         }
@@ -9659,25 +9762,25 @@ export class OutlineEditor {
     /**
      * Build glyph_stack string from current state
      * @param rootGlyphName - Name of the root glyph
-     * @param layerId - Current layer ID
+     * @param drawingId - Current drawing ID
      * @param componentPath - Array of component indices representing the nesting path
      */
     buildGlyphStack(
         rootGlyphName: string,
-        layerId: string | null,
+        drawingId: string | null,
         componentPath: number[] = []
     ): void {
-        let stack = `${rootGlyphName}@${this.normalizeGlyphStackLayerId(layerId)}`;
+        let stack = `${rootGlyphName}@${this.normalizeGlyphStackDrawingId(drawingId)}`;
 
         // Add each nested component to the stack
-        let currentLayerData = this.layerData;
+        let currentDrawingData = this.drawingData;
         for (let i = 0; i < componentPath.length; i++) {
             const compIndex = componentPath[i];
 
             if (
-                !currentLayerData ||
-                !currentLayerData.shapes ||
-                !currentLayerData.shapes[compIndex]
+                !currentDrawingData ||
+                !currentDrawingData.shapes ||
+                !currentDrawingData.shapes[compIndex]
             ) {
                 console.error(
                     '[GlyphStack] Invalid component path at index',
@@ -9687,7 +9790,7 @@ export class OutlineEditor {
                 break;
             }
 
-            const shape = currentLayerData.shapes[compIndex];
+            const shape = currentDrawingData.shapes[compIndex];
             if (!('reference' in shape)) {
                 console.error(
                     '[GlyphStack] Shape at index',
@@ -9699,16 +9802,16 @@ export class OutlineEditor {
 
             const componentGlyphName = shape.reference;
 
-            // Move to the nested component's layer data for the next iteration
-            currentLayerData = shape.layerData || null;
+            // Move to the nested component's drawing data for the next iteration
+            currentDrawingData = shape.layerData || null;
 
             // Resolve the nested component against the current variation location
-            // from the font model, rather than trusting interpolated layerData,
-            // which may not carry a stable exact layer id.
-            const componentLayerId = this.normalizeGlyphStackLayerId(
-                this.findMatchingLayer(componentGlyphName)?.id || null
+            // from the font model, rather than trusting interpolated drawing data,
+            // which may not carry a stable exact drawing id.
+            const componentDrawingId = this.normalizeGlyphStackDrawingId(
+                this.findMatchingDrawing(componentGlyphName)?.id || null
             );
-            stack += `>${compIndex}:${componentGlyphName}@${componentLayerId}`;
+            stack += `>${compIndex}:${componentGlyphName}@${componentDrawingId}`;
         }
 
         this.glyphStack = stack;
@@ -9722,34 +9825,34 @@ export class OutlineEditor {
     }
 
     /**
-     * Rebuild glyph_stack with new layer IDs when switching layers
-     * This method does NOT depend on this.layerData, so it works even when layer data hasn't been fetched yet
+     * Rebuild glyph_stack with new drawing IDs when switching drawings
+     * This method does NOT depend on this.drawingData, so it works even when drawing data hasn't been fetched yet
      * Preserves the component navigation path
      */
-    rebuildGlyphStackWithNewLayer(
-        newLayerId: string,
-        options?: { rootLayerId?: string | null }
+    rebuildGlyphStackWithNewDrawing(
+        newDrawingId: string,
+        options?: { rootDrawingId?: string | null }
     ): void {
         if (!this.glyphStack) return;
 
         // Update the active stack segment only.
-        // Root editing updates the root glyph layer token; nested editing updates
+        // Root editing updates the root glyph drawing token; nested editing updates
         // the innermost component segment and preserves the outer root token.
 
         // Split by '>' to get segments
         const segments = this.glyphStack.split('>');
         const targetIndex = this.isEditingComponent() ? segments.length - 1 : 0;
         const newSegments = segments.map((segment, index) => {
-            if (index === 0 && options && 'rootLayerId' in options) {
+            if (index === 0 && options && 'rootDrawingId' in options) {
                 const atIndex = segment.lastIndexOf('@');
                 const prefix = segment.substring(0, atIndex);
-                return `${prefix}@${this.normalizeGlyphStackLayerId(options.rootLayerId)}`;
+                return `${prefix}@${this.normalizeGlyphStackDrawingId(options.rootDrawingId)}`;
             }
 
             if (index === targetIndex) {
                 const atIndex = segment.lastIndexOf('@');
                 const prefix = segment.substring(0, atIndex);
-                return `${prefix}@${newLayerId}`;
+                return `${prefix}@${newDrawingId}`;
             } else {
                 return segment;
             }
@@ -9757,7 +9860,7 @@ export class OutlineEditor {
 
         this.glyphStack = newSegments.join('>');
         console.log(
-            '[GlyphStack] Rebuilt stack with updated layer ID:',
+            '[GlyphStack] Rebuilt stack with updated drawing ID:',
             this.glyphStack
         );
         window.dispatchEvent(
@@ -9775,21 +9878,21 @@ export class OutlineEditor {
         const parsedStack = this.parseGlyphStack();
         const rootGlyphName =
             parsedStack[0]?.glyphName ?? this.glyphCanvas.getCurrentGlyphName();
-        const currentLayerId = this.getCurrentLayerId();
+        const currentDrawingId = this.getCurrentDrawingId();
 
-        if (!this.active || !rootGlyphName || !currentLayerId) {
+        if (!this.active || !rootGlyphName || !currentDrawingId) {
             return false;
         }
 
         if (
-            this.selectedLayerId === null &&
-            (this.isInterpolating || this.layerData?.isInterpolated === true)
+            this.selectedDrawingId === null &&
+            (this.isInterpolating || this.drawingData?.isInterpolated === true)
         ) {
             return false;
         }
 
-        if (this.getCurrentLayerModel()) {
-            this.selectedLayerId = currentLayerId;
+        if (this.getCurrentDrawingModel()) {
+            this.selectedDrawingId = currentDrawingId;
             return false;
         }
 
@@ -9800,13 +9903,13 @@ export class OutlineEditor {
             )
             .map((item) => item.componentIndex);
 
-        this.selectedLayerId = null;
-        this.layerData = null;
+        this.selectedDrawingId = null;
+        this.drawingData = null;
         this.renderVerticalMetrics = null;
         this.clearAllSelections();
         this.buildGlyphStack(rootGlyphName, null, componentPath);
 
-        await this.autoSelectMatchingLayer({
+        await this.autoSelectMatchingDrawing({
             skipRender: options?.skipRender === true
         });
 
@@ -9852,7 +9955,7 @@ export class OutlineEditor {
     clearState() {
         this.canvasContextMenuTippy?.hide();
         this.canvasContextMenuTarget = null;
-        this.layerData = null;
+        this.drawingData = null;
         this.selectedPoints = [];
         this.selectedSidebearingHandle = null;
         this.hoveredPointIndex = null;
@@ -9889,7 +9992,7 @@ export class OutlineEditor {
         this.suppressSelectedEndpointCommandSeedUntilCommandRelease = false;
         this.pendingCommandPathEdit = null;
         this.resetMarqueeSelection();
-        this.layerDataDirty = false;
+        this.drawingDataDirty = false;
         this.notifyEditToolsChanged();
     }
 
@@ -9917,13 +10020,14 @@ export class OutlineEditor {
             };
         }
 
-        const layerData = this.getCurrentLayerDataFromStack() || this.layerData;
+        const drawingData =
+            this.getCurrentDrawingDataFromStack() || this.drawingData;
         let hasContours = false;
         let hasPathSegments = false;
         let hasLineSegments = false;
 
-        if (layerData) {
-            const shapes = layerData.shapes || [];
+        if (drawingData) {
+            const shapes = drawingData.shapes || [];
             for (const shape of shapes) {
                 if (this.isComponentShape(shape)) {
                     continue;
@@ -9936,7 +10040,7 @@ export class OutlineEditor {
                 if (contour.nodes.length < 2) {
                     continue;
                 }
-                const descriptors = Layer.getPathSegmentDescriptors({
+                const descriptors = Drawing.getPathSegmentDescriptors({
                     nodes: contour.nodes,
                     closed: contour.closed
                 });
@@ -10109,7 +10213,7 @@ export class OutlineEditor {
             return false;
         }
         const contour = getEditableContour(
-            this.getCurrentLayerDataFromStack()?.shapes?.[
+            this.getCurrentDrawingDataFromStack()?.shapes?.[
                 this.hoveredPointIndex.contourIndex
             ]
         );
@@ -10149,24 +10253,24 @@ export class OutlineEditor {
 
         const previousState = this.escapeState.peek();
         if (previousState) {
-            if (this.escapeState.matchesCurrent(this.selectedLayerId)) {
+            if (this.escapeState.matchesCurrent(this.selectedDrawingId)) {
                 console.log(
-                    'Already on previous layer, clearing state and continuing to exit'
+                    'Already on previous drawing, clearing state and continuing to exit'
                 );
                 this.escapeState.clear();
             } else {
-                console.log('Restoring previous layer by selecting it');
-                const layerToSelect = this.getFullLayerData(
+                console.log('Restoring previous drawing by selecting it');
+                const drawingToSelect = this.getFullDrawingData(
                     previousState.selectionId
                 );
-                if (layerToSelect) {
-                    console.log('Found previous layer:', layerToSelect.id);
+                if (drawingToSelect) {
+                    console.log('Found previous drawing:', drawingToSelect.id);
                     this.isInterpolating = false;
                     this.escapeState.clear();
-                    await this.selectLayer(layerToSelect);
+                    await this.selectDrawing(drawingToSelect);
                     return;
                 }
-                console.warn('Previous layer not found, clearing state');
+                console.warn('Previous drawing not found, clearing state');
                 this.escapeState.clear();
             }
         }
@@ -10246,13 +10350,13 @@ export class OutlineEditor {
         this.isInterpolating = true;
 
         // Leave object-model color in place until the slider actually leaves
-        // this stored layer. Mark interpolated (monochrome) only off-layer.
+        // this stored drawing. Mark interpolated (monochrome) only off-drawing.
         if (
             !this.isPreviewMode &&
-            this.layerData &&
-            !this.findMatchingLayerForActiveEdit()
+            this.drawingData &&
+            !this.findMatchingDrawingForActiveEdit()
         ) {
-            this.layerData.isInterpolated = true;
+            this.drawingData.isInterpolated = true;
             this.glyphCanvas.render();
         }
     }
@@ -10262,7 +10366,7 @@ export class OutlineEditor {
             active: this.active,
             isPreviewMode: this.isPreviewMode,
             isInterpolating: this.isInterpolating,
-            selectedLayerId: this.selectedLayerId
+            selectedDrawingId: this.selectedDrawingId
         });
         if (this.active && this.isPreviewMode) {
             // Only exit preview mode if we entered it via slider
@@ -10273,40 +10377,40 @@ export class OutlineEditor {
                 this.glyphCanvas.setPreviewMode(false);
             }
 
-            // Check if we're on an exact layer
-            await this.autoSelectMatchingLayer();
+            // Check if we're on an exact drawing
+            await this.autoSelectMatchingDrawing();
 
             // Note: Don't clear isInterpolating here - let it stay true until animation completes
             // so auto-panning continues working. It will be cleared in animationComplete handler.
-            // If we landed on an exact layer, update the saved state to this new layer
-            // so Escape will return here, not to the original layer
-            if (this.selectedLayerId) {
+            // If we landed on an exact drawing, update the saved state to this new drawing
+            // so Escape will return here, not to the original drawing
+            if (this.selectedDrawingId) {
                 this.escapeState.sync(
-                    this.selectedLayerId,
+                    this.selectedDrawingId,
                     this.glyphCanvas.axesManager!.variationSettings
                 );
-                console.log('Updated previous state to new layer:', {
-                    layerId: this.selectedLayerId,
+                console.log('Updated previous state to new drawing:', {
+                    layerId: this.selectedDrawingId,
                     settings: this.glyphCanvas.axesManager!.variationSettings
                 });
 
-                // Fetch layer data but skip render - we'll render after clearing flags
-                await this.fetchLayerData(true);
+                // Fetch drawing data but skip render - we'll render after clearing flags
+                await this.fetchDrawingData(true);
                 this.clearQueuedInterpolationRequest();
                 fontInterpolation.resetRequestTracking();
 
-                // Clear interpolating flag immediately since we're now on an exact layer
+                // Clear interpolating flag immediately since we're now on an exact drawing
                 // This ensures that if the user switches glyphs, the new glyph will properly
-                // fetch its layer data in autoSelectMatchingLayer
+                // fetch its drawing data in autoSelectMatchingDrawing
                 this.isInterpolating = false;
-            } else if (this.layerData && this.layerData.isInterpolated) {
-                // No exact layer match - keep interpolated data
+            } else if (this.drawingData && this.drawingData.isInterpolated) {
+                // No exact drawing match - keep interpolated data
                 // Only restore if shapes are empty/missing
                 if (
-                    !this.layerData.shapes ||
-                    this.layerData.shapes.length === 0
+                    !this.drawingData.shapes ||
+                    this.drawingData.shapes.length === 0
                 ) {
-                    await LayerDataNormalizer.restoreExactLayer(this);
+                    await DrawingDataNormalizer.restoreExactDrawing(this);
                 }
 
                 // Keep the latest worker request alive through slider release.
@@ -10318,40 +10422,40 @@ export class OutlineEditor {
         } else if (this.active) {
             this.isPreviewMode = false;
 
-            // Check if we're on an exact layer
+            // Check if we're on an exact drawing
             console.log(
-                '[OutlineEditor] About to call autoSelectMatchingLayer from onSliderMouseUp (non-preview mode)'
+                '[OutlineEditor] About to call autoSelectMatchingDrawing from onSliderMouseUp (non-preview mode)'
             );
-            await this.autoSelectMatchingLayer();
+            await this.autoSelectMatchingDrawing();
             console.log(
-                '[OutlineEditor] After autoSelectMatchingLayer, selectedLayerId:',
-                this.selectedLayerId
+                '[OutlineEditor] After autoSelectMatchingDrawing, selectedDrawingId:',
+                this.selectedDrawingId
             );
 
             // Note: Don't clear isInterpolating here - let it stay true until animation completes
             // so auto-panning continues working. It will be cleared in animationComplete handler.
-            // If we landed on an exact layer, update the saved state to this new layer
-            // so Escape will return here, not to the original layer
-            if (this.selectedLayerId) {
+            // If we landed on an exact drawing, update the saved state to this new drawing
+            // so Escape will return here, not to the original drawing
+            if (this.selectedDrawingId) {
                 this.escapeState.sync(
-                    this.selectedLayerId,
+                    this.selectedDrawingId,
                     this.glyphCanvas.axesManager!.variationSettings
                 );
-                console.log('Updated previous state to new layer:', {
-                    layerId: this.selectedLayerId,
+                console.log('Updated previous state to new drawing:', {
+                    layerId: this.selectedDrawingId,
                     settings: this.glyphCanvas.axesManager!.variationSettings
                 });
 
-                // Fetch layer data but skip render - we'll render after clearing flags
-                await this.fetchLayerData(true);
+                // Fetch drawing data but skip render - we'll render after clearing flags
+                await this.fetchDrawingData(true);
                 this.clearQueuedInterpolationRequest();
                 fontInterpolation.resetRequestTracking();
 
-                // Clear interpolating flag immediately since we're on an exact layer
+                // Clear interpolating flag immediately since we're on an exact drawing
                 this.isInterpolating = false;
             }
 
-            // If no exact layer match, keep showing interpolated data
+            // If no exact drawing match, keep showing interpolated data
 
             this.reapplyInterpolationBboxCenterAnchor();
             // Render with updated data and cleared flags
@@ -10363,7 +10467,7 @@ export class OutlineEditor {
         if (
             this.active &&
             !this.glyphCanvas.axesManager!.isAnimating &&
-            !this.isLayerSwitchAnimating &&
+            !this.isDrawingSwitchAnimating &&
             !this.glyphCanvas.axesManager!.isLoopAnimating
         ) {
             this.clearInterpolationBboxCenterAnchor();
@@ -10376,39 +10480,39 @@ export class OutlineEditor {
         console.log('[OutlineEditor] onSliderChange called', {
             axisTag,
             value,
-            selectedLayerId: this.selectedLayerId,
+            selectedDrawingId: this.selectedDrawingId,
             isInterpolating: this.isInterpolating,
             active: this.active
         });
 
-        const matchingLayer = this.active
-            ? this.findMatchingLayerForActiveEdit()
+        const matchingDrawing = this.active
+            ? this.findMatchingDrawingForActiveEdit()
             : null;
 
-        // Save current state before leaving a selected layer (once per session).
+        // Save current state before leaving a selected drawing (once per session).
         // Stay selected when the slider is still on that stored location.
-        if (this.selectedLayerId !== null) {
+        if (this.selectedDrawingId !== null) {
             if (
                 this.escapeState.save(
-                    this.selectedLayerId,
+                    this.selectedDrawingId,
                     this.glyphCanvas.axesManager!.variationSettings
                 )
             ) {
                 console.log(
                     '[OutlineEditor] Saved previous state for Escape:',
                     {
-                        layerId: this.selectedLayerId,
+                        layerId: this.selectedDrawingId,
                         settings:
                             this.glyphCanvas.axesManager!.variationSettings
                     }
                 );
             }
-            if (!matchingLayer) {
-                this.selectedLayerId = null;
+            if (!matchingDrawing) {
+                this.selectedDrawingId = null;
                 console.log(
-                    '[OutlineEditor] Deselected layer, selectedLayerId is now null'
+                    '[OutlineEditor] Deselected drawing, selectedDrawingId is now null'
                 );
-                this.updateLayerSelection();
+                this.updateDrawingSelection();
             }
         }
         if (
@@ -10417,7 +10521,7 @@ export class OutlineEditor {
             !this.isPreviewMode &&
             this.currentGlyphName
         ) {
-            if (matchingLayer) {
+            if (matchingDrawing) {
                 return;
             }
             console.log(
@@ -10428,12 +10532,12 @@ export class OutlineEditor {
     }
 
     animationInProgress() {
-        // Interpolate during both slider dragging AND layer switch animations
+        // Interpolate during both slider dragging AND drawing switch animations
         console.log('[OutlineEditor] animationInProgress called:', {
             active: this.active,
             hasGlyphName: !!this.currentGlyphName,
             isInterpolating: this.isInterpolating,
-            isLayerSwitchAnimating: this.isLayerSwitchAnimating
+            isDrawingSwitchAnimating: this.isDrawingSwitchAnimating
         });
         if (this.active && this.currentGlyphName) {
             if (!this.interpolationBboxCenterAnchorScreen) {
@@ -10441,7 +10545,7 @@ export class OutlineEditor {
             }
             if (
                 this.isInterpolating ||
-                this.isLayerSwitchAnimating ||
+                this.isDrawingSwitchAnimating ||
                 this.glyphCanvas.axesManager?.isLoopAnimating
             ) {
                 // Interpolate at current position for smooth animation
@@ -10457,8 +10561,8 @@ export class OutlineEditor {
         console.log(
             '[OutlineEditor] Double-click detected. isGlyphEditMode:',
             this.active,
-            'selectedLayerId:',
-            this.selectedLayerId,
+            'selectedDrawingId:',
+            this.selectedDrawingId,
             'hoveredGlyphIndex:',
             this.hoveredGlyphIndex,
             'hoveredComponentIndex:',
@@ -10471,15 +10575,15 @@ export class OutlineEditor {
                 return true;
             }
 
-            const hoveredLayerTreeIndex =
-                this.glyphCanvas.stackPreviewAnimator.hoveredLayerTreeIndex;
-            if (hoveredLayerTreeIndex === null) {
+            const hoveredDrawingTreeIndex =
+                this.glyphCanvas.stackPreviewAnimator.hoveredDrawingTreeIndex;
+            if (hoveredDrawingTreeIndex === null) {
                 return true;
             }
 
             const node =
-                this.glyphCanvas.stackPreviewAnimator.layerTree[
-                    hoveredLayerTreeIndex
+                this.glyphCanvas.stackPreviewAnimator.drawingTree[
+                    hoveredDrawingTreeIndex
                 ];
 
             if (!node) {
@@ -10494,7 +10598,7 @@ export class OutlineEditor {
         }
 
         // If in edit mode with a component/point/anchor hovered, prioritize that over glyph switching
-        if (this.active && this.layerData && !this.isPreviewMode) {
+        if (this.active && this.drawingData && !this.isPreviewMode) {
             // Double-click on point - toggle smooth for all selected points
             if (this.hoveredPointIndex) {
                 this.togglePointSmoothSelection(
@@ -10534,7 +10638,7 @@ export class OutlineEditor {
         }
 
         // Double-click on other glyph - switch to that glyph
-        // Check this after edit mode interactions, but before checking selectedLayerId,
+        // Check this after edit mode interactions, but before checking selectedDrawingId,
         // so it works even when interpolating
         if (this.hoveredGlyphIndex >= 0) {
             console.log(
@@ -10555,8 +10659,8 @@ export class OutlineEditor {
 
         if (
             !this.active ||
-            !this.selectedLayerId ||
-            !this.layerData ||
+            !this.selectedDrawingId ||
+            !this.drawingData ||
             this.isPreviewMode
         )
             return;
@@ -10812,9 +10916,9 @@ export class OutlineEditor {
                     p.nodeIndex === hoveredPoint.nodeIndex
             );
             const isInSelection = existingIndex >= 0;
-            const currentLayerData = this.getCurrentLayerDataFromStack();
+            const currentDrawingData = this.getCurrentDrawingDataFromStack();
             const contour = getEditableContour(
-                currentLayerData?.shapes?.[hoveredPoint.contourIndex]
+                currentDrawingData?.shapes?.[hoveredPoint.contourIndex]
             );
             const hoveredNode = contour?.nodes[hoveredPoint.nodeIndex];
             const canStartShiftOffCurveDrag =
@@ -10863,9 +10967,10 @@ export class OutlineEditor {
                     );
                 this._dragSeparatedFromCoincidentEndpointPair =
                     !this._dragStartEndpointsCoincident;
-                const dragStartLayerData = this.getCurrentLayerDataFromStack();
+                const dragStartDrawingData =
+                    this.getCurrentDrawingDataFromStack();
                 const dragStartContour = getEditableContour(
-                    dragStartLayerData?.shapes?.[hoveredPoint.contourIndex]
+                    dragStartDrawingData?.shapes?.[hoveredPoint.contourIndex]
                 );
                 const dragStartNode =
                     dragStartContour?.nodes?.[hoveredPoint.nodeIndex];
@@ -10926,7 +11031,7 @@ export class OutlineEditor {
                 }
                 // If already in selection, keep all selected components, points, and anchors
 
-                if (this.isAutomaticComposedLayer()) {
+                if (this.isAutomaticComposedDrawing()) {
                     this.glyphCanvas.updatePropertyPanel();
                     this.glyphCanvas.render();
                     return;
@@ -10959,42 +11064,42 @@ export class OutlineEditor {
         this.beginMarqueeSelection(e);
     }
 
-    private async ensureLayerSelectedForEditing(): Promise<boolean> {
-        if (this.selectedLayerId) {
+    private async ensureDrawingSelectedForEditing(): Promise<boolean> {
+        if (this.selectedDrawingId) {
             return true;
         }
 
-        if (this.active && !!this.layerData) {
+        if (this.active && !!this.drawingData) {
             return true;
         }
 
-        await this.autoSelectMatchingLayer();
-        if (this.selectedLayerId) {
+        await this.autoSelectMatchingDrawing();
+        if (this.selectedDrawingId) {
             return true;
         }
 
-        const sortedLayers = this.glyphCanvas.getSortedLayers();
-        if (sortedLayers.length === 0) {
+        const sortedDrawings = this.glyphCanvas.getSortedDrawings();
+        if (sortedDrawings.length === 0) {
             return false;
         }
 
-        const fallbackLayer = this.getFullLayerData(sortedLayers[0].id);
-        if (!fallbackLayer) {
+        const fallbackDrawing = this.getFullDrawingData(sortedDrawings[0].id);
+        if (!fallbackDrawing) {
             return false;
         }
 
-        await this.selectLayer(fallbackLayer);
-        return !!this.selectedLayerId;
+        await this.selectDrawing(fallbackDrawing);
+        return !!this.selectedDrawingId;
     }
 
     private async enterComponentEditingFromHover(
         componentIndex: number,
         e: MouseEvent | null
     ): Promise<void> {
-        const hasLayer = await this.ensureLayerSelectedForEditing();
-        if (!hasLayer) {
+        const hasDrawing = await this.ensureDrawingSelectedForEditing();
+        if (!hasDrawing) {
             console.warn(
-                '[OutlineEditor] Cannot enter component editing: no selectable layer available'
+                '[OutlineEditor] Cannot enter component editing: no selectable drawing available'
             );
             return;
         }
@@ -11006,10 +11111,10 @@ export class OutlineEditor {
     private async enterComponentEditingByPath(
         componentPath: number[]
     ): Promise<void> {
-        const hasLayer = await this.ensureLayerSelectedForEditing();
-        if (!hasLayer) {
+        const hasDrawing = await this.ensureDrawingSelectedForEditing();
+        if (!hasDrawing) {
             console.warn(
-                '[OutlineEditor] Cannot enter component editing path: no selectable layer available'
+                '[OutlineEditor] Cannot enter component editing path: no selectable drawing available'
             );
             return;
         }
@@ -11053,7 +11158,7 @@ export class OutlineEditor {
      * Collect on-curve node positions as snap candidates.
      *
      * Returns positions in **active-glyph-local** coordinates:
-     * - Nodes from the active glyph's current edited layer (all, or minus dragged when excludeDraggedPoints=true)
+     * - Nodes from the active glyph's current edited drawing (all, or minus dragged when excludeDraggedPoints=true)
      * - Nodes from the directly adjacent left/right glyphs in the text run (offset to active-glyph space)
      *
      * @param excludeDraggedPoints - when true, skip the currently-selected (dragged) nodes
@@ -11062,7 +11167,7 @@ export class OutlineEditor {
         shapes: Babelfont.Shape[] | undefined,
         source: SnapCandidate['source'],
         parentTransform: Transform = [1, 0, 0, 1, 0, 0],
-        masterId: string | null | undefined = null,
+        stationId: string | null | undefined = null,
         fontModel: any = (window as any).currentFontModel
     ): SnapCandidate[] {
         fontModel = fontModel || fontManager.currentFont?.fontModel;
@@ -11090,19 +11195,22 @@ export class OutlineEditor {
                     const componentGlyph = fontModel.findGlyph(
                         componentData.reference
                     );
-                    if (componentGlyph?.layers?.length) {
-                        const componentLayer =
-                            (masterId && componentGlyph.findLayerByMasterId
-                                ? componentGlyph.findLayerByMasterId(masterId)
-                                : undefined) ||
-                            (masterId
-                                ? componentGlyph.layers.find(
-                                      (candidate: any) =>
-                                          candidate.master?.master === masterId
+                    if (componentGlyph?.drawings?.length) {
+                        const componentDrawing =
+                            (stationId && componentGlyph.findDrawingByStationId
+                                ? componentGlyph.findDrawingByStationId(
+                                      stationId
                                   )
                                 : undefined) ||
-                            componentGlyph.layers[0];
-                        componentShapes = componentLayer?.shapes;
+                            (stationId
+                                ? componentGlyph.drawings.find(
+                                      (candidate: any) =>
+                                          candidate.station?.master ===
+                                          stationId
+                                  )
+                                : undefined) ||
+                            componentGlyph.drawings[0];
+                        componentShapes = componentDrawing?.shapes;
                     }
                 }
 
@@ -11111,7 +11219,7 @@ export class OutlineEditor {
                         componentShapes,
                         source,
                         combinedTransform,
-                        masterId,
+                        stationId,
                         fontModel
                     )
                 );
@@ -11141,8 +11249,8 @@ export class OutlineEditor {
 
     private _beginAdjacentSnapInterpolationSession(): void {
         this._adjacentSnapInterpolationSessionId += 1;
-        this._adjacentSnapInterpolatedLayerCache.clear();
-        this._pendingAdjacentSnapInterpolatedLayerRequests.clear();
+        this._adjacentSnapInterpolatedDrawingCache.clear();
+        this._pendingAdjacentSnapInterpolatedDrawingRequests.clear();
     }
 
     private _serializeAdjacentSnapUserspaceLocation(
@@ -11165,55 +11273,61 @@ export class OutlineEditor {
         return `${glyphName}|${this._serializeAdjacentSnapUserspaceLocation(location)}`;
     }
 
-    private _getEffectiveDesignLocationForLayerMatch(
-        layer: any,
-        masters: Babelfont.Master[]
+    private _getEffectiveDesignLocationForDrawingMatch(
+        drawing: any,
+        stations: Babelfont.Master[]
     ): DesignspaceLocation | undefined {
-        const hasLayerLocation =
-            !!layer?.location && Object.keys(layer.location).length > 0;
-        if (hasLayerLocation) {
-            return layer.location;
+        const hasDrawingLocation =
+            !!drawing?.location && Object.keys(drawing.location).length > 0;
+        if (hasDrawingLocation) {
+            return drawing.location;
         }
 
-        const masterId = layer?.master?.master || (layer as any)?._master;
-        if (!masterId) {
+        const stationId =
+            drawing?.station?.master || (drawing as any)?._station;
+        if (!stationId) {
             return undefined;
         }
 
-        return masters.find((candidate) => candidate.id === masterId)?.location;
+        return stations.find((candidate) => candidate.id === stationId)
+            ?.location;
     }
 
-    private _logLayerMatchDiagnostics(
+    private _logDrawingMatchDiagnostics(
         glyphName: string,
         userspaceLocation: UserspaceLocation,
         currentDesignspaceLocation: DesignspaceLocation,
-        layers: any[],
-        masters: Babelfont.Master[],
+        drawings: any[],
+        stations: Babelfont.Master[],
         axisTags: string[],
         options?: {
-            excludeLayerId?: string | null;
+            excludeDrawingId?: string | null;
             excludeGlyphName?: string | null;
         },
-        selectedLayer?: any | null
+        selectedDrawing?: any | null
     ): void {
-        const shouldExcludeCurrentGlyphLayer =
+        const shouldExcludeCurrentGlyphDrawing =
             !options?.excludeGlyphName ||
             glyphName === options.excludeGlyphName;
 
-        const candidateSummary = layers.map((layer: any) => {
+        const candidateSummary = drawings.map((drawing: any) => {
             const effectiveDesignLocation =
-                this._getEffectiveDesignLocationForLayerMatch(layer, masters);
-            const hasLayerLocation =
-                !!layer?.location && Object.keys(layer.location).length > 0;
-            const masterId = layer?.master?.master || (layer as any)?._master;
+                this._getEffectiveDesignLocationForDrawingMatch(
+                    drawing,
+                    stations
+                );
+            const hasDrawingLocation =
+                !!drawing?.location && Object.keys(drawing.location).length > 0;
+            const stationId =
+                drawing?.station?.master || (drawing as any)?._station;
 
             return {
-                id: layer?.id || null,
-                name: layer?.name || null,
-                masterType: layer?.master?.type || null,
-                masterId,
-                hasLayerLocation,
-                layerLocation: layer?.location || null,
+                id: drawing?.id || null,
+                name: drawing?.name || null,
+                stationType: drawing?.station?.type || null,
+                masterId: stationId,
+                hasLayerLocation: hasDrawingLocation,
+                drawingLocation: drawing?.location || null,
                 effectiveDesignLocation: effectiveDesignLocation || null,
                 matches: locationsMatchWithinTolerance(
                     effectiveDesignLocation,
@@ -11221,19 +11335,19 @@ export class OutlineEditor {
                     axisTags
                 ),
                 excluded: !!(
-                    shouldExcludeCurrentGlyphLayer &&
-                    options?.excludeLayerId &&
-                    layer?.id === options.excludeLayerId
+                    shouldExcludeCurrentGlyphDrawing &&
+                    options?.excludeDrawingId &&
+                    drawing?.id === options.excludeDrawingId
                 )
             };
         });
 
-        console.log('[OutlineEditor] Root layer match diagnostics', {
+        console.log('[OutlineEditor] Root drawing match diagnostics', {
             glyphName,
             stack: this.glyphStack,
-            selectedLayerId: this.selectedLayerId,
-            clickedLayerId: selectedLayer?.id || null,
-            excludeLayerId: options?.excludeLayerId || null,
+            selectedDrawingId: this.selectedDrawingId,
+            clickedDrawingId: selectedDrawing?.id || null,
+            excludeDrawingId: options?.excludeDrawingId || null,
             excludeGlyphName: options?.excludeGlyphName || null,
             userspaceLocation,
             currentDesignspaceLocation,
@@ -11246,13 +11360,13 @@ export class OutlineEditor {
             this.parseGlyphStack()[0]?.glyphName ||
             this.glyphCanvas.getCurrentGlyphName();
 
-        if (this.selectedLayerId && rootGlyphName) {
-            const layerLocation = this.getUserspaceLocationForLayer(
-                this.selectedLayerId,
+        if (this.selectedDrawingId && rootGlyphName) {
+            const drawingLocation = this.getUserspaceLocationForDrawing(
+                this.selectedDrawingId,
                 rootGlyphName
             );
-            if (layerLocation) {
-                return layerLocation;
+            if (drawingLocation) {
+                return drawingLocation;
             }
         }
 
@@ -11263,13 +11377,13 @@ export class OutlineEditor {
             : null;
     }
 
-    private _findMatchingLayerForGlyphAtUserspaceLocation(
+    private _findMatchingDrawingForGlyphAtUserspaceLocation(
         glyphName: string,
         userspaceLocation: UserspaceLocation,
         options?: {
-            excludeLayerId?: string | null;
+            excludeDrawingId?: string | null;
             excludeGlyphName?: string | null;
-            allowedLayerIds?: string[];
+            allowedDrawingIds?: string[];
         }
     ): any | null {
         const fontModel = fontManager.currentFont?.fontModel;
@@ -11283,12 +11397,12 @@ export class OutlineEditor {
             fontModel.glyphs.find(
                 (candidate: any) => candidate.name === glyphName
             );
-        if (!glyph?.layers?.length) {
+        if (!glyph?.drawings?.length) {
             return null;
         }
 
-        const masters: Babelfont.Master[] = (fontModel.masters || []) as any;
-        if (!masters.length) {
+        const stations: Babelfont.Master[] = (fontModel.stations || []) as any;
+        if (!stations.length) {
             return null;
         }
 
@@ -11297,7 +11411,7 @@ export class OutlineEditor {
             fontModel.axes || []
         );
         const axisTags = (fontModel.axes || []).map((axis) => axis.tag);
-        const shouldExcludeCurrentGlyphLayer =
+        const shouldExcludeCurrentGlyphDrawing =
             !options?.excludeGlyphName ||
             glyphName === options.excludeGlyphName;
         const shouldLogDiagnostics =
@@ -11305,46 +11419,49 @@ export class OutlineEditor {
             glyphName ===
                 (this.parseGlyphStack()[0]?.glyphName ||
                     this.glyphCanvas.getCurrentGlyphName()) &&
-            !!options?.excludeLayerId;
+            !!options?.excludeDrawingId;
 
         if (shouldLogDiagnostics) {
-            this._logLayerMatchDiagnostics(
+            this._logDrawingMatchDiagnostics(
                 glyphName,
                 userspaceLocation,
                 currentDesignspaceLocation,
-                glyph.layers,
-                masters,
+                glyph.drawings,
+                stations,
                 axisTags,
                 options,
-                this.resolveLayerModel(this.selectedLayerId)
+                this.resolveDrawingModel(this.selectedDrawingId)
             );
         }
 
-        const candidateLayers = options?.allowedLayerIds
+        const candidateDrawings = options?.allowedDrawingIds
             ? glyph.featureVariations
-                  .flatMap((featureVariation: any) => featureVariation.layers)
-                  .filter((layer: any) =>
-                      options.allowedLayerIds!.includes(layer.id)
+                  .flatMap((featureVariation: any) => featureVariation.drawings)
+                  .filter((drawing: any) =>
+                      options.allowedDrawingIds!.includes(drawing.id)
                   )
-            : glyph.layers;
-        const matchingLayers = candidateLayers.filter((layer: any) => {
+            : glyph.drawings;
+        const matchingDrawings = candidateDrawings.filter((drawing: any) => {
             if (
-                options?.allowedLayerIds &&
-                !options.allowedLayerIds.includes(layer.id)
+                options?.allowedDrawingIds &&
+                !options.allowedDrawingIds.includes(drawing.id)
             ) {
                 return false;
             }
 
             if (
-                shouldExcludeCurrentGlyphLayer &&
-                options?.excludeLayerId &&
-                layer.id === options.excludeLayerId
+                shouldExcludeCurrentGlyphDrawing &&
+                options?.excludeDrawingId &&
+                drawing.id === options.excludeDrawingId
             ) {
                 return false;
             }
 
             const effectiveDesignLocation =
-                this._getEffectiveDesignLocationForLayerMatch(layer, masters);
+                this._getEffectiveDesignLocationForDrawingMatch(
+                    drawing,
+                    stations
+                );
 
             return locationsMatchWithinTolerance(
                 effectiveDesignLocation,
@@ -11353,28 +11470,28 @@ export class OutlineEditor {
             );
         });
 
-        if (!matchingLayers.length) {
+        if (!matchingDrawings.length) {
             return null;
         }
 
-        matchingLayers.sort((left: any, right: any) => {
-            const leftHasLayerLocation =
+        matchingDrawings.sort((left: any, right: any) => {
+            const leftHasDrawingLocation =
                 !!left.location && Object.keys(left.location).length > 0;
-            const rightHasLayerLocation =
+            const rightHasDrawingLocation =
                 !!right.location && Object.keys(right.location).length > 0;
 
-            const leftPriority = leftHasLayerLocation
+            const leftPriority = leftHasDrawingLocation
                 ? 0
-                : left.master?.type === 'DefaultForMaster'
+                : left.station?.type === 'DefaultForMaster'
                   ? 1
-                  : left.master?.type === 'AssociatedWithMaster'
+                  : left.station?.type === 'AssociatedWithMaster'
                     ? 2
                     : 3;
-            const rightPriority = rightHasLayerLocation
+            const rightPriority = rightHasDrawingLocation
                 ? 0
-                : right.master?.type === 'DefaultForMaster'
+                : right.station?.type === 'DefaultForMaster'
                   ? 1
-                  : right.master?.type === 'AssociatedWithMaster'
+                  : right.station?.type === 'AssociatedWithMaster'
                     ? 2
                     : 3;
 
@@ -11385,7 +11502,7 @@ export class OutlineEditor {
             return String(left.id || '').localeCompare(String(right.id || ''));
         });
 
-        const bestMatch = matchingLayers[0] || null;
+        const bestMatch = matchingDrawings[0] || null;
         if (!bestMatch) {
             return null;
         }
@@ -11393,7 +11510,7 @@ export class OutlineEditor {
         return bestMatch;
     }
 
-    private _requestAdjacentSnapInterpolatedLayer(
+    private _requestAdjacentSnapInterpolatedDrawing(
         glyphName: string,
         userspaceLocation: UserspaceLocation
     ): void {
@@ -11407,14 +11524,14 @@ export class OutlineEditor {
             userspaceLocation
         );
         if (
-            this._adjacentSnapInterpolatedLayerCache.has(cacheKey) ||
-            this._pendingAdjacentSnapInterpolatedLayerRequests.has(cacheKey)
+            this._adjacentSnapInterpolatedDrawingCache.has(cacheKey) ||
+            this._pendingAdjacentSnapInterpolatedDrawingRequests.has(cacheKey)
         ) {
             return;
         }
 
         const sessionId = this._adjacentSnapInterpolationSessionId;
-        this._pendingAdjacentSnapInterpolatedLayerRequests.add(cacheKey);
+        this._pendingAdjacentSnapInterpolatedDrawingRequests.add(cacheKey);
 
         void fontCompilation
             .sendMessage({
@@ -11433,7 +11550,7 @@ export class OutlineEditor {
                         '[OutlineEditor] Failed to fetch adjacent snap outlines:',
                         response.error
                     );
-                    this._adjacentSnapInterpolatedLayerCache.set(
+                    this._adjacentSnapInterpolatedDrawingCache.set(
                         cacheKey,
                         null
                     );
@@ -11446,23 +11563,23 @@ export class OutlineEditor {
                 );
 
                 if (!outline) {
-                    this._adjacentSnapInterpolatedLayerCache.set(
+                    this._adjacentSnapInterpolatedDrawingCache.set(
                         cacheKey,
                         null
                     );
                     return;
                 }
 
-                const normalizedLayer = LayerDataNormalizer.normalize(
+                const normalizedDrawing = DrawingDataNormalizer.normalize(
                     {
                         width: outline.width ?? 0,
                         shapes: outline.shapes || []
                     },
                     true
                 );
-                this._adjacentSnapInterpolatedLayerCache.set(
+                this._adjacentSnapInterpolatedDrawingCache.set(
                     cacheKey,
-                    normalizedLayer
+                    normalizedDrawing
                 );
             })
             .catch((error: any) => {
@@ -11473,14 +11590,14 @@ export class OutlineEditor {
                     '[OutlineEditor] Adjacent snap outline request failed:',
                     error
                 );
-                this._adjacentSnapInterpolatedLayerCache.set(cacheKey, null);
+                this._adjacentSnapInterpolatedDrawingCache.set(cacheKey, null);
             })
             .finally(() => {
                 if (sessionId !== this._adjacentSnapInterpolationSessionId) {
                     return;
                 }
 
-                this._pendingAdjacentSnapInterpolatedLayerRequests.delete(
+                this._pendingAdjacentSnapInterpolatedDrawingRequests.delete(
                     cacheKey
                 );
 
@@ -11493,25 +11610,25 @@ export class OutlineEditor {
 
     private _resolveAdjacentSnapLayerData(
         glyphName: string,
-        masterId: string | null | undefined,
+        stationId: string | null | undefined,
         fontModel: any
     ): Babelfont.Layer | null {
         const userspaceLocation =
             this._getCurrentAdjacentSnapUserspaceLocation();
         if (userspaceLocation) {
-            const matchingLayer =
-                this._findMatchingLayerForGlyphAtUserspaceLocation(
+            const matchingDrawing =
+                this._findMatchingDrawingForGlyphAtUserspaceLocation(
                     glyphName,
                     userspaceLocation
                 );
 
-            if (matchingLayer?.id) {
-                const exactLayerData = this.buildExactLayerDataFromModel(
+            if (matchingDrawing?.id) {
+                const exactDrawingData = this.buildExactDrawingDataFromModel(
                     glyphName,
-                    matchingLayer.id
+                    matchingDrawing.id
                 );
-                if (exactLayerData) {
-                    return exactLayerData;
+                if (exactDrawingData) {
+                    return exactDrawingData;
                 }
             }
 
@@ -11519,14 +11636,14 @@ export class OutlineEditor {
                 glyphName,
                 userspaceLocation
             );
-            if (this._adjacentSnapInterpolatedLayerCache.has(cacheKey)) {
+            if (this._adjacentSnapInterpolatedDrawingCache.has(cacheKey)) {
                 return (
-                    this._adjacentSnapInterpolatedLayerCache.get(cacheKey) ||
+                    this._adjacentSnapInterpolatedDrawingCache.get(cacheKey) ||
                     null
                 );
             }
 
-            this._requestAdjacentSnapInterpolatedLayer(
+            this._requestAdjacentSnapInterpolatedDrawing(
                 glyphName,
                 userspaceLocation
             );
@@ -11534,23 +11651,24 @@ export class OutlineEditor {
         }
 
         const glyphWrapper = glyphName ? fontModel?.findGlyph(glyphName) : null;
-        if (!glyphWrapper?.layers?.length) {
+        if (!glyphWrapper?.drawings?.length) {
             return null;
         }
 
-        const layer =
-            (masterId && glyphWrapper.findLayerByMasterId
-                ? glyphWrapper.findLayerByMasterId(masterId)
+        const drawing =
+            (stationId && glyphWrapper.findDrawingByStationId
+                ? glyphWrapper.findDrawingByStationId(stationId)
                 : undefined) ||
-            (masterId
-                ? glyphWrapper.layers.find(
-                      (candidate: any) => candidate.master?.master === masterId
+            (stationId
+                ? glyphWrapper.drawings.find(
+                      (candidate: any) =>
+                          candidate.station?.master === stationId
                   )
                 : undefined) ||
-            glyphWrapper.layers[0];
+            glyphWrapper.drawings[0];
 
-        if (layer?.id) {
-            return this.buildExactLayerDataFromModel(glyphName, layer.id);
+        if (drawing?.id) {
+            return this.buildExactDrawingDataFromModel(glyphName, drawing.id);
         }
 
         return null;
@@ -11561,7 +11679,7 @@ export class OutlineEditor {
         source: 'left' | 'right',
         activeWorldX: number,
         activeWorldY: number,
-        masterId: string | null | undefined
+        stationId: string | null | undefined
     ): SnapCandidate[] {
         const tre = this.glyphCanvas.textRunEditor;
         if (!tre || glyphIndex < 0 || glyphIndex >= tre.shapedGlyphs.length) {
@@ -11586,7 +11704,7 @@ export class OutlineEditor {
                     explicitOutline.shapes as Babelfont.Shape[],
                     source,
                     [1, 0, 0, 1, offsetX, offsetY],
-                    masterId,
+                    stationId,
                     fontModel
                 );
             }
@@ -11598,20 +11716,20 @@ export class OutlineEditor {
             return [];
         }
 
-        const layer = this._resolveAdjacentSnapLayerData(
+        const drawing = this._resolveAdjacentSnapLayerData(
             glyphName,
-            masterId,
+            stationId,
             fontModel
         );
-        if (!layer?.shapes?.length) {
+        if (!drawing?.shapes?.length) {
             return [];
         }
 
         return this._collectOnCurveCandidatesFromShapes(
-            layer?.shapes,
+            drawing?.shapes,
             source,
             [1, 0, 0, 1, offsetX, offsetY],
-            masterId,
+            stationId,
             fontModel
         );
     }
@@ -11655,8 +11773,8 @@ export class OutlineEditor {
             return [];
         }
 
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        if (!currentLayerData?.shapes) {
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        if (!currentDrawingData?.shapes) {
             return [];
         }
 
@@ -11673,7 +11791,7 @@ export class OutlineEditor {
             : new Set<string>();
 
         const targets: CloseTargetMarker[] = [];
-        currentLayerData.shapes.forEach((shape, contourIndex) => {
+        currentDrawingData.shapes.forEach((shape, contourIndex) => {
             const contour = getEditableContour(shape);
             if (!contour || contour.closed || contour.nodes.length < 1) {
                 return;
@@ -11846,10 +11964,10 @@ export class OutlineEditor {
         const activeNonDragged: SnapCandidate[] = [];
         const activeDragged: SnapCandidate[] = [];
 
-        const activeLayerData = this.getCurrentLayerDataFromStack();
-        if (includeGeneralSnapCandidates && activeLayerData) {
-            if (activeLayerData.shapes) {
-                activeLayerData.shapes.forEach((shape, ci) => {
+        const activeDrawingData = this.getCurrentDrawingDataFromStack();
+        if (includeGeneralSnapCandidates && activeDrawingData) {
+            if (activeDrawingData.shapes) {
+                activeDrawingData.shapes.forEach((shape, ci) => {
                     const contour = getEditableContour(shape);
                     if (!contour) return;
                     contour.nodes.forEach((node, ni) => {
@@ -11877,7 +11995,7 @@ export class OutlineEditor {
             const draggedAnchorIndices = this.isDraggingAnchor
                 ? new Set(this.selectedAnchors)
                 : null;
-            (activeLayerData.anchors || []).forEach(
+            (activeDrawingData.anchors || []).forEach(
                 (anchor: { x?: number; y?: number }, index: number) => {
                     const x = anchor?.x;
                     const y = anchor?.y;
@@ -11924,8 +12042,8 @@ export class OutlineEditor {
         const leftCandidates: SnapCandidate[] = [];
         const rightCandidates: SnapCandidate[] = [];
         if (includeGeneralSnapCandidates) {
-            if (this.isPairedLayerVisible()) {
-                for (const path of this.getPairedLayerGhostPaths()) {
+            if (this.isPairedDrawingVisible()) {
+                for (const path of this.getPairedDrawingGhostPaths()) {
                     for (const node of path.nodes) {
                         if (isOnCurveNode(node)) {
                             pairedCandidates.push({
@@ -11944,10 +12062,10 @@ export class OutlineEditor {
                 (window as any).currentFontModel;
             if (tre && tre.selectedGlyphIndex >= 0 && fontModel) {
                 const idx = tre.selectedGlyphIndex;
-                const masterId =
-                    this.getCurrentLayerModel()?.master?.master ||
-                    tre.selectedMasterId ||
-                    fontModel.masters?.[0]?.id;
+                const stationId =
+                    this.getCurrentDrawingModel()?.station?.master ||
+                    tre.selectedStationId ||
+                    fontModel.stations?.[0]?.id;
                 const activePos = tre._getGlyphPosition(idx);
                 const wx = activePos.xPosition + activePos.xOffset;
                 const wy = activePos.yOffset;
@@ -11962,7 +12080,7 @@ export class OutlineEditor {
                             adjIdx < idx ? 'left' : 'right',
                             wx,
                             wy,
-                            masterId
+                            stationId
                         )
                     );
                 }
@@ -12012,7 +12130,7 @@ export class OutlineEditor {
         const scale = this.glyphCanvas.viewportManager?.scale || 1;
         const snapDistFontUnits =
             APP_SETTINGS.OUTLINE_EDITOR.SNAP_DISTANCE_PX / scale;
-        const width = activeLayerData?.width;
+        const width = activeDrawingData?.width;
         const edgeXValues = !includeGeneralSnapCandidates
             ? []
             : typeof width === 'number' && Number.isFinite(width)
@@ -12138,24 +12256,25 @@ export class OutlineEditor {
 
     /**
      * Return the position of the first selected point from the current live
-     * layer data, or null if none is available.
+     * drawing data, or null if none is available.
      */
     private _getPrimaryDragNodePos(): { x: number; y: number } | null {
         if (this.isDraggingTransientAnchor && this._transientDrag) {
             return { x: this._transientDrag.x, y: this._transientDrag.y };
         }
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        if (!currentLayerData) return null;
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        if (!currentDrawingData) return null;
         if (this.isDraggingAnchor) {
-            const anchor = currentLayerData.anchors?.[this.selectedAnchors[0]];
+            const anchor =
+                currentDrawingData.anchors?.[this.selectedAnchors[0]];
             if (anchor) {
                 return { x: anchor.x, y: anchor.y };
             }
         }
-        if (!currentLayerData.shapes) return null;
+        if (!currentDrawingData.shapes) return null;
         if (this._dragConnectionSourcePoint) {
             const contour = getEditableContour(
-                currentLayerData.shapes[
+                currentDrawingData.shapes[
                     this._dragConnectionSourcePoint.contourIndex
                 ]
             );
@@ -12167,7 +12286,7 @@ export class OutlineEditor {
         }
         for (const { contourIndex, nodeIndex } of this.selectedPoints) {
             const contour = getEditableContour(
-                currentLayerData.shapes[contourIndex]
+                currentDrawingData.shapes[contourIndex]
             );
             const node = contour?.nodes[nodeIndex];
             if (node) {
@@ -12393,9 +12512,9 @@ export class OutlineEditor {
             return null;
         }
 
-        const currentLayerData = this.getCurrentLayerDataFromStack();
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
         const contour = getEditableContour(
-            currentLayerData?.shapes?.[session.shapeIndex]
+            currentDrawingData?.shapes?.[session.shapeIndex]
         );
         const node = contour?.nodes?.[session.originNodeIndex];
         return node ? { x: node.x, y: node.y } : null;
@@ -12488,14 +12607,14 @@ export class OutlineEditor {
             return;
         }
 
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        if (!currentLayerData?.shapes) {
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        if (!currentDrawingData?.shapes) {
             return;
         }
 
         const { contourIndex, nodeIndex } = this.selectedPoints[0];
         const contour = getEditableContour(
-            currentLayerData.shapes[contourIndex]
+            currentDrawingData.shapes[contourIndex]
         );
         if (!contour) {
             return;
@@ -12527,14 +12646,14 @@ export class OutlineEditor {
             return;
         }
 
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        if (!currentLayerData?.shapes) {
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        if (!currentDrawingData?.shapes) {
             return;
         }
 
         const { contourIndex, nodeIndex } = this.selectedPoints[0];
         const contour = getEditableContour(
-            currentLayerData.shapes[contourIndex]
+            currentDrawingData.shapes[contourIndex]
         );
         const node = contour?.nodes[nodeIndex];
         if (!contour || !node || !isOnCurveNode(node) || !node.smooth) {
@@ -12615,13 +12734,13 @@ export class OutlineEditor {
             return;
         }
 
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        if (!currentLayerData?.shapes) {
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        if (!currentDrawingData?.shapes) {
             return;
         }
 
         const contour = getEditableContour(
-            currentLayerData.shapes[constraint.contourIndex]
+            currentDrawingData.shapes[constraint.contourIndex]
         );
         const node = contour?.nodes[constraint.nodeIndex];
         if (!contour || !node || !checkNodeType(node)) {
@@ -12633,7 +12752,7 @@ export class OutlineEditor {
         const beforeY = node.y;
 
         this.applySelectedPointMove(
-            currentLayerData,
+            currentDrawingData,
             0,
             0,
             false,
@@ -12649,7 +12768,7 @@ export class OutlineEditor {
         if (appliedDeltaX !== 0 || appliedDeltaY !== 0) {
             this._hasMoved = true;
             this.updatePointDragDeltaX(appliedDeltaX);
-            this.applyMetricsKeysToCurrentEditedLayer();
+            this.applyMetricsKeysToCurrentEditedDrawing();
         }
 
         const recalc = this.transformMouseToComponentSpace();
@@ -12783,7 +12902,7 @@ export class OutlineEditor {
             (this.isDraggingPoint && this.selectedPoints.length > 0) ||
             this.isDraggingTransientAnchor
         ) {
-            if (this.layerData) {
+            if (this.drawingData) {
                 this._handleDrag(e);
             }
             return;
@@ -12801,18 +12920,18 @@ export class OutlineEditor {
     }
 
     private beginSelectionResize(e: MouseEvent): void {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
         const bounds = this.getSelectionTransformBounds();
         const handle = this.hoveredResizeHandle;
 
-        if (!currentLayerData || !bounds || !handle) {
+        if (!currentDrawingData || !bounds || !handle) {
             return;
         }
 
         const points: SelectionResizePointSnapshot[] = [];
         for (const point of this.selectedPoints) {
             const contour = getEditableContour(
-                currentLayerData.shapes?.[point.contourIndex]
+                currentDrawingData.shapes?.[point.contourIndex]
             );
             const node = contour?.nodes?.[point.nodeIndex];
             if (!node) {
@@ -12829,7 +12948,7 @@ export class OutlineEditor {
 
         const anchors: SelectionResizeAnchorSnapshot[] = [];
         for (const anchorIndex of this.selectedAnchors) {
-            const anchor = currentLayerData.anchors?.[anchorIndex];
+            const anchor = currentDrawingData.anchors?.[anchorIndex];
             if (!anchor) {
                 continue;
             }
@@ -12843,7 +12962,7 @@ export class OutlineEditor {
 
         const components: SelectionResizeComponentSnapshot[] = [];
         for (const componentIndex of this.selectedComponents) {
-            const shape = currentLayerData.shapes?.[componentIndex];
+            const shape = currentDrawingData.shapes?.[componentIndex];
             if (!shape || !('reference' in shape)) {
                 continue;
             }
@@ -12894,9 +13013,9 @@ export class OutlineEditor {
 
     private handleSelectionResizeDrag(e: MouseEvent): void {
         const snapshot = this.selectionResizeSnapshot;
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        const currentLayerModel = this.getCurrentLayerModel();
-        if (!snapshot || !currentLayerData) {
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        const currentDrawingModel = this.getCurrentDrawingModel();
+        if (!snapshot || !currentDrawingData) {
             return;
         }
 
@@ -12967,7 +13086,7 @@ export class OutlineEditor {
 
         for (const pointSnapshot of snapshot.points) {
             const contour = getEditableContour(
-                currentLayerData.shapes?.[pointSnapshot.contourIndex]
+                currentDrawingData.shapes?.[pointSnapshot.contourIndex]
             );
             const node = contour?.nodes?.[pointSnapshot.nodeIndex];
             if (!node) {
@@ -12985,7 +13104,7 @@ export class OutlineEditor {
 
         for (const anchorSnapshot of snapshot.anchors) {
             const anchor =
-                currentLayerData.anchors?.[anchorSnapshot.anchorIndex];
+                currentDrawingData.anchors?.[anchorSnapshot.anchorIndex];
             if (!anchor) {
                 continue;
             }
@@ -13001,7 +13120,7 @@ export class OutlineEditor {
 
         for (const componentSnapshot of snapshot.components) {
             const shape =
-                currentLayerData.shapes?.[componentSnapshot.componentIndex];
+                currentDrawingData.shapes?.[componentSnapshot.componentIndex];
             if (!shape || !('reference' in shape)) {
                 continue;
             }
@@ -13016,15 +13135,15 @@ export class OutlineEditor {
                 : decomposedTransform;
 
             const modelShape =
-                currentLayerModel?.shapes?.[componentSnapshot.componentIndex];
+                currentDrawingModel?.shapes?.[componentSnapshot.componentIndex];
             if (modelShape?.isComponent?.()) {
                 modelShape.asComponent().transform = decomposedTransform;
             }
         }
 
         if (snapshot.components.length > 0) {
-            currentLayerModel?.applyAutomaticCompositionToLayerData?.(
-                currentLayerData
+            currentDrawingModel?.applyAutomaticCompositionToDrawingData?.(
+                currentDrawingData
             );
         }
 
@@ -13170,7 +13289,7 @@ export class OutlineEditor {
                 (this.isDraggingTransientAnchor && this._transientDrag))
         ) {
             // Read primary node position once for this frame (avoids a
-            // redundant getCurrentLayerDataFromStack inside _applySnapToDelta)
+            // redundant getCurrentDrawingDataFromStack inside _applySnapToDelta)
             const primaryPos = this._getPrimaryDragNodePos();
             if (!this._snapCandidateCache && this._snapDragStartNodePos) {
                 if (isNodeSnappingEnabled()) {
@@ -13199,10 +13318,10 @@ export class OutlineEditor {
                     predictedTargetY
                 );
                 if (endpointSnapTarget && primaryPos) {
-                    const currentLayerData =
-                        this.getCurrentLayerDataFromStack();
+                    const currentDrawingData =
+                        this.getCurrentDrawingDataFromStack();
                     const targetContour = getEditableContour(
-                        currentLayerData?.shapes?.[
+                        currentDrawingData?.shapes?.[
                             endpointSnapTarget.shapeIndex
                         ]
                     );
@@ -13282,21 +13401,21 @@ export class OutlineEditor {
             this.schedulePendingDragMetricsUpdate();
         }
 
-        // Throttle saveLayerData during drag (every 50ms) — final save on mouseUp
+        // Throttle saveDrawingData during drag (every 50ms) — final save on mouseUp
         // Anchor drag recomposition and sidebearing drag live refresh already
-        // keep the model in sync and trigger compilation; saveLayerData would
+        // keep the model in sync and trigger compilation; saveDrawingData would
         // be redundant.
         // Guides are editing-time helpers.
         // The model is already mutated directly in _updateDraggedGuide;
-        // no saveLayerData or compilation is needed during drag.
+        // no saveDrawingData or compilation is needed during drag.
         // Yjs sync on mouse-up still enables undo/history; the committed-change
         // funnel detects the 'guide' edit type and skips compilation.
         if (this.isDraggingGuide) {
             this.queueNonCompilingLiveDragEdit();
-            // Model already updated via _updateDraggedGuide — no saveLayerData needed.
+            // Model already updated via _updateDraggedGuide — no saveDrawingData needed.
         } else if (this.isSlidingSmoothPointAlongCurve) {
             // Sliding a smooth point is applied directly to the model so linked
-            // layers stay in sync. Persist once on mouse up.
+            // drawings stay in sync. Persist once on mouse up.
         } else if (
             !this.isDraggingAnchor &&
             !this.isDraggingSidebearing &&
@@ -13309,7 +13428,7 @@ export class OutlineEditor {
                 !this.isDraggingPoint
             ) {
                 this._lastDragSaveTime = now;
-                this.saveLayerData('mouse-drag-outline');
+                this.saveDrawingData('mouse-drag-outline');
             }
         }
 
@@ -13326,7 +13445,7 @@ export class OutlineEditor {
             return;
         }
 
-        if (this.selectedGuideHandle.scope === 'layer') {
+        if (this.selectedGuideHandle.scope === 'drawing') {
             const accumulatedTransform = this.getAccumulatedTransform();
             const { localDeltaX, localDeltaY } =
                 this.transformRootDeltaToGuideSpace(
@@ -13334,10 +13453,10 @@ export class OutlineEditor {
                     deltaY,
                     accumulatedTransform
                 );
-            const currentLayerData = this.getCurrentLayerDataFromStack();
-            const currentLayerModel = this.getCurrentLayerModel();
+            const currentDrawingData = this.getCurrentDrawingDataFromStack();
+            const currentDrawingModel = this.getCurrentDrawingModel();
             const modelGuide =
-                currentLayerModel?.guides?.[this.selectedGuideHandle.index];
+                currentDrawingModel?.guides?.[this.selectedGuideHandle.index];
             if (!modelGuide?.pos) {
                 return;
             }
@@ -13345,10 +13464,10 @@ export class OutlineEditor {
             modelGuide.pos.x += localDeltaX;
             modelGuide.pos.y += localDeltaY;
 
-            if (currentLayerData) {
-                if (!currentLayerData.guides) {
-                    currentLayerData.guides = currentLayerModel?.guides?.map(
-                        (guide: any) => ({
+            if (currentDrawingData) {
+                if (!currentDrawingData.guides) {
+                    currentDrawingData.guides =
+                        currentDrawingModel?.guides?.map((guide: any) => ({
                             pos: {
                                 x: guide.pos.x,
                                 y: guide.pos.y,
@@ -13356,12 +13475,11 @@ export class OutlineEditor {
                             },
                             ...(guide.name && { name: guide.name }),
                             ...(guide.color && { color: guide.color })
-                        })
-                    );
+                        }));
                 }
 
                 const dataGuide =
-                    currentLayerData.guides?.[this.selectedGuideHandle.index];
+                    currentDrawingData.guides?.[this.selectedGuideHandle.index];
                 if (dataGuide?.pos) {
                     dataGuide.pos.x = modelGuide.pos.x;
                     dataGuide.pos.y = modelGuide.pos.y;
@@ -13371,8 +13489,8 @@ export class OutlineEditor {
             return;
         }
 
-        const master = this.getRootMasterModel();
-        const guide = master?.guides?.[this.selectedGuideHandle.index];
+        const station = this.getRootStationModel();
+        const guide = station?.guides?.[this.selectedGuideHandle.index];
         if (!guide?.pos) {
             return;
         }
@@ -13391,11 +13509,11 @@ export class OutlineEditor {
         constrainWithAltModifier: boolean = false,
         allowPointerFallback: boolean = false
     ): void {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        if (!currentLayerData || !currentLayerData.shapes) return;
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        if (!currentDrawingData || !currentDrawingData.shapes) return;
 
         this.applySelectedPointMove(
-            currentLayerData,
+            currentDrawingData,
             deltaX,
             deltaY,
             preserveHandlePositions,
@@ -13413,13 +13531,13 @@ export class OutlineEditor {
     ): OpenPathEndpointRef | null {
         if (
             !this.isDraggingPoint ||
-            !this.getCurrentLayerDataFromStack()?.shapes
+            !this.getCurrentDrawingDataFromStack()?.shapes
         ) {
             return null;
         }
 
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        if (!currentLayerData?.shapes) {
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        if (!currentDrawingData?.shapes) {
             return null;
         }
 
@@ -13432,7 +13550,7 @@ export class OutlineEditor {
 
         const { contourIndex, nodeIndex } = sourcePoint;
         const contour = getEditableContour(
-            currentLayerData.shapes[contourIndex]
+            currentDrawingData.shapes[contourIndex]
         );
         if (!contour || contour.closed || contour.nodes.length < 2) {
             return null;
@@ -13469,11 +13587,11 @@ export class OutlineEditor {
 
         for (
             let shapeIndex = 0;
-            shapeIndex < currentLayerData.shapes.length;
+            shapeIndex < currentDrawingData.shapes.length;
             shapeIndex++
         ) {
             const candidateContour = getEditableContour(
-                currentLayerData.shapes[shapeIndex]
+                currentDrawingData.shapes[shapeIndex]
             );
             if (
                 !candidateContour ||
@@ -13540,14 +13658,14 @@ export class OutlineEditor {
             return false;
         }
 
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        if (!currentLayerData?.shapes) {
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        if (!currentDrawingData?.shapes) {
             return false;
         }
 
         const { contourIndex, nodeIndex } = targetPoint;
         const contour = getEditableContour(
-            currentLayerData.shapes[contourIndex]
+            currentDrawingData.shapes[contourIndex]
         );
         if (!contour || contour.closed || contour.nodes.length < 2) {
             return false;
@@ -13598,10 +13716,10 @@ export class OutlineEditor {
     }
 
     _updateDraggedAnchors(deltaX: number, deltaY: number): void {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        if (!currentLayerData) return;
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        if (!currentDrawingData) return;
 
-        let anchors = currentLayerData.anchors || [];
+        let anchors = currentDrawingData.anchors || [];
         for (const anchorIndex of this.selectedAnchors) {
             const anchor = anchors[anchorIndex];
             if (anchor) {
@@ -13612,11 +13730,11 @@ export class OutlineEditor {
     }
 
     _updateDraggedComponents(deltaX: number, deltaY: number): void {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        if (!currentLayerData || !currentLayerData.shapes) return;
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        if (!currentDrawingData || !currentDrawingData.shapes) return;
 
         for (const compIndex of this.selectedComponents) {
-            const shape = currentLayerData.shapes[compIndex];
+            const shape = currentDrawingData.shapes[compIndex];
             if (shape && 'reference' in shape) {
                 if (!shape.transform) {
                     // Initialize transform if it doesn't exist
@@ -13660,16 +13778,16 @@ export class OutlineEditor {
                 this.selectedTransientAnchor = { ...drag };
                 this.rememberTransientAnchor(drag);
             }
-            const layer = this.getCurrentLayerModel();
+            const drawing = this.getCurrentDrawingModel();
             const glyph = this.getCurrentGlyphModel();
-            const masterId = layer?.master?.master;
-            if (moved && drag && glyph?.name && layer?.id && masterId) {
+            const stationId = drawing?.station?.master;
+            if (moved && drag && glyph?.name && drawing?.id && stationId) {
                 void commitTransientAnchor({
                     pluginId: drag.pluginId,
                     name: drag.name,
                     glyphName: glyph.name,
-                    layerId: layer.id,
-                    masterId,
+                    drawingId: drawing.id,
+                    stationId: stationId,
                     x: drag.x,
                     y: drag.y,
                     defaultX: drag.defaultX
@@ -13760,10 +13878,10 @@ export class OutlineEditor {
                   sourcePoint.nodeIndex
               )
             : null;
-        const currentLayerData = this.getCurrentLayerDataFromStack();
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
         const draggedContour = sourcePoint
             ? getEditableContour(
-                  currentLayerData?.shapes?.[sourcePoint.contourIndex]
+                  currentDrawingData?.shapes?.[sourcePoint.contourIndex]
               )
             : null;
         const draggedNode = sourcePoint
@@ -13848,7 +13966,7 @@ export class OutlineEditor {
                     await this.refreshFinalSidebearingWorkerStateBeforeCommit();
                 }
 
-                // Flush the final saveLayerData that throttling may have skipped
+                // Flush the final saveDrawingData that throttling may have skipped
                 if (this._hasMoved && dragType !== 'guide') {
                     if (
                         dragType === 'point' ||
@@ -13870,7 +13988,8 @@ export class OutlineEditor {
                         }
                     } else {
                         this._lastDragSaveTime = performance.now();
-                        const saveResult = this.saveLayerData(dragChangeSource);
+                        const saveResult =
+                            this.saveDrawingData(dragChangeSource);
                         if (
                             saveResult &&
                             typeof saveResult.then === 'function'
@@ -13886,7 +14005,7 @@ export class OutlineEditor {
                 // Only sync to Y.Doc if there was actual movement — avoids spurious undo entries
                 // from simple clicks on anchors/points/components that didn't move anything.
                 if (this._hasMoved) {
-                    // Build post-drag description (layerData already mutated — use coords-only)
+                    // Build post-drag description (drawingData already mutated — use coords-only)
                     let postDragDesc: string | undefined;
                     if (dragType === 'anchor') {
                         postDragDesc = this._buildAnchorDesc(true);
@@ -13972,7 +14091,7 @@ export class OutlineEditor {
                             compileChangeSource: 'mouse-drag-outline'
                         });
                     } else if (!(
-                        dragType === 'guide' && draggedGuideScope === 'master'
+                        dragType === 'guide' && draggedGuideScope === 'station'
                     )) {
                         // Encode the metrics-key edited side into newValue so
                         // inferSidebearingSideFromHistoryItem can detect it on undo.
@@ -14004,34 +14123,34 @@ export class OutlineEditor {
                             this._anchorAffectedGlyphNames = new Set(
                                 this._anchorAffectedGlyphNames
                             );
-                            const anchorCascadeLayerId =
-                                this.getCurrentLayerId() ??
-                                this.selectedLayerId;
+                            const anchorCascadeDrawingId =
+                                this.getCurrentDrawingId() ??
+                                this.selectedDrawingId;
                             const currentFont = fontManager.currentFont;
                             if (
                                 this._anchorAffectedGlyphNames.size > 0 &&
-                                anchorCascadeLayerId &&
+                                anchorCascadeDrawingId &&
                                 Array.isArray(
                                     currentFont?.babelfontData?.glyphs
                                 )
                             ) {
                                 const anchorCascadeTargets =
-                                    this.collectMatchingLayerWorkerReplayTargets(
+                                    this.collectMatchingDrawingWorkerReplayTargets(
                                         this._anchorAffectedGlyphNames,
-                                        anchorCascadeLayerId
+                                        anchorCascadeDrawingId
                                     );
                                 if (
                                     anchorCascadeTargets.length === 0 ||
                                     anchorCascadeTargets.some(
                                         (target) =>
-                                            !fontManager.syncLayerFromModelToStorage(
+                                            !fontManager.syncDrawingFromModelToStorage(
                                                 target.glyphName,
                                                 target.layerId
                                             )
                                     )
                                 ) {
                                     throw new Error(
-                                        'Unable to sync anchor cascade layers into canonical storage.'
+                                        'Unable to sync anchor cascade drawings into canonical storage.'
                                     );
                                 }
                             }
@@ -14041,14 +14160,15 @@ export class OutlineEditor {
                             parsed.length > 0
                                 ? parsed[parsed.length - 1].glyphName
                                 : this.glyphCanvas.getCurrentGlyphName();
-                        const activeLayerId =
-                            this.getCurrentLayerId() ?? this.selectedLayerId;
+                        const activeDrawingId =
+                            this.getCurrentDrawingId() ??
+                            this.selectedDrawingId;
                         const sourceTarget =
-                            activeLayerId && activeGlyphName
+                            activeDrawingId && activeGlyphName
                                 ? [
                                       {
                                           glyphName: activeGlyphName,
-                                          layerId: activeLayerId
+                                          layerId: activeDrawingId
                                       }
                                   ]
                                 : [];
@@ -14074,7 +14194,7 @@ export class OutlineEditor {
                             dragType === 'sidebearing'
                                 ? this._pendingSidebearingCommitSync
                                 : null;
-                        let changedLayerTargets: Array<{
+                        let changedDrawingTargets: Array<{
                             glyphName: string;
                             layerId: string;
                         }>;
@@ -14085,8 +14205,8 @@ export class OutlineEditor {
                         if (pendingSidebearingSync) {
                             // Reuse the single scope:'all' closure from
                             // refreshFinal — do not recompute on mouseup.
-                            changedLayerTargets =
-                                pendingSidebearingSync.changedLayerTargets;
+                            changedDrawingTargets =
+                                pendingSidebearingSync.changedDrawingTargets;
                             workerReplayTargets =
                                 pendingSidebearingSync.workerReplayTargets;
                         } else {
@@ -14095,8 +14215,8 @@ export class OutlineEditor {
                                 editKinds: dragEditKinds,
                                 scope: 'all'
                             });
-                            ({ changedLayerTargets, workerReplayTargets } =
-                                resolveLayerSyncTargetsFromClosure(
+                            ({ changedDrawingTargets, workerReplayTargets } =
+                                resolveDrawingSyncTargetsFromClosure(
                                     closure,
                                     sourceTarget,
                                     dragType === 'anchor'
@@ -14110,9 +14230,9 @@ export class OutlineEditor {
                             encodedPostDesc,
                             metricsKeySide,
                             {
-                                changedLayerTargets,
+                                changedDrawingTargets,
                                 workerReplayTargets,
-                                sourceLayerIsRecomposed:
+                                sourceDrawingIsRecomposed:
                                     !!pendingSidebearingSync
                             },
                             this.getCommittedCompileMetadata(dragChangeSource)
@@ -14123,19 +14243,21 @@ export class OutlineEditor {
                 endDragTransaction();
                 if (dragType === 'guide') {
                     const handle = this.selectedGuideHandle;
-                    const master = this.getRootMasterModel();
-                    const layerModel = this.getCurrentLayerModel();
+                    const station = this.getRootStationModel();
+                    const drawingModel = this.getCurrentDrawingModel();
                     const guide = handle
-                        ? handle.scope === 'master'
-                            ? master?.guides?.[handle.index]
-                            : layerModel?.guides?.[handle.index]
+                        ? handle.scope === 'station'
+                            ? station?.guides?.[handle.index]
+                            : drawingModel?.guides?.[handle.index]
                         : undefined;
                     if (guide && handle && window.compileFilterHost) {
                         void window.compileFilterHost.onGuideCommitted({
                             kind: 'position',
                             scope:
-                                handle.scope === 'layer' ? 'layer' : 'master',
-                            masterId: master?.id,
+                                handle.scope === 'drawing'
+                                    ? 'drawing'
+                                    : 'station',
+                            stationId: station?.id,
                             name: guide.name,
                             pos: {
                                 x: guide.pos?.x,
@@ -14151,7 +14273,7 @@ export class OutlineEditor {
                             new CustomEvent('glyphChanged', {
                                 detail: {
                                     glyphName: currentGlyphModel.name,
-                                    layerId: this.getCurrentLayerId()
+                                    layerId: this.getCurrentDrawingId()
                                 }
                             })
                         );
@@ -14184,7 +14306,7 @@ export class OutlineEditor {
                 this.hoveredResizeHandle = null;
 
                 // A remote change was deferred during the drag to avoid resetting
-                // layerData mid-drag. Now that the drag is complete, run the refresh.
+                // drawingData mid-drag. Now that the drag is complete, run the refresh.
                 if (this.pendingRemoteRefreshAfterDrag) {
                     this.pendingRemoteRefreshAfterDrag = false;
                     void queueCanvasRefreshFromCommittedModel();
@@ -14209,7 +14331,7 @@ export class OutlineEditor {
 
     // In outline editor mode, check for hovered components, anchors and points first (unless in preview mode), then other glyphs
     performHitDetection(e: MouseEvent | null): void {
-        if (!(this.active && this.layerData && !this.isPreviewMode)) return;
+        if (!(this.active && this.drawingData && !this.isPreviewMode)) return;
         if (this.glyphCanvas.stackPreviewAnimator.shouldRenderStackPreview()) {
             return;
         }
@@ -14284,8 +14406,8 @@ export class OutlineEditor {
             return null;
         }
         if (
-            this.selectedLayerId &&
-            this.layerData &&
+            this.selectedDrawingId &&
+            this.drawingData &&
             !this.isPreviewMode &&
             (this.hoveredGuideHandle !== null ||
                 this.hoveredSidebearingHandle !== null ||
@@ -14311,7 +14433,7 @@ export class OutlineEditor {
         getValue: (item: T) => U,
         hitRadius: number = 10
     ): U | null {
-        if (!this.layerData || !items) {
+        if (!this.drawingData || !items) {
             return null;
         }
         const { glyphX, glyphY } = this.transformMouseToComponentSpace();
@@ -14347,8 +14469,8 @@ export class OutlineEditor {
     updateHoveredResizeHandle(): void {
         if (
             !this.active ||
-            !this.selectedLayerId ||
-            !this.layerData ||
+            !this.selectedDrawingId ||
+            !this.drawingData ||
             this.isPreviewMode
         ) {
             this.hoveredResizeHandle = null;
@@ -14424,13 +14546,13 @@ export class OutlineEditor {
     }
 
     updateHoveredComponent(): void {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        if (!currentLayerData || !currentLayerData.shapes) {
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        if (!currentDrawingData || !currentDrawingData.shapes) {
             return;
         }
 
         // First, check for hovering near component origins, which take priority.
-        const components = currentLayerData.shapes
+        const components = currentDrawingData.shapes
             .map((shape: Babelfont.Shape, index: number) => ({
                 shape,
                 index
@@ -14475,10 +14597,10 @@ export class OutlineEditor {
 
             for (
                 let index = 0;
-                index < currentLayerData.shapes.length;
+                index < currentDrawingData.shapes.length;
                 index++
             ) {
-                const shape = currentLayerData.shapes[index];
+                const shape = currentDrawingData.shapes[index];
                 // Check for both nested { Component: { reference, ... } } and flat { reference, ... }
                 const isComponent =
                     'Component' in shape || 'reference' in shape;
@@ -14627,9 +14749,9 @@ export class OutlineEditor {
         const shapeComponentData = shapeIsNested
             ? (shape as any).Component
             : shape;
-        const layerData = shapeComponentData.layerData;
+        const drawingData = shapeComponentData.layerData;
 
-        let outlineShapes = collectOutlineShapes(layerData?.shapes || []);
+        let outlineShapes = collectOutlineShapes(drawingData?.shapes || []);
 
         if (outlineShapes.length === 0) {
             const reference =
@@ -14719,7 +14841,7 @@ export class OutlineEditor {
     }
 
     updateHoveredPointAndAnchor(): void {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
         const scale = Math.max(this.glyphCanvas.viewportManager!.scale, 0.001);
         const { glyphX, glyphY } = this.transformMouseToComponentSpace();
         const nodeHitRadius = this.getNodeHitRadiusScreen() / scale;
@@ -14730,8 +14852,8 @@ export class OutlineEditor {
         let bestPointDist = Infinity;
         let bestPointScore = Infinity;
 
-        if (currentLayerData?.shapes) {
-            currentLayerData.shapes.forEach(
+        if (currentDrawingData?.shapes) {
+            currentDrawingData.shapes.forEach(
                 (shape: Babelfont.Shape, contourIndex: number) => {
                     const contour = getEditableContour(shape);
                     if (!contour?.nodes?.length) {
@@ -14792,8 +14914,8 @@ export class OutlineEditor {
             transientHit?.x !== this.hoveredTransientAnchor?.x ||
             transientHit?.y !== this.hoveredTransientAnchor?.y;
 
-        if (currentLayerData?.anchors?.length && !transientHit) {
-            currentLayerData.anchors.forEach(
+        if (currentDrawingData?.anchors?.length && !transientHit) {
+            currentDrawingData.anchors.forEach(
                 (anchor: Babelfont.Anchor, index: number) => {
                     const dist = Math.hypot(
                         anchor.x - glyphX,
@@ -14934,10 +15056,10 @@ export class OutlineEditor {
 
     private scheduleTransientAnchorKeyboardCommit(): void {
         const selected = this.selectedTransientAnchor;
-        const layer = this.getCurrentLayerModel();
+        const drawing = this.getCurrentDrawingModel();
         const glyph = this.getCurrentGlyphModel();
-        const masterId = layer?.master?.master;
-        if (!selected || !glyph?.name || !layer?.id || !masterId) {
+        const stationId = drawing?.station?.master;
+        if (!selected || !glyph?.name || !drawing?.id || !stationId) {
             return;
         }
         this._pendingTransientKeyboardCommit = {
@@ -14947,8 +15069,8 @@ export class OutlineEditor {
             y: selected.y,
             defaultX: selected.defaultX,
             glyphName: glyph.name,
-            layerId: layer.id,
-            masterId
+            drawingId: drawing.id,
+            stationId
         };
         if (this._transientKeyboardCommitTimer !== null) {
             window.clearTimeout(this._transientKeyboardCommitTimer);
@@ -15045,7 +15167,7 @@ export class OutlineEditor {
     }
 
     /**
-     * Drop the glyph/layer cache and query plugin anchors again.
+     * Drop the glyph/drawing cache and query plugin anchors again.
      * Keeps the current squares until the query returns, so undo does not
      * blank them and a finished drag does not jump back to the origin.
      */
@@ -15088,22 +15210,22 @@ export class OutlineEditor {
         ) {
             return;
         }
-        const layer = this.getCurrentLayerModel();
+        const drawing = this.getCurrentDrawingModel();
         const glyph = this.getCurrentGlyphModel();
-        if (!layer?.id || !glyph?.name) {
+        if (!drawing?.id || !glyph?.name) {
             if (this._transientAnchors.length) {
                 this._transientAnchors = [];
                 this._transientAnchorKey = '';
             }
             return;
         }
-        const key = `${glyph.name}:${layer.id}`;
+        const key = `${glyph.name}:${drawing.id}`;
         if (key === this._transientAnchorKey) {
             return;
         }
         const generation = ++this._transientAnchorQueryGeneration;
         this._transientAnchorKey = key;
-        void queryTransientAnchors(glyph.name, layer.id).then((anchors) => {
+        void queryTransientAnchors(glyph.name, drawing.id).then((anchors) => {
             if (
                 generation !== this._transientAnchorQueryGeneration ||
                 this._transientAnchorKey !== key
@@ -15171,8 +15293,8 @@ export class OutlineEditor {
     }
 
     private findClosestPathSegmentHit(): PathSegmentHit | null {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        if (!currentLayerData?.shapes) {
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        if (!currentDrawingData?.shapes) {
             return null;
         }
 
@@ -15183,14 +15305,14 @@ export class OutlineEditor {
         let bestDistance = Infinity;
         let pathIndex = 0;
 
-        currentLayerData.shapes.forEach(
+        currentDrawingData.shapes.forEach(
             (shape: Babelfont.Shape, shapeIndex: number) => {
                 const contour = getEditableContour(shape);
                 if (!contour || contour.nodes.length < 2) {
                     return;
                 }
 
-                const descriptors = Layer.getPathSegmentDescriptors({
+                const descriptors = Drawing.getPathSegmentDescriptors({
                     nodes: contour.nodes,
                     closed: contour.closed
                 });
@@ -15289,14 +15411,14 @@ export class OutlineEditor {
         segmentId: number,
         nodeIndex: number
     ): boolean {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
         const contour = getEditableContour(
-            currentLayerData?.shapes?.[contourIndex]
+            currentDrawingData?.shapes?.[contourIndex]
         );
         if (!contour) {
             return false;
         }
-        return Layer.getPathSegmentDescriptors({
+        return Drawing.getPathSegmentDescriptors({
             nodes: contour.nodes,
             closed: contour.closed
         }).some(
@@ -15418,9 +15540,9 @@ export class OutlineEditor {
     }
 
     selectAllNodesInContour(contourIndex: number): boolean {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
         const contour = getEditableContour(
-            currentLayerData?.shapes?.[contourIndex]
+            currentDrawingData?.shapes?.[contourIndex]
         );
 
         if (!contour?.nodes.length) {
@@ -15445,9 +15567,9 @@ export class OutlineEditor {
     private updateHoveredAddPointPreview(): void {
         if (
             !this.active ||
-            !this.layerData ||
-            this.layerData.isInterpolated ||
-            !this.selectedLayerId ||
+            !this.drawingData ||
+            this.drawingData.isInterpolated ||
+            !this.selectedDrawingId ||
             !this.glyphCanvas.canvas?.matches(':focus')
         ) {
             this.clearHoveredAddPointPreview();
@@ -15475,8 +15597,8 @@ export class OutlineEditor {
             return;
         }
 
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        if (!currentLayerData?.shapes) {
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        if (!currentDrawingData?.shapes) {
             this.clearHoveredAddPointPreview();
             return;
         }
@@ -15563,9 +15685,9 @@ export class OutlineEditor {
     private updateHoveredCommandCurvePreview(): void {
         if (
             !this.active ||
-            !this.layerData ||
-            this.layerData.isInterpolated ||
-            !this.selectedLayerId ||
+            !this.drawingData ||
+            this.drawingData.isInterpolated ||
+            !this.selectedDrawingId ||
             !this.isConvertArmed() ||
             this.activePathDrawingSession
         ) {
@@ -15618,7 +15740,7 @@ export class OutlineEditor {
         if (
             refreshHover &&
             this.active &&
-            this.layerData &&
+            this.drawingData &&
             !this.isPreviewMode
         ) {
             this.performHitDetection(null);
@@ -15674,7 +15796,7 @@ export class OutlineEditor {
             this.finalizePendingCommandPathEdit();
         }
 
-        if (this.active && this.layerData && !this.isPreviewMode) {
+        if (this.active && this.drawingData && !this.isPreviewMode) {
             this.performHitDetection(null);
             this.glyphCanvas.updateCursorStyle();
             this.glyphCanvas.render();
@@ -15685,31 +15807,31 @@ export class OutlineEditor {
 
     private async commitHoveredAddPointPreview(): Promise<Point | null> {
         const preview = this.hoveredAddPointPreview;
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        const currentLayerModel = this.getCurrentLayerModel();
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        const currentDrawingModel = this.getCurrentDrawingModel();
         const currentGlyphModel = this.getCurrentGlyphModel();
 
         if (
             !preview ||
-            !currentLayerData ||
-            !currentLayerModel ||
+            !currentDrawingData ||
+            !currentDrawingModel ||
             !currentGlyphModel
         ) {
             return null;
         }
 
-        const activePath = currentLayerModel.paths?.[preview.pathIndex];
+        const activePath = currentDrawingModel.paths?.[preview.pathIndex];
         if (!activePath) {
             return null;
         }
 
-        const linkedLayers = currentLayerModel._getLinkedLayers?.() || [];
-        const allLinkedPathsSupportInsertion = linkedLayers.every(
-            (linkedLayer: Layer) => {
-                const linkedPath = linkedLayer.paths?.[preview.pathIndex];
+        const linkedDrawings = currentDrawingModel._getLinkedDrawings?.() || [];
+        const allLinkedPathsSupportInsertion = linkedDrawings.every(
+            (linkedDrawing: Drawing) => {
+                const linkedPath = linkedDrawing.paths?.[preview.pathIndex];
                 return Boolean(
                     linkedPath &&
-                    Layer.getPathSegmentDescriptors(linkedPath.toJSON()).some(
+                    Drawing.getPathSegmentDescriptors(linkedPath.toJSON()).some(
                         (descriptor) =>
                             descriptor.segmentId === preview.segmentId
                     )
@@ -15718,15 +15840,18 @@ export class OutlineEditor {
         );
         if (!allLinkedPathsSupportInsertion) {
             console.warn(
-                'Cannot add a point because a linked layer has no matching segment.'
+                'Cannot add a point because a linked drawing has no matching segment.'
             );
             return null;
         }
-        const structuralLayerTargets = [currentLayerModel, ...linkedLayers]
-            .filter((layerModel) => !!layerModel.id)
-            .map((layerModel) => ({
+        const structuralDrawingTargets = [
+            currentDrawingModel,
+            ...linkedDrawings
+        ]
+            .filter((drawingModel) => !!drawingModel.id)
+            .map((drawingModel) => ({
                 glyphName: currentGlyphModel.name,
-                layerId: layerModel.id!
+                layerId: drawingModel.id!
             }));
         const bridge = window.patchSyncEngine;
         let insertedNodeIndex: number | null = null;
@@ -15750,9 +15875,9 @@ export class OutlineEditor {
                 );
 
                 if (insertedNodeIndex !== null) {
-                    for (const linkedLayer of linkedLayers) {
+                    for (const linkedDrawing of linkedDrawings) {
                         const linkedPath =
-                            linkedLayer.paths?.[preview.pathIndex];
+                            linkedDrawing.paths?.[preview.pathIndex];
                         if (!linkedPath) {
                             continue;
                         }
@@ -15768,7 +15893,7 @@ export class OutlineEditor {
             if (insertedNodeIndex !== null) {
                 const activePathData = activePath.toJSON();
                 const activeShape =
-                    currentLayerData.shapes?.[preview.shapeIndex];
+                    currentDrawingData.shapes?.[preview.shapeIndex];
                 const activeContour = getPathShapeData(activeShape);
                 if (activeContour && typeof activeContour === 'object') {
                     activeContour.nodes = activePathData.nodes.map(
@@ -15778,7 +15903,7 @@ export class OutlineEditor {
                 }
                 this.commitStructuralOutlineChange('Add point', {
                     reuseTransaction: true,
-                    layerTargets: structuralLayerTargets
+                    layerTargets: structuralDrawingTargets
                 });
             }
         } finally {
@@ -15801,7 +15926,7 @@ export class OutlineEditor {
         this.selectedSidebearingHandle = null;
         this.hoveredAddPointPreview = null;
 
-        const layerId = this.getCurrentLayerId();
+        const drawingId = this.getCurrentDrawingId();
 
         this.performHitDetection(null);
         this.glyphCanvas.updatePropertyPanel();
@@ -15812,7 +15937,7 @@ export class OutlineEditor {
                 new CustomEvent('glyphChanged', {
                     detail: {
                         glyphName: currentGlyphModel.name,
-                        layerId
+                        layerId: drawingId
                     }
                 })
             );
@@ -16025,10 +16150,10 @@ export class OutlineEditor {
     }
 
     private beginCommandPathDrawing(): boolean {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        const currentLayerModel = this.getCurrentLayerModel();
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        const currentDrawingModel = this.getCurrentDrawingModel();
 
-        if (!currentLayerData || !currentLayerModel) {
+        if (!currentDrawingData || !currentDrawingModel) {
             return false;
         }
 
@@ -16133,8 +16258,8 @@ export class OutlineEditor {
         glyphPoint: CanvasPoint,
         hitRadius?: number
     ): Point | null {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        if (!currentLayerData?.shapes) {
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        if (!currentDrawingData?.shapes) {
             return null;
         }
 
@@ -16149,7 +16274,7 @@ export class OutlineEditor {
         let bestDist = Infinity;
         let bestPoint: Point | null = null;
 
-        currentLayerData.shapes.forEach(
+        currentDrawingData.shapes.forEach(
             (shape: Babelfont.Shape, contourIndex) => {
                 const contour = getEditableContour(shape);
                 if (!contour?.nodes?.length) {
@@ -16192,8 +16317,8 @@ export class OutlineEditor {
     private findClosestPathSegmentHitAt(
         glyphPoint: CanvasPoint
     ): PathSegmentHit | null {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        if (!currentLayerData?.shapes) {
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        if (!currentDrawingData?.shapes) {
             return null;
         }
 
@@ -16203,14 +16328,14 @@ export class OutlineEditor {
         let bestDistance = Infinity;
         let pathIndex = 0;
 
-        currentLayerData.shapes.forEach(
+        currentDrawingData.shapes.forEach(
             (shape: Babelfont.Shape, shapeIndex: number) => {
                 const contour = getEditableContour(shape);
                 if (!contour || contour.nodes.length < 2) {
                     return;
                 }
 
-                const descriptors = Layer.getPathSegmentDescriptors({
+                const descriptors = Drawing.getPathSegmentDescriptors({
                     nodes: contour.nodes,
                     closed: contour.closed
                 });
@@ -16263,13 +16388,13 @@ export class OutlineEditor {
     private buildCanvasContextMenuTarget(
         clickedPoint: CanvasPoint | null = null
     ): CanvasPathContextTarget | null {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        const currentLayerModel = this.getCurrentLayerModel();
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        const currentDrawingModel = this.getCurrentDrawingModel();
         if (
-            !this.selectedLayerId ||
-            !currentLayerModel ||
-            currentLayerData?.isInterpolated ||
-            !currentLayerData?.shapes
+            !this.selectedDrawingId ||
+            !currentDrawingModel ||
+            currentDrawingData?.isInterpolated ||
+            !currentDrawingData?.shapes
         ) {
             return null;
         }
@@ -16315,7 +16440,9 @@ export class OutlineEditor {
             return null;
         }
 
-        const contour = getEditableContour(currentLayerData.shapes[shapeIndex]);
+        const contour = getEditableContour(
+            currentDrawingData.shapes[shapeIndex]
+        );
         const hoveredNodeIndex =
             clickedNode?.contourIndex === shapeIndex
                 ? clickedNode.nodeIndex
@@ -16361,8 +16488,8 @@ export class OutlineEditor {
     }
 
     private findComponentShapeIndexAt(point: CanvasPoint): number | null {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        const shapes = currentLayerData?.shapes;
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        const shapes = currentDrawingData?.shapes;
         if (!shapes?.length) {
             return null;
         }
@@ -16496,10 +16623,10 @@ export class OutlineEditor {
         target: CanvasPathContextTarget | null
     ): string {
         const items: string[] = [];
-        const currentLayer = this.getCurrentLayerModel();
-        const currentLayerData = this.getCurrentLayerDataFromStack();
+        const currentDrawing = this.getCurrentDrawingModel();
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
 
-        if (currentLayer && !currentLayerData?.isInterpolated) {
+        if (currentDrawing && !currentDrawingData?.isInterpolated) {
             if (target?.isComponent) {
                 items.push(`
                 <div class="plugin-menu-item" data-action="decompose-component">
@@ -16514,7 +16641,7 @@ export class OutlineEditor {
                     <span>Add component</span>
                 </div>
             `);
-            if (!currentLayer.is_background) {
+            if (!currentDrawing.is_background) {
                 items.push(`
                 <div class="plugin-menu-item" data-action="add-anchor">
                     <span class="material-symbols-outlined">anchor</span>
@@ -16690,11 +16817,11 @@ export class OutlineEditor {
 
     private decomposeContextMenuComponents(): boolean {
         const target = this.canvasContextMenuTarget;
-        const currentLayerModel = this.getCurrentLayerModel();
+        const currentDrawingModel = this.getCurrentDrawingModel();
         const currentGlyphModel = this.getCurrentGlyphModel();
         if (
             !target?.isComponent ||
-            !currentLayerModel ||
+            !currentDrawingModel ||
             !currentGlyphModel?.name
         ) {
             return false;
@@ -16705,7 +16832,7 @@ export class OutlineEditor {
         ].filter(
             (shapeIndex) =>
                 Number.isInteger(shapeIndex) &&
-                currentLayerModel.shapes?.[shapeIndex]?.isComponent()
+                currentDrawingModel.shapes?.[shapeIndex]?.isComponent()
         );
         const shapeIndices = (
             selectedComponentIndices.includes(target.shapeIndex)
@@ -16713,7 +16840,7 @@ export class OutlineEditor {
                 : [target.shapeIndex]
         )
             .filter((shapeIndex) =>
-                currentLayerModel.shapes?.[shapeIndex]?.isComponent()
+                currentDrawingModel.shapes?.[shapeIndex]?.isComponent()
             )
             .sort((left, right) => right - left);
 
@@ -16721,13 +16848,13 @@ export class OutlineEditor {
             return false;
         }
 
-        const linkedLayers = currentLayerModel._getLinkedLayers?.() || [];
-        const layers = [currentLayerModel, ...linkedLayers];
-        const structuralLayerTargets = layers
-            .filter((layer) => !!layer.id)
-            .map((layer) => ({
+        const linkedDrawings = currentDrawingModel._getLinkedDrawings?.() || [];
+        const drawings = [currentDrawingModel, ...linkedDrawings];
+        const structuralDrawingTargets = drawings
+            .filter((drawing) => !!drawing.id)
+            .map((drawing) => ({
                 glyphName: currentGlyphModel.name,
-                layerId: layer.id!
+                layerId: drawing.id!
             }));
 
         let changed = false;
@@ -16741,8 +16868,8 @@ export class OutlineEditor {
         try {
             withSuppressedModelRecording(() => {
                 for (const shapeIndex of shapeIndices) {
-                    for (const layer of layers) {
-                        const shape = layer.shapes?.[shapeIndex];
+                    for (const drawing of drawings) {
+                        const shape = drawing.shapes?.[shapeIndex];
                         if (!shape?.isComponent?.()) {
                             continue;
                         }
@@ -16751,7 +16878,7 @@ export class OutlineEditor {
                             continue;
                         }
                         changed = true;
-                        if (layer !== currentLayerModel) {
+                        if (drawing !== currentDrawingModel) {
                             continue;
                         }
                         insertedShapeIndices = insertedShapeIndices.map(
@@ -16775,7 +16902,7 @@ export class OutlineEditor {
                 return false;
             }
 
-            this.syncCurrentExactLayerDataFromModel();
+            this.syncCurrentExactDrawingDataFromModel();
             const bboxCenterAnchorScreen =
                 this.getBoundingBoxCenterScreenPosition();
             const affectedGlyphNames = this.recomputeMetricsKeysForGlyph(
@@ -16783,8 +16910,8 @@ export class OutlineEditor {
             );
             this.commitStructuralOutlineChange(label, {
                 reuseTransaction: true,
-                layerTargets: structuralLayerTargets.length
-                    ? structuralLayerTargets
+                layerTargets: structuralDrawingTargets.length
+                    ? structuralDrawingTargets
                     : undefined
             });
             this.refreshKeyedMetricsAfterStructuralEdit(
@@ -16797,7 +16924,7 @@ export class OutlineEditor {
 
         this.selectedPoints = [];
         for (const shapeIndex of insertedShapeIndices) {
-            const shape = currentLayerModel.shapes?.[shapeIndex];
+            const shape = currentDrawingModel.shapes?.[shapeIndex];
             const nodeCount = shape?.isPath?.()
                 ? shape.asPath().nodes?.length || 0
                 : 0;
@@ -16820,7 +16947,7 @@ export class OutlineEditor {
                 new CustomEvent('glyphChanged', {
                     detail: {
                         glyphName: currentGlyphModel.name,
-                        layerId: this.getCurrentLayerId()
+                        layerId: this.getCurrentDrawingId()
                     }
                 })
             );
@@ -16828,35 +16955,38 @@ export class OutlineEditor {
         return true;
     }
 
-    private applyPathMutationAcrossLinkedLayers(
+    private applyPathMutationAcrossLinkedDrawings(
         pathIndex: number,
         label: string,
-        mutate: (path: any, layerIndex?: number) => boolean,
+        mutate: (path: any, drawingIndex?: number) => boolean,
         options: { granularSync?: boolean } = {}
     ): boolean {
-        const currentLayerModel = this.getCurrentLayerModel();
+        const currentDrawingModel = this.getCurrentDrawingModel();
         const currentGlyphModel = this.getCurrentGlyphModel();
-        if (!currentLayerModel || !currentGlyphModel) {
+        if (!currentDrawingModel || !currentGlyphModel) {
             return false;
         }
 
-        const activePath = currentLayerModel.paths?.[pathIndex];
+        const activePath = currentDrawingModel.paths?.[pathIndex];
         if (!activePath) {
             return false;
         }
 
-        const linkedLayers = currentLayerModel._getLinkedLayers?.() || [];
-        const structuralLayerTargets = [currentLayerModel, ...linkedLayers]
-            .filter((layer) => !!layer.id)
-            .map((layer) => ({
+        const linkedDrawings = currentDrawingModel._getLinkedDrawings?.() || [];
+        const structuralDrawingTargets = [
+            currentDrawingModel,
+            ...linkedDrawings
+        ]
+            .filter((drawing) => !!drawing.id)
+            .map((drawing) => ({
                 glyphName: currentGlyphModel.name,
-                layerId: layer.id!
+                layerId: drawing.id!
             }));
         let changed = false;
-        const layerTargets = normalizeWorkerReplayTargets(
-            [currentLayerModel, ...linkedLayers].map((layer) => ({
+        const drawingTargets = normalizeWorkerReplayTargets(
+            [currentDrawingModel, ...linkedDrawings].map((drawing) => ({
                 glyphName: currentGlyphModel.name,
-                layerId: String(layer?.id || '')
+                layerId: String(drawing?.id || '')
             }))
         );
 
@@ -16873,24 +17003,24 @@ export class OutlineEditor {
                     changed = mutate(activePath, 0);
                     if (changed) {
                         for (
-                            let layerIndex = 0;
-                            layerIndex < linkedLayers.length;
-                            layerIndex++
+                            let drawingIndex = 0;
+                            drawingIndex < linkedDrawings.length;
+                            drawingIndex++
                         ) {
-                            const linkedLayer = linkedLayers[layerIndex];
-                            const linkedPath = linkedLayer.paths?.[pathIndex];
+                            const linkedDrawing = linkedDrawings[drawingIndex];
+                            const linkedPath = linkedDrawing.paths?.[pathIndex];
                             if (!linkedPath) continue;
-                            mutate(linkedPath, layerIndex + 1);
+                            mutate(linkedPath, drawingIndex + 1);
                         }
                     }
                 });
 
                 if (changed) {
-                    this.syncCurrentExactLayerDataFromModel();
+                    this.syncCurrentExactDrawingDataFromModel();
                     this.commitStructuralOutlineChange(label, {
                         reuseTransaction: true,
-                        layerTargets: layerTargets.length
-                            ? layerTargets
+                        layerTargets: drawingTargets.length
+                            ? drawingTargets
                             : undefined
                     });
                 }
@@ -16906,20 +17036,20 @@ export class OutlineEditor {
                 changed = mutate(activePath, 0);
                 if (!changed) return;
                 for (
-                    let layerIndex = 0;
-                    layerIndex < linkedLayers.length;
-                    layerIndex++
+                    let drawingIndex = 0;
+                    drawingIndex < linkedDrawings.length;
+                    drawingIndex++
                 ) {
-                    const linkedLayer = linkedLayers[layerIndex];
-                    const linkedPath = linkedLayer.paths?.[pathIndex];
+                    const linkedDrawing = linkedDrawings[drawingIndex];
+                    const linkedPath = linkedDrawing.paths?.[pathIndex];
                     if (!linkedPath) continue;
-                    mutate(linkedPath, layerIndex + 1);
+                    mutate(linkedPath, drawingIndex + 1);
                 }
             });
             if (!changed) return false;
-            this.syncCurrentExactLayerDataFromModel();
+            this.syncCurrentExactDrawingDataFromModel();
             this.commitStructuralOutlineChange(label, {
-                layerTargets: layerTargets.length ? layerTargets : undefined
+                layerTargets: drawingTargets.length ? drawingTargets : undefined
             });
         }
 
@@ -16932,7 +17062,7 @@ export class OutlineEditor {
                 new CustomEvent('glyphChanged', {
                     detail: {
                         glyphName: currentGlyphModel.name,
-                        layerId: this.getCurrentLayerId()
+                        layerId: this.getCurrentDrawingId()
                     }
                 })
             );
@@ -16962,20 +17092,20 @@ export class OutlineEditor {
             return false;
         }
 
-        const currentLayerModel = this.getCurrentLayerModel();
-        if (!currentLayerModel) {
+        const currentDrawingModel = this.getCurrentDrawingModel();
+        if (!currentDrawingModel) {
             return false;
         }
 
-        const linkedLayers = currentLayerModel._getLinkedLayers?.() || [];
-        const layers = [currentLayerModel, ...linkedLayers];
-        const mappedNodeIndicesByLayer: number[] = [];
+        const linkedDrawings = currentDrawingModel._getLinkedDrawings?.() || [];
+        const drawings = [currentDrawingModel, ...linkedDrawings];
+        const mappedNodeIndicesByDrawing: number[] = [];
 
-        // Resolve active layer by coordinate proximity (intendedPoint in model space),
-        // then derive the on-curve ordinal for linked-layer mapping.
+        // Resolve active drawing by coordinate proximity (intendedPoint in model space),
+        // then derive the on-curve ordinal for linked-drawing mapping.
         // This avoids relying on target.nodeIndex / target.onCurveOrdinal which were
         // captured from render data that may be out of sync after prior mutations.
-        const activePath = currentLayerModel.paths?.[resolvedPathIndex];
+        const activePath = currentDrawingModel.paths?.[resolvedPathIndex];
         if (!activePath) {
             return false;
         }
@@ -16990,9 +17120,9 @@ export class OutlineEditor {
             return false;
         }
 
-        mappedNodeIndicesByLayer[0] = activeModelIndex;
+        mappedNodeIndicesByDrawing[0] = activeModelIndex;
 
-        // Derive on-curve ordinal from the resolved active-layer node.
+        // Derive on-curve ordinal from the resolved active-drawing node.
         const activeNodes = activePath.nodes;
         const activeOrdinal = Array.isArray(activeNodes)
             ? activeNodes
@@ -17004,9 +17134,13 @@ export class OutlineEditor {
             return false;
         }
 
-        for (let layerIndex = 1; layerIndex < layers.length; layerIndex++) {
-            const layer = layers[layerIndex];
-            const path = layer?.paths?.[resolvedPathIndex];
+        for (
+            let drawingIndex = 1;
+            drawingIndex < drawings.length;
+            drawingIndex++
+        ) {
+            const drawing = drawings[drawingIndex];
+            const path = drawing?.paths?.[resolvedPathIndex];
             if (!path) {
                 continue;
             }
@@ -17021,21 +17155,22 @@ export class OutlineEditor {
                 continue;
             }
 
-            mappedNodeIndicesByLayer[layerIndex] = mappedNodeIndex;
+            mappedNodeIndicesByDrawing[drawingIndex] = mappedNodeIndex;
         }
 
-        // Verify all layers have resolved indices before mutating.
-        for (let i = 0; i < layers.length; i++) {
-            if (mappedNodeIndicesByLayer[i] === undefined) {
+        // Verify all drawings have resolved indices before mutating.
+        for (let i = 0; i < drawings.length; i++) {
+            if (mappedNodeIndicesByDrawing[i] === undefined) {
                 return false;
             }
         }
 
-        const changed = this.applyPathMutationAcrossLinkedLayers(
+        const changed = this.applyPathMutationAcrossLinkedDrawings(
             resolvedPathIndex,
             'Set start node',
-            (path: any, layerIndex = 0) => {
-                const mappedNodeIndex = mappedNodeIndicesByLayer[layerIndex];
+            (path: any, drawingIndex = 0) => {
+                const mappedNodeIndex =
+                    mappedNodeIndicesByDrawing[drawingIndex];
                 if (mappedNodeIndex === undefined || mappedNodeIndex <= 0) {
                     return mappedNodeIndex === 0;
                 }
@@ -17080,7 +17215,7 @@ export class OutlineEditor {
             return false;
         }
 
-        const changed = this.applyPathMutationAcrossLinkedLayers(
+        const changed = this.applyPathMutationAcrossLinkedDrawings(
             resolvedPathIndex,
             'Reverse path direction',
             (path: any) => path?._reverseDirection?.() ?? false,
@@ -17133,9 +17268,9 @@ export class OutlineEditor {
         shapeIndex: number,
         nodeIndex: number
     ): OpenPathEndpointRef | null {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
         const contour = getEditableContour(
-            currentLayerData?.shapes?.[shapeIndex]
+            currentDrawingData?.shapes?.[shapeIndex]
         );
 
         if (!contour || contour.closed || contour.nodes.length < 1) {
@@ -17165,8 +17300,8 @@ export class OutlineEditor {
         };
     }
 
-    private findCoincidentOpenPathEndpointPairInLayerModel(
-        layerModel: Babelfont.Layer
+    private findCoincidentOpenPathEndpointPairInDrawingModel(
+        drawingModel: Babelfont.Layer
     ): {
         sourceEndpoint: OpenPathEndpointRef;
         targetEndpoint: OpenPathEndpointRef;
@@ -17175,7 +17310,7 @@ export class OutlineEditor {
             string,
             Array<OpenPathEndpointRef>
         >();
-        const shapes = (layerModel.shapes || []) as Array<
+        const shapes = (drawingModel.shapes || []) as Array<
             Babelfont.Shape & {
                 isPath?: () => boolean;
                 asPath?: () => {
@@ -17272,8 +17407,8 @@ export class OutlineEditor {
     }
 
     private getPathIndexForShapeIndex(shapeIndex: number): number | null {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        const shapes = currentLayerData?.shapes;
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        const shapes = currentDrawingData?.shapes;
         if (!shapes || shapeIndex < 0 || shapeIndex >= shapes.length) {
             return null;
         }
@@ -17307,9 +17442,9 @@ export class OutlineEditor {
             return null;
         }
 
-        const currentLayerData = this.getCurrentLayerDataFromStack();
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
         const contour = getEditableContour(
-            currentLayerData?.shapes?.[session.shapeIndex]
+            currentDrawingData?.shapes?.[session.shapeIndex]
         );
 
         if (!contour?.nodes.length) {
@@ -17349,9 +17484,9 @@ export class OutlineEditor {
             return null;
         }
 
-        const currentLayerData = this.getCurrentLayerDataFromStack();
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
         const contour = getEditableContour(
-            currentLayerData?.shapes?.[session.shapeIndex]
+            currentDrawingData?.shapes?.[session.shapeIndex]
         );
 
         if (!contour?.nodes.length) {
@@ -17435,10 +17570,10 @@ export class OutlineEditor {
     }
 
     private startNewPathDrawingSession(): boolean {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        const currentLayerModel = this.getCurrentLayerModel();
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        const currentDrawingModel = this.getCurrentDrawingModel();
 
-        if (!currentLayerData || !currentLayerModel) {
+        if (!currentDrawingData || !currentDrawingModel) {
             return false;
         }
 
@@ -17449,29 +17584,29 @@ export class OutlineEditor {
         });
         snappedStart.x = Math.round(snappedStart.x);
         snappedStart.y = Math.round(snappedStart.y);
-        const linkedLayers = currentLayerModel._getLinkedLayers?.() || [];
+        const linkedDrawings = currentDrawingModel._getLinkedDrawings?.() || [];
         let activePath = null;
 
         withSuppressedModelRecording(() => {
-            activePath = currentLayerModel.addPath(false);
+            activePath = currentDrawingModel.addPath(false);
             activePath?._appendLine(snappedStart);
 
-            for (const linkedLayer of linkedLayers) {
-                const linkedPath = linkedLayer.addPath(false);
+            for (const linkedDrawing of linkedDrawings) {
+                const linkedPath = linkedDrawing.addPath(false);
                 linkedPath._appendLine(snappedStart);
             }
         });
 
         if (
-            currentLayerModel.id &&
-            this.selectedLayerId !== currentLayerModel.id
+            currentDrawingModel.id &&
+            this.selectedDrawingId !== currentDrawingModel.id
         ) {
-            this.selectedLayerId = currentLayerModel.id;
-            this.rebuildGlyphStackWithNewLayer(currentLayerModel.id);
+            this.selectedDrawingId = currentDrawingModel.id;
+            this.rebuildGlyphStackWithNewDrawing(currentDrawingModel.id);
         }
 
-        const pathIndex = currentLayerModel.paths.length - 1;
-        const shapeIndex = (currentLayerModel.shapes?.length || 1) - 1;
+        const pathIndex = currentDrawingModel.paths.length - 1;
+        const shapeIndex = (currentDrawingModel.shapes?.length || 1) - 1;
         this.notePendingCommandPathEdit('draw');
         this.activePathDrawingSession = {
             shapeIndex,
@@ -17482,12 +17617,12 @@ export class OutlineEditor {
             segmentCount: 0
         };
 
-        if (currentLayerModel.is_background) {
+        if (currentDrawingModel.is_background) {
             // Materializing a virtual background replaces its synthetic ID with
             // a persisted sibling ID. Refresh the canvas snapshot as a whole
             // so later points and deletions stay on that sibling.
-            this.syncCurrentExactLayerDataFromModel();
-            this.syncMaterializedBackgroundLayer(currentLayerModel);
+            this.syncCurrentExactDrawingDataFromModel();
+            this.syncMaterializedBackgroundDrawing(currentDrawingModel);
         } else {
             this.syncCurrentContourDataFromModel(pathIndex, shapeIndex);
         }
@@ -17505,19 +17640,19 @@ export class OutlineEditor {
         return !!activePath;
     }
 
-    private syncMaterializedBackgroundLayer(layer: any): void {
+    private syncMaterializedBackgroundDrawing(drawing: Drawing): void {
         const bridge = window.patchSyncEngine;
         const glyph = this.getCurrentGlyphModel();
-        const foregroundLayer = layer.background_layer_id
-            ? glyph?.findLayerById?.(layer.background_layer_id)
+        const foregroundDrawing = drawing.background_drawing_id
+            ? glyph?.findDrawingById?.(drawing.background_drawing_id)
             : null;
 
         if (
             !bridge ||
             !glyph?.name ||
-            !foregroundLayer?.id ||
-            !layer?.id ||
-            typeof bridge.syncLayerSnapshotsFromJson !== 'function'
+            !foregroundDrawing?.id ||
+            !drawing?.id ||
+            typeof bridge.syncDrawingSnapshotsFromJson !== 'function'
         ) {
             return;
         }
@@ -17527,11 +17662,11 @@ export class OutlineEditor {
             compileEditType: null
         });
         try {
-            bridge.syncLayerSnapshotsFromJson(
-                [foregroundLayer, layer].map((layerModel: any) => ({
+            bridge.syncDrawingSnapshotsFromJson(
+                [foregroundDrawing, drawing].map((drawingModel: any) => ({
                     glyphName: glyph.name,
-                    layerId: layerModel.id,
-                    layerJson: layerModel.toJSON()
+                    layerId: drawingModel.id,
+                    drawingJson: drawingModel.toJSON()
                 })),
                 'Draw path',
                 undefined,
@@ -17551,17 +17686,17 @@ export class OutlineEditor {
         session: ActivePathDrawingSession,
         point: { x: number; y: number }
     ): boolean {
-        const currentLayerModel = this.getCurrentLayerModel();
-        if (!currentLayerModel) {
+        const currentDrawingModel = this.getCurrentDrawingModel();
+        if (!currentDrawingModel) {
             return false;
         }
 
-        const activePath = currentLayerModel.paths?.[session.pathIndex];
+        const activePath = currentDrawingModel.paths?.[session.pathIndex];
         if (!activePath) {
             return false;
         }
 
-        const linkedLayers = currentLayerModel._getLinkedLayers?.() || [];
+        const linkedDrawings = currentDrawingModel._getLinkedDrawings?.() || [];
         const snappedPoint = this._snapPointForDrawing(
             point,
             this.getCommandPathOriginPoint(session)
@@ -17576,8 +17711,8 @@ export class OutlineEditor {
                 session.edge
             );
 
-            for (const linkedLayer of linkedLayers) {
-                const linkedPath = linkedLayer.paths?.[session.pathIndex];
+            for (const linkedDrawing of linkedDrawings) {
+                const linkedPath = linkedDrawing.paths?.[session.pathIndex];
                 linkedPath?._appendLine(snappedPoint, session.edge);
             }
         });
@@ -17622,9 +17757,9 @@ export class OutlineEditor {
             return false;
         }
 
-        const currentLayerData = this.getCurrentLayerDataFromStack();
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
         const contour = getEditableContour(
-            currentLayerData?.shapes?.[session.shapeIndex]
+            currentDrawingData?.shapes?.[session.shapeIndex]
         );
         if (!contour?.nodes.length) {
             return false;
@@ -17652,17 +17787,17 @@ export class OutlineEditor {
     }
 
     private convertLineSegmentToCurve(hit: PathSegmentHit): boolean {
-        const currentLayerModel = this.getCurrentLayerModel();
-        if (!currentLayerModel) {
+        const currentDrawingModel = this.getCurrentDrawingModel();
+        if (!currentDrawingModel) {
             return false;
         }
 
-        const activePath = currentLayerModel.paths?.[hit.pathIndex];
+        const activePath = currentDrawingModel.paths?.[hit.pathIndex];
         if (!activePath) {
             return false;
         }
 
-        const linkedLayers = currentLayerModel._getLinkedLayers?.() || [];
+        const linkedDrawings = currentDrawingModel._getLinkedDrawings?.() || [];
         const roundPathNodesToGrid = (
             path: { nodes?: Babelfont.Node[] } | null | undefined
         ): void => {
@@ -17686,8 +17821,8 @@ export class OutlineEditor {
             }
             roundPathNodesToGrid(activePath);
 
-            for (const linkedLayer of linkedLayers) {
-                const linkedPath = linkedLayer.paths?.[hit.pathIndex];
+            for (const linkedDrawing of linkedDrawings) {
+                const linkedPath = linkedDrawing.paths?.[hit.pathIndex];
                 linkedPath?._convertLineSegmentToCurve(
                     hit.descriptor.segmentId
                 );
@@ -17716,9 +17851,9 @@ export class OutlineEditor {
             return false;
         }
 
-        const currentLayerData = this.getCurrentLayerDataFromStack();
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
         const contour = getEditableContour(
-            currentLayerData?.shapes?.[point.contourIndex]
+            currentDrawingData?.shapes?.[point.contourIndex]
         );
         if (!contour) {
             return false;
@@ -17734,9 +17869,9 @@ export class OutlineEditor {
             return false;
         }
 
-        const currentLayerData = this.getCurrentLayerDataFromStack();
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
         const contour = getEditableContour(
-            currentLayerData?.shapes?.[point.contourIndex]
+            currentDrawingData?.shapes?.[point.contourIndex]
         );
         const node = contour?.nodes?.[point.nodeIndex] as
             Babelfont.Node | undefined;
@@ -17756,13 +17891,13 @@ export class OutlineEditor {
 
     /**
      * After a structural cut/split has already been committed to Yjs, refresh
-     * exact layer data, select the produced node, and re-render.
+     * exact drawing data, select the produced node, and re-render.
      */
     private _finalizePathCutOrSplitEdit(
         currentGlyphModel: any,
         selectedPoint: Point
     ): void {
-        this.syncCurrentExactLayerDataFromModel();
+        this.syncCurrentExactDrawingDataFromModel();
 
         this.suppressSelectedEndpointCommandSeedUntilCommandRelease = true;
         this.selectedPoints = [selectedPoint];
@@ -17779,7 +17914,7 @@ export class OutlineEditor {
                 new CustomEvent('glyphChanged', {
                     detail: {
                         glyphName: currentGlyphModel.name,
-                        layerId: this.getCurrentLayerId()
+                        layerId: this.getCurrentDrawingId()
                     }
                 })
             );
@@ -17787,9 +17922,9 @@ export class OutlineEditor {
     }
 
     private openClosedPathAtNode(point: Point): boolean {
-        const currentLayerModel = this.getCurrentLayerModel();
+        const currentDrawingModel = this.getCurrentDrawingModel();
         const currentGlyphModel = this.getCurrentGlyphModel();
-        if (!currentLayerModel || !currentGlyphModel) {
+        if (!currentDrawingModel || !currentGlyphModel) {
             return false;
         }
 
@@ -17798,15 +17933,15 @@ export class OutlineEditor {
             return false;
         }
 
-        const activePath = currentLayerModel.paths?.[pathIndex];
+        const activePath = currentDrawingModel.paths?.[pathIndex];
         if (!activePath || !activePath.closed) {
             return false;
         }
 
-        const linkedLayers = currentLayerModel._getLinkedLayers?.() || [];
-        const allLinkedPathsSupportOpening = linkedLayers.every(
-            (linkedLayer: Layer) => {
-                const linkedPath = linkedLayer.paths?.[pathIndex];
+        const linkedDrawings = currentDrawingModel._getLinkedDrawings?.() || [];
+        const allLinkedPathsSupportOpening = linkedDrawings.every(
+            (linkedDrawing: Drawing) => {
+                const linkedPath = linkedDrawing.paths?.[pathIndex];
                 const linkedNode = linkedPath?.nodes?.[point.nodeIndex];
                 return Boolean(
                     linkedPath?.closed &&
@@ -17819,15 +17954,18 @@ export class OutlineEditor {
         );
         if (!allLinkedPathsSupportOpening) {
             console.warn(
-                'Cannot open a path because a linked layer has no matching node.'
+                'Cannot open a path because a linked drawing has no matching node.'
             );
             return false;
         }
-        const structuralLayerTargets = [currentLayerModel, ...linkedLayers]
-            .filter((layer) => !!layer.id)
-            .map((layer) => ({
+        const structuralDrawingTargets = [
+            currentDrawingModel,
+            ...linkedDrawings
+        ]
+            .filter((drawing) => !!drawing.id)
+            .map((drawing) => ({
                 glyphName: currentGlyphModel.name,
-                layerId: layer.id!
+                layerId: drawing.id!
             }));
         let changed = false;
 
@@ -17848,8 +17986,8 @@ export class OutlineEditor {
                     return;
                 }
 
-                for (const linkedLayer of linkedLayers) {
-                    const linkedPath = linkedLayer.paths?.[pathIndex];
+                for (const linkedDrawing of linkedDrawings) {
+                    const linkedPath = linkedDrawing.paths?.[pathIndex];
                     linkedPath?._openClosedPathAtNode(point.nodeIndex);
                 }
             });
@@ -17861,7 +17999,7 @@ export class OutlineEditor {
             this.syncCurrentContourDataFromModel(pathIndex, point.contourIndex);
             this.commitStructuralOutlineChange('Open path', {
                 reuseTransaction: true,
-                layerTargets: structuralLayerTargets
+                layerTargets: structuralDrawingTargets
             });
         } finally {
             if (startedOpenTx) _openBridge.endTransaction();
@@ -17871,7 +18009,7 @@ export class OutlineEditor {
             return false;
         }
 
-        const newPath = currentLayerModel.paths?.[point.contourIndex];
+        const newPath = currentDrawingModel.paths?.[point.contourIndex];
         const lastNodeIndex = newPath ? newPath.nodes.length - 1 : 0;
         this._finalizePathCutOrSplitEdit(currentGlyphModel, {
             contourIndex: point.contourIndex,
@@ -17881,9 +18019,9 @@ export class OutlineEditor {
     }
 
     private splitOpenPathAtNode(point: Point): boolean {
-        const currentLayerModel = this.getCurrentLayerModel();
+        const currentDrawingModel = this.getCurrentDrawingModel();
         const currentGlyphModel = this.getCurrentGlyphModel();
-        if (!currentLayerModel || !currentGlyphModel) {
+        if (!currentDrawingModel || !currentGlyphModel) {
             return false;
         }
 
@@ -17892,17 +18030,20 @@ export class OutlineEditor {
             return false;
         }
 
-        const activePath = currentLayerModel.paths?.[pathIndex];
+        const activePath = currentDrawingModel.paths?.[pathIndex];
         if (!activePath || activePath.closed) {
             return false;
         }
 
-        const linkedLayers = currentLayerModel._getLinkedLayers?.() || [];
-        const structuralLayerTargets = [currentLayerModel, ...linkedLayers]
-            .filter((layer) => !!layer.id)
-            .map((layer) => ({
+        const linkedDrawings = currentDrawingModel._getLinkedDrawings?.() || [];
+        const structuralDrawingTargets = [
+            currentDrawingModel,
+            ...linkedDrawings
+        ]
+            .filter((drawing) => !!drawing.id)
+            .map((drawing) => ({
                 glyphName: currentGlyphModel.name,
-                layerId: layer.id!
+                layerId: drawing.id!
             }));
         let splitResult: {
             shapeIndex: number;
@@ -17921,7 +18062,7 @@ export class OutlineEditor {
             });
         try {
             withSuppressedModelRecording(() => {
-                splitResult = currentLayerModel.splitOpenPathAtNode(
+                splitResult = currentDrawingModel.splitOpenPathAtNode(
                     pathIndex,
                     point.nodeIndex
                 );
@@ -17929,8 +18070,11 @@ export class OutlineEditor {
                     return;
                 }
 
-                for (const linkedLayer of linkedLayers) {
-                    linkedLayer.splitOpenPathAtNode(pathIndex, point.nodeIndex);
+                for (const linkedDrawing of linkedDrawings) {
+                    linkedDrawing.splitOpenPathAtNode(
+                        pathIndex,
+                        point.nodeIndex
+                    );
                 }
             });
 
@@ -17940,7 +18084,7 @@ export class OutlineEditor {
 
             this.commitStructuralOutlineChange('Split path', {
                 reuseTransaction: true,
-                layerTargets: structuralLayerTargets
+                layerTargets: structuralDrawingTargets
             });
         } finally {
             if (startedSplitTx) _splitBridge.endTransaction();
@@ -17972,13 +18116,13 @@ export class OutlineEditor {
             cascadeCoincidentConnections?: boolean;
         }
     ): boolean {
-        const currentLayerModel = this.getCurrentLayerModel();
+        const currentDrawingModel = this.getCurrentDrawingModel();
         const currentGlyphModel = this.getCurrentGlyphModel();
-        if (!currentLayerModel || !currentGlyphModel) {
+        if (!currentDrawingModel || !currentGlyphModel) {
             return false;
         }
 
-        const linkedLayers = currentLayerModel._getLinkedLayers?.() || [];
+        const linkedDrawings = currentDrawingModel._getLinkedDrawings?.() || [];
         let result: {
             shapeIndex: number;
             boundaryNodeIndex: number;
@@ -17998,7 +18142,7 @@ export class OutlineEditor {
                 };
 
                 while (pendingPair) {
-                    result = currentLayerModel.connectOpenPathEndpoints(
+                    result = currentDrawingModel.connectOpenPathEndpoints(
                         pendingPair.sourceEndpoint.pathIndex,
                         pendingPair.sourceEndpoint.edge,
                         pendingPair.targetEndpoint.pathIndex,
@@ -18008,8 +18152,8 @@ export class OutlineEditor {
                         return;
                     }
 
-                    for (const linkedLayer of linkedLayers) {
-                        linkedLayer.connectOpenPathEndpoints(
+                    for (const linkedDrawing of linkedDrawings) {
+                        linkedDrawing.connectOpenPathEndpoints(
                             pendingPair.sourceEndpoint.pathIndex,
                             pendingPair.sourceEndpoint.edge,
                             pendingPair.targetEndpoint.pathIndex,
@@ -18018,8 +18162,8 @@ export class OutlineEditor {
                     }
 
                     pendingPair = options.cascadeCoincidentConnections
-                        ? this.findCoincidentOpenPathEndpointPairInLayerModel(
-                              currentLayerModel
+                        ? this.findCoincidentOpenPathEndpointPairInDrawingModel(
+                              currentDrawingModel
                           )
                         : null;
                 }
@@ -18045,7 +18189,7 @@ export class OutlineEditor {
 
                 withSuppressedModelRecording(() => {
                     while (pendingPair) {
-                        result = currentLayerModel.connectOpenPathEndpoints(
+                        result = currentDrawingModel.connectOpenPathEndpoints(
                             pendingPair.sourceEndpoint.pathIndex,
                             pendingPair.sourceEndpoint.edge,
                             pendingPair.targetEndpoint.pathIndex,
@@ -18055,8 +18199,8 @@ export class OutlineEditor {
                             return;
                         }
 
-                        for (const linkedLayer of linkedLayers) {
-                            linkedLayer.connectOpenPathEndpoints(
+                        for (const linkedDrawing of linkedDrawings) {
+                            linkedDrawing.connectOpenPathEndpoints(
                                 pendingPair.sourceEndpoint.pathIndex,
                                 pendingPair.sourceEndpoint.edge,
                                 pendingPair.targetEndpoint.pathIndex,
@@ -18065,8 +18209,8 @@ export class OutlineEditor {
                         }
 
                         pendingPair = options.cascadeCoincidentConnections
-                            ? this.findCoincidentOpenPathEndpointPairInLayerModel(
-                                  currentLayerModel
+                            ? this.findCoincidentOpenPathEndpointPairInDrawingModel(
+                                  currentDrawingModel
                               )
                             : null;
                     }
@@ -18089,7 +18233,7 @@ export class OutlineEditor {
                     {
                         reuseTransaction: true,
                         layerTargets:
-                            this.getCurrentGlyphStructuralLayerTargets()
+                            this.getCurrentGlyphStructuralDrawingTargets()
                     }
                 );
             } finally {
@@ -18107,7 +18251,7 @@ export class OutlineEditor {
             closed: boolean;
         };
 
-        this.syncCurrentExactLayerDataFromModel();
+        this.syncCurrentExactDrawingDataFromModel();
 
         if (options.pendingCommandEdit) {
             this.notePendingCommandPathEdit('draw');
@@ -18168,7 +18312,7 @@ export class OutlineEditor {
                 new CustomEvent('glyphChanged', {
                     detail: {
                         glyphName: currentGlyphModel.name,
-                        layerId: this.getCurrentLayerId()
+                        layerId: this.getCurrentDrawingId()
                     }
                 })
             );
@@ -18181,23 +18325,26 @@ export class OutlineEditor {
         contourIndex: number,
         reuseTransaction: boolean = false
     ): boolean {
-        const currentLayerModel = this.getCurrentLayerModel();
+        const currentDrawingModel = this.getCurrentDrawingModel();
         const currentGlyphModel = this.getCurrentGlyphModel();
-        if (!currentLayerModel || !currentGlyphModel) {
+        if (!currentDrawingModel || !currentGlyphModel) {
             return false;
         }
 
-        const activePath = currentLayerModel.paths?.[contourIndex];
+        const activePath = currentDrawingModel.paths?.[contourIndex];
         if (!activePath || activePath.closed) {
             return false;
         }
 
-        const linkedLayers = currentLayerModel._getLinkedLayers?.() || [];
-        const structuralLayerTargets = [currentLayerModel, ...linkedLayers]
-            .filter((layer) => !!layer.id)
-            .map((layer) => ({
+        const linkedDrawings = currentDrawingModel._getLinkedDrawings?.() || [];
+        const structuralDrawingTargets = [
+            currentDrawingModel,
+            ...linkedDrawings
+        ]
+            .filter((drawing) => !!drawing.id)
+            .map((drawing) => ({
                 glyphName: currentGlyphModel.name,
-                layerId: layer.id!
+                layerId: drawing.id!
             }));
         let changed = false;
 
@@ -18215,8 +18362,8 @@ export class OutlineEditor {
                     return;
                 }
 
-                for (const linkedLayer of linkedLayers) {
-                    const linkedPath = linkedLayer.paths?.[contourIndex];
+                for (const linkedDrawing of linkedDrawings) {
+                    const linkedPath = linkedDrawing.paths?.[contourIndex];
                     linkedPath?._closeOpenPathByMerge();
                 }
             });
@@ -18234,7 +18381,7 @@ export class OutlineEditor {
 
             this.commitStructuralOutlineChange('Close path', {
                 reuseTransaction: true,
-                layerTargets: structuralLayerTargets
+                layerTargets: structuralDrawingTargets
             });
 
             this.refreshKeyedMetricsAfterStructuralEdit(
@@ -18250,7 +18397,7 @@ export class OutlineEditor {
             return false;
         }
 
-        this.syncCurrentExactLayerDataFromModel();
+        this.syncCurrentExactDrawingDataFromModel();
 
         this.selectedPoints = [{ contourIndex, nodeIndex: 0 }];
         this.selectedAnchors = [];
@@ -18266,7 +18413,7 @@ export class OutlineEditor {
                 new CustomEvent('glyphChanged', {
                     detail: {
                         glyphName: currentGlyphModel.name,
-                        layerId: this.getCurrentLayerId()
+                        layerId: this.getCurrentDrawingId()
                     }
                 })
             );
@@ -18306,22 +18453,22 @@ export class OutlineEditor {
 
         try {
             if (Array.isArray(currentFont.babelfontData?.glyphs)) {
-                for (const target of this.getCurrentGlyphStructuralLayerTargets()) {
+                for (const target of this.getCurrentGlyphStructuralDrawingTargets()) {
                     if (
-                        !fontManager.syncLayerFromModelToStorage(
+                        !fontManager.syncDrawingFromModelToStorage(
                             target.glyphName,
                             target.layerId
                         )
                     ) {
                         throw new Error(
-                            `Unable to sync structural preview layer ${target.glyphName}/${target.layerId} into canonical storage.`
+                            `Unable to sync structural preview drawing ${target.glyphName}/${target.layerId} into canonical storage.`
                         );
                     }
                 }
             }
         } catch (error) {
             console.error(
-                '[OutlineEditor] Error syncing structural preview layer:',
+                '[OutlineEditor] Error syncing structural preview drawing:',
                 error
             );
             return;
@@ -18341,7 +18488,7 @@ export class OutlineEditor {
         }
 
         const currentGlyphModel = this.getCurrentGlyphModel();
-        const layerId = this.getCurrentLayerId();
+        const drawingId = this.getCurrentDrawingId();
         const bboxCenterAnchorScreen =
             this.getBoundingBoxCenterScreenPosition();
         const affectedGlyphNames = this.recomputeMetricsKeysForGlyph(
@@ -18359,10 +18506,10 @@ export class OutlineEditor {
             return;
         }
 
-        const layerTargets = this.getCurrentGlyphStructuralLayerTargets();
+        const drawingTargets = this.getCurrentGlyphStructuralDrawingTargets();
 
         this.commitStructuralOutlineChange(label, {
-            layerTargets: layerTargets.length ? layerTargets : undefined
+            layerTargets: drawingTargets.length ? drawingTargets : undefined
         });
 
         if (!fontManager.currentFont && currentGlyphModel?.name) {
@@ -18370,7 +18517,7 @@ export class OutlineEditor {
                 new CustomEvent('glyphChanged', {
                     detail: {
                         glyphName: currentGlyphModel.name,
-                        layerId
+                        layerId: drawingId
                     }
                 })
             );
@@ -18392,7 +18539,7 @@ export class OutlineEditor {
 
     onGlyphSelected() {
         // Perform mouse hit detection for objects at current mouse position
-        if (this.active && this.selectedLayerId && this.layerData) {
+        if (this.active && this.selectedDrawingId && this.drawingData) {
             this.updateHoveredGuideHandle();
             this.updateHoveredComponent();
             this.updateHoveredPointAndAnchor();
@@ -18406,13 +18553,13 @@ export class OutlineEditor {
         pathIndex: number,
         shapeIndex: number = pathIndex
     ): void {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        const currentLayerModel = this.getCurrentLayerModel();
-        const path = currentLayerModel?.paths?.[pathIndex];
-        const shape = currentLayerData?.shapes?.[shapeIndex];
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        const currentDrawingModel = this.getCurrentDrawingModel();
+        const path = currentDrawingModel?.paths?.[pathIndex];
+        const shape = currentDrawingData?.shapes?.[shapeIndex];
         const contour = getPathShapeData(shape);
 
-        if (!currentLayerData || !path) {
+        if (!currentDrawingData || !path) {
             return;
         }
 
@@ -18427,11 +18574,11 @@ export class OutlineEditor {
         };
 
         if (!contour || typeof contour !== 'object') {
-            if (!currentLayerData.shapes) {
-                currentLayerData.shapes = [];
+            if (!currentDrawingData.shapes) {
+                currentDrawingData.shapes = [];
             }
 
-            currentLayerData.shapes.splice(shapeIndex, 0, normalizedPathData);
+            currentDrawingData.shapes.splice(shapeIndex, 0, normalizedPathData);
             return;
         }
 
@@ -18439,85 +18586,85 @@ export class OutlineEditor {
         contour.closed = normalizedPathData.closed;
     }
 
-    private syncCurrentExactLayerDataFromModel(): void {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        const currentLayerModel = this.getCurrentLayerModel();
+    private syncCurrentExactDrawingDataFromModel(): void {
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        const currentDrawingModel = this.getCurrentDrawingModel();
         const workingCopyVerticalMetrics = (
-            currentLayerData as unknown as {
+            currentDrawingData as unknown as {
                 _verticalMetrics?: Record<string, number> | null;
             } | null
         )?._verticalMetrics;
         const retainedVerticalMetrics =
             workingCopyVerticalMetrics ||
             this.renderVerticalMetrics ||
-            this.getVerticalMetricsForLayer(
-                currentLayerModel,
+            this.getVerticalMetricsForDrawing(
+                currentDrawingModel,
                 fontManager.currentFont?.fontModel
             );
         const restoreRetainedVerticalMetrics = (): void => {
-            const stackLayer =
-                this.getCurrentLayerDataFromStack() as unknown as {
+            const stackDrawing =
+                this.getCurrentDrawingDataFromStack() as unknown as {
                     _verticalMetrics?: Record<string, number> | null;
                 } | null;
-            // Model toJSON has no `_verticalMetrics`. LayerDataNormalizer then
+            // Model toJSON has no `_verticalMetrics`. DrawingDataNormalizer then
             // writes `null`, which Object.assign would otherwise leave on the
             // working copy so the next keyboard/sidebearing sync has nothing
-            // to retain and the metrics underlay vanishes until fetchLayerData.
-            if (stackLayer && retainedVerticalMetrics) {
-                stackLayer._verticalMetrics = retainedVerticalMetrics;
+            // to retain and the metrics underlay vanishes until fetchDrawingData.
+            if (stackDrawing && retainedVerticalMetrics) {
+                stackDrawing._verticalMetrics = retainedVerticalMetrics;
             }
             this.setRenderVerticalMetrics(
                 retainedVerticalMetrics
                     ? { _verticalMetrics: retainedVerticalMetrics }
-                    : stackLayer
+                    : stackDrawing
             );
         };
 
-        if (!currentLayerData || !currentLayerModel) {
+        if (!currentDrawingData || !currentDrawingModel) {
             restoreRetainedVerticalMetrics();
             return;
         }
 
-        const rawLayerData = currentLayerModel.toJSON();
-        const exactNormalized = this.preserveMissingLayerFields(
-            LayerDataNormalizer.normalize(rawLayerData, false),
-            rawLayerData
+        const rawDrawingData = currentDrawingModel.toJSON();
+        const exactNormalized = this.preserveMissingDrawingFields(
+            DrawingDataNormalizer.normalize(rawDrawingData, false),
+            rawDrawingData
         );
 
         if (!exactNormalized) {
             return;
         }
 
-        if (currentLayerData.id !== currentLayerModel.id) {
+        if (currentDrawingData.id !== currentDrawingModel.id) {
             // A virtual background receives a persisted sibling ID when its
             // first path is added. Its old canvas snapshot belongs to the
             // virtual ID, so replace it rather than merging across identities.
-            this.applyExactSelectedLayerData(rawLayerData);
+            this.applyExactSelectedDrawingData(rawDrawingData);
             restoreRetainedVerticalMetrics();
             return;
         }
 
         const preferExactComponentTransforms =
-            this.shouldPreferExactSelectedLayerComponentTransforms(
-                currentLayerModel
+            this.shouldPreferExactSelectedDrawingComponentTransforms(
+                currentDrawingModel
             );
 
-        if (exactNormalized.shapes && currentLayerData.shapes?.length) {
-            exactNormalized.shapes = this.mergeSelectedLayerShapes(
+        if (exactNormalized.shapes && currentDrawingData.shapes?.length) {
+            exactNormalized.shapes = this.mergeSelectedDrawingShapes(
                 exactNormalized.shapes,
-                currentLayerData.shapes,
+                currentDrawingData.shapes,
                 preferExactComponentTransforms
             );
         }
 
-        Object.assign(currentLayerData, exactNormalized);
-        parseComponentNodes(currentLayerData.shapes || []);
+        Object.assign(currentDrawingData, exactNormalized);
+        parseComponentNodes(currentDrawingData.shapes || []);
         restoreRetainedVerticalMetrics();
     }
 
     private getPathModelForContour(contourIndex: number): Path | null {
-        const currentLayerModel = this.getCurrentLayerModel();
-        const shape = currentLayerModel?.shapes?.[contourIndex];
+        const currentDrawingModel = this.getCurrentDrawingModel();
+        const shape = currentDrawingModel?.shapes?.[contourIndex];
         if (shape && typeof shape.isPath === 'function' && shape.isPath()) {
             return shape.asPath();
         }
@@ -18532,7 +18679,7 @@ export class OutlineEditor {
 
         return canSlideSmoothOnCurveFromContour(
             getEditableContour(
-                this.getCurrentLayerDataFromStack()?.shapes?.[
+                this.getCurrentDrawingDataFromStack()?.shapes?.[
                     point.contourIndex
                 ]
             ),
@@ -18569,17 +18716,17 @@ export class OutlineEditor {
             return false;
         }
 
-        const currentLayerModel = this.getCurrentLayerModel();
+        const currentDrawingModel = this.getCurrentDrawingModel();
         const currentPoint = this.selectedPoints[0];
         const activePath = this.getPathModelForContour(
             currentPoint.contourIndex
         );
 
-        if (!currentLayerModel || !activePath) {
+        if (!currentDrawingModel || !activePath) {
             return false;
         }
 
-        const linkedLayers = currentLayerModel._getLinkedLayers?.() || [];
+        const linkedDrawings = currentDrawingModel._getLinkedDrawings?.() || [];
         let result: {
             insertedNodeIndex: number;
             changed: boolean;
@@ -18596,9 +18743,9 @@ export class OutlineEditor {
                 return;
             }
 
-            for (const linkedLayer of linkedLayers) {
+            for (const linkedDrawing of linkedDrawings) {
                 const linkedShape =
-                    linkedLayer.shapes?.[currentPoint.contourIndex];
+                    linkedDrawing.shapes?.[currentPoint.contourIndex];
                 const linkedPath =
                     linkedShape &&
                     typeof linkedShape.isPath === 'function' &&
@@ -18643,25 +18790,28 @@ export class OutlineEditor {
         preserveHandlePositions: boolean = false
     ): Set<string> | null {
         // Move all selected points by the given delta
-        const currentLayerData = this.getCurrentLayerDataFromStack();
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
         if (
-            !currentLayerData ||
-            !currentLayerData.shapes ||
+            !currentDrawingData ||
+            !currentDrawingData.shapes ||
             this.selectedPoints.length === 0
         ) {
             return null;
         }
 
         this.applySelectedPointMove(
-            currentLayerData,
+            currentDrawingData,
             deltaX,
             deltaY,
             preserveHandlePositions
         );
 
-        const metricsUpdate = this.applyMetricsKeysToCurrentEditedLayer(true, {
-            rebuildAutomaticComposites: true
-        });
+        const metricsUpdate = this.applyMetricsKeysToCurrentEditedDrawing(
+            true,
+            {
+                rebuildAutomaticComposites: true
+            }
+        );
         this.glyphCanvas.updatePropertyPanel();
         this.glyphCanvas.render();
         return (
@@ -18676,24 +18826,24 @@ export class OutlineEditor {
 
     moveSelectedAnchors(deltaX: number, deltaY: number): boolean {
         // Move all selected anchors by the given delta
-        const currentLayerData = this.getCurrentLayerDataFromStack();
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
         if (
-            !currentLayerData ||
-            !currentLayerData.anchors ||
+            !currentDrawingData ||
+            !currentDrawingData.anchors ||
             this.selectedAnchors.length === 0
         ) {
             return false;
         }
 
         for (const anchorIndex of this.selectedAnchors) {
-            const anchor = currentLayerData.anchors[anchorIndex];
+            const anchor = currentDrawingData.anchors[anchorIndex];
             if (anchor) {
                 anchor.x += deltaX;
                 anchor.y += deltaY;
             }
         }
 
-        // Rebuild auto-composites before saving so downstream layer data
+        // Rebuild auto-composites before saving so downstream drawing data
         // is current when the preview overlay is staged and when the
         // debounced Yjs history entry is finally recorded.
         this._anchorAffectedGlyphNames =
@@ -18705,26 +18855,26 @@ export class OutlineEditor {
 
     moveSelectedComponents(deltaX: number, deltaY: number): Set<string> | null {
         // Move all selected components by the given delta.
-        // Use the stacked nested layer (same as mouse drag), not root layerData.
-        const currentLayerData = this.getCurrentLayerDataFromStack();
+        // Use the stacked nested drawing (same as mouse drag), not root drawingData.
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
         if (
-            !currentLayerData ||
-            !currentLayerData.shapes ||
+            !currentDrawingData ||
+            !currentDrawingData.shapes ||
             this.selectedComponents.length === 0
         ) {
             return null;
         }
 
-        // Gate on the *current* nested layer being auto-composed. Entering a
+        // Gate on the *current* nested drawing being auto-composed. Entering a
         // non-auto nested glyph from an auto-composed base must still nudge.
-        if (this.isAutomaticComposedLayer()) {
+        if (this.isAutomaticComposedDrawing()) {
             this.glyphCanvas.updatePropertyPanel();
             this.glyphCanvas.render();
             return null;
         }
 
         for (const compIndex of this.selectedComponents) {
-            const shape = currentLayerData.shapes[compIndex];
+            const shape = currentDrawingData.shapes[compIndex];
             if (shape && 'reference' in shape) {
                 if (!shape.transform) {
                     // Initialize transform if it doesn't exist
@@ -18742,9 +18892,12 @@ export class OutlineEditor {
             }
         }
 
-        const metricsUpdate = this.applyMetricsKeysToCurrentEditedLayer(true, {
-            rebuildAutomaticComposites: true
-        });
+        const metricsUpdate = this.applyMetricsKeysToCurrentEditedDrawing(
+            true,
+            {
+                rebuildAutomaticComposites: true
+            }
+        );
 
         this.glyphCanvas.updatePropertyPanel();
         this.glyphCanvas.render();
@@ -18758,21 +18911,21 @@ export class OutlineEditor {
         );
     }
 
-    private syncKeyboardOutlineLayerEdit(
+    private syncKeyboardOutlineDrawingEdit(
         label: string,
         metricsUpdate?: { affectedGlyphNames: Set<string> } | null
     ): void {
         // Use the unified recomposition closure to derive complete replay
-        // targets (source layer + composite dependents + automatic composites
+        // targets (source drawing + composite dependents + automatic composites
         // + metrics-key dependents).  This is the committed path, so scope
         // is always 'all'.
-        const activeLayerId = this.getCurrentLayerId();
+        const activeDrawingId = this.getCurrentDrawingId();
         const glyphName =
             this.parseGlyphStack().slice(-1)[0]?.glyphName ??
             this.glyphCanvas.getCurrentGlyphName();
         const sourceTargets =
-            activeLayerId && glyphName
-                ? [{ glyphName, layerId: activeLayerId }]
+            activeDrawingId && glyphName
+                ? [{ glyphName, layerId: activeDrawingId }]
                 : [];
 
         const editKinds = this.getCurrentSelectionEditKinds();
@@ -18783,11 +18936,11 @@ export class OutlineEditor {
             sourceTargets,
             editKinds,
             scope: 'all',
-            activeLayerId
+            activeDrawingId
         });
 
-        const { changedLayerTargets, workerReplayTargets } =
-            resolveLayerSyncTargetsFromClosure(closure, sourceTargets);
+        const { changedDrawingTargets, workerReplayTargets } =
+            resolveDrawingSyncTargetsFromClosure(closure, sourceTargets);
 
         this._syncCurrentGlyphToYDoc(
             label,
@@ -18795,7 +18948,7 @@ export class OutlineEditor {
             undefined,
             null,
             {
-                changedLayerTargets,
+                changedDrawingTargets,
                 workerReplayTargets
             },
             this.getCommittedCompileMetadata('keyboard-outline')
@@ -18803,16 +18956,16 @@ export class OutlineEditor {
     }
 
     private getCurrentDirectSidebearing(side: 'left' | 'right'): number | null {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        if (!currentLayerData || currentLayerData.isInterpolated) {
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        if (!currentDrawingData || currentDrawingData.isInterpolated) {
             return null;
         }
 
-        const bounds = Layer.calculateBoundingBox(
-            currentLayerData,
+        const bounds = Drawing.calculateBoundingBox(
+            currentDrawingData,
             false,
             fontManager.currentFont?.fontModel,
-            currentLayerData.master?.master
+            currentDrawingData.master?.master
         );
 
         if (side === 'left') {
@@ -18820,21 +18973,21 @@ export class OutlineEditor {
         }
 
         return bounds
-            ? (currentLayerData.width || 0) - bounds.maxX
-            : currentLayerData.width || 0;
+            ? (currentDrawingData.width || 0) - bounds.maxX
+            : currentDrawingData.width || 0;
     }
 
-    private getDirectSidebearingsForLayerData(layerData: {
+    private getDirectSidebearingsForDrawingData(drawingData: {
         width?: number;
         master?: { master?: string } | null;
     }): { left: number; right: number } {
-        const bounds = Layer.calculateBoundingBox(
-            layerData,
+        const bounds = Drawing.calculateBoundingBox(
+            drawingData,
             false,
             fontManager.currentFont?.fontModel,
-            layerData.master?.master
+            drawingData.master?.master
         );
-        const width = Number(layerData.width) || 0;
+        const width = Number(drawingData.width) || 0;
 
         return {
             left: bounds ? bounds.minX : 0,
@@ -18871,25 +19024,25 @@ export class OutlineEditor {
         side: 'left' | 'right',
         sidebearingDelta: number
     ): boolean {
-        if (this.isEditingBackgroundLayer() || sidebearingDelta === 0) {
+        if (this.isEditingBackgroundDrawing() || sidebearingDelta === 0) {
             return false;
         }
 
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        if (!currentLayerData || currentLayerData.isInterpolated) {
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        if (!currentDrawingData || currentDrawingData.isInterpolated) {
             return false;
         }
 
         const bboxCenterAnchorScreen =
             this.getBoundingBoxCenterScreenPosition();
-        const previousWidth = currentLayerData.width;
+        const previousWidth = currentDrawingData.width;
         this._pendingSidebearingBboxCenterAnchorScreen = bboxCenterAnchorScreen;
 
         if (side === 'left') {
-            translateLayerContentsX(
+            translateDrawingContentsX(
                 {
-                    shapes: currentLayerData.shapes || [],
-                    anchors: currentLayerData.anchors || [],
+                    shapes: currentDrawingData.shapes || [],
+                    anchors: currentDrawingData.anchors || [],
                     getPathNodes: (shape) => {
                         const pathData = getPathShapeData(shape);
                         if (
@@ -18930,33 +19083,33 @@ export class OutlineEditor {
                 },
                 sidebearingDelta
             );
-            this.getCurrentLayerModel()?.translateMaterializedBackgroundLayerContentsX?.(
+            this.getCurrentDrawingModel()?.translateMaterializedBackgroundDrawingContentsX?.(
                 sidebearingDelta
             );
         }
 
-        currentLayerData.width =
-            (currentLayerData.width || 0) + sidebearingDelta;
+        currentDrawingData.width =
+            (currentDrawingData.width || 0) + sidebearingDelta;
 
         const parsed = this.parseGlyphStack();
         const glyphName =
             parsed.length > 0
                 ? parsed[parsed.length - 1].glyphName
                 : this.glyphCanvas.getCurrentGlyphName();
-        const currentLayerId = this.getCurrentLayerId();
+        const currentDrawingId = this.getCurrentDrawingId();
         let glyphAdvances: Record<string, number> | undefined;
         let previousGlyphAdvances: Record<string, number> | undefined;
-        let nextWidth = currentLayerData.width || 0;
+        let nextWidth = currentDrawingData.width || 0;
         let affectedGlyphNames = new Set(
             [glyphName].filter(Boolean) as string[]
         );
 
-        if (glyphName && currentLayerId) {
-            const masterId =
-                typeof currentLayerData.master === 'object' &&
-                currentLayerData.master
-                    ? (currentLayerData.master as { master?: string }).master ||
-                      null
+        if (glyphName && currentDrawingId) {
+            const stationId =
+                typeof currentDrawingData.master === 'object' &&
+                currentDrawingData.master
+                    ? (currentDrawingData.master as { master?: string })
+                          .master || null
                     : null;
             const advanceSnapshotGlyphNames = new Set<string>([glyphName]);
             const pendingMetricsKeyGlyphNames = [glyphName];
@@ -18990,18 +19143,18 @@ export class OutlineEditor {
             }
             previousGlyphAdvances = this.collectLiveAdvanceWidths(
                 advanceSnapshotGlyphNames,
-                currentLayerId,
-                masterId
+                currentDrawingId,
+                stationId
             );
 
-            this.syncEditorLayerIntoModelForRecomposition(
+            this.syncEditorDrawingIntoModelForRecomposition(
                 glyphName,
-                currentLayerId,
-                currentLayerData
+                currentDrawingId,
+                currentDrawingData
             );
 
             const closure = this.computeRecompositionClosure({
-                sourceTargets: [{ glyphName, layerId: currentLayerId }],
+                sourceTargets: [{ glyphName, layerId: currentDrawingId }],
                 editKinds: new Set(['sidebearing']),
                 scope: this.isDraggingSidebearing ? 'visible' : 'all'
             });
@@ -19009,20 +19162,20 @@ export class OutlineEditor {
 
             // Keyboard and property-panel edits persist immediately after this
             // method. Replace their working copy with the authoritative
-            // recomposed layer before it can overwrite rebuilt geometry.
+            // recomposed drawing before it can overwrite rebuilt geometry.
             if (!this.isDraggingSidebearing) {
-                this.syncCurrentExactLayerDataFromModel();
+                this.syncCurrentExactDrawingDataFromModel();
             }
 
             // Pull editor working-copy width back only after the closure so
             // metrics/rebuild adjustments win, and never clobber the live
             // edit with a stale pre-sync model width.
-            const layerModel = fontManager.currentFont?.fontModel
+            const drawingModel = fontManager.currentFont?.fontModel
                 ?.findGlyph(glyphName)
-                ?.findLayerById(currentLayerId);
-            if (layerModel && typeof layerModel.width === 'number') {
-                currentLayerData.width = layerModel.width;
-                nextWidth = layerModel.width;
+                ?.findDrawingById(currentDrawingId);
+            if (drawingModel && typeof drawingModel.width === 'number') {
+                currentDrawingData.width = drawingModel.width;
+                nextWidth = drawingModel.width;
             }
 
             const widthGlyphNames = new Set<string>([
@@ -19031,8 +19184,8 @@ export class OutlineEditor {
             ]);
             glyphAdvances = this.collectLiveAdvanceWidths(
                 widthGlyphNames,
-                currentLayerId,
-                masterId
+                currentDrawingId,
+                stationId
             );
             this.ensureLiveSidebearingSessionBaselines(
                 previousGlyphAdvances || glyphAdvances
@@ -19095,8 +19248,8 @@ export class OutlineEditor {
 
     setSidebearingValue(side: 'left' | 'right', targetValue: number): boolean {
         if (
-            this.isEditingBackgroundLayer() ||
-            this.isAutomaticComposedLayer()
+            this.isEditingBackgroundDrawing() ||
+            this.isAutomaticComposedDrawing()
         ) {
             return false;
         }
@@ -19120,14 +19273,14 @@ export class OutlineEditor {
             });
         }
         try {
-            const layer = this.getSelectionScopeLayerModel(
-                this.getCurrentLayerId()
+            const drawing = this.getSelectionScopeDrawingModel(
+                this.getCurrentDrawingId()
             );
             if (
-                layer &&
-                typeof layer.clearEffectiveSidebearingKey === 'function'
+                drawing &&
+                typeof drawing.clearEffectiveSidebearingKey === 'function'
             ) {
-                layer.clearEffectiveSidebearingKey(side);
+                drawing.clearEffectiveSidebearingKey(side);
             }
 
             if (
@@ -19139,18 +19292,18 @@ export class OutlineEditor {
                 return false;
             }
 
-            this.saveLayerData('keyboard-sidebearing');
+            this.saveDrawingData('keyboard-sidebearing');
 
             // Use unified recomposition closure.
-            const activeLayerId = this.getCurrentLayerId();
+            const activeDrawingId = this.getCurrentDrawingId();
             const glyphName =
                 this.parseGlyphStack().slice(-1)[0]?.glyphName ??
                 this.glyphCanvas.getCurrentGlyphName();
             const sourceTargets =
-                activeLayerId && glyphName
-                    ? [{ glyphName, layerId: activeLayerId }]
+                activeDrawingId && glyphName
+                    ? [{ glyphName, layerId: activeDrawingId }]
                     : [];
-            const changedLayerTargets = normalizeWorkerReplayTargets([
+            const changedDrawingTargets = normalizeWorkerReplayTargets([
                 ...sourceTargets,
                 ...this._lastLiveSidebearingRecomposeTargets
             ]);
@@ -19166,9 +19319,9 @@ export class OutlineEditor {
                 formatSidebearingHistoryValue(side, targetValue),
                 side,
                 {
-                    changedLayerTargets,
+                    changedDrawingTargets,
                     workerReplayTargets,
-                    sourceLayerIsRecomposed: true
+                    sourceDrawingIsRecomposed: true
                 },
                 this.getCommittedCompileMetadata('keyboard-sidebearing')
             );
@@ -19217,13 +19370,13 @@ export class OutlineEditor {
         this.adjustSelectedSidebearing(deltaX);
 
         // During sidebearing drag, queue a live downstream refresh so that
-        // metrics-key cascades update incrementally without saveLayerData.
+        // metrics-key cascades update incrementally without saveDrawingData.
         const now = performance.now();
         this.refreshLiveVisibleSidebearingDependents(now);
     }
 
     private applySelectedPointMove(
-        currentLayerData: Babelfont.Layer,
+        currentDrawingData: Babelfont.Layer,
         deltaX: number,
         deltaY: number,
         preserveHandlePositions: boolean = false,
@@ -19240,7 +19393,9 @@ export class OutlineEditor {
             if (!contourCache.has(contourIndex)) {
                 contourCache.set(
                     contourIndex,
-                    getEditableContour(currentLayerData.shapes?.[contourIndex])
+                    getEditableContour(
+                        currentDrawingData.shapes?.[contourIndex]
+                    )
                 );
             }
             return contourCache.get(contourIndex) || null;
@@ -19520,8 +19675,8 @@ export class OutlineEditor {
     }
 
     private togglePointSmoothSelection(points: Point[]): void {
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        if (!currentLayerData || !currentLayerData.shapes) {
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        if (!currentDrawingData || !currentDrawingData.shapes) {
             return;
         }
 
@@ -19532,7 +19687,9 @@ export class OutlineEditor {
             if (!contourCache.has(contourIndex)) {
                 contourCache.set(
                     contourIndex,
-                    getEditableContour(currentLayerData.shapes?.[contourIndex])
+                    getEditableContour(
+                        currentDrawingData.shapes?.[contourIndex]
+                    )
                 );
             }
             return contourCache.get(contourIndex) || null;
@@ -19564,11 +19721,14 @@ export class OutlineEditor {
             return;
         }
 
-        const metricsUpdate = this.applyMetricsKeysToCurrentEditedLayer(false, {
-            rebuildAutomaticComposites: true
-        });
-        this.saveLayerData('keyboard-outline');
-        this.syncKeyboardOutlineLayerEdit('Toggle smooth', metricsUpdate);
+        const metricsUpdate = this.applyMetricsKeysToCurrentEditedDrawing(
+            false,
+            {
+                rebuildAutomaticComposites: true
+            }
+        );
+        this.saveDrawingData('keyboard-outline');
+        this.syncKeyboardOutlineDrawingEdit('Toggle smooth', metricsUpdate);
         this.glyphCanvas.updatePropertyPanel();
         this.glyphCanvas.render();
     }
@@ -19578,23 +19738,23 @@ export class OutlineEditor {
     }
 
     /**
-     * Delete selected nodes with proper segment merging across all linked layers.
+     * Delete selected nodes with proper segment merging across all linked drawings.
      * Handles off-curve nodes (converts to line), on-curve nodes with various
      * neighbor configurations (line-line, line-curve, curve-curve).
      */
     async deleteSelectedNodes(): Promise<void> {
-        const currentLayerModel = this.getCurrentLayerModel();
+        const currentDrawingModel = this.getCurrentDrawingModel();
         const currentGlyphModel = this.getCurrentGlyphModel();
-        const currentLayerData = this.getCurrentLayerDataFromStack();
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
         const hasPointSelection = this.selectedPoints.length > 0;
         const hasAnchorSelection = this.selectedAnchors.length > 0;
         const hasComponentSelection = this.selectedComponents.length > 0;
         const hasGuideSelection = this.selectedGuideHandle !== null;
 
         if (
-            !currentLayerModel ||
+            !currentDrawingModel ||
             !currentGlyphModel ||
-            !currentLayerData ||
+            !currentDrawingData ||
             (!hasPointSelection &&
                 !hasAnchorSelection &&
                 !hasComponentSelection &&
@@ -19611,27 +19771,27 @@ export class OutlineEditor {
             pointsByPath.set(point.contourIndex, indices);
         }
 
-        const linkedLayers = currentLayerModel._getLinkedLayers?.() || [];
-        const interpolatingLayers = (currentGlyphModel.layers || []).filter(
-            (layer: Layer) => !!layer.id
+        const linkedDrawings = currentDrawingModel._getLinkedDrawings?.() || [];
+        const interpolatingDrawings = (currentGlyphModel.drawings || []).filter(
+            (drawing: Drawing) => !!drawing.id
         );
         const bridge = window.patchSyncEngine;
-        const structuralLayerTargets = (
+        const structuralDrawingTargets = (
             hasAnchorSelection
-                ? interpolatingLayers
-                : [currentLayerModel, ...linkedLayers]
+                ? interpolatingDrawings
+                : [currentDrawingModel, ...linkedDrawings]
         )
-            .filter((layer: Layer) => !!layer.id)
-            .map((layer: Layer) => ({
+            .filter((drawing: Drawing) => !!drawing.id)
+            .map((drawing: Drawing) => ({
                 glyphName: currentGlyphModel.name,
-                layerId: layer.id!
+                layerId: drawing.id!
             }));
         const fullContourIndices = new Set<number>();
 
         // Sort indices in descending order for each path (to maintain validity during deletion)
         for (const [pathIndex, nodeIndices] of pointsByPath) {
             const contour = getEditableContour(
-                currentLayerData.shapes?.[pathIndex]
+                currentDrawingData.shapes?.[pathIndex]
             );
             const uniqueNodeIndices = [...new Set(nodeIndices)].filter(
                 (nodeIndex) =>
@@ -19681,13 +19841,13 @@ export class OutlineEditor {
                 (anchorIndex) =>
                     Number.isInteger(anchorIndex) &&
                     anchorIndex >= 0 &&
-                    anchorIndex < (currentLayerModel.anchors?.length || 0)
+                    anchorIndex < (currentDrawingModel.anchors?.length || 0)
             )
             .sort((left, right) => right - left);
 
         const selectedAnchorNames = this.getAnchorNamesForSelectionIndices(
             this.selectedAnchors,
-            currentLayerData.anchors || []
+            currentDrawingData.anchors || []
         );
 
         const selectedComponentIndicesDescending = [
@@ -19696,7 +19856,7 @@ export class OutlineEditor {
             .filter(
                 (shapeIndex) =>
                     Number.isInteger(shapeIndex) &&
-                    currentLayerModel.shapes?.[shapeIndex]?.isComponent()
+                    currentDrawingModel.shapes?.[shapeIndex]?.isComponent()
             )
             .sort((left, right) => right - left);
 
@@ -19704,9 +19864,9 @@ export class OutlineEditor {
             ? { ...this.selectedGuideHandle }
             : null;
 
-        const selectedLayerGuideName =
-            selectedGuideHandle?.scope === 'layer'
-                ? currentLayerModel.guides?.[selectedGuideHandle.index]?.name
+        const selectedDrawingGuideName =
+            selectedGuideHandle?.scope === 'drawing'
+                ? currentDrawingModel.guides?.[selectedGuideHandle.index]?.name
                 : null;
 
         // Perform deletions with granular recording inside a transaction
@@ -19722,15 +19882,15 @@ export class OutlineEditor {
             compileEditType: null
         });
         try {
-            const deleteContourFromLayer = (layerModel: Layer): void => {
+            const deleteContourFromDrawing = (drawingModel: Drawing): void => {
                 for (const pathIndex of contourIndicesDescending) {
-                    const shape = layerModel.shapes?.[pathIndex];
+                    const shape = drawingModel.shapes?.[pathIndex];
                     if (!shape?.isPath?.()) {
                         continue;
                     }
 
                     if (fullContourIndices.has(pathIndex)) {
-                        layerModel.removeShape(pathIndex);
+                        drawingModel.removeShape(pathIndex);
                         continue;
                     }
 
@@ -19743,15 +19903,17 @@ export class OutlineEditor {
                 }
             };
 
-            const deleteComponentsFromLayer = (layerModel: Layer): void => {
+            const deleteComponentsFromDrawing = (
+                drawingModel: Drawing
+            ): void => {
                 for (const shapeIndex of selectedComponentIndicesDescending) {
-                    if (layerModel.shapes?.[shapeIndex]?.isComponent()) {
-                        layerModel.removeShape(shapeIndex);
+                    if (drawingModel.shapes?.[shapeIndex]?.isComponent()) {
+                        drawingModel.removeShape(shapeIndex);
                     }
                 }
             };
 
-            const removeAnchorsByName = (layerModel: Layer): void => {
+            const removeAnchorsByName = (drawingModel: Drawing): void => {
                 if (!selectedAnchorNames.length) {
                     return;
                 }
@@ -19760,7 +19922,7 @@ export class OutlineEditor {
                 const indicesToDelete: number[] = [];
 
                 for (const anchorName of selectedAnchorNames) {
-                    const match = layerModel.anchors?.findIndex(
+                    const match = drawingModel.anchors?.findIndex(
                         (anchor, index) =>
                             !used.has(index) && anchor.name === anchorName
                     );
@@ -19773,60 +19935,62 @@ export class OutlineEditor {
 
                 indicesToDelete
                     .sort((left, right) => right - left)
-                    .forEach((index) => layerModel.removeAnchor(index));
+                    .forEach((index) => drawingModel.removeAnchor(index));
             };
 
-            const removeSelectedGuideFromLayer = (layerModel: Layer): void => {
-                if (selectedGuideHandle?.scope !== 'layer') {
+            const removeSelectedGuideFromDrawing = (
+                drawingModel: Drawing
+            ): void => {
+                if (selectedGuideHandle?.scope !== 'drawing') {
                     return;
                 }
 
-                if (layerModel === currentLayerModel) {
-                    layerModel.removeGuide(selectedGuideHandle.index);
+                if (drawingModel === currentDrawingModel) {
+                    drawingModel.removeGuide(selectedGuideHandle.index);
                     return;
                 }
 
-                if (!selectedLayerGuideName) {
+                if (!selectedDrawingGuideName) {
                     return;
                 }
 
-                const linkedGuideIndex = layerModel.guides?.findIndex(
-                    (guide) => guide.name === selectedLayerGuideName
+                const linkedGuideIndex = drawingModel.guides?.findIndex(
+                    (guide) => guide.name === selectedDrawingGuideName
                 );
 
                 if (linkedGuideIndex !== undefined && linkedGuideIndex >= 0) {
-                    layerModel.removeGuide(linkedGuideIndex);
+                    drawingModel.removeGuide(linkedGuideIndex);
                 }
             };
 
             withSuppressedModelRecording(() => {
-                deleteContourFromLayer(currentLayerModel);
-                deleteComponentsFromLayer(currentLayerModel);
+                deleteContourFromDrawing(currentDrawingModel);
+                deleteComponentsFromDrawing(currentDrawingModel);
                 selectedAnchorIndicesDescending.forEach((anchorIndex) =>
-                    currentLayerModel.removeAnchor(anchorIndex)
+                    currentDrawingModel.removeAnchor(anchorIndex)
                 );
-                removeSelectedGuideFromLayer(currentLayerModel);
+                removeSelectedGuideFromDrawing(currentDrawingModel);
 
-                for (const linkedLayer of linkedLayers) {
-                    deleteContourFromLayer(linkedLayer);
-                    deleteComponentsFromLayer(linkedLayer);
+                for (const linkedDrawing of linkedDrawings) {
+                    deleteContourFromDrawing(linkedDrawing);
+                    deleteComponentsFromDrawing(linkedDrawing);
                     if (!hasAnchorSelection) {
-                        removeAnchorsByName(linkedLayer);
+                        removeAnchorsByName(linkedDrawing);
                     }
-                    removeSelectedGuideFromLayer(linkedLayer);
+                    removeSelectedGuideFromDrawing(linkedDrawing);
                 }
                 if (hasAnchorSelection) {
-                    for (const interpolatingLayer of interpolatingLayers) {
-                        if (interpolatingLayer === currentLayerModel) {
+                    for (const interpolatingDrawing of interpolatingDrawings) {
+                        if (interpolatingDrawing === currentDrawingModel) {
                             continue;
                         }
-                        removeAnchorsByName(interpolatingLayer);
+                        removeAnchorsByName(interpolatingDrawing);
                     }
                 }
             });
 
-            if (selectedGuideHandle?.scope === 'master') {
-                this.getRootMasterModel()?.removeGuide(
+            if (selectedGuideHandle?.scope === 'station') {
+                this.getRootStationModel()?.removeGuide(
                     selectedGuideHandle.index
                 );
             }
@@ -19843,17 +20007,17 @@ export class OutlineEditor {
                 [currentGlyphModel.name].filter(Boolean) as string[]
             );
             let bboxCenterAnchorScreen: { x: number; y: number } | null = null;
-            // Commit copies editor layerData back onto the active model layer.
+            // Commit copies editor drawingData back onto the active model drawing.
             // Anchor/guide-only deletes mutate the model first, so refresh
             // that working copy before snapshotting or the deleted objects
-            // are resurrected on the current layer while linked layers stay
+            // are resurrected on the current drawing while linked drawings stay
             // deleted (fontc BadAnchor NoDefault).
             if (
                 deletedStructuralGeometry ||
                 deletedAnchorStructure ||
                 deletedGuideStructure
             ) {
-                this.syncCurrentExactLayerDataFromModel();
+                this.syncCurrentExactDrawingDataFromModel();
             }
             if (deletedStructuralGeometry) {
                 bboxCenterAnchorScreen =
@@ -19872,7 +20036,7 @@ export class OutlineEditor {
 
             this.commitStructuralOutlineChange(deletionLabel, {
                 reuseTransaction: true,
-                layerTargets: structuralLayerTargets,
+                layerTargets: structuralDrawingTargets,
                 compileChangeSource
             });
 
@@ -19886,7 +20050,7 @@ export class OutlineEditor {
             bridge?.endTransaction();
         }
 
-        this.syncCurrentExactLayerDataFromModel();
+        this.syncCurrentExactDrawingDataFromModel();
 
         // Clear selection
         this.selectedPoints = [];
@@ -19907,7 +20071,7 @@ export class OutlineEditor {
                 new CustomEvent('glyphChanged', {
                     detail: {
                         glyphName: currentGlyphModel.name,
-                        layerId: this.getCurrentLayerId()
+                        layerId: this.getCurrentDrawingId()
                     }
                 })
             );
@@ -19930,7 +20094,7 @@ export class OutlineEditor {
         }
 
         this.glyphCanvas.runAfterPreviewChromeSettled(() => {
-            void this.autoSelectMatchingLayer();
+            void this.autoSelectMatchingDrawing();
         });
     }
 
@@ -19989,13 +20153,13 @@ export class OutlineEditor {
             return;
         }
 
-        // Allow interpolation during active interpolation OR layer switch animation
+        // Allow interpolation during active interpolation OR drawing switch animation
         // OR loop animation (play button). Unless force=true (e.g., entering edit
         // mode at interpolated position)
         if (
             !force &&
             !this.isInterpolating &&
-            !this.isLayerSwitchAnimating &&
+            !this.isDrawingSwitchAnimating &&
             !this.glyphCanvas.axesManager?.isLoopAnimating
         ) {
             console.log(
@@ -20007,7 +20171,7 @@ export class OutlineEditor {
         if (
             !force &&
             this.glyphCanvas.axesManager?.isSliderActive &&
-            this.findMatchingLayerForActiveEdit()
+            this.findMatchingDrawingForActiveEdit()
         ) {
             return;
         }
@@ -20036,17 +20200,17 @@ export class OutlineEditor {
 
         try {
             // ALWAYS interpolate the root glyph (with full component tree)
-            // This matches the architecture where layerData always contains the root glyph
+            // This matches the architecture where drawingData always contains the root glyph
             // and we navigate to nested components using glyphStack
             const rootGlyphName = this.getAuthoringRootGlyphName();
             const shouldExtrapolate = true;
-            const rootLayerIds = this.getRootFeatureVariationLayerIds();
-            const interpolatedLayer = rootLayerIds
+            const rootDrawingIds = this.getRootFeatureVariationDrawingIds();
+            const interpolatedDrawing = rootDrawingIds
                 ? await fontInterpolation.interpolateGlyph(
                       rootGlyphName,
                       requestLocation,
                       shouldExtrapolate,
-                      rootLayerIds
+                      rootDrawingIds
                   )
                 : await fontInterpolation.interpolateGlyph(
                       rootGlyphName,
@@ -20073,33 +20237,33 @@ export class OutlineEditor {
             );
 
             // Don't apply interpolated data if we're no longer in an interpolating state
-            // This can happen if a layer switch animation completes while an interpolation is in flight
+            // This can happen if a drawing switch animation completes while an interpolation is in flight
             if (
                 !this.isInterpolating &&
-                !this.isLayerSwitchAnimating &&
+                !this.isDrawingSwitchAnimating &&
                 !this.glyphCanvas.axesManager?.isLoopAnimating &&
                 !force
             ) {
                 console.log(
-                    '[OutlineEditor] 🚫 Skipping applyInterpolatedLayer - no longer interpolating'
+                    '[OutlineEditor] 🚫 Skipping applyInterpolatedDrawing - no longer interpolating'
                 );
                 return;
             }
 
-            // A later slider sample may have landed on a stored layer while this
+            // A later slider sample may have landed on a stored drawing while this
             // request was in flight. Keep the object-model paint, not this result.
             if (
                 this.glyphCanvas.axesManager?.isSliderActive &&
-                this.findMatchingLayerForActiveEdit()
+                this.findMatchingDrawingForActiveEdit()
             ) {
                 console.log(
-                    '[OutlineEditor] 🚫 Skipping applyInterpolatedLayer - current location is an exact layer'
+                    '[OutlineEditor] 🚫 Skipping applyInterpolatedDrawing - current location is an exact drawing'
                 );
                 return;
             }
 
             // Apply interpolated data via shared normalizer
-            this.applyRustLayerData(interpolatedLayer, true);
+            this.applyRustDrawingData(interpolatedDrawing, true);
 
             // Shape text at the exact location that produced this outline.
             const textRun = this.glyphCanvas.textRunEditor;
@@ -20118,17 +20282,17 @@ export class OutlineEditor {
 
             // Render with the new interpolated data
             console.log(
-                '[OutlineEditor] About to render with layerData.width:',
-                this.layerData?.width
+                '[OutlineEditor] About to render with drawingData.width:',
+                this.drawingData?.width
             );
             this.glyphCanvas.render();
             console.log(
-                '[OutlineEditor] After render - layerData.width:',
-                this.layerData?.width
+                '[OutlineEditor] After render - drawingData.width:',
+                this.drawingData?.width
             );
 
             console.log(
-                `[OutlineEditor] ✅ Applied interpolated layer for "${this.currentGlyphName}"`
+                `[OutlineEditor] ✅ Applied interpolated drawing for "${this.currentGlyphName}"`
             );
         } catch (error: any) {
             // Silently ignore cancellation errors
@@ -20159,7 +20323,7 @@ export class OutlineEditor {
                 this.isInterpolating &&
                 !this.glyphCanvas.axesManager?.isSliderActive &&
                 !this.glyphCanvas.axesManager?.isAnimating &&
-                !this.isLayerSwitchAnimating &&
+                !this.isDrawingSwitchAnimating &&
                 !this.glyphCanvas.axesManager?.isLoopAnimating
             ) {
                 this.isInterpolating = false;
@@ -20186,14 +20350,15 @@ export class OutlineEditor {
         return glyph?.featureVariations?.[featureVariationIndex];
     }
 
-    private getRootFeatureVariationLayerIds(): string[] | undefined {
-        const layerIds = this.getRootFeatureVariation()
-            ?.layers.map((layer: Layer) => layer.id)
+    private getRootFeatureVariationDrawingIds(): string[] | undefined {
+        const drawingIds = this.getRootFeatureVariation()
+            ?.drawings.map((drawing: Drawing) => drawing.id)
             .filter(
-                (layerId: string | undefined): layerId is string => !!layerId
+                (drawingId: string | undefined): drawingId is string =>
+                    !!drawingId
             );
 
-        return layerIds?.length ? layerIds : undefined;
+        return drawingIds?.length ? drawingIds : undefined;
     }
 
     async runDeterministicRefresh<T>(task: () => Promise<T>): Promise<T> {
@@ -20215,7 +20380,7 @@ export class OutlineEditor {
                 e.key === 'ArrowRight' ||
                 e.key === 'ArrowUp' ||
                 e.key === 'ArrowDown') &&
-            !!this.selectedLayerId &&
+            !!this.selectedDrawingId &&
             (this.selectedPoints.length > 0 ||
                 this.selectedAnchors.length > 0 ||
                 this.selectedComponents.length > 0 ||
@@ -20237,12 +20402,12 @@ export class OutlineEditor {
         }
         if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.code === 'KeyB') {
             e.preventDefault();
-            await this.toggleBackgroundLayerEditing();
+            await this.toggleBackgroundDrawingEditing();
             return;
         }
         if ((e.metaKey || e.ctrlKey) && e.altKey && e.code === 'KeyB') {
             e.preventDefault();
-            this.togglePairedLayerVisible();
+            this.togglePairedDrawingVisible();
             return;
         }
         if (
@@ -20252,7 +20417,7 @@ export class OutlineEditor {
             e.code === 'KeyB'
         ) {
             e.preventDefault();
-            this.copySelectedShapesToPairedLayer();
+            this.copySelectedShapesToPairedDrawing();
             return;
         }
         // Handle space bar press to enter preview mode and enable panning
@@ -20325,18 +20490,18 @@ export class OutlineEditor {
             return;
         }
 
-        // Handle Cmd+Up/Down to cycle through layers.
-        // Allow when a layer is selected, or when we have saved brace-layer
+        // Handle Cmd+Up/Down to cycle through drawings.
+        // Allow when a drawing is selected, or when we have saved free-drawing
         // neighbors so navigation can resume after switching to a glyph that
-        // doesn't have that brace layer.
-        const canCycleLayers =
-            this.selectedLayerId !== null ||
-            this.braceLayerNeighborAboveMasterId !== null ||
-            this.braceLayerNeighborBelowMasterId !== null;
-        if ((e.metaKey || e.ctrlKey) && !e.shiftKey && canCycleLayers) {
+        // doesn't have that free drawing.
+        const canCycleDrawings =
+            this.selectedDrawingId !== null ||
+            this.freeDrawingNeighborAboveStationId !== null ||
+            this.freeDrawingNeighborBelowStationId !== null;
+        if ((e.metaKey || e.ctrlKey) && !e.shiftKey && canCycleDrawings) {
             if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
                 e.preventDefault();
-                this.cycleLayers(e.key === 'ArrowUp');
+                this.cycleDrawings(e.key === 'ArrowUp');
                 return;
             }
         }
@@ -20347,7 +20512,7 @@ export class OutlineEditor {
             !e.shiftKey &&
             !e.altKey
         ) {
-            if (this.selectAllCurrentLayerObjects()) {
+            if (this.selectAllCurrentDrawingObjects()) {
                 e.preventDefault();
             }
             return;
@@ -20368,7 +20533,7 @@ export class OutlineEditor {
 
         // Handle arrow keys for point/anchor/component movement
         if (
-            this.selectedLayerId &&
+            this.selectedDrawingId &&
             (this.selectedPoints.length > 0 ||
                 this.selectedAnchors.length > 0 ||
                 this.selectedComponents.length > 0 ||
@@ -20468,46 +20633,48 @@ export class OutlineEditor {
         }
     }
 
-    async cycleLayers(moveUp: boolean): Promise<void> {
+    async cycleDrawings(moveUp: boolean): Promise<void> {
         const featureVariation = this.isEditingComponent()
             ? undefined
             : this.getRootFeatureVariation();
-        let sortedLayers = this.glyphCanvas.getSortedLayers(
-            featureVariation?.layers
+        let sortedDrawings = this.glyphCanvas.getSortedDrawings(
+            featureVariation?.drawings
         );
-        if (sortedLayers.length === 0) {
+        if (sortedDrawings.length === 0) {
             return;
         }
-        // Cycle through layers with Cmd+Up (previous) or Cmd+Down (next)
-        // Find current layer index
-        const selectedLayerId = this.isEditingBackgroundLayer()
-            ? this.getPairedLayerModel()?.id || this.selectedLayerId
-            : this.selectedLayerId;
-        const currentIndex = sortedLayers.findIndex(
-            (layer) => layer.id === selectedLayerId
+        // Cycle through drawings with Cmd+Up (previous) or Cmd+Down (next)
+        // Find current drawing index
+        const selectedDrawingId = this.isEditingBackgroundDrawing()
+            ? this.getPairedDrawingModel()?.id || this.selectedDrawingId
+            : this.selectedDrawingId;
+        const currentIndex = sortedDrawings.findIndex(
+            (drawing) => drawing.id === selectedDrawingId
         );
         if (currentIndex === -1) {
-            // No layer selected. If we last had a brace layer selected, resume
-            // navigation from the saved adjacent master position.
-            const neighborMasterId = moveUp
-                ? this.braceLayerNeighborAboveMasterId
-                : this.braceLayerNeighborBelowMasterId;
-            if (neighborMasterId) {
-                const neighborIndex = sortedLayers.findIndex(
-                    (l) => l._master === neighborMasterId
+            // No drawing selected. If we last had a free drawing selected, resume
+            // navigation from the saved adjacent station position.
+            const neighborStationId = moveUp
+                ? this.freeDrawingNeighborAboveStationId
+                : this.freeDrawingNeighborBelowStationId;
+            if (neighborStationId) {
+                const neighborIndex = sortedDrawings.findIndex(
+                    (l) => l._station === neighborStationId
                 );
                 const targetIndex = neighborIndex !== -1 ? neighborIndex : 0;
-                const layerToSelect = this.getFullLayerData(
-                    sortedLayers[targetIndex].id
+                const drawingToSelect = this.getFullDrawingData(
+                    sortedDrawings[targetIndex].id
                 );
-                if (layerToSelect) {
-                    await this.selectLayer(layerToSelect);
+                if (drawingToSelect) {
+                    await this.selectDrawing(drawingToSelect);
                 }
             } else {
-                // Default: select first layer
-                const layerToSelect = this.getFullLayerData(sortedLayers[0].id);
-                if (layerToSelect) {
-                    await this.selectLayer(layerToSelect);
+                // Default: select first drawing
+                const drawingToSelect = this.getFullDrawingData(
+                    sortedDrawings[0].id
+                );
+                if (drawingToSelect) {
+                    await this.selectDrawing(drawingToSelect);
                 }
             }
             return;
@@ -20518,19 +20685,21 @@ export class OutlineEditor {
         if (moveUp) {
             nextIndex = currentIndex - 1;
             if (nextIndex < 0) {
-                nextIndex = sortedLayers.length - 1; // Wrap to last
+                nextIndex = sortedDrawings.length - 1; // Wrap to last
             }
         } else {
             nextIndex = currentIndex + 1;
-            if (nextIndex >= sortedLayers.length) {
+            if (nextIndex >= sortedDrawings.length) {
                 nextIndex = 0; // Wrap to first
             }
         }
 
-        // Get full layer data from font model before selecting
-        const layerToSelect = this.getFullLayerData(sortedLayers[nextIndex].id);
-        if (layerToSelect) {
-            await this.selectLayer(layerToSelect);
+        // Get full drawing data from font model before selecting
+        const drawingToSelect = this.getFullDrawingData(
+            sortedDrawings[nextIndex].id
+        );
+        if (drawingToSelect) {
+            await this.selectDrawing(drawingToSelect);
         }
     }
 
@@ -20556,23 +20725,23 @@ export class OutlineEditor {
             : (currentIndex + 1) % choices.length;
 
         this.setRootFeatureVariationSelection(choices[nextIndex], {
-            clearLayerSelection: true
+            clearDrawingSelection: true
         });
-        await this.autoSelectMatchingLayer({ skipRender: true });
-        if (this.selectedLayerId === null) {
+        await this.autoSelectMatchingDrawing({ skipRender: true });
+        if (this.selectedDrawingId === null) {
             await this.interpolateCurrentGlyph(true);
         }
         await this.glyphCanvas.updatePropertiesUI({
-            skipAutoSelectMatchingLayer: true
+            skipAutoSelectMatchingDrawing: true
         });
         this.glyphCanvas.render();
     }
 
     /**
-     * Get full layer data from font model by layer ID
-     * Converts Layer wrapper to plain Babelfont.Layer object
+     * Get full drawing data from font model by drawing ID
+     * Converts Drawing wrapper to plain Babelfont.Layer object
      */
-    private getFullLayerData(layerId: string): Babelfont.Layer | null {
+    private getFullDrawingData(drawingId: string): Babelfont.Layer | null {
         const fontModel = fontManager.currentFont?.fontModel;
         if (!fontModel) return null;
 
@@ -20583,25 +20752,25 @@ export class OutlineEditor {
         const glyph =
             fontModel.resolveGlyphView?.(glyphName) ??
             fontModel.glyphs.find((g: any) => g.name === glyphName);
-        if (!glyph || !glyph.layers) return null;
+        if (!glyph || !glyph.drawings) return null;
 
-        const layer = glyph.layers.find((l: any) => l.id === layerId);
-        if (!layer) return null;
+        const drawing = glyph.drawings.find((l: any) => l.id === drawingId);
+        if (!drawing) return null;
 
-        // Convert Layer wrapper to plain Babelfont.Layer object
+        // Convert Drawing wrapper to plain Babelfont.Layer object
         return {
-            id: layer.id,
-            name: layer.name,
-            master: layer.master,
-            location: layer.location,
-            width: layer.width,
-            shapes: layer.shapes?.map((s: any) => ({ ...s })),
-            anchors: layer.anchors?.map((anchor: any) => ({
+            id: drawing.id,
+            name: drawing.name,
+            master: drawing.station,
+            location: drawing.location,
+            width: drawing.width,
+            shapes: drawing.shapes?.map((s: any) => ({ ...s })),
+            anchors: drawing.anchors?.map((anchor: any) => ({
                 name: anchor.name,
                 x: anchor.x,
                 y: anchor.y
             })),
-            guides: layer.guides?.map((guide: any) => ({
+            guides: drawing.guides?.map((guide: any) => ({
                 pos: {
                     x: guide.pos.x,
                     y: guide.pos.y,
@@ -20614,119 +20783,123 @@ export class OutlineEditor {
         };
     }
 
-    async selectLayer(layer: Babelfont.Layer | Layer): Promise<void> {
+    async selectDrawing(drawing: Babelfont.Layer | Drawing): Promise<void> {
         await this.flushPendingKeyboardPreviewCommit();
-        layer = this.resolveLayerForSelection(layer);
+        drawing = this.resolveDrawingForSelection(drawing);
 
-        this.cancelPendingLayerSwitchAnimation();
+        this.cancelPendingDrawingSwitchAnimation();
         if (this.active) {
             this.captureInterpolationBboxCenterAnchor();
         }
-        this.suppressAutoLayerMatching = true;
+        this.suppressAutoDrawingMatching = true;
 
-        // Clear all slider/play interpolation state so explicit layer selection
+        // Clear all slider/play interpolation state so explicit drawing selection
         // is a hard boundary — stale in-flight or incomplete interpolation results
         // must not apply after this point.
         this.isInterpolating = false;
         this.clearQueuedInterpolationRequest();
         fontInterpolation.resetRequestTracking();
 
-        // Select a layer and update axis sliders to match its master location
-        // Clear previous state when explicitly selecting a layer
+        // Select a drawing and update axis sliders to match its station location
+        // Clear previous state when explicitly selecting a drawing
         this.escapeState.clear();
-        const previousLayer = this.getCurrentLayerModel();
+        const previousDrawing = this.getCurrentDrawingModel();
 
         console.log(
-            `[OutlineEditor] selectLayer called with layer:`,
-            layer,
-            `id: ${layer.id}, _master: ${layer.master}`
+            `[OutlineEditor] selectDrawing called with drawing:`,
+            drawing,
+            `id: ${drawing.id}, station: ${'station' in drawing ? drawing.station : drawing.master}`
         );
-        this.selectedLayerId = layer.id!;
+        this.selectedDrawingId = drawing.id!;
         console.log(
-            `[OutlineEditor] Set selectedLayerId to:`,
-            this.selectedLayerId
+            `[OutlineEditor] Set selectedDrawingId to:`,
+            this.selectedDrawingId
         );
-        // When a brace layer is selected, record the master IDs of the layers
+        // When a free drawing is selected, record the station IDs of the drawings
         // immediately above and below it in the sorted list. This lets
         // Cmd+Up/Down resume from the right position when switching to a glyph
-        // that doesn't have the same brace layer.
-        const isBraceLayer =
-            !!layer.location && Object.keys(layer.location).length > 0;
-        if (isBraceLayer) {
-            const sortedLayers = this.glyphCanvas.getSortedLayers();
-            const braceIndex = sortedLayers.findIndex((l) => l.id === layer.id);
+        // that doesn't have the same free drawing.
+        const isFreeDrawing =
+            !!drawing.location && Object.keys(drawing.location).length > 0;
+        if (isFreeDrawing) {
+            const sortedDrawings = this.glyphCanvas.getSortedDrawings();
+            const braceIndex = sortedDrawings.findIndex(
+                (l) => l.id === drawing.id
+            );
             if (braceIndex !== -1) {
                 const above =
-                    braceIndex > 0 ? sortedLayers[braceIndex - 1] : undefined;
+                    braceIndex > 0 ? sortedDrawings[braceIndex - 1] : undefined;
                 const below =
-                    braceIndex < sortedLayers.length - 1
-                        ? sortedLayers[braceIndex + 1]
+                    braceIndex < sortedDrawings.length - 1
+                        ? sortedDrawings[braceIndex + 1]
                         : undefined;
-                this.braceLayerNeighborAboveMasterId = above?._master ?? null;
-                this.braceLayerNeighborBelowMasterId = below?._master ?? null;
+                this.freeDrawingNeighborAboveStationId =
+                    above?._station ?? null;
+                this.freeDrawingNeighborBelowStationId =
+                    below?._station ?? null;
             }
         } else {
-            this.braceLayerNeighborAboveMasterId = null;
-            this.braceLayerNeighborBelowMasterId = null;
+            this.freeDrawingNeighborAboveStationId = null;
+            this.freeDrawingNeighborBelowStationId = null;
         }
 
-        // Rebuild glyph_stack with new layer ID (preserves component path)
+        // Rebuild glyph_stack with new drawing ID (preserves component path)
         if (this.glyphStack && this.glyphStack !== '') {
-            this.rebuildGlyphStackWithNewLayer(layer.id!);
+            this.rebuildGlyphStackWithNewDrawing(drawing.id!);
         } else {
             // Initial selection - build stack from scratch at root level
             const rootGlyphName = this.getAuthoringRootGlyphName();
-            this.buildGlyphStack(rootGlyphName, layer.id!, []);
+            this.buildGlyphStack(rootGlyphName, drawing.id!, []);
         }
 
-        const selectionTargetLayer =
-            this.isEditingComponent() && layer.id
-                ? this.getSelectionScopeLayerModel(layer.id) || layer
-                : layer;
-        const nextSelectionState = this.getSelectionStateForLayerTransition(
-            previousLayer,
-            selectionTargetLayer
+        const selectionTargetDrawing =
+            this.isEditingComponent() && drawing.id
+                ? this.getSelectionScopeDrawingModel(drawing.id) || drawing
+                : drawing;
+        const nextSelectionState = this.getSelectionStateForDrawingTransition(
+            previousDrawing,
+            selectionTargetDrawing
         );
 
         // Immediately clear interpolated flag on existing data
         // to prevent rendering with monochrome colors
-        if (this.layerData) {
-            this.layerData.isInterpolated = false;
+        if (this.drawingData) {
+            this.drawingData.isInterpolated = false;
         }
-        // Use font model masters (designspace locations), NOT fontData.masters
+        // Use font model stations (designspace locations), NOT fontData.masters
         // which has already-converted userspace locations
-        let masters: Babelfont.Master[] =
-            (fontManager.currentFont?.fontModel?.masters as any) || [];
-        console.log(`Selected layer: ${layer.name} (ID: ${layer.id})`);
-        console.log('Layer data:', layer);
-        console.log('Available masters:', masters);
+        let stations: Babelfont.Master[] =
+            (fontManager.currentFont?.fontModel?.stations as any) || [];
+        console.log(`Selected drawing: ${drawing.name} (ID: ${drawing.id})`);
+        console.log('Drawing data:', drawing);
+        console.log('Available stations:', stations);
 
-        // Store current layer data before fetching new one (for animation)
-        const oldLayerData = this.layerData;
+        // Store current drawing data before fetching new one (for animation)
+        const oldDrawingData = this.drawingData;
 
-        // CRITICAL SECTION: Suppress all renders during layer data fetch and swap
-        // This prevents the target layer from flashing before animation starts
+        // CRITICAL SECTION: Suppress all renders during drawing data fetch and swap
+        // This prevents the target drawing from flashing before animation starts
         this.glyphCanvas.renderSuppressed = true;
 
         try {
-            // Fetch layer data now and store as target for animation
+            // Fetch drawing data now and store as target for animation
             // This ensures new outlines are ready before animation starts
-            await this.fetchLayerData(true);
+            await this.fetchDrawingData(true);
 
-            // Immediately swap layer data to prevent flash
+            // Immediately swap drawing data to prevent flash
             // If we're in edit mode, set up animation state
-            // Move the NEW layer data to targetLayerData and restore OLD layer data
+            // Move the NEW drawing data to targetDrawingData and restore OLD drawing data
             // so the animation interpolates FROM old TO new
-            if (this.active && this.layerData) {
-                this.targetLayerData = this.layerData;
-                this.layerData = oldLayerData;
-                this.isLayerSwitchAnimating = true;
+            if (this.active && this.drawingData) {
+                this.targetDrawingData = this.drawingData;
+                this.drawingData = oldDrawingData;
+                this.isDrawingSwitchAnimating = true;
                 console.log(
-                    'Starting layer switch animation - old layer in layerData, new layer in targetLayerData'
+                    'Starting drawing switch animation - old drawing in drawingData, new drawing in targetDrawingData'
                 );
             }
 
-            // Perform mouse hit detection after swap (uses layerData)
+            // Perform mouse hit detection after swap (uses drawingData)
             this.performHitDetection(null);
         } finally {
             // Always re-enable rendering after critical section
@@ -20736,30 +20909,30 @@ export class OutlineEditor {
             }
         }
 
-        this.applySelectionStateForLayer(
+        this.applySelectionStateForDrawing(
             nextSelectionState,
-            selectionTargetLayer,
+            selectionTargetDrawing,
             this.getActiveSelectionScopeGlyphName()
         );
 
-        // Find the userspace location for this layer
+        // Find the userspace location for this drawing
         const targetUserspaceLocation =
-            this.getUserspaceLocationForLayerRecord(layer) ||
-            this.getUserspaceLocationForLayer(
-                layer.id!,
+            this.getUserspaceLocationForDrawingRecord(drawing) ||
+            this.getUserspaceLocationForDrawing(
+                drawing.id!,
                 this.parseGlyphStack()[0]?.glyphName
             );
 
         if (!targetUserspaceLocation) {
-            console.warn('No location found for layer', {
-                layerId: layer.id
+            console.warn('No location found for drawing', {
+                layerId: drawing.id
             });
-            this.suppressAutoLayerMatching = false;
+            this.suppressAutoDrawingMatching = false;
             return;
         }
 
         console.log(
-            `Setting axis values to layer location:`,
+            `Setting axis values to drawing location:`,
             targetUserspaceLocation
         );
 
@@ -20768,37 +20941,38 @@ export class OutlineEditor {
             const activeGlyphName =
                 this.parseGlyphStack()[this.parseGlyphStack().length - 1]
                     ?.glyphName || this.currentGlyphName;
-            const rootMatchingLayer = rootGlyphName
-                ? this.findMatchingLayerForUserspaceLocation(
+            const rootMatchingDrawing = rootGlyphName
+                ? this.findMatchingDrawingForUserspaceLocation(
                       rootGlyphName,
                       targetUserspaceLocation,
                       {
-                          excludeLayerId: layer.id!,
+                          excludeDrawingId: drawing.id!,
                           excludeGlyphName: activeGlyphName
                       }
                   )
                 : null;
 
-            console.log('[OutlineEditor] Nested selectLayer root recovery', {
+            console.log('[OutlineEditor] Nested selectDrawing root recovery', {
                 stackBeforeRootRewrite: this.glyphStack,
-                clickedLayerId: layer.id,
-                clickedLayerMaster: layer.master,
-                clickedLayerLocation: layer.location || null,
+                clickedDrawingId: drawing.id,
+                clickedDrawingStation:
+                    'station' in drawing ? drawing.station : drawing.master,
+                clickedDrawingLocation: drawing.location || null,
                 rootGlyphName,
                 targetUserspaceLocation,
-                resolvedRootMatchingLayerId: rootMatchingLayer?.id || null,
-                resolvedRootMatchingLayerMaster:
-                    rootMatchingLayer?.master || null,
-                resolvedRootMatchingLayerLocation:
-                    rootMatchingLayer?.location || null
+                resolvedRootMatchingDrawingId: rootMatchingDrawing?.id || null,
+                resolvedRootMatchingDrawingStation:
+                    rootMatchingDrawing?.master || null,
+                resolvedRootMatchingDrawingLocation:
+                    rootMatchingDrawing?.location || null
             });
 
-            this.rebuildGlyphStackWithNewLayer(layer.id!, {
-                rootLayerId: rootMatchingLayer?.id || null
+            this.rebuildGlyphStackWithNewDrawing(drawing.id!, {
+                rootDrawingId: rootMatchingDrawing?.id || null
             });
 
             console.log(
-                '[OutlineEditor] Nested selectLayer stack after root recovery',
+                '[OutlineEditor] Nested selectDrawing stack after root recovery',
                 {
                     stackAfterRootRewrite: this.glyphStack
                 }
@@ -20814,51 +20988,51 @@ export class OutlineEditor {
         }
 
         if (Object.keys(newSettings).length === 0) {
-            await this.restoreTargetLayerDataAfterAnimating();
-            this.isLayerSwitchAnimating = false;
-            this.suppressAutoLayerMatching = false;
+            await this.restoreTargetDrawingDataAfterAnimating();
+            this.isDrawingSwitchAnimating = false;
+            this.suppressAutoDrawingMatching = false;
             await this.glyphCanvas.updatePropertiesUI({
-                skipAutoSelectMatchingLayer: true
+                skipAutoSelectMatchingDrawing: true
             });
-            this.syncAddLayerButtonForExplicitSelection();
+            this.syncAddDrawingButtonForExplicitSelection();
             return;
         }
 
         this.glyphCanvas.axesManager!._setupAnimation(newSettings);
 
         await this.glyphCanvas.updatePropertiesUI({
-            skipAutoSelectMatchingLayer: true
+            skipAutoSelectMatchingDrawing: true
         });
-        this.syncAddLayerButtonForExplicitSelection();
+        this.syncAddDrawingButtonForExplicitSelection();
     }
 
     async onAnimationComplete() {
-        // Don't clear isLayerSwitchAnimating here - it's cleared in glyph-canvas.ts
-        // after calling restoreTargetLayerDataAfterAnimating()
+        // Don't clear isDrawingSwitchAnimating here - it's cleared in glyph-canvas.ts
+        // after calling restoreTargetDrawingDataAfterAnimating()
 
-        // Don't handle interpolation slider resets here when layer switching
-        // The layer switch logic in glyph-canvas.ts will handle everything
-        if (!this.isLayerSwitchAnimating) {
+        // Don't handle interpolation slider resets here when drawing switching
+        // The drawing switch logic in glyph-canvas.ts will handle everything
+        if (!this.isDrawingSwitchAnimating) {
             this.clearQueuedInterpolationRequest();
             fontInterpolation.resetRequestTracking();
         }
 
-        // Only handle interpolation mode here, not layer switches
-        // Layer switches are handled in restoreTargetLayerDataAfterAnimating()
-        if (this.isLayerSwitchAnimating) {
-            // Layer switch animation - don't handle here
+        // Only handle interpolation mode here, not drawing switches
+        // Drawing switches are handled in restoreTargetDrawingDataAfterAnimating()
+        if (this.isDrawingSwitchAnimating) {
+            // Drawing switch animation - don't handle here
             return;
         }
 
-        // Check if new variation settings match any layer (interpolation mode only)
+        // Check if new variation settings match any drawing (interpolation mode only)
         if (this.active && this.glyphCanvas.fontData) {
-            await this.autoSelectMatchingLayer();
+            await this.autoSelectMatchingDrawing();
 
-            // If no exact layer match, keep interpolated data visible
+            // If no exact drawing match, keep interpolated data visible
             if (
-                this.selectedLayerId === null &&
-                this.layerData &&
-                this.layerData.isInterpolated
+                this.selectedDrawingId === null &&
+                this.drawingData &&
+                this.drawingData.isInterpolated
             ) {
                 // Keep showing interpolated data
                 console.log('Animation complete: showing interpolated glyph');
@@ -20873,30 +21047,30 @@ export class OutlineEditor {
         }
     }
 
-    findMatchingLayer(
+    findMatchingDrawing(
         rootGlyphName: string = this.getAuthoringRootGlyphName()
     ): Babelfont.Layer | null {
         const currentUserspaceLocation = {
             ...this.glyphCanvas.axesManager!.variationSettings
         };
 
-        return this.findMatchingLayerForUserspaceLocation(
+        return this.findMatchingDrawingForUserspaceLocation(
             rootGlyphName,
             currentUserspaceLocation,
-            { allowedLayerIds: this.getRootFeatureVariationLayerIds() }
+            { allowedDrawingIds: this.getRootFeatureVariationDrawingIds() }
         );
     }
 
-    private findMatchingLayerForUserspaceLocation(
+    private findMatchingDrawingForUserspaceLocation(
         glyphName: string,
         userspaceLocation: UserspaceLocation,
         options?: {
-            excludeLayerId?: string | null;
+            excludeDrawingId?: string | null;
             excludeGlyphName?: string | null;
-            allowedLayerIds?: string[];
+            allowedDrawingIds?: string[];
         }
     ): Babelfont.Layer | null {
-        return this._findMatchingLayerForGlyphAtUserspaceLocation(
+        return this._findMatchingDrawingForGlyphAtUserspaceLocation(
             glyphName,
             userspaceLocation,
             options
@@ -20904,16 +21078,16 @@ export class OutlineEditor {
     }
 
     /**
-     * Userspace location used to match stored layers. While a slider drag is
+     * Userspace location used to match stored drawings. While a slider drag is
      * easing, `variationSettings` lags behind the thumb; match the animation
-     * target (the slider value) so an exact layer paints immediately.
+     * target (the slider value) so an exact drawing paints immediately.
      */
-    private getLayerMatchUserspaceLocation(): UserspaceLocation {
+    private getDrawingMatchUserspaceLocation(): UserspaceLocation {
         const axes = this.glyphCanvas.axesManager!;
         if (
             axes.isSliderActive &&
             axes.isAnimating &&
-            !this.isLayerSwitchAnimating &&
+            !this.isDrawingSwitchAnimating &&
             axes.animationTargetValues &&
             Object.keys(axes.animationTargetValues).length > 0
         ) {
@@ -20926,9 +21100,9 @@ export class OutlineEditor {
     }
 
     /**
-     * Stored layer at the current slider location for the glyph being edited.
+     * Stored drawing at the current slider location for the glyph being edited.
      */
-    private findMatchingLayerForActiveEdit(): Babelfont.Layer | null {
+    private findMatchingDrawingForActiveEdit(): Babelfont.Layer | null {
         const parsedStack = this.parseGlyphStack();
         const rootGlyphName = this.getAuthoringRootGlyphName();
         const activeGlyphName = this.isEditingComponent()
@@ -20937,23 +21111,24 @@ export class OutlineEditor {
               rootGlyphName
             : rootGlyphName;
 
-        return this.findMatchingLayerForUserspaceLocation(
+        return this.findMatchingDrawingForUserspaceLocation(
             activeGlyphName,
-            this.getLayerMatchUserspaceLocation(),
+            this.getDrawingMatchUserspaceLocation(),
             this.isEditingComponent()
                 ? undefined
                 : {
-                      allowedLayerIds: this.getRootFeatureVariationLayerIds()
+                      allowedDrawingIds:
+                          this.getRootFeatureVariationDrawingIds()
                   }
         );
     }
 
     /**
-     * Paint the selected stored layer from the object model without waiting
+     * Paint the selected stored drawing from the object model without waiting
      * for a WASM interpolation round-trip.
      */
-    private paintExactSelectedLayerFromModel(skipRender: boolean): boolean {
-        if (!this.selectedLayerId) {
+    private paintExactSelectedDrawingFromModel(skipRender: boolean): boolean {
+        if (!this.selectedDrawingId) {
             return false;
         }
 
@@ -20972,31 +21147,31 @@ export class OutlineEditor {
         }
 
         try {
-            const exactLayerData = this.getExactLayerDataForSelection(
+            const exactDrawingData = this.getExactDrawingDataForSelection(
                 selectionGlyphName,
-                this.selectedLayerId
+                this.selectedDrawingId
             );
-            if (!exactLayerData) {
+            if (!exactDrawingData) {
                 return false;
             }
-            this.applyExactSelectedLayerData(exactLayerData, null);
-            this.finalizeFetchedLayerData(glyphName, skipRender);
+            this.applyExactSelectedDrawingData(exactDrawingData, null);
+            this.finalizeFetchedDrawingData(glyphName, skipRender);
             return true;
         } catch (error) {
             console.warn(
-                '[OutlineEditor] Could not paint exact layer from model during slider drag',
+                '[OutlineEditor] Could not paint exact drawing from model during slider drag',
                 error
             );
             return false;
         }
     }
 
-    async autoSelectMatchingLayer(options?: {
+    async autoSelectMatchingDrawing(options?: {
         skipRender?: boolean;
     }): Promise<void> {
-        if (this.suppressAutoLayerMatching) {
+        if (this.suppressAutoDrawingMatching) {
             console.log(
-                '[OutlineEditor] Skipping autoSelectMatchingLayer during explicit layer selection'
+                '[OutlineEditor] Skipping autoSelectMatchingDrawing during explicit drawing selection'
             );
             return;
         }
@@ -21009,22 +21184,22 @@ export class OutlineEditor {
               rootGlyphName
             : rootGlyphName;
         const skipRender = options?.skipRender === true;
-        const previousLayer = this.isEditingComponent()
-            ? this.getCurrentLayerModel()
-            : this.getTransitionPreviousLayerModel(rootGlyphName);
+        const previousDrawing = this.isEditingComponent()
+            ? this.getCurrentDrawingModel()
+            : this.getTransitionPreviousDrawingModel(rootGlyphName);
 
-        console.log('[OutlineEditor] autoSelectMatchingLayer called', {
+        console.log('[OutlineEditor] autoSelectMatchingDrawing called', {
             active: this.active,
             isInterpolating: this.isInterpolating,
-            selectedLayerId: this.selectedLayerId,
+            selectedDrawingId: this.selectedDrawingId,
             currentGlyphName: this.currentGlyphName,
             rootGlyphName,
             activeGlyphName
         });
 
-        if (this.getCurrentLayerModel()?.is_background) {
-            if (!this.isInterpolating && !this.isLayerSwitchAnimating) {
-                await this.fetchLayerData(skipRender);
+        if (this.getCurrentDrawingModel()?.is_background) {
+            if (!this.isInterpolating && !this.isDrawingSwitchAnimating) {
+                await this.fetchDrawingData(skipRender);
                 this.performHitDetection(null);
             }
 
@@ -21033,69 +21208,70 @@ export class OutlineEditor {
                 this.glyphCanvas.render();
             }
 
-            this.updateLayerSelection();
+            this.updateDrawingSelection();
             this.glyphCanvas.updatePropertyPanel();
             return;
         }
 
-        const matchingLayer = this.findMatchingLayerForActiveEdit();
+        const matchingDrawing = this.findMatchingDrawingForActiveEdit();
 
-        if (matchingLayer) {
+        if (matchingDrawing) {
             console.log(
                 '[OutlineEditor]',
-                `  ✓ MATCH found: layer ${matchingLayer.id}`
+                `  ✓ MATCH found: drawing ${matchingDrawing.id}`
             );
-            // Found a matching layer - select it
-            this.selectedLayerId = matchingLayer.id || null;
+            // Found a matching drawing - select it
+            this.selectedDrawingId = matchingDrawing.id || null;
 
-            // Build or rebuild glyph_stack with new layer ID
+            // Build or rebuild glyph_stack with new drawing ID
             if (
                 this.glyphStack &&
                 this.glyphStack !== '' &&
                 this.getAuthoringRootGlyphName() === rootGlyphName
             ) {
-                // If stack exists, rebuild with new layer (preserves component path)
-                this.rebuildGlyphStackWithNewLayer(matchingLayer.id!);
+                // If stack exists, rebuild with new drawing (preserves component path)
+                this.rebuildGlyphStackWithNewDrawing(matchingDrawing.id!);
             } else {
                 // If stack is empty or the root glyph changed, rebuild the stack for the new glyph.
-                this.buildGlyphStack(rootGlyphName, matchingLayer.id!, []);
+                this.buildGlyphStack(rootGlyphName, matchingDrawing.id!, []);
             }
 
-            const selectionTargetLayer =
-                this.isEditingComponent() && matchingLayer.id
-                    ? this.getSelectionScopeLayerModel(matchingLayer.id) ||
-                      matchingLayer
-                    : matchingLayer;
-            const nextSelectionState = this.getSelectionStateForLayerTransition(
-                previousLayer,
-                selectionTargetLayer
-            );
+            const selectionTargetDrawing =
+                this.isEditingComponent() && matchingDrawing.id
+                    ? this.getSelectionScopeDrawingModel(matchingDrawing.id) ||
+                      matchingDrawing
+                    : matchingDrawing;
+            const nextSelectionState =
+                this.getSelectionStateForDrawingTransition(
+                    previousDrawing,
+                    selectionTargetDrawing
+                );
 
             // Don't clear previous state - keep it to allow Escape to restore
-            // The previous state is only cleared in selectLayer() when explicitly clicking a layer
+            // The previous state is only cleared in selectDrawing() when explicitly clicking a drawing
             console.log('Keeping previous state for Escape functionality');
 
-            // Fetch layer data EXCEPT during layer switch animation (interpolated
+            // Fetch drawing data EXCEPT during drawing switch animation (interpolated
             // frames) and EXCEPT during off-slider interpolation (mouseup / animation
             // complete still fetch via those callers). While a slider is down on an
-            // exact stored location, paint the object-model layer immediately.
-            if (!this.isLayerSwitchAnimating) {
+            // exact stored location, paint the object-model drawing immediately.
+            if (!this.isDrawingSwitchAnimating) {
                 if (
                     this.isInterpolating &&
                     this.glyphCanvas.axesManager?.isSliderActive
                 ) {
-                    this.paintExactSelectedLayerFromModel(skipRender);
+                    this.paintExactSelectedDrawingFromModel(skipRender);
                 } else if (!this.isInterpolating) {
-                    await this.fetchLayerData(skipRender); // Fetch layer data for outline editor
+                    await this.fetchDrawingData(skipRender); // Fetch drawing data for outline editor
 
-                    // Perform mouse hit detection after layer data is loaded
+                    // Perform mouse hit detection after drawing data is loaded
                     this.performHitDetection(null);
                 }
             }
 
-            this.applySelectionStateForLayer(
+            this.applySelectionStateForDrawing(
                 nextSelectionState,
-                selectionTargetLayer,
+                selectionTargetDrawing,
                 this.getActiveSelectionScopeGlyphName()
             );
 
@@ -21113,36 +21289,36 @@ export class OutlineEditor {
                 this.glyphCanvas.render();
             }
 
-            this.updateLayerSelection();
+            this.updateDrawingSelection();
             this.glyphCanvas.updatePropertyPanel();
             console.log(
-                `Auto-selected layer: ${matchingLayer.name || 'Default'} (${matchingLayer.id})`
+                `Auto-selected drawing: ${matchingDrawing.name || 'Default'} (${matchingDrawing.id})`
             );
             return;
         }
 
-        // No matching layer found - deselect current layer
-        if (this.selectedLayerId !== null) {
-            if (previousLayer) {
-                this.storeSelectionStateForLayer(previousLayer);
+        // No matching drawing found - deselect current drawing
+        if (this.selectedDrawingId !== null) {
+            if (previousDrawing) {
+                this.storeSelectionStateForDrawing(previousDrawing);
             }
-            this.selectedLayerId = null;
-            // Don't clear layer data during interpolation - keep showing interpolated data
+            this.selectedDrawingId = null;
+            // Don't clear drawing data during interpolation - keep showing interpolated data
             if (!this.isInterpolating) {
-                this.layerData = null; // Clear layer data when deselecting
+                this.drawingData = null; // Clear drawing data when deselecting
             }
             this.selectedPointIndex = null;
             this.hoveredPointIndex = null;
             this.hoveredPathSegment = null;
-            this.updateLayerSelection();
+            this.updateDrawingSelection();
             this.glyphCanvas.updatePropertyPanel();
-            console.log('No matching layer - deselected');
+            console.log('No matching drawing - deselected');
         } else {
-            this.updateLayerSelection();
+            this.updateDrawingSelection();
         }
 
-        // If we're in glyph edit mode and not on a layer, interpolate at current position
-        if (this.active && this.selectedLayerId === null && rootGlyphName) {
+        // If we're in glyph edit mode and not on a drawing, interpolate at current position
+        if (this.active && this.selectedDrawingId === null && rootGlyphName) {
             console.log(
                 'Interpolating at current position after entering edit mode'
             );
@@ -21165,8 +21341,8 @@ export class OutlineEditor {
     }
 
     /**
-     * Walk glyphStack once. `layerData` is the edited level (null if a
-     * component on the path has no layer data). `transform` maps that
+     * Walk glyphStack once. `drawingData` is the edited level (null if a
+     * component on the path has no drawing data). `transform` maps that
      * level's local space into the root glyph, and keeps every component
      * applied before a broken step.
      */
@@ -21175,19 +21351,19 @@ export class OutlineEditor {
         transform: Transform;
     } {
         const identity: Transform = [1, 0, 0, 1, 0, 0];
-        if (!this.layerData) {
+        if (!this.drawingData) {
             return { layerData: null, transform: identity };
         }
         if (!this.glyphStack) {
-            return { layerData: this.layerData, transform: identity };
+            return { layerData: this.drawingData, transform: identity };
         }
 
         const parsed = this.parseGlyphStack();
         if (parsed.length === 0) {
-            return { layerData: this.layerData, transform: identity };
+            return { layerData: this.drawingData, transform: identity };
         }
 
-        let layerData: Babelfont.Layer | null = this.layerData;
+        let drawingData: Babelfont.Layer | null = this.drawingData;
         let transform: Transform = identity;
 
         for (let i = 0; i < parsed.length; i++) {
@@ -21197,9 +21373,9 @@ export class OutlineEditor {
             }
 
             if (
-                !layerData ||
-                !layerData.shapes ||
-                !layerData.shapes[item.componentIndex]
+                !drawingData ||
+                !drawingData.shapes ||
+                !drawingData.shapes[item.componentIndex]
             ) {
                 console.error(
                     '[GlyphStack] Invalid navigation at index',
@@ -21207,19 +21383,19 @@ export class OutlineEditor {
                     'componentIndex:',
                     item.componentIndex
                 );
-                layerData = null;
+                drawingData = null;
                 break;
             }
 
             const shape: Babelfont.Shape =
-                layerData.shapes[item.componentIndex];
+                drawingData.shapes[item.componentIndex];
             if (!('reference' in shape)) {
                 console.error(
                     '[GlyphStack] Shape at index',
                     item.componentIndex,
                     'is not a component'
                 );
-                layerData = null;
+                drawingData = null;
                 break;
             }
 
@@ -21230,21 +21406,21 @@ export class OutlineEditor {
                 );
             }
 
-            const nextLayerData: Babelfont.Layer | null =
+            const nextDrawingData: Babelfont.Layer | null =
                 shape.layerData || null;
-            if (!nextLayerData) {
+            if (!nextDrawingData) {
                 console.error(
                     '[GlyphStack] Component at index',
                     item.componentIndex,
                     'has no layerData'
                 );
-                layerData = null;
+                drawingData = null;
                 break;
             }
-            layerData = nextLayerData;
+            drawingData = nextDrawingData;
         }
 
-        return { layerData, transform };
+        return { layerData: drawingData, transform };
     }
 
     /** Map a point from root-glyph space into the edited component's space. */
@@ -21268,48 +21444,48 @@ export class OutlineEditor {
     }
 
     /**
-     * Get the layer data for the current position in glyph_stack
-     * Always starts from root layerData and navigates through components
-     * @returns The layer data at the current glyph_stack position
+     * Get the drawing data for the current position in glyph_stack
+     * Always starts from root drawingData and navigates through components
+     * @returns The drawing data at the current glyph_stack position
      */
-    getCurrentLayerDataFromStack(): Babelfont.Layer | null {
-        if (!this.layerData || !this.glyphStack) {
-            return this.layerData;
+    getCurrentDrawingDataFromStack(): Babelfont.Layer | null {
+        if (!this.drawingData || !this.glyphStack) {
+            return this.drawingData;
         }
         if (this.parseGlyphStack().length === 0) {
-            return this.layerData;
+            return this.drawingData;
         }
         return this.resolveStackLevel().layerData;
     }
 
     getAccumulatedTransform(): Transform {
-        if (!this.layerData || !this.glyphStack) {
+        if (!this.drawingData || !this.glyphStack) {
             return [1, 0, 0, 1, 0, 0];
         }
         return this.resolveStackLevel().transform;
     }
 
-    async fetchLayerData(
+    async fetchDrawingData(
         skipRender: boolean = false,
         rootGlyphName?: string,
         retryCount: number = 0
     ): Promise<void> {
-        const fetchGeneration = ++this._layerDataFetchGeneration;
+        const fetchGeneration = ++this._drawingDataFetchGeneration;
         const isCurrentFetch = () =>
-            fetchGeneration === this._layerDataFetchGeneration;
+            fetchGeneration === this._drawingDataFetchGeneration;
         const stackPreview = new Error().stack
             ?.split('\n')
             .slice(2, 6)
             .map((line) => line.trim())
             .join(' | ');
-        // Reset interpolation request tracking since we're loading exact layer data
+        // Reset interpolation request tracking since we're loading exact drawing data
         this.clearQueuedInterpolationRequest();
         fontInterpolation.resetRequestTracking();
 
-        // ALWAYS fetch root glyph layer data (with nested components)
-        // Never fetch layer data for a component separately
-        if (!this.selectedLayerId) {
-            this.layerData = null;
+        // ALWAYS fetch root glyph drawing data (with nested components)
+        // Never fetch drawing data for a component separately
+        if (!this.selectedDrawingId) {
+            this.drawingData = null;
             this.renderVerticalMetrics = null;
             return;
         }
@@ -21327,49 +21503,49 @@ export class OutlineEditor {
             glyphName.startsWith('GID ')
         ) {
             console.warn(
-                '[OutlineEditor] Skipping fetchLayerData due to invalid glyph name',
+                '[OutlineEditor] Skipping fetchDrawingData due to invalid glyph name',
                 glyphName
             );
             return;
         }
 
         console.log(
-            `🔍 Fetching ROOT layer data for glyph: "${glyphName}", layer: ${this.selectedLayerId}`
+            `🔍 Fetching ROOT drawing data for glyph: "${glyphName}", drawing: ${this.selectedDrawingId}`
         );
 
-        let exactLayerData: any | null = null;
+        let exactDrawingData: any | null = null;
         try {
-            exactLayerData = this.getExactLayerDataForSelection(
+            exactDrawingData = this.getExactDrawingDataForSelection(
                 selectionGlyphName,
-                this.selectedLayerId
+                this.selectedDrawingId
             );
         } catch (error) {
             console.warn(
-                '[OutlineEditor] Could not build exact selected layer data; falling back to interpolation result',
+                '[OutlineEditor] Could not build exact selected drawing data; falling back to interpolation result',
                 error
             );
         }
-        if (exactLayerData && isCurrentFetch()) {
-            this.applyExactSelectedLayerData(exactLayerData, null);
-            this.finalizeFetchedLayerData(glyphName, skipRender);
+        if (exactDrawingData && isCurrentFetch()) {
+            this.applyExactSelectedDrawingData(exactDrawingData, null);
+            this.finalizeFetchedDrawingData(glyphName, skipRender);
         }
 
-        if (this.getRootLayerModel()?.is_background) {
+        if (this.getRootDrawingModel()?.is_background) {
             return;
         }
 
         try {
-            // Compute the userspace location for this layer
-            const userspaceLocation = this.getUserspaceLocationForLayer(
-                this.selectedLayerId,
+            // Compute the userspace location for this drawing
+            const userspaceLocation = this.getUserspaceLocationForDrawing(
+                this.selectedDrawingId,
                 selectionGlyphName
             );
             if (!userspaceLocation) {
                 console.warn(
-                    `[OutlineEditor] Could not resolve location for layer ${this.selectedLayerId}`
+                    `[OutlineEditor] Could not resolve location for drawing ${this.selectedDrawingId}`
                 );
-                if (!exactLayerData) {
-                    this.layerData = null;
+                if (!exactDrawingData) {
+                    this.drawingData = null;
                     this.renderVerticalMetrics = null;
                 }
                 return;
@@ -21377,14 +21553,14 @@ export class OutlineEditor {
 
             // Fetch via Rust WASM — same path as interpolation.
             // The Rust FONT_CACHE is already up-to-date via incremental
-            // incremental layer-update batches during edits and storeFontJson at font-open time.
-            const rootLayerIds = this.getRootFeatureVariationLayerIds();
-            const rustResult = rootLayerIds
+            // incremental drawing-update batches during edits and storeFontJson at font-open time.
+            const rootDrawingIds = this.getRootFeatureVariationDrawingIds();
+            const rustResult = rootDrawingIds
                 ? await fontInterpolation.interpolateGlyph(
                       glyphName,
                       userspaceLocation,
                       false,
-                      rootLayerIds
+                      rootDrawingIds
                   )
                 : await fontInterpolation.interpolateGlyph(
                       glyphName,
@@ -21394,23 +21570,26 @@ export class OutlineEditor {
                 return;
             }
 
-            if (exactLayerData) {
-                this.applyExactSelectedLayerData(exactLayerData, rustResult);
+            if (exactDrawingData) {
+                this.applyExactSelectedDrawingData(
+                    exactDrawingData,
+                    rustResult
+                );
             } else {
                 // Fallback for unexpected selection/model desync.
-                this.applyRustLayerData(rustResult, false);
+                this.applyRustDrawingData(rustResult, false);
             }
 
-            this.finalizeFetchedLayerData(glyphName, skipRender);
+            this.finalizeFetchedDrawingData(glyphName, skipRender);
         } catch (error) {
-            // Silently ignore cancellations — these happen when a newer fetchLayerData
+            // Silently ignore cancellations — these happen when a newer fetchDrawingData
             // call supersedes this one during startup or rapid glyph switching.
             if (
                 error instanceof Error &&
                 error.message.includes('Interpolation cancelled')
             ) {
                 if (retryCount < 1) {
-                    await this.fetchLayerData(
+                    await this.fetchDrawingData(
                         skipRender,
                         rootGlyphName,
                         retryCount + 1
@@ -21418,24 +21597,24 @@ export class OutlineEditor {
                 }
                 return;
             }
-            console.error('Error fetching layer data via Rust:', error);
-            if (!exactLayerData) {
-                this.layerData = null;
+            console.error('Error fetching drawing data via Rust:', error);
+            if (!exactDrawingData) {
+                this.drawingData = null;
                 this.renderVerticalMetrics = null;
             }
         }
     }
 
     /**
-     * Commit layer data into Y.Doc after an edit.
+     * Commit drawing data into Y.Doc after an edit.
      *
      * The caller has already:
-     *   1. Mutated the layer data
-     *   2. Called saveLayerData() to persist to the model and babelfontData
+     *   1. Mutated the drawing data
+     *   2. Called saveDrawingData() to persist to the model and babelfontData
      *   3. Computed the recomposition closure via computeRecompositionClosure()
      *
      * This method receives the pre-computed closure targets, collects explicit
-     * next-layer snapshots for every changed target, then commits those
+     * next-drawing snapshots for every changed target, then commits those
      * snapshots to Yjs.  The complete closure (allTargets) is stamped as
      * workerReplayTargets metadata on every change-log entry so the Rust worker
      * refreshes the subset/font/filter cache for every affected glyph, not just
@@ -21445,9 +21624,9 @@ export class OutlineEditor {
      * @param oldValue     Previous state description for undo/redo display.
      * @param newValue     New state description for undo/redo display.
      * @param visualAnchorSide Which side was edited (for viewport pan).
-     * @param layerSyncTargets Pre-computed changed-layer targets and
-     *   replay metadata targets from the caller.  `changedLayerTargets`
-     *   controls which layer JSON fragments are diffed into Yjs;
+     * @param drawingSyncTargets Pre-computed changed-drawing targets and
+     *   replay metadata targets from the caller.  `changedDrawingTargets`
+     *   controls which drawing JSON fragments are diffed into Yjs;
      *   `workerReplayTargets` stays metadata-only for downstream cache
      *   refresh and compile scoping.
      */
@@ -21456,8 +21635,8 @@ export class OutlineEditor {
         oldValue?: string,
         newValue?: string,
         visualAnchorSide?: SidebearingSide | null,
-        layerSyncTargets?: {
-            changedLayerTargets?: Array<{
+        drawingSyncTargets?: {
+            changedDrawingTargets?: Array<{
                 glyphName: string;
                 layerId: string;
             }>;
@@ -21465,8 +21644,8 @@ export class OutlineEditor {
                 glyphName: string;
                 layerId: string;
             }>;
-            sourceLayerIsRecomposed?: boolean;
-            authoritativeOptionalLayerFields?: Array<
+            sourceDrawingIsRecomposed?: boolean;
+            authoritativeOptionalDrawingFields?: Array<
                 'anchors' | 'guides' | 'format_specific'
             >;
         },
@@ -21478,7 +21657,8 @@ export class OutlineEditor {
     ): void {
         if (!window.patchSyncEngine) return;
         const parsed = this.parseGlyphStack();
-        const activeLayerId = this.getCurrentLayerId() ?? this.selectedLayerId;
+        const activeDrawingId =
+            this.getCurrentDrawingId() ?? this.selectedDrawingId;
         const editedGlyphName =
             parsed.length > 0
                 ? parsed[parsed.length - 1].glyphName
@@ -21488,104 +21668,105 @@ export class OutlineEditor {
             return;
         }
 
-        const activeModelLayer = activeLayerId
+        const activeModelDrawing = activeDrawingId
             ? fontManager.currentFont?.fontModel
                   ?.findGlyph(editedGlyphName)
-                  ?.findLayerById?.(activeLayerId)
+                  ?.findDrawingById?.(activeDrawingId)
             : null;
-        if (activeLayerId?.startsWith('background-') && !activeModelLayer) {
+        if (activeDrawingId?.startsWith('background-') && !activeModelDrawing) {
             return;
         }
 
-        // Build the full set of targets: directly edited layer + closure-derived targets.
+        // Build the full set of targets: directly edited drawing + closure-derived targets.
         // The caller is responsible for supplying pre-computed complete closure targets.
         // This method does NOT perform additional dependent discovery — the shared
         // recomposition-closure module is the single source of truth.
-        const directTarget = activeLayerId
-            ? [{ glyphName: editedGlyphName, layerId: activeLayerId }]
+        const directTarget = activeDrawingId
+            ? [{ glyphName: editedGlyphName, layerId: activeDrawingId }]
             : [];
         const replayTargets = normalizeWorkerReplayTargets([
             ...directTarget,
-            ...(layerSyncTargets?.workerReplayTargets ?? [])
+            ...(drawingSyncTargets?.workerReplayTargets ?? [])
         ]);
-        const changedLayerTargets = normalizeWorkerReplayTargets(
-            layerSyncTargets?.changedLayerTargets?.length
-                ? layerSyncTargets.changedLayerTargets
+        const changedDrawingTargets = normalizeWorkerReplayTargets(
+            drawingSyncTargets?.changedDrawingTargets?.length
+                ? drawingSyncTargets.changedDrawingTargets
                 : directTarget
         );
-        const authoritativeOptionalLayerFields =
-            layerSyncTargets?.authoritativeOptionalLayerFields ??
-            this.getAuthoritativeOptionalLayerFields(
+        const authoritativeOptionalDrawingFields =
+            drawingSyncTargets?.authoritativeOptionalDrawingFields ??
+            this.getAuthoritativeOptionalDrawingFields(
                 this.getCurrentSelectionEditKinds()
             );
 
         if (
-            changedLayerTargets.length &&
-            typeof window.patchSyncEngine.syncLayerSnapshotsFromJson ===
+            changedDrawingTargets.length &&
+            typeof window.patchSyncEngine.syncDrawingSnapshotsFromJson ===
                 'function'
         ) {
-            const layerSnapshots: Array<{
+            const drawingSnapshots: Array<{
                 glyphName: string;
                 layerId: string;
-                layerJson: unknown;
+                drawingJson: unknown;
             }> = [];
             const fontModel = fontManager.currentFont?.fontModel;
             const storedGlyphs = fontManager.currentFont?.babelfontData?.glyphs;
             if (fontModel) {
-                const currentLayerData = this.getCurrentLayerDataFromStack();
-                const directModelLayer = activeLayerId
+                const currentDrawingData =
+                    this.getCurrentDrawingDataFromStack();
+                const directModelDrawing = activeDrawingId
                     ? fontModel
                           .findGlyph(editedGlyphName)
-                          ?.findLayerById?.(activeLayerId)
+                          ?.findDrawingById?.(activeDrawingId)
                     : null;
-                const hasDirectEditedLayerTarget = changedLayerTargets.some(
+                const hasDirectEditedDrawingTarget = changedDrawingTargets.some(
                     (target) =>
                         target.glyphName === editedGlyphName &&
-                        target.layerId === activeLayerId
+                        target.layerId === activeDrawingId
                 );
                 if (
-                    hasDirectEditedLayerTarget &&
-                    !layerSyncTargets?.sourceLayerIsRecomposed &&
-                    currentLayerData &&
-                    directModelLayer &&
-                    typeof directModelLayer.syncFromEditorLayerData ===
+                    hasDirectEditedDrawingTarget &&
+                    !drawingSyncTargets?.sourceDrawingIsRecomposed &&
+                    currentDrawingData &&
+                    directModelDrawing &&
+                    typeof directModelDrawing.syncFromEditorDrawingData ===
                         'function'
                 ) {
-                    const directModelLayerData =
-                        typeof directModelLayer.toJSON === 'function'
-                            ? directModelLayer.toJSON()
+                    const directModelDrawingData =
+                        typeof directModelDrawing.toJSON === 'function'
+                            ? directModelDrawing.toJSON()
                             : null;
                     const shouldSyncAnchors =
-                        Array.isArray(currentLayerData.anchors) &&
-                        (currentLayerData.anchors.length > 0 ||
-                            Array.isArray(directModelLayerData?.anchors));
+                        Array.isArray(currentDrawingData.anchors) &&
+                        (currentDrawingData.anchors.length > 0 ||
+                            Array.isArray(directModelDrawingData?.anchors));
                     const shouldSyncGuides =
-                        Array.isArray(currentLayerData.guides) &&
-                        (currentLayerData.guides.length > 0 ||
-                            Array.isArray(directModelLayerData?.guides));
+                        Array.isArray(currentDrawingData.guides) &&
+                        (currentDrawingData.guides.length > 0 ||
+                            Array.isArray(directModelDrawingData?.guides));
                     const shouldSyncFormatSpecific =
-                        !!currentLayerData.format_specific &&
-                        Object.keys(currentLayerData.format_specific).length >
+                        !!currentDrawingData.format_specific &&
+                        Object.keys(currentDrawingData.format_specific).length >
                             0;
                     withSuppressedModelRecording(() => {
-                        directModelLayer.syncFromEditorLayerData({
-                            width: currentLayerData.width,
-                            height: currentLayerData.height,
-                            vertWidth: currentLayerData.vertWidth,
-                            shapes: currentLayerData.shapes,
+                        directModelDrawing.syncFromEditorDrawingData({
+                            width: currentDrawingData.width,
+                            height: currentDrawingData.height,
+                            vertWidth: currentDrawingData.vertWidth,
+                            shapes: currentDrawingData.shapes,
                             ...(shouldSyncAnchors && {
-                                anchors: currentLayerData.anchors
+                                anchors: currentDrawingData.anchors
                             }),
                             ...(shouldSyncGuides && {
-                                guides: currentLayerData.guides
+                                guides: currentDrawingData.guides
                             }),
                             ...(shouldSyncFormatSpecific && {
                                 format_specific:
-                                    currentLayerData.format_specific
+                                    currentDrawingData.format_specific
                             })
                         });
                         // Producers must already have run
-                        // computeLayerRecompositionClosure before sync.
+                        // computeDrawingRecompositionClosure before sync.
                         // Do not rebuild again here — that reintroduces
                         // live/commit divergence.
                         const invalidationGlyphNames =
@@ -21602,25 +21783,26 @@ export class OutlineEditor {
                     });
                 }
                 const snapshotTargets = normalizeWorkerReplayTargets([
-                    ...changedLayerTargets,
-                    ...changedLayerTargets.flatMap((target) => {
-                        const foregroundLayer = fontModel
+                    ...changedDrawingTargets,
+                    ...changedDrawingTargets.flatMap((target) => {
+                        const foregroundDrawing = fontModel
                             .findGlyph(target.glyphName)
-                            ?.findLayerById?.(target.layerId);
-                        const backgroundLayerId = foregroundLayer?.is_background
-                            ? null
-                            : foregroundLayer?.background_layer_id;
-                        const backgroundLayer = backgroundLayerId
+                            ?.findDrawingById?.(target.layerId);
+                        const backgroundDrawingId =
+                            foregroundDrawing?.is_background
+                                ? null
+                                : foregroundDrawing?.background_drawing_id;
+                        const backgroundDrawing = backgroundDrawingId
                             ? fontModel
                                   .findGlyph(target.glyphName)
-                                  ?.findLayerById?.(backgroundLayerId)
+                                  ?.findDrawingById?.(backgroundDrawingId)
                             : null;
-                        return backgroundLayer?.is_background &&
-                            backgroundLayer.id
+                        return backgroundDrawing?.is_background &&
+                            backgroundDrawing.id
                             ? [
                                   {
                                       glyphName: target.glyphName,
-                                      layerId: backgroundLayer.id
+                                      layerId: backgroundDrawing.id
                                   }
                               ]
                             : [];
@@ -21629,30 +21811,30 @@ export class OutlineEditor {
 
                 for (const target of snapshotTargets) {
                     const modelGlyph = fontModel.findGlyph(target.glyphName);
-                    const modelLayer = modelGlyph?.findLayerById?.(
+                    const modelDrawing = modelGlyph?.findDrawingById?.(
                         target.layerId
                     );
-                    const isDirectEditedLayer =
+                    const isDirectEditedDrawing =
                         target.glyphName === editedGlyphName &&
-                        target.layerId === activeLayerId;
-                    const targetCurrentLayerData = isDirectEditedLayer
-                        ? currentLayerData
+                        target.layerId === activeDrawingId;
+                    const targetCurrentDrawingData = isDirectEditedDrawing
+                        ? currentDrawingData
                         : null;
-                    if (!modelLayer && !targetCurrentLayerData) continue;
-                    const modelLayerJson =
-                        typeof modelLayer?.toJSON === 'function'
-                            ? modelLayer.toJSON()
-                            : (targetCurrentLayerData ?? modelLayer);
-                    const serializedLayer =
-                        fontManager.serializeLayerForCommittedSync(
+                    if (!modelDrawing && !targetCurrentDrawingData) continue;
+                    const modelDrawingJson =
+                        typeof modelDrawing?.toJSON === 'function'
+                            ? modelDrawing.toJSON()
+                            : (targetCurrentDrawingData ?? modelDrawing);
+                    const serializedDrawing =
+                        fontManager.serializeDrawingForCommittedSync(
                             target.glyphName,
                             target.layerId,
-                            modelLayerJson,
-                            authoritativeOptionalLayerFields.length
-                                ? { authoritativeOptionalLayerFields }
+                            modelDrawingJson,
+                            authoritativeOptionalDrawingFields.length
+                                ? { authoritativeOptionalDrawingFields }
                                 : undefined
                         );
-                    if (!serializedLayer) {
+                    if (!serializedDrawing) {
                         continue;
                     }
                     const storedGlyph = Array.isArray(storedGlyphs)
@@ -21660,37 +21842,38 @@ export class OutlineEditor {
                               (glyph: any) => glyph?.name === target.glyphName
                           )
                         : null;
-                    const storedLayers = storedGlyph?.layers;
-                    const storedLayerIndex = Array.isArray(storedLayers)
-                        ? storedLayers.findIndex(
-                              (layer: any) => layer?.id === target.layerId
+                    const storedDrawings = storedGlyph?.layers;
+                    const storedDrawingIndex = Array.isArray(storedDrawings)
+                        ? storedDrawings.findIndex(
+                              (drawing: any) => drawing?.id === target.layerId
                           )
                         : -1;
-                    if (storedLayerIndex < 0) {
+                    if (storedDrawingIndex < 0) {
                         throw new Error(
-                            `[OutlineEditor] Missing stored layer ${target.glyphName}/${target.layerId} for committed layer snapshot sync.`
+                            `[OutlineEditor] Missing stored drawing ${target.glyphName}/${target.layerId} for committed drawing snapshot sync.`
                         );
                     }
-                    storedLayers[storedLayerIndex] = serializedLayer;
-                    modelLayer?.invalidateContentCaches?.();
-                    layerSnapshots.push({
+                    storedDrawings[storedDrawingIndex] = serializedDrawing;
+                    modelDrawing?.invalidateContentCaches?.();
+                    drawingSnapshots.push({
                         glyphName: target.glyphName,
                         layerId: target.layerId,
-                        layerJson: serializedLayer,
-                        ...(authoritativeOptionalLayerFields.length > 0 && {
-                            authoritativeOptionalLayerFields
+                        drawingJson: serializedDrawing,
+                        ...(authoritativeOptionalDrawingFields.length > 0 && {
+                            authoritativeOptionalLayerFields:
+                                authoritativeOptionalDrawingFields
                         })
                     });
                 }
             }
 
-            if (layerSnapshots.length) {
-                // Diff only the layers whose committed JSON actually changed.
+            if (drawingSnapshots.length) {
+                // Diff only the drawings whose committed JSON actually changed.
                 // Replay targets stay metadata-only so downstream caches can still
                 // refresh broader dependent glyph closures without widening the
                 // authoritative Yjs mutation set.
-                window.patchSyncEngine.syncLayerSnapshotsFromJson(
-                    layerSnapshots,
+                window.patchSyncEngine.syncDrawingSnapshotsFromJson(
+                    drawingSnapshots,
                     label,
                     oldValue,
                     newValue,
@@ -21711,7 +21894,7 @@ export class OutlineEditor {
             label,
             oldValue,
             newValue,
-            activeLayerId,
+            activeDrawingId,
             visualAnchorSide,
             undefined,
             compileMetadata?.editSource ??
@@ -21798,13 +21981,13 @@ export class OutlineEditor {
 
     /**
      * Build a description string for the selected anchors given their
-     * current positions in layerData.
+     * current positions in drawingData.
      * @param coordsOnly - If true, return only "(X, Y)" without the anchor label.
      */
     private _buildAnchorDesc(coordsOnly = false): string {
-        const layer = this.getCurrentLayerDataFromStack();
-        if (!layer?.anchors || this.selectedAnchors.length === 0) return '';
-        const first = layer.anchors[this.selectedAnchors[0]];
+        const drawing = this.getCurrentDrawingDataFromStack();
+        if (!drawing?.anchors || this.selectedAnchors.length === 0) return '';
+        const first = drawing.anchors[this.selectedAnchors[0]];
         if (!first) return '';
         const pos = this._fmtCoord(first.x, first.y);
         if (coordsOnly) return pos;
@@ -21817,14 +22000,14 @@ export class OutlineEditor {
 
     /**
      * Build a description string for the selected nodes given their
-     * current positions in layerData.
+     * current positions in drawingData.
      * @param coordsOnly - If true, return only "(X, Y)" without the node label.
      */
     private _buildNodeDesc(coordsOnly = false): string {
-        const layer = this.getCurrentLayerDataFromStack();
-        if (!layer?.shapes || this.selectedPoints.length === 0) return '';
+        const drawing = this.getCurrentDrawingDataFromStack();
+        if (!drawing?.shapes || this.selectedPoints.length === 0) return '';
         const first = this.selectedPoints[0];
-        const shape = layer.shapes[first.contourIndex];
+        const shape = drawing.shapes[first.contourIndex];
         let nodes: Babelfont.Node[] | null = null;
         if ('Path' in shape && (shape as any).Path?.nodes) {
             nodes = (shape as any).Path.nodes;
@@ -21845,14 +22028,14 @@ export class OutlineEditor {
 
     /**
      * Build a description string for the selected components given their
-     * current transforms in layerData.
+     * current transforms in drawingData.
      * @param coordsOnly - If true, return only "(X, Y)" without the component label.
      */
     private _buildComponentDesc(coordsOnly = false): string {
-        const layer = this.getCurrentLayerDataFromStack();
-        if (!layer?.shapes || this.selectedComponents.length === 0) return '';
+        const drawing = this.getCurrentDrawingDataFromStack();
+        if (!drawing?.shapes || this.selectedComponents.length === 0) return '';
         const idx = this.selectedComponents[0];
-        const shape = layer.shapes[idx];
+        const shape = drawing.shapes[idx];
         if (!shape || !('reference' in shape || 'Component' in shape))
             return '';
         const compData =
@@ -21892,29 +22075,29 @@ export class OutlineEditor {
         if (coordsOnly) return pos;
 
         const scopeLabel =
-            guideEntry.scope === 'master' ? 'master guide' : 'layer guide';
+            guideEntry.scope === 'station' ? 'station guide' : 'drawing guide';
         const nameLabel = guideEntry.guide.name
             ? ` '${guideEntry.guide.name}'`
             : '';
         return `${scopeLabel}${nameLabel}: ${pos}`;
     }
 
-    async saveLayerData(changeSource: string = 'unknown'): Promise<void> {
-        // Save layer data back to Python using from_dict()
-        if (!this.layerData) {
+    async saveDrawingData(changeSource: string = 'unknown'): Promise<void> {
+        // Save drawing data back to Python using from_dict()
+        if (!this.drawingData) {
             return;
         }
 
-        // Don't save interpolated data - it's not editable and has no layer ID
-        if (this.layerData.isInterpolated) {
+        // Don't save interpolated data - it's not editable and has no drawing ID
+        if (this.drawingData.isInterpolated) {
             console.warn(
-                'Cannot save interpolated layer data - not on an exact layer location'
+                'Cannot save interpolated drawing data - not on an exact drawing location'
             );
             return;
         }
 
-        if (!this.selectedLayerId) {
-            console.warn('No layer selected - cannot save');
+        if (!this.selectedDrawingId) {
+            console.warn('No drawing selected - cannot save');
             return;
         }
 
@@ -21926,112 +22109,113 @@ export class OutlineEditor {
                     : this.glyphCanvas.getCurrentGlyphName();
             const isNestedEditing = this.isEditingComponent();
 
-            const activeLayerId =
-                this.getCurrentLayerId() || this.selectedLayerId;
-            if (!activeLayerId) {
-                console.warn('No active layer resolved - cannot save');
+            const activeDrawingId =
+                this.getCurrentDrawingId() || this.selectedDrawingId;
+            if (!activeDrawingId) {
+                console.warn('No active drawing resolved - cannot save');
                 return;
             }
             const activeGlyphName = isNestedEditing
                 ? parsed[parsed.length - 1]?.glyphName
                 : rootGlyphName;
-            const activeStoredLayer = activeLayerId
+            const activeStoredDrawing = activeDrawingId
                 ? fontManager.currentFont?.fontModel
                       ?.findGlyph(activeGlyphName)
-                      ?.findLayerById(activeLayerId)
+                      ?.findDrawingById(activeDrawingId)
                 : null;
             if (
-                activeLayerId?.startsWith('background-') &&
-                !activeStoredLayer
+                activeDrawingId?.startsWith('background-') &&
+                !activeStoredDrawing
             ) {
                 return;
             }
 
             if (!isNestedEditing) {
-                // Root editing mode: persist the root glyph layer.
-                const currentLayerData =
-                    this.getCurrentLayerDataFromStack() || this.layerData;
+                // Root editing mode: persist the root glyph drawing.
+                const currentDrawingData =
+                    this.getCurrentDrawingDataFromStack() || this.drawingData;
                 console.log(
-                    `[SaveLayerData] Saving ROOT glyph "${rootGlyphName}" with stack: ${this.glyphStack}`
+                    `[SaveDrawingData] Saving ROOT glyph "${rootGlyphName}" with stack: ${this.glyphStack}`
                 );
-                await fontManager!.saveLayerData(
+                await fontManager!.saveDrawingData(
                     rootGlyphName,
-                    activeLayerId,
-                    currentLayerData,
+                    activeDrawingId,
+                    currentDrawingData,
                     changeSource
                 );
             } else {
                 // Nested component editing mode: persist only the glyph that is
                 // actually being edited (last item in glyph stack).
-                const currentLayerData = this.getCurrentLayerDataFromStack();
-                if (currentLayerData) {
+                const currentDrawingData =
+                    this.getCurrentDrawingDataFromStack();
+                if (currentDrawingData) {
                     // Get the currently edited glyph name from the stack
                     const componentGlyphName =
                         parsed[parsed.length - 1].glyphName;
-                    const currentLayerId =
-                        currentLayerData.id || this.getCurrentLayerId();
+                    const currentDrawingId =
+                        currentDrawingData.id || this.getCurrentDrawingId();
 
-                    if (!currentLayerId) {
+                    if (!currentDrawingId) {
                         console.warn(
-                            '[SaveLayerData] No current layer ID for nested editing'
+                            '[SaveDrawingData] No current drawing ID for nested editing'
                         );
                         return;
                     }
 
                     console.log(
-                        `[SaveLayerData] Saving nested edited glyph "${componentGlyphName}" with layer: ${currentLayerId}`
+                        `[SaveDrawingData] Saving nested edited glyph "${componentGlyphName}" with drawing: ${currentDrawingId}`
                     );
 
                     // Save only the edited glyph definition; do not also persist
                     // the root glyph copy in nested mode.
-                    await fontManager!.saveLayerData(
+                    await fontManager!.saveDrawingData(
                         componentGlyphName,
-                        currentLayerId,
-                        currentLayerData,
+                        currentDrawingId,
+                        currentDrawingData,
                         changeSource
                     );
                 }
             }
 
-            console.log('Layer data saved successfully');
+            console.log('Drawing data saved successfully');
         } catch (error) {
-            console.error('Error saving layer data to Python:', error);
+            console.error('Error saving drawing data to Python:', error);
             throw error;
         }
     }
 
-    updateLayerSelection(): void {
-        // Update the visual selection highlight for layer items without rebuilding
+    updateDrawingSelection(): void {
+        // Update the visual selection highlight for drawing items without rebuilding
         if (!this.glyphCanvas.propertiesSection) return;
 
-        // Find all master/layer items and update their selected class
-        // Items now have data-master-id, and optionally data-layer-id if layer exists
-        const masterItems =
+        // Find all station/drawing items and update their selected class
+        // Items now have data-station-id, and optionally data-drawing-id if a drawing exists
+        const stationItems =
             this.glyphCanvas.propertiesSection.querySelectorAll(
-                '[data-master-id]'
+                '[data-station-id]'
             );
-        const selectedLayerId = this.isEditingBackgroundLayer()
-            ? this.getPairedLayerModel()?.id || this.selectedLayerId
-            : this.selectedLayerId;
-        masterItems.forEach((item: any) => {
-            const layerId = item.getAttribute('data-layer-id');
-            if (layerId === selectedLayerId) {
+        const selectedDrawingId = this.isEditingBackgroundDrawing()
+            ? this.getPairedDrawingModel()?.id || this.selectedDrawingId
+            : this.selectedDrawingId;
+        stationItems.forEach((item: any) => {
+            const drawingId = item.getAttribute('data-drawing-id');
+            if (drawingId === selectedDrawingId) {
                 item.classList.add('selected');
             } else {
                 item.classList.remove('selected');
             }
         });
 
-        const addLayerButton =
+        const addDrawingButton =
             this.glyphCanvas.propertiesSection.querySelector<HTMLButtonElement>(
-                '.editor-layer-add-button'
+                '.editor-drawing-add-button'
             );
-        if (addLayerButton) {
+        if (addDrawingButton) {
             const glyphName =
-                this.getLayerLinkGlyphName() ||
+                this.getDrawingLinkGlyphName() ||
                 this.glyphCanvas.getCurrentGlyphName();
-            addLayerButton.disabled =
-                !glyphName || !!this.findMatchingLayer(glyphName);
+            addDrawingButton.disabled =
+                !glyphName || !!this.findMatchingDrawing(glyphName);
         }
     }
 
@@ -22041,29 +22225,29 @@ export class OutlineEditor {
         mouseEvent: MouseEvent | null = null
     ): Promise<void> {
         // Enter editing mode for a component
-        // With glyph_stack approach: we DON'T swap layerData, we just update the stack
-        // layerData ALWAYS remains the root glyph's data
+        // With glyph_stack approach: we DON'T swap drawingData, we just update the stack
+        // drawingData ALWAYS remains the root glyph's data
         // skipUIUpdate: if true, skip UI updates (useful when rebuilding component stack)
         if (
-            !this.layerData ||
-            !this.layerData.shapes ||
-            !this.layerData.shapes[componentIndex]
+            !this.drawingData ||
+            !this.drawingData.shapes ||
+            !this.drawingData.shapes[componentIndex]
         ) {
             return;
         }
 
         // Get the component shape from current position in stack
-        const currentLayerData =
-            this.getCurrentLayerDataFromStack() || this.layerData;
+        const currentDrawingData =
+            this.getCurrentDrawingDataFromStack() || this.drawingData;
 
         if (
-            !currentLayerData.shapes ||
-            !currentLayerData.shapes[componentIndex]
+            !currentDrawingData.shapes ||
+            !currentDrawingData.shapes[componentIndex]
         ) {
             return;
         }
 
-        const componentShape = currentLayerData.shapes[componentIndex];
+        const componentShape = currentDrawingData.shapes[componentIndex];
         if (!('reference' in componentShape) || !componentShape.reference) {
             console.log('Component has no reference');
             return;
@@ -22073,11 +22257,11 @@ export class OutlineEditor {
             `[EnterComponent] Entering component: ${componentShape.reference}, index: ${componentIndex}`
         );
 
-        const previousLayer = this.getCurrentLayerModel();
+        const previousDrawing = this.getCurrentDrawingModel();
         const previousGlyphName = this.getActiveSelectionScopeGlyphName();
-        if (previousLayer) {
-            this.storeSelectionStateForLayer(
-                previousLayer,
+        if (previousDrawing) {
+            this.storeSelectionStateForDrawing(
+                previousDrawing,
                 this.getCurrentSelectionState(),
                 previousGlyphName
             );
@@ -22115,31 +22299,31 @@ export class OutlineEditor {
         }
         // Add the new component index
         componentPath.push(componentIndex);
-        const rootLayerToken = this.getRootLayerStackToken();
+        const rootDrawingToken = this.getRootDrawingStackToken();
         // Rebuild with updated path
         const rootGlyphName =
             parsed[0]?.glyphName ?? this.glyphCanvas.getCurrentGlyphName();
-        this.buildGlyphStack(rootGlyphName, rootLayerToken, componentPath);
+        this.buildGlyphStack(rootGlyphName, rootDrawingToken, componentPath);
 
         // Update currentGlyphName for interpolation to target the component we're entering
         this.currentGlyphName = editingGlyphName;
-        this.selectedLayerId = this.getCurrentLayerId();
+        this.selectedDrawingId = this.getCurrentDrawingId();
 
-        if (this.selectedLayerId) {
-            await this.fetchLayerData(true);
+        if (this.selectedDrawingId) {
+            await this.fetchDrawingData(true);
         }
 
-        // DON'T set layerData to component data - keep it as root!
-        // The renderer will use getCurrentLayerDataFromStack() to get the right data
+        // DON'T set drawingData to component data - keep it as root!
+        // The renderer will use getCurrentDrawingDataFromStack() to get the right data
 
-        const nextLayer = this.getCurrentLayerModel();
-        if (nextLayer) {
-            this.applySelectionStateForLayer(
-                this.getStoredSelectionStateForLayer(
-                    nextLayer,
+        const nextDrawing = this.getCurrentDrawingModel();
+        if (nextDrawing) {
+            this.applySelectionStateForDrawing(
+                this.getStoredSelectionStateForDrawing(
+                    nextDrawing,
                     editingGlyphName
                 ),
-                nextLayer,
+                nextDrawing,
                 editingGlyphName
             );
         }
@@ -22165,8 +22349,8 @@ export class OutlineEditor {
 
     exitComponentEditing(skipUIUpdate: boolean = false): boolean {
         // Exit current component editing level
-        // With glyph_stack: we DON'T restore layerData, we just update the stack
-        // layerData ALWAYS remains the root glyph's data
+        // With glyph_stack: we DON'T restore drawingData, we just update the stack
+        // drawingData ALWAYS remains the root glyph's data
         // skipUIUpdate: if true, skip UI updates (useful when exiting multiple levels)
         console.log(
             '[EXIT] exitComponentEditing called, current stack depth:',
@@ -22177,11 +22361,11 @@ export class OutlineEditor {
             return false; // Not in component mode
         }
 
-        const previousLayer = this.getCurrentLayerModel();
+        const previousDrawing = this.getCurrentDrawingModel();
         const previousGlyphName = this.getActiveSelectionScopeGlyphName();
-        if (previousLayer) {
-            this.storeSelectionStateForLayer(
-                previousLayer,
+        if (previousDrawing) {
+            this.storeSelectionStateForDrawing(
+                previousDrawing,
                 this.getCurrentSelectionState(),
                 previousGlyphName
             );
@@ -22202,9 +22386,9 @@ export class OutlineEditor {
         // Rebuild with reduced path
         const rootGlyphName =
             parsed[0]?.glyphName ?? this.glyphCanvas.getCurrentGlyphName();
-        const rootLayerToken = this.getRootLayerStackToken();
-        this.buildGlyphStack(rootGlyphName, rootLayerToken, componentPath);
-        this.selectedLayerId = this.getCurrentLayerId();
+        const rootDrawingToken = this.getRootDrawingStackToken();
+        this.buildGlyphStack(rootGlyphName, rootDrawingToken, componentPath);
+        this.selectedDrawingId = this.getCurrentDrawingId();
 
         // Clear selections when exiting (selection tracking will be added separately)
         this.clearAllSelections();
@@ -22219,12 +22403,15 @@ export class OutlineEditor {
             this.currentGlyphName = this.glyphCanvas.getCurrentGlyphName();
         }
 
-        const nextLayer = this.getCurrentLayerModel();
+        const nextDrawing = this.getCurrentDrawingModel();
         const nextGlyphName = this.getActiveSelectionScopeGlyphName();
-        if (nextLayer) {
-            this.applySelectionStateForLayer(
-                this.getStoredSelectionStateForLayer(nextLayer, nextGlyphName),
-                nextLayer,
+        if (nextDrawing) {
+            this.applySelectionStateForDrawing(
+                this.getStoredSelectionStateForDrawing(
+                    nextDrawing,
+                    nextGlyphName
+                ),
+                nextDrawing,
                 nextGlyphName
             );
         }
@@ -22245,7 +22432,7 @@ export class OutlineEditor {
 
     exitAllComponentEditing(): void {
         // If we're in nested component mode, exit all levels first
-        // Skip UI updates during batch exit to avoid duplicate layer interfaces
+        // Skip UI updates during batch exit to avoid duplicate drawing interfaces
         while (this.isEditingComponent()) {
             this.exitComponentEditing(true); // Skip UI updates
         }
@@ -22305,14 +22492,14 @@ export class OutlineEditor {
                 const name = document.createElement('span');
                 name.textContent = stackItem.glyphName;
                 item.appendChild(name);
-                if (this.isBackgroundLayerStackId(stackItem.layerId)) {
-                    item.appendChild(this.createBackgroundLayerBadge());
+                if (this.isBackgroundDrawingStackId(stackItem.layerId)) {
+                    item.appendChild(this.createBackgroundDrawingBadge());
                 } else if (
                     index > 0 &&
                     parsedStack
                         .slice(0, index)
                         .some((ancestor) =>
-                            this.isBackgroundLayerStackId(ancestor.layerId)
+                            this.isBackgroundDrawingStackId(ancestor.layerId)
                         )
                 ) {
                     item.appendChild(
@@ -22347,17 +22534,17 @@ export class OutlineEditor {
         const name = document.createElement('span');
         name.textContent = mainGlyphName;
         mainNameSpan.appendChild(name);
-        if (this.isEditingBackgroundLayer()) {
-            mainNameSpan.appendChild(this.createBackgroundLayerBadge());
+        if (this.isEditingBackgroundDrawing()) {
+            mainNameSpan.appendChild(this.createBackgroundDrawingBadge());
         }
         glyphNameElement.appendChild(mainNameSpan);
     }
 
-    private createBackgroundLayerBadge(): HTMLSpanElement {
+    private createBackgroundDrawingBadge(): HTMLSpanElement {
         const badge = document.createElement('span');
         badge.className = 'editor-glyph-bg-badge';
         badge.textContent = 'BG';
-        badge.title = 'Background layer';
+        badge.title = 'Background drawing';
         return badge;
     }
 
@@ -22371,19 +22558,19 @@ export class OutlineEditor {
         return badge;
     }
 
-    private isBackgroundLayerStackId(
-        layerId: string | null | undefined
+    private isBackgroundDrawingStackId(
+        drawingId: string | null | undefined
     ): boolean {
-        if (!layerId || this.isMissingInterpolationLayerId(layerId)) {
+        if (!drawingId || this.isMissingInterpolationDrawingId(drawingId)) {
             return false;
         }
 
-        if (layerId.startsWith('background-') || layerId.endsWith('.bg')) {
+        if (drawingId.startsWith('background-') || drawingId.endsWith('.bg')) {
             return true;
         }
 
-        const owning = this.resolveOwningGlyphForLayer(layerId);
-        return !!owning?.glyph?.findLayerById?.(layerId)?.is_background;
+        const owning = this.resolveOwningGlyphForDrawing(drawingId);
+        return !!owning?.glyph?.findDrawingById?.(drawingId)?.is_background;
     }
 
     transformMouseToComponentSpace(): { glyphX: number; glyphY: number } {
@@ -22406,32 +22593,32 @@ export class OutlineEditor {
         // Calculate bounding box for the currently edited glyph
         // When editing a component, this returns the bbox of the component, not the root glyph
         // Returns {minX, minY, maxX, maxY, width, height} in glyph-local coordinates
-        // Returns null if no glyph is selected or no layer data is available
+        // Returns null if no glyph is selected or no drawing data is available
 
-        if (!this.active || !this.layerData) {
+        if (!this.active || !this.drawingData) {
             return null;
         }
 
-        // Get the layer data for the current editing position
-        // If editing a component, this navigates to the component's layer data
-        const currentLayerData = this.getCurrentLayerDataFromStack();
-        if (!currentLayerData) {
+        // Get the drawing data for the current editing position
+        // If editing a component, this navigates to the component's drawing data
+        const currentDrawingData = this.getCurrentDrawingDataFromStack();
+        if (!currentDrawingData) {
             return null;
         }
 
         console.log(
             '[OutlineEditor]',
-            'calculateGlyphBoundingBox: currentLayerData.shapes=',
-            currentLayerData.shapes,
-            'currentLayerData.width=',
-            currentLayerData.width,
+            'calculateGlyphBoundingBox: currentDrawingData.shapes=',
+            currentDrawingData.shapes,
+            'currentDrawingData.width=',
+            currentDrawingData.width,
             'isEditingComponent=',
             this.isEditingComponent()
         );
 
-        // Use the Layer.calculateBoundingBox static method with includeAnchors=true
+        // Use the Drawing.calculateBoundingBox static method with includeAnchors=true
         // to match the old behavior of including anchors
-        const bbox = Layer.calculateBoundingBox(currentLayerData, true);
+        const bbox = Drawing.calculateBoundingBox(currentDrawingData, true);
 
         if (bbox) {
             console.log(
@@ -22449,25 +22636,25 @@ export class OutlineEditor {
         return bbox;
     }
 
-    async restoreTargetLayerDataAfterAnimating(): Promise<void> {
-        if (this.targetLayerData) {
+    async restoreTargetDrawingDataAfterAnimating(): Promise<void> {
+        if (this.targetDrawingData) {
             console.log(
-                'Before restore - layerData.isInterpolated:',
-                this.layerData?.isInterpolated
+                'Before restore - drawingData.isInterpolated:',
+                this.drawingData?.isInterpolated
             );
             console.log(
-                'Before restore - targetLayerData.isInterpolated:',
-                this.targetLayerData?.isInterpolated
+                'Before restore - targetDrawingData.isInterpolated:',
+                this.targetDrawingData?.isInterpolated
             );
-            this.layerData = this.targetLayerData;
-            this.targetLayerData = null;
+            this.drawingData = this.targetDrawingData;
+            this.targetDrawingData = null;
             // Clear interpolated flag to restore editing mode
-            if (this.layerData) {
-                this.layerData.isInterpolated = false;
-                stripInterpolatorRequestId(this.layerData);
+            if (this.drawingData) {
+                this.drawingData.isInterpolated = false;
+                stripInterpolatorRequestId(this.drawingData);
                 // Also clear on shapes
-                if (this.layerData.shapes) {
-                    this.layerData.shapes.forEach((shape: any) => {
+                if (this.drawingData.shapes) {
+                    this.drawingData.shapes.forEach((shape: any) => {
                         if (shape.isInterpolated !== undefined) {
                             shape.isInterpolated = false;
                         }
@@ -22475,30 +22662,30 @@ export class OutlineEditor {
                 }
             }
             console.log(
-                'After restore - layerData.isInterpolated:',
-                this.layerData?.isInterpolated
+                'After restore - drawingData.isInterpolated:',
+                this.drawingData?.isInterpolated
             );
             console.log(
-                'Layer switch animation complete, restored target layer for editing'
+                'Drawing switch animation complete, restored target drawing for editing'
             );
 
-            // Only re-match if we don't already have an explicitly selected layer.
-            // When the user clicked a layer (including brace layers), selectedLayerId
-            // is already set correctly by selectLayer() — don't override it.
-            if (!this.selectedLayerId) {
-                await this.autoSelectMatchingLayer();
+            // Only re-match if we don't already have an explicitly selected drawing.
+            // When the user clicked a drawing (including free drawings), selectedDrawingId
+            // is already set correctly by selectDrawing() — don't override it.
+            if (!this.selectedDrawingId) {
+                await this.autoSelectMatchingDrawing();
             }
 
-            const currentLayer = this.getCurrentLayerModel();
-            if (currentLayer) {
-                this.applySelectionStateForLayer(
-                    this.getStoredSelectionStateForLayer(currentLayer),
-                    currentLayer
+            const currentDrawing = this.getCurrentDrawingModel();
+            if (currentDrawing) {
+                this.applySelectionStateForDrawing(
+                    this.getStoredSelectionStateForDrawing(currentDrawing),
+                    currentDrawing
                 );
             }
 
-            this.updateLayerSelection();
-            this.syncAddLayerButtonForExplicitSelection();
+            this.updateDrawingSelection();
+            this.syncAddDrawingButtonForExplicitSelection();
 
             if (this.active) {
                 this.glyphCanvas.updatePropertyPanel();
@@ -22508,6 +22695,6 @@ export class OutlineEditor {
         }
 
         this.clearInterpolationBboxCenterAnchor();
-        this.suppressAutoLayerMatching = false;
+        this.suppressAutoDrawingMatching = false;
     }
 }

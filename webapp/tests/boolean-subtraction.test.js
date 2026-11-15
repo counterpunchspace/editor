@@ -1,4 +1,4 @@
-// Path subtraction and shape z-order on linked layers, through the outline
+// Path subtraction and shape z-order on linked drawings, through the outline
 // editor commands. Formerly a Playwright spec; the logic is pure model work.
 const { Font } = require('../js/babelfont-model');
 const { OutlineEditor } = require('../js/glyph-canvas/outline-editor');
@@ -15,11 +15,11 @@ function rect(x0, y0, x1, y1) {
     };
 }
 
-function layer(id, master, shapes) {
+function drawing(id, station, shapes) {
     return {
         width: 600,
         id,
-        master: { type: 'DefaultForMaster', master },
+        master: { type: 'DefaultForMaster', master: station },
         shapes,
         anchors: [],
         guides: []
@@ -65,8 +65,8 @@ function makeFont() {
                 category: 'Base',
                 exported: true,
                 layers: [
-                    layer('DL0', 'M0', [rect(0, 0, 80, 80)]),
-                    layer('DL1', 'M1', [rect(0, 0, 80, 80)])
+                    drawing('DL0', 'M0', [rect(0, 0, 80, 80)]),
+                    drawing('DL1', 'M1', [rect(0, 0, 80, 80)])
                 ]
             },
             {
@@ -75,8 +75,8 @@ function makeFont() {
                 exported: true,
                 codepoints: [65],
                 layers: [
-                    layer('L0', 'M0', glyphShapes()),
-                    layer('L1', 'M1', glyphShapes())
+                    drawing('L0', 'M0', glyphShapes()),
+                    drawing('L1', 'M1', glyphShapes())
                 ]
             }
         ],
@@ -89,7 +89,7 @@ function makeFont() {
 
 function editorOn(font) {
     const glyph = font.findGlyph('A');
-    const current = glyph.layers[1];
+    const current = glyph.drawings[1];
     const editor = Object.create(OutlineEditor.prototype);
     editor.active = true;
     editor.selectedPoints = [];
@@ -98,28 +98,28 @@ function editorOn(font) {
         render: jest.fn(),
         updatePropertyPanel: jest.fn()
     };
-    editor.getCurrentLayerModel = () => current;
+    editor.getCurrentDrawingModel = () => current;
     editor.getCurrentGlyphModel = () => glyph;
-    editor.getCurrentLayerDataFromStack = () => ({ isInterpolated: false });
-    editor.syncCurrentExactLayerDataFromModel = jest.fn();
+    editor.getCurrentDrawingDataFromStack = () => ({ isInterpolated: false });
+    editor.syncCurrentExactDrawingDataFromModel = jest.fn();
     editor.commitStructuralOutlineChange = jest.fn();
     editor.performHitDetection = jest.fn();
     return { editor, glyph };
 }
 
-describe('boolean path subtraction on linked layers', () => {
-    test('marks subtraction on linked layers and keeps later shapes on top', () => {
+describe('boolean path subtraction on linked drawings', () => {
+    test('marks subtraction on linked drawings and keeps later shapes on top', () => {
         const font = makeFont();
         const { editor, glyph } = editorOn(font);
         expect(
-            glyph.layers[1]._getLinkedLayers().map((item) => item.id)
+            glyph.drawings[1]._getLinkedDrawings().map((item) => item.id)
         ).toEqual(['L0']);
 
         editor.selectedPoints = [{ contourIndex: 1, nodeIndex: 0 }];
         expect(editor.setSelectedPathsSubtraction(true)).toBe(true);
 
-        expect(glyph.layers).toHaveLength(2);
-        for (const item of glyph.layers) {
+        expect(glyph.drawings).toHaveLength(2);
+        for (const item of glyph.drawings) {
             expect(
                 item.shapes.map((shape) =>
                     shape.isPath?.() ? shape.asPath().isSubtraction : false
@@ -134,7 +134,7 @@ describe('boolean path subtraction on linked layers', () => {
         );
     });
 
-    test('reorders a mixed path and component selection on linked layers', () => {
+    test('reorders a mixed path and component selection on linked drawings', () => {
         const font = makeFont();
         const { editor, glyph } = editorOn(font);
         editor.selectedPoints = [{ contourIndex: 1, nodeIndex: 0 }];
@@ -142,7 +142,7 @@ describe('boolean path subtraction on linked layers', () => {
 
         expect(editor.moveSelectedShapes('back')).toBe(true);
 
-        const kinds = glyph.layers.map((item) =>
+        const kinds = glyph.drawings.map((item) =>
             item.shapes.map((shape) =>
                 shape.isPath?.() ? 'path' : 'component'
             )

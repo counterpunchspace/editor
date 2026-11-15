@@ -50,7 +50,7 @@ describe('getUndoRedoContext', () => {
         window.glyphCanvas = {
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: jest.fn(() => [
                     { glyphName: 'a' },
                     { glyphName: 'a.alt' }
@@ -66,7 +66,7 @@ describe('getUndoRedoContext', () => {
         expect(getUndoRedoContext()).toEqual({
             rootGlyphName: 'a',
             undoGlyphName: 'a.alt',
-            undoLayerId: 'layer-1',
+            undoDrawingId: 'layer-1',
             historyTargetKey: null,
             surface: 'canvas'
         });
@@ -77,7 +77,7 @@ describe('getUndoRedoContext', () => {
         window.glyphCanvas = {
             outlineEditor: {
                 active: false,
-                selectedLayerId: null,
+                selectedDrawingId: null,
                 parseGlyphStack: jest.fn(() => []),
                 currentGlyphName: 'a'
             },
@@ -87,7 +87,7 @@ describe('getUndoRedoContext', () => {
         expect(getUndoRedoContext()).toEqual({
             rootGlyphName: 'a',
             undoGlyphName: 'a',
-            undoLayerId: null,
+            undoDrawingId: null,
             historyTargetKey: null,
             surface: 'canvas'
         });
@@ -100,7 +100,7 @@ describe('getUndoRedoContext', () => {
         expect(getUndoRedoContext()).toEqual({
             rootGlyphName: 'a',
             undoGlyphName: undefined,
-            undoLayerId: null,
+            undoDrawingId: null,
             historyTargetKey: null,
             surface: 'font'
         });
@@ -119,7 +119,7 @@ describe('getUndoRedoContext', () => {
         expect(getUndoRedoContext()).toEqual({
             rootGlyphName: 'a',
             undoGlyphName: undefined,
-            undoLayerId: null,
+            undoDrawingId: null,
             historyTargetKey: 'feature:kern',
             surface: 'feature'
         });
@@ -130,7 +130,7 @@ describe('getUndoRedoContext', () => {
         window.glyphCanvas = {
             outlineEditor: {
                 active: false,
-                selectedLayerId: null,
+                selectedDrawingId: null,
                 parseGlyphStack: jest.fn(() => [])
             }
         };
@@ -138,7 +138,7 @@ describe('getUndoRedoContext', () => {
         expect(getUndoRedoContext()).toEqual({
             rootGlyphName: undefined,
             undoGlyphName: undefined,
-            undoLayerId: null,
+            undoDrawingId: null,
             historyTargetKey: null,
             surface: 'overview'
         });
@@ -154,7 +154,7 @@ describe('getUndoRedoContext', () => {
         expect(getUndoRedoContext()).toEqual({
             rootGlyphName: 'a',
             undoGlyphName: undefined,
-            undoLayerId: null,
+            undoDrawingId: null,
             historyTargetKey: null,
             surface: 'overview'
         });
@@ -182,7 +182,7 @@ describe('getUndoRedoContext', () => {
         expect(getUndoRedoContext()).toEqual({
             rootGlyphName: 'a',
             undoGlyphName: undefined,
-            undoLayerId: null,
+            undoDrawingId: null,
             historyTargetKey: null,
             surface: 'automation'
         });
@@ -210,7 +210,7 @@ describe('getUndoRedoContext', () => {
         expect(getUndoRedoContext()).toEqual({
             rootGlyphName: 'a',
             undoGlyphName: undefined,
-            undoLayerId: null,
+            undoDrawingId: null,
             historyTargetKey: null,
             surface: 'font'
         });

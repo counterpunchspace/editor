@@ -2,38 +2,38 @@
  * Collaborator cascades, shown before their documents arrive.
  *
  * When a collaborator edits a glyph that is live in this window (its room
- * socket is open here), the edit arrives at once. The layers it recomposes
+ * socket is open here), the edit arrives at once. The drawings it recomposes
  * in other glyphs (automatically aligned composites, metrics-key widths)
  * live in their own glyph documents. Those reach this window later, by HTTP
  * catch-up after the sender has uploaded them, so composites lagged behind
  * the base glyph.
  *
- * This window therefore recomposes those layers itself, with the same
+ * This window therefore recomposes those drawings itself, with the same
  * cascade the sender ran, as a preview: in its model without recording a
  * change, and in its worker as a preview overlay for the compile. Nothing
- * is written to the documents or sent anywhere. The stored layers stay the
+ * is written to the documents or sent anywhere. The stored drawings stay the
  * authority:
  *
- * - When a catch-up (or a live packet) brings a previewed layer, the
+ * - When a catch-up (or a live packet) brings a previewed drawing, the
  *   documents replace the preview. If the base glyph has moved on in the
- *   meantime, the layer is recomposed again from the current base.
- * - A preview whose stored layer never arrives is reverted to the documents
+ *   meantime, the drawing is recomposed again from the current base.
+ * - A preview whose stored drawing never arrives is reverted to the documents
  *   after `REMOTE_CASCADE_PREVIEW_MAX_MS`.
  */
 import type { RecompositionEditKind } from './recomposition-closure';
 import { deriveEditKindsFromChangeLogEntries } from './recomposition-closure';
 import {
     deriveGlyphNameFromPath,
-    deriveLayerIdFromPath,
+    deriveDrawingIdFromPath,
     getPathSegments
 } from './change-log';
 import { Logger } from './logger';
 
 const console = new Logger('RemoteCascadePreview');
 
-export type CascadeLayerTarget = { glyphName: string; layerId: string };
+export type CascadeDrawingTarget = { glyphName: string; layerId: string };
 
-export type CascadeSource = CascadeLayerTarget & {
+export type CascadeSource = CascadeDrawingTarget & {
     editKinds: Set<RecompositionEditKind>;
 };
 
@@ -50,19 +50,19 @@ export type RemoteCascadePreviewHost = {
     /** This window is in a drag or burst of its own; it keeps its own state. */
     isBusyLocally(): boolean;
     /**
-     * Recompose what depends on these source layers, in the model and
-     * without recording. Returns the dependent layers whose stored data
+     * Recompose what depends on these source drawings, in the model and
+     * without recording. Returns the dependent drawings whose stored data
      * this window now shows ahead of its documents.
      */
-    recompose(sources: CascadeSource[]): CascadeLayerTarget[];
-    /** Stage these layers in the worker overlay; true when staged. */
-    stageOverlay(targets: CascadeLayerTarget[]): Promise<boolean>;
+    recompose(sources: CascadeSource[]): CascadeDrawingTarget[];
+    /** Stage these drawings in the worker overlay; true when staged. */
+    stageOverlay(targets: CascadeDrawingTarget[]): Promise<boolean>;
     /** Compile with the overlay; the text repaints when it lands. */
     requestCompile(): void;
     /** Redraw what shows these glyphs from the model. */
     repaint(glyphNames: string[]): void;
-    /** Put the model layers back to what the documents hold, and recompile. */
-    revert(targets: CascadeLayerTarget[]): void;
+    /** Put the model drawings back to what the documents hold, and recompile. */
+    revert(targets: CascadeDrawingTarget[]): void;
 };
 
 export type RemoteCascadeClock = {
@@ -83,18 +83,18 @@ const realClock: RemoteCascadeClock = {
 /**
  * How long a preview may stay ahead of the documents. It matches the
  * longest time a sender holds a core stamp for its uploads, after which the
- * stored layers are normally here.
+ * stored drawings are normally here.
  */
 export const REMOTE_CASCADE_PREVIEW_MAX_MS = 10_000;
 
 /** A revert waits this long while the window is busy with its own edit. */
 export const REMOTE_CASCADE_BUSY_RETRY_MS = 500;
 
-function targetKey(target: CascadeLayerTarget): string {
+function targetKey(target: CascadeDrawingTarget): string {
     return `${target.glyphName}\u0000${target.layerId}`;
 }
 
-/** The glyph and layer an entry path writes; layer null for glyph-wide paths. */
+/** The glyph and drawing an entry path writes; drawing null for glyph-wide paths. */
 function entryTarget(
     path: string
 ): { glyphName: string; layerId: string | null } | null {
@@ -102,10 +102,10 @@ function entryTarget(
     if (!glyphName) {
         return null;
     }
-    return { glyphName, layerId: deriveLayerIdFromPath(path) };
+    return { glyphName, layerId: deriveDrawingIdFromPath(path) };
 }
 
-/** True for a path that replaces the whole glyph (and so all its layers). */
+/** True for a path that replaces the whole glyph (and so all its drawings). */
 function isGlyphRootPath(path: string): boolean {
     const segments = getPathSegments(path);
     return segments[0] === 'glyphs' && segments.length <= 2;
@@ -118,7 +118,7 @@ export class RemoteCascadePreview {
     >();
     private pending = new Map<
         string,
-        { target: CascadeLayerTarget; expiresAt: number }
+        { target: CascadeDrawingTarget; expiresAt: number }
     >();
     private refreshQueued = false;
     private timer: ReturnType<typeof setTimeout> | null = null;
@@ -130,14 +130,14 @@ export class RemoteCascadePreview {
         private readonly clock: RemoteCascadeClock = realClock
     ) {}
 
-    /** Layers this window shows ahead of its documents. */
-    get pendingTargets(): CascadeLayerTarget[] {
+    /** Drawings this window shows ahead of its documents. */
+    get pendingTargets(): CascadeDrawingTarget[] {
         return [...this.pending.values()].map((entry) => entry.target);
     }
 
     /**
      * A collaborator’s live edit of a glyph arrived (by its room socket, or
-     * relayed from the main window). Its layers become cascade sources.
+     * relayed from the main window). Its drawings become cascade sources.
      */
     noteCollaboratorEdit(entries: CascadeEntry[]): void {
         if (this.destroyed || !entries.length) {
@@ -179,7 +179,7 @@ export class RemoteCascadePreview {
 
     /**
      * The documents changed from outside (a catch-up, or any remote
-     * packet). Previewed layers they now hold are theirs again.
+     * packet). Previewed drawings they now hold are theirs again.
      */
     noteStoredChange(entries: CascadeEntry[]): void {
         if (this.destroyed || !this.pending.size) {
@@ -237,11 +237,11 @@ export class RemoteCascadePreview {
         }
         if (this.host.isBusyLocally()) {
             // The window’s own drag owns the model and the overlay; its
-            // commit, and the catch-ups, bring the stored layers.
+            // commit, and the catch-ups, bring the stored drawings.
             this.armTimer();
             return;
         }
-        let changed: CascadeLayerTarget[] = [];
+        let changed: CascadeDrawingTarget[] = [];
         if (this.sources.size) {
             try {
                 changed = this.host.recompose(
@@ -316,7 +316,7 @@ export class RemoteCascadePreview {
             return;
         }
         const now = this.clock.now();
-        const expired: CascadeLayerTarget[] = [];
+        const expired: CascadeDrawingTarget[] = [];
         for (const [key, entry] of this.pending) {
             if (entry.expiresAt <= now) {
                 expired.push(entry.target);

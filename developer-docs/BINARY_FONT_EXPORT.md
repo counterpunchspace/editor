@@ -34,7 +34,7 @@ While the sync bridge is active, glyph bodies live only in per-glyph shards.
 Export (like the assistant's binary analysis) seeds the worker through
 `seedCompilerFromCommittedFont` (`committed-font-seed.ts`), which sends every
 shard: `font-core`, `font-deps` and each `glyph:<id>`. The `font-core` snapshot
-alone has masters and features but no glyphs, so it is used only when there
+alone has stations and features but no glyphs, so it is used only when there
 is no bridge.
 
 Before choosing a destination, export checks

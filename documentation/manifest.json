@@ -40,6 +40,20 @@
             ]
         },
         {
+            "id": "type-design",
+            "title": "Type design",
+            "kind": "section",
+            "path": "type-design/index.md",
+            "children": [
+                {
+                    "id": "type-design/designspace",
+                    "title": "Designspace, stations and drawings",
+                    "kind": "page",
+                    "path": "type-design/01-designspace.md"
+                }
+            ]
+        },
+        {
             "id": "files",
             "title": "Files",
             "kind": "section",
@@ -108,10 +122,10 @@
                     "path": "editor/02-outline-drawing.md"
                 },
                 {
-                    "id": "editor/axes-masters",
-                    "title": "Axes and masters",
+                    "id": "editor/axes-stations",
+                    "title": "Axes and stations",
                     "kind": "page",
-                    "path": "editor/03-axes-masters.md"
+                    "path": "editor/03-axes-stations.md"
                 },
                 {
                     "id": "editor/sidebearing-arithmetics",
@@ -120,10 +134,10 @@
                     "path": "editor/04-sidebearing-arithmetics.md"
                 },
                 {
-                    "id": "editor/layer-operations",
-                    "title": "Layer operations",
+                    "id": "editor/drawing-operations",
+                    "title": "Drawing operations",
                     "kind": "page",
-                    "path": "editor/05-layer-operations.md"
+                    "path": "editor/05-drawing-operations.md"
                 },
                 {
                     "id": "editor/text-mode-kerning",

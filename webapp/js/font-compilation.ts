@@ -1457,7 +1457,7 @@ export class FontCompilation {
 
     /**
      * Run FIP001 boolean subtraction on the worker font (no DropIncompatiblePaths)
-     * and return per-layer outline fingerprints for `glyphName`.
+     * and return per-drawing outline fingerprints for `glyphName`.
      */
     async requestFilteredBooleanFingerprints(
         glyphName: string
@@ -1485,7 +1485,7 @@ export class FontCompilation {
 
     /**
      * Destructive linesweeper boolean on closed path JSON.
-     * One worker turn evaluates every layer. Throws when any set fails.
+     * One worker turn evaluates every drawing. Throws when any set fails.
      */
     async requestBooleanOpPaths(
         op: string,
@@ -1918,17 +1918,17 @@ export class FontCompilation {
     }
 
     /**
-     * Return read-only cross-replica snapshots for the requested glyph layers.
+     * Return read-only cross-replica snapshots for the requested glyph drawings.
      */
-    async dumpLayerState(
-        layerTargets: Array<{ glyphName: string; layerId: string }>
+    async dumpDrawingState(
+        drawingTargets: Array<{ glyphName: string; layerId: string }>
     ): Promise<string> {
         const result = await this.sendMessage({
-            type: 'dumpLayerState',
-            layerTargets
+            type: 'dumpDrawingState',
+            layerTargets: drawingTargets
         });
         if (typeof result?.dumpJson !== 'string') {
-            throw new Error('Worker returned no layer diagnostic payload.');
+            throw new Error('Worker returned no drawing diagnostic payload.');
         }
         return result.dumpJson;
     }
@@ -1947,7 +1947,7 @@ export class FontCompilation {
                 produce_varc_table?: boolean;
             };
             usePatchedWorkerCache?: boolean;
-            usePreviewLayerOverlay?: boolean;
+            usePreviewDrawingOverlay?: boolean;
         }
     ): Promise<{
         result: Uint8Array;
@@ -2013,7 +2013,7 @@ export class FontCompilation {
 
             const compileResult = await this.sendMessage({
                 type: 'compileEditingCached',
-                babelfontJson: '__incremental_layer__',
+                babelfontJson: '__incremental_drawing__',
                 options,
                 subsetKey,
                 layoutClosureKey,
@@ -2022,8 +2022,8 @@ export class FontCompilation {
                 filename: 'editing-font.ttf',
                 _dragActive: requestMeta?.dragActive === true,
                 _compileSource: requestMeta?.compileSource,
-                _usePreviewLayerOverlay:
-                    requestMeta?.usePreviewLayerOverlay === true
+                _usePreviewDrawingOverlay:
+                    requestMeta?.usePreviewDrawingOverlay === true
             });
 
             this.lastEditingSubsetKey = subsetKey;

@@ -1,6 +1,6 @@
 # Feature code editor
 
-OpenType feature code lives in Font Info on the **Features** tab (alongside General, Names, Axes, Masters, Instances, and Custom OT Values). The editor is more than a text buffer: it combines syntax-aware editing with shaping preview, glyph search, and feature-order visualization so you can see how code affects rendering.
+OpenType feature code lives in Font Info on the **Features** tab (alongside General, Names, Axes, Stations, Instances, and Custom OT Values). The editor is more than a text buffer: it combines syntax-aware editing with shaping preview, glyph search, and feature-order visualization so you can see how code affects rendering.
 
 Write substitutions, positioning rules, class definitions, prefixes, and feature blocks there. Search for a glyph name to highlight every use in rules and classes. That is the fastest way to see the substitution and positioning chain for a character, check class membership, and find a bad reference without scanning the whole file.
 

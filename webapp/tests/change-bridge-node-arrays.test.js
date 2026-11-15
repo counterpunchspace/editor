@@ -4,7 +4,7 @@ const {
     yDocToJson,
     fromYType,
     setYPath,
-    applyLayerDelta
+    applyDrawingDelta
 } = require('../js/change-bridge-ydoc');
 const { Font, ensureStableIds } = require('../js/babelfont-model');
 
@@ -51,12 +51,12 @@ function setupYDoc(fontJson) {
     return { yDoc, fontMap };
 }
 
-function getLayerMap(fontMap) {
+function getDrawingMap(fontMap) {
     return fontMap.get('glyphs').get('A').get('layers').get('layer-1');
 }
 
 function getShapeJson(fontMap) {
-    return fromYType(getLayerMap(fontMap)).shapes[0];
+    return fromYType(getDrawingMap(fontMap)).shapes[0];
 }
 
 describe('normalized Y.Doc path geometry', () => {
@@ -64,7 +64,7 @@ describe('normalized Y.Doc path geometry', () => {
         const { fontMap } = setupYDoc(makeTestFont());
         const shape = getShapeJson(fontMap);
 
-        expect(getLayerMap(fontMap).get('shapes')).toBeUndefined();
+        expect(getDrawingMap(fontMap).get('shapes')).toBeUndefined();
         expect(shape.nodes.map((node) => node.x)).toEqual(
             nodes.map((node) => node.x)
         );
@@ -102,7 +102,7 @@ describe('normalized Y.Doc path geometry', () => {
     test('rejects malformed node payloads in applyLayerDelta', () => {
         const { fontMap } = setupYDoc(makeTestFont());
         expect(() =>
-            applyLayerDelta(fontMap, 'A', 'layer-1', {
+            applyDrawingDelta(fontMap, 'A', 'layer-1', {
                 shapes: [{ nodes: '300 400 l', closed: true }]
             })
         ).toThrow();
@@ -121,7 +121,7 @@ describe('normalized Y.Doc path geometry', () => {
         );
 
         const runtimeFont = Font.fromData(yDocToJson(fontMap));
-        const path = runtimeFont.glyphs[0].layers[0].paths[0];
+        const path = runtimeFont.glyphs[0].drawings[0].paths[0];
         expect(path.nodes.map((node) => node.x)).toEqual([111, 333]);
         path.nodes[1].x = 350;
 
@@ -136,7 +136,7 @@ describe('normalized Y.Doc path geometry', () => {
 
     test('applyLayerDelta writes array nodes and strips editor shape ids on serialization', () => {
         const { fontMap } = setupYDoc(makeTestFont());
-        applyLayerDelta(fontMap, 'A', 'layer-1', {
+        applyDrawingDelta(fontMap, 'A', 'layer-1', {
             shapes: [{ id: 'editor-shape-id', nodes, closed: false }]
         });
 
@@ -177,19 +177,19 @@ describe('normalized Y.Doc path geometry', () => {
 
     test('applyLayerDelta does not let interpolator snapshots delete width or poison shapes', () => {
         const { fontMap } = setupYDoc(makeTestFont());
-        applyLayerDelta(fontMap, 'A', 'layer-1', {
+        applyDrawingDelta(fontMap, 'A', 'layer-1', {
             _interpolationRequestId: 4,
             shapes: [{ id: 'ghost', transform: [1, 0, 0, 1, 10, 20] }]
         });
 
-        const layer = yDocToJson(fontMap).glyphs[0].layers[0];
-        expect(layer.width).toBe(600);
-        expect(layer.master).toEqual({
+        const drawing = yDocToJson(fontMap).glyphs[0].layers[0];
+        expect(drawing.width).toBe(600);
+        expect(drawing.master).toEqual({
             type: 'DefaultForMaster',
             master: 'master-1'
         });
-        expect(layer._interpolationRequestId).toBeUndefined();
-        expect(layer.shapes[0].nodes).toEqual(nodes);
+        expect(drawing._interpolationRequestId).toBeUndefined();
+        expect(drawing.shapes[0].nodes).toEqual(nodes);
     });
 
     test('setYPath on an existing layer map merges instead of replacing identity fields', () => {
@@ -198,9 +198,9 @@ describe('normalized Y.Doc path geometry', () => {
             _interpolationRequestId: 8
         });
 
-        const layer = yDocToJson(fontMap).glyphs[0].layers[0];
-        expect(layer.width).toBe(600);
-        expect(layer._interpolationRequestId).toBeUndefined();
-        expect(layer.shapes[0].nodes).toEqual(nodes);
+        const drawing = yDocToJson(fontMap).glyphs[0].layers[0];
+        expect(drawing.width).toBe(600);
+        expect(drawing._interpolationRequestId).toBeUndefined();
+        expect(drawing.shapes[0].nodes).toEqual(nodes);
     });
 });

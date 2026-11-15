@@ -1375,9 +1375,9 @@ async function waitForEditorModeActivation(page: any) {
                       sequence?: number;
                       mode?: 'text' | 'edit';
                       selectedGlyphIndex?: number;
-                      selectedLayerId?: string | null;
+                      selectedDrawingId?: string | null;
                       glyphStack?: string;
-                      hasLayerData?: boolean;
+                      hasDrawingData?: boolean;
                       isInterpolated?: boolean;
                   }
                 | undefined) ?? null;
@@ -1402,8 +1402,8 @@ async function waitForEditorModeActivation(page: any) {
                     renderState.selectedGlyphIndex ===
                         textRunEditor.selectedGlyphIndex &&
                     Boolean(renderState.glyphStack) &&
-                    Boolean(renderState.hasLayerData) &&
-                    (Boolean(renderState.selectedLayerId) ||
+                    Boolean(renderState.hasDrawingData) &&
+                    (Boolean(renderState.selectedDrawingId) ||
                         Boolean(renderState.isInterpolated))
                 );
             }

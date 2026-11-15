@@ -73,7 +73,7 @@ let fontCacheEpoch = 0;
 let lastStoreFontAtMs = 0;
 let dragCompilesSinceStore = 0;
 const PERF_TRACE_CONTEXT_GLOBAL_KEY = '__cpPerfTraceContext';
-const MAX_DUMP_LAYER_TARGETS = 256;
+const MAX_DUMP_DRAWING_TARGETS = 256;
 
 function applyCompileFeatureOverlay(data: { featureOverlay?: unknown }): void {
     const text =
@@ -236,20 +236,20 @@ function inspectInvalidShapes(fontData: any, maxIssues: number = 8): string[] {
         const glyphName = glyph.name || `[glyph-${glyphIndex}]`;
 
         for (
-            let layerIndex = 0;
-            layerIndex < glyph.layers.length;
-            layerIndex++
+            let drawingIndex = 0;
+            drawingIndex < glyph.layers.length;
+            drawingIndex++
         ) {
-            const layer = glyph.layers[layerIndex];
-            if (!layer || !Array.isArray(layer.shapes)) continue;
-            const layerId = layer.id || `[layer-${layerIndex}]`;
+            const drawing = glyph.layers[drawingIndex];
+            if (!drawing || !Array.isArray(drawing.shapes)) continue;
+            const drawingId = drawing.id || `[drawing-${drawingIndex}]`;
 
             for (
                 let shapeIndex = 0;
-                shapeIndex < layer.shapes.length;
+                shapeIndex < drawing.shapes.length;
                 shapeIndex++
             ) {
-                const shape = layer.shapes[shapeIndex];
+                const shape = drawing.shapes[shapeIndex];
                 if (isValidShapeForUntaggedEnum(shape)) {
                     continue;
                 }
@@ -259,7 +259,7 @@ function inspectInvalidShapes(fontData: any, maxIssues: number = 8): string[] {
                         ? Object.keys(shape).join(',')
                         : typeof shape;
                 issues.push(
-                    `glyph=${glyphName} layer=${layerId} layerIndex=${layerIndex} shapeIndex=${shapeIndex} keys=${keys}`
+                    `glyph=${glyphName} drawing=${drawingId} drawingIndex=${drawingIndex} shapeIndex=${shapeIndex} keys=${keys}`
                 );
 
                 if (shape && typeof shape === 'object') {
@@ -477,46 +477,48 @@ export function compileFromLastLayoutClosureWithReprime(
 export { buildApplyYjsUpdateMetadataJson } from './apply-yjs-update-metadata';
 
 export function sanitizeDumpLayerTargets(
-    layerTargets: unknown,
-    maxTargets = MAX_DUMP_LAYER_TARGETS
+    drawingTargets: unknown,
+    maxTargets = MAX_DUMP_DRAWING_TARGETS
 ): DumpLayerTarget[] {
-    if (!Array.isArray(layerTargets)) {
-        throw new Error('dumpLayerState requires an array of layer targets');
-    }
-
-    if (layerTargets.length > maxTargets) {
+    if (!Array.isArray(drawingTargets)) {
         throw new Error(
-            `dumpLayerState received ${layerTargets.length} targets; max ${maxTargets}`
+            'dumpDrawingState requires an array of drawing targets'
         );
     }
 
-    return layerTargets.map((target, index) => {
+    if (drawingTargets.length > maxTargets) {
+        throw new Error(
+            `dumpDrawingState received ${drawingTargets.length} targets; max ${maxTargets}`
+        );
+    }
+
+    return drawingTargets.map((target, index) => {
         const glyphName =
             typeof target?.glyphName === 'string'
                 ? target.glyphName.trim()
                 : '';
-        const layerId =
+        const drawingId =
             typeof target?.layerId === 'string' ? target.layerId.trim() : '';
 
         if (!glyphName) {
             throw new Error(
-                `dumpLayerState target ${index} must include a non-empty glyphName`
+                `dumpDrawingState target ${index} must include a non-empty glyphName`
             );
         }
-        if (!layerId) {
+        if (!drawingId) {
             throw new Error(
-                `dumpLayerState target ${index} must include a non-empty layerId`
+                `dumpDrawingState target ${index} must include a non-empty layerId`
             );
         }
 
-        return { glyphName, layerId };
+        return { glyphName, layerId: drawingId };
     });
 }
 
 /**
  * Strip layerData fields from components in the font JSON,
- * ensure all layers have a shapes array,
- * and filter out AssociatedWithMaster layers that aren't brace layers
+ * ensure all drawings have a shapes array,
+ * and filter out AssociatedWithMaster drawings that aren't free drawings
  *
  * layerData is a runtime-only field used for rendering nested components
  * and must not be saved to files or passed to fontc compilation.
@@ -526,7 +528,7 @@ export function sanitizeDumpLayerTargets(
  *   {type: "AssociatedWithMaster", master: "id"}
  *   {type: "FreeFloating"}
  *
- * AssociatedWithMaster layers without location data are old backup layers
+ * AssociatedWithMaster drawings without location data are old backup layers (Glyphs)
  * that should not be compiled.
  */
 
@@ -536,12 +538,12 @@ function stripLayerData(fontData: any): any {
     // Deep clone to avoid mutating original
     const cleaned = JSON.parse(JSON.stringify(fontData));
 
-    // Temporarily remove guides from masters to avoid serialization issues
+    // Temporarily remove guides from stations to avoid serialization issues
     // TODO: Fix guide format conversion
     if (cleaned.masters && Array.isArray(cleaned.masters)) {
-        cleaned.masters.forEach((master: any) => {
-            if (master.guides) {
-                delete master.guides;
+        cleaned.masters.forEach((station: any) => {
+            if (station.guides) {
+                delete station.guides;
             }
         });
     }
@@ -559,29 +561,30 @@ function stripLayerData(fontData: any): any {
 
             // Validate dotaccentcomb before filtering
             if (glyph.name === 'dotaccentcomb') {
-                glyph.layers.forEach((layer: any, i: number) => {
-                    const masterType =
-                        layer.master && typeof layer.master === 'object'
-                            ? 'type' in layer.master
-                                ? layer.master.type
-                                : Object.keys(layer.master)[0]
+                glyph.layers.forEach((drawing: any, i: number) => {
+                    const stationType =
+                        drawing.master && typeof drawing.master === 'object'
+                            ? 'type' in drawing.master
+                                ? drawing.master.type
+                                : Object.keys(drawing.master)[0]
                             : 'none';
                 });
             }
 
-            // Filter out AssociatedWithMaster layers without location data
-            // (these are old backup layers, not brace layers)
-            glyph.layers = glyph.layers.filter((layer: any) => {
-                if (!layer || !layer.master) return true;
+            // Filter out AssociatedWithMaster drawings without location data
+            // (these are old backup layers from Glyphs, not free drawings)
+            glyph.layers = glyph.layers.filter((drawing: any) => {
+                if (!drawing || !drawing.master) return true;
 
-                const master = layer.master;
+                const station = drawing.master;
 
-                if (master.type === 'DefaultForMaster') return true;
-                if (master.type === 'FreeFloating') return true;
-                if (master.type === 'AssociatedWithMaster') {
-                    // Only keep if it has location data (brace layer)
+                if (station.type === 'DefaultForMaster') return true;
+                if (station.type === 'FreeFloating') return true;
+                if (station.type === 'AssociatedWithMaster') {
+                    // Only keep if it has location data (free drawing)
                     return (
-                        layer.location && Object.keys(layer.location).length > 0
+                        drawing.location &&
+                        Object.keys(drawing.location).length > 0
                     );
                 }
 
@@ -590,29 +593,29 @@ function stripLayerData(fontData: any): any {
 
             // Validate dotaccentcomb AFTER filtering
             if (glyph.name === 'dotaccentcomb') {
-                glyph.layers.forEach((layer: any, i: number) => {
-                    const masterType =
-                        layer.master && typeof layer.master === 'object'
-                            ? 'type' in layer.master
-                                ? `{type: ${layer.master.type}}`
-                                : Object.keys(layer.master)[0]
+                glyph.layers.forEach((drawing: any, i: number) => {
+                    const stationType =
+                        drawing.master && typeof drawing.master === 'object'
+                            ? 'type' in drawing.master
+                                ? `{type: ${drawing.master.type}}`
+                                : Object.keys(drawing.master)[0]
                             : 'none';
                 });
             }
 
-            // Process remaining layers
-            for (const layer of glyph.layers) {
-                if (!layer) {
+            // Process remaining drawings
+            for (const drawing of glyph.layers) {
+                if (!drawing) {
                     continue;
                 }
-                // Ensure layer has a shapes array (even if empty)
-                if (!layer.shapes) {
-                    layer.shapes = [];
+                // Ensure drawing has a shapes array (even if empty)
+                if (!drawing.shapes) {
+                    drawing.shapes = [];
                 }
 
                 // Clean component layerData (runtime-only field)
-                if (Array.isArray(layer.shapes)) {
-                    for (const shape of layer.shapes) {
+                if (Array.isArray(drawing.shapes)) {
+                    for (const shape of drawing.shapes) {
                         if (!shape || typeof shape !== 'object') continue;
 
                         // Components have 'reference' field (unwrapped format from babelfont-rs)
@@ -638,8 +641,8 @@ function stripLayerData(fontData: any): any {
 
                 // Temporarily remove guides to avoid serialization issues
                 // TODO: Fix guide format conversion
-                if (layer.guides) {
-                    delete layer.guides;
+                if (drawing.guides) {
+                    delete drawing.guides;
                 }
             }
         });
@@ -670,35 +673,35 @@ function validateFontData(fontData: any): void {
         const glyphName = glyph.name || `index ${index}`;
 
         if (!glyph.layers || glyph.layers.length === 0) {
-            issues.push(`Glyph "${glyphName}" has no layers`);
+            issues.push(`Glyph "${glyphName}" has no drawings`);
             if (isArray) glyphIndicesToRemove.push(index);
             return;
         }
 
-        // Check if ALL layers are empty
-        let allLayersEmpty = true;
+        // Check if ALL drawings are empty
+        let allDrawingsEmpty = true;
         for (let i = 0; i < glyph.layers.length; i++) {
-            const layer = glyph.layers[i];
-            if (!layer) {
+            const drawing = glyph.layers[i];
+            if (!drawing) {
                 continue;
             }
 
-            if (!layer.shapes) {
-                const presentFields = Object.keys(layer).join(', ');
+            if (!drawing.shapes) {
+                const presentFields = Object.keys(drawing).join(', ');
                 issues.push(
-                    `Glyph "${glyphName}" layer ${i} has no shapes array (has: ${presentFields})`
+                    `Glyph "${glyphName}" drawing ${i} has no shapes array (has: ${presentFields})`
                 );
-            } else if (layer.shapes.length === 0) {
+            } else if (drawing.shapes.length === 0) {
                 issues.push(
-                    `Glyph "${glyphName}" layer ${i} has empty shapes array`
+                    `Glyph "${glyphName}" drawing ${i} has empty shapes array`
                 );
             } else {
-                allLayersEmpty = false;
+                allDrawingsEmpty = false;
             }
         }
 
-        // If all layers are empty, mark glyph for removal
-        if (allLayersEmpty && isArray) {
+        // If all drawings are empty, mark glyph for removal
+        if (allDrawingsEmpty && isArray) {
             glyphIndicesToRemove.push(index);
         }
     });
@@ -710,7 +713,7 @@ function validateFontData(fontData: any): void {
         }
     }
 
-    // Remove glyphs with all empty layers to prevent compilation errors
+    // Remove glyphs with all empty drawings to prevent compilation errors
     if (isArray && glyphIndicesToRemove.length > 0) {
         // Filter out the glyphs by creating a new array without them
         fontData.glyphs = fontData.glyphs.filter(
@@ -988,10 +991,10 @@ self.onmessage = async (event) => {
                     fontRevisionKey,
                     _dragActive,
                     _compileSource,
-                    _usePreviewLayerOverlay
+                    _usePreviewLayerOverlay: _usePreviewDrawingOverlay
                 } = data;
 
-                if (data.babelfontJson !== '__incremental_layer__') {
+                if (data.babelfontJson !== '__incremental_drawing__') {
                     throw new Error(
                         'compileEditingCached requires the incremental Yjs worker cache; full babelfont JSON fallback is disabled'
                     );
@@ -1035,10 +1038,10 @@ self.onmessage = async (event) => {
                 const primeClosureSpanId = timelineSpanStart(
                     'font.worker.compileEditingCached.primeLayoutClosure'
                 );
-                const currentCachedBaseSubsetKey = _usePreviewLayerOverlay
+                const currentCachedBaseSubsetKey = _usePreviewDrawingOverlay
                     ? cachedPreviewBaseSubsetKey
                     : cachedBaseSubsetKey;
-                const currentCachedClosureGlyphCount = _usePreviewLayerOverlay
+                const currentCachedClosureGlyphCount = _usePreviewDrawingOverlay
                     ? cachedPreviewClosureGlyphCount
                     : cachedClosureGlyphCount;
                 let needsPrimeClosure =
@@ -1050,7 +1053,7 @@ self.onmessage = async (event) => {
 
                 if (
                     needsPrimeClosure &&
-                    _usePreviewLayerOverlay &&
+                    _usePreviewDrawingOverlay &&
                     isOutlineIncrementalCompile &&
                     adopt_preview_layout_closure_from_last()
                 ) {
@@ -1085,7 +1088,7 @@ self.onmessage = async (event) => {
                         );
                     }
 
-                    const primedClosureGlyphCount = _usePreviewLayerOverlay
+                    const primedClosureGlyphCount = _usePreviewDrawingOverlay
                         ? prime_preview_layout_closure_cache(
                               effectiveSubsetKey,
                               JSON.stringify(baseSubsetGlyphs)
@@ -1094,7 +1097,7 @@ self.onmessage = async (event) => {
                               effectiveSubsetKey,
                               JSON.stringify(baseSubsetGlyphs)
                           );
-                    if (_usePreviewLayerOverlay) {
+                    if (_usePreviewDrawingOverlay) {
                         cachedPreviewClosureGlyphCount =
                             primedClosureGlyphCount;
                         cachedPreviewBaseSubsetKey = effectiveSubsetKey;
@@ -1134,10 +1137,10 @@ self.onmessage = async (event) => {
                     options || {},
                     effectiveSubsetKey,
                     baseSubsetGlyphs,
-                    _usePreviewLayerOverlay
+                    _usePreviewDrawingOverlay
                         ? compile_preview_cached_font_from_last_layout_closure
                         : compile_cached_font_from_last_layout_closure,
-                    _usePreviewLayerOverlay
+                    _usePreviewDrawingOverlay
                         ? prime_preview_layout_closure_cache
                         : prime_layout_closure_cache,
                     (closureGlyphCount) => {
@@ -1145,7 +1148,7 @@ self.onmessage = async (event) => {
                             'font.worker.compileEditingCached.compileCachedFont.reprimeMissingClosure',
                             { parentSpanId: compileCachedSpanId }
                         );
-                        if (_usePreviewLayerOverlay) {
+                        if (_usePreviewDrawingOverlay) {
                             cachedPreviewClosureGlyphCount = closureGlyphCount;
                             cachedPreviewBaseSubsetKey = effectiveSubsetKey;
                         } else {
@@ -1175,7 +1178,7 @@ self.onmessage = async (event) => {
                         time_taken: endTime - startTime,
                         fontRevisionKey: revisionKey,
                         closureGlyphCount:
-                            (_usePreviewLayerOverlay
+                            (_usePreviewDrawingOverlay
                                 ? cachedPreviewClosureGlyphCount
                                 : cachedClosureGlyphCount) || 0,
                         compileSource: _compileSource
@@ -1774,7 +1777,7 @@ self.onmessage = async (event) => {
                 id,
                 update,
                 changedGlyphs,
-                layerTargets,
+                layerTargets: drawingTargets,
                 nonGlyphChangeHints,
                 glyphRenames,
                 invalidateLayoutClosure,
@@ -1788,7 +1791,7 @@ self.onmessage = async (event) => {
                 const updateMetadataJson = buildApplyYjsUpdateMetadataJson({
                     changedGlyphs,
                     nonGlyphChangeHints,
-                    layerTargets,
+                    layerTargets: drawingTargets,
                     glyphRenames,
                     invalidateLayoutClosure,
                     documentId
@@ -1831,7 +1834,7 @@ self.onmessage = async (event) => {
                 // re-primes closure state instead of reusing a stale key.
                 // However, if the sender explicitly passed
                 // invalidateLayoutClosure: false, respect that — visual
-                // layer-scoped edits must not clear the closure cache.
+                // drawing-scoped edits must not clear the closure cache.
                 if (!wasSkipped && invalidateLayoutClosure !== false) {
                     cachedBaseSubsetKey = null;
                     cachedClosureGlyphCount = null;
@@ -1864,12 +1867,12 @@ self.onmessage = async (event) => {
             return;
         }
 
-        if (data.type === 'applyPreviewLayerOverlay') {
+        if (data.type === 'applyPreviewDrawingOverlay') {
             const {
                 id,
-                layerUpdates,
+                layerUpdates: drawingUpdates,
                 changedGlyphs,
-                layerTargets,
+                layerTargets: drawingTargets,
                 nonGlyphChangeHints,
                 invalidateLayoutClosure
             } = data;
@@ -1885,13 +1888,13 @@ self.onmessage = async (event) => {
                     nonGlyphChangeHints: Array.isArray(nonGlyphChangeHints)
                         ? nonGlyphChangeHints
                         : [],
-                    layerTargets: Array.isArray(layerTargets)
-                        ? layerTargets
+                    layerTargets: Array.isArray(drawingTargets)
+                        ? drawingTargets
                         : []
                 });
                 const resultJson = apply_preview_layer_overlay(
                     JSON.stringify(
-                        Array.isArray(layerUpdates) ? layerUpdates : []
+                        Array.isArray(drawingUpdates) ? drawingUpdates : []
                     ),
                     updateMetadataJson
                 );
@@ -1911,7 +1914,7 @@ self.onmessage = async (event) => {
                 }
                 self.postMessage({
                     id,
-                    type: 'applyPreviewLayerOverlay',
+                    type: 'applyPreviewDrawingOverlay',
                     success: true,
                     result: resultJson,
                     time_taken: performance.now() - startTime,
@@ -1919,12 +1922,12 @@ self.onmessage = async (event) => {
                 });
             } catch (e: any) {
                 console.error(
-                    '[Fontc Worker] applyPreviewLayerOverlay error:',
+                    '[Fontc Worker] applyPreviewDrawingOverlay error:',
                     e
                 );
                 self.postMessage({
                     id,
-                    type: 'applyPreviewLayerOverlay',
+                    type: 'applyPreviewDrawingOverlay',
                     success: false,
                     error: e.toString()
                 });
@@ -1932,7 +1935,7 @@ self.onmessage = async (event) => {
             return;
         }
 
-        if (data.type === 'clearPreviewLayerOverlay') {
+        if (data.type === 'clearPreviewDrawingOverlay') {
             const { id } = data;
             try {
                 if (!initialized) {
@@ -1943,17 +1946,17 @@ self.onmessage = async (event) => {
                 cachedPreviewClosureGlyphCount = null;
                 self.postMessage({
                     id,
-                    type: 'clearPreviewLayerOverlay',
+                    type: 'clearPreviewDrawingOverlay',
                     success: true
                 });
             } catch (e: any) {
                 console.error(
-                    '[Fontc Worker] clearPreviewLayerOverlay error:',
+                    '[Fontc Worker] clearPreviewDrawingOverlay error:',
                     e
                 );
                 self.postMessage({
                     id,
-                    type: 'clearPreviewLayerOverlay',
+                    type: 'clearPreviewDrawingOverlay',
                     success: false,
                     error: e.toString()
                 });
@@ -1980,22 +1983,28 @@ self.onmessage = async (event) => {
             const interpolateSpanId = timelineSpanStart(
                 'font.worker.interpolate'
             );
-            const { id, glyphName, location, extrapolate, rootLayerIds } = data;
+            const {
+                id,
+                glyphName,
+                location,
+                extrapolate,
+                rootLayerIds: rootDrawingIds
+            } = data;
 
             try {
                 timelineMark('font.worker.interpolate.started');
                 const locationJson = JSON.stringify(location);
-                const layerJson = interpolate_glyph(
+                const drawingJson = interpolate_glyph(
                     glyphName,
                     locationJson,
                     extrapolate === true,
-                    JSON.stringify(rootLayerIds || [])
+                    JSON.stringify(rootDrawingIds || [])
                 );
 
                 self.postMessage({
                     id,
                     type: 'interpolate',
-                    result: layerJson,
+                    result: drawingJson,
                     glyphName
                 });
                 timelineMark('font.worker.interpolate.success');
@@ -2014,75 +2023,36 @@ self.onmessage = async (event) => {
             return;
         }
 
-        if (data.type === 'reinterpolateLayerYjs') {
+        if (data.type === 'reinterpolateDrawingYjs') {
             const reinterpolateSpanId = timelineSpanStart(
-                'font.worker.reinterpolateLayerYjs'
+                'font.worker.reinterpolateDrawingYjs'
             );
-            const { id, glyphName, layerId } = data;
+            const { id, glyphName, layerId: drawingId } = data;
 
             try {
-                timelineMark('font.worker.reinterpolateLayerYjs.started');
+                timelineMark('font.worker.reinterpolateDrawingYjs.started');
                 const result = reinterpolate_layer_yjs(
                     glyphName,
-                    layerId
+                    drawingId
                 ) as RustYjsBatchResult;
                 self.postMessage({
                     id,
-                    type: 'reinterpolateLayerYjs',
+                    type: 'reinterpolateDrawingYjs',
                     success: true,
                     update: result.update ?? new Uint8Array(),
                     updates: result.updates,
                     metadataJson: result.metadataJson ?? '{}'
                 });
-                timelineMark('font.worker.reinterpolateLayerYjs.success');
+                timelineMark('font.worker.reinterpolateDrawingYjs.success');
             } catch (e: any) {
-                timelineMark('font.worker.reinterpolateLayerYjs.failed');
-                console.error('[Fontc Worker] reinterpolateLayerYjs error:', e);
-                self.postMessage({
-                    id,
-                    type: 'reinterpolateLayerYjs',
-                    success: false,
-                    error: e.toString()
-                });
-            } finally {
-                timelineSpanEnd(reinterpolateSpanId);
-            }
-            return;
-        }
-
-        if (data.type === 'reinterpolateMasterLayersYjs') {
-            const reinterpolateSpanId = timelineSpanStart(
-                'font.worker.reinterpolateMasterLayersYjs'
-            );
-            const { id, masterId } = data;
-
-            try {
-                timelineMark(
-                    'font.worker.reinterpolateMasterLayersYjs.started'
-                );
-                const result = reinterpolate_master_layers_yjs(
-                    masterId
-                ) as RustYjsBatchResult;
-                self.postMessage({
-                    id,
-                    type: 'reinterpolateMasterLayersYjs',
-                    success: true,
-                    update: result.update ?? new Uint8Array(),
-                    updates: result.updates,
-                    metadataJson: result.metadataJson ?? '{}'
-                });
-                timelineMark(
-                    'font.worker.reinterpolateMasterLayersYjs.success'
-                );
-            } catch (e: any) {
-                timelineMark('font.worker.reinterpolateMasterLayersYjs.failed');
+                timelineMark('font.worker.reinterpolateDrawingYjs.failed');
                 console.error(
-                    '[Fontc Worker] reinterpolateMasterLayersYjs error:',
+                    '[Fontc Worker] reinterpolateDrawingYjs error:',
                     e
                 );
                 self.postMessage({
                     id,
-                    type: 'reinterpolateMasterLayersYjs',
+                    type: 'reinterpolateDrawingYjs',
                     success: false,
                     error: e.toString()
                 });
@@ -2092,18 +2062,62 @@ self.onmessage = async (event) => {
             return;
         }
 
-        if (data.type === 'addMasterWithInterpolatedLayersYjs') {
-            const addMasterSpanId = timelineSpanStart(
-                'font.worker.addMasterWithInterpolatedLayersYjs'
+        if (data.type === 'reinterpolateStationDrawingsYjs') {
+            const reinterpolateSpanId = timelineSpanStart(
+                'font.worker.reinterpolateStationDrawingsYjs'
             );
-            const { id, master, interpolationLocations, axes } = data;
+            const { id, masterId: stationId } = data;
 
             try {
                 timelineMark(
-                    'font.worker.addMasterWithInterpolatedLayersYjs.started'
+                    'font.worker.reinterpolateStationDrawingsYjs.started'
+                );
+                const result = reinterpolate_master_layers_yjs(
+                    stationId
+                ) as RustYjsBatchResult;
+                self.postMessage({
+                    id,
+                    type: 'reinterpolateStationDrawingsYjs',
+                    success: true,
+                    update: result.update ?? new Uint8Array(),
+                    updates: result.updates,
+                    metadataJson: result.metadataJson ?? '{}'
+                });
+                timelineMark(
+                    'font.worker.reinterpolateStationDrawingsYjs.success'
+                );
+            } catch (e: any) {
+                timelineMark(
+                    'font.worker.reinterpolateStationDrawingsYjs.failed'
+                );
+                console.error(
+                    '[Fontc Worker] reinterpolateStationDrawingsYjs error:',
+                    e
+                );
+                self.postMessage({
+                    id,
+                    type: 'reinterpolateStationDrawingsYjs',
+                    success: false,
+                    error: e.toString()
+                });
+            } finally {
+                timelineSpanEnd(reinterpolateSpanId);
+            }
+            return;
+        }
+
+        if (data.type === 'addStationWithInterpolatedDrawingsYjs') {
+            const addStationSpanId = timelineSpanStart(
+                'font.worker.addStationWithInterpolatedDrawingsYjs'
+            );
+            const { id, master: station, interpolationLocations, axes } = data;
+
+            try {
+                timelineMark(
+                    'font.worker.addStationWithInterpolatedDrawingsYjs.started'
                 );
                 const payload = JSON.stringify({
-                    master,
+                    master: station,
                     ...(Array.isArray(axes) && axes.length ? { axes } : {}),
                     ...(Array.isArray(interpolationLocations) &&
                     interpolationLocations.length
@@ -2127,38 +2141,38 @@ self.onmessage = async (event) => {
                 ) as RustYjsBatchResult;
                 self.postMessage({
                     id,
-                    type: 'addMasterWithInterpolatedLayersYjs',
+                    type: 'addStationWithInterpolatedDrawingsYjs',
                     success: true,
                     update: result.update ?? new Uint8Array(),
                     updates: result.updates,
                     metadataJson: result.metadataJson ?? '{}'
                 });
                 timelineMark(
-                    'font.worker.addMasterWithInterpolatedLayersYjs.success'
+                    'font.worker.addStationWithInterpolatedDrawingsYjs.success'
                 );
             } catch (e: any) {
                 timelineMark(
-                    'font.worker.addMasterWithInterpolatedLayersYjs.failed'
+                    'font.worker.addStationWithInterpolatedDrawingsYjs.failed'
                 );
                 console.error(
-                    '[Fontc Worker] addMasterWithInterpolatedLayersYjs error:',
+                    '[Fontc Worker] addStationWithInterpolatedDrawingsYjs error:',
                     e
                 );
                 self.postMessage({
                     id,
-                    type: 'addMasterWithInterpolatedLayersYjs',
+                    type: 'addStationWithInterpolatedDrawingsYjs',
                     success: false,
                     error: e.toString()
                 });
             } finally {
-                timelineSpanEnd(addMasterSpanId);
+                timelineSpanEnd(addStationSpanId);
             }
             return;
         }
 
-        if (data.type === 'addAxisWithMasterCopiesYjs') {
+        if (data.type === 'addAxisWithStationCopiesYjs') {
             const spanId = timelineSpanStart(
-                'font.worker.addAxisWithMasterCopiesYjs'
+                'font.worker.addAxisWithStationCopiesYjs'
             );
             const { id, plan } = data;
             try {
@@ -2167,7 +2181,7 @@ self.onmessage = async (event) => {
                 ) as RustYjsBatchResult;
                 self.postMessage({
                     id,
-                    type: 'addAxisWithMasterCopiesYjs',
+                    type: 'addAxisWithStationCopiesYjs',
                     success: true,
                     update: result.update ?? new Uint8Array(),
                     updates: result.updates,
@@ -2175,12 +2189,12 @@ self.onmessage = async (event) => {
                 });
             } catch (e) {
                 console.error(
-                    '[Fontc Worker] addAxisWithMasterCopiesYjs error:',
+                    '[Fontc Worker] addAxisWithStationCopiesYjs error:',
                     e
                 );
                 self.postMessage({
                     id,
-                    type: 'addAxisWithMasterCopiesYjs',
+                    type: 'addAxisWithStationCopiesYjs',
                     success: false,
                     error: String(e)
                 });
@@ -2190,14 +2204,14 @@ self.onmessage = async (event) => {
             return;
         }
 
-        if (data.type === 'refineLayerSnapshotsYjs') {
+        if (data.type === 'refineDrawingSnapshotsYjs') {
             const refineSpanId = timelineSpanStart(
-                'font.worker.refineLayerSnapshotsYjs'
+                'font.worker.refineDrawingSnapshotsYjs'
             );
             const { id, baseUpdate, overrides } = data;
 
             try {
-                timelineMark('font.worker.refineLayerSnapshotsYjs.started');
+                timelineMark('font.worker.refineDrawingSnapshotsYjs.started');
                 const result = refine_layer_snapshots_yjs(
                     baseUpdate instanceof Uint8Array
                         ? baseUpdate
@@ -2206,22 +2220,22 @@ self.onmessage = async (event) => {
                 ) as RustYjsBatchResult;
                 self.postMessage({
                     id,
-                    type: 'refineLayerSnapshotsYjs',
+                    type: 'refineDrawingSnapshotsYjs',
                     success: true,
                     update: result.update ?? new Uint8Array(),
                     updates: result.updates,
                     metadataJson: result.metadataJson ?? '{}'
                 });
-                timelineMark('font.worker.refineLayerSnapshotsYjs.success');
+                timelineMark('font.worker.refineDrawingSnapshotsYjs.success');
             } catch (e: any) {
-                timelineMark('font.worker.refineLayerSnapshotsYjs.failed');
+                timelineMark('font.worker.refineDrawingSnapshotsYjs.failed');
                 console.error(
-                    '[Fontc Worker] refineLayerSnapshotsYjs error:',
+                    '[Fontc Worker] refineDrawingSnapshotsYjs error:',
                     e
                 );
                 self.postMessage({
                     id,
-                    type: 'refineLayerSnapshotsYjs',
+                    type: 'refineDrawingSnapshotsYjs',
                     success: false,
                     error: e.toString()
                 });
@@ -2231,37 +2245,37 @@ self.onmessage = async (event) => {
             return;
         }
 
-        if (data.type === 'removeMastersYjs') {
-            const removeMastersSpanId = timelineSpanStart(
-                'font.worker.removeMastersYjs'
+        if (data.type === 'removeStationsYjs') {
+            const removeStationsSpanId = timelineSpanStart(
+                'font.worker.removeStationsYjs'
             );
-            const { id, masterIds } = data;
+            const { id, masterIds: stationIds } = data;
 
             try {
-                timelineMark('font.worker.removeMastersYjs.started');
+                timelineMark('font.worker.removeStationsYjs.started');
                 const result = remove_masters_yjs(
-                    JSON.stringify(masterIds ?? [])
+                    JSON.stringify(stationIds ?? [])
                 ) as RustYjsBatchResult;
                 self.postMessage({
                     id,
-                    type: 'removeMastersYjs',
+                    type: 'removeStationsYjs',
                     success: true,
                     update: result.update ?? new Uint8Array(),
                     updates: result.updates,
                     metadataJson: result.metadataJson ?? '{}'
                 });
-                timelineMark('font.worker.removeMastersYjs.success');
+                timelineMark('font.worker.removeStationsYjs.success');
             } catch (e: any) {
-                timelineMark('font.worker.removeMastersYjs.failed');
-                console.error('[Fontc Worker] removeMastersYjs error:', e);
+                timelineMark('font.worker.removeStationsYjs.failed');
+                console.error('[Fontc Worker] removeStationsYjs error:', e);
                 self.postMessage({
                     id,
-                    type: 'removeMastersYjs',
+                    type: 'removeStationsYjs',
                     success: false,
                     error: e.toString()
                 });
             } finally {
-                timelineSpanEnd(removeMastersSpanId);
+                timelineSpanEnd(removeStationsSpanId);
             }
             return;
         }
@@ -2439,32 +2453,34 @@ self.onmessage = async (event) => {
             return;
         }
 
-        if (data.type === 'dumpLayerState') {
-            const dumpSpanId = timelineSpanStart('font.worker.dumpLayerState');
-            const { id, layerTargets } = data;
+        if (data.type === 'dumpDrawingState') {
+            const dumpSpanId = timelineSpanStart(
+                'font.worker.dumpDrawingState'
+            );
+            const { id, layerTargets: drawingTargets } = data;
 
             try {
                 if (!initialized) {
                     await initializeWasm();
                 }
 
-                const sanitizedLayerTargets =
-                    sanitizeDumpLayerTargets(layerTargets);
+                const sanitizedDrawingTargets =
+                    sanitizeDumpLayerTargets(drawingTargets);
 
                 const dumpJson = dump_layer_state_json(
-                    JSON.stringify(sanitizedLayerTargets)
+                    JSON.stringify(sanitizedDrawingTargets)
                 );
 
                 self.postMessage({
                     id,
-                    type: 'dumpLayerState',
+                    type: 'dumpDrawingState',
                     dumpJson
                 });
             } catch (e: any) {
-                console.error('[Fontc Worker] dumpLayerState error:', e);
+                console.error('[Fontc Worker] dumpDrawingState error:', e);
                 self.postMessage({
                     id,
-                    type: 'dumpLayerState',
+                    type: 'dumpDrawingState',
                     error: e.toString()
                 });
             } finally {

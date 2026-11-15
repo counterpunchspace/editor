@@ -30,7 +30,7 @@ import {
     withSuppressedModelRecording,
     jsonPartsToChunks,
     jsonPartsToData,
-    type AxisMasterCopyPlan,
+    type AxisStationCopyPlan,
     type BabelfontJsonParts
 } from './babelfont-model';
 import {
@@ -53,17 +53,17 @@ import {
 import { compilationPlan, type CompileEditStamp } from './edit-intent';
 import { jsonToYDoc, fromYType, getYPath } from './change-bridge-ydoc';
 import {
-    describeRestingLayerViolation,
-    omitRestingLayerRuntimeKeys,
-    toRestingLayerJson,
+    describeRestingDrawingViolation,
+    omitRestingDrawingRuntimeKeys,
+    toRestingDrawingJson,
     toRestingShapeJson
-} from './resting-layer-json';
+} from './resting-drawing-json';
 import { sidebarErrorDisplay } from './sidebar-error-display';
 import type { FilesystemPlugin } from './filesystem-plugins';
 import { Logger } from './logger';
 import type {
     LivePreviewCompile,
-    LivePreviewLayerRecord
+    LivePreviewDrawingRecord
 } from './linked-live-preview';
 import {
     showProceedDialog,
@@ -141,7 +141,7 @@ const {
         layoutEntriesJson: string,
         glifsJson: string,
         glyphNamesJson: string,
-        masterId: string
+        stationId: string
     ) => string;
     load_glyphspackage_glyphs: (
         fontinfo: string,
@@ -170,9 +170,9 @@ const console = new Logger('FontManager');
 /** A live stage older than this is not posted to linked windows. */
 const LINKED_PREVIEW_STAGE_MAX_AGE_MS = 1000;
 
-/** A plain copy of layer data that any window message can carry. */
-function toPlainLayerData<T>(layerData: T): T {
-    return JSON.parse(JSON.stringify(layerData)) as T;
+/** A plain copy of drawing data that any window message can carry. */
+function toPlainDrawingData<T>(drawingData: T): T {
+    return JSON.parse(JSON.stringify(drawingData)) as T;
 }
 
 let startupOpenSessionActive = false;
@@ -454,15 +454,15 @@ function stampPathBooleanFlagsForGlyphsSave(data: unknown): unknown {
         if (!glyph || typeof glyph !== 'object') {
             continue;
         }
-        const layers = (glyph as { layers?: unknown }).layers;
-        if (!Array.isArray(layers)) {
+        const drawings = (glyph as { layers?: unknown }).layers;
+        if (!Array.isArray(drawings)) {
             continue;
         }
-        for (const layer of layers) {
-            if (!layer || typeof layer !== 'object') {
+        for (const drawing of drawings) {
+            if (!drawing || typeof drawing !== 'object') {
                 continue;
             }
-            const shapes = (layer as { shapes?: unknown }).shapes;
+            const shapes = (drawing as { shapes?: unknown }).shapes;
             if (!Array.isArray(shapes)) {
                 continue;
             }
@@ -480,7 +480,7 @@ export type GlyphData = {
     layers: {
         id: string;
         name: string;
-        _master: string;
+        _station: string;
         location?: DesignspaceLocation;
     }[];
     masters: {
@@ -491,14 +491,14 @@ export type GlyphData = {
     axesOrder: string[];
 };
 
-export type RustBatchLayerTarget = {
+export type RustBatchDrawingTarget = {
     glyphName: string;
     layerId: string;
 };
 
 export type RustBatchMetadata = {
     changedGlyphs: string[];
-    layerTargets: RustBatchLayerTarget[];
+    layerTargets: RustBatchDrawingTarget[];
     layerOperations: Array<{
         glyphName: string;
         layerId: string;
@@ -537,18 +537,18 @@ export function rustBatchHasContent(result: RustBatchResult): boolean {
     return Boolean(result.updates?.some((packet) => packet.update.length > 0));
 }
 
-export type AddMasterInterpolationLocation = {
+export type AddStationInterpolationLocation = {
     glyphName: string;
     designLocation: DesignspaceLocation;
 };
 
-type LayerCacheUpdate = {
+type DrawingCacheUpdate = {
     glyphName: string;
     layerId: string;
     layerData: Babelfont.Layer;
 };
 
-type ExplicitLayerCacheInput = LayerCacheUpdate;
+type ExplicitDrawingCacheInput = DrawingCacheUpdate;
 
 /**
  * Counters that record traffic across the JS ↔ Rust/worker boundary.
@@ -564,8 +564,8 @@ type ExplicitLayerCacheInput = LayerCacheUpdate;
 export type BoundaryCrossingStats = {
     /** Number of `forwardWorkerYjsUpdate` batches (1 per batch). */
     submitBatchCalls: number;
-    /** Total number of layer entries crossed in batches. */
-    layersTransmitted: number;
+    /** Total number of drawing entries crossed in batches. */
+    drawingsTransmitted: number;
     /** Number of distinct glyphs crossed in batches (running count). */
     glyphsTransmitted: number;
     /**
@@ -577,7 +577,7 @@ export type BoundaryCrossingStats = {
 
 /**
  * Shared empty fingerprint baseline map. Returned by the (now no-op)
- * `getLayerFingerprintsFromStoredJson` to avoid re-parsing the
+ * `getDrawingFingerprintsFromStoredJson` to avoid re-parsing the
  * megabyte-scale `babelfontJson` on every commit batch.
  */
 const EMPTY_FINGERPRINT_MAP: Map<string, string> = new Map();
@@ -589,21 +589,21 @@ class FontDataIntegrityError extends Error {
     }
 }
 
-type SerializableLayerRecord = {
+type SerializableDrawingRecord = {
     id?: string;
     width?: number | null;
 };
 
 type SerializableGlyphRecord = {
     name?: string;
-    layers?: SerializableLayerRecord[];
+    layers?: SerializableDrawingRecord[];
 };
 
 type SerializableFontRecord = {
     glyphs?: SerializableGlyphRecord[];
 };
 
-function assertFiniteLayerWidth(
+function assertFiniteDrawingWidth(
     width: number | null | undefined,
     context: {
         glyphName?: string | null;
@@ -616,13 +616,13 @@ function assertFiniteLayerWidth(
     }
 
     const glyphName = context.glyphName || '[unknown glyph]';
-    const layerId = context.layerId || '[unknown layer]';
+    const drawingId = context.layerId || '[unknown drawing]';
     throw new FontDataIntegrityError(
-        `Layer ${glyphName}/${layerId} has invalid width during ${context.operation}; refusing to serialize malformed layer data.`
+        `Drawing ${glyphName}/${drawingId} has invalid width during ${context.operation}; refusing to serialize malformed drawing data.`
     );
 }
 
-function assertBabelfontLayerWidths(
+function assertBabelfontDrawingWidths(
     data: SerializableFontRecord,
     operation: string
 ): void {
@@ -635,10 +635,10 @@ function assertBabelfontLayerWidths(
             continue;
         }
 
-        for (const layer of glyph.layers) {
-            assertFiniteLayerWidth(layer?.width, {
+        for (const drawing of glyph.layers) {
+            assertFiniteDrawingWidth(drawing?.width, {
                 glyphName: glyph?.name,
-                layerId: layer?.id,
+                layerId: drawing?.id,
                 operation
             });
         }
@@ -652,7 +652,7 @@ type ReloadCurrentFontOptions = {
 type CapturedGlyphCanvasState = {
     wasEditMode: boolean;
     selectedGlyphIndex: number;
-    selectedLayerId: string | null;
+    selectedDrawingId: string | null;
     cursorPosition: number;
     textBuffer: string;
     variationSettings: UserspaceLocation | null;
@@ -741,7 +741,7 @@ class OpenedFont {
         this.fileHandle = fileHandle;
         this.directoryHandle = directoryHandle;
 
-        assertBabelfontLayerWidths(
+        assertBabelfontDrawingWidths(
             this.babelfontData,
             'OpenedFont.constructor'
         );
@@ -929,7 +929,7 @@ class OpenedFont {
      * The next read of `babelfontJson` serializes the model again.
      */
     syncJsonFromModel(): void {
-        assertBabelfontLayerWidths(this.babelfontData, 'syncJsonFromModel');
+        assertBabelfontDrawingWidths(this.babelfontData, 'syncJsonFromModel');
         this.normalizeComponentTransformsForRust(this.babelfontData.glyphs);
 
         // `babelfontJson` backs bridge/worker seeding and must retain logical
@@ -944,11 +944,11 @@ class OpenedFont {
         glyphs: Babelfont.Glyph[] | undefined
     ): void {
         for (const glyph of glyphs || []) {
-            for (const layer of glyph.layers || []) {
-                if (!layer?.shapes) continue;
+            for (const drawing of glyph.layers || []) {
+                if (!drawing?.shapes) continue;
 
-                for (let i = 0; i < layer.shapes.length; i++) {
-                    const shape = layer.shapes[i];
+                for (let i = 0; i < drawing.shapes.length; i++) {
+                    const shape = drawing.shapes[i];
 
                     if (
                         shape &&
@@ -1161,7 +1161,7 @@ class OpenedFont {
     private folderSourceJson(
         glyphs: ReadonlySet<string> | null
     ): BabelfontJsonParts {
-        assertBabelfontLayerWidths(this.babelfontData, 'folderSourceJson');
+        assertBabelfontDrawingWidths(this.babelfontData, 'folderSourceJson');
         const allGlyphs: Babelfont.Glyph[] = this.babelfontData.glyphs || [];
         this.normalizeComponentTransformsForRust(
             glyphs ? allGlyphs.filter((g) => glyphs.has(g.name)) : allGlyphs
@@ -1234,15 +1234,15 @@ class FontManager {
     pendingCommittedKeyboardDriftCheckAfterDrag: boolean;
     workerCacheUpdatePromise: Promise<void> | null;
     /**
-     * Layers the last live stage sent to the worker, for the live compile
+     * Drawings the last live stage sent to the worker, for the live compile
      * request that follows it; linked windows get the same.
      */
     private _stagedLinkedPreview: {
-        updates: LayerCacheUpdate[];
+        updates: DrawingCacheUpdate[];
         stagedAt: number;
     } | null = null;
     forceFullEditingCacheRefresh: boolean;
-    workerLayerFingerprintCache: Map<string, string>;
+    workerDrawingFingerprintCache: Map<string, string>;
     lastWorkerDocumentEpoch: number;
     lastWorkerFilterEpoch: number;
     lastWorkerFontCacheEpoch: number;
@@ -1278,12 +1278,12 @@ class FontManager {
      */
     private _boundaryCrossingStats: {
         submitBatchCalls: number;
-        layersTransmitted: number;
+        drawingsTransmitted: number;
         fullFontCrossings: number;
         transmittedGlyphs: Set<string>;
     } = {
         submitBatchCalls: 0,
-        layersTransmitted: 0,
+        drawingsTransmitted: 0,
         fullFontCrossings: 0,
         transmittedGlyphs: new Set<string>()
     };
@@ -1315,7 +1315,7 @@ class FontManager {
         this.pendingCommittedKeyboardDriftCheckAfterDrag = false;
         this.workerCacheUpdatePromise = null;
         this.forceFullEditingCacheRefresh = false;
-        this.workerLayerFingerprintCache = new Map();
+        this.workerDrawingFingerprintCache = new Map();
         this.lastWorkerDocumentEpoch = 0;
         this.lastWorkerFilterEpoch = 0;
         this.lastWorkerFontCacheEpoch = 0;
@@ -1864,45 +1864,45 @@ class FontManager {
                       typeof glyphName === 'string' && glyphName.length > 0
               )
             : [];
-        const layerTargets = Array.isArray(rawMetadata.layerTargets)
+        const drawingTargets = Array.isArray(rawMetadata.layerTargets)
             ? rawMetadata.layerTargets.flatMap((target) => {
                   if (!target || typeof target !== 'object') {
                       return [];
                   }
                   const glyphName = (target as Record<string, unknown>)
                       .glyphName;
-                  const layerId = (target as Record<string, unknown>).layerId;
+                  const drawingId = (target as Record<string, unknown>).layerId;
                   return typeof glyphName === 'string' &&
-                      typeof layerId === 'string'
-                      ? [{ glyphName, layerId }]
+                      typeof drawingId === 'string'
+                      ? [{ glyphName, layerId: drawingId }]
                       : [];
               })
             : [];
-        const layerOperations = Array.isArray(rawMetadata.layerOperations)
+        const drawingOperations = Array.isArray(rawMetadata.layerOperations)
             ? rawMetadata.layerOperations.flatMap((operation) => {
                   if (!operation || typeof operation !== 'object') {
                       return [];
                   }
                   const record = operation as Record<string, unknown>;
                   const glyphName = record.glyphName;
-                  const layerId = record.layerId;
+                  const drawingId = record.layerId;
                   if (
                       typeof glyphName !== 'string' ||
-                      typeof layerId !== 'string'
+                      typeof drawingId !== 'string'
                   ) {
                       return [];
                   }
                   return [
                       {
                           glyphName,
-                          layerId,
+                          layerId: drawingId,
                           oldValue: record.oldValue,
                           newValue: record.newValue
                       }
                   ];
               })
             : [];
-        const mastersOperation =
+        const stationsOperation =
             rawMetadata.mastersOperation &&
             typeof rawMetadata.mastersOperation === 'object'
                 ? (rawMetadata.mastersOperation as {
@@ -1929,9 +1929,9 @@ class FontManager {
 
         return {
             changedGlyphs,
-            layerTargets,
-            layerOperations,
-            mastersOperation,
+            layerTargets: drawingTargets,
+            layerOperations: drawingOperations,
+            mastersOperation: stationsOperation,
             axesOperation,
             instancesOperation
         };
@@ -1959,49 +1959,49 @@ class FontManager {
         };
     }
 
-    async buildWorkerReinterpolateLayerBatch(
+    async buildWorkerReinterpolateDrawingBatch(
         glyphName: string,
-        layerId: string
+        drawingId: string
     ): Promise<RustBatchResult> {
         return this.requestRustBatchFromWorker({
-            type: 'reinterpolateLayerYjs',
+            type: 'reinterpolateDrawingYjs',
             glyphName,
-            layerId
+            layerId: drawingId
         });
     }
 
-    async buildWorkerReinterpolateMasterLayersBatch(
-        masterId: string
+    async buildWorkerReinterpolateStationDrawingsBatch(
+        stationId: string
     ): Promise<RustBatchResult> {
         return this.requestRustBatchFromWorker({
-            type: 'reinterpolateMasterLayersYjs',
-            masterId
+            type: 'reinterpolateStationDrawingsYjs',
+            masterId: stationId
         });
     }
 
-    async buildWorkerAddMasterWithInterpolatedLayersBatch(
-        master: Babelfont.Master,
-        interpolationLocations?: AddMasterInterpolationLocation[],
+    async buildWorkerAddStationWithInterpolatedDrawingsBatch(
+        station: Babelfont.Master,
+        interpolationLocations?: AddStationInterpolationLocation[],
         axes?: Babelfont.Axis[]
     ): Promise<RustBatchResult> {
         return this.requestRustBatchFromWorker({
-            type: 'addMasterWithInterpolatedLayersYjs',
-            master,
+            type: 'addStationWithInterpolatedDrawingsYjs',
+            master: station,
             interpolationLocations: interpolationLocations ?? [],
             ...(axes ? { axes } : {})
         });
     }
 
-    async buildWorkerAddAxisWithMasterCopiesBatch(
-        plan: AxisMasterCopyPlan
+    async buildWorkerAddAxisWithStationCopiesBatch(
+        plan: AxisStationCopyPlan
     ): Promise<RustBatchResult> {
         return this.requestRustBatchFromWorker({
-            type: 'addAxisWithMasterCopiesYjs',
+            type: 'addAxisWithStationCopiesYjs',
             plan
         });
     }
 
-    async buildWorkerRefineLayerSnapshotsBatch(
+    async buildWorkerRefineDrawingSnapshotsBatch(
         baseUpdate: Uint8Array,
         overrides: Array<{
             glyphName: string;
@@ -2010,18 +2010,18 @@ class FontManager {
         }>
     ): Promise<RustBatchResult> {
         return this.requestRustBatchFromWorker({
-            type: 'refineLayerSnapshotsYjs',
+            type: 'refineDrawingSnapshotsYjs',
             baseUpdate,
             overrides
         });
     }
 
-    async buildWorkerRemoveMastersBatch(
-        masterIds: string[]
+    async buildWorkerRemoveStationsBatch(
+        stationIds: string[]
     ): Promise<RustBatchResult> {
         return this.requestRustBatchFromWorker({
-            type: 'removeMastersYjs',
-            masterIds
+            type: 'removeStationsYjs',
+            masterIds: stationIds
         });
     }
 
@@ -2357,7 +2357,7 @@ class FontManager {
         this.pendingBabelfontJsonSyncAfterDrag = false;
         this.pendingCommittedKeyboardDriftCheckAfterDrag = false;
         this.forceFullEditingCacheRefresh = false;
-        this.workerLayerFingerprintCache.clear();
+        this.workerDrawingFingerprintCache.clear();
         this.workerMirrorQuarantined = false;
         window.currentFontModel = null;
         (window.fontInterpolation as any)?.resetRequestTracking?.();
@@ -2477,7 +2477,8 @@ class FontManager {
                 typeof glyphCanvas.textRunEditor.selectedGlyphIndex === 'number'
                     ? glyphCanvas.textRunEditor.selectedGlyphIndex
                     : -1,
-            selectedLayerId: glyphCanvas.outlineEditor?.selectedLayerId || null,
+            selectedDrawingId:
+                glyphCanvas.outlineEditor?.selectedDrawingId || null,
             cursorPosition:
                 typeof glyphCanvas.textRunEditor.cursorPosition === 'number'
                     ? glyphCanvas.textRunEditor.cursorPosition
@@ -2527,9 +2528,9 @@ class FontManager {
                 state.selectedGlyphIndex
             );
 
-            if (state.selectedLayerId) {
-                glyphCanvas.outlineEditor.selectedLayerId =
-                    state.selectedLayerId;
+            if (state.selectedDrawingId) {
+                glyphCanvas.outlineEditor.selectedDrawingId =
+                    state.selectedDrawingId;
             }
         } else if (glyphCanvas.outlineEditor?.active) {
             glyphCanvas.exitGlyphEditMode();
@@ -2687,14 +2688,15 @@ class FontManager {
         const liveData = font.babelfontData as Babelfont.Font;
         const liveGlyph = (name: string) =>
             liveData.glyphs.find((glyph) => glyph.name === name);
-        const masters = liveData.masters || [];
+        const stations = liveData.masters || [];
         let glyphs: Babelfont.Glyph[];
 
         if (format === 'ufo' || format === 'designspace') {
             const layoutJson = JSON.stringify(state.layoutEntries());
             const document = state.documentText();
-            const masterId = masters.length === 1 ? masters[0].id : undefined;
-            if (format === 'designspace' ? !document : !masterId) {
+            const stationId =
+                stations.length === 1 ? stations[0].id : undefined;
+            if (format === 'designspace' ? !document : !stationId) {
                 return false;
             }
             const changedPaths = JSON.stringify(
@@ -2741,7 +2743,7 @@ class FontManager {
                           layoutJson,
                           JSON.stringify(glifs),
                           names,
-                          masterId!
+                          stationId!
                       )
             ) as Babelfont.Glyph[];
             glyphs = [];
@@ -2750,7 +2752,7 @@ class FontManager {
                 if (!live) {
                     return false;
                 }
-                // A .glif holds a glyph's layers and codepoints; the rest is
+                // A .glif holds a glyph's drawings and codepoints; the rest is
                 // in lib.plist, which did not change.
                 glyphs.push({
                     ...live,
@@ -2823,7 +2825,7 @@ class FontManager {
 
         const wasClean = !font.hasUnsavedChanges;
         const result = bridge.applyExternalGlyphReload(
-            canonicalizeImportedGlyphs(glyphs, masters) as unknown as Array<
+            canonicalizeImportedGlyphs(glyphs, stations) as unknown as Array<
                 Record<string, unknown>
             >
         );
@@ -3060,7 +3062,7 @@ class FontManager {
         directoryHandle?: FileSystemDirectoryHandle
     ) {
         this.resetStateForNewFont();
-        assertBabelfontLayerWidths(fontData, 'adoptResidentFont');
+        assertBabelfontDrawingWidths(fontData, 'adoptResidentFont');
         const fontModel = Font.fromData(fontData as never);
         const newFont = OpenedFont.fromResidentData(
             fontData,
@@ -3098,17 +3100,17 @@ class FontManager {
 
     /**
      * Generate a minimal empty babelfont JSON string.
-     * One master with design/export vertical metrics, hollow rectangular
+     * One station with design/export vertical metrics, hollow rectangular
      * .notdef, space glyph, Regular style name, no axes or instances.
      */
     private generateEmptyFontJson(): string {
         // Build a minimal font from scratch.
         // Rust babelfont::Font requires: upm, version, date, names, features, glyphs.
-        // Master requires: name, id, location, metrics, kerning.
+        // Station requires: name, id, location, metrics, kerning.
         // All other fields have #[serde(default)] so they are optional.
-        const masterId = crypto.randomUUID();
-        const notdefLayerId = crypto.randomUUID();
-        const spaceLayerId = crypto.randomUUID();
+        const stationId = crypto.randomUUID();
+        const notdefDrawingId = crypto.randomUUID();
+        const spaceDrawingId = crypto.randomUUID();
         // Standard UPM-1000 vertical metrics so guides, overview framing,
         // and binary export have usable values from the first open.
         const metrics = {
@@ -3161,12 +3163,12 @@ class FontManager {
                 prefixes: {},
                 features: []
             },
-            // No axes — a static font with no axes and one master means the
-            // glyph rendering path uses the single master directly instead
-            // of trying to interpolate between nonexistent masters.
+            // No axes — a static font with no axes and one station means the
+            // glyph rendering path uses the single station directly instead
+            // of trying to interpolate between nonexistent stations.
             masters: [
                 {
-                    id: masterId,
+                    id: stationId,
                     name: { dflt: 'Regular' },
                     location: {},
                     metrics,
@@ -3180,11 +3182,11 @@ class FontManager {
                     exported: true,
                     layers: [
                         {
-                            id: notdefLayerId,
+                            id: notdefDrawingId,
                             width: notdefWidth,
                             master: {
                                 type: 'DefaultForMaster',
-                                master: masterId
+                                master: stationId
                             },
                             shapes: notdefShapes
                         }
@@ -3197,11 +3199,11 @@ class FontManager {
                     exported: true,
                     layers: [
                         {
-                            id: spaceLayerId,
+                            id: spaceDrawingId,
                             width: 250,
                             master: {
                                 type: 'DefaultForMaster',
-                                master: masterId
+                                master: stationId
                             },
                             shapes: []
                         }
@@ -3574,9 +3576,13 @@ class FontManager {
                 continue;
             }
             const glyph = fontModel?.findGlyph?.(current);
-            const layers = Array.isArray(glyph?.layers) ? glyph.layers : [];
-            for (const layer of layers) {
-                const shapes = Array.isArray(layer?.shapes) ? layer.shapes : [];
+            const drawings = Array.isArray(glyph?.drawings)
+                ? glyph.drawings
+                : [];
+            for (const drawing of drawings) {
+                const shapes = Array.isArray(drawing?.shapes)
+                    ? drawing.shapes
+                    : [];
                 for (const shape of shapes) {
                     const shapeRecord = shape as unknown as {
                         reference?: unknown;
@@ -3723,115 +3729,117 @@ class FontManager {
         });
     }
 
-    syncSerializedLayerIntoObjectModel(
+    syncSerializedDrawingIntoObjectModel(
         glyphName: string,
-        layerId: string,
-        layerData: Babelfont.Layer
+        drawingId: string,
+        drawingData: Babelfont.Layer
     ): Babelfont.Layer | null {
         const currentFont = this.currentFont;
-        const modelLayer = currentFont?.fontModel
+        const modelDrawing = currentFont?.fontModel
             ?.findGlyph(glyphName)
-            ?.findLayerById(layerId);
+            ?.findDrawingById(drawingId);
 
-        if (!modelLayer) {
+        if (!modelDrawing) {
             return null;
         }
 
-        if (typeof modelLayer.syncFromEditorLayerData === 'function') {
+        if (typeof modelDrawing.syncFromEditorDrawingData === 'function') {
             withSuppressedModelRecording(() => {
-                modelLayer.syncFromEditorLayerData({
-                    width: layerData.width,
-                    ...(layerData.height !== undefined
-                        ? { height: layerData.height }
+                modelDrawing.syncFromEditorDrawingData({
+                    width: drawingData.width,
+                    ...(drawingData.height !== undefined
+                        ? { height: drawingData.height }
                         : {}),
-                    ...(layerData.vertWidth !== undefined
-                        ? { vertWidth: layerData.vertWidth }
+                    ...(drawingData.vertWidth !== undefined
+                        ? { vertWidth: drawingData.vertWidth }
                         : {}),
-                    ...(layerData.shapes !== undefined
-                        ? { shapes: layerData.shapes }
+                    ...(drawingData.shapes !== undefined
+                        ? { shapes: drawingData.shapes }
                         : {}),
-                    ...(layerData.anchors !== undefined
-                        ? { anchors: layerData.anchors }
+                    ...(drawingData.anchors !== undefined
+                        ? { anchors: drawingData.anchors }
                         : {}),
-                    ...(layerData.guides !== undefined
-                        ? { guides: layerData.guides }
+                    ...(drawingData.guides !== undefined
+                        ? { guides: drawingData.guides }
                         : {}),
-                    ...(layerData.format_specific !== undefined
-                        ? { format_specific: layerData.format_specific }
+                    ...(drawingData.format_specific !== undefined
+                        ? { format_specific: drawingData.format_specific }
                         : {})
                 });
             });
 
-            const syncedLayerData = modelLayer.toJSON() as Babelfont.Layer &
+            const syncedDrawingData = modelDrawing.toJSON() as Babelfont.Layer &
                 Record<string, unknown>;
-            Object.assign(syncedLayerData, {
-                ...(layerData.name !== undefined
-                    ? { name: layerData.name }
+            Object.assign(syncedDrawingData, {
+                ...(drawingData.name !== undefined
+                    ? { name: drawingData.name }
                     : {}),
-                ...(layerData.location !== undefined
-                    ? { location: layerData.location }
+                ...(drawingData.location !== undefined
+                    ? { location: drawingData.location }
                     : {}),
-                ...(layerData.color !== undefined
-                    ? { color: layerData.color }
+                ...(drawingData.color !== undefined
+                    ? { color: drawingData.color }
                     : {}),
-                ...(layerData.background_layer_id !== undefined
+                ...(drawingData.background_layer_id !== undefined
                     ? {
-                          background_layer_id: layerData.background_layer_id
+                          background_layer_id: drawingData.background_layer_id
                       }
                     : {}),
-                ...(layerData.layer_index !== undefined
-                    ? { layer_index: layerData.layer_index }
+                ...(drawingData.layer_index !== undefined
+                    ? { layer_index: drawingData.layer_index }
                     : {}),
-                ...(layerData.is_background !== undefined
-                    ? { is_background: layerData.is_background }
+                ...(drawingData.is_background !== undefined
+                    ? { is_background: drawingData.is_background }
                     : {}),
-                ...(layerData.master !== undefined
-                    ? { master: layerData.master }
+                ...(drawingData.master !== undefined
+                    ? { master: drawingData.master }
                     : {}),
-                id: layerId
+                id: drawingId
             });
 
-            modelLayer.invalidateContentCaches();
-            return syncedLayerData;
+            modelDrawing.invalidateContentCaches();
+            return syncedDrawingData;
         }
 
-        const rawLayerData = modelLayer.toJSON() as Babelfont.Layer &
+        const rawDrawingData = modelDrawing.toJSON() as Babelfont.Layer &
             Record<string, unknown>;
-        Object.assign(rawLayerData, layerData);
+        Object.assign(rawDrawingData, drawingData);
 
-        modelLayer.invalidateContentCaches();
+        modelDrawing.invalidateContentCaches();
 
-        return rawLayerData;
+        return rawDrawingData;
     }
 
-    private syncSerializedLayerIntoStoredFontData(
+    private syncSerializedDrawingIntoStoredFontData(
         glyphName: string,
-        layerId: string,
-        layerData: Babelfont.Layer
+        drawingId: string,
+        drawingData: Babelfont.Layer
     ): Babelfont.Layer | null {
         const glyph = this.getGlyph(glyphName);
         if (!glyph?.layers) {
             return null;
         }
 
-        const storedLayer = glyph.layers.find((layer) => layer.id === layerId);
-        if (!storedLayer) {
+        const storedDrawing = glyph.layers.find(
+            (drawing) => drawing.id === drawingId
+        );
+        if (!storedDrawing) {
             return null;
         }
 
-        const mutableStoredLayer = storedLayer as unknown as Record<
+        const mutableStoredDrawing = storedDrawing as unknown as Record<
             string,
             unknown
         >;
 
-        for (const key of Object.keys(storedLayer)) {
-            if (!Object.prototype.hasOwnProperty.call(layerData, key)) {
-                delete mutableStoredLayer[key];
+        for (const key of Object.keys(storedDrawing)) {
+            if (!Object.prototype.hasOwnProperty.call(drawingData, key)) {
+                delete mutableStoredDrawing[key];
             }
         }
 
-        Object.assign(storedLayer, layerData);
-        return storedLayer;
+        Object.assign(storedDrawing, drawingData);
+        return storedDrawing;
     }
 
     private normalizeComponentTransformForRust(
@@ -3970,29 +3978,29 @@ class FontManager {
             : undefined;
     }
 
-    private normalizeLayerForRust(layerData: any): any {
-        if (!layerData || typeof layerData !== 'object') {
-            return layerData;
+    private normalizeDrawingForRust(drawingData: any): any {
+        if (!drawingData || typeof drawingData !== 'object') {
+            return drawingData;
         }
 
-        assertFiniteLayerWidth(layerData.width, {
+        assertFiniteDrawingWidth(drawingData.width, {
             layerId:
-                typeof layerData.id === 'string' ? layerData.id : undefined,
-            operation: 'normalizeLayerForRust'
+                typeof drawingData.id === 'string' ? drawingData.id : undefined,
+            operation: 'normalizeDrawingForRust'
         });
 
-        const shapes = Array.isArray(layerData.shapes)
-            ? layerData.shapes.map((shape: any) =>
+        const shapes = Array.isArray(drawingData.shapes)
+            ? drawingData.shapes.map((shape: any) =>
                   this.normalizeShapeForRust(shape)
               )
             : [];
 
-        const normalizedLayer = {
-            ...layerData,
+        const normalizedDrawing = {
+            ...drawingData,
             shapes,
-            ...(Array.isArray(layerData.anchors)
+            ...(Array.isArray(drawingData.anchors)
                 ? {
-                      anchors: layerData.anchors.map((anchor: any) => ({
+                      anchors: drawingData.anchors.map((anchor: any) => ({
                           ...(typeof anchor?.id === 'string'
                               ? { id: anchor.id }
                               : {}),
@@ -4005,9 +4013,9 @@ class FontManager {
                       }))
                   }
                 : {}),
-            ...(Array.isArray(layerData.guides)
+            ...(Array.isArray(drawingData.guides)
                 ? {
-                      guides: layerData.guides.map((guide: any) => ({
+                      guides: drawingData.guides.map((guide: any) => ({
                           ...(typeof guide?.id === 'string'
                               ? { id: guide.id }
                               : {}),
@@ -4031,33 +4039,33 @@ class FontManager {
         };
 
         const normalizedHeight = this.normalizeOptionalFiniteNumber(
-            layerData.height
+            drawingData.height
         );
         if (normalizedHeight === undefined) {
-            delete normalizedLayer.height;
+            delete normalizedDrawing.height;
         } else {
-            normalizedLayer.height = normalizedHeight;
+            normalizedDrawing.height = normalizedHeight;
         }
 
         const normalizedVertWidth = this.normalizeOptionalFiniteNumber(
-            layerData.vertWidth
+            drawingData.vertWidth
         );
         if (normalizedVertWidth === undefined) {
-            delete normalizedLayer.vertWidth;
+            delete normalizedDrawing.vertWidth;
         } else {
-            normalizedLayer.vertWidth = normalizedVertWidth;
+            normalizedDrawing.vertWidth = normalizedVertWidth;
         }
 
         const normalizedLocation = this.normalizeLocationForRust(
-            layerData.location
+            drawingData.location
         );
         if (normalizedLocation) {
-            normalizedLayer.location = normalizedLocation;
+            normalizedDrawing.location = normalizedLocation;
         } else {
-            delete normalizedLayer.location;
+            delete normalizedDrawing.location;
         }
 
-        return normalizedLayer;
+        return normalizedDrawing;
     }
 
     /**
@@ -4157,26 +4165,26 @@ class FontManager {
             compileSource.startsWith('mouse-drag') ||
             compileSource.startsWith('keyboard') ||
             compileSource.startsWith('remote-') ||
-            compileSource === 'master-reinterpolate-batch';
+            compileSource === 'station-reinterpolate-batch';
         let isMouseDragSource = compileSource.startsWith('mouse-drag');
         let isKeyboardSource = compileSource.startsWith('keyboard');
         let isRemoteSource = compileSource.startsWith('remote-');
-        let isMasterReinterpolateBatchSource =
-            compileSource === 'master-reinterpolate-batch';
+        let isStationReinterpolateBatchSource =
+            compileSource === 'station-reinterpolate-batch';
         const forceFullWorkerCompileAtStart = this.forceFullEditingCacheRefresh;
-        const shouldPrepareIncrementalLayerUpdate =
+        const shouldPrepareIncrementalDrawingUpdate =
             (isMouseDragSource || isKeyboardSource) &&
             !forceFullWorkerCompileAtStart;
-        const activeDirtyGlyphName = shouldPrepareIncrementalLayerUpdate
+        const activeDirtyGlyphName = shouldPrepareIncrementalDrawingUpdate
             ? window.glyphCanvas?.outlineEditor?.currentGlyphName ||
               window.glyphCanvas?.getCurrentGlyphName?.() ||
               null
             : null;
-        const activeDirtyLayerId = shouldPrepareIncrementalLayerUpdate
-            ? window.glyphCanvas?.outlineEditor?.selectedLayerId || null
+        const activeDirtyDrawingId = shouldPrepareIncrementalDrawingUpdate
+            ? window.glyphCanvas?.outlineEditor?.selectedDrawingId || null
             : null;
-        const canUseIncrementalDirtyLayerPatch = (() => {
-            if (!activeDirtyGlyphName || !activeDirtyLayerId) {
+        const canUseIncrementalDirtyDrawingPatch = (() => {
+            if (!activeDirtyGlyphName || !activeDirtyDrawingId) {
                 return false;
             }
 
@@ -4187,8 +4195,8 @@ class FontManager {
                 return false;
             }
 
-            return dirtyGlyph.layers?.some(
-                (layer: any) => layer?.id === activeDirtyLayerId
+            return dirtyGlyph.drawings?.some(
+                (drawing: any) => drawing?.id === activeDirtyDrawingId
             );
         })();
 
@@ -4201,7 +4209,7 @@ class FontManager {
         // receives stale format artifacts from the model.
         const canKeepStaleJsonDuringActiveMouseDrag =
             wasJsonStale &&
-            canUseIncrementalDirtyLayerPatch &&
+            canUseIncrementalDirtyDrawingPatch &&
             isMouseDragSource;
         const canSkipCanonicalJsonSyncForStartupCompile =
             startupOpenSessionActive &&
@@ -4386,12 +4394,12 @@ class FontManager {
                     compileSource.startsWith('mouse-drag') ||
                     compileSource.startsWith('keyboard') ||
                     compileSource.startsWith('remote-') ||
-                    compileSource === 'master-reinterpolate-batch';
+                    compileSource === 'station-reinterpolate-batch';
                 isMouseDragSource = compileSource.startsWith('mouse-drag');
                 isKeyboardSource = compileSource.startsWith('keyboard');
                 isRemoteSource = compileSource.startsWith('remote-');
-                isMasterReinterpolateBatchSource =
-                    compileSource === 'master-reinterpolate-batch';
+                isStationReinterpolateBatchSource =
+                    compileSource === 'station-reinterpolate-batch';
                 dragActiveAtRequest =
                     isMouseDragSource ||
                     !!window.glyphCanvas?.outlineEditor?.draggingSomething;
@@ -4429,7 +4437,7 @@ class FontManager {
 
                 const compileFilters = optionOverrides?.skip_features
                     ? {
-                          layerUpdates: [] as Array<{
+                          drawingUpdates: [] as Array<{
                               glyphName: string;
                               layerId: string;
                               layerData: unknown;
@@ -4437,14 +4445,14 @@ class FontManager {
                           features: ''
                       }
                     : await prepareCompileFilters(subsetForCompile ?? null);
-                if (compileFilters.layerUpdates.length > 0) {
-                    await this.sendWorkerPreviewLayerOverlay(
-                        compileFilters.layerUpdates as Array<{
+                if (compileFilters.drawingUpdates.length > 0) {
+                    await this.sendWorkerPreviewDrawingOverlay(
+                        compileFilters.drawingUpdates as Array<{
                             glyphName: string;
                             layerId: string;
                             layerData: Babelfont.Layer;
                         }>,
-                        compileFilters.layerUpdates.map(
+                        compileFilters.drawingUpdates.map(
                             (update) => update.glyphName
                         ),
                         true
@@ -4470,7 +4478,7 @@ class FontManager {
                             (isIncrementalEditingCompile &&
                                 wasJsonStale &&
                                 !forceFullWorkerCompile),
-                        usePreviewLayerOverlay:
+                        usePreviewDrawingOverlay:
                             dataFreshnessModeAtRequest ===
                             'live-drag-worker-preview'
                     }
@@ -4573,7 +4581,7 @@ class FontManager {
             }
             timelineSpanEnd(debugSaveSpanId);
 
-            // Track compilation mode for axis/layer switch gating
+            // Track compilation mode for axis/drawing switch gating
             this.lastCompilationMode = compilationMode;
 
             // Dispatch event to notify canvas that new font is ready
@@ -4814,9 +4822,13 @@ class FontManager {
         const componentQueue = subset.filter((name) => name !== notdefName);
         for (let index = 0; index < componentQueue.length; index += 1) {
             const glyph = fontModel.findGlyph(componentQueue[index]);
-            const layers = Array.isArray(glyph?.layers) ? glyph.layers : [];
-            for (const layer of layers) {
-                const shapes = Array.isArray(layer?.shapes) ? layer.shapes : [];
+            const drawings = Array.isArray(glyph?.drawings)
+                ? glyph.drawings
+                : [];
+            for (const drawing of drawings) {
+                const shapes = Array.isArray(drawing?.shapes)
+                    ? drawing.shapes
+                    : [];
                 for (const shape of shapes) {
                     const shapeRecord = shape as unknown as {
                         reference?: unknown;
@@ -4852,7 +4864,7 @@ class FontManager {
     async recompileEditingFont(): Promise<boolean> {
         if (!this.currentFont) return false;
 
-        // Multi-layer structural edits can enqueue an explicit worker cache
+        // Multi-drawing structural edits can enqueue an explicit worker cache
         // refresh before requesting recompilation. Wait for that refresh so the
         // editing-font compile never races against stale Rust cache contents.
         await this.awaitWorkerCacheUpdate();
@@ -4869,7 +4881,7 @@ class FontManager {
         const isOutlineIncrementalChange =
             changeSource.startsWith('mouse-drag') ||
             changeSource.startsWith('keyboard') ||
-            changeSource === 'master-reinterpolate-batch';
+            changeSource === 'station-reinterpolate-batch';
 
         let subsetGlyphs = this.getEditingSubsetSnapshot();
 
@@ -4968,7 +4980,7 @@ class FontManager {
 
     /**
      * Ensure a full editing font (with features/kerning) has been compiled.
-     * Call this before axis slider changes or layer switches that depend
+     * Call this before axis slider changes or drawing switches that depend
      * on correct HarfBuzz positioning.
      * Returns a promise that resolves when the full compile is ready.
      */
@@ -4977,7 +4989,7 @@ class FontManager {
             return; // Already have a full compile
         }
         console.log(
-            '[FontManager] Forcing full compile before axis/layer change'
+            '[FontManager] Forcing full compile before axis/drawing change'
         );
         const compileContext = {
             changeSource: this.lastChangeSource,
@@ -5054,12 +5066,12 @@ class FontManager {
     ): void {
         try {
             let fixCount = 0;
-            const knownMasterIds = new Set(
+            const knownStationIds = new Set(
                 Array.isArray(data?.masters)
                     ? data.masters
-                          .map((master: any) =>
-                              master && typeof master === 'object'
-                                  ? String(master.id || '')
+                          .map((station: any) =>
+                              station && typeof station === 'object'
+                                  ? String(station.id || '')
                                   : ''
                           )
                           .filter(Boolean)
@@ -5100,113 +5112,113 @@ class FontManager {
                 return arr;
             };
 
-            const normalizeLayerMasterValue = (
-                masterValue: any,
+            const normalizeDrawingStationValue = (
+                stationValue: any,
                 isBackground: boolean,
-                layerId: string
+                drawingId: string
             ): Record<string, unknown> | null => {
-                if (typeof masterValue === 'string' && masterValue.length) {
+                if (typeof stationValue === 'string' && stationValue.length) {
                     return {
                         type: 'DefaultForMaster',
-                        master: masterValue
+                        master: stationValue
                     };
                 }
 
                 if (
-                    !masterValue ||
-                    typeof masterValue !== 'object' ||
-                    Array.isArray(masterValue)
+                    !stationValue ||
+                    typeof stationValue !== 'object' ||
+                    Array.isArray(stationValue)
                 ) {
-                    if (!isBackground && knownMasterIds.has(layerId)) {
+                    if (!isBackground && knownStationIds.has(drawingId)) {
                         return {
                             type: 'DefaultForMaster',
-                            master: layerId
+                            master: drawingId
                         };
                     }
                     return null;
                 }
 
-                if (masterValue.type === 'FreeFloating') {
+                if (stationValue.type === 'FreeFloating') {
                     return { type: 'FreeFloating' };
                 }
 
                 if (
-                    (masterValue.type === 'DefaultForMaster' ||
-                        masterValue.type === 'AssociatedWithMaster') &&
-                    typeof masterValue.master === 'string' &&
-                    masterValue.master.length
+                    (stationValue.type === 'DefaultForMaster' ||
+                        stationValue.type === 'AssociatedWithMaster') &&
+                    typeof stationValue.master === 'string' &&
+                    stationValue.master.length
                 ) {
                     return {
-                        type: masterValue.type,
-                        master: masterValue.master
+                        type: stationValue.type,
+                        master: stationValue.master
                     };
                 }
 
                 if (
-                    typeof masterValue.master === 'string' &&
-                    masterValue.master.length
-                ) {
-                    return {
-                        type: 'DefaultForMaster',
-                        master: masterValue.master
-                    };
-                }
-
-                if (
-                    typeof masterValue.DefaultForMaster === 'string' &&
-                    masterValue.DefaultForMaster.length
+                    typeof stationValue.master === 'string' &&
+                    stationValue.master.length
                 ) {
                     return {
                         type: 'DefaultForMaster',
-                        master: masterValue.DefaultForMaster
+                        master: stationValue.master
                     };
                 }
 
                 if (
-                    typeof masterValue.default_for_master === 'string' &&
-                    masterValue.default_for_master.length
+                    typeof stationValue.DefaultForMaster === 'string' &&
+                    stationValue.DefaultForMaster.length
                 ) {
                     return {
                         type: 'DefaultForMaster',
-                        master: masterValue.default_for_master
+                        master: stationValue.DefaultForMaster
                     };
                 }
 
                 if (
-                    typeof masterValue.AssociatedWithMaster === 'string' &&
-                    masterValue.AssociatedWithMaster.length
+                    typeof stationValue.default_for_master === 'string' &&
+                    stationValue.default_for_master.length
+                ) {
+                    return {
+                        type: 'DefaultForMaster',
+                        master: stationValue.default_for_master
+                    };
+                }
+
+                if (
+                    typeof stationValue.AssociatedWithMaster === 'string' &&
+                    stationValue.AssociatedWithMaster.length
                 ) {
                     return {
                         type: 'AssociatedWithMaster',
-                        master: masterValue.AssociatedWithMaster
+                        master: stationValue.AssociatedWithMaster
                     };
                 }
 
                 if (
-                    typeof masterValue.associated_with_master === 'string' &&
-                    masterValue.associated_with_master.length
+                    typeof stationValue.associated_with_master === 'string' &&
+                    stationValue.associated_with_master.length
                 ) {
                     return {
                         type: 'AssociatedWithMaster',
-                        master: masterValue.associated_with_master
+                        master: stationValue.associated_with_master
                     };
                 }
 
-                if ('FreeFloating' in masterValue) {
+                if ('FreeFloating' in stationValue) {
                     return { type: 'FreeFloating' };
                 }
 
-                if (!isBackground && knownMasterIds.has(layerId)) {
+                if (!isBackground && knownStationIds.has(drawingId)) {
                     return {
                         type: 'DefaultForMaster',
-                        master: layerId
+                        master: drawingId
                     };
                 }
 
                 return null;
             };
 
-            const canonicalizeGlyphLayerIdentities = (
+            const canonicalizeGlyphDrawingIdentities = (
                 glyph: any,
                 glyphPath: string
             ): void => {
@@ -5214,50 +5226,50 @@ class FontManager {
                     return;
                 }
 
-                for (const layer of glyph.layers) {
-                    if (!layer || typeof layer !== 'object') {
+                for (const drawing of glyph.layers) {
+                    if (!drawing || typeof drawing !== 'object') {
                         continue;
                     }
 
-                    const layerId =
-                        typeof layer.id === 'string' ? layer.id : '';
-                    const normalizedMaster = normalizeLayerMasterValue(
-                        layer.master,
-                        layer.is_background === true,
-                        layerId
+                    const drawingId =
+                        typeof drawing.id === 'string' ? drawing.id : '';
+                    const normalizedStation = normalizeDrawingStationValue(
+                        drawing.master,
+                        drawing.is_background === true,
+                        drawingId
                     );
 
-                    if (normalizedMaster) {
-                        const masterChanged =
-                            JSON.stringify(layer.master ?? null) !==
-                            JSON.stringify(normalizedMaster);
-                        if (masterChanged) {
-                            layer.master = normalizedMaster;
+                    if (normalizedStation) {
+                        const stationChanged =
+                            JSON.stringify(drawing.master ?? null) !==
+                            JSON.stringify(normalizedStation);
+                        if (stationChanged) {
+                            drawing.master = normalizedStation;
                             fixCount++;
                         }
 
                         if (
-                            normalizedMaster.type === 'DefaultForMaster' &&
-                            typeof normalizedMaster.master === 'string' &&
-                            normalizedMaster.master.length
+                            normalizedStation.type === 'DefaultForMaster' &&
+                            typeof normalizedStation.master === 'string' &&
+                            normalizedStation.master.length
                         ) {
-                            const canonicalLayerId = normalizedMaster.master;
-                            const conflictingLayer = glyph.layers.find(
+                            const canonicalDrawingId = normalizedStation.master;
+                            const conflictingDrawing = glyph.layers.find(
                                 (candidate: any) =>
-                                    candidate !== layer &&
+                                    candidate !== drawing &&
                                     candidate &&
                                     typeof candidate.id === 'string' &&
-                                    candidate.id === canonicalLayerId
+                                    candidate.id === canonicalDrawingId
                             );
 
                             if (
-                                !conflictingLayer &&
-                                layer.id !== canonicalLayerId
+                                !conflictingDrawing &&
+                                drawing.id !== canonicalDrawingId
                             ) {
-                                layer.id = canonicalLayerId;
+                                drawing.id = canonicalDrawingId;
                                 fixCount++;
                                 console.warn(
-                                    `[FontManager] Canonicalized default layer id at ${glyphPath} from ${layerId || '[missing]'} to ${canonicalLayerId}`
+                                    `[FontManager] Canonicalized default drawing id at ${glyphPath} from ${drawingId || '[missing]'} to ${canonicalDrawingId}`
                                 );
                             }
                         }
@@ -5267,11 +5279,14 @@ class FontManager {
 
             if (Array.isArray(data?.glyphs)) {
                 data.glyphs.forEach((glyph: any, index: number) => {
-                    canonicalizeGlyphLayerIdentities(glyph, `glyphs[${index}]`);
+                    canonicalizeGlyphDrawingIdentities(
+                        glyph,
+                        `glyphs[${index}]`
+                    );
                 });
             }
 
-            assertBabelfontLayerWidths(data, 'validateBabelfontDataForRust');
+            assertBabelfontDrawingWidths(data, 'validateBabelfontDataForRust');
 
             const fixValue = (val: any, path: string = ''): void => {
                 if (!val || typeof val !== 'object') return;
@@ -5343,7 +5358,7 @@ class FontManager {
 
             if (data && typeof data === 'object') {
                 fixValue(data);
-                assertBabelfontLayerWidths(
+                assertBabelfontDrawingWidths(
                     data,
                     'validateBabelfontDataForRust'
                 );
@@ -5388,17 +5403,17 @@ class FontManager {
                         const glyph = data.glyphs[gi];
                         if (glyph?.layers && Array.isArray(glyph.layers)) {
                             for (let li = 0; li < glyph.layers.length; li++) {
-                                const layer = glyph.layers[li];
+                                const drawing = glyph.layers[li];
                                 if (
-                                    layer?.shapes &&
-                                    Array.isArray(layer.shapes)
+                                    drawing?.shapes &&
+                                    Array.isArray(drawing.shapes)
                                 ) {
                                     for (
                                         let si = 0;
-                                        si < layer.shapes.length;
+                                        si < drawing.shapes.length;
                                         si++
                                     ) {
-                                        const shape = layer.shapes[si];
+                                        const shape = drawing.shapes[si];
                                         const hasNodes =
                                             shape && 'nodes' in shape;
                                         const hasClosed =
@@ -5414,7 +5429,7 @@ class FontManager {
                                         const isComponent = hasReference;
                                         if (!isPath && !isComponent) {
                                             console.error(
-                                                `[FontManager] Malformed shape: glyph=${glyph.name}, layer=${layer.id}, shape[${si}]: ` +
+                                                `[FontManager] Malformed shape: glyph=${glyph.name}, drawing=${drawing.id}, shape[${si}]: ` +
                                                     `keys=[${Object.keys(shape).join(',')}], ` +
                                                     `nodes=${hasNodes ? typeof shape.nodes + (Array.isArray(shape.nodes) ? '(array)' : '') : 'missing'}, ` +
                                                     `closed=${hasClosed}, reference=${hasReference}, transform=${hasTransform}`
@@ -5545,13 +5560,13 @@ class FontManager {
         return glyph;
     }
 
-    private serializeLayerForStorage(
+    private serializeDrawingForStorage(
         glyphName: string,
-        layerId: string,
-        layerData: Babelfont.Layer,
+        drawingId: string,
+        drawingData: Babelfont.Layer,
         options?: {
             preserveExistingShapes?: boolean;
-            authoritativeOptionalLayerFields?: Array<
+            authoritativeOptionalDrawingFields?: Array<
                 'anchors' | 'guides' | 'format_specific'
             >;
         }
@@ -5562,13 +5577,13 @@ class FontManager {
             !Array.isArray(value) &&
             Object.keys(value).length > 0;
 
-        const copyPersistedLayerFields = (value: Record<string, unknown>) => {
+        const copyPersistedDrawingFields = (value: Record<string, unknown>) => {
             const {
                 anchors: _anchors,
                 guides: _guides,
                 format_specific: _formatSpecific,
                 ...persistedFields
-            } = omitRestingLayerRuntimeKeys(value);
+            } = omitRestingDrawingRuntimeKeys(value);
             return persistedFields;
         };
 
@@ -5576,49 +5591,49 @@ class FontManager {
             return toRestingShapeJson(shape, {
                 allowWrapped: true,
                 strict: true,
-                context: 'layer storage serialization'
+                context: 'drawing storage serialization'
             });
         };
 
-        const originalLayer = this.getGlyph(glyphName)?.layers?.find(
-            (entry: any) => entry.id === layerId
+        const originalDrawing = this.getGlyph(glyphName)?.layers?.find(
+            (entry: any) => entry.id === drawingId
         );
-        const existingLayer = originalLayer;
-        if (!originalLayer && !layerData) {
+        const existingDrawing = originalDrawing;
+        if (!originalDrawing && !drawingData) {
             return null;
         }
-        const authoritativeOptionalLayerFields = new Set(
-            options?.authoritativeOptionalLayerFields
+        const authoritativeOptionalDrawingFields = new Set(
+            options?.authoritativeOptionalDrawingFields
         );
 
         const resolvedWidth =
-            typeof layerData?.width === 'number' &&
-            Number.isFinite(layerData.width)
-                ? layerData.width
-                : originalLayer?.width;
-        assertFiniteLayerWidth(resolvedWidth, {
+            typeof drawingData?.width === 'number' &&
+            Number.isFinite(drawingData.width)
+                ? drawingData.width
+                : originalDrawing?.width;
+        assertFiniteDrawingWidth(resolvedWidth, {
             glyphName,
-            layerId,
-            operation: 'serializeLayerForStorage'
+            layerId: drawingId,
+            operation: 'serializeDrawingForStorage'
         });
 
-        const cleanOriginalShapes = Array.isArray(originalLayer?.shapes)
-            ? originalLayer.shapes.map(cleanShapeForSaving)
-            : originalLayer?.shapes;
-        const cleanShapes = Array.isArray(layerData?.shapes)
-            ? layerData.shapes.map(cleanShapeForSaving)
+        const cleanOriginalShapes = Array.isArray(originalDrawing?.shapes)
+            ? originalDrawing.shapes.map(cleanShapeForSaving)
+            : originalDrawing?.shapes;
+        const cleanShapes = Array.isArray(drawingData?.shapes)
+            ? drawingData.shapes.map(cleanShapeForSaving)
             : cleanOriginalShapes;
         const storedShapes =
-            options?.preserveExistingShapes && originalLayer?.shapes
+            options?.preserveExistingShapes && originalDrawing?.shapes
                 ? cleanOriginalShapes
                 : cleanShapes;
 
         const cleanAnchors =
-            Array.isArray(layerData.anchors) &&
-            (layerData.anchors.length > 0 ||
-                Array.isArray(originalLayer?.anchors) ||
-                authoritativeOptionalLayerFields.has('anchors'))
-                ? layerData.anchors.map((anchor) => {
+            Array.isArray(drawingData.anchors) &&
+            (drawingData.anchors.length > 0 ||
+                Array.isArray(originalDrawing?.anchors) ||
+                authoritativeOptionalDrawingFields.has('anchors'))
+                ? drawingData.anchors.map((anchor) => {
                       const { format_specific, ...persistedAnchor } = anchor;
                       return {
                           ...persistedAnchor,
@@ -5630,14 +5645,14 @@ class FontManager {
                           })
                       };
                   })
-                : originalLayer?.anchors;
+                : originalDrawing?.anchors;
 
         const cleanGuides =
-            Array.isArray(layerData.guides) &&
-            (layerData.guides.length > 0 ||
-                Array.isArray(originalLayer?.guides) ||
-                authoritativeOptionalLayerFields.has('guides'))
-                ? layerData.guides.map((guide) => {
+            Array.isArray(drawingData.guides) &&
+            (drawingData.guides.length > 0 ||
+                Array.isArray(originalDrawing?.guides) ||
+                authoritativeOptionalDrawingFields.has('guides'))
+                ? drawingData.guides.map((guide) => {
                       const { format_specific, ...persistedGuide } = guide;
                       return {
                           ...persistedGuide,
@@ -5653,161 +5668,168 @@ class FontManager {
                           })
                       };
                   })
-                : originalLayer?.guides;
+                : originalDrawing?.guides;
 
         const formatSpecific =
-            hasOwnKeys(layerData.format_specific) ||
-            authoritativeOptionalLayerFields.has('format_specific')
-                ? layerData.format_specific
-                : hasOwnKeys(originalLayer?.format_specific)
-                  ? originalLayer?.format_specific
+            hasOwnKeys(drawingData.format_specific) ||
+            authoritativeOptionalDrawingFields.has('format_specific')
+                ? drawingData.format_specific
+                : hasOwnKeys(originalDrawing?.format_specific)
+                  ? originalDrawing?.format_specific
                   : undefined;
 
-        const layerName = layerData.name ?? originalLayer?.name;
+        const drawingName = drawingData.name ?? originalDrawing?.name;
 
-        return toRestingLayerJson(
+        return toRestingDrawingJson(
             {
-                ...(originalLayer
-                    ? copyPersistedLayerFields(originalLayer as any)
+                ...(originalDrawing
+                    ? copyPersistedDrawingFields(originalDrawing as any)
                     : {}),
-                ...copyPersistedLayerFields(layerData as any),
+                ...copyPersistedDrawingFields(drawingData as any),
                 width: resolvedWidth,
-                ...(layerData.height !== undefined && {
-                    height: layerData.height
+                ...(drawingData.height !== undefined && {
+                    height: drawingData.height
                 }),
-                ...(layerData.vertWidth !== undefined && {
-                    vertWidth: layerData.vertWidth
+                ...(drawingData.vertWidth !== undefined && {
+                    vertWidth: drawingData.vertWidth
                 }),
-                ...(layerName !== undefined && { name: layerName }),
-                id: layerId,
-                master: originalLayer?.master ?? layerData.master,
+                ...(drawingName !== undefined && { name: drawingName }),
+                id: drawingId,
+                master: originalDrawing?.master ?? drawingData.master,
                 ...(Array.isArray(storedShapes) && { shapes: storedShapes }),
                 ...(cleanAnchors && { anchors: cleanAnchors }),
                 ...(cleanGuides && { guides: cleanGuides }),
-                ...((layerData.color ?? originalLayer?.color) && {
-                    color: layerData.color ?? originalLayer?.color
+                ...((drawingData.color ?? originalDrawing?.color) && {
+                    color: drawingData.color ?? originalDrawing?.color
                 }),
-                ...(layerData.layer_index !== undefined && {
-                    layer_index: layerData.layer_index
+                ...(drawingData.layer_index !== undefined && {
+                    layer_index: drawingData.layer_index
                 }),
-                ...(layerData.is_background !== undefined
-                    ? { is_background: layerData.is_background }
-                    : originalLayer?.is_background === true
+                ...(drawingData.is_background !== undefined
+                    ? { is_background: drawingData.is_background }
+                    : originalDrawing?.is_background === true
                       ? { is_background: true }
                       : {}),
-                ...((layerData.background_layer_id ??
-                    originalLayer?.background_layer_id) && {
+                ...((drawingData.background_layer_id ??
+                    originalDrawing?.background_layer_id) && {
                     background_layer_id:
-                        layerData.background_layer_id ??
-                        originalLayer?.background_layer_id
+                        drawingData.background_layer_id ??
+                        originalDrawing?.background_layer_id
                 }),
-                ...((layerData.location ?? originalLayer?.location) && {
+                ...((drawingData.location ?? originalDrawing?.location) && {
                     location: {
-                        ...(layerData.location ?? originalLayer?.location)
+                        ...(drawingData.location ?? originalDrawing?.location)
                     }
                 }),
                 ...(formatSpecific && {
                     format_specific: formatSpecific
                 }),
-                ...((layerData as any).master && {
-                    master: (layerData as any).master
+                ...((drawingData as any).master && {
+                    master: (drawingData as any).master
                 })
             },
             {
-                existing: originalLayer ?? undefined,
+                existing: originalDrawing ?? undefined,
                 mode: 'replace',
                 allowWrapped: true,
-                context: 'layer storage serialization'
+                context: 'drawing storage serialization'
             }
         ) as unknown as Babelfont.Layer;
     }
 
-    private updateStoredLayerData(
+    private updateStoredDrawingData(
         glyphName: string,
-        layerId: string,
-        layerData: Babelfont.Layer
+        drawingId: string,
+        drawingData: Babelfont.Layer
     ): boolean {
         const glyph = this.getGlyph(glyphName);
         if (!glyph?.layers) {
             return false;
         }
 
-        const layerIndex = glyph.layers.findIndex(
-            (layer) => layer.id === layerId
+        const drawingIndex = glyph.layers.findIndex(
+            (drawing) => drawing.id === drawingId
         );
-        if (layerIndex === -1) {
+        if (drawingIndex === -1) {
             return false;
         }
 
-        glyph.layers[layerIndex] = layerData;
+        glyph.layers[drawingIndex] = drawingData;
         return true;
     }
 
-    syncLayerFromModelToStorage(glyphName: string, layerId: string): boolean {
+    syncDrawingFromModelToStorage(
+        glyphName: string,
+        drawingId: string
+    ): boolean {
         const glyph = this.currentFont?.fontModel?.findGlyph(glyphName);
-        const layer = glyph?.findLayerById(layerId);
-        if (!layer) {
+        const drawing = glyph?.findDrawingById(drawingId);
+        if (!drawing) {
             return false;
         }
 
-        const serializedLayer = this.serializeLayerForStorage(
+        const serializedDrawing = this.serializeDrawingForStorage(
             glyphName,
-            layerId,
-            layer.toJSON(),
+            drawingId,
+            drawing.toJSON(),
             undefined
         );
         return (
-            !!serializedLayer &&
-            this.updateStoredLayerData(glyphName, layerId, serializedLayer)
+            !!serializedDrawing &&
+            this.updateStoredDrawingData(
+                glyphName,
+                drawingId,
+                serializedDrawing
+            )
         );
     }
 
-    removeStoredLayerData(glyphName: string, layerId: string): boolean {
+    removeStoredDrawingData(glyphName: string, drawingId: string): boolean {
         const glyph = this.getGlyph(glyphName);
         if (!glyph?.layers) {
             return false;
         }
 
-        const layerIndex = glyph.layers.findIndex(
-            (layer) => layer.id === layerId
+        const drawingIndex = glyph.layers.findIndex(
+            (drawing) => drawing.id === drawingId
         );
-        if (layerIndex === -1) {
+        if (drawingIndex === -1) {
             return false;
         }
 
-        glyph.layers.splice(layerIndex, 1);
+        glyph.layers.splice(drawingIndex, 1);
         return true;
     }
 
-    private getWorkerLayerFingerprintKey(
+    private getWorkerDrawingFingerprintKey(
         glyphName: string,
-        layerId: string
+        drawingId: string
     ): string {
-        return `${glyphName}::${layerId}`;
+        return `${glyphName}::${drawingId}`;
     }
 
-    private getLayerWorkerFingerprint(layerData: Babelfont.Layer): string {
-        return JSON.stringify(this.normalizeLayerForRust(layerData));
+    private getDrawingWorkerFingerprint(drawingData: Babelfont.Layer): string {
+        return JSON.stringify(this.normalizeDrawingForRust(drawingData));
     }
 
     /**
-     * Baseline fingerprints for changed-layer detection.
+     * Baseline fingerprints for changed-drawing detection.
      *
      * Historically this parsed the entire `currentFont.babelfontJson`
      * (multi-megabyte JSON) on every commit batch — a steady ~50-100ms
      * cost per edit even though the only baseline that matters is
      * "what is currently in the Rust worker cache". That state is
-     * already tracked incrementally in `workerLayerFingerprintCache`:
+     * already tracked incrementally in `workerDrawingFingerprintCache`:
      * it is cleared whenever the worker cache is fully reseeded
      * (`storeFontJson`/`forceFullWorkerCacheUpdate` via
      * {@link recordFullFontCrossing}) and updated on every successful
      * `forwardWorkerYjsUpdate` batch. Returning an empty Map here
-     * keeps the logic correct (a missing fingerprint forces the layer
+     * keeps the logic correct (a missing fingerprint forces the drawing
      * to be included in the next batch — the safe fallback) while
      * removing the per-commit JSON.parse from the hot path entirely.
      * See COMPILATION_EDIT_POLICY.md.
      */
-    private getLayerFingerprintsFromStoredJson(
+    private getDrawingFingerprintsFromStoredJson(
         _glyphNames: Iterable<string>
     ): Map<string, string> {
         return EMPTY_FINGERPRINT_MAP;
@@ -5884,7 +5906,7 @@ class FontManager {
 
     /** Discard JS fingerprint/epoch state that must stay coherent with the worker document. */
     private invalidateWorkerCacheMirror(): void {
-        this.workerLayerFingerprintCache.clear();
+        this.workerDrawingFingerprintCache.clear();
         this.lastWorkerDocumentEpoch = 0;
         this.lastWorkerFilterEpoch = 0;
         this.lastWorkerFontCacheEpoch = 0;
@@ -5892,10 +5914,10 @@ class FontManager {
         fontCompilation?.setWorkerCacheDocumentReady(false);
     }
 
-    private workerLayerTargetsAreResting(
-        layerTargets: WorkerReplayTarget[]
+    private workerDrawingTargetsAreResting(
+        drawingTargets: WorkerReplayTarget[]
     ): boolean {
-        if (!layerTargets.length) {
+        if (!drawingTargets.length) {
             return true;
         }
         const fontMap = window.patchSyncEngine?.fontMap;
@@ -5903,35 +5925,35 @@ class FontManager {
             return true;
         }
 
-        for (const target of layerTargets) {
+        for (const target of drawingTargets) {
             if (!target?.glyphName || !target?.layerId) {
                 continue;
             }
-            const layerValue = getYPath(fontMap, [
+            const drawingValue = getYPath(fontMap, [
                 'glyphs',
                 target.glyphName,
                 'layers',
                 target.layerId
             ]);
-            if (layerValue === undefined || layerValue === null) {
+            if (drawingValue === undefined || drawingValue === null) {
                 continue;
             }
-            const layerJson = fromYType(layerValue);
+            const drawingJson = fromYType(drawingValue);
             if (
-                !layerJson ||
-                typeof layerJson !== 'object' ||
-                Array.isArray(layerJson)
+                !drawingJson ||
+                typeof drawingJson !== 'object' ||
+                Array.isArray(drawingJson)
             ) {
                 continue;
             }
-            const violation = describeRestingLayerViolation(
-                omitRestingLayerRuntimeKeys(
-                    layerJson as Record<string, unknown>
+            const violation = describeRestingDrawingViolation(
+                omitRestingDrawingRuntimeKeys(
+                    drawingJson as Record<string, unknown>
                 )
             );
             if (violation) {
                 console.error(
-                    `[FontManager] Resting-layer preflight failed for ${target.glyphName}/${target.layerId}: ${violation}`
+                    `[FontManager] Resting-drawing preflight failed for ${target.glyphName}/${target.layerId}: ${violation}`
                 );
                 return false;
             }
@@ -5944,7 +5966,7 @@ class FontManager {
         changedGlyphs: string[],
         invalidateLayoutClosure: boolean,
         nonGlyphChangeHints: string[] = [],
-        layerTargets: WorkerReplayTarget[] = [],
+        drawingTargets: WorkerReplayTarget[] = [],
         glyphRenames: Array<{ oldName: string; newName: string }> = [],
         documentId?: string
     ): Promise<boolean> {
@@ -5981,7 +6003,7 @@ class FontManager {
             const hasRefreshMetadata =
                 changedGlyphs.length > 0 ||
                 nonGlyphChangeHints.length > 0 ||
-                layerTargets.length > 0 ||
+                drawingTargets.length > 0 ||
                 glyphRenames.length > 0;
             if (!hasRefreshMetadata) {
                 // Core stamps like glyphRevisions have no compile-cache
@@ -6000,12 +6022,14 @@ class FontManager {
                 return true;
             }
 
-            const normalizedLayerTargets =
-                normalizeWorkerReplayTargets(layerTargets);
-            if (!this.workerLayerTargetsAreResting(normalizedLayerTargets)) {
+            const normalizedDrawingTargets =
+                normalizeWorkerReplayTargets(drawingTargets);
+            if (
+                !this.workerDrawingTargetsAreResting(normalizedDrawingTargets)
+            ) {
                 console.error(
-                    '[FontManager] Refusing applyYjsUpdate; JS Y.Doc layer is not resting JSON',
-                    { changedGlyphs, layerTargets: normalizedLayerTargets }
+                    '[FontManager] Refusing applyYjsUpdate; JS Y.Doc drawing is not resting JSON',
+                    { changedGlyphs, layerTargets: normalizedDrawingTargets }
                 );
                 return false;
             }
@@ -6047,8 +6071,8 @@ class FontManager {
                     update: updateToSend,
                     changedGlyphs,
                     nonGlyphChangeHints,
-                    ...(normalizedLayerTargets.length
-                        ? { layerTargets: normalizedLayerTargets }
+                    ...(normalizedDrawingTargets.length
+                        ? { layerTargets: normalizedDrawingTargets }
                         : undefined),
                     ...(glyphRenames.length ? { glyphRenames } : undefined),
                     invalidateLayoutClosure,
@@ -6173,8 +6197,8 @@ class FontManager {
         return queuedSend;
     }
 
-    private async sendWorkerPreviewLayerOverlay(
-        layerUpdates: Array<{
+    private async sendWorkerPreviewDrawingOverlay(
+        drawingUpdates: Array<{
             glyphName: string;
             layerId: string;
             layerData: Babelfont.Layer;
@@ -6182,27 +6206,27 @@ class FontManager {
         changedGlyphs: string[],
         invalidateLayoutClosure: boolean,
         nonGlyphChangeHints: string[] = [],
-        layerTargets: WorkerReplayTarget[] = []
+        drawingTargets: WorkerReplayTarget[] = []
     ): Promise<boolean> {
         const runSend = async (): Promise<boolean> => {
             if (!fontCompilation?.isInitialized) {
                 return false;
             }
 
-            if (!layerUpdates.length) {
+            if (!drawingUpdates.length) {
                 return true;
             }
 
             try {
-                const normalizedLayerTargets =
-                    normalizeWorkerReplayTargets(layerTargets);
+                const normalizedDrawingTargets =
+                    normalizeWorkerReplayTargets(drawingTargets);
                 const response = await fontCompilation.sendMessage({
-                    type: 'applyPreviewLayerOverlay',
-                    layerUpdates,
+                    type: 'applyPreviewDrawingOverlay',
+                    layerUpdates: drawingUpdates,
                     changedGlyphs,
                     nonGlyphChangeHints,
-                    ...(normalizedLayerTargets.length
-                        ? { layerTargets: normalizedLayerTargets }
+                    ...(normalizedDrawingTargets.length
+                        ? { layerTargets: normalizedDrawingTargets }
                         : undefined),
                     invalidateLayoutClosure
                 });
@@ -6214,7 +6238,7 @@ class FontManager {
                 return true;
             } catch (error) {
                 console.warn(
-                    '[FontManager] Failed to send worker preview layer overlay:',
+                    '[FontManager] Failed to send worker preview drawing overlay:',
                     {
                         changedGlyphs,
                         invalidateLayoutClosure
@@ -6280,7 +6304,7 @@ class FontManager {
      * packets are not forced through a redundant recover.
      */
     acknowledgeWorkerBridgeReseed(): void {
-        this.workerLayerFingerprintCache.clear();
+        this.workerDrawingFingerprintCache.clear();
         this.workerMirrorQuarantined = false;
         fontCompilation?.setWorkerCacheDocumentReady(true);
     }
@@ -6289,10 +6313,10 @@ class FontManager {
         return this.recoverWorkerCacheFromAuthoritativeState(reason);
     }
 
-    private collectLayerUpdatesForTargetsFromModel(
+    private collectDrawingUpdatesForTargetsFromModel(
         targets: Iterable<WorkerReplayTarget>
     ): {
-        updates: LayerCacheUpdate[];
+        updates: DrawingCacheUpdate[];
         removedFingerprintKeys: string[];
     } | null {
         const currentFont = this.currentFont;
@@ -6300,20 +6324,20 @@ class FontManager {
             return null;
         }
 
-        const updates: LayerCacheUpdate[] = [];
+        const updates: DrawingCacheUpdate[] = [];
         const removedFingerprintKeys: string[] = [];
         const seenTargets = new Set<string>();
 
         for (const target of targets) {
             const glyphName = target?.glyphName;
-            const layerId = target?.layerId;
-            if (!glyphName || !layerId) {
+            const drawingId = target?.layerId;
+            if (!glyphName || !drawingId) {
                 continue;
             }
 
-            const fingerprintKey = this.getWorkerLayerFingerprintKey(
+            const fingerprintKey = this.getWorkerDrawingFingerprintKey(
                 glyphName,
-                layerId
+                drawingId
             );
             if (seenTargets.has(fingerprintKey)) {
                 continue;
@@ -6324,34 +6348,36 @@ class FontManager {
                 (entry: any) => entry?.name === glyphName
             );
             const rawModelGlyph = modelGlyph as any;
-            const modelLayer =
+            const modelDrawing =
                 rawModelGlyph?.data?.layers?.find(
-                    (entry: any) => entry?.id === layerId
+                    (entry: any) => entry?.id === drawingId
                 ) ??
-                modelGlyph?.layers?.find((entry: any) => entry?.id === layerId);
+                modelGlyph?.drawings?.find(
+                    (entry: any) => entry?.id === drawingId
+                );
 
-            if (!modelLayer) {
+            if (!modelDrawing) {
                 removedFingerprintKeys.push(fingerprintKey);
                 continue;
             }
 
-            const rawLayerData =
-                typeof modelLayer.toJSON === 'function'
-                    ? modelLayer.toJSON()
-                    : modelLayer;
-            const serializedLayer = this.serializeLayerForStorage(
+            const rawDrawingData =
+                typeof modelDrawing.toJSON === 'function'
+                    ? modelDrawing.toJSON()
+                    : modelDrawing;
+            const serializedDrawing = this.serializeDrawingForStorage(
                 glyphName,
-                layerId,
-                rawLayerData
+                drawingId,
+                rawDrawingData
             );
-            if (!serializedLayer) {
+            if (!serializedDrawing) {
                 return null;
             }
 
             updates.push({
                 glyphName,
-                layerId,
-                layerData: serializedLayer
+                layerId: drawingId,
+                layerData: serializedDrawing
             });
         }
 
@@ -6361,10 +6387,10 @@ class FontManager {
         };
     }
 
-    private collectLayerUpdatesForTargetsFromBridge(
+    private collectDrawingUpdatesForTargetsFromBridge(
         targets: Iterable<WorkerReplayTarget>
     ): {
-        updates: LayerCacheUpdate[];
+        updates: DrawingCacheUpdate[];
         removedFingerprintKeys: string[];
     } | null {
         const currentFont = this.currentFont;
@@ -6373,78 +6399,78 @@ class FontManager {
             return null;
         }
 
-        const updates: LayerCacheUpdate[] = [];
+        const updates: DrawingCacheUpdate[] = [];
         const removedFingerprintKeys: string[] = [];
         const seenTargets = new Set<string>();
 
         for (const target of targets) {
             const glyphName = target?.glyphName;
-            const layerId = target?.layerId;
-            if (!glyphName || !layerId) {
+            const drawingId = target?.layerId;
+            if (!glyphName || !drawingId) {
                 continue;
             }
 
-            const fingerprintKey = this.getWorkerLayerFingerprintKey(
+            const fingerprintKey = this.getWorkerDrawingFingerprintKey(
                 glyphName,
-                layerId
+                drawingId
             );
             if (seenTargets.has(fingerprintKey)) {
                 continue;
             }
             seenTargets.add(fingerprintKey);
 
-            const bridgeLayer = getYPath(fontMap, [
+            const bridgeDrawing = getYPath(fontMap, [
                 'glyphs',
                 glyphName,
                 'layers',
-                layerId
+                drawingId
             ]);
-            if (!bridgeLayer) {
+            if (!bridgeDrawing) {
                 removedFingerprintKeys.push(fingerprintKey);
                 continue;
             }
 
-            const rawLayerData = fromYType(bridgeLayer) as Babelfont.Layer;
-            let serializedLayer = this.serializeLayerForStorage(
+            const rawDrawingData = fromYType(bridgeDrawing) as Babelfont.Layer;
+            let serializedDrawing = this.serializeDrawingForStorage(
                 glyphName,
-                layerId,
-                rawLayerData
+                drawingId,
+                rawDrawingData
             );
             const modelGlyph = currentFont.fontModel?.glyphs?.find(
                 (entry: any) => entry?.name === glyphName
             );
-            const modelLayer = modelGlyph?.layers?.find(
-                (entry: any) => entry?.id === layerId
+            const modelDrawing = modelGlyph?.drawings?.find(
+                (entry: any) => entry?.id === drawingId
             );
-            const rawModelLayerData =
-                typeof modelLayer?.toJSON === 'function'
-                    ? modelLayer.toJSON()
-                    : modelLayer;
-            const modelSerializedLayer = rawModelLayerData
-                ? this.serializeLayerForStorage(
+            const rawModelDrawingData =
+                typeof modelDrawing?.toJSON === 'function'
+                    ? modelDrawing.toJSON()
+                    : modelDrawing;
+            const modelSerializedDrawing = rawModelDrawingData
+                ? this.serializeDrawingForStorage(
                       glyphName,
-                      layerId,
-                      rawModelLayerData
+                      drawingId,
+                      rawModelDrawingData
                   )
                 : null;
             if (
-                serializedLayer &&
-                modelSerializedLayer &&
-                Array.isArray(modelSerializedLayer.shapes) &&
-                modelSerializedLayer.shapes.length > 0 &&
-                (!Array.isArray(serializedLayer.shapes) ||
-                    serializedLayer.shapes.length === 0)
+                serializedDrawing &&
+                modelSerializedDrawing &&
+                Array.isArray(modelSerializedDrawing.shapes) &&
+                modelSerializedDrawing.shapes.length > 0 &&
+                (!Array.isArray(serializedDrawing.shapes) ||
+                    serializedDrawing.shapes.length === 0)
             ) {
-                serializedLayer = modelSerializedLayer;
+                serializedDrawing = modelSerializedDrawing;
             }
-            if (!serializedLayer) {
+            if (!serializedDrawing) {
                 return null;
             }
 
             updates.push({
                 glyphName,
-                layerId,
-                layerData: serializedLayer
+                layerId: drawingId,
+                layerData: serializedDrawing
             });
         }
 
@@ -6504,40 +6530,43 @@ class FontManager {
         const normalizedNonGlyphChangeHints = Array.from(
             new Set((options?.nonGlyphChangeHints || []).filter(Boolean))
         );
-        const normalizedLayerTargets = normalizeWorkerReplayTargets(
+        const normalizedDrawingTargets = normalizeWorkerReplayTargets(
             options?.layerTargets || []
         );
 
-        if (!normalizedChangedGlyphs.length && !normalizedLayerTargets.length) {
+        if (
+            !normalizedChangedGlyphs.length &&
+            !normalizedDrawingTargets.length
+        ) {
             return this.sendWorkerYjsUpdate(
                 update,
                 [],
                 options?.invalidateLayoutClosure !== false,
                 normalizedNonGlyphChangeHints,
-                normalizedLayerTargets,
+                normalizedDrawingTargets,
                 options?.glyphRenames || [],
                 options?.documentId
             );
         }
         // Authoritative mutation is the Yjs binary already being sent.
         // Do not walk the bridge with `fromYType` just to fingerprint.
-        let fingerprintUpdates: LayerCacheUpdate[] = [];
+        let fingerprintUpdates: DrawingCacheUpdate[] = [];
         const removedFingerprintKeys: string[] = [];
-        if (normalizedLayerTargets.length) {
+        if (normalizedDrawingTargets.length) {
             fingerprintUpdates =
-                this.collectChangedLayerUpdatesFromTargets(
-                    normalizedLayerTargets
+                this.collectChangedDrawingUpdatesFromTargets(
+                    normalizedDrawingTargets
                 ) || [];
             const fingerprintedKeys = new Set(
                 fingerprintUpdates.map((update) =>
-                    this.getWorkerLayerFingerprintKey(
+                    this.getWorkerDrawingFingerprintKey(
                         update.glyphName,
                         update.layerId
                     )
                 )
             );
-            for (const target of normalizedLayerTargets) {
-                const fingerprintKey = this.getWorkerLayerFingerprintKey(
+            for (const target of normalizedDrawingTargets) {
+                const fingerprintKey = this.getWorkerDrawingFingerprintKey(
                     target.glyphName,
                     target.layerId
                 );
@@ -6547,7 +6576,7 @@ class FontManager {
             }
         } else {
             fingerprintUpdates =
-                this.collectChangedLayerUpdatesFromModel(
+                this.collectChangedDrawingUpdatesFromModel(
                     normalizedChangedGlyphs,
                     null,
                     { skipFingerprintBaseline: true }
@@ -6559,18 +6588,18 @@ class FontManager {
             normalizedChangedGlyphs,
             options?.invalidateLayoutClosure !== false,
             normalizedNonGlyphChangeHints,
-            normalizedLayerTargets,
+            normalizedDrawingTargets,
             options?.glyphRenames || [],
             options?.documentId
         );
 
         if (!sent) {
-            this.workerLayerFingerprintCache.clear();
+            this.workerDrawingFingerprintCache.clear();
             return false;
         }
 
         for (const fingerprintKey of removedFingerprintKeys) {
-            this.workerLayerFingerprintCache.delete(fingerprintKey);
+            this.workerDrawingFingerprintCache.delete(fingerprintKey);
         }
 
         const missingGlyphNames = normalizedChangedGlyphs.filter(
@@ -6578,40 +6607,40 @@ class FontManager {
         );
         if (missingGlyphNames.length > 0) {
             for (const fingerprintKey of Array.from(
-                this.workerLayerFingerprintCache.keys()
+                this.workerDrawingFingerprintCache.keys()
             )) {
                 if (
                     missingGlyphNames.some((glyphName) =>
                         fingerprintKey.startsWith(`${glyphName}::`)
                     )
                 ) {
-                    this.workerLayerFingerprintCache.delete(fingerprintKey);
+                    this.workerDrawingFingerprintCache.delete(fingerprintKey);
                 }
             }
         }
 
-        const transmittedLayerCount =
-            normalizedLayerTargets.length || fingerprintUpdates.length;
-        if (transmittedLayerCount > 0) {
+        const transmittedDrawingCount =
+            normalizedDrawingTargets.length || fingerprintUpdates.length;
+        if (transmittedDrawingCount > 0) {
             this._boundaryCrossingStats.submitBatchCalls++;
-            this._boundaryCrossingStats.layersTransmitted +=
-                transmittedLayerCount;
-            for (const layerUpdate of fingerprintUpdates) {
-                const normalizedLayer = this.normalizeLayerForRust(
-                    layerUpdate.layerData
+            this._boundaryCrossingStats.drawingsTransmitted +=
+                transmittedDrawingCount;
+            for (const drawingUpdate of fingerprintUpdates) {
+                const normalizedDrawing = this.normalizeDrawingForRust(
+                    drawingUpdate.layerData
                 );
-                this.workerLayerFingerprintCache.set(
-                    this.getWorkerLayerFingerprintKey(
-                        layerUpdate.glyphName,
-                        layerUpdate.layerId
+                this.workerDrawingFingerprintCache.set(
+                    this.getWorkerDrawingFingerprintKey(
+                        drawingUpdate.glyphName,
+                        drawingUpdate.layerId
                     ),
-                    JSON.stringify(normalizedLayer)
+                    JSON.stringify(normalizedDrawing)
                 );
                 this._boundaryCrossingStats.transmittedGlyphs.add(
-                    layerUpdate.glyphName
+                    drawingUpdate.glyphName
                 );
             }
-            for (const target of normalizedLayerTargets) {
+            for (const target of normalizedDrawingTargets) {
                 this._boundaryCrossingStats.transmittedGlyphs.add(
                     target.glyphName
                 );
@@ -6621,42 +6650,42 @@ class FontManager {
         return true;
     }
 
-    private prepareCompileFacingLayerUpdate(
+    private prepareCompileFacingDrawingUpdate(
         glyphName: string,
-        layerId: string,
-        rawLayerData: Babelfont.Layer
-    ): LayerCacheUpdate {
+        drawingId: string,
+        rawDrawingData: Babelfont.Layer
+    ): DrawingCacheUpdate {
         const storedWidth = this.getGlyph(glyphName)?.layers?.find(
-            (entry: { id?: string }) => entry?.id === layerId
+            (entry: { id?: string }) => entry?.id === drawingId
         )?.width;
         const resolvedWidth =
-            typeof rawLayerData?.width === 'number' &&
-            Number.isFinite(rawLayerData.width)
-                ? rawLayerData.width
+            typeof rawDrawingData?.width === 'number' &&
+            Number.isFinite(rawDrawingData.width)
+                ? rawDrawingData.width
                 : storedWidth;
-        assertFiniteLayerWidth(resolvedWidth, {
+        assertFiniteDrawingWidth(resolvedWidth, {
             glyphName,
-            layerId,
-            operation: 'prepareCompileFacingLayerUpdate'
+            layerId: drawingId,
+            operation: 'prepareCompileFacingDrawingUpdate'
         });
         return {
             glyphName,
-            layerId,
+            layerId: drawingId,
             layerData:
-                rawLayerData?.width === resolvedWidth
-                    ? rawLayerData
-                    : { ...rawLayerData, width: resolvedWidth }
+                rawDrawingData?.width === resolvedWidth
+                    ? rawDrawingData
+                    : { ...rawDrawingData, width: resolvedWidth }
         };
     }
 
-    private collectChangedLayerUpdatesFromTargets(
+    private collectChangedDrawingUpdatesFromTargets(
         targets: Iterable<WorkerReplayTarget>,
         options?: {
             skipFingerprintBaseline?: boolean;
             compileFacing?: boolean;
-            explicitLayerData?: Iterable<ExplicitLayerCacheInput>;
+            explicitDrawingData?: Iterable<ExplicitDrawingCacheInput>;
         }
-    ): LayerCacheUpdate[] | null {
+    ): DrawingCacheUpdate[] | null {
         const normalizedTargets = normalizeWorkerReplayTargets(targets);
         if (normalizedTargets.length === 0) {
             return [];
@@ -6667,12 +6696,12 @@ class FontManager {
             return null;
         }
 
-        const updates: LayerCacheUpdate[] = [];
-        const explicitLayerData = new Map<string, Babelfont.Layer>();
-        for (const input of options?.explicitLayerData || []) {
+        const updates: DrawingCacheUpdate[] = [];
+        const explicitDrawingData = new Map<string, Babelfont.Layer>();
+        for (const input of options?.explicitDrawingData || []) {
             if (input?.glyphName && input?.layerId && input?.layerData) {
-                explicitLayerData.set(
-                    this.getWorkerLayerFingerprintKey(
+                explicitDrawingData.set(
+                    this.getWorkerDrawingFingerprintKey(
                         input.glyphName,
                         input.layerId
                     ),
@@ -6685,82 +6714,84 @@ class FontManager {
             const modelGlyph = currentFont.fontModel?.findGlyph?.(
                 target.glyphName
             );
-            const modelLayer = modelGlyph?.findLayerById?.(target.layerId);
-            if (!modelLayer) {
+            const modelDrawing = modelGlyph?.findDrawingById?.(target.layerId);
+            if (!modelDrawing) {
                 console.warn(
-                    '[FontManager] Missing matched layer for preview/sync target',
+                    '[FontManager] Missing matched drawing for preview/sync target',
                     target
                 );
                 continue;
             }
 
-            const fingerprintKey = this.getWorkerLayerFingerprintKey(
+            const fingerprintKey = this.getWorkerDrawingFingerprintKey(
                 target.glyphName,
                 target.layerId
             );
-            const explicitLayer = explicitLayerData.get(fingerprintKey);
-            const rawLayerData =
-                explicitLayer ??
+            const explicitDrawing = explicitDrawingData.get(fingerprintKey);
+            const rawDrawingData =
+                explicitDrawing ??
                 (options?.compileFacing &&
-                typeof (modelLayer as { toCompileJSON?: () => unknown })
+                typeof (modelDrawing as { toCompileJSON?: () => unknown })
                     .toCompileJSON === 'function'
                     ? (
-                          modelLayer as { toCompileJSON: () => Babelfont.Layer }
+                          modelDrawing as {
+                              toCompileJSON: () => Babelfont.Layer;
+                          }
                       ).toCompileJSON()
-                    : typeof modelLayer.toJSON === 'function'
-                      ? (modelLayer.toJSON() as Babelfont.Layer)
-                      : (modelLayer as Babelfont.Layer));
+                    : typeof modelDrawing.toJSON === 'function'
+                      ? (modelDrawing.toJSON() as Babelfont.Layer)
+                      : (modelDrawing as Babelfont.Layer));
 
             if (options?.compileFacing) {
                 updates.push(
-                    this.prepareCompileFacingLayerUpdate(
+                    this.prepareCompileFacingDrawingUpdate(
                         target.glyphName,
                         target.layerId,
-                        rawLayerData
+                        rawDrawingData
                     )
                 );
                 continue;
             }
 
-            const serializedLayer = this.serializeLayerForStorage(
+            const serializedDrawing = this.serializeDrawingForStorage(
                 target.glyphName,
                 target.layerId,
-                rawLayerData
+                rawDrawingData
             );
-            if (!serializedLayer) {
+            if (!serializedDrawing) {
                 return null;
             }
 
             updates.push({
                 glyphName: target.glyphName,
                 layerId: target.layerId,
-                layerData: serializedLayer
+                layerData: serializedDrawing
             });
         }
 
         return updates;
     }
 
-    private collectChangedLayerUpdatesFromModel(
+    private collectChangedDrawingUpdatesFromModel(
         glyphNames: Iterable<string>,
-        preferredLayerId?: string | null,
+        preferredDrawingId?: string | null,
         options?: {
             skipFingerprintBaseline?: boolean;
             compileFacing?: boolean;
-            explicitLayerData?: Iterable<ExplicitLayerCacheInput>;
+            explicitDrawingData?: Iterable<ExplicitDrawingCacheInput>;
         }
-    ): LayerCacheUpdate[] | null {
+    ): DrawingCacheUpdate[] | null {
         const currentFont = this.currentFont;
         if (!currentFont) {
             return null;
         }
 
-        const updates: LayerCacheUpdate[] = [];
-        const explicitLayerData = new Map<string, Babelfont.Layer>();
-        for (const input of options?.explicitLayerData || []) {
+        const updates: DrawingCacheUpdate[] = [];
+        const explicitDrawingData = new Map<string, Babelfont.Layer>();
+        for (const input of options?.explicitDrawingData || []) {
             if (input?.glyphName && input?.layerId && input?.layerData) {
-                explicitLayerData.set(
-                    this.getWorkerLayerFingerprintKey(
+                explicitDrawingData.set(
+                    this.getWorkerDrawingFingerprintKey(
                         input.glyphName,
                         input.layerId
                     ),
@@ -6771,18 +6802,18 @@ class FontManager {
         const glyphNameList = Array.from(glyphNames);
         const storedJsonFingerprints = options?.skipFingerprintBaseline
             ? new Map<string, string>()
-            : this.getLayerFingerprintsFromStoredJson(glyphNameList);
+            : this.getDrawingFingerprintsFromStoredJson(glyphNameList);
         const sourceGlyphName =
             window.glyphCanvas?.outlineEditor?.currentGlyphName ||
             window.glyphCanvas?.getCurrentGlyphName?.() ||
             glyphNameList[0] ||
             null;
-        const sourceLayer =
-            preferredLayerId && sourceGlyphName
+        const sourceDrawing =
+            preferredDrawingId && sourceGlyphName
                 ? currentFont.fontModel
                       ?.findGlyph(sourceGlyphName)
-                      ?.layers?.find(
-                          (layer: any) => layer?.id === preferredLayerId
+                      ?.drawings?.find(
+                          (drawing: any) => drawing?.id === preferredDrawingId
                       )
                 : null;
 
@@ -6795,61 +6826,68 @@ class FontManager {
                 return null;
             }
 
-            const modelLayers = preferredLayerId
+            const modelDrawings = preferredDrawingId
                 ? [
                       glyphName === sourceGlyphName
-                          ? sourceLayer
-                          : sourceLayer?.getMatchingLayerOnGlyph?.(glyphName) ||
-                            modelGlyph.layers?.find(
-                                (layer: any) => layer?.id === preferredLayerId
+                          ? sourceDrawing
+                          : sourceDrawing?.getMatchingDrawingOnGlyph?.(
+                                glyphName
+                            ) ||
+                            modelGlyph.drawings?.find(
+                                (drawing: any) =>
+                                    drawing?.id === preferredDrawingId
                             )
                   ].filter(Boolean)
-                : modelGlyph.layers || [];
+                : modelGlyph.drawings || [];
 
-            if (preferredLayerId && modelLayers.length === 0) {
+            if (preferredDrawingId && modelDrawings.length === 0) {
                 console.warn(
-                    '[FontManager] Failed to resolve matching layer for dependent glyph',
-                    { glyphName, preferredLayerId, sourceGlyphName }
+                    '[FontManager] Failed to resolve matching drawing for dependent glyph',
+                    {
+                        glyphName,
+                        preferredLayerId: preferredDrawingId,
+                        sourceGlyphName
+                    }
                 );
             }
 
-            for (const modelLayer of modelLayers) {
-                const layerId = modelLayer?.id;
-                if (typeof layerId !== 'string' || !layerId) {
+            for (const modelDrawing of modelDrawings) {
+                const drawingId = modelDrawing?.id;
+                if (typeof drawingId !== 'string' || !drawingId) {
                     return null;
                 }
 
-                const fingerprintKey = this.getWorkerLayerFingerprintKey(
+                const fingerprintKey = this.getWorkerDrawingFingerprintKey(
                     glyphName,
-                    layerId
+                    drawingId
                 );
-                const explicitLayer = explicitLayerData.get(fingerprintKey);
-                const rawLayerData =
-                    explicitLayer ??
+                const explicitDrawing = explicitDrawingData.get(fingerprintKey);
+                const rawDrawingData =
+                    explicitDrawing ??
                     (options?.compileFacing &&
-                    typeof modelLayer.toCompileJSON === 'function'
-                        ? modelLayer.toCompileJSON()
-                        : typeof modelLayer.toJSON === 'function'
-                          ? modelLayer.toJSON()
-                          : modelLayer);
+                    typeof modelDrawing.toCompileJSON === 'function'
+                        ? modelDrawing.toCompileJSON()
+                        : typeof modelDrawing.toJSON === 'function'
+                          ? modelDrawing.toJSON()
+                          : modelDrawing);
 
                 if (options?.compileFacing) {
                     updates.push(
-                        this.prepareCompileFacingLayerUpdate(
+                        this.prepareCompileFacingDrawingUpdate(
                             glyphName,
-                            layerId,
-                            rawLayerData
+                            drawingId,
+                            rawDrawingData
                         )
                     );
                     continue;
                 }
 
-                const serializedLayer = this.serializeLayerForStorage(
+                const serializedDrawing = this.serializeDrawingForStorage(
                     glyphName,
-                    layerId,
-                    rawLayerData
+                    drawingId,
+                    rawDrawingData
                 );
-                if (!serializedLayer) {
+                if (!serializedDrawing) {
                     return null;
                 }
 
@@ -6857,14 +6895,18 @@ class FontManager {
                 // expensive fingerprint comparison and always include the update
                 if (!options?.skipFingerprintBaseline) {
                     const modelFingerprint =
-                        this.getLayerWorkerFingerprint(serializedLayer);
+                        this.getDrawingWorkerFingerprint(serializedDrawing);
                     const baselineFingerprint =
-                        this.workerLayerFingerprintCache.get(fingerprintKey) ??
+                        this.workerDrawingFingerprintCache.get(
+                            fingerprintKey
+                        ) ??
                         storedJsonFingerprints.get(fingerprintKey) ??
                         null;
 
                     if (
-                        !(preferredLayerId && glyphName === sourceGlyphName) &&
+                        !(
+                            preferredDrawingId && glyphName === sourceGlyphName
+                        ) &&
                         baselineFingerprint === modelFingerprint
                     ) {
                         continue;
@@ -6876,10 +6918,10 @@ class FontManager {
                 // double-bakes =+/-= on the next drag.
                 if (
                     !options?.compileFacing &&
-                    !this.updateStoredLayerData(
+                    !this.updateStoredDrawingData(
                         glyphName,
-                        layerId,
-                        serializedLayer
+                        drawingId,
+                        serializedDrawing
                     )
                 ) {
                     return null;
@@ -6887,8 +6929,8 @@ class FontManager {
 
                 updates.push({
                     glyphName,
-                    layerId,
-                    layerData: serializedLayer
+                    layerId: drawingId,
+                    layerData: serializedDrawing
                 });
             }
         }
@@ -6896,8 +6938,8 @@ class FontManager {
         return updates;
     }
 
-    private async submitLayerUpdatesToWorkerPreview(
-        updates: LayerCacheUpdate[],
+    private async submitDrawingUpdatesToWorkerPreview(
+        updates: DrawingCacheUpdate[],
         options?: { invalidateLayoutClosure?: boolean }
     ): Promise<boolean> {
         if (!this.currentFont || !fontCompilation?.isInitialized) {
@@ -6912,27 +6954,27 @@ class FontManager {
             const normalizedUpdates = updates.map((update) => ({
                 glyphName: update.glyphName,
                 layerId: update.layerId,
-                layerData: this.normalizeLayerForRust(update.layerData)
+                layerData: this.normalizeDrawingForRust(update.layerData)
             }));
 
-            return await this.sendWorkerPreviewLayerOverlay(
+            return await this.sendWorkerPreviewDrawingOverlay(
                 normalizedUpdates,
                 Array.from(
                     new Set(normalizedUpdates.map((update) => update.glyphName))
                 ),
                 options?.invalidateLayoutClosure ?? false,
                 [],
-                normalizedUpdates.map(({ glyphName, layerId }) => ({
+                normalizedUpdates.map(({ glyphName, layerId: drawingId }) => ({
                     glyphName,
-                    layerId
+                    layerId: drawingId
                 }))
             );
         } catch (error) {
             console.warn(
-                '[FontManager] Failed to submit live-drag layer overlay to worker preview cache:',
-                updates.map(({ glyphName, layerId }) => ({
+                '[FontManager] Failed to submit live-drag drawing overlay to worker preview cache:',
+                updates.map(({ glyphName, layerId: drawingId }) => ({
                     glyphName,
-                    layerId
+                    layerId: drawingId
                 })),
                 error
             );
@@ -6944,13 +6986,14 @@ class FontManager {
      * Snapshot the running JS ↔ Rust/worker boundary-crossing counters.
      * Call {@link resetBoundaryCrossingStats} at the start of an edit
      * and read the snapshot at the end to assert that exactly the
-     * expected number of batched layer updates / full-font crossings
+     * expected number of batched drawing updates / full-font crossings
      * occurred.
      */
     getBoundaryCrossingStats(): BoundaryCrossingStats {
         return {
             submitBatchCalls: this._boundaryCrossingStats.submitBatchCalls,
-            layersTransmitted: this._boundaryCrossingStats.layersTransmitted,
+            drawingsTransmitted:
+                this._boundaryCrossingStats.drawingsTransmitted,
             glyphsTransmitted:
                 this._boundaryCrossingStats.transmittedGlyphs.size,
             fullFontCrossings: this._boundaryCrossingStats.fullFontCrossings
@@ -6986,7 +7029,7 @@ class FontManager {
             editingFontBytes: this.editingFont?.byteLength ?? 0,
             closureCache: this.closureCache,
             glyphOrderCache: this.glyphOrderCache,
-            fingerprintCache: this.workerLayerFingerprintCache
+            fingerprintCache: this.workerDrawingFingerprintCache
         };
     }
 
@@ -6997,7 +7040,7 @@ class FontManager {
      */
     resetBoundaryCrossingStats(): void {
         this._boundaryCrossingStats.submitBatchCalls = 0;
-        this._boundaryCrossingStats.layersTransmitted = 0;
+        this._boundaryCrossingStats.drawingsTransmitted = 0;
         this._boundaryCrossingStats.fullFontCrossings = 0;
         this._boundaryCrossingStats.transmittedGlyphs.clear();
     }
@@ -7010,7 +7053,7 @@ class FontManager {
      * `babelfontJson` and the previous incremental fingerprints become
      * a stale baseline (they refer to a state that may not match what
      * Rust now has). Clearing the cache forces the next batch to
-     * include every touched layer — the safe direction — and the
+     * include every touched drawing — the safe direction — and the
      * cache is then incrementally rebuilt by subsequent successful
      * `forwardWorkerYjsUpdate` batches. This keeps the
      * fingerprint cache as the documented single source of truth (see
@@ -7018,7 +7061,7 @@ class FontManager {
      */
     recordFullFontCrossing(): void {
         this._boundaryCrossingStats.fullFontCrossings++;
-        this.workerLayerFingerprintCache.clear();
+        this.workerDrawingFingerprintCache.clear();
     }
 
     async refreshWorkerCacheForReplayTargets(
@@ -7036,23 +7079,25 @@ class FontManager {
             }
 
             // Fingerprint bookkeeping only — worker mutation arrives via
-            // forwarded bridge Yjs updates, not whole-layer encode.
-            const targetLayerUpdates =
-                this.collectLayerUpdatesForTargetsFromBridge(
+            // forwarded bridge Yjs updates, not whole-drawing encode.
+            const targetDrawingUpdates =
+                this.collectDrawingUpdatesForTargetsFromBridge(
                     normalizedTargets
                 ) ||
-                this.collectLayerUpdatesForTargetsFromModel(normalizedTargets);
+                this.collectDrawingUpdatesForTargetsFromModel(
+                    normalizedTargets
+                );
 
-            if (targetLayerUpdates) {
-                for (const fingerprintKey of targetLayerUpdates.removedFingerprintKeys) {
-                    this.workerLayerFingerprintCache.delete(fingerprintKey);
+            if (targetDrawingUpdates) {
+                for (const fingerprintKey of targetDrawingUpdates.removedFingerprintKeys) {
+                    this.workerDrawingFingerprintCache.delete(fingerprintKey);
                 }
-                for (const update of targetLayerUpdates.updates) {
-                    const normalized = this.normalizeLayerForRust(
+                for (const update of targetDrawingUpdates.updates) {
+                    const normalized = this.normalizeDrawingForRust(
                         update.layerData
                     );
-                    this.workerLayerFingerprintCache.set(
-                        this.getWorkerLayerFingerprintKey(
+                    this.workerDrawingFingerprintCache.set(
+                        this.getWorkerDrawingFingerprintKey(
                             update.glyphName,
                             update.layerId
                         ),
@@ -7117,38 +7162,43 @@ class FontManager {
         if (!glyph) {
             return null;
         }
-        let master_ids = new Set<string>();
-        for (let master of this.currentFont!.babelfontData.masters) {
-            master_ids.add(master.id);
+        let stationIds = new Set<string>();
+        for (let station of this.currentFont!.babelfontData.masters) {
+            stationIds.add(station.id);
         }
-        let layersData: any[] = [];
-        for (let layer of glyph.layers || []) {
-            // Include non-background layers that are either:
-            // - default layers for their master, or
-            // - brace layers (AssociatedWithMaster + non-empty location)
-            if (!layer.is_background) {
-                const layerAny = layer as any;
-                const hasTaggedMaster =
-                    layerAny.master &&
-                    typeof layerAny.master === 'object' &&
-                    'type' in layerAny.master;
-                const isDefaultLayer =
-                    hasTaggedMaster &&
-                    layerAny.master.type === 'DefaultForMaster';
-                const isAssociatedLayer =
-                    hasTaggedMaster &&
-                    layerAny.master.type === 'AssociatedWithMaster';
+        let drawingsData: any[] = [];
+        for (let drawing of glyph.layers || []) {
+            // Include non-background drawings that are either:
+            // - default drawings for their station, or
+            // - free drawings (AssociatedWithMaster + non-empty location)
+            if (!drawing.is_background) {
+                const drawingAny = drawing as any;
+                const hasTaggedStation =
+                    drawingAny.master &&
+                    typeof drawingAny.master === 'object' &&
+                    'type' in drawingAny.master;
+                const isDefaultDrawing =
+                    hasTaggedStation &&
+                    drawingAny.master.type === 'DefaultForMaster';
+                const isAssociatedDrawing =
+                    hasTaggedStation &&
+                    drawingAny.master.type === 'AssociatedWithMaster';
                 const hasBraceLocation =
-                    !!layer.location && Object.keys(layer.location).length > 0;
+                    !!drawing.location &&
+                    Object.keys(drawing.location).length > 0;
 
-                if (isDefaultLayer || (isAssociatedLayer && hasBraceLocation)) {
-                    const masterIdStr = layerAny.master?.master || layer.id;
-                    if (master_ids.has(masterIdStr)) {
-                        layersData.push({
-                            id: layer.id as string,
-                            name: layer.name || 'Default',
-                            _master: masterIdStr,
-                            location: layer.location
+                if (
+                    isDefaultDrawing ||
+                    (isAssociatedDrawing && hasBraceLocation)
+                ) {
+                    const stationIdStr =
+                        drawingAny.master?.master || drawing.id;
+                    if (stationIds.has(stationIdStr)) {
+                        drawingsData.push({
+                            id: drawing.id as string,
+                            name: drawing.name || 'Default',
+                            _station: stationIdStr,
+                            location: drawing.location
                         });
                     }
                 }
@@ -7157,68 +7207,68 @@ class FontManager {
         const axes = this.currentFont!.babelfontData.axes || [];
         let axes_order = axes.map((axis: Babelfont.Axis) => axis.tag);
 
-        let mastersData: any[] = [];
-        for (let master of this.currentFont!.babelfontData
+        let stationsData: any[] = [];
+        for (let station of this.currentFont!.babelfontData
             .masters as Babelfont.Master[]) {
             let userspaceLocation = designspaceToUserspace(
-                master.location || {},
+                station.location || {},
                 axes
             );
-            // Extract master name from I18NDictionary (use 'en' or first available)
-            let masterName =
-                typeof master.name === 'string'
-                    ? master.name
-                    : master.name?.en ||
-                      Object.values(master.name || {})[0] ||
+            // Extract station name from I18NDictionary (use 'en' or first available)
+            let stationName =
+                typeof station.name === 'string'
+                    ? station.name
+                    : station.name?.en ||
+                      Object.values(station.name || {})[0] ||
                       'Unknown';
-            mastersData.push({
-                id: master.id,
-                name: masterName,
+            stationsData.push({
+                id: station.id,
+                name: stationName,
                 location: userspaceLocation
             });
         }
         return {
             glyphName: glyph.name,
-            layers: layersData,
-            masters: mastersData,
+            layers: drawingsData,
+            masters: stationsData,
             axesOrder: axes_order
         };
     }
 
-    serializeLayerForCommittedSync(
+    serializeDrawingForCommittedSync(
         glyphName: string,
-        layerId: string,
-        layerData: Babelfont.Layer,
+        drawingId: string,
+        drawingData: Babelfont.Layer,
         options?: {
             preserveExistingShapes?: boolean;
-            authoritativeOptionalLayerFields?: Array<
+            authoritativeOptionalDrawingFields?: Array<
                 'anchors' | 'guides' | 'format_specific'
             >;
         }
     ): Babelfont.Layer | null {
-        return this.serializeLayerForStorage(
+        return this.serializeDrawingForStorage(
             glyphName,
-            layerId,
-            layerData,
+            drawingId,
+            drawingData,
             options
         );
     }
 
-    async saveLayerData(
+    async saveDrawingData(
         glyphName: string,
-        layerId: string,
-        layerData: Babelfont.Layer,
+        drawingId: string,
+        drawingData: Babelfont.Layer,
         changeSource: string = 'unknown'
     ) {
-        const layerDataCopy = this.serializeLayerForStorage(
+        const drawingDataCopy = this.serializeDrawingForStorage(
             glyphName,
-            layerId,
-            layerData
+            drawingId,
+            drawingData
         );
-        if (!layerDataCopy) {
+        if (!drawingDataCopy) {
             console.error(
                 '[FontManager]',
-                `Failed to serialize layer ${layerId} in glyph ${glyphName}`
+                `Failed to serialize drawing ${drawingId} in glyph ${glyphName}`
             );
             return;
         }
@@ -7231,7 +7281,7 @@ class FontManager {
         if (!glyph) {
             console.error(
                 `[FontManager]`,
-                `Glyph ${glyphName} not found - cannot save layer data`
+                `Glyph ${glyphName} not found - cannot save drawing data`
             );
             return;
         }
@@ -7239,33 +7289,33 @@ class FontManager {
         if (!glyph.layers) {
             console.error(
                 `[FontManager]`,
-                `Glyph ${glyphName} has no layers - cannot save layer data`
+                `Glyph ${glyphName} has no drawings - cannot save drawing data`
             );
             return;
         }
 
-        const storedLayer = this.syncSerializedLayerIntoStoredFontData(
+        const storedDrawing = this.syncSerializedDrawingIntoStoredFontData(
             glyphName,
-            layerId,
-            layerDataCopy
+            drawingId,
+            drawingDataCopy
         );
-        if (!storedLayer) {
+        if (!storedDrawing) {
             console.error(
                 '[FontManager]',
-                `Failed to commit stored layer ${layerId} in glyph ${glyphName}`
+                `Failed to commit stored drawing ${drawingId} in glyph ${glyphName}`
             );
             return;
         }
 
-        this.syncSerializedLayerIntoObjectModel(
+        this.syncSerializedDrawingIntoObjectModel(
             glyphName,
-            layerId,
-            storedLayer
+            drawingId,
+            storedDrawing
         );
 
-        // Local layer saves mutate the authoritative font object in place.
+        // Local drawing saves mutate the authoritative font object in place.
         // Re-point the bridge snapshot immediately so the subsequent Yjs sync
-        // diffs against the just-saved layer instead of a stale detached JSON.
+        // diffs against the just-saved drawing instead of a stale detached JSON.
         window.patchSyncEngine?.setFontJson?.(this.currentFont!.babelfontData);
 
         if (isInteractiveEdit) {
@@ -7323,7 +7373,7 @@ class FontManager {
 
     /**
      * Re-seed the Rust worker document from the authoritative bridge state.
-     * Kept for API compatibility; does not encode whole layers into Yjs.
+     * Kept for API compatibility; does not encode whole drawings into Yjs.
      */
     async forceFullWorkerCacheUpdate(): Promise<void> {
         if (!this.currentFont || !fontCompilation?.isInitialized) {
@@ -7360,11 +7410,11 @@ class FontManager {
 
     async refreshGlyphsAfterModelBatch(
         glyphNames: Iterable<string>,
-        layerId?: string | null,
+        drawingId?: string | null,
         options?: {
             dispatchGlyphChanged?: boolean;
             skipFingerprintBaseline?: boolean;
-            explicitLayerData?: Iterable<ExplicitLayerCacheInput>;
+            explicitDrawingData?: Iterable<ExplicitDrawingCacheInput>;
         }
     ): Promise<void> {
         const refreshPromise = (async () => {
@@ -7384,7 +7434,7 @@ class FontManager {
             }
 
             // With PatchSyncEngine, worker mutation already flows through
-            // forwardWorkerYjsUpdate; do not whole-layer encode.
+            // forwardWorkerYjsUpdate; do not whole-drawing encode.
             // Without a bridge, still avoid deleted submit paths — dispatch only.
             if (options?.dispatchGlyphChanged === false) {
                 return;
@@ -7396,12 +7446,12 @@ class FontManager {
                         uniqueGlyphNames.length === 1
                             ? {
                                   glyphName: uniqueGlyphNames[0],
-                                  layerId: layerId ?? undefined
+                                  layerId: drawingId ?? undefined
                               }
                             : {
                                   glyphName: uniqueGlyphNames[0],
                                   glyphNames: uniqueGlyphNames,
-                                  layerId: layerId ?? undefined
+                                  layerId: drawingId ?? undefined
                               }
                 })
             );
@@ -7419,11 +7469,11 @@ class FontManager {
 
     async stageLiveDragPreviewFromModel(
         glyphNamesOrTargets: Iterable<string> | Iterable<WorkerReplayTarget>,
-        layerId?: string | null,
+        drawingId?: string | null,
         options?: {
             dispatchGlyphChanged?: boolean;
-            explicitLayerData?: Iterable<ExplicitLayerCacheInput>;
-            /** When set, use these explicit per-glyph layer targets instead of
+            explicitDrawingData?: Iterable<ExplicitDrawingCacheInput>;
+            /** When set, use these explicit per-glyph drawing targets instead of
              *  glyph-names + a shared source layerId. */
             layerTargets?: Iterable<WorkerReplayTarget>;
         }
@@ -7465,41 +7515,41 @@ class FontManager {
         }
 
         const previewPromise = (async () => {
-            const pendingLayerUpdates =
+            const pendingDrawingUpdates =
                 explicitTargets.length > 0
-                    ? this.collectChangedLayerUpdatesFromTargets(
+                    ? this.collectChangedDrawingUpdatesFromTargets(
                           explicitTargets,
                           {
                               skipFingerprintBaseline: true,
                               compileFacing: true,
-                              ...(options?.explicitLayerData
+                              ...(options?.explicitDrawingData
                                   ? {
-                                        explicitLayerData:
-                                            options.explicitLayerData
+                                        explicitDrawingData:
+                                            options.explicitDrawingData
                                     }
                                   : undefined)
                           }
                       )
-                    : this.collectChangedLayerUpdatesFromModel(
+                    : this.collectChangedDrawingUpdatesFromModel(
                           uniqueGlyphNames,
-                          layerId,
+                          drawingId,
                           {
                               skipFingerprintBaseline: true,
                               compileFacing: true,
-                              ...(options?.explicitLayerData
+                              ...(options?.explicitDrawingData
                                   ? {
-                                        explicitLayerData:
-                                            options.explicitLayerData
+                                        explicitDrawingData:
+                                            options.explicitDrawingData
                                     }
                                   : undefined)
                           }
                       );
 
             const updatedIncrementally =
-                !!pendingLayerUpdates &&
-                pendingLayerUpdates.length > 0 &&
-                (await this.submitLayerUpdatesToWorkerPreview(
-                    pendingLayerUpdates
+                !!pendingDrawingUpdates &&
+                pendingDrawingUpdates.length > 0 &&
+                (await this.submitDrawingUpdatesToWorkerPreview(
+                    pendingDrawingUpdates
                 ));
 
             if (!updatedIncrementally) {
@@ -7508,7 +7558,7 @@ class FontManager {
                 );
             }
             this._stagedLinkedPreview = {
-                updates: pendingLayerUpdates,
+                updates: pendingDrawingUpdates,
                 stagedAt: performance.now()
             };
         })();
@@ -7543,19 +7593,19 @@ class FontManager {
                           : uniqueGlyphNames.length === 1
                             ? {
                                   glyphName: uniqueGlyphNames[0],
-                                  layerId: layerId ?? undefined
+                                  layerId: drawingId ?? undefined
                               }
                             : {
                                   glyphName: uniqueGlyphNames[0],
                                   glyphNames: uniqueGlyphNames,
-                                  layerId: layerId ?? undefined
+                                  layerId: drawingId ?? undefined
                               }
             })
         );
     }
 
     /**
-     * Post the layers staged last to the linked windows, so they follow the
+     * Post the drawings staged last to the linked windows, so they follow the
      * gesture before it commits (see linked-live-preview.ts).
      */
     broadcastLinkedLivePreview(compile: LivePreviewCompile | null): void {
@@ -7578,25 +7628,25 @@ class FontManager {
         if (!sync?.hasLinkedPeers?.()) {
             return;
         }
-        const model: LivePreviewLayerRecord[] = [];
+        const model: LivePreviewDrawingRecord[] = [];
         for (const update of staged) {
-            const layer = this.currentFont?.fontModel
+            const drawing = this.currentFont?.fontModel
                 ?.findGlyph?.(update.glyphName)
-                ?.findLayerById?.(update.layerId);
-            // Automatic layers recompose in the receiving window.
-            if (!layer || layer.isAutomaticAlignedLayer?.()) {
+                ?.findDrawingById?.(update.layerId);
+            // Automatic drawings recompose in the receiving window.
+            if (!drawing || drawing.isAutomaticAlignedDrawing?.()) {
                 continue;
             }
-            const layerData = layer.toJSON?.();
-            if (layerData && typeof layerData === 'object') {
+            const drawingData = drawing.toJSON?.();
+            if (drawingData && typeof drawingData === 'object') {
                 model.push({
                     glyphName: update.glyphName,
                     layerId: update.layerId,
-                    layerData
+                    layerData: drawingData
                 });
             }
         }
-        // The window message must be plain data: layers recomposed during
+        // The window message must be plain data: drawings recomposed during
         // the drag (an automatically aligned Ä, say) can hold live model
         // arrays that cannot be copied to another window. postMessage then
         // fails, and linked windows would never see the drag.
@@ -7604,11 +7654,11 @@ class FontManager {
             overlay: staged.map((update) => ({
                 glyphName: update.glyphName,
                 layerId: update.layerId,
-                layerData: toPlainLayerData(update.layerData)
+                layerData: toPlainDrawingData(update.layerData)
             })),
             model: model.map((record) => ({
                 ...record,
-                layerData: toPlainLayerData(record.layerData)
+                layerData: toPlainDrawingData(record.layerData)
             })),
             compile
         });
@@ -7633,21 +7683,21 @@ class FontManager {
             }
             await pending.catch(() => undefined);
         }
-        const updates = this.collectChangedLayerUpdatesFromTargets(targets, {
+        const updates = this.collectChangedDrawingUpdatesFromTargets(targets, {
             skipFingerprintBaseline: true,
             compileFacing: true
         });
         if (!updates?.length) {
             return false;
         }
-        return this.submitLayerUpdatesToWorkerPreview(updates);
+        return this.submitDrawingUpdatesToWorkerPreview(updates);
     }
 
     /** A linked window stages what the editing window posted. */
     stageLinkedLivePreviewOverlay(
-        records: LivePreviewLayerRecord[]
+        records: LivePreviewDrawingRecord[]
     ): Promise<boolean> {
-        return this.submitLayerUpdatesToWorkerPreview(records);
+        return this.submitDrawingUpdatesToWorkerPreview(records);
     }
 
     clearLiveDragPreview(options?: { notifyPeers?: boolean }): void {
@@ -7662,20 +7712,20 @@ class FontManager {
         this.enqueueWorkerPreviewSend(async () => {
             try {
                 await fontCompilation.sendMessage({
-                    type: 'clearPreviewLayerOverlay'
+                    type: 'clearPreviewDrawingOverlay'
                 });
             } catch (error) {
                 console.warn(
-                    '[FontManager] Failed to clear worker preview layer overlay:',
+                    '[FontManager] Failed to clear worker preview drawing overlay:',
                     error
                 );
             }
         });
     }
 
-    async submitLayerToWorkerCache(
+    async submitDrawingToWorkerCache(
         glyphName: string,
-        layerId: string
+        drawingId: string
     ): Promise<boolean> {
         if (!this.currentFont || !fontCompilation?.isInitialized) {
             return false;
@@ -7684,21 +7734,21 @@ class FontManager {
         const glyph = this.currentFont.fontModel?.glyphs?.find(
             (entry: any) => entry?.name === glyphName
         );
-        const layer = glyph?.layers?.find(
-            (entry: any) => entry?.id === layerId
+        const drawing = glyph?.drawings?.find(
+            (entry: any) => entry?.id === drawingId
         );
-        if (!layer) {
+        if (!drawing) {
             return false;
         }
 
-        const rawLayerData =
-            typeof layer.toJSON === 'function' ? layer.toJSON() : layer;
-        const serializedLayer = this.serializeLayerForStorage(
+        const rawDrawingData =
+            typeof drawing.toJSON === 'function' ? drawing.toJSON() : drawing;
+        const serializedDrawing = this.serializeDrawingForStorage(
             glyphName,
-            layerId,
-            rawLayerData
+            drawingId,
+            rawDrawingData
         );
-        if (!serializedLayer) {
+        if (!serializedDrawing) {
             return false;
         }
 
@@ -7708,9 +7758,9 @@ class FontManager {
             return false;
         }
 
-        const normalized = this.normalizeLayerForRust(serializedLayer);
-        this.workerLayerFingerprintCache.set(
-            this.getWorkerLayerFingerprintKey(glyphName, layerId),
+        const normalized = this.normalizeDrawingForRust(serializedDrawing);
+        this.workerDrawingFingerprintCache.set(
+            this.getWorkerDrawingFingerprintKey(glyphName, drawingId),
             JSON.stringify(normalized)
         );
         return true;

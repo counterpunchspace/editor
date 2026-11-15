@@ -4556,7 +4556,7 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     margin: 0 -12px;
 }
 
-.fontinfo-masters-blocked-notice {
+.fontinfo-stations-blocked-notice {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
@@ -4778,12 +4778,12 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     flex: 1 1 auto;
 }
 
-.fontinfo-master-location-modal .matplotlib-modal-body {
+.fontinfo-station-location-modal .matplotlib-modal-body {
     align-items: stretch;
     justify-content: flex-start;
 }
 
-.fontinfo-master-location-modal-content {
+.fontinfo-station-location-modal-content {
     width: min(420px, calc(100vw - 40px));
 }
 
@@ -4863,30 +4863,30 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     }
 }
 
-.fontinfo-master-location-modal-body,
-.fontinfo-master-location-rows {
+.fontinfo-station-location-modal-body,
+.fontinfo-station-location-rows {
     display: flex;
     flex-direction: column;
     gap: 12px;
 }
 
-.fontinfo-master-location-description {
+.fontinfo-station-location-description {
     color: var(--text-secondary);
     font-size: 11px;
 }
 
-.fontinfo-master-location-row,
-.fontinfo-master-location-actions {
+.fontinfo-station-location-row,
+.fontinfo-station-location-actions {
     display: flex;
     align-items: center;
     gap: 10px;
 }
 
-.fontinfo-master-location-actions {
+.fontinfo-station-location-actions {
     justify-content: flex-end;
 }
 
-.fontinfo-master-location-label {
+.fontinfo-station-location-label {
     width: 120px;
     flex: 0 0 120px;
     color: var(--text-secondary);
@@ -4894,7 +4894,7 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     font-size: 11px;
 }
 
-.fontinfo-master-location-input {
+.fontinfo-station-location-input {
     flex: 1 1 auto;
 }
 
@@ -7890,7 +7890,7 @@ select.glyph-property-input {
     margin-bottom: -4px;
 }
 
-.editor-layers-header {
+.editor-drawings-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -7898,7 +7898,7 @@ select.glyph-property-input {
     margin-bottom: 0;
 }
 
-.editor-layers-header-actions {
+.editor-drawings-header-actions {
     display: inline-flex;
     align-items: center;
     gap: 4px;
@@ -7923,7 +7923,7 @@ select.glyph-property-input {
 }
 
 /* Masters/Layers list container (unified widget for both modes) */
-.editor-layers-list {
+.editor-drawings-list {
     display: flex;
     flex-direction: column;
     gap: 0;
@@ -7932,7 +7932,7 @@ select.glyph-property-input {
 }
 
 /* Individual master/layer item */
-.editor-layer-item {
+.editor-drawing-item {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -7951,42 +7951,42 @@ select.glyph-property-input {
     transition: background-color 0.15s ease;
 }
 
-.editor-layer-item:first-child {
+.editor-drawing-item:first-child {
     border-top: 1px solid var(--border-primary);
 }
 
 /* Dark theme colors - matches consolidated sidebar-item pattern */
-:root:not([data-theme='light']) .editor-layer-item:hover:not(.selected) {
+:root:not([data-theme='light']) .editor-drawing-item:hover:not(.selected) {
     background-color: rgba(255, 255, 255, 0.05);
 }
 
-:root:not([data-theme='light']) .editor-layer-item:hover:not(.selected) {
+:root:not([data-theme='light']) .editor-drawing-item:hover:not(.selected) {
     background-color: rgba(255, 255, 255, 0.08);
 }
 
-:root:not([data-theme='light']) .editor-layer-item.selected {
+:root:not([data-theme='light']) .editor-drawing-item.selected {
     background-color: rgba(255, 255, 255, 0.12);
 }
 
 /* Light theme colors - matches consolidated sidebar-item pattern */
-:root[data-theme='light'] .editor-layer-item:hover:not(.selected) {
+:root[data-theme='light'] .editor-drawing-item:hover:not(.selected) {
     background-color: rgba(0, 0, 0, 0.06);
 }
 
-:root[data-theme='light'] .editor-layer-item.selected {
+:root[data-theme='light'] .editor-drawing-item.selected {
     background-color: rgba(0, 0, 0, 0.1);
 }
 
 /* Inactive layer items (master without corresponding layer) */
-.editor-layer-item-content {
+.editor-drawing-item-content {
     flex: 1 1 auto;
     min-width: 0;
     display: flex;
     flex-direction: column;
 }
 
-.editor-layer-link-toggle,
-.editor-layer-add-button,
+.editor-drawing-link-toggle,
+.editor-drawing-add-button,
 .editor-feature-variation-add-button {
     appearance: none;
     -webkit-appearance: none;
@@ -8010,48 +8010,48 @@ select.glyph-property-input {
         background-color 0.15s ease;
 }
 
-.editor-layer-link-toggle .material-symbols-outlined,
-.editor-layer-add-button .material-symbols-outlined,
+.editor-drawing-link-toggle .material-symbols-outlined,
+.editor-drawing-add-button .material-symbols-outlined,
 .editor-feature-variation-add-button .material-symbols-outlined {
     font-size: 15px;
 }
 
-.editor-layers-widget .editor-layer-link-toggle[data-linked='true'] {
+.editor-drawings-widget .editor-drawing-link-toggle[data-linked='true'] {
     opacity: 0;
     pointer-events: none;
 }
 
-.editor-layers-widget:hover .editor-layer-link-toggle[data-linked='true'] {
+.editor-drawings-widget:hover .editor-drawing-link-toggle[data-linked='true'] {
     opacity: 0.7;
     pointer-events: auto;
 }
 
-.editor-layers-widget .editor-layer-link-toggle[data-linked='false'] {
+.editor-drawings-widget .editor-drawing-link-toggle[data-linked='false'] {
     opacity: 0.85;
     pointer-events: auto;
 }
 
-.editor-layer-link-toggle:hover:not(:disabled),
-.editor-layer-add-button:hover:not(:disabled),
+.editor-drawing-link-toggle:hover:not(:disabled),
+.editor-drawing-add-button:hover:not(:disabled),
 .editor-feature-variation-add-button:hover:not(:disabled) {
     color: var(--text-primary);
     background-color: var(--background-hover);
 }
 
-.editor-layer-link-toggle:disabled,
-.editor-layer-add-button:disabled,
+.editor-drawing-link-toggle:disabled,
+.editor-drawing-add-button:disabled,
 .editor-feature-variation-add-button:disabled {
     opacity: 0.3;
     cursor: default;
 }
 
-.editor-layer-add-button,
+.editor-drawing-add-button,
 .editor-feature-variation-add-button {
     opacity: 0.85;
     pointer-events: auto;
 }
 
-.editor-layer-compatibility-indicator {
+.editor-drawing-compatibility-indicator {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -8061,35 +8061,35 @@ select.glyph-property-input {
     flex: 0 0 auto;
 }
 
-.editor-layer-compatibility-indicator .material-symbols-outlined {
+.editor-drawing-compatibility-indicator .material-symbols-outlined {
     font-size: 15px;
 }
 
-:root:not([data-theme='light']) .editor-layer-item.inactive:hover {
+:root:not([data-theme='light']) .editor-drawing-item.inactive:hover {
     background-color: rgba(255, 255, 255, 0.04);
 }
 
-:root[data-theme='light'] .editor-layer-item.inactive:hover {
+:root[data-theme='light'] .editor-drawing-item.inactive:hover {
     background-color: rgba(0, 0, 0, 0.03);
 }
 
-.editor-layer-add-button,
+.editor-drawing-add-button,
 .editor-feature-variation-add-button {
     margin: 0;
 }
 
 /* Master/Layer item content */
-.master-item-name {
+.station-item-name {
     font-family: var(--font-families-sans);
     font-size: 11px;
     color: var(--text-primary);
 }
 
-.master-item-name-intermediate {
+.station-item-name-free {
     font-style: italic;
 }
 
-.master-item-location {
+.station-item-location {
     font-family: var(--font-families-mono);
     font-size: 9px;
     color: var(--text-muted);
@@ -8100,7 +8100,7 @@ select.glyph-property-input {
     min-width: 0;
 }
 
-.master-item-location-line {
+.station-item-location-line {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -8237,13 +8237,13 @@ select.glyph-property-input {
     );
 }
 
-.editor-axis-layer-marks {
+.editor-axis-drawing-marks {
     position: absolute;
     inset: 0;
     pointer-events: none;
 }
 
-.editor-axis-layer-mark {
+.editor-axis-drawing-mark {
     position: absolute;
     top: 50%;
     width: 6px;
@@ -8251,11 +8251,11 @@ select.glyph-property-input {
     border-radius: 50%;
     background: var(--border-primary);
     transform: translate(-50%, -50%);
-    left: calc(6px + (100% - 12px) * var(--layer-location-t, 0));
+    left: calc(6px + (100% - 12px) * var(--drawing-location-t, 0));
     z-index: 1;
 }
 
-.editor-axis-layer-mark-passed {
+.editor-axis-drawing-mark-passed {
     background: var(--text-secondary);
 }
 
@@ -8842,14 +8842,14 @@ select.glyph-property-input {
     margin-bottom: 0px;
 }
 
-#fontinfo-masters-content,
+#fontinfo-stations-content,
 #fontinfo-instances-content {
     margin: 0;
 }
 
 #fontinfo-general-content,
 #fontinfo-names-content,
-#fontinfo-masters-content,
+#fontinfo-stations-content,
 #fontinfo-instances-content,
 #fontinfo-custom-ot-values-content {
     scrollbar-width: none;
@@ -8857,7 +8857,7 @@ select.glyph-property-input {
 
 #fontinfo-general-content::-webkit-scrollbar,
 #fontinfo-names-content::-webkit-scrollbar,
-#fontinfo-masters-content::-webkit-scrollbar,
+#fontinfo-stations-content::-webkit-scrollbar,
 #fontinfo-instances-content::-webkit-scrollbar,
 #fontinfo-custom-ot-values-content::-webkit-scrollbar {
     width: 0;
@@ -8866,7 +8866,7 @@ select.glyph-property-input {
 
 #fontinfo-general-content::-webkit-scrollbar-track,
 #fontinfo-names-content::-webkit-scrollbar-track,
-#fontinfo-masters-content::-webkit-scrollbar-track,
+#fontinfo-stations-content::-webkit-scrollbar-track,
 #fontinfo-instances-content::-webkit-scrollbar-track,
 #fontinfo-custom-ot-values-content::-webkit-scrollbar-track {
     background: transparent;
@@ -8874,7 +8874,7 @@ select.glyph-property-input {
 
 #fontinfo-general-content::-webkit-scrollbar-thumb,
 #fontinfo-names-content::-webkit-scrollbar-thumb,
-#fontinfo-masters-content::-webkit-scrollbar-thumb,
+#fontinfo-stations-content::-webkit-scrollbar-thumb,
 #fontinfo-instances-content::-webkit-scrollbar-thumb,
 #fontinfo-custom-ot-values-content::-webkit-scrollbar-thumb {
     background: transparent;

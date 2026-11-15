@@ -129,7 +129,7 @@ describe('Designspace round-trip test', () => {
         expect(JSON.stringify(font.names)).toContain('Yanone');
         expect(
             font.glyphs.some((glyph) =>
-                glyph.layers?.some((layer) => layer.shapes?.length > 0)
+                glyph.layers?.some((drawing) => drawing.shapes?.length > 0)
             )
         ).toBe(true);
     });
@@ -153,31 +153,32 @@ describe('Designspace round-trip test', () => {
         // (norad/UFO limitation). The designspace font has 2 masters, so we
         // need to test with a single-master subset.
         // Create a single-master font for the round-trip test.
-        const singleMasterFont = JSON.parse(JSON.stringify(originalFont));
-        if (singleMasterFont.masters && singleMasterFont.masters.length > 1) {
+        const singleStationFont = JSON.parse(JSON.stringify(originalFont));
+        if (singleStationFont.masters && singleStationFont.masters.length > 1) {
             // Keep only the first master
-            const firstMasterId = singleMasterFont.masters[0].id;
-            singleMasterFont.masters = [singleMasterFont.masters[0]];
+            const firstStationId = singleStationFont.masters[0].id;
+            singleStationFont.masters = [singleStationFont.masters[0]];
 
             // Filter glyph layers to only those belonging to the first master
-            for (const glyph of singleMasterFont.glyphs) {
+            for (const glyph of singleStationFont.glyphs) {
                 if (glyph.layers) {
-                    glyph.layers = glyph.layers.filter((layer) => {
+                    glyph.layers = glyph.layers.filter((drawing) => {
                         // Keep layers whose master is the first master, or free-floating layers
-                        if (layer.master) {
+                        if (drawing.master) {
                             if (
-                                layer.master.type === 'DefaultForMaster' &&
-                                layer.master.master === firstMasterId
+                                drawing.master.type === 'DefaultForMaster' &&
+                                drawing.master.master === firstStationId
                             ) {
                                 return true;
                             }
                             if (
-                                layer.master.type === 'AssociatedWithMaster' &&
-                                layer.master.master === firstMasterId
+                                drawing.master.type ===
+                                    'AssociatedWithMaster' &&
+                                drawing.master.master === firstStationId
                             ) {
                                 return true;
                             }
-                            if (layer.master.type === 'FreeFloating') {
+                            if (drawing.master.type === 'FreeFloating') {
                                 return true;
                             }
                             return false;
@@ -187,13 +188,13 @@ describe('Designspace round-trip test', () => {
                 }
             }
             // Remove axes since we're now single-master
-            singleMasterFont.axes = [];
+            singleStationFont.axes = [];
         }
 
-        const singleMasterJson = JSON.stringify(singleMasterFont);
+        const singleStationJson = JSON.stringify(singleStationFont);
         const ufoEntriesJson = save_font_source_entries(
             'ufo',
-            singleMasterJson,
+            singleStationJson,
             '{}'
         );
 
@@ -216,19 +217,21 @@ describe('Designspace round-trip test', () => {
         const reloadedFont = JSON.parse(reloadedJson);
 
         // Step 4: Verify key data is preserved
-        expect(reloadedFont.upm).toBe(singleMasterFont.upm);
-        expect(reloadedFont.glyphs.length).toBe(singleMasterFont.glyphs.length);
+        expect(reloadedFont.upm).toBe(singleStationFont.upm);
+        expect(reloadedFont.glyphs.length).toBe(
+            singleStationFont.glyphs.length
+        );
 
         // Check that glyph names are preserved
-        const originalGlyphNames = singleMasterFont.glyphs.map((g) => g.name);
+        const originalGlyphNames = singleStationFont.glyphs.map((g) => g.name);
         const reloadedGlyphNames = reloadedFont.glyphs.map((g) => g.name);
         expect(reloadedGlyphNames.sort()).toEqual(originalGlyphNames.sort());
 
         // Check that at least some glyphs have shapes (paths/components)
         let totalShapes = 0;
         for (const glyph of reloadedFont.glyphs) {
-            for (const layer of glyph.layers || []) {
-                totalShapes += (layer.shapes || []).length;
+            for (const drawing of glyph.layers || []) {
+                totalShapes += (drawing.shapes || []).length;
             }
         }
         // The test font should have at least some outline data

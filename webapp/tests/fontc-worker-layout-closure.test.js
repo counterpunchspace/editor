@@ -112,14 +112,16 @@ describe('fontc-worker layout closure retry predicates', () => {
 
     test('rejects invalid dump layer target payloads', () => {
         expect(() => sanitizeDumpLayerTargets(null)).toThrow(
-            'dumpLayerState requires an array of layer targets'
+            'dumpDrawingState requires an array of drawing targets'
         );
         expect(() =>
             sanitizeDumpLayerTargets([{ glyphName: '', layerId: 'regular' }])
-        ).toThrow('dumpLayerState target 0 must include a non-empty glyphName');
+        ).toThrow(
+            'dumpDrawingState target 0 must include a non-empty glyphName'
+        );
         expect(() =>
             sanitizeDumpLayerTargets([{ glyphName: 'a', layerId: '' }])
-        ).toThrow('dumpLayerState target 0 must include a non-empty layerId');
+        ).toThrow('dumpDrawingState target 0 must include a non-empty layerId');
     });
 
     test('rejects oversized dump layer target batches', () => {
@@ -129,7 +131,7 @@ describe('fontc-worker layout closure retry predicates', () => {
         }));
 
         expect(() => sanitizeDumpLayerTargets(targets, 2)).toThrow(
-            'dumpLayerState received 3 targets; max 2'
+            'dumpDrawingState received 3 targets; max 2'
         );
     });
 });

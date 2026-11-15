@@ -1,38 +1,38 @@
 import { normalizeGlyphRenames } from './change-log';
 
-export type ApplyYjsUpdateLayerTarget = {
+export type ApplyYjsUpdateDrawingTarget = {
     glyphName: string;
     layerId: string;
 };
 
-/** Soft cap for sparse layer patches. Larger structural floods fall back. */
-export const APPLY_YJS_UPDATE_MAX_LAYER_TARGETS = 512;
+/** Soft cap for sparse drawing patches. Larger structural floods fall back. */
+export const APPLY_YJS_UPDATE_MAX_DRAWING_TARGETS = 512;
 
 /**
- * Sanitize layer targets for worker → WASM applyYjsUpdate metadata.
+ * Sanitize drawing targets for worker → WASM applyYjsUpdate metadata.
  * Kept beside the metadata builder so Jest can cover rename forwarding
  * without loading the WASM worker module.
  */
-export function sanitizeApplyYjsUpdateLayerTargets(
-    layerTargets: unknown,
-    maxTargets = APPLY_YJS_UPDATE_MAX_LAYER_TARGETS
-): ApplyYjsUpdateLayerTarget[] {
-    if (!Array.isArray(layerTargets)) {
-        throw new Error('applyYjsUpdate requires an array of layer targets');
+export function sanitizeApplyYjsUpdateDrawingTargets(
+    drawingTargets: unknown,
+    maxTargets = APPLY_YJS_UPDATE_MAX_DRAWING_TARGETS
+): ApplyYjsUpdateDrawingTarget[] {
+    if (!Array.isArray(drawingTargets)) {
+        throw new Error('applyYjsUpdate requires an array of drawing targets');
     }
 
-    if (layerTargets.length > maxTargets) {
+    if (drawingTargets.length > maxTargets) {
         throw new Error(
-            `applyYjsUpdate received ${layerTargets.length} targets; max ${maxTargets}`
+            `applyYjsUpdate received ${drawingTargets.length} targets; max ${maxTargets}`
         );
     }
 
-    return layerTargets.map((target, index) => {
+    return drawingTargets.map((target, index) => {
         const glyphName =
             typeof target?.glyphName === 'string'
                 ? target.glyphName.trim()
                 : '';
-        const layerId =
+        const drawingId =
             typeof target?.layerId === 'string' ? target.layerId.trim() : '';
 
         if (!glyphName) {
@@ -40,19 +40,21 @@ export function sanitizeApplyYjsUpdateLayerTargets(
                 `applyYjsUpdate target ${index} must include a non-empty glyphName`
             );
         }
-        if (!layerId) {
+        if (!drawingId) {
             throw new Error(
                 `applyYjsUpdate target ${index} must include a non-empty layerId`
             );
         }
 
-        return { glyphName, layerId };
+        return { glyphName, layerId: drawingId };
     });
 }
 
-function collectGlyphNamesFromLayerTargets(layerTargets: unknown[]): string[] {
+function collectGlyphNamesFromDrawingTargets(
+    drawingTargets: unknown[]
+): string[] {
     const names = new Set<string>();
-    for (const target of layerTargets) {
+    for (const target of drawingTargets) {
         const glyphName =
             typeof (target as { glyphName?: unknown })?.glyphName === 'string'
                 ? (target as { glyphName: string }).glyphName.trim()
@@ -80,10 +82,10 @@ function ensureNonGlyphHints(hints: unknown[], required: string[]): string[] {
  * Build the JSON metadata payload for `apply_yjs_update`.
  * Pure helper so Jest can assert rename identity records are forwarded.
  *
- * When `layerTargets` exceeds the sparse-patch cap (e.g. add-master creating
- * a layer on every glyph), fall back to whole-glyph Y.Doc snapshots instead
+ * When `layerTargets` exceeds the sparse-patch cap (e.g. adding a station creates
+ * a drawing on every glyph), fall back to whole-glyph Y.Doc snapshots instead
  * of throwing. Throwing quarantines the worker mirror and leaves live
- * interpolation on a stale master/axis topology.
+ * interpolation on a stale station/axis topology.
  */
 export function buildApplyYjsUpdateMetadataJson(options: {
     changedGlyphs?: unknown;
@@ -93,7 +95,7 @@ export function buildApplyYjsUpdateMetadataJson(options: {
     invalidateLayoutClosure?: unknown;
     documentId?: unknown;
 }): string {
-    const rawLayerTargets = Array.isArray(options.layerTargets)
+    const rawDrawingTargets = Array.isArray(options.layerTargets)
         ? options.layerTargets
         : [];
     const rawChangedGlyphs = Array.isArray(options.changedGlyphs)
@@ -106,23 +108,25 @@ export function buildApplyYjsUpdateMetadataJson(options: {
         ? options.nonGlyphChangeHints
         : [];
 
-    let sanitizedLayerTargets: ApplyYjsUpdateLayerTarget[];
+    let sanitizedDrawingTargets: ApplyYjsUpdateDrawingTarget[];
     let changedGlyphs = rawChangedGlyphs;
     let nonGlyphChangeHints = rawHints.filter(
         (hint): hint is string => typeof hint === 'string' && hint.length > 0
     );
 
-    if (rawLayerTargets.length > APPLY_YJS_UPDATE_MAX_LAYER_TARGETS) {
+    if (rawDrawingTargets.length > APPLY_YJS_UPDATE_MAX_DRAWING_TARGETS) {
         // Structural flood: prefer whole-glyph snapshots from the applied
-        // Y.Doc over thousands of sparse layer patches.
+        // Y.Doc over thousands of sparse drawing patches.
         const glyphNames = new Set(changedGlyphs);
-        for (const name of collectGlyphNamesFromLayerTargets(rawLayerTargets)) {
+        for (const name of collectGlyphNamesFromDrawingTargets(
+            rawDrawingTargets
+        )) {
             glyphNames.add(name);
         }
         changedGlyphs = [...glyphNames];
-        sanitizedLayerTargets = [];
-        // Masters/axes almost always change alongside such floods (add/remove
-        // master). Ensure Rust refreshes both even if the change-log omitted a
+        sanitizedDrawingTargets = [];
+        // Stations/axes almost always change alongside such floods (add/remove
+        // station). Ensure Rust refreshes both even if the change-log omitted a
         // hint — otherwise FONT_CACHE keeps a stale avar map and live
         // interpolation past the old endpoint explodes.
         nonGlyphChangeHints = ensureNonGlyphHints(nonGlyphChangeHints, [
@@ -130,8 +134,8 @@ export function buildApplyYjsUpdateMetadataJson(options: {
             'top-level:axes'
         ]);
     } else {
-        sanitizedLayerTargets =
-            sanitizeApplyYjsUpdateLayerTargets(rawLayerTargets);
+        sanitizedDrawingTargets =
+            sanitizeApplyYjsUpdateDrawingTargets(rawDrawingTargets);
     }
 
     const glyphRenames = glyphRenamesForApplyYjsUpdateMetadata(
@@ -140,7 +144,7 @@ export function buildApplyYjsUpdateMetadataJson(options: {
     return JSON.stringify({
         changedGlyphs,
         nonGlyphChangeHints,
-        layerTargets: sanitizedLayerTargets,
+        layerTargets: sanitizedDrawingTargets,
         ...(glyphRenames.length ? { glyphRenames } : {}),
         invalidateLayoutClosure: options.invalidateLayoutClosure === true,
         ...(typeof options.documentId === 'string' && options.documentId

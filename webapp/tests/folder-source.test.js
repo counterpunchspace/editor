@@ -192,14 +192,14 @@ describe('FolderSaveTracker', () => {
     });
 
     test('masters, axes and package kerning groups save everything', () => {
-        const masters = new FolderSaveTracker();
-        masters.recordEntries([entry('masters.0.metrics.ascender')]);
-        expect(masters.plan('ufo', true)).toMatchObject({
+        const stations = new FolderSaveTracker();
+        stations.recordEntries([entry('masters.0.metrics.ascender')]);
+        expect(stations.plan('ufo', true)).toMatchObject({
             fontLevel: true,
             full: false
         });
-        masters.recordEntries([entry('masters.1', { op: 'add' })]);
-        expect(masters.plan('ufo', true).full).toBe(true);
+        stations.recordEntries([entry('masters.1', { op: 'add' })]);
+        expect(stations.plan('ufo', true).full).toBe(true);
 
         const axes = new FolderSaveTracker();
         axes.recordEntries([entry('axes.0.max')]);

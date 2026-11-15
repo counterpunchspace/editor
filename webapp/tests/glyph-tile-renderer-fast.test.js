@@ -56,7 +56,7 @@ describe('overview tile punch-out', () => {
             upm: 1000,
             findGlyph(name) {
                 if (name === 'base') {
-                    return { layers: [{ paths: [] }] };
+                    return { drawings: [{ paths: [] }] };
                 }
                 return null;
             }

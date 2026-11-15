@@ -218,18 +218,18 @@ async function setTextBufferAndWaitForCompile(
 async function getOutlineMetrics(page: any): Promise<{
     bottomNodeY: number;
     outlineMinX: number;
-    layerLsb: number;
+    drawingLsb: number;
     selectedGlyphIndex: number;
 }> {
     return page.evaluate(() => {
         const gc = (window as any).glyphCanvas;
         const oe = gc?.outlineEditor;
         const tre = gc?.textRunEditor;
-        const layerData = oe?.getCurrentLayerDataFromStack?.();
-        const layerModel = oe?.getCurrentLayerModel?.();
+        const drawingData = oe?.getCurrentDrawingDataFromStack?.();
+        const drawingModel = oe?.getCurrentDrawingModel?.();
         let bottomNodeY = Number.POSITIVE_INFINITY;
         let minX = Number.POSITIVE_INFINITY;
-        for (const shape of layerData?.shapes || []) {
+        for (const shape of drawingData?.shapes || []) {
             const nodes = shape.nodes || shape.Path?.nodes || [];
             for (const node of nodes) {
                 if (!node || node.nodetype === 'OffCurve') continue;
@@ -237,11 +237,11 @@ async function getOutlineMetrics(page: any): Promise<{
                 if (node.x < minX) minX = node.x;
             }
         }
-        const layerLsb = Number(layerModel?.lsb);
+        const drawingLsb = Number(drawingModel?.lsb);
         return {
             bottomNodeY: Number.isFinite(bottomNodeY) ? bottomNodeY : 0,
             outlineMinX: Number.isFinite(minX) ? minX : 0,
-            layerLsb: Number.isFinite(layerLsb) ? layerLsb : 0,
+            drawingLsb: Number.isFinite(drawingLsb) ? drawingLsb : 0,
             selectedGlyphIndex: tre?.selectedGlyphIndex ?? -1
         };
     });
@@ -282,11 +282,11 @@ async function getBottomNodeFontPoint(page: any): Promise<FontPoint> {
         const gc = (window as any).glyphCanvas;
         const oe = gc.outlineEditor;
         const tre = gc.textRunEditor;
-        const layerData = oe.getCurrentLayerDataFromStack();
+        const drawingData = oe.getCurrentDrawingDataFromStack();
         const gp = tre._getGlyphPosition(tre.selectedGlyphIndex);
 
         let bestNode: any = null;
-        for (const shape of layerData.shapes || []) {
+        for (const shape of drawingData.shapes || []) {
             const nodes = shape.nodes || shape.Path?.nodes || [];
             for (const node of nodes) {
                 if (!node || node.nodetype === 'OffCurve') continue;
@@ -591,8 +591,8 @@ test.describe('Keyboard-after-drag stale editing handoff', () => {
         await page.waitForFunction(
             () => {
                 const oe = (window as any).glyphCanvas?.outlineEditor;
-                const layer = oe?.getCurrentLayerDataFromStack?.();
-                for (const shape of layer?.shapes || []) {
+                const drawing = oe?.getCurrentDrawingDataFromStack?.();
+                for (const shape of drawing?.shapes || []) {
                     const nodes = shape.nodes || shape.Path?.nodes || [];
                     if (
                         nodes.some(
@@ -702,7 +702,7 @@ test.describe('Keyboard-after-drag stale editing handoff', () => {
 
         const metrics2 = await getOutlineMetrics(page);
         expect(metrics2.bottomNodeY).toBe(metrics1.bottomNodeY - 50);
-        expect(metrics2.layerLsb).toBe(metrics1.layerLsb);
+        expect(metrics2.drawingLsb).toBe(metrics1.drawingLsb);
         expect(metrics2.outlineMinX).toBe(metrics1.outlineMinX);
 
         // ── 5. Drag left sidebearing handle left by 50u via mouse ────────
@@ -717,7 +717,7 @@ test.describe('Keyboard-after-drag stale editing handoff', () => {
         await revertToFramedViewport();
 
         const metrics3 = await getOutlineMetrics(page);
-        expect(metrics3.layerLsb).not.toBe(metrics2.layerLsb);
+        expect(metrics3.drawingLsb).not.toBe(metrics2.drawingLsb);
         expect(metrics3.bottomNodeY).toBe(metrics2.bottomNodeY);
 
         // ── 6. Undo (Cmd+Z) — should revert sidebearing drag ─────────────
@@ -736,7 +736,7 @@ test.describe('Keyboard-after-drag stale editing handoff', () => {
             '[Test] Assert metrics after undo === metrics after keyboard move'
         );
         expect(metrics4.bottomNodeY).toBe(metrics2.bottomNodeY);
-        expect(metrics4.layerLsb).toBe(metrics2.layerLsb);
+        expect(metrics4.drawingLsb).toBe(metrics2.drawingLsb);
 
         // ── 7. Move node back up 50u (undo the keyboard move)
         await nudgeBottomNodeToY(page, metrics1.bottomNodeY, 'up');
@@ -750,6 +750,6 @@ test.describe('Keyboard-after-drag stale editing handoff', () => {
         console.log('[Test] Assert final metrics === baseline metrics');
         expect(metrics5.selectedGlyphIndex).toBe(0);
         expect(metrics5.bottomNodeY).toBe(metrics1.bottomNodeY);
-        expect(metrics5.layerLsb).toBe(metrics1.layerLsb);
+        expect(metrics5.drawingLsb).toBe(metrics1.drawingLsb);
     });
 });

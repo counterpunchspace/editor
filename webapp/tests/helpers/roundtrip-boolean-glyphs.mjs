@@ -50,8 +50,8 @@ function pathFormatSpecific(shape) {
 function stripBooleanFlags(font) {
     const clone = JSON.parse(JSON.stringify(font));
     for (const glyph of clone.glyphs || []) {
-        for (const layer of glyph.layers || []) {
-            for (const shape of layer.shapes || []) {
+        for (const drawing of glyph.layers || []) {
+            for (const shape of drawing.shapes || []) {
                 const payload = shape.Path || shape;
                 if (!payload?.format_specific) {
                     continue;

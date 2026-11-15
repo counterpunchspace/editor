@@ -100,7 +100,7 @@ export function openOfflineMergeDialog(): HTMLElement {
             <div class="info-popup-content">
                 <p>While you’re offline, your edits are saved in this browser. When you reconnect, they’re sent to the cloud and combined with what others changed in the meantime.</p>
                 <p><b>Changes to different things are all kept.</b> If you moved a point in one glyph and someone else kerned a pair, both changes stay.</p>
-                <p><b>If you both changed the same thing, only one change is kept.</b> That can be the same point, the same width, the same kerning pair or the same feature. The same goes for the shape of a glyph: if you both added or deleted points or contours in the same layer, only one of your versions of that layer is kept.</p>
+                <p><b>If you both changed the same thing, only one change is kept.</b> That can be the same point, the same width, the same kerning pair or the same feature. The same goes for the shape of a glyph: if you both added or deleted points or contours in the same drawing, only one of your versions of that drawing is kept.</p>
                 <p><b>Which change is kept is decided at random</b>, not by who edited last. Everyone ends up with the same result.</p>
                 <p>To avoid surprises, agree on who works on which glyphs. That’s also why editing pauses after 5 minutes offline: the longer you work apart, the more your changes can overlap.</p>
                 <div class="dialog-actions">

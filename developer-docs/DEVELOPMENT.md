@@ -63,14 +63,14 @@ EVENT_TYPES = ["glyph.paths.changed"]
 def classify_glyph(glyph):
     node_count = sum(
         len(shape.nodes)
-        for layer in glyph.layers
-        for shape in layer.shapes
+        for drawing in glyph.drawings
+        for shape in drawing.shapes
         if hasattr(shape, "nodes") and shape.nodes
     )
     return node_count > 1000
 ```
 
-Object model dictionaries are also live mappings, including `master.kerning`, `font.names`, and `instance.custom_names`. Use attribute access for identifier names (`master.metrics.XHeight`, `font.names.family_name.dflt`, `master.location.wght`). Do not use `.get()`. Do not call `.to_py()` first.
+Object model dictionaries are also live mappings, including `station.kerning`, `font.names`, and `instance.custom_names`. Use attribute access for identifier names (`station.metrics.XHeight`, `font.names.family_name.dflt`, `station.location.wght`). Do not use `.get()`. Do not call `.to_py()` first.
 
 Notes:
 

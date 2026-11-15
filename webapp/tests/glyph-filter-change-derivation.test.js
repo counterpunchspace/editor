@@ -70,7 +70,7 @@ describe('deriveGlyphFilterChangesFromCommittedEntry', () => {
             oldValue: null,
             newValue: { id: 'm1' }
         });
-        expect(result.mastersChanged).toBe(true);
+        expect(result.stationsChanged).toBe(true);
         expect(result.changes).toEqual([]);
     });
 
@@ -81,7 +81,7 @@ describe('deriveGlyphFilterChangesFromCommittedEntry', () => {
             oldValue: {},
             newValue: { 'A:V': -40 }
         });
-        expect(result.mastersChanged).toBe(false);
+        expect(result.stationsChanged).toBe(false);
         expect(result.changes).toEqual([]);
         expect(
             deriveGlyphFilterChangesFromCommittedEntry({
@@ -89,7 +89,7 @@ describe('deriveGlyphFilterChangesFromCommittedEntry', () => {
                 op: 'replace',
                 oldValue: {},
                 newValue: { wght: 700 }
-            }).mastersChanged
+            }).stationsChanged
         ).toBe(true);
     });
 
@@ -203,7 +203,7 @@ describe('deriveGlyphFilterChangesFromCommittedEntry', () => {
         expect(result.compatibilityCheckGlyphNames).toEqual(['A']);
         expect(result.changes[0].metadata).toEqual({
             glyphName: 'A',
-            layerIds: ['layer-1']
+            drawingIds: ['layer-1']
         });
     });
 
@@ -282,7 +282,7 @@ describe('deriveGlyphFilterChangesFromCommittedEntry', () => {
         expect(typesOf(result)).toEqual(['glyph.anchors.changed']);
         expect(result.changes[0].metadata).toEqual({
             glyphName: 'A',
-            layerIds: ['layer-1']
+            drawingIds: ['layer-1']
         });
         expect(result.compatibilityCheckGlyphNames).toEqual(['A']);
     });
@@ -297,7 +297,7 @@ describe('deriveGlyphFilterChangesFromCommittedEntry', () => {
         expect(typesOf(result)).toEqual(['glyph.paths.changed']);
         expect(result.changes[0].metadata).toEqual({
             glyphName: 'behDotless-ar.medi',
-            layerIds: ['layer.regular.v1']
+            drawingIds: ['layer.regular.v1']
         });
     });
 
@@ -331,25 +331,25 @@ describe('deriveGlyphFilterChangesFromCommittedEntry', () => {
         expect(result.compatibilityCheckGlyphNames).toEqual([]);
     });
 
-    test('glyph.layers.changed on layer add', () => {
+    test('glyph.drawings.changed on layer add', () => {
         const result = deriveGlyphFilterChangesFromCommittedEntry({
             path: 'glyphs.A.layers.layer-2',
             op: 'add',
             oldValue: null,
             newValue: { id: 'layer-2', shapes: [] }
         });
-        expect(typesOf(result)).toEqual(['glyph.layers.changed']);
+        expect(typesOf(result)).toEqual(['glyph.drawings.changed']);
         expect(result.compatibilityCheckGlyphNames).toEqual(['A']);
     });
 
-    test('glyph.layer.location.changed', () => {
+    test('glyph.drawing.location.changed', () => {
         const result = deriveGlyphFilterChangesFromCommittedEntry({
             path: 'glyphs.A.layers.layer-1.location',
             op: 'set',
             oldValue: { wght: 400 },
             newValue: { wght: 700 }
         });
-        expect(typesOf(result)).toEqual(['glyph.layer.location.changed']);
+        expect(typesOf(result)).toEqual(['glyph.drawing.location.changed']);
         expect(result.compatibilityCheckGlyphNames).toEqual([]);
     });
 
@@ -384,7 +384,7 @@ describe('deriveGlyphFilterChangesFromCommittedEntry', () => {
         expect(typesOf(result)).toEqual(['glyph.metrics-key.changed']);
         expect(result.changes[0].metadata).toEqual({
             glyphName: 'A',
-            layerIds: ['layer-1']
+            drawingIds: ['layer-1']
         });
     });
 
@@ -402,15 +402,15 @@ describe('deriveGlyphFilterChangesFromCommittedEntry', () => {
         const deduped = dedupeGlyphFilterChanges([
             {
                 type: 'glyph.paths.changed',
-                metadata: { glyphName: 'A', layerIds: ['l1'] }
+                metadata: { glyphName: 'A', drawingIds: ['l1'] }
             },
             {
                 type: 'glyph.paths.changed',
-                metadata: { glyphName: 'A', layerIds: ['l1'] }
+                metadata: { glyphName: 'A', drawingIds: ['l1'] }
             },
             {
                 type: 'glyph.anchors.changed',
-                metadata: { glyphName: 'A', layerIds: ['l1'] }
+                metadata: { glyphName: 'A', drawingIds: ['l1'] }
             }
         ]);
         expect(deduped).toHaveLength(2);
@@ -424,7 +424,7 @@ describe('GlyphOverviewFilterManager compatibility toggles', () => {
         localStorage.clear();
         manager = new GlyphOverviewFilterManager();
         window.currentFontModel = {
-            masters: [{ id: 'm1' }],
+            stations: [{ id: 'm1' }],
             glyphs: [],
             findGlyph: jest.fn()
         };
@@ -439,7 +439,7 @@ describe('GlyphOverviewFilterManager compatibility toggles', () => {
         const glyph = {
             name: 'A',
             isCompatible: true,
-            layers: [{ id: 'layer-1' }, { id: 'layer-2' }]
+            drawings: [{ id: 'layer-1' }, { id: 'layer-2' }]
         };
         window.currentFontModel.glyphs = [glyph];
         window.currentFontModel.findGlyph.mockImplementation((name) =>
@@ -466,7 +466,7 @@ describe('GlyphOverviewFilterManager compatibility toggles', () => {
             changes: [
                 {
                     type: 'glyph.paths.changed',
-                    metadata: { glyphName: 'A', layerIds: ['layer-1'] }
+                    metadata: { glyphName: 'A', drawingIds: ['layer-1'] }
                 }
             ]
         });
@@ -485,14 +485,14 @@ describe('GlyphOverviewFilterManager compatibility toggles', () => {
             changes: expect.arrayContaining([
                 {
                     type: 'glyph.paths.changed',
-                    metadata: { glyphName: 'A', layerIds: ['layer-1'] }
+                    metadata: { glyphName: 'A', drawingIds: ['layer-1'] }
                 },
                 {
                     type: 'glyph.compatibility.changed',
                     metadata: {
                         glyphName: 'A',
                         compatible: false,
-                        layerIds: ['layer-1', 'layer-2']
+                        drawingIds: ['layer-1', 'layer-2']
                     }
                 }
             ])
@@ -575,7 +575,7 @@ describe('GlyphOverviewFilterManager compatibility toggles', () => {
             changes: [
                 {
                     type: 'glyph.anchors.changed',
-                    metadata: { glyphName: 'A', layerIds: ['layer-1'] }
+                    metadata: { glyphName: 'A', drawingIds: ['layer-1'] }
                 }
             ]
         });

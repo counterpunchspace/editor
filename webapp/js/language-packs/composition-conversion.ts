@@ -19,7 +19,7 @@ import {
 
 export interface CompositionGlyphView {
     codepoints?: number[];
-    layers?: Array<{ shapes?: unknown[] }>;
+    drawings?: Array<{ shapes?: unknown[] }>;
 }
 
 export interface CompositionOffer {
@@ -97,8 +97,8 @@ export function glyphComponentNames(
     glyph: CompositionGlyphView | undefined
 ): string[] {
     const names: string[] = [];
-    for (const layer of glyph?.layers || []) {
-        for (const shape of layer.shapes || []) {
+    for (const drawing of glyph?.drawings || []) {
+        for (const shape of drawing.shapes || []) {
             const name = componentReference(shape);
             if (name && !names.includes(name)) {
                 names.push(name);
@@ -375,8 +375,8 @@ function mergePlans(
 }
 
 function hasOutlines(glyph: CompositionGlyphView | undefined): boolean {
-    for (const layer of glyph?.layers || []) {
-        for (const shape of layer.shapes || []) {
+    for (const drawing of glyph?.drawings || []) {
+        for (const shape of drawing.shapes || []) {
             if (isOutlineShape(shape)) {
                 return true;
             }

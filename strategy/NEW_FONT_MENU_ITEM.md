@@ -82,8 +82,8 @@ private generateEmptyFontJson(): string {
     // Rust babelfont::Font requires: upm, version, date, names, features, glyphs.
     // Master requires: name, id, location, metrics, kerning.
     // All other fields have #[serde(default)] so they are optional.
-    const masterId = crypto.randomUUID();
-    const layerId = crypto.randomUUID();
+    const stationId = crypto.randomUUID();
+    const drawingId = crypto.randomUUID();
     const fontData: any = {
         upm: 1000,
         version: [1, 0],
@@ -97,13 +97,13 @@ private generateEmptyFontJson(): string {
             prefixes: {},
             features: []
         },
-        // No axes — a static font with no axes and one master means the
-        // glyph rendering path uses the single master directly instead
-        // of trying to interpolate between nonexistent masters.
+        // No axes — a static font with no axes and one station means the
+        // glyph rendering path uses the single station directly instead
+        // of trying to interpolate between nonexistent stations.
         masters: [
             {
-                id: masterId,
-                name: { dflt: 'Default Master' },
+                id: stationId,
+                name: { dflt: 'Default Station' },
                 location: {},
                 metrics: {},
                 kerning: {}
@@ -116,11 +116,11 @@ private generateEmptyFontJson(): string {
                 exported: true,
                 layers: [
                     {
-                        id: layerId,
+                        id: drawingId,
                         width: 600,
                         master: {
                             type: 'DefaultForMaster',
-                            master: masterId
+                            master: stationId
                         }
                     }
                 ]
@@ -133,14 +133,14 @@ private generateEmptyFontJson(): string {
 
 **Key decisions:**
 
-- **No axes.** A single-master font with no axes avoids the Rust interpolation
-  path entirely. Adding a `wght` axis with a single master causes
+- **No axes.** A single-station font with no axes avoids the Rust interpolation
+  path entirely. Adding a `wght` axis with a single station causes
   `Interpolation failed for '.notdef': No layers found` because the glyph only
-  has one layer and interpolation between nonexistent masters fails.
+  has one drawing and interpolation between nonexistent stations fails.
 - **date uses `toISOString()`** (full ISO 8601) not `.split('T')[0]` (date-only).
-- **Master `name` is an i18n dictionary** `{ dflt: 'Default Master' }` not a
+- **Station `name` is an i18n dictionary** `{ dflt: 'Default Station' }` not a
   string, matching what `babelfont-model.ts` creates (line 11196).
-- **Layer `master` is a tagged object** `{ type: 'DefaultForMaster', master: id }`
+- **A drawing’s `master` key is a tagged object** `{ type: 'DefaultForMaster', master: id }`
   matching the Rust `LayerType` enum.
 - **`exported: true`** is included because the JS `Glyph` model's getter reads
   it from `_data` and returns `undefined` if absent. Rust skips it when true
@@ -415,7 +415,7 @@ that checks whether the font actually has glyphs matching the fallback text.
 ### b. Glyph overview "No layers found"
 
 The glyph overview worker calls `get_glyph_outlines` on `.notdef`. Since the
-empty `.notdef` layer has no shapes and no paths, the batch render path logs
+empty `.notdef` drawing has no shapes and no paths, the batch render path logs
 `Interpolation failed for '.notdef': No layers found` to the console. This
 is non-fatal (the overview renders empty tiles) but noisy.
 

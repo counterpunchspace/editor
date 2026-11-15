@@ -31,7 +31,7 @@ function makeFontData(glyphs) {
     };
 }
 
-function closedTriangleLayer(id) {
+function closedTriangleDrawing(id) {
     return {
         id,
         width: 500,
@@ -129,13 +129,13 @@ describe('clipboard cut', () => {
                     name: 'a',
                     category: 'Base',
                     exported: true,
-                    layers: [closedTriangleLayer('layer-a')]
+                    layers: [closedTriangleDrawing('layer-a')]
                 },
                 {
                     name: 'b',
                     category: 'Base',
                     exported: true,
-                    layers: [closedTriangleLayer('layer-b')]
+                    layers: [closedTriangleDrawing('layer-b')]
                 }
             ])
         );
@@ -167,7 +167,7 @@ describe('clipboard cut', () => {
                     name: 'A',
                     category: 'Base',
                     exported: true,
-                    layers: [closedTriangleLayer('layer-1')]
+                    layers: [closedTriangleDrawing('layer-1')]
                 }
             ])
         );
@@ -181,13 +181,13 @@ describe('clipboard cut', () => {
         document.getElementById('view-editor').classList.add('focused');
 
         const glyph = font.findGlyph('A');
-        const layer = glyph.findLayerById('layer-1');
+        const drawing = glyph.findDrawingById('layer-1');
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.currentGlyphName = 'A';
-        canvas.outlineEditor.selectedLayerId = 'layer-1';
-        canvas.outlineEditor.layerData = JSON.parse(
-            JSON.stringify(layer.toJSON())
+        canvas.outlineEditor.selectedDrawingId = 'layer-1';
+        canvas.outlineEditor.drawingData = JSON.parse(
+            JSON.stringify(drawing.toJSON())
         );
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 1 }
@@ -197,7 +197,7 @@ describe('clipboard cut', () => {
         const cut = await canvas.cutFocusedClipboardSelection();
 
         expect(cut).toBe(true);
-        expect(layer.shapes || []).toHaveLength(0);
+        expect(drawing.shapes || []).toHaveLength(0);
         expect(navigator.clipboard.write).toHaveBeenCalled();
     });
 
@@ -208,7 +208,7 @@ describe('clipboard cut', () => {
                     name: 'A',
                     category: 'Base',
                     exported: true,
-                    layers: [closedTriangleLayer('layer-1')]
+                    layers: [closedTriangleDrawing('layer-1')]
                 }
             ])
         );

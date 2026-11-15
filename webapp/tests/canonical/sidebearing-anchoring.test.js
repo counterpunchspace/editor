@@ -2,12 +2,12 @@ const {
     handleCommittedChangeRefresh,
     runBridgeUndoRedo
 } = require('../../js/change-bridge-init');
-const { Layer } = require('../../js/babelfont-model');
+const { Drawing } = require('../../js/babelfont-model');
 const fontManager = require('../../js/font-manager').default;
 
-function snapshotLayerCenterScreen(target) {
-    const bbox = Layer.calculateBoundingBox(
-        target.outlineEditor.layerData,
+function snapshotDrawingCenterScreen(target) {
+    const bbox = Drawing.calculateBoundingBox(
+        target.outlineEditor.drawingData,
         true
     );
     if (!bbox) {
@@ -37,7 +37,7 @@ function snapshotGlyphOriginScreen(target, { rtl = false } = {}) {
     const advance =
         typeof shapedGlyph?.ax === 'number'
             ? shapedGlyph.ax
-            : target.outlineEditor.layerData.width;
+            : target.outlineEditor.drawingData.width;
     const localX = rtl ? advance : 0;
 
     return target.viewportManager.fontToScreenCoordinates(
@@ -57,7 +57,7 @@ function snapshotGlyphRightEdgeScreen(target, { rtl = false } = {}) {
     const advance =
         typeof shapedGlyph?.ax === 'number'
             ? shapedGlyph.ax
-            : target.outlineEditor.layerData.width;
+            : target.outlineEditor.drawingData.width;
     const localX = rtl ? 0 : advance;
 
     return target.viewportManager.fontToScreenCoordinates(
@@ -66,8 +66,8 @@ function snapshotGlyphRightEdgeScreen(target, { rtl = false } = {}) {
     );
 }
 
-function expectLayerCenterAnchored(target, beforeCenter) {
-    const afterCenter = snapshotLayerCenterScreen(target);
+function expectDrawingCenterAnchored(target, beforeCenter) {
+    const afterCenter = snapshotDrawingCenterScreen(target);
 
     expect(afterCenter.x).toBeCloseTo(beforeCenter.x, 5);
     expect(afterCenter.y).toBeCloseTo(beforeCenter.y, 5);
@@ -87,8 +87,8 @@ function expectGlyphRightEdgeAnchored(target, beforeRight, options) {
     expect(afterRight.y).toBeCloseTo(beforeRight.y, 5);
 }
 
-function shiftLayerNodes(target, dx) {
-    for (const shape of target.outlineEditor.layerData.shapes) {
+function shiftDrawingNodes(target, dx) {
+    for (const shape of target.outlineEditor.drawingData.shapes) {
         for (const node of shape.nodes) {
             node.x += dx;
         }
@@ -110,14 +110,14 @@ function expectViewportUnchanged(target, beforeViewport) {
 function setupUnkeyedCanvas(canvas) {
     canvas.outlineEditor.active = true;
     canvas.outlineEditor.currentGlyphName = 'a';
-    canvas.outlineEditor.selectedLayerId = 'layer-1';
+    canvas.outlineEditor.selectedDrawingId = 'layer-1';
     canvas.outlineEditor.glyphStack = 'a@layer-1';
     canvas.outlineEditor.parseGlyphStack = jest.fn(() => [{ glyphName: 'a' }]);
     canvas.getCurrentGlyphName = jest.fn(() => 'a');
     canvas.viewportManager.scale = 2;
     canvas.viewportManager.panX = 100;
     canvas.viewportManager.panY = 50;
-    canvas.outlineEditor.layerData = {
+    canvas.outlineEditor.drawingData = {
         id: 'layer-1',
         width: 500,
         shapes: [
@@ -134,7 +134,7 @@ function setupUnkeyedCanvas(canvas) {
         anchors: [],
         guides: []
     };
-    canvas.outlineEditor.saveLayerData = jest.fn();
+    canvas.outlineEditor.saveDrawingData = jest.fn();
     canvas.outlineEditor._syncCurrentGlyphToYDoc = jest.fn();
     canvas.outlineEditor.performHitDetection = jest.fn();
     canvas.updatePropertyPanel = jest.fn();
@@ -179,7 +179,7 @@ describe('Sidebearing center anchoring matrix', () => {
             deltaX: 20
         }
     ])('$label', ({ side, deltaX }) => {
-        const beforeCenter = snapshotLayerCenterScreen(canvas);
+        const beforeCenter = snapshotDrawingCenterScreen(canvas);
 
         canvas.outlineEditor.isDraggingSidebearing = true;
         canvas.outlineEditor.selectedSidebearingHandle = {
@@ -188,14 +188,14 @@ describe('Sidebearing center anchoring matrix', () => {
         };
         canvas.outlineEditor._updateDraggedSidebearing(deltaX);
 
-        expectLayerCenterAnchored(canvas, beforeCenter);
+        expectDrawingCenterAnchored(canvas, beforeCenter);
         expect(canvas.outlineEditor.getLiveSidebearingOverlayWidth()).toEqual(
-            canvas.outlineEditor.layerData.width
+            canvas.outlineEditor.drawingData.width
         );
     });
 
     test('mouse sidebearing drag retains its center anchor for recomposed advance replay', () => {
-        const beforeCenter = snapshotLayerCenterScreen(canvas);
+        const beforeCenter = snapshotDrawingCenterScreen(canvas);
 
         canvas.outlineEditor.isDraggingSidebearing = true;
         canvas.outlineEditor.selectedSidebearingHandle = {
@@ -209,7 +209,7 @@ describe('Sidebearing center anchoring matrix', () => {
             canvas.outlineEditor.reapplyPendingSidebearingBboxCenterAnchor()
         ).toBe(true);
 
-        expectLayerCenterAnchored(canvas, beforeCenter);
+        expectDrawingCenterAnchored(canvas, beforeCenter);
     });
 
     test('mouse sidebearing drag clears a preview anchor from an earlier interaction', () => {
@@ -242,8 +242,8 @@ describe('Sidebearing center anchoring matrix', () => {
             side: 'right'
         }
     ])('$label', async ({ side }) => {
-        const beforeCenter = snapshotLayerCenterScreen(canvas);
-        const beforeWidth = canvas.outlineEditor.layerData.width;
+        const beforeCenter = snapshotDrawingCenterScreen(canvas);
+        const beforeWidth = canvas.outlineEditor.drawingData.width;
 
         canvas.outlineEditor.selectedSidebearingHandle = {
             side,
@@ -259,10 +259,10 @@ describe('Sidebearing center anchoring matrix', () => {
         await Promise.resolve();
         await Promise.resolve();
 
-        expect(canvas.outlineEditor.layerData.width).not.toBe(beforeWidth);
-        expectLayerCenterAnchored(canvas, beforeCenter);
+        expect(canvas.outlineEditor.drawingData.width).not.toBe(beforeWidth);
+        expectDrawingCenterAnchored(canvas, beforeCenter);
         expect(canvas.outlineEditor.getLiveSidebearingOverlayWidth()).toEqual(
-            canvas.outlineEditor.layerData.width
+            canvas.outlineEditor.drawingData.width
         );
     });
 
@@ -279,7 +279,7 @@ describe('Sidebearing center anchoring matrix', () => {
                 side: 'left',
                 editable: true
             };
-            const beforeWidth = canvas.outlineEditor.layerData.width;
+            const beforeWidth = canvas.outlineEditor.drawingData.width;
             canvas.outlineEditor.onKeyDown({
                 key: 'ArrowRight',
                 shiftKey: false,
@@ -289,8 +289,10 @@ describe('Sidebearing center anchoring matrix', () => {
             });
             await Promise.resolve();
             await Promise.resolve();
-            expect(canvas.outlineEditor.layerData.width).not.toBe(beforeWidth);
-            const beforeCenter = snapshotLayerCenterScreen(canvas);
+            expect(canvas.outlineEditor.drawingData.width).not.toBe(
+                beforeWidth
+            );
+            const beforeCenter = snapshotDrawingCenterScreen(canvas);
 
             // Simulate mid-burst preview blob apply: re-anchor then owned paint.
             canvas.outlineEditor.reapplyLastLiveSidebearingAdvances();
@@ -298,7 +300,7 @@ describe('Sidebearing center anchoring matrix', () => {
             canvas.outlineEditor.scheduleSidebearingOwnedRepaint();
             pendingFrames.splice(0).forEach((callback) => callback());
 
-            expectLayerCenterAnchored(canvas, beforeCenter);
+            expectDrawingCenterAnchored(canvas, beforeCenter);
         } finally {
             global.requestAnimationFrame = originalRequestAnimationFrame;
         }
@@ -363,11 +365,11 @@ describe('Sidebearing center anchoring matrix', () => {
             value: '120'
         }
     ])('$label', async ({ side, value }) => {
-        const beforeCenter = snapshotLayerCenterScreen(canvas);
+        const beforeCenter = snapshotDrawingCenterScreen(canvas);
 
         await canvas.commitPropertyPanelValue(side, value);
 
-        expectLayerCenterAnchored(canvas, beforeCenter);
+        expectDrawingCenterAnchored(canvas, beforeCenter);
     });
 });
 
@@ -400,14 +402,14 @@ describe('Sidebearing undo viewport stability', () => {
             },
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'a' }]),
-                fetchLayerData: jest.fn().mockResolvedValue(),
+                fetchDrawingData: jest.fn().mockResolvedValue(),
                 runDeterministicRefresh: jest.fn(async (task) => await task()),
                 performHitDetection: jest.fn()
             },
             getCurrentGlyphName: jest.fn(() => 'a'),
-            syncCurrentOutlineLayerDataFromModel: jest.fn(),
+            syncCurrentOutlineDrawingDataFromModel: jest.fn(),
             updatePropertyPanel: jest.fn(),
             render: jest.fn(),
             requestRepaintAfterCompile: jest.fn()
@@ -416,7 +418,7 @@ describe('Sidebearing undo viewport stability', () => {
         const currentFont = {
             fontModel: {
                 findGlyph: jest.fn(() => ({
-                    findLayerById: jest.fn(() => ({ width: previousWidth }))
+                    findDrawingById: jest.fn(() => ({ width: previousWidth }))
                 }))
             },
             requestRecompileWithoutDataChange: jest.fn()
@@ -441,7 +443,7 @@ describe('Sidebearing undo viewport stability', () => {
             undo: jest.fn(() => {
                 currentFont.fontModel = {
                     findGlyph: jest.fn(() => ({
-                        findLayerById: jest.fn(() => ({ width: nextWidth }))
+                        findDrawingById: jest.fn(() => ({ width: nextWidth }))
                     }))
                 };
 
@@ -493,7 +495,7 @@ describe('Sidebearing undo viewport stability', () => {
     test.each(['undo', 'redo'])(
         '%s keeps the active bbox center anchored without side metadata',
         async (action) => {
-            const previousLayerData = {
+            const previousDrawingData = {
                 width: 500,
                 shapes: [
                     {
@@ -507,13 +509,13 @@ describe('Sidebearing undo viewport stability', () => {
                     }
                 ]
             };
-            const nextLayerData = {
-                ...previousLayerData,
+            const nextDrawingData = {
+                ...previousDrawingData,
                 width: 520,
                 shapes: [
                     {
-                        ...previousLayerData.shapes[0],
-                        nodes: previousLayerData.shapes[0].nodes.map(
+                        ...previousDrawingData.shapes[0],
+                        nodes: previousDrawingData.shapes[0].nodes.map(
                             (node) => ({
                                 ...node,
                                 x: node.x + 20
@@ -522,7 +524,7 @@ describe('Sidebearing undo viewport stability', () => {
                     }
                 ]
             };
-            let modelLayer = previousLayerData;
+            let modelDrawing = previousDrawingData;
             let capturedAnchor = null;
             const glyphCanvas = {
                 viewportManager: {
@@ -546,12 +548,12 @@ describe('Sidebearing undo viewport stability', () => {
                     refreshGlyphAdvanceDeltasLive: jest.fn(() => true)
                 },
                 captureIdleViewLock: jest.fn(() => {
-                    capturedAnchor = snapshotLayerCenterScreen(glyphCanvas);
+                    capturedAnchor = snapshotDrawingCenterScreen(glyphCanvas);
                     return true;
                 }),
                 reapplyIdleViewLock: jest.fn(() => {
                     const currentCenter =
-                        snapshotLayerCenterScreen(glyphCanvas);
+                        snapshotDrawingCenterScreen(glyphCanvas);
                     glyphCanvas.viewportManager.panX +=
                         capturedAnchor.x - currentCenter.x;
                     glyphCanvas.viewportManager.panY +=
@@ -560,18 +562,18 @@ describe('Sidebearing undo viewport stability', () => {
                 }),
                 outlineEditor: {
                     active: true,
-                    selectedLayerId: 'layer-1',
-                    layerData: previousLayerData,
+                    selectedDrawingId: 'layer-1',
+                    drawingData: previousDrawingData,
                     parseGlyphStack: jest.fn(() => [{ glyphName: 'a' }]),
-                    fetchLayerData: jest.fn().mockResolvedValue(),
+                    fetchDrawingData: jest.fn().mockResolvedValue(),
                     runDeterministicRefresh: jest.fn(
                         async (task) => await task()
                     ),
                     performHitDetection: jest.fn()
                 },
                 getCurrentGlyphName: jest.fn(() => 'a'),
-                syncCurrentOutlineLayerDataFromModel: jest.fn((layer) => {
-                    glyphCanvas.outlineEditor.layerData = layer;
+                syncCurrentOutlineDrawingDataFromModel: jest.fn((drawing) => {
+                    glyphCanvas.outlineEditor.drawingData = drawing;
                 }),
                 updatePropertyPanel: jest.fn(),
                 render: jest.fn(),
@@ -581,20 +583,20 @@ describe('Sidebearing undo viewport stability', () => {
                 transactionLabel: 'Set sidebearing',
                 entries: [
                     {
-                        oldValue: previousLayerData,
-                        newValue: nextLayerData,
+                        oldValue: previousDrawingData,
+                        newValue: nextDrawingData,
                         path: 'glyphs.a.layers.layer-1'
                     }
                 ]
             };
-            const beforeCenter = snapshotLayerCenterScreen(glyphCanvas);
+            const beforeCenter = snapshotDrawingCenterScreen(glyphCanvas);
 
             originalWindow.glyphCanvas = glyphCanvas;
             originalWindow.fontManager = {
                 currentFont: {
                     fontModel: {
                         findGlyph: jest.fn(() => ({
-                            findLayerById: jest.fn(() => modelLayer)
+                            findDrawingById: jest.fn(() => modelDrawing)
                         }))
                     },
                     requestRecompileWithoutDataChange: jest.fn()
@@ -613,7 +615,7 @@ describe('Sidebearing undo viewport stability', () => {
             };
             originalWindow.patchSyncEngine = originalWindow.changeBridge = {
                 undo: jest.fn(() => {
-                    modelLayer = nextLayerData;
+                    modelDrawing = nextDrawingData;
                     return {
                         scope: 'layer',
                         glyphName: 'a',
@@ -622,7 +624,7 @@ describe('Sidebearing undo viewport stability', () => {
                     };
                 }),
                 redo: jest.fn(() => {
-                    modelLayer = nextLayerData;
+                    modelDrawing = nextDrawingData;
                     return {
                         scope: 'layer',
                         glyphName: 'a',
@@ -637,7 +639,7 @@ describe('Sidebearing undo viewport stability', () => {
 
             await runBridgeUndoRedo(action, 'a', 'a', 'layer-1', null);
 
-            expectLayerCenterAnchored(glyphCanvas, beforeCenter);
+            expectDrawingCenterAnchored(glyphCanvas, beforeCenter);
             expect(glyphCanvas.captureIdleViewLock).toHaveBeenCalledTimes(1);
             expect(glyphCanvas.reapplyIdleViewLock).toHaveBeenCalledTimes(1);
         }
@@ -706,14 +708,14 @@ describe('Sidebearing undo viewport stability', () => {
             textRunEditor: { refreshGlyphAdvanceDeltasLive },
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'a' }]),
-                fetchLayerData: jest.fn().mockResolvedValue(),
+                fetchDrawingData: jest.fn().mockResolvedValue(),
                 runDeterministicRefresh: jest.fn(async (task) => await task()),
                 performHitDetection: jest.fn()
             },
             getCurrentGlyphName: jest.fn(() => 'a'),
-            syncCurrentOutlineLayerDataFromModel: jest.fn(),
+            syncCurrentOutlineDrawingDataFromModel: jest.fn(),
             updatePropertyPanel: jest.fn(),
             render: jest.fn(),
             requestRepaintAfterCompile: jest.fn()
@@ -723,7 +725,7 @@ describe('Sidebearing undo viewport stability', () => {
         const currentFont = {
             fontModel: {
                 findGlyph: jest.fn(() => ({
-                    findLayerById: jest.fn(() => ({ width: currentWidth }))
+                    findDrawingById: jest.fn(() => ({ width: currentWidth }))
                 }))
             },
             requestRecompileWithoutDataChange: jest.fn()
@@ -864,16 +866,16 @@ describe('Idle live sidebearing overlay cleanup', () => {
     });
 
     test('undo after property-panel LSB uses restored layer width, not leftover overlay', () => {
-        const originalWidth = canvas.outlineEditor.layerData.width;
+        const originalWidth = canvas.outlineEditor.drawingData.width;
 
         expect(canvas.outlineEditor.setSidebearingValue('left', 150)).toBe(
             true
         );
-        const committedWidth = canvas.outlineEditor.layerData.width;
+        const committedWidth = canvas.outlineEditor.drawingData.width;
         expect(committedWidth).toBe(originalWidth + 50);
 
         // Forward commit left the live overlay at the new advance. Undo
-        // restored layerData.width but used to leave that overlay in place,
+        // restored drawingData.width but used to leave that overlay in place,
         // so metric bars kept the post-edit advance.
         canvas.outlineEditor.activeSidebearingDragLayout = {
             width: committedWidth
@@ -881,12 +883,12 @@ describe('Idle live sidebearing overlay cleanup', () => {
         canvas.outlineEditor._lastLiveSidebearingAdvances = {
             a: committedWidth
         };
-        canvas.outlineEditor.layerData.width = originalWidth;
+        canvas.outlineEditor.drawingData.width = originalWidth;
 
         expect(
             canvas.outlineEditor.getLiveSidebearingOverlayWidth()
         ).toBeNull();
-        expect(canvas.renderer['getLiveSelectedLayerWidth']()).toBe(
+        expect(canvas.renderer['getLiveSelectedDrawingWidth']()).toBe(
             originalWidth
         );
 
@@ -894,7 +896,7 @@ describe('Idle live sidebearing overlay cleanup', () => {
 
         expect(canvas.outlineEditor.activeSidebearingDragLayout).toBeNull();
         expect(canvas.outlineEditor._lastLiveSidebearingAdvances).toEqual({});
-        expect(canvas.renderer['getLiveSelectedLayerWidth']()).toBe(
+        expect(canvas.renderer['getLiveSelectedDrawingWidth']()).toBe(
             originalWidth
         );
     });
@@ -967,14 +969,14 @@ describe('Idle committed viewer lock', () => {
 
     test('edit mode origin lock does not keep bbox center after a geometry change', () => {
         const beforeOrigin = snapshotGlyphOriginScreen(canvas);
-        const beforeCenter = snapshotLayerCenterScreen(canvas);
+        const beforeCenter = snapshotDrawingCenterScreen(canvas);
         expect(canvas.captureIdleViewLock({ kerningPair: false })).toBe(true);
 
-        shiftLayerNodes(canvas, 80);
+        shiftDrawingNodes(canvas, 80);
 
         expect(canvas.reapplyIdleViewLock()).toBe(true);
         expectGlyphOriginAnchored(canvas, beforeOrigin);
-        const afterCenter = snapshotLayerCenterScreen(canvas);
+        const afterCenter = snapshotDrawingCenterScreen(canvas);
         expect(afterCenter.x).not.toBeCloseTo(beforeCenter.x, 5);
         canvas.clearIdleViewLock();
     });
@@ -988,7 +990,7 @@ describe('Idle committed viewer lock', () => {
             })
         ).toBe(true);
 
-        canvas.outlineEditor.layerData.width = 580;
+        canvas.outlineEditor.drawingData.width = 580;
         canvas.textRunEditor.shapedGlyphs = [{ ax: 580, cl: 0 }];
 
         expect(canvas.reapplyIdleViewLock()).toBe(true);
@@ -997,7 +999,7 @@ describe('Idle committed viewer lock', () => {
     });
 
     test('edit mode sidebearing exception keeps bbox center after a geometry change', () => {
-        const beforeCenter = snapshotLayerCenterScreen(canvas);
+        const beforeCenter = snapshotDrawingCenterScreen(canvas);
         expect(
             canvas.captureIdleViewLock({
                 kerningPair: false,
@@ -1005,10 +1007,10 @@ describe('Idle committed viewer lock', () => {
             })
         ).toBe(true);
 
-        shiftLayerNodes(canvas, 80);
+        shiftDrawingNodes(canvas, 80);
 
         expect(canvas.reapplyIdleViewLock()).toBe(true);
-        expectLayerCenterAnchored(canvas, beforeCenter);
+        expectDrawingCenterAnchored(canvas, beforeCenter);
         canvas.clearIdleViewLock();
     });
 
@@ -1019,7 +1021,7 @@ describe('Idle committed viewer lock', () => {
         expect(canvas.captureIdleViewLock({ kerningPair: false })).toBe(true);
 
         canvas.textRunEditor.shapedGlyphs = [{ ax: 580, cl: 0 }];
-        canvas.outlineEditor.layerData.width = 580;
+        canvas.outlineEditor.drawingData.width = 580;
 
         expect(canvas.reapplyIdleViewLock()).toBe(true);
         expectGlyphOriginAnchored(canvas, beforeOrigin, { rtl: true });

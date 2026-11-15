@@ -10,13 +10,13 @@ const {
     createLogEntry,
     formatHistoryOriginLabel,
     resetLogCounter,
-    resolveCommitOriginatingLayer
+    resolveCommitOriginatingDrawing
 } = require('../../js/change-log');
 const {
     resetUndoRedoContextStickyState
 } = require('../../js/undo-redo-context');
 
-function makeLayer(id, name, width) {
+function makeDrawing(id, name, width) {
     return {
         id,
         name,
@@ -63,9 +63,9 @@ function makeFont() {
                 codepoints: [65],
                 exported: true,
                 layers: [
-                    makeLayer('layer-1', 'Regular', 600),
-                    makeLayer('layer-1b', 'Regular Alt', 620),
-                    makeLayer('layer-1c', 'Unwritten', 640)
+                    makeDrawing('layer-1', 'Regular', 600),
+                    makeDrawing('layer-1b', 'Regular Alt', 620),
+                    makeDrawing('layer-1c', 'Unwritten', 640)
                 ]
             },
             {
@@ -74,7 +74,7 @@ function makeFont() {
                 category: 'Base',
                 codepoints: [66],
                 exported: true,
-                layers: [makeLayer('layer-2', 'Regular', 650)]
+                layers: [makeDrawing('layer-2', 'Regular', 650)]
             }
         ]
     };
@@ -88,7 +88,7 @@ describe('history layer availability', () => {
 
     test('multi-layer same-glyph edits are undoable from every written layer', () => {
         const fontJson = makeFont();
-        const bridge = new ChangeBridge('history-layer-availability');
+        const bridge = new ChangeBridge('history-drawing-availability');
         bridge.initFromJson(fontJson);
         window.changeBridge = bridge;
 
@@ -111,31 +111,32 @@ describe('history layer availability', () => {
         bridge.endTransaction();
 
         const log = bridge.getChangeLog();
-        const originLayerItems = buildHistoryStackItems(log, {
+        const originDrawingItems = buildHistoryStackItems(log, {
             glyphName: 'A',
             layerId: 'layer-1'
         });
-        const otherWrittenLayerItems = buildHistoryStackItems(log, {
+        const otherWrittenDrawingItems = buildHistoryStackItems(log, {
             glyphName: 'A',
             layerId: 'layer-1b'
         });
-        const unwrittenLayerItems = buildHistoryStackItems(log, {
+        const unwrittenDrawingItems = buildHistoryStackItems(log, {
             glyphName: 'A',
             layerId: 'layer-1c'
         });
 
-        expect(originLayerItems).toHaveLength(1);
-        expect(otherWrittenLayerItems).toHaveLength(1);
-        expect(otherWrittenLayerItems[0].id).toBe(originLayerItems[0].id);
-        expect(unwrittenLayerItems).toHaveLength(0);
+        expect(originDrawingItems).toHaveLength(1);
+        expect(otherWrittenDrawingItems).toHaveLength(1);
+        expect(otherWrittenDrawingItems[0].id).toBe(originDrawingItems[0].id);
+        expect(unwrittenDrawingItems).toHaveLength(0);
         expect(
             formatHistoryOriginLabel({
-                undoScope: originLayerItems[0].undoScope,
-                originatingGlyphName: originLayerItems[0].originatingGlyphName,
-                originatingLayerId: originLayerItems[0].originatingLayerId,
-                changePaths: originLayerItems[0].touchedPaths
+                undoScope: originDrawingItems[0].undoScope,
+                originatingGlyphName:
+                    originDrawingItems[0].originatingGlyphName,
+                originatingLayerId: originDrawingItems[0].originatingLayerId,
+                changePaths: originDrawingItems[0].touchedPaths
             })
-        ).toBe('Layer · A');
+        ).toBe('Drawing · A');
 
         expect(bridge.undo('A', 'layer-1b')).not.toBeNull();
         expect(
@@ -306,10 +307,10 @@ describe('history layer availability', () => {
 
     test('resolveCommitOriginatingLayer prefers canvas context over dependent writes', () => {
         expect(
-            resolveCommitOriginatingLayer({
+            resolveCommitOriginatingDrawing({
                 contextSurface: 'canvas',
                 contextGlyphName: 'A',
-                contextLayerId: 'layer-1',
+                contextDrawingId: 'layer-1',
                 operations: [
                     {
                         originatingGlyphName: 'B',
@@ -321,10 +322,10 @@ describe('history layer availability', () => {
         ).toEqual({ glyphName: 'A', layerId: 'layer-1' });
 
         expect(
-            resolveCommitOriginatingLayer({
+            resolveCommitOriginatingDrawing({
                 contextSurface: 'canvas',
                 contextGlyphName: 'A',
-                contextLayerId: null,
+                contextDrawingId: null,
                 operations: [
                     {
                         path: ['masters', 'master-regular', 'kerning', 'A']
@@ -344,7 +345,7 @@ describe('history layer availability', () => {
         window.glyphCanvas = {
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'A' }]),
                 currentGlyphName: 'A'
             },
@@ -406,17 +407,20 @@ describe('history layer availability', () => {
             currentFont: {
                 fontModel: {
                     findGlyph: (name) => ({
-                        findLayerById: (id) => {
-                            const layerId = name === 'B' ? 'layer-2' : id;
+                        findDrawingById: (id) => {
+                            const drawingId = name === 'B' ? 'layer-2' : id;
                             if (name === 'B' && id !== 'layer-2') {
                                 return null;
                             }
                             return {
-                                id: layerId,
-                                getMatchingLayerOnGlyph: (otherGlyph) => ({
-                                    id: otherGlyph === 'B' ? 'layer-2' : layerId
+                                id: drawingId,
+                                getMatchingDrawingOnGlyph: (otherGlyph) => ({
+                                    id:
+                                        otherGlyph === 'B'
+                                            ? 'layer-2'
+                                            : drawingId
                                 }),
-                                isAutomaticAlignedLayer: () =>
+                                isAutomaticAlignedDrawing: () =>
                                     name === 'B' && compositeIsAutomatic
                             };
                         }
@@ -492,16 +496,16 @@ describe('history layer availability', () => {
             currentFont: {
                 fontModel: {
                     findGlyph: (name) => ({
-                        findLayerById: (id) => {
+                        findDrawingById: (id) => {
                             if (name === 'B' && id !== 'layer-2') {
                                 return null;
                             }
                             return {
                                 id: name === 'B' ? 'layer-2' : id,
-                                getMatchingLayerOnGlyph: (otherGlyph) => ({
+                                getMatchingDrawingOnGlyph: (otherGlyph) => ({
                                     id: otherGlyph === 'B' ? 'layer-2' : id
                                 }),
-                                isAutomaticAlignedLayer: () => name === 'B'
+                                isAutomaticAlignedDrawing: () => name === 'B'
                             };
                         }
                     }),

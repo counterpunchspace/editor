@@ -266,7 +266,7 @@ class ArabicFontSource:
                 rows.append(
                     {
                         "glyph_name": name,
-                        "master_id": request.get("master_id"),
+                        "station_id": request.get("station_id"),
                         "positions": {},
                         "known": False,
                     }
@@ -296,7 +296,7 @@ class ArabicFontSource:
             rows.append(
                 {
                     "glyph_name": name,
-                    "master_id": request.get("master_id"),
+                    "station_id": request.get("station_id"),
                     "positions": positions,
                     "known": True,
                 }

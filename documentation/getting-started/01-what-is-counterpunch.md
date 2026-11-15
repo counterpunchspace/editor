@@ -2,7 +2,7 @@
 
 Counterpunch is a browser-native type design environment. Visual editing, live compilation, Python, and an AI assistant share one workspace, so you do not have to split inspection, drawing, and automation across disconnected tools.
 
-You can open existing sources, draw and refine outlines, build variable fonts with masters and axes, write OpenType feature code, space and kern in context, and run scripts on the live font model. The compile-and-shape loop stays in the same window as the canvas.
+You can open existing sources, draw and refine outlines, build variable fonts with axes and stations, write OpenType feature code, space and kern in context, and run scripts on the live font model. The compile-and-shape loop stays in the same window as the canvas.
 
 Counterpunch is unique in that it generates an authoritative OpenType font after each edit which is immediately shaped and displayed using Harfbuzz, the leading text shaping engine. It removes the edit-compile-test cycle of established font editors, so **you are always looking at a completely functional font**. If the font behaves correctly in Counterpunch, it’s a correct font!
 

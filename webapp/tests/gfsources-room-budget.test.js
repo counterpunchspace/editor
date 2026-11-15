@@ -133,8 +133,8 @@ function expandNodes(text) {
 
 function expandFont(font) {
     for (const glyph of font.glyphs || []) {
-        for (const layer of glyph.layers || []) {
-            for (const shape of layer.shapes || []) {
+        for (const drawing of glyph.layers || []) {
+            for (const shape of drawing.shapes || []) {
                 if (shape && typeof shape.nodes === 'string') {
                     shape.nodes = expandNodes(shape.nodes);
                 }

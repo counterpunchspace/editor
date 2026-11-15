@@ -383,12 +383,12 @@ async function triggerUndoRedo(direction: 'undo' | 'redo'): Promise<void> {
     const {
         rootGlyphName,
         undoGlyphName,
-        undoLayerId,
+        undoDrawingId,
         historyTargetKey,
         surface
     } = getUndoRedoContext();
     if (oe?.active && (!rootGlyphName || !undoGlyphName)) {
-        if (undoGlyphName || undoLayerId) {
+        if (undoGlyphName || undoDrawingId) {
             console.warn(
                 `Skipping ${direction}: active outline editor has incomplete glyph stack`
             );
@@ -400,7 +400,7 @@ async function triggerUndoRedo(direction: 'undo' | 'redo'): Promise<void> {
         direction,
         undoGlyphName,
         rootGlyphName,
-        undoLayerId,
+        undoDrawingId,
         historyTargetKey,
         surface
     );

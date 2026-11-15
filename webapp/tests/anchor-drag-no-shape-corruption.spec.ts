@@ -90,8 +90,8 @@ async function getTopAnchorClientPoint(page: Page): Promise<{
             throw new Error('Glyph canvas is not ready for anchor drag test');
         }
 
-        const layerData = outlineEditor.getCurrentLayerDataFromStack?.();
-        const topAnchor = layerData?.anchors?.find(
+        const drawingData = outlineEditor.getCurrentDrawingDataFromStack?.();
+        const topAnchor = drawingData?.anchors?.find(
             (anchor: any) => anchor?.name === 'top'
         );
         if (!topAnchor) {
@@ -132,9 +132,9 @@ async function getCompileErrorState(page: Page): Promise<{
 }> {
     return page.evaluate(() => {
         const win = window as any;
-        const layerData =
-            win.glyphCanvas?.outlineEditor?.getCurrentLayerDataFromStack?.();
-        const topAnchor = layerData?.anchors?.find(
+        const drawingData =
+            win.glyphCanvas?.outlineEditor?.getCurrentDrawingDataFromStack?.();
+        const topAnchor = drawingData?.anchors?.find(
             (anchor: any) => anchor?.name === 'top'
         );
 
@@ -223,7 +223,7 @@ async function openFustatAndPrepareEditor(page: Page): Promise<void> {
         await textRunEditor.selectGlyphByIndex(0, true);
         outlineEditor.currentGlyphName = 'o';
         await glyphCanvas.doUIUpdateAsync?.();
-        await outlineEditor.autoSelectMatchingLayer?.();
+        await outlineEditor.autoSelectMatchingDrawing?.();
         await glyphCanvas.enterGlyphEditModeAtCursor?.();
         await glyphCanvas.doUIUpdateAsync?.();
     });

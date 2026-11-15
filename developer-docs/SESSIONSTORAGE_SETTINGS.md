@@ -71,8 +71,8 @@ This document lists `sessionStorage` keys discovered in production TypeScript (`
 - Kind: literal
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/loading-cursor.ts:19 `getItem` via function `restoreStoredPointerPosition`
-  - webapp/js/loading-cursor.ts:44 `setItem` via function `persistPointerPosition`
+  - webapp/js/loading-cursor.ts:20 `getItem` via function `restoreStoredPointerPosition`
+  - webapp/js/loading-cursor.ts:45 `setItem` via function `persistPointerPosition`
 
 <a id="key-reloadcount"></a>
 

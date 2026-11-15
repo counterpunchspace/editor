@@ -10,16 +10,16 @@
 - [Class Reference](#class-reference)
   - [Font](#font) - 
   - [Glyph](#glyph) - 
-  - [FeatureVariationGlyph](#featurevariationglyph) - An authorable view over one conditional Glyphs feature-variation layer family.
-  - [Layer](#layer) - Layer in a glyph representing a master or intermediate design
+  - [FeatureVariationGlyph](#featurevariationglyph) - An authorable view over one conditional Glyphs feature-variation drawing family.
+  - [Drawing](#drawing) - A glyph’s drawing at a station, or a free drawing at a location of its own
   - [Shape](#shape) - Shape wrapper that can contain either a Component or a Path
-  - [Path](#path) - Path (contour) in a layer
+  - [Path](#path) - Path (contour) in a drawing
   - [Node](#node) - Point in a path
   - [Component](#component) - 
-  - [Anchor](#anchor) - Anchor point in a layer
-  - [Guide](#guide) - Guideline in a layer or master
+  - [Anchor](#anchor) - Anchor point in a drawing
+  - [Guide](#guide) - Guideline in a drawing or station
   - [Axis](#axis) - Variation axis in a variable font
-  - [Master](#master) - Master/source in a design space
+  - [Station](#station) - A station: a font-wide named location in the designspace that carries metrics, kerning and guides
   - [Instance](#instance) - Named instance in a variable font
 - [Complete Examples](#complete-examples)
 - [Tips and Best Practices](#tips-and-best-practices)
@@ -49,29 +49,29 @@ Do not use `.get()`. Index kerning by pair key
 
 ```python
 font = Font()
-master = font.masters[0]
+station = font.stations[0]
 
 # Pair-key kerning dictionary
-master.kerning["A:V"] = -80
+station.kerning["A:V"] = -80
 
-# Per-master vertical metrics
-xh = master.metrics.XHeight
-master.metrics.Ascender = 800
+# Per-station vertical metrics
+xh = station.metrics.XHeight
+station.metrics.Ascender = 800
 
 # I18N: language tags are attributes
 print(font.names.family_name.dflt)
 font.names.family_name.dflt = "My Family"
 font.names.family_name.de = "Meine Familie"
 font.names.family_name.fr = "Ma Famille"
-print(master.name.dflt)
-master.name.dflt = "Standard"
+print(station.name.dflt)
+station.name.dflt = "Standard"
 
 # Designspace location
-print(master.location)
-print(master.location.wght)
+print(station.location)
+print(station.location.wght)
 
 # Optional snapshot copy when needed
-kerning_snapshot = master.kerning.as_dict()
+kerning_snapshot = station.kerning.as_dict()
 ```
 
 ### System Notifications
@@ -100,11 +100,11 @@ allowing navigation up the object tree to the root Font object.
 **Example:**
 ```python
 # Navigate from node up to font
-node = font.glyphs[0].layers[0].paths[0].nodes[0]
+node = font.glyphs[0].drawings[0].paths[0].nodes[0]
 path = node.parent()      # Path object
 shape = path.parent()     # Shape object
-layer = shape.parent()    # Layer object
-glyph = layer.parent()    # Glyph object
+drawing = shape.parent()    # Drawing object
+glyph = drawing.parent()    # Glyph object
 font = glyph.parent()     # Font object
 ```
 
@@ -130,7 +130,7 @@ font = Font()
 - **`version`** ([number, number])
 - **`axes`** (list[[Axis](#axis)] | None)
 - **`instances`** (list[[Instance](#instance)] | None)
-- **`masters`** (list[[Master](#master)] | None)
+- **`stations`** (list[[Station](#station)] | None)
 - **`note`** (str | None)
 - **`date`** (str)
 - **`names`** (Names): OpenType name table. Fields are attributes (`family_name`,
@@ -155,7 +155,7 @@ Known keys include `head_flags`, `head_lowest_rec_ppem`,
 `os2_vendor_id`, `os2_fs_selection`, `os2_code_page_range1`/`2`,
 `cff_blue_values`, `cff_other_blues`, `cff_family_blues`,
 `cff_family_other_blues`, `cff_stem_snap_h`, `cff_stem_snap_v`.
-Master-varying metrics belong on `Master.metrics`, not here.
+Station-varying metrics belong on `Station.metrics`, not here.
 
 **Example:**
 ```python
@@ -188,7 +188,7 @@ operations. An unset font infers it from existing generator stamps.
 
 ### Methods
 
-#### `rebuildAutomaticCompositesForGlyphs(changedGlyphNames: Set<string> | None = None, options: { allowedGlyphNames?: Set<string>; preferredLayerId?: string | null; preferredSourceGlyphName?: string | null; } | None = None) -> Set<string>`
+#### `rebuildAutomaticCompositesForGlyphs(changedGlyphNames: Set<string> | None = None, options: { allowedGlyphNames?: Set<string>; preferredDrawingId?: string | null; preferredSourceGlyphName?: string | null; } | None = None) -> Set<string>`
 #### `rebuildAutomaticCompositesForKerningPair(firstKey: str, secondKey: str) -> Set<string>`
 Rebuild automatic ligatures whose unattached consecutive bases resolve
 to this kerning pair (glyph or `@group` keys, overlay precedence).
@@ -199,11 +199,11 @@ corresponding unattached-base operand after a kern-group membership edit.
 
 #### `preflightManualComponentConversion() -> { convertibleGlyphNames: string[]; compositeGlyphCount: number; }`
 Enable automatic alignment only on glyphs where every non-empty
-foreground layer preflights: the composition engine can place every
+foreground drawing preflights: the composition engine can place every
 component (anchor attachment, unattached non-mark bases including
 ligatures with LTR kerning, or a single non-mark component), and the
-result matches stored translations and width on all of those layers.
-Manual components that would move, or layers whose advance would
+result matches stored translations and width on all of those drawings.
+Manual components that would move, or drawings whose advance would
 change, stay manual.
 
 `compositeGlyphCount` is how many glyphs have at least one component.
@@ -253,7 +253,7 @@ for glyphs in the rename set, component bases and metrics keys that
 are not themselves being renamed are rewritten to those targets.
 
 #### `resolveGlyphView(name: str) -> [Glyph](#glyph) | FeatureVariationGlyph | None`
-Resolve an editor glyph token to an authorable layer view. A literal glyph
+Resolve an editor glyph token to an authorable drawing view. A literal glyph
 name resolves to its persisted Glyph; `base.feaVar.N` resolves to the
 corresponding synthetic feature-variation family.
 
@@ -278,7 +278,7 @@ added/removed/renamed (see `invalidateReverseComponentIndex`).
 #### `findDirectGlyphsUsingComponent(componentGlyphName: str) -> list[str]`
 #### `collectComponentDependentGlyphs(componentGlyphNames: Iterable<string>, options: { includeSourceGlyphNames?: boolean; retainGlyphNames?: Set<string>; } | None = None) -> Set<string>`
 #### `invalidateLayoutCachesForGlyphs(glyphNames: Iterable<string>) -> None`
-Invalidate automatic composition layout caches for all layers
+Invalidate automatic composition layout caches for all drawings
 of the specified glyphs. Call before recomputing compositions
 so that stale cached layouts from a previous frame are not reused.
 
@@ -308,7 +308,7 @@ Next free glyph name using Glyphs-style .001 / .002 suffixes.
 #### `duplicateGlyphs(names: Iterable<string>) -> list[[Glyph](#glyph)]`
 Duplicate each named glyph under a unique .001-style name.
 Each clone is inserted directly after its source, loses codepoints,
-regenerates layer IDs, and keeps master references.
+regenerates drawing IDs, and keeps station references.
 
 #### `findAxis(id: str) -> [Axis](#axis) | None`
 Find an axis by ID
@@ -321,20 +321,20 @@ Find an axis by tag
 weight_axis = font.findAxisByTag("wght")
 ```
 
-#### `findMaster(id: str) -> [Master](#master) | None`
-Find a master by ID
+#### `findStation(id: str) -> [Station](#station) | None`
+Find a station by ID
 
-#### `getMasterTopologyGate() -> MasterTopologyGate`
-Whether masters may be added, removed, or reinterpolated now. Cloud
+#### `getStationTopologyGate() -> StationTopologyGate`
+Whether stations may be added, removed, or reinterpolated now. Cloud
 fonts refuse while some glyphs are not downloaded.
 
-#### `addMaster(master: Babelfont.Master | None = None, options: AddMasterOptions | None = None) -> Promise<Master | null>`
-#### `addAxisWithMasterCopies(plan: AxisMasterCopyPlan, label: str) -> Promise<void>`
-Adds an axis and copies existing masters along it as one undo step.
-The worker writes the core document once and each glyph's new layers
+#### `addStation(station: Babelfont.Master | None = None, options: AddStationOptions | None = None) -> Promise<Station | null>`
+#### `addAxisWithStationCopies(plan: AxisStationCopyPlan, label: str) -> Promise<void>`
+Adds an axis and copies existing stations along it as one undo step.
+The worker writes the core document once and each glyph's new drawings
 in a single transaction per glyph.
 
-#### `removeMastersByIds(masterIds: list[str]) -> Promise<boolean>`
+#### `removeStationsByIds(stationIds: list[str]) -> Promise<boolean>`
 #### `findInsertIndexAfterName(baseName: str) -> float | int`
 Index at which to insert a new glyph that belongs with `baseName`.
 Strips a trailing `.NNN` so clipboard names like `a.001` still land
@@ -344,8 +344,8 @@ existing family sibling; otherwise appends.
 #### `addGlyph(name: str, category: Babelfont.GlyphCategory | str, options: { insertIndex?: number } | None = None) -> [Glyph](#glyph)`
 Add a new glyph to the font.
 
-Seeds one empty DefaultForMaster layer for every font master, using
-`Glyph.addLayer()` so Python and the UI share the same constructor.
+Seeds one empty DefaultForMaster drawing for every font station, using
+`Glyph.addDrawing()` so Python and the UI share the same constructor.
 
 **Example:**
 ```python
@@ -378,9 +378,9 @@ Serialize the font back to a `.babelfont` JSON string, indented by two
 spaces for readable diffs.
 
 With `glyphBodies`, only those glyphs keep their outlines, anchors,
-guides and layer libs; every other glyph keeps its layer metadata
-(ids, masters, widths) as a cheap stub. Serializers that write some
-glyphs' files still see the whole glyph set and every master's layers.
+guides and drawing libs; every other glyph keeps its drawing metadata
+(ids, stations, widths) as a cheap stub. Serializers that write some
+glyphs' files still see the whole glyph set and every station's drawings.
 
 A large font's string can go over the engine's string length limit;
 `toJSONParts` serializes glyph by glyph instead.
@@ -452,7 +452,7 @@ glyph = font.findGlyph("A")
 
 #### Read-Only Properties
 
-- **`featureVariations`** (list[FeatureVariationGlyph]): Synthetic, authorable views over this glyph's raw Glyphs feature-variation layers.
+- **`featureVariations`** (list[FeatureVariationGlyph]): Synthetic, authorable views over this glyph's raw Glyphs feature-variation drawings.
 - **`BUILTIN_CATEGORIES`** (Any)
 - **`id`** (str)
 - **`glyphData`** (dict | None): Read-only Unicode metadata from the bundled Glyph Data catalog.
@@ -472,23 +472,23 @@ glyph cannot be identified or no checks fire. Does not write the font.
 for message in glyph.qa:
     print(message.checkId, message.message)
 ```
-- **`layers`** (list[[Layer](#layer)] | None)
-- **`isCompatible`** (bool): Returns True/False based on whether the outline structure (components + paths + anchors) is compatible across all main layers of this glyph.
+- **`drawings`** (list[[Drawing](#drawing)] | None)
+- **`isCompatible`** (bool): Returns True/False based on whether the outline structure (components + paths + anchors) is compatible across all main drawings of this glyph.
 
 ### Methods
 
 #### `getPathSegment() -> list[(string | number)]`
-#### `getFeatureVariationLayerEntries(familyId: str | None = None) -> Array<{ familyId: string; layer: Layer }>`
+#### `getFeatureVariationDrawingEntries(familyId: str | None = None) -> Array<{ familyId: string; drawing: Drawing }>`
 #### `addFeatureVariation(axisRules: list[dict]) -> FeatureVariationGlyph`
-Create one associated feature-variation layer for every base master layer,
-copying each layer's materialized background when present.
+Create one associated feature-variation drawing for every base drawing,
+copying each drawing's materialized background when present.
 
 #### `removeFeatureVariation(featureVariation: FeatureVariationGlyph | str) -> None`
-Delete every raw layer belonging to a feature-variation family.
+Delete every raw drawing belonging to a feature-variation family.
 
 #### `normalizeCategory(value: Babelfont.GlyphCategory | str | None) -> Babelfont.GlyphCategory`
 #### `applyComputedAnchors(anchorNames: list[str]) -> bool`
-Copy computed component-stack anchors onto every foreground layer.
+Copy computed component-stack anchors onto every foreground drawing.
 An empty list writes every computed anchor; otherwise only the named
 anchors that exist in the computed set are added or updated.
 
@@ -498,33 +498,33 @@ glyph.applyComputedAnchors()
 glyph.applyComputedAnchors(["top"])
 ```
 
-#### `addLayer(width: float | int, master: dict | None = None, requestedLayerId: str | None | None = None) -> [Layer](#layer)`
-Add a new layer to the glyph.
+#### `addDrawing(width: float | int, station: dict | None = None, requestedDrawingId: str | None | None = None) -> [Drawing](#drawing)`
+Add a new drawing to the glyph.
 
-Default-for-master layers use the master id as the layer id so fontc
-can resolve each source to a master location.
+Default drawings (`DefaultForMaster`) use the station id as the drawing id so fontc
+can resolve each source to a station location.
 
 **Example:**
 ```python
-layer = glyph.addLayer(500)  # 500 units wide
-layer = glyph.addLayer(500, {"type": "DefaultForMaster", "master": master.id}, master.id)
+drawing = glyph.addDrawing(500)  # 500 units wide
+drawing = glyph.addDrawing(500, {"type": "DefaultForMaster", "master": station.id}, station.id)
 ```
 
-#### `addBackgroundLayer(foreground: [Layer](#layer)) -> [Layer](#layer)`
-#### `removeLayer(index: float | int) -> None`
-Remove a layer at the specified index
+#### `addBackgroundDrawing(foreground: [Drawing](#drawing)) -> [Drawing](#drawing)`
+#### `removeDrawing(index: float | int) -> None`
+Remove a drawing at the specified index
 
-#### `removeLayerById(id: str) -> None`
-Remove a layer by its backing-array ID.
+#### `removeDrawingById(id: str) -> None`
+Remove a drawing by its backing-array ID.
 
-#### `findLayerById(id: str) -> [Layer](#layer) | None`
-Find a layer by ID
+#### `findDrawingById(id: str) -> [Drawing](#drawing) | None`
+Find a drawing by ID
 
-#### `findLayerByMasterId(masterId: str) -> [Layer](#layer) | None`
-Find a layer by master ID
+#### `findDrawingByStationId(stationId: str) -> [Drawing](#drawing) | None`
+Find a drawing by station ID
 
-#### `calculateOutlineCompatibility() -> { compatible: boolean; layerCount: number; referenceLayerId?: string; incompatibleLayerIds: string[]; }`
-Compare outline structure across main layers (the same list shown in the UI).
+#### `calculateOutlineCompatibility() -> { compatible: boolean; drawingCount: number; referenceDrawingId?: string; incompatibleDrawingIds: string[]; }`
+Compare outline structure across main drawings (the same list shown in the UI).
 
 Source fingerprints include path `fip001-boolean` flags. When any path in
 this glyph or its component tree is a subtraction cutter, compatibility
@@ -536,7 +536,7 @@ also ANDs post-boolean (Linesweeper) fingerprints from the compile worker.
 
 ## FeatureVariationGlyph
 
-An authorable view over one conditional Glyphs feature-variation layer family.
+An authorable view over one conditional Glyphs feature-variation drawing family.
 
 ### Properties
 
@@ -550,29 +550,29 @@ for the corresponding font axis (same order as `font.axes`).
 ```python
 feature_variation.axisRules[0].min
 ```
-- **`layers`** (list[[Layer](#layer)])
+- **`drawings`** (list[[Drawing](#drawing)])
 
 ### Methods
 
 #### `setAxisRules(axisRules: list[dict]) -> FeatureVariationGlyph`
-Replace the shared Glyphs feature-variation rules on every raw family layer.
+Replace the shared Glyphs feature-variation rules on every raw family drawing.
 
-#### `findLayerById(id: str) -> [Layer](#layer) | None`
-#### `findLayerByMasterId(masterId: str) -> [Layer](#layer) | None`
-#### `addLayer(width: float | int, master: dict | None = None, requestedLayerId: str | None | None = None) -> [Layer](#layer)`
-#### `removeLayer(index: float | int) -> None`
-#### `removeLayerById(id: str) -> None`
+#### `findDrawingById(id: str) -> [Drawing](#drawing) | None`
+#### `findDrawingByStationId(stationId: str) -> [Drawing](#drawing) | None`
+#### `addDrawing(width: float | int, station: dict | None = None, requestedDrawingId: str | None | None = None) -> [Drawing](#drawing)`
+#### `removeDrawing(index: float | int) -> None`
+#### `removeDrawingById(id: str) -> None`
 #### `toString() -> str`
 ---
 
 
-## Layer
+## Drawing
 
-Layer in a glyph representing a master or intermediate design
+A glyph’s drawing at a station, or a free drawing at a location of its own
 
 **Access:**
 ```python
-layer = glyph.layers[0]
+drawing = glyph.drawings[0]
 ```
 
 ### Properties
@@ -584,49 +584,49 @@ layer = glyph.layers[0]
 - **`width`** (float | int)
 - **`lsb`** (float | int): Get the left sidebearing (LSB) - the distance from x=0 to the left edge of the bounding box
 - **`rsb`** (float | int): Get the right sidebearing (RSB) - the distance from the right edge of the bounding box to the advance width
-- **`linked`** (bool): Whether this layer is linked for editor multi-layer operations.
-This is editor-only runtime state keyed by glyph and layer ID; it is not persisted into font data.
+- **`linked`** (bool): Whether this drawing is linked for editor multi-drawing operations.
+This is editor-only runtime state keyed by glyph and drawing ID; it is not persisted into font data.
 - **`name`** (str | None)
 - **`id`** (str | None)
-- **`master`** (dict | None): Tagged layer-to-master link: `{ "type": "DefaultForMaster", "master": id }`,
-`"AssociatedWithMaster"`, or `"FreeFloating"` (master optional).
+- **`station`** (dict | None): Tagged drawing-to-station link: `{ "type": "DefaultForMaster", "master": id }`,
+`"AssociatedWithMaster"`, or `"FreeFloating"` (`master` optional).
 
 **Example:**
 ```python
-layer.master["type"]  # `type` is a Python keyword
-layer.master.master
+drawing.station["type"]  # `type` is a Python keyword
+drawing.station.master
 ```
 - **`smart_component_location`** (dict[str, float | int] | None): Smart-component location: glyph-axis tag → userspace value.
-- **`selection`** (list[SelectableLayerObject]): Current UI selection on this layer.
+- **`selection`** (list[SelectableDrawingObject]): Current UI selection on this drawing.
 Assign a node, anchor, component, guide, or a list of them to replace the selection.
 - **`color`** (dict | None): RGBA color channels `r`, `g`, `b`, `a`.
-- **`layer_index`** (float | int | None)
+- **`drawing_index`** (float | int | None)
 - **`is_background`** (bool | None)
-- **`background_layer_id`** (str | None)
-- **`location`** (dict[str, float | int] | None): Intermediate designspace location. Access axis tags as attributes
-(`layer.location.wght`). Absent when the layer sits at its master default.
+- **`background_drawing_id`** (str | None)
+- **`location`** (dict[str, float | int] | None): The free drawing’s own designspace location. Access axis tags as attributes
+(`drawing.location.wght`). Absent when the drawing sits at its station.
 - **`format_specific`** (dict | None)
 
 #### Read-Only Properties
 
 - **`guides`** (list[[Guide](#guide)] | None)
-- **`paths`** (list[[Path](#path)]): Direct path objects in this layer, ready to use without Shape.asPath()
+- **`paths`** (list[[Path](#path)]): Direct path objects in this drawing, ready to use without Shape.asPath()
 
 **Example:**
 ```python
-path = layer.paths[0]
+path = drawing.paths[0]
 ```
-- **`components`** (list[[Component](#component)]): Direct component objects in this layer, ready to use without Shape.asComponent()
+- **`components`** (list[[Component](#component)]): Direct component objects in this drawing, ready to use without Shape.asComponent()
 
 **Example:**
 ```python
-component = layer.components[0]
+component = drawing.components[0]
 ```
 - **`anchors`** (list[[Anchor](#anchor)] | None)
-- **`backgroundLayer`** ([Layer](#layer)): The paired background layer. Empty backgrounds are transient until a path
+- **`backgroundDrawing`** ([Drawing](#drawing)): The paired background drawing. Empty backgrounds are transient until a path
 or component is added, so merely accessing this property does not alter
 the glyph.
-- **`fingerprint`** (str): Returns a normalized outline-compatibility fingerprint for this layer.
+- **`fingerprint`** (str): Returns a normalized outline-compatibility fingerprint for this drawing.
 The fingerprint includes components, paths, and anchors, with anchors
 sorted by name and guides excluded.
 
@@ -652,27 +652,27 @@ Cheaper than full invalidateContentCaches() when only
 anchor/composition state has changed (not shapes/guides).
 
 #### `getAutomaticCompositionSourceCacheKey() -> object`
-#### `syncFromEditorLayerData(layerData: { width: number; height?: number; vertWidth?: number; shapes?: Unsafe[]; anchors?: Unsafe[]; guides?: Unsafe[]; format_specific?: Record<string, Unsafe>; }) -> None`
+#### `syncFromEditorDrawingData(drawingData: { width: number; height?: number; vertWidth?: number; shapes?: Unsafe[]; anchors?: Unsafe[]; guides?: Unsafe[]; format_specific?: Record<string, Unsafe>; }) -> None`
 Bulk-sync mutable properties from the outline editor's working
-copy into this layer's model data. Skips the expensive toJSON()
+copy into this drawing's model data. Skips the expensive toJSON()
 round-trip and layout recomputation that would otherwise occur
-for automatic-aligned layers.
+for automatic-aligned drawings.
 
 Must be called inside withSuppressedModelRecording so that the
 individual property mutations don't trigger recordAndMarkDirty.
 
 #### `clearEffectiveSidebearingKey(side: SidebearingSide) -> None`
 #### `setDirectSidebearing(side: SidebearingSide, value: float | int) -> None`
-#### `translateMaterializedBackgroundLayerContentsX(deltaX: float | int) -> None`
+#### `translateMaterializedBackgroundDrawingContentsX(deltaX: float | int) -> None`
 Keep an existing background drawing aligned with a foreground X shift.
 Virtual empty backgrounds remain unmaterialized and are intentionally ignored.
 
 #### `recomputeOwnMetricsKeys() -> bool`
-Resolve and apply this layer's own metrics keys (left/right)
+Resolve and apply this drawing's own metrics keys (left/right)
 without scanning the full font. Use during interactive editing
-(keyboard/mouse) where only the current layer needs updating.
+(keyboard/mouse) where only the current drawing needs updating.
 
-#### `isAutomaticAlignedLayer() -> bool`
+#### `isAutomaticAlignedDrawing() -> bool`
 #### `matchesAutomaticCompositionPreflight(sourceDataCache: WeakMap<object | None = None, AutomaticCompositionSourceData>) -> bool`
 In-memory preflight for migrating manual composites. The composition
 engine must be able to place every component, and the result must match
@@ -680,17 +680,17 @@ stored translations and width. Eligible layouts today: unattached
 non-mark bases (including ligatures, using LTR kerning between them),
 two or more components where every non-base attaches by anchors, or a
 single component whose referenced glyph is not a mark (Unicode general
-category does not start with M). Does not mutate the layer.
+category does not start with M). Does not mutate the drawing.
 
 #### `assignAutomaticCompositeKerningGroups() -> bool`
 Copy kerning groups from resolved automatic bases onto this glyph.
-Invoked only when enabling automatic alignment makes the layer automatic.
+Invoked only when enabling automatic alignment makes the drawing automatic.
 
 #### `getAutomaticComponentTargetAnchorOptions(component: [Component](#component)) -> list[str]`
 #### `rebuildAutomaticComposition(sourceDataCache: WeakMap<object | None = None, AutomaticCompositionSourceData>) -> bool`
-#### `applyAutomaticCompositionToLayerData(layerData: { shapes?: Unsafe[]; width?: number; }, sourceDataCache: WeakMap<object | None = None, AutomaticCompositionSourceData>) -> bool`
-Apply automatic component anchoring and derived width to mutable layer
-data without mutating the model layer itself.
+#### `applyAutomaticCompositionToDrawingData(drawingData: { shapes?: Unsafe[]; width?: number; }, sourceDataCache: WeakMap<object | None = None, AutomaticCompositionSourceData>) -> bool`
+Apply automatic component anchoring and derived width to mutable drawing
+data without mutating the model drawing itself.
 
 This is used by live editor interactions, such as resize-box scaling,
 where component transforms are already edited on a working copy and only
@@ -699,12 +699,12 @@ the automatic translations and width need to be refreshed.
 #### `resolveMetricsKey(side: SidebearingSide, stack: Set<string>) -> MetricsKeyResolution`
 #### `applySidebearingInput(side: SidebearingSide, rawValue: str) -> MetricsKeyResolution`
 #### `getPathSegment() -> list[(string | number)]`
-#### `getMaster() -> [Master](#master) | None`
-Get the resolved master object for this layer.
-Returns a Master only when this layer is a DefaultForMaster layer.
+#### `getStation() -> [Station](#station) | None`
+Get the resolved station object for this drawing.
+Returns a Station only when this drawing is a DefaultForMaster drawing.
 
 #### `usesAutomaticLigatureKerningPair(firstKey: str, secondKey: str) -> bool`
-True when this automatic layer stacks unattached bases that resolve to
+True when this automatic drawing stacks unattached bases that resolve to
 the kerning pair (`glyph` or `@group` keys).
 
 #### `usesAutomaticLigatureKerningGroupMembership(pairSide: 'first' | 'second', glyphNames: Iterable<string>) -> bool`
@@ -714,51 +714,51 @@ kern-group membership just changed (`first` = left of the pair).
 #### `getComputedName() -> str`
 #### `findAnchor(anchorName: str) -> [Anchor](#anchor) | None`
 #### `computedAnchors() -> ComputedAnchorMap`
-Anchors inherited from this layer's component stack, in this layer's
-coordinate space. Stored anchors on this layer are not included; later
+Anchors inherited from this drawing's component stack, in this drawing's
+coordinate space. Stored anchors on this drawing are not included; later
 components overwrite earlier names. Nested components are walked
-recursively unless this layer already stores an incoming attachment
+recursively unless this drawing already stores an incoming attachment
 anchor (`_top`, `_bottom`, …): those nested shapes are drawings, not
 identity, so their anchors are omitted.
 
 **Example:**
 ```python
-anchors = layer.computedAnchors()
+anchors = drawing.computedAnchors()
 top = anchors["top"]
 ```
 
 #### `getPluginSetting(pluginId: str, settingId: str) -> unknown`
 #### `setPluginSetting(pluginId: str, settingId: str, value: unknown) -> None`
 #### `addShape(shape: Babelfont.Shape) -> [Shape](#shape)`
-Add a new shape to the layer
+Add a new shape to the drawing
 
 #### `addPath(closed: bool | dict, Unsafe>) -> [Path](#path)`
-Add a new path to the layer
+Add a new path to the drawing
 
 **Example:**
 ```python
-path = layer.addPath(closed=True)
+path = drawing.addPath(closed=True)
 ```
 
 #### `addComponent(reference: str, transform: list[float | int] | dict | None = None) -> [Component](#component)`
-Add a new component to the layer. If the layer is then eligible for
+Add a new component to the drawing. If the drawing is then eligible for
 automatic composition (component-only, and the engine can place every
 component — including unattached non-mark bases as a ligature), automatic
-alignment is enabled on every component and the layer is recomposed in
+alignment is enabled on every component and the drawing is recomposed in
 the same transaction.
 
 **Example:**
 ```python
-component = layer.addComponent("A")
+component = drawing.addComponent("A")
 # With transformation matrix (legacy 6-element format converted to DecomposedAffine)
-component = layer.addComponent("acutecomb", [1, 0, 0, 1, 250, 500])
+component = drawing.addComponent("acutecomb", [1, 0, 0, 1, 250, 500])
 ```
 
 #### `insertShapeAt(index: float | int, shape: Babelfont.Shape) -> [Shape](#shape)`
 Insert a new shape at the specified index
 
 #### `moveShapes(indexes: list[float | int], command: ShapeZOrderCommand) -> Map<number, number>`
-Move selected shapes as a unit in z-order. Linked layers with a matching
+Move selected shapes as a unit in z-order. Linked drawings with a matching
 fingerprint receive the same index permutation.
 
 `backward` / `forward` swap each selected index with the adjacent
@@ -776,11 +776,11 @@ Connect two open-path endpoints or close a single open path by merging its endpo
 Remove a shape at the specified index
 
 #### `addAnchor(x: float | int, y: float | int, name: str | None = None) -> [Anchor](#anchor)`
-Add a new anchor to the layer
+Add a new anchor to the drawing
 
 **Example:**
 ```python
-anchor = layer.addAnchor(250, 700, "top")
+anchor = drawing.addAnchor(250, 700, "top")
 ```
 
 #### `addGuide(pos: dict, name: str | None = None, color: dict | None = None) -> [Guide](#guide)`
@@ -800,28 +800,28 @@ Handles the babelfont node format where:
 #### `calculateShapeBounds(shapes: list[Unsafe] | None, parentTransform: list[float | int]) -> { minX: number; minY: number; maxX: number; maxY: number; width: number; height: number; } | None`
 #### `calculateSvgPathBounds(pathData: str) -> { minX: number; minY: number; maxX: number; maxY: number; width: number; height: number; } | None`
 #### `getAllPaths() -> list[Babelfont.Path]`
-Get all paths in this layer including transformed paths from components (recursively flattened)
+Get all paths in this drawing including transformed paths from components (recursively flattened)
 
-#### `calculateBoundingBox(layerData: Unsafe, includeAnchors: bool, font: [Font](#font) | None = None, masterId: str | None = None, matchingSource: [Layer](#layer) | None = None) -> { minX: number; minY: number; maxX: number; maxY: number; width: number; height: number; } | None`
-Calculate bounding box for layer data
+#### `calculateBoundingBox(drawingData: Unsafe, includeAnchors: bool, font: [Font](#font) | None = None, stationId: str | None = None, matchingSource: [Drawing](#drawing) | None = None) -> { minX: number; minY: number; maxX: number; maxY: number; width: number; height: number; } | None`
+Calculate bounding box for drawing data
 
 #### `getBoundingBox(includeAnchors: bool) -> { minX: number; minY: number; maxX: number; maxY: number; width: number; height: number; } | None`
-Calculate bounding box for this layer
+Calculate bounding box for this drawing
 
 #### `intersectPathsWithLine(paths: Array<{ nodes?: Unsafe[]; closed?: boolean }>, p1: { x: number; y: number }, p2: { x: number; y: number }) -> Array<{ x: number; y: number; t: number }>`
 Intersections of a line segment with already-flattened paths.
 Points are sorted by t along the line (0 at p1, 1 at p2).
 
 #### `getIntersectionsOnLine(p1: { x: number; y: number }, p2: { x: number; y: number }, includeComponents: bool) -> Array<{ x: number; y: number; t: number }>`
-Calculate intersections between a line segment and all paths in this layer
+Calculate intersections between a line segment and all paths in this drawing
 
 #### `getSidebearingsAtHeight(y: float | int) -> { left: number; right: number; } | None`
 Calculate sidebearings at a given Y height by measuring distance from glyph edges to first/last outline intersections
 
-#### `getMatchingLayerOnGlyph(glyphName: str) -> [Layer](#layer) | None`
-Find the exact matching stored layer on another glyph for this layer's
+#### `getMatchingDrawingOnGlyph(glyphName: str) -> [Drawing](#drawing) | None`
+Find the exact matching stored drawing on another glyph for this drawing's
 effective designspace location.
-Background layers resolve through their partner foreground layer.
+Background drawings resolve through their partner foreground drawing.
 
 #### `toString() -> str`
 ---
@@ -833,7 +833,7 @@ Shape wrapper that can contain either a Component or a Path
 
 **Access:**
 ```python
-path = layer.paths[0]
+path = drawing.paths[0]
 shape = path.parent()
 ```
 
@@ -858,11 +858,11 @@ Get as Path (throws if not a path)
 
 ## Path
 
-Path (contour) in a layer
+Path (contour) in a drawing
 
 **Access:**
 ```python
-path = layer.paths[0]
+path = drawing.paths[0]
 ```
 
 ### Properties
@@ -944,7 +944,7 @@ node = path.nodes[0]
 
 **Access:**
 ```python
-component = layer.components[0]
+component = drawing.components[0]
 ```
 
 ### Properties
@@ -966,7 +966,7 @@ component.transform.translation = [10, 0]
 - **`anchor`** (str | None): Glyphs attachment anchor name stored in format_specific.
 - **`automaticAlignment`** (bool): Whether this component explicitly opts into Glyphs automatic alignment.
 Unlike isAutomaticAligned(), this is per-component metadata and does not
-depend on the rest of its containing layer.
+depend on the rest of its containing drawing.
 - **`format_specific`** (dict | None)
 
 #### Read-Only Properties
@@ -977,12 +977,12 @@ depend on the rest of its containing layer.
 
 #### `getPathSegment() -> list[(string | number)]`
 #### `isAutomaticAligned() -> bool`
-Returns whether every component in the containing layer explicitly opts
+Returns whether every component in the containing drawing explicitly opts
 into Glyphs automatic alignment.
 
 #### `hasExplicitManualAlignment() -> bool`
 Returns whether this component itself carries Glyphs' explicit manual
-alignment metadata, independent of the layer's effective state.
+alignment metadata, independent of the drawing's effective state.
 
 #### `toAffineArray() -> list[float | int]`
 Convert transform to affine matrix array [a, b, c, d, e, f]
@@ -992,7 +992,7 @@ Uses the proper DecomposedAffineTransform utility
 #### `decompose() -> float | int | None`
 Replace this component with its recursively flattened outlines in place.
 Nested components are expanded with accumulated transforms. Returns the
-number of paths inserted, or `None` if the component is not on a layer.
+number of paths inserted, or `None` if the component is not on a drawing.
 
 **Example:**
 ```python
@@ -1001,18 +1001,18 @@ count = component.decompose()
 
 #### `getTransformedPaths() -> list[Babelfont.Path]`
 Get all paths from this component with transforms applied recursively
-Automatically determines the correct master by walking up the parent chain
+Automatically determines the correct station by walking up the parent chain
 
 ---
 
 
 ## Anchor
 
-Anchor point in a layer
+Anchor point in a drawing
 
 **Access:**
 ```python
-anchor = layer.anchors[0]
+anchor = drawing.anchors[0]
 ```
 
 ### Properties
@@ -1038,13 +1038,13 @@ anchor = layer.anchors[0]
 
 ## Guide
 
-Guideline in a layer or master
+Guideline in a drawing or station
 
 **Access:**
 ```python
-guide = layer.guides[0]
+guide = drawing.guides[0]
 # or
-guide = master.guides[0]
+guide = station.guides[0]
 ```
 
 ### Properties
@@ -1107,33 +1107,33 @@ All properties are read/write:
 ---
 
 
-## Master
+## Station
 
-Master/source in a design space
+A station: a font-wide named location in the designspace that carries metrics, kerning and guides
 
 **Access:**
 ```python
-master = font.masters[0]
+station = font.stations[0]
 # or
-master = font.findMaster("master-id")
+station = font.findStation("station-id")
 ```
 
 ### Properties
 
 #### Read/Write Properties
 
-- **`name`** (I18NDictionary): Localized master name. Access language tags as attributes
-(`master.name.dflt`). Do not use `.get()`.
+- **`name`** (I18NDictionary): Localized station name. Access language tags as attributes
+(`station.name.dflt`). Do not use `.get()`.
 - **`id`** (str)
-- **`location`** (dict[str, float | int] | None): Master location in designspace. Access axis tags as attributes
-(`master.location.wght`).
+- **`location`** (dict[str, float | int] | None): Station location in designspace. Access axis tags as attributes
+(`station.location.wght`).
 
 **Example:**
 ```python
-print(master.location)
-print(master.location.wght)
+print(station.location)
+print(station.location.wght)
 ```
-- **`metrics`** (MasterMetrics): Per-master vertical metrics. Access as attributes: `XHeight`, `CapHeight`,
+- **`metrics`** (StationMetrics): Per-station vertical metrics. Access as attributes: `XHeight`, `CapHeight`,
 `Ascender`, `Descender`, `ItalicAngle`, `HheaAscender`, `HheaDescender`,
 `HheaLineGap`, `WinAscent`, `WinDescent`, `TypoAscender`, `TypoDescender`,
 `TypoLineGap`, `SubscriptXSize`, `SubscriptYSize`, `SubscriptXOffset`,
@@ -1144,25 +1144,25 @@ print(master.location.wght)
 
 **Example:**
 ```python
-xh = master.metrics.XHeight
-master.metrics.Ascender = 800
+xh = station.metrics.XHeight
+station.metrics.Ascender = 800
 ```
 - **`kerning`** (dict): LTR kerning: pair key `"left:right"` → value. Keys are glyph names or
 `@groupName` (first vs second group from key position).
 
 **Example:**
 ```python
-master.kerning["A:V"] = -80
+station.kerning["A:V"] = -80
 ```
 - **`kerning_rtl`** (dict): RTL kerning: pair key `"first:second"` → value, same operand rules
 as LTR.
 
 **Example:**
 ```python
-master.kerning_rtl["reh-ar:alef-ar"] = -80
+station.kerning_rtl["reh-ar:alef-ar"] = -80
 ```
-- **`custom_ot_values`** (dict[str, Any] | None): Per-master OpenType table overrides as a live dict (not a list).
-Same keys as `Font.custom_ot_values`. Master-varying vertical metrics
+- **`custom_ot_values`** (dict[str, Any] | None): Per-station OpenType table overrides as a live dict (not a list).
+Same keys as `Font.custom_ot_values`. Station-varying vertical metrics
 belong on `metrics`, not here.
 - **`format_specific`** (dict | None)
 
@@ -1175,7 +1175,7 @@ belong on `metrics`, not here.
 #### `getPathSegment() -> list[(string | number)]`
 #### `addGuide(pos: dict, name: str | None = None, color: dict | None = None) -> [Guide](#guide)`
 #### `removeGuide(index: float | int) -> None`
-#### `reinterpolateLayers() -> Promise<void>`
+#### `reinterpolateDrawings() -> Promise<void>`
 #### `delete() -> Promise<boolean>`
 #### `toString() -> str`
 ---
@@ -1224,11 +1224,11 @@ font = Font()
 # Create a new glyph
 glyph = font.addGlyph("myGlyph", "Base")
 
-# Add a layer
-layer = glyph.addLayer(500)  # 500 units wide
+# Add a drawing
+drawing = glyph.addDrawing(500)  # 500 units wide
 
 # Create a rectangle path
-path = layer.addPath(closed=True)
+path = drawing.addPath(closed=True)
 path.appendNode(100, 0, "Line")
 path.appendNode(400, 0, "Line")
 path.appendNode(400, 700, "Line")
@@ -1245,16 +1245,16 @@ font = Font()
 # Find glyph A
 glyph_a = font.findGlyph("A")
 if glyph_a:
-    layer = glyph_a.layers[0]
+    drawing = glyph_a.drawings[0]
     
     # Modify all nodes
-    for path in layer.paths:
+    for path in drawing.paths:
         for node in path.nodes:
             node.x += 10  # Shift 10 units right
             node.y += 5   # Shift 5 units up
     
     # Add an anchor
-    layer.addAnchor(250, 700, "top")
+    drawing.addAnchor(250, 700, "top")
     
     print(f"Modified {glyph_a.name}")
 ```
@@ -1266,14 +1266,14 @@ font = Font()
 
 # Create a glyph with a component
 glyph = font.addGlyph("Aacute", "Base")
-layer = glyph.addLayer(600)
+drawing = glyph.addDrawing(600)
 
 # Add base letter component
-base = layer.addComponent("A")
+base = drawing.addComponent("A")
 
 # Add accent component with transformation
 # Transform: [scaleX, skewX, skewY, scaleY, translateX, translateY]
-accent = layer.addComponent("acutecomb", [1, 0, 0, 1, 250, 500])
+accent = drawing.addComponent("acutecomb", [1, 0, 0, 1, 250, 500])
 
 print(f"Created {glyph.name} with components")
 ```
@@ -1286,9 +1286,9 @@ font = Font()
 # Count nodes across all glyphs
 total_nodes = 0
 for glyph in font.glyphs:
-    if glyph.layers:
-        for layer in glyph.layers:
-            for path in layer.paths:
+    if glyph.drawings:
+        for drawing in glyph.drawings:
+            for path in drawing.paths:
                 total_nodes += len(path.nodes)
 
 print(f"Total nodes in font: {total_nodes}")
@@ -1305,12 +1305,12 @@ if font.axes:
     for axis in font.axes:
         print(f"  {axis.tag}: {axis.min} - {axis.max} (default: {axis.default})")
     
-    # Check masters
-    if font.masters:
-        print(f"\nFont has {len(font.masters)} masters:")
-        for master in font.masters:
-            location_str = ", ".join(f"{k}={v}" for k, v in (master.location or {}).items())
-            print(f"  Master: {location_str}")
+    # Check stations
+    if font.stations:
+        print(f"\nFont has {len(font.stations)} stations:")
+        for station in font.stations:
+            location_str = ", ".join(f"{k}={v}" for k, v in (station.location or {}).items())
+            print(f"  Station: {location_str}")
 ```
 
 ### Example 6: Batch Processing Glyphs
@@ -1322,20 +1322,20 @@ font = Font()
 scale_factor = 1.5
 
 for glyph in font.glyphs:
-    if glyph.layers:
-        for layer in glyph.layers:
+    if glyph.drawings:
+        for drawing in glyph.drawings:
             # Scale width
-            layer.width *= scale_factor
+            drawing.width *= scale_factor
             
             # Scale all outline paths
-            for path in layer.paths:
+            for path in drawing.paths:
                 for node in path.nodes:
                     node.x *= scale_factor
                     node.y *= scale_factor
             
             # Scale anchors
-            if layer.anchors:
-                for anchor in layer.anchors:
+            if drawing.anchors:
+                for anchor in drawing.anchors:
                     anchor.x *= scale_factor
                     anchor.y *= scale_factor
 
@@ -1346,14 +1346,14 @@ print(f"Scaled {len(font.glyphs)} glyphs by {scale_factor}x")
 
 ```python
 font = Font()
-master = font.masters[0]
+station = font.stations[0]
 
 # Pair-key kerning
-master.kerning["A:V"] = -90
-master.kerning["A:W"] = -70
+station.kerning["A:V"] = -90
+station.kerning["A:W"] = -70
 
 # Read values
-av_value = master.kerning["A:V"]
+av_value = station.kerning["A:V"]
 print(f"A/V kerning: {av_value}")
 
 # Update localized names
@@ -1399,10 +1399,10 @@ del feature_items[0]
 
 ```python
 # Use the filtered convenience collections when you know what you want
-for path in layer.paths:
+for path in drawing.paths:
     # Work with path
 
-for component in layer.components:
+for component in drawing.components:
     # Work with component
 ```
 
@@ -1410,9 +1410,9 @@ for component in layer.components:
 
 ```python
 # Check for optional properties
-if glyph.layers:
-    for layer in glyph.layers:
-        for path in layer.paths:
+if glyph.drawings:
+    for drawing in glyph.drawings:
+        for path in drawing.paths:
             for node in path.nodes:
                 print(f"Node at ({node.x}, {node.y})")
 ```
@@ -1440,12 +1440,12 @@ font.names.family_name = {
 
 ```python
 # Direct access (may fail if properties are None)
-# glyph.layers[0].paths[0].nodes  # DON'T DO THIS
+# glyph.drawings[0].paths[0].nodes  # DON'T DO THIS
 
 # Safe access with checks:
-layer = glyph.layers[0] if glyph.layers else None
-if layer and layer.paths:
-    path = layer.paths[0]
+drawing = glyph.drawings[0] if glyph.drawings else None
+if drawing and drawing.paths:
+    path = drawing.paths[0]
     nodes = path.nodes
     print(f"Path has {len(nodes)} nodes")
 ```
@@ -1458,26 +1458,26 @@ if layer and layer.paths:
 
 ### Common Issues
 
-**Q: Why does `glyph.layers[0].paths[0].nodes` fail?**
+**Q: Why does `glyph.drawings[0].paths[0].nodes` fail?**
 
 A: Optional properties may be `None`. Use safe access:
 ```python
 # Check each step
-if glyph.layers and len(glyph.layers) > 0:
-    layer = glyph.layers[0]
-    if layer.paths and len(layer.paths) > 0:
-        path = layer.paths[0]
+if glyph.drawings and len(glyph.drawings) > 0:
+    drawing = glyph.drawings[0]
+    if drawing.paths and len(drawing.paths) > 0:
+        path = drawing.paths[0]
         nodes = path.nodes  # Now safe to access
 ```
 
-**Q: How do I access only paths or only components in a layer?**
+**Q: How do I access only paths or only components in a drawing?**
 
-A: Use `layer.paths` and `layer.components` directly:
+A: Use `drawing.paths` and `drawing.components` directly:
 ```python
-for path in layer.paths:
+for path in drawing.paths:
     print(len(path.nodes))
 
-for component in layer.components:
+for component in drawing.components:
     print(component.reference)
 ```
 

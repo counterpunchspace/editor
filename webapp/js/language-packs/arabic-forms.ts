@@ -125,8 +125,8 @@ export function designerLanguageSystems(
 }
 
 function componentNames(glyph: Glyph | undefined): string[] {
-    const layer = (glyph?.layers || []).find((item) => !item.is_background);
-    return (layer?.components || [])
+    const drawing = (glyph?.drawings || []).find((item) => !item.is_background);
+    return (drawing?.components || [])
         .map((component) => component.reference)
         .filter((name): name is string => Boolean(name));
 }

@@ -27,6 +27,22 @@ When docs disagree, this order wins:
 
 Before reporting a change as done, and before any commit the user asks for, summarize it with Gortex: `change` with `operation: "detect"`, `target: {repo: "editor"}`, `options: {scope: "all"}`. Check that the changed symbols and risk match what you intended, and report HIGH or CRITICAL risk to the user. Then run the narrowest relevant tests (see Commands). Do not use `gitnexus_detect_changes`.
 
+## Terminology: stations and drawings
+
+The editor uses the type design terms pinned in the workspace `../AGENTS.md` (“Type design terms”): **station** (was master), **drawing** (was a glyph’s layer), **free drawing** (was intermediate or brace layer), **background drawing**, **variation**, **instance**, **location**, and **layer** only for color-font layers. Use them in new code, identifiers, UI, docs, tests and the Python API. Never add the old names back as aliases.
+
+The rename stops at Babelfont and at every format or wire boundary. These keep the old names, because files, rooms, plugins or another repo read them:
+
+- Babelfont data and types: `Babelfont.Layer`, `Babelfont.Master`, JSON keys `masters`, `layers`, `master`, `background_layer_id`, and the tagged layer type `{ type: 'DefaultForMaster' | 'AssociatedWithMaster' | 'FreeFloating', master: id }`. So a model drawing’s station id is `drawing.station.master`, and raw layer JSON is `layer.master.master`.
+- Rust/WASM in `babelfont-fontc-build/` and the payload keys it reads or writes: `layerId`, `layerData`, `layerTargets`, `layerOperations`, `mastersOperation`, `sourceMasterId`, `newMasterId`, `copyIntermediateLayers`, and `master`, `masters`, `layer`, `layers` in batch payloads.
+- Y.Doc maps and change-log paths (`glyphs.<name>.layers.<id>…`, `layerOrder`).
+- Collab protocol fields shared with `collab`: `changedLayerIds`, `originatingLayerId`, `workerReplayTargets[].layerId`.
+- Clipboard JSON (`masterIndex`) shared with `tools/glyphs/`, and the Fontra, UFO, Glyphs and designspace adapters.
+- Settings that plugins store in fonts under their own ids, such as Harakat’s `minimum_by_master`. Plugin contracts themselves use the new names since contract 2 (`filter_drawing_json`, `ctx.station`, `stationId`, `station_id`).
+- `localStorage` and `sessionStorage` key strings, so stored settings survive.
+
+Model objects and raw JSON share these shapes, so mind which one you hold. `font.stations`, `glyph.drawings` and `drawing.station` exist only on model objects (`babelfont-model.ts`); raw data and Y.Doc snapshots have `masters`, `layers` and `master`. Never cast a model object to a `Babelfont.*` type (for example `window.currentFontModel as unknown as Babelfont.Font`): the type checker then accepts `font.masters`, which is `undefined` at runtime. Use `plainRecords()` or `toJSON()` when you need raw records from the model. When a boundary needs an old key, convert explicitly at the boundary instead of reusing the old name inside the editor.
+
 ## Code map
 
 Paths are under `webapp/js/` unless they start at the repo root.

@@ -4,7 +4,7 @@ Counterpunch splits work into focused views so you are not staring at every cont
 
 ![Labeled main views in the Counterpunch workspace](images/workspace.png)
 
-- **Font Info** (`Cmd/Ctrl+Shift+I`) holds General, Names, Axes, Masters, Instances, Custom OT Values, and OpenType Features.
+- **Font Info** (`Cmd/Ctrl+Shift+I`) holds General, Names, Axes, Stations, Instances, Custom OT Values, and OpenType Features.
 - **Overview** (`Cmd/Ctrl+Shift+O`) shows all glyphs at once for scanning and selection. Glyph filters allow to look at a shorter selection only.
 - **Editor** (`Cmd/Ctrl+Shift+E`) is the main drawing canvas. You start by typing text and double-click on glyphs to edit them.
 - **Assistant** (`Cmd/Ctrl+Shift+A`) inspects the font, drafts scripts and glyph filters, and can change font data (if you allow it).

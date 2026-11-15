@@ -672,13 +672,13 @@ describe('FontInfo feature code compilation scheduling', () => {
         const runWithoutRecording = jest.fn((fn) => fn());
         const applySyntheticChangeSet = jest.fn();
         const applyLocalGeneratedYjsUpdate = jest.fn((_update, operations) => {
-            const mastersOperation = operations.find(
+            const stationsOperation = operations.find(
                 (operation) =>
                     Array.isArray(operation.path) &&
                     operation.path[0] === 'masters'
             );
-            if (mastersOperation) {
-                window.currentFontModel.masters = mastersOperation.newValue;
+            if (stationsOperation) {
+                window.currentFontModel.stations = stationsOperation.newValue;
             }
         });
         const markDirty = jest.fn();
@@ -1374,7 +1374,7 @@ describe('FontInfo feature code compilation scheduling', () => {
             features: {
                 features: []
             },
-            masters: [
+            stations: [
                 {
                     id: 'M1',
                     name: { dflt: 'Regular' },
@@ -1409,10 +1409,10 @@ describe('FontInfo feature code compilation scheduling', () => {
 
         fontInfoManager.switchTab('masters');
 
-        const masterSidebarText = document.querySelector(
+        const stationSidebarText = document.querySelector(
             '.fontinfo-record-item-secondary'
         );
-        expect(masterSidebarText.textContent).toBe('wght:400/400');
+        expect(stationSidebarText.textContent).toBe('wght:400/400');
         expect(
             document.querySelector('[data-font-field="masters.0.id"]')
         ).toBeNull();
@@ -1422,12 +1422,12 @@ describe('FontInfo feature code compilation scheduling', () => {
             )
         ).toBeNull();
 
-        const masterMetricInput = document.querySelector(
+        const stationMetricInput = document.querySelector(
             '[data-font-field="masters.0.metrics.ascender"] .localized-string-input'
         );
-        masterMetricInput.focus();
-        masterMetricInput.value = '825';
-        masterMetricInput.dispatchEvent(
+        stationMetricInput.focus();
+        stationMetricInput.value = '825';
+        stationMetricInput.dispatchEvent(
             new KeyboardEvent('keydown', {
                 key: 'Enter',
                 bubbles: true
@@ -1435,7 +1435,7 @@ describe('FontInfo feature code compilation scheduling', () => {
         );
 
         expect(applySyntheticChangeSet).toHaveBeenCalledWith(
-            'Edit master metric',
+            'Edit station metric',
             [
                 {
                     op: 'set',
@@ -1520,7 +1520,7 @@ describe('FontInfo feature code compilation scheduling', () => {
             features: {
                 features: []
             },
-            masters: [
+            stations: [
                 {
                     id: 'M1',
                     name: { dflt: 'Regular' },
@@ -1545,19 +1545,19 @@ describe('FontInfo feature code compilation scheduling', () => {
 
         fontInfoManager.switchTab('masters');
 
-        let masterMetricInput = document.querySelector(
+        let stationMetricInput = document.querySelector(
             '[data-font-field="masters.0.metrics.ascender"] .localized-string-input'
         );
-        expect(masterMetricInput.value).toBe('800');
+        expect(stationMetricInput.value).toBe('800');
 
-        window.currentFontModel.masters[0].metrics.ascender = 825;
+        window.currentFontModel.stations[0].metrics.ascender = 825;
         window.dispatchEvent(new CustomEvent('fontModelSync'));
         jest.runOnlyPendingTimers();
 
-        masterMetricInput = document.querySelector(
+        stationMetricInput = document.querySelector(
             '[data-font-field="masters.0.metrics.ascender"] .localized-string-input'
         );
-        expect(masterMetricInput.value).toBe('825');
+        expect(stationMetricInput.value).toBe('825');
 
         fontInfoManager.switchTab('instances');
 
@@ -1606,7 +1606,7 @@ describe('FontInfo feature code compilation scheduling', () => {
             features: {
                 features: []
             },
-            masters: [
+            stations: [
                 {
                     id: 'M1',
                     name: { dflt: 'Regular' },
@@ -1630,24 +1630,28 @@ describe('FontInfo feature code compilation scheduling', () => {
         jest.runOnlyPendingTimers();
 
         fontInfoManager.switchTab('masters');
-        const masterPane = document.getElementById('fontinfo-masters-fields');
-        const masterSidebar = document.querySelector(
-            '#fontinfo-masters-content .fontinfo-records-sidebar'
+        const stationPane = document.getElementById('fontinfo-stations-fields');
+        const stationSidebar = document.querySelector(
+            '#fontinfo-stations-content .fontinfo-records-sidebar'
         );
-        const masterList = document.querySelector(
-            '#fontinfo-masters-content .fontinfo-records-list'
+        const stationList = document.querySelector(
+            '#fontinfo-stations-content .fontinfo-records-list'
         );
-        const masterItem = document.querySelector(
-            '#fontinfo-masters-content .fontinfo-record-item'
+        const stationItem = document.querySelector(
+            '#fontinfo-stations-content .fontinfo-record-item'
         );
-        expect(masterPane.classList.contains('fontinfo-records-pane')).toBe(
+        expect(stationPane.classList.contains('fontinfo-records-pane')).toBe(
             true
         );
-        expect(masterSidebar.classList.contains('features-sidebar')).toBe(
+        expect(stationSidebar.classList.contains('features-sidebar')).toBe(
             false
         );
-        expect(masterList.classList.contains('editor-layers-list')).toBe(true);
-        expect(masterItem.classList.contains('editor-layer-item')).toBe(true);
+        expect(stationList.classList.contains('editor-drawings-list')).toBe(
+            true
+        );
+        expect(stationItem.classList.contains('editor-drawing-item')).toBe(
+            true
+        );
 
         fontInfoManager.switchTab('instances');
         const instancePane = document.getElementById(
@@ -1668,10 +1672,12 @@ describe('FontInfo feature code compilation scheduling', () => {
         expect(instanceSidebar.classList.contains('features-sidebar')).toBe(
             false
         );
-        expect(instanceList.classList.contains('editor-layers-list')).toBe(
+        expect(instanceList.classList.contains('editor-drawings-list')).toBe(
             true
         );
-        expect(instanceItem.classList.contains('editor-layer-item')).toBe(true);
+        expect(instanceItem.classList.contains('editor-drawing-item')).toBe(
+            true
+        );
     });
 
     test('masters list controls add, remove, and reorder through the patch funnel', async () => {
@@ -1695,29 +1701,29 @@ describe('FontInfo feature code compilation scheduling', () => {
         const endTransaction = jest.fn();
         const updatePropertiesUI = jest.fn().mockResolvedValue(undefined);
         const applySyntheticChangeSet = jest.fn((_label, operations) => {
-            const mastersOperation = operations.find(
+            const stationsOperation = operations.find(
                 (operation) =>
                     Array.isArray(operation.path) &&
                     operation.path[0] === 'masters'
             );
-            if (mastersOperation) {
-                window.currentFontModel.masters = mastersOperation.newValue;
+            if (stationsOperation) {
+                window.currentFontModel.stations = stationsOperation.newValue;
             }
         });
-        const addMaster = jest.fn(async function () {
-            const createdMaster = {
+        const addStation = jest.fn(async function () {
+            const createdStation = {
                 id: 'master-3',
                 name: { dflt: 'Master 3' },
                 location: { wght: 400 },
                 metrics: { ascender: 820 },
                 kerning: {}
             };
-            this.masters = [...this.masters, createdMaster];
-            return createdMaster;
+            this.stations = [...this.stations, createdStation];
+            return createdStation;
         });
-        const removeMastersByIds = jest.fn(async function (masterIds) {
-            this.masters = this.masters.filter(
-                (master) => !masterIds.includes(master.id)
+        const removeStationsByIds = jest.fn(async function (stationIds) {
+            this.stations = this.stations.filter(
+                (station) => !stationIds.includes(station.id)
             );
             return true;
         });
@@ -1736,7 +1742,7 @@ describe('FontInfo feature code compilation scheduling', () => {
             features: {
                 features: []
             },
-            masters: [
+            stations: [
                 {
                     id: 'M1',
                     name: { dflt: 'Regular' },
@@ -1752,8 +1758,8 @@ describe('FontInfo feature code compilation scheduling', () => {
                     kerning: {}
                 }
             ],
-            addMaster,
-            removeMastersByIds
+            addStation,
+            removeStationsByIds
         };
         window.patchSyncEngine = {
             beginTransaction,
@@ -1769,21 +1775,23 @@ describe('FontInfo feature code compilation scheduling', () => {
         jest.runOnlyPendingTimers();
         fontInfoManager.switchTab('masters');
 
-        const selectedMasterItems = document.querySelectorAll(
-            '#fontinfo-masters-content .fontinfo-record-item'
+        const selectedStationItems = document.querySelectorAll(
+            '#fontinfo-stations-content .fontinfo-record-item'
         );
-        selectedMasterItems[1].click();
+        selectedStationItems[1].click();
 
-        const addMasterButton = document.querySelector(
-            '[data-fontinfo-list-action="masters-add"]'
+        const addStationButton = document.querySelector(
+            '[data-fontinfo-list-action="stations-add"]'
         );
-        addMasterButton.focus();
-        addMasterButton.click();
+        addStationButton.focus();
+        addStationButton.click();
 
-        const modal = document.querySelector('.fontinfo-master-location-modal');
+        const modal = document.querySelector(
+            '.fontinfo-station-location-modal'
+        );
         expect(modal).toBeTruthy();
         const createButton = modal.querySelector(
-            '.fontinfo-master-location-create'
+            '.fontinfo-station-location-create'
         );
         createButton.click();
         await Promise.resolve();
@@ -1791,55 +1799,55 @@ describe('FontInfo feature code compilation scheduling', () => {
         jest.runOnlyPendingTimers();
         await Promise.resolve();
 
-        expect(addMaster).toHaveBeenCalledWith(
+        expect(addStation).toHaveBeenCalledWith(
             undefined,
             expect.objectContaining({
-                metricTemplateMasterId: 'M2',
+                metricTemplateStationId: 'M2',
                 location: { wght: 700 }
             })
         );
-        expect(window.currentFontModel.masters).toHaveLength(3);
+        expect(window.currentFontModel.stations).toHaveLength(3);
 
-        const removeMasterButton = document.querySelector(
-            '[data-fontinfo-list-action="masters-remove"]'
+        const removeStationButton = document.querySelector(
+            '[data-fontinfo-list-action="stations-remove"]'
         );
-        removeMasterButton.focus();
+        removeStationButton.focus();
         fontInfoManager.setDeleteConfirmationHandler(true);
-        removeMasterButton.click();
+        removeStationButton.click();
 
         await Promise.resolve();
 
-        expect(removeMastersByIds).toHaveBeenCalledWith(['master-3']);
-        expect(window.currentFontModel.masters).toHaveLength(2);
+        expect(removeStationsByIds).toHaveBeenCalledWith(['master-3']);
+        expect(window.currentFontModel.stations).toHaveLength(2);
 
-        const masterItems = document.querySelectorAll(
-            '#fontinfo-masters-content .fontinfo-record-item'
+        const stationItems = document.querySelectorAll(
+            '#fontinfo-stations-content .fontinfo-record-item'
         );
-        masterItems[1].focus();
-        masterItems[0].getBoundingClientRect = () => ({
+        stationItems[1].focus();
+        stationItems[0].getBoundingClientRect = () => ({
             top: 0,
             height: 20
         });
-        fontInfoManager.onMasterDragStart(
+        fontInfoManager.onStationDragStart(
             {
-                currentTarget: masterItems[1],
+                currentTarget: stationItems[1],
                 dataTransfer: {}
             },
             1
         );
-        fontInfoManager.onMasterDragOver(
+        fontInfoManager.onStationDragOver(
             {
                 preventDefault: jest.fn(),
-                currentTarget: masterItems[0],
+                currentTarget: stationItems[0],
                 dataTransfer: {},
                 clientY: 0
             },
             0
         );
         expect(
-            masterItems[0].classList.contains('feature-drop-target-before')
+            stationItems[0].classList.contains('feature-drop-target-before')
         ).toBe(true);
-        fontInfoManager.onMasterDrop(
+        fontInfoManager.onStationDrop(
             {
                 preventDefault: jest.fn()
             },
@@ -1847,7 +1855,7 @@ describe('FontInfo feature code compilation scheduling', () => {
         );
 
         expect(applySyntheticChangeSet).toHaveBeenCalledWith(
-            'Reorder masters',
+            'Reorder stations',
             [
                 {
                     op: 'set',
@@ -1865,11 +1873,11 @@ describe('FontInfo feature code compilation scheduling', () => {
             })
         );
         expect(updatePropertiesUI).toHaveBeenCalledWith({
-            skipAutoSelectMatchingLayer: true
+            skipAutoSelectMatchingDrawing: true
         });
         expect(
             document.querySelector(
-                '#fontinfo-masters-content .fontinfo-record-item-primary'
+                '#fontinfo-stations-content .fontinfo-record-item-primary'
             ).textContent
         ).toBe('Bold');
     });
@@ -1894,8 +1902,8 @@ describe('FontInfo feature code compilation scheduling', () => {
         const reason =
             'This font is only partly downloaded. Reopen it with all glyphs to add, remove, or reinterpolate masters.';
         let gate = { allowed: false, reason, canReopenWithAllGlyphs: true };
-        const addMaster = jest.fn();
-        const removeMastersByIds = jest.fn();
+        const addStation = jest.fn();
+        const removeStationsByIds = jest.fn();
         const reopenWithAllGlyphs = jest.fn().mockResolvedValue(true);
         const previousCloudPlugin = window.cloudPlugin;
         window.cloudPlugin = { reopenWithAllGlyphs };
@@ -1904,7 +1912,7 @@ describe('FontInfo feature code compilation scheduling', () => {
             axes: [],
             names: {},
             features: { features: [] },
-            masters: [
+            stations: [
                 {
                     id: 'M1',
                     name: { dflt: 'Regular' },
@@ -1913,9 +1921,9 @@ describe('FontInfo feature code compilation scheduling', () => {
                     kerning: {}
                 }
             ],
-            addMaster,
-            removeMastersByIds,
-            getMasterTopologyGate: () => gate
+            addStation,
+            removeStationsByIds,
+            getStationTopologyGate: () => gate
         };
 
         try {
@@ -1924,10 +1932,10 @@ describe('FontInfo feature code compilation scheduling', () => {
             fontInfoManager.switchTab('masters');
 
             const addButton = document.querySelector(
-                '[data-fontinfo-list-action="masters-add"]'
+                '[data-fontinfo-list-action="stations-add"]'
             );
             const removeButton = document.querySelector(
-                '[data-fontinfo-list-action="masters-remove"]'
+                '[data-fontinfo-list-action="stations-remove"]'
             );
             expect(addButton.disabled).toBe(true);
             expect(removeButton.disabled).toBe(true);
@@ -1935,25 +1943,25 @@ describe('FontInfo feature code compilation scheduling', () => {
             expect(removeButton.title).toBe(reason);
             addButton.click();
             removeButton.click();
-            expect(addMaster).not.toHaveBeenCalled();
-            expect(removeMastersByIds).not.toHaveBeenCalled();
+            expect(addStation).not.toHaveBeenCalled();
+            expect(removeStationsByIds).not.toHaveBeenCalled();
 
             const notice = document.querySelector(
-                '[data-fontinfo-masters-blocked="true"]'
+                '[data-fontinfo-stations-blocked="true"]'
             );
             expect(notice.textContent).toContain(reason);
             const reopenButton = document.querySelector(
-                '[data-fontinfo-list-action="masters-reopen-all-glyphs"]'
+                '[data-fontinfo-list-action="stations-reopen-all-glyphs"]'
             );
             expect(reopenButton.textContent).toBe('Reopen with all glyphs');
             reopenButton.click();
             await Promise.resolve();
             expect(reopenWithAllGlyphs).toHaveBeenCalledTimes(1);
 
-            const masterItem = document.querySelector(
-                '#fontinfo-masters-content .fontinfo-record-item'
+            const stationItem = document.querySelector(
+                '#fontinfo-stations-content .fontinfo-record-item'
             );
-            masterItem.dispatchEvent(
+            stationItem.dispatchEvent(
                 new MouseEvent('contextmenu', {
                     bubbles: true,
                     cancelable: true
@@ -1988,16 +1996,18 @@ describe('FontInfo feature code compilation scheduling', () => {
             );
             expect(
                 document.querySelector(
-                    '[data-fontinfo-list-action="masters-add"]'
+                    '[data-fontinfo-list-action="stations-add"]'
                 ).disabled
             ).toBe(false);
             expect(
                 document.querySelector(
-                    '[data-fontinfo-list-action="masters-remove"]'
+                    '[data-fontinfo-list-action="stations-remove"]'
                 ).disabled
             ).toBe(false);
             expect(
-                document.querySelector('[data-fontinfo-masters-blocked="true"]')
+                document.querySelector(
+                    '[data-fontinfo-stations-blocked="true"]'
+                )
             ).toBeNull();
         } finally {
             window.cloudPlugin = previousCloudPlugin;
@@ -2018,8 +2028,8 @@ describe('FontInfo feature code compilation scheduling', () => {
             axes: [],
             names: {},
             features: { features: [] },
-            masters: [],
-            getMasterTopologyGate: () => ({
+            stations: [],
+            getStationTopologyGate: () => ({
                 allowed: false,
                 reason: 'Masters cannot be added, removed, or reinterpolated while some glyphs stay on the server.',
                 canReopenWithAllGlyphs: false
@@ -2031,16 +2041,16 @@ describe('FontInfo feature code compilation scheduling', () => {
         fontInfoManager.switchTab('masters');
 
         expect(
-            document.querySelector('[data-fontinfo-masters-blocked="true"]')
+            document.querySelector('[data-fontinfo-stations-blocked="true"]')
                 .textContent
         ).toContain('stay on the server');
         expect(
             document.querySelector(
-                '[data-fontinfo-list-action="masters-reopen-all-glyphs"]'
+                '[data-fontinfo-list-action="stations-reopen-all-glyphs"]'
             )
         ).toBeNull();
         expect(
-            document.querySelector('[data-fontinfo-list-action="masters-add"]')
+            document.querySelector('[data-fontinfo-list-action="stations-add"]')
                 .disabled
         ).toBe(true);
     });
@@ -2081,7 +2091,7 @@ describe('FontInfo feature code compilation scheduling', () => {
             features: {
                 features: []
             },
-            masters: [
+            stations: [
                 {
                     id: 'M1',
                     name: { dflt: 'Regular' },
@@ -2109,36 +2119,36 @@ describe('FontInfo feature code compilation scheduling', () => {
         jest.runOnlyPendingTimers();
         fontInfoManager.switchTab('masters');
 
-        const masterMetricInput = document.querySelector(
+        const stationMetricInput = document.querySelector(
             '[data-font-field="masters.0.metrics.ascender"] .localized-string-input'
         );
-        masterMetricInput.focus();
+        stationMetricInput.focus();
 
-        const masterItems = document.querySelectorAll(
-            '#fontinfo-masters-content .fontinfo-record-item'
+        const stationItems = document.querySelectorAll(
+            '#fontinfo-stations-content .fontinfo-record-item'
         );
-        masterItems[0].getBoundingClientRect = () => ({
+        stationItems[0].getBoundingClientRect = () => ({
             top: 0,
             height: 20
         });
 
-        fontInfoManager.onMasterDragStart(
+        fontInfoManager.onStationDragStart(
             {
-                currentTarget: masterItems[1],
+                currentTarget: stationItems[1],
                 dataTransfer: {}
             },
             1
         );
-        fontInfoManager.onMasterDragOver(
+        fontInfoManager.onStationDragOver(
             {
                 preventDefault: jest.fn(),
-                currentTarget: masterItems[0],
+                currentTarget: stationItems[0],
                 dataTransfer: {},
                 clientY: 0
             },
             0
         );
-        fontInfoManager.onMasterDrop(
+        fontInfoManager.onStationDrop(
             {
                 preventDefault: jest.fn()
             },
@@ -2146,7 +2156,7 @@ describe('FontInfo feature code compilation scheduling', () => {
         );
 
         const reorderedItems = document.querySelectorAll(
-            '#fontinfo-masters-content .fontinfo-record-item-primary'
+            '#fontinfo-stations-content .fontinfo-record-item-primary'
         );
         expect(reorderedItems[0].textContent).toBe('Bold');
         expect(reorderedItems[1].textContent).toBe('Regular');
@@ -2188,7 +2198,7 @@ describe('FontInfo feature code compilation scheduling', () => {
             features: {
                 features: []
             },
-            masters: [
+            stations: [
                 {
                     id: 'M1',
                     name: { dflt: 'Regular' },
@@ -2216,17 +2226,17 @@ describe('FontInfo feature code compilation scheduling', () => {
         jest.runOnlyPendingTimers();
         fontInfoManager.switchTab('masters');
 
-        const masterItems = document.querySelectorAll(
-            '#fontinfo-masters-content .fontinfo-record-item'
+        const stationItems = document.querySelectorAll(
+            '#fontinfo-stations-content .fontinfo-record-item'
         );
-        masterItems[0].getBoundingClientRect = () => ({
+        stationItems[0].getBoundingClientRect = () => ({
             top: 0,
             height: 20
         });
 
-        fontInfoManager.onMasterDragStart(
+        fontInfoManager.onStationDragStart(
             {
-                currentTarget: masterItems[1],
+                currentTarget: stationItems[1],
                 dataTransfer: {
                     effectAllowed: 'all',
                     setData: jest.fn()
@@ -2234,19 +2244,19 @@ describe('FontInfo feature code compilation scheduling', () => {
             },
             1
         );
-        fontInfoManager.onMasterDragOver(
+        fontInfoManager.onStationDragOver(
             {
                 preventDefault: jest.fn(),
-                currentTarget: masterItems[0],
+                currentTarget: stationItems[0],
                 dataTransfer: {},
                 clientY: 0
             },
             0
         );
-        fontInfoManager.onMasterDragEnd();
+        fontInfoManager.onStationDragEnd();
 
         expect(applySyntheticChangeSet).toHaveBeenCalledWith(
-            'Reorder masters',
+            'Reorder stations',
             [
                 {
                     op: 'set',
@@ -2480,7 +2490,7 @@ describe('FontInfo feature code compilation scheduling', () => {
             features: {
                 features: []
             },
-            masters: [
+            stations: [
                 {
                     id: 'M1',
                     name: { dflt: 'Regular' },
@@ -2517,23 +2527,23 @@ describe('FontInfo feature code compilation scheduling', () => {
         jest.runOnlyPendingTimers();
 
         fontInfoManager.switchTab('masters');
-        const masterMetricInput = document.querySelector(
+        const stationMetricInput = document.querySelector(
             '[data-font-field="masters.0.metrics.ascender"] .localized-string-input'
         );
-        masterMetricInput.focus();
+        stationMetricInput.focus();
 
-        window.currentFontModel.masters = [
-            window.currentFontModel.masters[1],
-            window.currentFontModel.masters[0]
+        window.currentFontModel.stations = [
+            window.currentFontModel.stations[1],
+            window.currentFontModel.stations[0]
         ];
         window.dispatchEvent(new CustomEvent('fontModelSync'));
         jest.runOnlyPendingTimers();
 
-        let reorderedMasterItems = document.querySelectorAll(
-            '#fontinfo-masters-content .fontinfo-record-item-primary'
+        let reorderedStationItems = document.querySelectorAll(
+            '#fontinfo-stations-content .fontinfo-record-item-primary'
         );
-        expect(reorderedMasterItems[0].textContent).toBe('Bold');
-        expect(reorderedMasterItems[1].textContent).toBe('Regular');
+        expect(reorderedStationItems[0].textContent).toBe('Bold');
+        expect(reorderedStationItems[1].textContent).toBe('Regular');
 
         fontInfoManager.switchTab('instances');
         const instanceNameInput = document.querySelector(
@@ -2704,7 +2714,7 @@ describe('FontInfo feature code compilation scheduling', () => {
             features: {
                 features: []
             },
-            masters: [
+            stations: [
                 {
                     id: 'M1',
                     name: { dflt: 'Regular' },
@@ -2735,24 +2745,24 @@ describe('FontInfo feature code compilation scheduling', () => {
 
         fontInfoManager.switchTab('masters');
 
-        const masterNameInput = document.querySelector(
+        const stationNameInput = document.querySelector(
             '[data-font-field="masters.0.name"] .localized-string-input'
         );
-        masterNameInput.focus();
-        masterNameInput.value = 'Text';
-        masterNameInput.dispatchEvent(
+        stationNameInput.focus();
+        stationNameInput.value = 'Text';
+        stationNameInput.dispatchEvent(
             new KeyboardEvent('keydown', {
                 key: 'Enter',
                 bubbles: true
             })
         );
 
-        const masterLocationInput = document.querySelector(
+        const stationLocationInput = document.querySelector(
             '[data-font-field="masters.0.location.wght"] .localized-string-input'
         );
-        masterLocationInput.focus();
-        masterLocationInput.value = '650';
-        masterLocationInput.dispatchEvent(
+        stationLocationInput.focus();
+        stationLocationInput.value = '650';
+        stationLocationInput.dispatchEvent(
             new KeyboardEvent('keydown', {
                 key: 'Enter',
                 bubbles: true
@@ -2761,12 +2771,12 @@ describe('FontInfo feature code compilation scheduling', () => {
 
         expect(
             document.querySelector(
-                '#fontinfo-masters-content .fontinfo-record-item-primary'
+                '#fontinfo-stations-content .fontinfo-record-item-primary'
             ).textContent
         ).toBe('Text');
         expect(
             document.querySelector(
-                '#fontinfo-masters-content .fontinfo-record-item-secondary'
+                '#fontinfo-stations-content .fontinfo-record-item-secondary'
             ).textContent
         ).toBe('wght:650/650');
 
@@ -3245,7 +3255,7 @@ describe('FontInfo feature code compilation scheduling', () => {
             ],
             names: {},
             features: { features: [] },
-            masters: [
+            stations: [
                 {
                     id: 'M1',
                     name: { dflt: 'Regular' },
@@ -3254,7 +3264,7 @@ describe('FontInfo feature code compilation scheduling', () => {
                     kerning: {}
                 }
             ],
-            addAxisWithMasterCopies: jest.fn(async () => {}),
+            addAxisWithStationCopies: jest.fn(async () => {}),
             instances: [
                 {
                     id: 'I1',
@@ -3280,11 +3290,11 @@ describe('FontInfo feature code compilation scheduling', () => {
         );
         await addAxisThroughDialog(addAxesButton, 'commit');
 
-        const addAxisWithMasterCopies =
-            window.currentFontModel.addAxisWithMasterCopies;
-        expect(addAxisWithMasterCopies).toHaveBeenCalledTimes(1);
-        const [plan, label] = addAxisWithMasterCopies.mock.calls[0];
-        expect(label).toBe('Add Width axis with 1 master');
+        const addAxisWithStationCopies =
+            window.currentFontModel.addAxisWithStationCopies;
+        expect(addAxisWithStationCopies).toHaveBeenCalledTimes(1);
+        const [plan, label] = addAxisWithStationCopies.mock.calls[0];
+        expect(label).toBe('Add Width axis with 1 station');
         expect(plan.axisTag).toBe('wdth');
         expect(plan.existingValue).toBe(100);
         expect(plan.axes.map((axis) => axis.tag)).toEqual(['wght', 'wdth']);
@@ -3340,7 +3350,7 @@ describe('FontInfo feature code compilation scheduling', () => {
             ],
             names: {},
             features: { features: [] },
-            masters: [
+            stations: [
                 {
                     id: 'M1',
                     name: { dflt: 'Regular' },
@@ -3390,16 +3400,16 @@ describe('FontInfo feature code compilation scheduling', () => {
         );
 
         // Must include a location update for master 0 with the new axis tag
-        const masterLocationChange = addChanges.find(
+        const stationLocationChange = addChanges.find(
             (c) =>
                 c.path.length === 3 &&
                 c.path[0] === 'masters' &&
                 c.path[1] === 0 &&
                 c.path[2] === 'location'
         );
-        expect(masterLocationChange).toBeDefined();
-        expect(masterLocationChange.newValue).toMatchObject({ wght: 400 });
-        expect(Object.keys(masterLocationChange.newValue)).toHaveLength(2); // wght + new tag
+        expect(stationLocationChange).toBeDefined();
+        expect(stationLocationChange.newValue).toMatchObject({ wght: 400 });
+        expect(Object.keys(stationLocationChange.newValue)).toHaveLength(2); // wght + new tag
 
         // Must include a location update for instance 0
         const instanceLocationChange = addChanges.find(
@@ -3429,15 +3439,15 @@ describe('FontInfo feature code compilation scheduling', () => {
         const removeChanges = removeCall[1];
 
         // Master and instance locations should have the removed tag stripped
-        const masterRemoveChange = removeChanges.find(
+        const stationRemoveChange = removeChanges.find(
             (c) =>
                 c.path.length === 3 &&
                 c.path[0] === 'masters' &&
                 c.path[2] === 'location'
         );
-        expect(masterRemoveChange).toBeDefined();
-        expect(Object.keys(masterRemoveChange.newValue ?? {})).toHaveLength(1);
-        expect(masterRemoveChange.newValue).toHaveProperty('wght');
+        expect(stationRemoveChange).toBeDefined();
+        expect(Object.keys(stationRemoveChange.newValue ?? {})).toHaveLength(1);
+        expect(stationRemoveChange.newValue).toHaveProperty('wght');
     });
 
     // ── Layer sync + multi-select tests ─────────────────────────────────────
@@ -3459,22 +3469,22 @@ describe('FontInfo feature code compilation scheduling', () => {
         `;
 
         const fontInfoManager = loadFontInfoManager();
-        const addMaster = jest.fn(async function () {
-            const createdMaster = {
+        const addStation = jest.fn(async function () {
+            const createdStation = {
                 id: 'M2',
                 name: { dflt: 'Master 2' },
                 location: {},
                 metrics: { ascender: 800 },
                 kerning: {}
             };
-            this.masters = [...this.masters, createdMaster];
-            return createdMaster;
+            this.stations = [...this.stations, createdStation];
+            return createdStation;
         });
         window.currentFontModel = {
             axes: [],
             names: {},
             features: { features: [] },
-            masters: [
+            stations: [
                 {
                     id: 'M1',
                     name: { dflt: 'Regular' },
@@ -3484,22 +3494,22 @@ describe('FontInfo feature code compilation scheduling', () => {
                 }
             ],
             glyphs: [],
-            addMaster
+            addStation
         };
 
         fontInfoManager.init();
         jest.runOnlyPendingTimers();
         fontInfoManager.switchTab('masters');
 
-        const addMasterButton = document.querySelector(
-            '[data-fontinfo-list-action="masters-add"]'
+        const addStationButton = document.querySelector(
+            '[data-fontinfo-list-action="stations-add"]'
         );
-        addMasterButton.click();
+        addStationButton.click();
 
         await Promise.resolve();
 
-        expect(addMaster).toHaveBeenCalledTimes(1);
-        expect(window.currentFontModel.masters).toHaveLength(2);
+        expect(addStation).toHaveBeenCalledTimes(1);
+        expect(window.currentFontModel.stations).toHaveLength(2);
     });
 
     test('adding a master prompts for location and passes it to the object model', async () => {
@@ -3519,16 +3529,16 @@ describe('FontInfo feature code compilation scheduling', () => {
         `;
 
         const fontInfoManager = loadFontInfoManager();
-        const addMaster = jest.fn(async function (_master, options) {
-            const createdMaster = {
+        const addStation = jest.fn(async function (_station, options) {
+            const createdStation = {
                 id: 'M3',
                 name: { dflt: 'Master 3' },
                 location: options?.location ?? {},
                 metrics: { ascender: 800 },
                 kerning: {}
             };
-            this.masters = [...this.masters, createdMaster];
-            return createdMaster;
+            this.stations = [...this.stations, createdStation];
+            return createdStation;
         });
 
         window.currentFontModel = {
@@ -3550,7 +3560,7 @@ describe('FontInfo feature code compilation scheduling', () => {
             ],
             names: {},
             features: { features: [] },
-            masters: [
+            stations: [
                 {
                     id: 'M1',
                     name: { dflt: 'Regular' },
@@ -3567,28 +3577,30 @@ describe('FontInfo feature code compilation scheduling', () => {
                 }
             ],
             glyphs: [],
-            addMaster
+            addStation
         };
 
         fontInfoManager.init();
         jest.runOnlyPendingTimers();
         fontInfoManager.switchTab('masters');
 
-        const addMasterButton = document.querySelector(
-            '[data-fontinfo-list-action="masters-add"]'
+        const addStationButton = document.querySelector(
+            '[data-fontinfo-list-action="stations-add"]'
         );
-        addMasterButton.click();
+        addStationButton.click();
 
-        expect(addMaster).not.toHaveBeenCalled();
+        expect(addStation).not.toHaveBeenCalled();
 
-        const modal = document.querySelector('.fontinfo-master-location-modal');
+        const modal = document.querySelector(
+            '.fontinfo-station-location-modal'
+        );
         expect(modal).toBeTruthy();
 
         const wghtInput = modal.querySelector(
-            '[data-master-location-axis="wght"]'
+            '[data-station-location-axis="wght"]'
         );
         const wdthInput = modal.querySelector(
-            '[data-master-location-axis="wdth"]'
+            '[data-station-location-axis="wdth"]'
         );
         expect(wghtInput.value).toBe('700');
         expect(wdthInput.value).toBe('120');
@@ -3597,13 +3609,13 @@ describe('FontInfo feature code compilation scheduling', () => {
         wdthInput.value = '110';
 
         const createButton = modal.querySelector(
-            '.fontinfo-master-location-create'
+            '.fontinfo-station-location-create'
         );
         createButton.click();
         await Promise.resolve();
         await Promise.resolve();
 
-        expect(addMaster).toHaveBeenCalledWith(
+        expect(addStation).toHaveBeenCalledWith(
             undefined,
             expect.objectContaining({
                 location: { wght: 650, wdth: 110 }
@@ -3628,7 +3640,7 @@ describe('FontInfo feature code compilation scheduling', () => {
         `;
 
         const fontInfoManager = loadFontInfoManager();
-        const addMaster = jest.fn();
+        const addStation = jest.fn();
 
         window.currentFontModel = {
             axes: [
@@ -3642,7 +3654,7 @@ describe('FontInfo feature code compilation scheduling', () => {
             ],
             names: {},
             features: { features: [] },
-            masters: [
+            stations: [
                 {
                     id: 'M1',
                     name: { dflt: 'Regular' },
@@ -3652,30 +3664,32 @@ describe('FontInfo feature code compilation scheduling', () => {
                 }
             ],
             glyphs: [],
-            addMaster
+            addStation
         };
 
         fontInfoManager.init();
         jest.runOnlyPendingTimers();
         fontInfoManager.switchTab('masters');
 
-        const addMasterButton = document.querySelector(
-            '[data-fontinfo-list-action="masters-add"]'
+        const addStationButton = document.querySelector(
+            '[data-fontinfo-list-action="stations-add"]'
         );
-        addMasterButton.click();
+        addStationButton.click();
 
-        const modal = document.querySelector('.fontinfo-master-location-modal');
+        const modal = document.querySelector(
+            '.fontinfo-station-location-modal'
+        );
         expect(modal).toBeTruthy();
 
         const cancelButton = modal.querySelector(
-            '.fontinfo-master-location-cancel'
+            '.fontinfo-station-location-cancel'
         );
         cancelButton.click();
         await Promise.resolve();
 
-        expect(addMaster).not.toHaveBeenCalled();
+        expect(addStation).not.toHaveBeenCalled();
         expect(
-            document.querySelector('.fontinfo-master-location-modal')
+            document.querySelector('.fontinfo-station-location-modal')
         ).toBeNull();
     });
 
@@ -3696,9 +3710,9 @@ describe('FontInfo feature code compilation scheduling', () => {
         `;
 
         const fontInfoManager = loadFontInfoManager();
-        const removeMastersByIds = jest.fn(async function (masterIds) {
-            this.masters = this.masters.filter(
-                (master) => !masterIds.includes(master.id)
+        const removeStationsByIds = jest.fn(async function (stationIds) {
+            this.stations = this.stations.filter(
+                (station) => !stationIds.includes(station.id)
             );
             return true;
         });
@@ -3706,7 +3720,7 @@ describe('FontInfo feature code compilation scheduling', () => {
             axes: [],
             names: {},
             features: { features: [] },
-            masters: [
+            stations: [
                 {
                     id: 'M1',
                     name: { dflt: 'Regular' },
@@ -3723,7 +3737,7 @@ describe('FontInfo feature code compilation scheduling', () => {
                 }
             ],
             glyphs: [],
-            removeMastersByIds
+            removeStationsByIds
         };
 
         fontInfoManager.init();
@@ -3731,20 +3745,20 @@ describe('FontInfo feature code compilation scheduling', () => {
         fontInfoManager.switchTab('masters');
 
         // Select M2 (index 1)
-        const masterItems = document.querySelectorAll(
-            '#fontinfo-masters-content .fontinfo-record-item'
+        const stationItems = document.querySelectorAll(
+            '#fontinfo-stations-content .fontinfo-record-item'
         );
-        masterItems[1].click();
+        stationItems[1].click();
 
         fontInfoManager.setDeleteConfirmationHandler(true);
         document
-            .querySelector('[data-fontinfo-list-action="masters-remove"]')
+            .querySelector('[data-fontinfo-list-action="stations-remove"]')
             .click();
 
         await Promise.resolve();
 
-        expect(removeMastersByIds).toHaveBeenCalledWith(['M2']);
-        expect(window.currentFontModel.masters).toHaveLength(1);
+        expect(removeStationsByIds).toHaveBeenCalledWith(['M2']);
+        expect(window.currentFontModel.stations).toHaveLength(1);
     });
 
     test('confirmation cancel aborts master deletion', () => {
@@ -3773,7 +3787,7 @@ describe('FontInfo feature code compilation scheduling', () => {
             axes: [],
             names: {},
             features: { features: [] },
-            masters: [
+            stations: [
                 {
                     id: 'M1',
                     name: { dflt: 'Regular' },
@@ -3798,19 +3812,19 @@ describe('FontInfo feature code compilation scheduling', () => {
         // Cancel the deletion
         fontInfoManager.setDeleteConfirmationHandler(false);
         document
-            .querySelector('[data-fontinfo-list-action="masters-remove"]')
+            .querySelector('[data-fontinfo-list-action="stations-remove"]')
             .click();
 
         // No transaction should have been started
-        expect(beginTransaction).not.toHaveBeenCalledWith('Remove master');
+        expect(beginTransaction).not.toHaveBeenCalledWith('Remove station');
         expect(applySyntheticChangeSet).not.toHaveBeenCalledWith(
-            'Remove master',
+            'Remove station',
             expect.anything()
         );
         // List is unchanged
         expect(
             document.querySelectorAll(
-                '#fontinfo-masters-content .fontinfo-record-item'
+                '#fontinfo-stations-content .fontinfo-record-item'
             )
         ).toHaveLength(1);
     });
@@ -3836,9 +3850,9 @@ describe('FontInfo feature code compilation scheduling', () => {
         const endTransaction = jest.fn();
         const applySyntheticChangeSet = jest.fn();
         const runWithoutRecording = jest.fn((fn) => fn());
-        const removeMastersByIds = jest.fn(async function (masterIds) {
-            this.masters = this.masters.filter(
-                (master) => !masterIds.includes(master.id)
+        const removeStationsByIds = jest.fn(async function (stationIds) {
+            this.stations = this.stations.filter(
+                (station) => !stationIds.includes(station.id)
             );
             return true;
         });
@@ -3847,7 +3861,7 @@ describe('FontInfo feature code compilation scheduling', () => {
             axes: [],
             names: {},
             features: { features: [] },
-            masters: [
+            stations: [
                 {
                     id: 'M1',
                     name: { dflt: 'Regular' },
@@ -3871,7 +3885,7 @@ describe('FontInfo feature code compilation scheduling', () => {
                 }
             ],
             glyphs: [],
-            removeMastersByIds
+            removeStationsByIds
         };
         window.patchSyncEngine = {
             beginTransaction,
@@ -3884,35 +3898,35 @@ describe('FontInfo feature code compilation scheduling', () => {
         jest.runOnlyPendingTimers();
         fontInfoManager.switchTab('masters');
 
-        const masterItems = () =>
+        const stationItems = () =>
             document.querySelectorAll(
-                '#fontinfo-masters-content .fontinfo-record-item'
+                '#fontinfo-stations-content .fontinfo-record-item'
             );
 
         // Click M1 (index 0) to select it
-        masterItems()[0].click();
+        stationItems()[0].click();
 
         // Ctrl+click M3 (index 2) to add to selection
-        masterItems()[2].dispatchEvent(
+        stationItems()[2].dispatchEvent(
             new MouseEvent('click', { bubbles: true, metaKey: true })
         );
 
         // Both 0 and 2 should be selected
-        expect(masterItems()[0].classList.contains('selected')).toBe(true);
-        expect(masterItems()[1].classList.contains('selected')).toBe(false);
-        expect(masterItems()[2].classList.contains('selected')).toBe(true);
+        expect(stationItems()[0].classList.contains('selected')).toBe(true);
+        expect(stationItems()[1].classList.contains('selected')).toBe(false);
+        expect(stationItems()[2].classList.contains('selected')).toBe(true);
 
         // Delete the selection
         fontInfoManager.setDeleteConfirmationHandler(true);
         document
-            .querySelector('[data-fontinfo-list-action="masters-remove"]')
+            .querySelector('[data-fontinfo-list-action="stations-remove"]')
             .click();
 
         await Promise.resolve();
 
         // Only M2 (index 1) should remain
-        expect(removeMastersByIds).toHaveBeenCalledWith(['M1', 'M3']);
-        expect(masterItems()).toHaveLength(1);
+        expect(removeStationsByIds).toHaveBeenCalledWith(['M1', 'M3']);
+        expect(stationItems()).toHaveLength(1);
     });
 
     test('confirmation cancel aborts instance deletion', () => {
@@ -3941,7 +3955,7 @@ describe('FontInfo feature code compilation scheduling', () => {
             axes: [],
             names: {},
             features: { features: [] },
-            masters: [
+            stations: [
                 {
                     id: 'M1',
                     name: { dflt: 'Regular' },
@@ -4020,7 +4034,7 @@ describe('FontInfo feature code compilation scheduling', () => {
             ],
             names: {},
             features: { features: [] },
-            masters: [
+            stations: [
                 {
                     id: 'M1',
                     name: { dflt: 'Regular' },

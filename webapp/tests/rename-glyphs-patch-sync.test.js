@@ -151,7 +151,7 @@ function createRenameRoundTripFontData() {
 }
 
 function expectBackgroundComponentRef(font, glyphName, expectedRef) {
-    const background = font.findGlyph(glyphName).findLayerById('layer-1-bg');
+    const background = font.findGlyph(glyphName).findDrawingById('layer-1-bg');
     expect(background?.is_background).toBe(true);
     expect(
         background.components.map((component) => component.reference)
@@ -163,10 +163,10 @@ function expectOriginalRenameRefs(font) {
     expect(font.findGlyph('B')).toBeDefined();
     expect(font.findGlyph('A.alt')).toBeUndefined();
     expect(font.findGlyph('B.alt')).toBeUndefined();
-    expect(font.findGlyph('B').layers[0].components[0].reference).toBe('A');
+    expect(font.findGlyph('B').drawings[0].components[0].reference).toBe('A');
     expectBackgroundComponentRef(font, 'B', 'A');
-    expect(font.masters[0].kerning).toEqual({ 'A:B': -40 });
-    expect(font.masters[0].kerning_rtl).toEqual({ 'A:B': -50 });
+    expect(font.stations[0].kerning).toEqual({ 'A:B': -40 });
+    expect(font.stations[0].kerning_rtl).toEqual({ 'A:B': -50 });
     expect(font.first_kern_groups).toEqual({ left: ['A'] });
     expect(font.second_kern_groups).toEqual({ right: ['B'] });
     expect(font.features.classes.letters.code).toBe('A B');
@@ -179,12 +179,12 @@ function expectRenamedRefs(font) {
     expect(font.findGlyph('B')).toBeUndefined();
     expect(font.findGlyph('A.alt')).toBeDefined();
     expect(font.findGlyph('B.alt')).toBeDefined();
-    expect(font.findGlyph('B.alt').layers[0].components[0].reference).toBe(
+    expect(font.findGlyph('B.alt').drawings[0].components[0].reference).toBe(
         'A.alt'
     );
     expectBackgroundComponentRef(font, 'B.alt', 'A.alt');
-    expect(font.masters[0].kerning).toEqual({ 'A.alt:B.alt': -40 });
-    expect(font.masters[0].kerning_rtl).toEqual({ 'A.alt:B.alt': -50 });
+    expect(font.stations[0].kerning).toEqual({ 'A.alt:B.alt': -40 });
+    expect(font.stations[0].kerning_rtl).toEqual({ 'A.alt:B.alt': -50 });
     expect(font.first_kern_groups).toEqual({ left: ['A.alt'] });
     expect(font.second_kern_groups).toEqual({ right: ['B.alt'] });
     expect(font.features.classes.letters.code).toBe('A.alt B.alt');
@@ -489,7 +489,7 @@ describe('PatchSyncEngine.renameGlyphs integrity', () => {
             });
             font.renameGlyphs(new Map([['A', 'A.alt']]));
             bridge.runAfterOutermostCommit(afterCommit);
-            font.findGlyph('A.alt').layers[0].width = 640;
+            font.findGlyph('A.alt').drawings[0].width = 640;
             expect(afterCommit).not.toHaveBeenCalled();
             bridge.endTransaction();
 
@@ -579,8 +579,8 @@ describe('PatchSyncEngine.renameGlyphs integrity', () => {
             expect(
                 bridge.getYValue(['glyphs', 'B', 'layers', 'layer-1', 'width'])
             ).toBe(600);
-            expect(font.findGlyph('A').layers[0].width).toBe(700);
-            expect(font.findGlyph('B').layers[0].width).toBe(600);
+            expect(font.findGlyph('A').drawings[0].width).toBe(700);
+            expect(font.findGlyph('B').drawings[0].width).toBe(600);
         } finally {
             window.patchSyncEngine = previousBridge;
             bridge.destroy();
@@ -748,7 +748,7 @@ describe('fontc-worker applyYjsUpdate metadata', () => {
     });
 
     test('falls back to whole-glyph snapshots when layerTargets exceed the sparse cap', () => {
-        const layerTargets = Array.from({ length: 513 }, (_, index) => ({
+        const drawingTargets = Array.from({ length: 513 }, (_, index) => ({
             glyphName: `g${index % 3}`,
             layerId: `layer-${index}`
         }));
@@ -757,7 +757,7 @@ describe('fontc-worker applyYjsUpdate metadata', () => {
             buildApplyYjsUpdateMetadataJson({
                 changedGlyphs: ['g0'],
                 nonGlyphChangeHints: ['masters'],
-                layerTargets,
+                layerTargets: drawingTargets,
                 invalidateLayoutClosure: true
             })
         );

@@ -2,7 +2,7 @@
 
 Treat assistant output as something you authorized with the pen toggle, not as an unsupervised design pass. The assistant does not save files. With **Assistant editing** off, it cannot mutate the font or rewrite the Script Editor. With editing on, Python it executes can change the font immediately, and Script Editor buffer edits still wait for you to Save or Run.
 
-Before a broad operation, save the font and turn editing on only for that prompt. Confirm whether the task should inspect, draft a script, or change data. Name glyph ranges, layers, axis values, or naming patterns.
+Before a broad operation, save the font and turn editing on only for that prompt. Confirm whether the task should inspect, draft a script, or change data. Name glyph ranges, drawings, axis values, or naming patterns.
 
 While Assistant is focused, `Cmd/Ctrl+Z` undoes assistant-produced font edits on the automation undo surface without switching views. Script Editor buffer edits can be reverted from the chat action when the buffer has not changed since, or from the Script Editor recovery controls.
 

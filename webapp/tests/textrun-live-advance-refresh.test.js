@@ -621,18 +621,18 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
     test('undoing a left sidebearing change refreshes the layer without a live-advance detour', async () => {
         const requestRepaintAfterCompile = jest.fn();
         const refreshGlyphAdvancesLive = jest.fn();
-        const fetchLayerData = jest.fn().mockResolvedValue();
+        const fetchDrawingData = jest.fn().mockResolvedValue();
         const runDeterministicRefresh = jest.fn(async (task) => await task());
-        const canRefreshSelectedLayerFromModelExactly = jest.fn(() => true);
-        const refreshSelectedLayerFromModel = jest.fn(() => true);
-        const syncCurrentOutlineLayerDataFromModel = jest.fn();
+        const canRefreshSelectedDrawingFromModelExactly = jest.fn(() => true);
+        const refreshSelectedDrawingFromModel = jest.fn(() => true);
+        const syncCurrentOutlineDrawingDataFromModel = jest.fn();
         const captureIdleViewLock = jest.fn(() => true);
         const reapplyIdleViewLock = jest.fn(() => true);
         const render = jest.fn();
 
         const makeFontModel = (width) => ({
             findGlyph: jest.fn(() => ({
-                findLayerById: jest.fn(() => ({ id: 'layer-1', width }))
+                findDrawingById: jest.fn(() => ({ id: 'layer-1', width }))
             }))
         });
 
@@ -652,18 +652,18 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             },
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'a' }]),
-                canRefreshSelectedLayerFromModelExactly,
-                refreshSelectedLayerFromModel,
-                fetchLayerData,
+                canRefreshSelectedDrawingFromModelExactly,
+                refreshSelectedDrawingFromModel,
+                fetchDrawingData,
                 runDeterministicRefresh,
                 performHitDetection: jest.fn()
             },
             getCurrentGlyphName: jest.fn(() => 'a'),
             captureIdleViewLock,
             reapplyIdleViewLock,
-            syncCurrentOutlineLayerDataFromModel,
+            syncCurrentOutlineDrawingDataFromModel,
             updatePropertyPanel: jest.fn(),
             render,
             requestRepaintAfterCompile
@@ -713,14 +713,14 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
 
         expect(originalWindow.fontManager.lastChangeSource).toBeNull();
         expect(originalWindow.fontManager.lastEditType).toBeNull();
-        expect(canRefreshSelectedLayerFromModelExactly).toHaveBeenCalledTimes(
+        expect(canRefreshSelectedDrawingFromModelExactly).toHaveBeenCalledTimes(
             1
         );
-        expect(refreshSelectedLayerFromModel).toHaveBeenCalledTimes(1);
-        expect(fetchLayerData).not.toHaveBeenCalled();
+        expect(refreshSelectedDrawingFromModel).toHaveBeenCalledTimes(1);
+        expect(fetchDrawingData).not.toHaveBeenCalled();
         expect(refreshGlyphAdvancesLive).not.toHaveBeenCalled();
         expect(originalWindow.glyphCanvas.viewportManager.panX).toBe(100);
-        expect(syncCurrentOutlineLayerDataFromModel).not.toHaveBeenCalled();
+        expect(syncCurrentOutlineDrawingDataFromModel).not.toHaveBeenCalled();
         expect(captureIdleViewLock).toHaveBeenCalledWith({
             kerningPair: false,
             bboxCenter: true,
@@ -741,13 +741,13 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             findGlyph: jest.fn((glyphName) => {
                 if (glyphName === 'a') {
                     return {
-                        findLayerById: jest.fn(() => ({ width: 500 }))
+                        findDrawingById: jest.fn(() => ({ width: 500 }))
                     };
                 }
 
                 if (glyphName === 'a.alt') {
                     return {
-                        findLayerById: jest.fn(() => ({ width: 520 }))
+                        findDrawingById: jest.fn(() => ({ width: 520 }))
                     };
                 }
 
@@ -770,14 +770,14 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             },
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'a.alt' }]),
-                fetchLayerData: jest.fn().mockResolvedValue(),
+                fetchDrawingData: jest.fn().mockResolvedValue(),
                 runDeterministicRefresh: jest.fn(async (task) => await task()),
                 performHitDetection: jest.fn()
             },
             getCurrentGlyphName: jest.fn(() => 'a'),
-            syncCurrentOutlineLayerDataFromModel: jest.fn(),
+            syncCurrentOutlineDrawingDataFromModel: jest.fn(),
             updatePropertyPanel: jest.fn(),
             render: jest.fn(),
             requestRepaintAfterCompile: jest.fn()
@@ -819,7 +819,7 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
         const currentFont = {
             fontModel: {
                 findGlyph: jest.fn(() => ({
-                    findLayerById: jest.fn(() => ({ width: 500 }))
+                    findDrawingById: jest.fn(() => ({ width: 500 }))
                 })),
                 findGlyphsUsingComponent: jest.fn((glyphName) =>
                     glyphName === 'a' ? ['adieresis', 'aring'] : []
@@ -838,14 +838,14 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             },
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'a' }]),
-                fetchLayerData: jest.fn().mockResolvedValue(),
+                fetchDrawingData: jest.fn().mockResolvedValue(),
                 runDeterministicRefresh: jest.fn(async (task) => await task()),
                 performHitDetection: jest.fn()
             },
             getCurrentGlyphName: jest.fn(() => 'a'),
-            syncCurrentOutlineLayerDataFromModel: jest.fn(),
+            syncCurrentOutlineDrawingDataFromModel: jest.fn(),
             updatePropertyPanel: jest.fn(),
             render: jest.fn(),
             requestRepaintAfterCompile: jest.fn()
@@ -902,7 +902,7 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
         const currentFont = {
             fontModel: {
                 findGlyph: jest.fn(() => ({
-                    findLayerById: jest.fn(() => ({ width: 500 }))
+                    findDrawingById: jest.fn(() => ({ width: 500 }))
                 })),
                 findGlyphsUsingComponent: jest.fn((glyphName) =>
                     glyphName === 'a' ? ['adieresis', 'aring'] : []
@@ -921,14 +921,14 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             },
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'a' }]),
-                fetchLayerData: jest.fn().mockResolvedValue(),
+                fetchDrawingData: jest.fn().mockResolvedValue(),
                 runDeterministicRefresh: jest.fn(async (task) => await task()),
                 performHitDetection: jest.fn()
             },
             getCurrentGlyphName: jest.fn(() => 'a'),
-            syncCurrentOutlineLayerDataFromModel: jest.fn(),
+            syncCurrentOutlineDrawingDataFromModel: jest.fn(),
             updatePropertyPanel: jest.fn(),
             render: jest.fn(),
             requestRepaintAfterCompile: jest.fn()
@@ -985,13 +985,13 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             findGlyph: jest.fn((glyphName) => {
                 if (glyphName === 'a') {
                     return {
-                        findLayerById: jest.fn(() => ({ width: 520 }))
+                        findDrawingById: jest.fn(() => ({ width: 520 }))
                     };
                 }
 
                 if (glyphName === 'a.alt') {
                     return {
-                        findLayerById: jest.fn(() => ({ width: 540 }))
+                        findDrawingById: jest.fn(() => ({ width: 540 }))
                     };
                 }
 
@@ -1002,13 +1002,13 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             findGlyph: jest.fn((glyphName) => {
                 if (glyphName === 'a') {
                     return {
-                        findLayerById: jest.fn(() => ({ width: 520 }))
+                        findDrawingById: jest.fn(() => ({ width: 520 }))
                     };
                 }
 
                 if (glyphName === 'a.alt') {
                     return {
-                        findLayerById: jest.fn(() => ({ width: 520 }))
+                        findDrawingById: jest.fn(() => ({ width: 520 }))
                     };
                 }
 
@@ -1032,14 +1032,14 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             },
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'a.alt' }]),
-                fetchLayerData: jest.fn().mockResolvedValue(),
+                fetchDrawingData: jest.fn().mockResolvedValue(),
                 runDeterministicRefresh: jest.fn(async (task) => await task()),
                 performHitDetection: jest.fn()
             },
             getCurrentGlyphName: jest.fn(() => 'a'),
-            syncCurrentOutlineLayerDataFromModel: jest.fn(),
+            syncCurrentOutlineDrawingDataFromModel: jest.fn(),
             updatePropertyPanel: jest.fn(),
             render: jest.fn(),
             requestRepaintAfterCompile: jest.fn()
@@ -1085,22 +1085,22 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
         const recomputeMetricsKeys = jest.fn(() => new Set(['a', 'n']));
         const sendMessage = jest.fn().mockResolvedValue({ success: true });
 
-        const makeFontModel = (aWidth, nWidth, otherMasterWidth = aWidth) => ({
+        const makeFontModel = (aWidth, nWidth, otherStationWidth = aWidth) => ({
             recomputeMetricsKeys,
             findGlyph: jest.fn((glyphName) => {
                 if (glyphName === 'a') {
                     return {
-                        findLayerById: jest.fn((layerId) => ({
+                        findDrawingById: jest.fn((drawingId) => ({
                             width:
-                                layerId === 'layer-1'
+                                drawingId === 'layer-1'
                                     ? aWidth
-                                    : otherMasterWidth
+                                    : otherStationWidth
                         }))
                     };
                 }
                 if (glyphName === 'n') {
                     return {
-                        findLayerById: jest.fn(() => ({ width: nWidth }))
+                        findDrawingById: jest.fn(() => ({ width: nWidth }))
                     };
                 }
                 return null;
@@ -1127,14 +1127,14 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             },
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'a' }]),
-                fetchLayerData: jest.fn().mockResolvedValue(),
+                fetchDrawingData: jest.fn().mockResolvedValue(),
                 runDeterministicRefresh: jest.fn(async (task) => await task()),
                 performHitDetection: jest.fn()
             },
             getCurrentGlyphName: jest.fn(() => 'a'),
-            syncCurrentOutlineLayerDataFromModel: jest.fn(),
+            syncCurrentOutlineDrawingDataFromModel: jest.fn(),
             updatePropertyPanel: jest.fn(),
             render: jest.fn(),
             requestRepaintAfterCompile: jest.fn()
@@ -1228,30 +1228,30 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
 
     test('undo point drag falls back to interpolation when exact model refresh is unavailable', async () => {
         const refreshGlyphAdvancesLive = jest.fn();
-        const syncCurrentOutlineLayerDataFromModel = jest.fn();
+        const syncCurrentOutlineDrawingDataFromModel = jest.fn();
         const performHitDetection = jest.fn();
         const render = jest.fn();
-        const fetchLayerData = jest.fn().mockResolvedValue();
-        const updatedLayer = { id: 'layer-1', width: 520 };
+        const fetchDrawingData = jest.fn().mockResolvedValue();
+        const updatedDrawing = { id: 'layer-1', width: 520 };
         const fontModelBeforeUndo = {
             recomputeMetricsKeys: jest.fn(() => {
                 currentFont.fontModel = fontModelAfterRecompute;
                 return new Set(['a']);
             }),
             findGlyph: jest.fn(() => ({
-                findLayerById: jest.fn(() => ({ id: 'layer-1', width: 500 }))
+                findDrawingById: jest.fn(() => ({ id: 'layer-1', width: 500 }))
             }))
         };
         const fontModelAfterUndo = {
             recomputeMetricsKeys: fontModelBeforeUndo.recomputeMetricsKeys,
             findGlyph: jest.fn(() => ({
-                findLayerById: jest.fn(() => ({ id: 'layer-1', width: 500 }))
+                findDrawingById: jest.fn(() => ({ id: 'layer-1', width: 500 }))
             }))
         };
         const fontModelAfterRecompute = {
             recomputeMetricsKeys: fontModelBeforeUndo.recomputeMetricsKeys,
             findGlyph: jest.fn(() => ({
-                findLayerById: jest.fn(() => updatedLayer)
+                findDrawingById: jest.fn(() => updatedDrawing)
             }))
         };
 
@@ -1270,14 +1270,14 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             },
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'a' }]),
-                fetchLayerData,
+                fetchDrawingData,
                 runDeterministicRefresh: jest.fn(async (task) => await task()),
                 performHitDetection
             },
             getCurrentGlyphName: jest.fn(() => 'a'),
-            syncCurrentOutlineLayerDataFromModel,
+            syncCurrentOutlineDrawingDataFromModel,
             updatePropertyPanel: jest.fn(),
             render,
             requestRepaintAfterCompile: jest.fn()
@@ -1318,7 +1318,7 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
 
         await runBridgeUndoRedo('undo', 'a', 'a', 'layer-1', null);
 
-        expect(fetchLayerData).toHaveBeenCalledWith(true, 'a');
+        expect(fetchDrawingData).toHaveBeenCalledWith(true, 'a');
         expect(performHitDetection).not.toHaveBeenCalled();
         expect(render).not.toHaveBeenCalled();
         expect(refreshGlyphAdvancesLive).not.toHaveBeenCalled();
@@ -1326,29 +1326,29 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
 
     test('undo nested point drag refreshes the active stack layer instead of root layerData', async () => {
         const refreshGlyphAdvancesLive = jest.fn();
-        const replaceCurrentLayerDataInStack = jest.fn(() => true);
-        const canRefreshSelectedLayerFromModelExactly = jest.fn(() => true);
-        const refreshSelectedLayerFromModel = jest.fn(() => true);
-        const fetchLayerData = jest.fn().mockResolvedValue();
-        const syncCurrentOutlineLayerDataFromModel = jest.fn();
+        const replaceCurrentDrawingDataInStack = jest.fn(() => true);
+        const canRefreshSelectedDrawingFromModelExactly = jest.fn(() => true);
+        const refreshSelectedDrawingFromModel = jest.fn(() => true);
+        const fetchDrawingData = jest.fn().mockResolvedValue();
+        const syncCurrentOutlineDrawingDataFromModel = jest.fn();
         const performHitDetection = jest.fn();
         const render = jest.fn();
-        const updatedLayerJson = {
+        const updatedDrawingJson = {
             id: 'layer-1',
             width: 520,
             shapes: []
         };
-        const updatedLayer = {
+        const updatedDrawing = {
             id: 'layer-1',
             width: 520,
-            toJSON: jest.fn(() => updatedLayerJson)
+            toJSON: jest.fn(() => updatedDrawingJson)
         };
         const fontModelBeforeUndo = {
             recomputeMetricsKeys: jest.fn(() => new Set(['nested'])),
             findGlyph: jest.fn((glyphName) => {
                 if (glyphName === 'nested') {
                     return {
-                        findLayerById: jest.fn(() => ({
+                        findDrawingById: jest.fn(() => ({
                             id: 'layer-1',
                             width: 500
                         }))
@@ -1363,7 +1363,7 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             findGlyph: jest.fn((glyphName) => {
                 if (glyphName === 'nested') {
                     return {
-                        findLayerById: jest.fn(() => updatedLayer)
+                        findDrawingById: jest.fn(() => updatedDrawing)
                     };
                 }
 
@@ -1386,7 +1386,7 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             },
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'root-layer',
+                selectedDrawingId: 'root-layer',
                 parseGlyphStack: jest.fn(() => [
                     { glyphName: 'root', layerId: 'root-layer' },
                     {
@@ -1395,15 +1395,16 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
                         componentIndex: 0
                     }
                 ]),
-                replaceCurrentLayerDataInStack,
-                canRefreshSelectedLayerFromModelExactly,
-                refreshSelectedLayerFromModel,
-                fetchLayerData,
+                replaceCurrentDrawingDataInStack:
+                    replaceCurrentDrawingDataInStack,
+                canRefreshSelectedDrawingFromModelExactly,
+                refreshSelectedDrawingFromModel,
+                fetchDrawingData,
                 runDeterministicRefresh: jest.fn(async (task) => await task()),
                 performHitDetection
             },
             getCurrentGlyphName: jest.fn(() => 'root'),
-            syncCurrentOutlineLayerDataFromModel,
+            syncCurrentOutlineDrawingDataFromModel,
             updatePropertyPanel: jest.fn(),
             render,
             requestRepaintAfterCompile: jest.fn()
@@ -1444,13 +1445,13 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
 
         await runBridgeUndoRedo('undo', 'nested', 'root', 'layer-1', null);
 
-        expect(canRefreshSelectedLayerFromModelExactly).toHaveBeenCalledTimes(
+        expect(canRefreshSelectedDrawingFromModelExactly).toHaveBeenCalledTimes(
             1
         );
-        expect(refreshSelectedLayerFromModel).toHaveBeenCalledTimes(1);
-        expect(fetchLayerData).not.toHaveBeenCalled();
-        expect(replaceCurrentLayerDataInStack).not.toHaveBeenCalled();
-        expect(syncCurrentOutlineLayerDataFromModel).not.toHaveBeenCalled();
+        expect(refreshSelectedDrawingFromModel).toHaveBeenCalledTimes(1);
+        expect(fetchDrawingData).not.toHaveBeenCalled();
+        expect(replaceCurrentDrawingDataInStack).not.toHaveBeenCalled();
+        expect(syncCurrentOutlineDrawingDataFromModel).not.toHaveBeenCalled();
         expect(performHitDetection).toHaveBeenCalled();
         expect(render).toHaveBeenCalled();
         expect(refreshGlyphAdvancesLive).not.toHaveBeenCalled();
@@ -1468,7 +1469,7 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
 
         const makeFontModel = (width) => ({
             findGlyph: jest.fn(() => ({
-                findLayerById: jest.fn(() => ({ id: 'layer-1', width }))
+                findDrawingById: jest.fn(() => ({ id: 'layer-1', width }))
             }))
         });
 
@@ -1492,14 +1493,14 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             },
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'a' }]),
-                fetchLayerData: jest.fn().mockResolvedValue(),
+                fetchDrawingData: jest.fn().mockResolvedValue(),
                 runDeterministicRefresh: jest.fn(async (task) => await task()),
                 performHitDetection: jest.fn()
             },
             getCurrentGlyphName: jest.fn(() => 'a'),
-            syncCurrentOutlineLayerDataFromModel: jest.fn(),
+            syncCurrentOutlineDrawingDataFromModel: jest.fn(),
             updatePropertyPanel: jest.fn(),
             render: jest.fn(),
             requestRepaintAfterCompile: jest.fn()
@@ -1579,7 +1580,7 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             findGlyph: jest.fn((glyphName) => {
                 if (glyphName === 'a') {
                     return {
-                        findLayerById: jest.fn(() => ({
+                        findDrawingById: jest.fn(() => ({
                             id: 'layer-1',
                             width: 500
                         }))
@@ -1588,7 +1589,7 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
 
                 if (glyphName === 'adieresis') {
                     return {
-                        findLayerById: jest.fn(() => ({
+                        findDrawingById: jest.fn(() => ({
                             id: 'layer-1',
                             width: 500
                         }))
@@ -1619,14 +1620,14 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             },
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'a' }]),
-                fetchLayerData: jest.fn().mockResolvedValue(),
+                fetchDrawingData: jest.fn().mockResolvedValue(),
                 runDeterministicRefresh: jest.fn(async (task) => await task()),
                 performHitDetection: jest.fn()
             },
             getCurrentGlyphName: jest.fn(() => 'a'),
-            syncCurrentOutlineLayerDataFromModel: jest.fn(),
+            syncCurrentOutlineDrawingDataFromModel: jest.fn(),
             updatePropertyPanel: jest.fn(),
             render: jest.fn(),
             requestRepaintAfterCompile: jest.fn()
@@ -1695,7 +1696,7 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
                 )
             ).toBe(false);
             expect(
-                originalWindow.glyphCanvas.outlineEditor.fetchLayerData
+                originalWindow.glyphCanvas.outlineEditor.fetchDrawingData
             ).toHaveBeenCalledWith(true, 'a');
         } finally {
             fontCompilation.isInitialized = originalIsInitialized;
@@ -1733,7 +1734,7 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             findGlyph: jest.fn((glyphName) => {
                 if (glyphName === 'a' || glyphName === 'adieresis') {
                     return {
-                        findLayerById: jest.fn(() => ({
+                        findDrawingById: jest.fn(() => ({
                             id: 'layer-1',
                             width: 500
                         }))
@@ -1764,14 +1765,14 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             },
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'a' }]),
-                fetchLayerData: jest.fn().mockResolvedValue(),
+                fetchDrawingData: jest.fn().mockResolvedValue(),
                 runDeterministicRefresh: jest.fn(async (task) => await task()),
                 performHitDetection: jest.fn()
             },
             getCurrentGlyphName: jest.fn(() => 'a'),
-            syncCurrentOutlineLayerDataFromModel: jest.fn(),
+            syncCurrentOutlineDrawingDataFromModel: jest.fn(),
             updatePropertyPanel: jest.fn(),
             render: jest.fn(),
             requestRepaintAfterCompile: jest.fn()
@@ -1846,7 +1847,7 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
         }
     });
 
-    test('undo coarse layer-snapshot Scale selection compiles from the forwarded worker update', async () => {
+    test('undo coarse drawing-snapshot Scale selection compiles from the forwarded worker update', async () => {
         const originalIsInitialized = fontCompilation.isInitialized;
         const originalLastStoredFontJson = fontCompilation.lastStoredFontJson;
         const sendMessageSpy = jest
@@ -1869,7 +1870,7 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
                 findGlyph: jest.fn((glyphName) => {
                     if (glyphName === 'a' || glyphName === 'adieresis') {
                         return {
-                            findLayerById: jest.fn(() => ({
+                            findDrawingById: jest.fn(() => ({
                                 id: 'layer-1',
                                 width: 500
                             }))
@@ -1896,14 +1897,14 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             },
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'a' }]),
-                fetchLayerData: jest.fn().mockResolvedValue(),
+                fetchDrawingData: jest.fn().mockResolvedValue(),
                 runDeterministicRefresh: jest.fn(async (task) => await task()),
                 performHitDetection: jest.fn()
             },
             getCurrentGlyphName: jest.fn(() => 'a'),
-            syncCurrentOutlineLayerDataFromModel: jest.fn(),
+            syncCurrentOutlineDrawingDataFromModel: jest.fn(),
             updatePropertyPanel: jest.fn(),
             render: jest.fn(),
             requestRepaintAfterCompile: jest.fn()
@@ -1985,7 +1986,7 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
                 findGlyph: jest.fn((glyphName) => {
                     if (glyphName === 'a' || glyphName === 'adieresis') {
                         return {
-                            findLayerById: jest.fn(() => ({
+                            findDrawingById: jest.fn(() => ({
                                 id: 'layer-1',
                                 width: 500
                             }))
@@ -2015,14 +2016,14 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             },
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'a' }]),
-                fetchLayerData: jest.fn().mockResolvedValue(),
+                fetchDrawingData: jest.fn().mockResolvedValue(),
                 runDeterministicRefresh: jest.fn(async (task) => await task()),
                 performHitDetection: jest.fn()
             },
             getCurrentGlyphName: jest.fn(() => 'a'),
-            syncCurrentOutlineLayerDataFromModel: jest.fn(),
+            syncCurrentOutlineDrawingDataFromModel: jest.fn(),
             updatePropertyPanel: jest.fn(),
             render: jest.fn(),
             requestRepaintAfterCompile: jest.fn()
@@ -2091,10 +2092,10 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
 
     test('undo component drag reloads the active canvas layer without direct worker cache work', async () => {
         const originalIsInitialized = fontCompilation.isInitialized;
-        const submitLayerToWorkerCache = jest.fn().mockResolvedValue(true);
+        const submitDrawingToWorkerCache = jest.fn().mockResolvedValue(true);
         const requestRecompileWithoutDataChange = jest.fn();
-        const refreshSelectedLayerFromModel = jest.fn(() => true);
-        const canRefreshSelectedLayerFromModelExactly = jest
+        const refreshSelectedDrawingFromModel = jest.fn(() => true);
+        const canRefreshSelectedDrawingFromModelExactly = jest
             .fn()
             .mockReturnValueOnce(true)
             .mockReturnValueOnce(true)
@@ -2103,13 +2104,13 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             .fn()
             .mockResolvedValueOnce(false)
             .mockResolvedValueOnce(true);
-        const fetchLayerData = jest.fn().mockResolvedValue();
+        const fetchDrawingData = jest.fn().mockResolvedValue();
 
         const currentFont = {
             babelfontJson: '{"glyphs":[]}',
             fontModel: {
                 findGlyph: jest.fn(() => ({
-                    findLayerById: jest.fn(() => ({
+                    findDrawingById: jest.fn(() => ({
                         id: 'layer-1',
                         width: 500
                     }))
@@ -2129,17 +2130,17 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             },
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'a' }]),
-                canRefreshSelectedLayerFromModelExactly,
-                refreshSelectedLayerFromModel,
+                canRefreshSelectedDrawingFromModelExactly,
+                refreshSelectedDrawingFromModel,
                 reconcileSelectionAfterModelSync,
-                fetchLayerData,
+                fetchDrawingData,
                 runDeterministicRefresh: jest.fn(async (task) => await task()),
                 performHitDetection: jest.fn()
             },
             getCurrentGlyphName: jest.fn(() => 'a'),
-            syncCurrentOutlineLayerDataFromModel: jest.fn(),
+            syncCurrentOutlineDrawingDataFromModel: jest.fn(),
             updatePropertyPanel: jest.fn(),
             render: jest.fn(),
             requestRepaintAfterCompile: jest.fn()
@@ -2148,7 +2149,7 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
         originalWindow.fontManager = {
             currentFont,
             awaitWorkerCacheUpdate: jest.fn().mockResolvedValue(),
-            submitLayerToWorkerCache,
+            submitDrawingToWorkerCache: submitDrawingToWorkerCache,
             pendingBabelfontJsonSyncAfterDrag: false,
             lastChangeSource: null,
             lastEditType: null
@@ -2184,28 +2185,28 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
         try {
             await runBridgeUndoRedo('undo', 'a', 'a', 'layer-1', null);
 
-            expect(submitLayerToWorkerCache).not.toHaveBeenCalled();
+            expect(submitDrawingToWorkerCache).not.toHaveBeenCalled();
             expect(requestRecompileWithoutDataChange).toHaveBeenCalledTimes(1);
             expect(
                 originalWindow.autoCompileManager.checkAndSchedule
             ).toHaveBeenCalledTimes(1);
-            expect(fetchLayerData).not.toHaveBeenCalled();
-            expect(refreshSelectedLayerFromModel).toHaveBeenCalledTimes(1);
+            expect(fetchDrawingData).not.toHaveBeenCalled();
+            expect(refreshSelectedDrawingFromModel).toHaveBeenCalledTimes(1);
             expect(
-                canRefreshSelectedLayerFromModelExactly
+                canRefreshSelectedDrawingFromModelExactly
             ).toHaveBeenCalledTimes(1);
 
             await runBridgeUndoRedo('undo', 'a', 'a', 'layer-1', null);
 
-            expect(fetchLayerData).toHaveBeenCalledWith(true, 'a');
-            expect(refreshSelectedLayerFromModel).toHaveBeenCalledTimes(2);
+            expect(fetchDrawingData).toHaveBeenCalledWith(true, 'a');
+            expect(refreshSelectedDrawingFromModel).toHaveBeenCalledTimes(2);
 
             await runBridgeUndoRedo('undo', 'a', 'a', 'layer-1', null);
 
-            expect(fetchLayerData).toHaveBeenCalledTimes(2);
-            expect(refreshSelectedLayerFromModel).toHaveBeenCalledTimes(2);
+            expect(fetchDrawingData).toHaveBeenCalledTimes(2);
+            expect(refreshSelectedDrawingFromModel).toHaveBeenCalledTimes(2);
             expect(
-                canRefreshSelectedLayerFromModelExactly
+                canRefreshSelectedDrawingFromModelExactly
             ).toHaveBeenCalledTimes(3);
         } finally {
             fontCompilation.isInitialized = originalIsInitialized;
@@ -2214,9 +2215,9 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
 
     test('undo on an inexact selected layer falls back to interpolation', async () => {
         const refreshGlyphAdvancesLive = jest.fn();
-        const canRefreshSelectedLayerFromModelExactly = jest.fn(() => false);
-        const refreshSelectedLayerFromModel = jest.fn(() => true);
-        const fetchLayerData = jest.fn().mockResolvedValue();
+        const canRefreshSelectedDrawingFromModelExactly = jest.fn(() => false);
+        const refreshSelectedDrawingFromModel = jest.fn(() => true);
+        const fetchDrawingData = jest.fn().mockResolvedValue();
 
         originalWindow.glyphCanvas = {
             viewportManager: {
@@ -2228,11 +2229,11 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             },
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'a' }]),
-                canRefreshSelectedLayerFromModelExactly,
-                refreshSelectedLayerFromModel,
-                fetchLayerData,
+                canRefreshSelectedDrawingFromModelExactly,
+                refreshSelectedDrawingFromModel,
+                fetchDrawingData,
                 runDeterministicRefresh: jest.fn(async (task) => await task()),
                 performHitDetection: jest.fn()
             },
@@ -2246,7 +2247,7 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             currentFont: {
                 fontModel: {
                     findGlyph: jest.fn(() => ({
-                        findLayerById: jest.fn(() => ({
+                        findDrawingById: jest.fn(() => ({
                             id: 'layer-1',
                             width: 500
                         }))
@@ -2283,11 +2284,11 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
 
         await runBridgeUndoRedo('undo', 'a', 'a', 'layer-1', null);
 
-        expect(canRefreshSelectedLayerFromModelExactly).toHaveBeenCalledTimes(
+        expect(canRefreshSelectedDrawingFromModelExactly).toHaveBeenCalledTimes(
             1
         );
-        expect(refreshSelectedLayerFromModel).not.toHaveBeenCalled();
-        expect(fetchLayerData).toHaveBeenCalledWith(true, 'a');
+        expect(refreshSelectedDrawingFromModel).not.toHaveBeenCalled();
+        expect(fetchDrawingData).toHaveBeenCalledWith(true, 'a');
     });
 
     test('undo glyph-scoped snapshot uses explicit replay targets instead of storeFontJson', async () => {
@@ -2304,7 +2305,7 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             babelfontJson: '{"glyphs":[]}',
             fontModel: {
                 findGlyph: jest.fn(() => ({
-                    findLayerById: jest.fn(() => ({
+                    findDrawingById: jest.fn(() => ({
                         id: 'layer-1',
                         width: 500
                     }))
@@ -2324,14 +2325,14 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             },
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'a' }]),
-                fetchLayerData: jest.fn().mockResolvedValue(),
+                fetchDrawingData: jest.fn().mockResolvedValue(),
                 runDeterministicRefresh: jest.fn(async (task) => await task()),
                 performHitDetection: jest.fn()
             },
             getCurrentGlyphName: jest.fn(() => 'a'),
-            syncCurrentOutlineLayerDataFromModel: jest.fn(),
+            syncCurrentOutlineDrawingDataFromModel: jest.fn(),
             updatePropertyPanel: jest.fn(),
             render: jest.fn(),
             requestRepaintAfterCompile: jest.fn()
@@ -2418,7 +2419,7 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
                 findGlyph: jest.fn((glyphName) => {
                     if (glyphName === 'a' || glyphName === 'adieresis') {
                         return {
-                            findLayerById: jest.fn(() => ({
+                            findDrawingById: jest.fn(() => ({
                                 id: 'layer-1',
                                 width: 500
                             }))
@@ -2446,14 +2447,14 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             },
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'a' }]),
-                fetchLayerData: jest.fn().mockResolvedValue(),
+                fetchDrawingData: jest.fn().mockResolvedValue(),
                 runDeterministicRefresh: jest.fn(async (task) => await task()),
                 performHitDetection: jest.fn()
             },
             getCurrentGlyphName: jest.fn(() => 'a'),
-            syncCurrentOutlineLayerDataFromModel: jest.fn(),
+            syncCurrentOutlineDrawingDataFromModel: jest.fn(),
             updatePropertyPanel: jest.fn(),
             render: jest.fn(),
             requestRepaintAfterCompile: jest.fn()
@@ -2551,7 +2552,7 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             babelfontJson: '{"glyphs":[{"name":"stale"}]}',
             fontModel: {
                 findGlyph: jest.fn(() => ({
-                    findLayerById: jest.fn(() => ({
+                    findDrawingById: jest.fn(() => ({
                         id: 'layer-1',
                         width: 500
                     }))
@@ -2573,14 +2574,14 @@ describe('runBridgeUndoRedo sidebearing sync', () => {
             },
             outlineEditor: {
                 active: true,
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'a' }]),
-                fetchLayerData: jest.fn().mockResolvedValue(),
+                fetchDrawingData: jest.fn().mockResolvedValue(),
                 runDeterministicRefresh: jest.fn(async (task) => await task()),
                 performHitDetection: jest.fn()
             },
             getCurrentGlyphName: jest.fn(() => 'a'),
-            syncCurrentOutlineLayerDataFromModel: jest.fn(),
+            syncCurrentOutlineDrawingDataFromModel: jest.fn(),
             updatePropertyPanel: jest.fn(),
             render: jest.fn(),
             requestRepaintAfterCompile: jest.fn()

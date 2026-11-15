@@ -13,17 +13,17 @@ import { LOCAL_EDITOR_ORIGIN, LOCAL_ROOM_ORIGIN } from './cloud-collab-session';
 export async function dumpCloudGlyphSync(
     page: Page,
     glyphName: string,
-    layerId: string
+    drawingId: string
 ): Promise<Record<string, unknown>> {
     return page.evaluate(
-        ({ glyphName, layerId }) => {
+        ({ glyphName, layerId: drawingId }) => {
             const plugin = (window as any).cloudPlugin;
             const bridge = (window as any).changeBridge;
             const glyph = (window as any).currentFontModel?.findGlyph?.(
                 glyphName
             );
-            const layer = glyph?.findLayerById?.(layerId);
-            const node = layer?.paths?.[0]?.nodes?.[0];
+            const drawing = glyph?.findDrawingById?.(drawingId);
+            const node = drawing?.paths?.[0]?.nodes?.[0];
             const documentId = bridge?.glyphDocumentIdForName?.(glyphName);
             const tokens = bridge?.listGlyphRevisionTokens?.() ?? [];
             const glyphId = documentId?.startsWith?.('glyph:')
@@ -72,7 +72,7 @@ export async function dumpCloudGlyphSync(
                 ).slice(0, 24)
             };
         },
-        { glyphName, layerId }
+        { glyphName, layerId: drawingId }
     );
 }
 

@@ -68,7 +68,7 @@ describe('TextRunEditor explicit token EOL append behavior', () => {
                 if (name === '.notdef') {
                     return {
                         name: '.notdef',
-                        layers: [{ width: 600 }]
+                        drawings: [{ width: 600 }]
                     };
                 }
                 return null;
@@ -99,7 +99,7 @@ describe('TextRunEditor explicit token EOL append behavior', () => {
         window.currentFontModel = {
             findGlyph: jest.fn(() => ({
                 name: 'A',
-                findLayerByMasterId: jest.fn(() => ({ width: 500 })),
+                findDrawingByStationId: jest.fn(() => ({ width: 500 })),
                 layers: [{ width: 500 }, { width: 900 }]
             }))
         };
@@ -167,8 +167,8 @@ describe('TextRunEditor explicit token EOL append behavior', () => {
         window.glyphCanvas = {
             outlineEditor: {
                 active: true,
-                layerData: { width: 733 },
-                findMatchingLayer: jest.fn(() => null)
+                drawingData: { width: 733 },
+                findMatchingDrawing: jest.fn(() => null)
             },
             getCurrentGlyphName: () => 'A'
         };

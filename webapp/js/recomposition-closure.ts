@@ -1,13 +1,13 @@
 /**
- * Shared cascading layer recomposition closure.
+ * Shared cascading drawing recomposition closure.
  *
  * Distinguishes two dependent sets after a visual edit:
  *
- *   recomposeTargets — layers whose *stored model* must change (automatic
+ *   recomposeTargets — drawings whose *stored model* must change (automatic
  *     composition rebuild and/or metrics-key inheritance). These may be
- *     written into the authoritative Yjs packet as layer snapshots.
+ *     written into the authoritative Yjs packet as drawing snapshots.
  *
- *   invalidateTargets — layers that only need worker/canvas/overview refresh
+ *   invalidateTargets — drawings that only need worker/canvas/overview refresh
  *     because they *draw* an edited source (e.g. manual composites). These
  *     must NOT receive model writes; they are stamped only as
  *     `workerReplayTargets` metadata on the Yjs packet.
@@ -31,8 +31,8 @@
  *     enter recomposeTargets even when mutation is a no-op, so Yjs matches
  *     the already-correct model.
  *
- * Layer identity: every target carries a per-glyph layer id resolved via
- * designspace matching. Source layer UUIDs must never be reused as dependent ids.
+ * Drawing identity: every target carries a per-glyph drawing id resolved via
+ * designspace matching. Source drawing UUIDs must never be reused as dependent ids.
  *
  * The module is the sole cascade mutator for live and commit — all
  * dependencies are passed explicitly.
@@ -43,7 +43,7 @@ import { recordCompileBenchRecomposition } from './compile-bench-probe';
 import {
     deriveGlyphNameFromPath,
     getPathSegments,
-    isDerivedLayerChangePath,
+    isDerivedDrawingChangePath,
     normalizeWorkerReplayTargets
 } from './change-log';
 
@@ -67,15 +67,15 @@ export type RecompositionClosure = {
     allTargets: WorkerReplayTarget[];
 
     /**
-     * Layers whose stored model changed via automatic composition rebuild
+     * Drawings whose stored model changed via automatic composition rebuild
      * and/or metrics-key recomputation (excludes pure invalidate dependents).
-     * Use these (plus the source targets) as `changedLayerTargets`.
+     * Use these (plus the source targets) as `changedDrawingTargets`.
      */
     recomposeTargets: WorkerReplayTarget[];
 
     /**
      * Component-reference dependents that need cache/redraw only.
-     * Never write these into Yjs as layer snapshots from cascade alone.
+     * Never write these into Yjs as drawing snapshots from cascade alone.
      */
     invalidateTargets: WorkerReplayTarget[];
 
@@ -112,7 +112,7 @@ export interface FontModelLike {
         sourceGlyphNames: Iterable<string>,
         options?: {
             allowedGlyphNames?: Set<string>;
-            preferredLayerId?: string;
+            preferredDrawingId?: string;
             preferredSourceGlyphName?: string;
         }
     ) => Set<string>;
@@ -140,14 +140,14 @@ export interface FontModelLike {
 
 export interface GlyphLike {
     name?: string;
-    findLayerById?: (layerId: string) => LayerLike | null | undefined;
+    findDrawingById?: (drawingId: string) => DrawingLike | null | undefined;
     layers?: Array<{ id?: string }>;
 }
 
-export interface LayerLike {
+export interface DrawingLike {
     id?: string;
-    getMatchingLayerOnGlyph?: (glyphName: string) => LayerLike | null;
-    isAutomaticAlignedLayer?: () => boolean;
+    getMatchingDrawingOnGlyph?: (glyphName: string) => DrawingLike | null;
+    isAutomaticAlignedDrawing?: () => boolean;
 }
 
 /**
@@ -186,7 +186,10 @@ function emptyClosure(
     };
 }
 
-function layerSnapshotTouchesField(snapshot: unknown, field: string): boolean {
+function drawingSnapshotTouchesField(
+    snapshot: unknown,
+    field: string
+): boolean {
     if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
         return false;
     }
@@ -244,7 +247,7 @@ export function deriveEditKindsFromOperations(
         }
 
         if (
-            operation.applyMode === 'layer-snapshot' &&
+            operation.applyMode === 'drawing-snapshot' &&
             path.length === 4 &&
             path[0] === 'glyphs' &&
             path[2] === 'layers'
@@ -252,20 +255,20 @@ export function deriveEditKindsFromOperations(
             const oldValue = operation.applyOldValue ?? operation.oldValue;
             const newValue = operation.applyNewValue ?? operation.newValue;
             if (
-                layerSnapshotTouchesField(oldValue, 'width') ||
-                layerSnapshotTouchesField(newValue, 'width')
+                drawingSnapshotTouchesField(oldValue, 'width') ||
+                drawingSnapshotTouchesField(newValue, 'width')
             ) {
                 kinds.add('sidebearing');
             }
             if (
-                layerSnapshotTouchesField(oldValue, 'anchors') ||
-                layerSnapshotTouchesField(newValue, 'anchors')
+                drawingSnapshotTouchesField(oldValue, 'anchors') ||
+                drawingSnapshotTouchesField(newValue, 'anchors')
             ) {
                 kinds.add('anchor');
             }
             if (
-                layerSnapshotTouchesField(oldValue, 'shapes') ||
-                layerSnapshotTouchesField(newValue, 'shapes')
+                drawingSnapshotTouchesField(oldValue, 'shapes') ||
+                drawingSnapshotTouchesField(newValue, 'shapes')
             ) {
                 kinds.add('outline');
                 kinds.add('component');
@@ -289,13 +292,13 @@ export function deriveEditKindsFromChangeLogEntries(
     const kinds = deriveEditKindsFromOperations(
         entries.map((entry) => {
             const path = getPathSegments(entry.path);
-            const isLayerRoot =
+            const isDrawingRoot =
                 path.length === 4 &&
                 path[0] === 'glyphs' &&
                 path[2] === 'layers';
             return {
                 path,
-                applyMode: isLayerRoot ? 'layer-snapshot' : 'default',
+                applyMode: isDrawingRoot ? 'drawing-snapshot' : 'default',
                 oldValue: entry.replayOldValue ?? entry.oldValue,
                 newValue: entry.replayNewValue ?? entry.newValue
             };
@@ -315,7 +318,7 @@ export function deriveEditKindsFromChangeLogEntries(
     return kinds;
 }
 
-export function historyItemHasDerivedLayerWrites(item: {
+export function historyItemHasDerivedDrawingWrites(item: {
     originatingGlyphName?: string | null;
     entries: Array<{ path: string }>;
     workerReplayTargets?: WorkerReplayTarget[] | null;
@@ -341,11 +344,11 @@ function originEntriesForHistoryItem(item: {
 }): Array<{ path: string }> {
     return item.entries.filter(
         (entry) =>
-            !isDerivedLayerChangePath(entry.path, item.originatingGlyphName)
+            !isDerivedDrawingChangePath(entry.path, item.originatingGlyphName)
     );
 }
 
-export function shouldResettleDerivedLayersOnHistoryReplay(
+export function shouldResettleDerivedDrawingsOnHistoryReplay(
     item: {
         originatingGlyphName?: string | null;
         entries: Array<{
@@ -360,7 +363,7 @@ export function shouldResettleDerivedLayersOnHistoryReplay(
     },
     hasFontModel: boolean
 ): boolean {
-    if (!hasFontModel || !historyItemHasDerivedLayerWrites(item)) {
+    if (!hasFontModel || !historyItemHasDerivedDrawingWrites(item)) {
         return false;
     }
     return (
@@ -370,47 +373,47 @@ export function shouldResettleDerivedLayersOnHistoryReplay(
 }
 
 /**
- * Resolve the matching master layer on a dependent glyph.
+ * Resolve the matching drawing on a dependent glyph.
  *
- * Layer IDs are unique per glyph. Prefer same-id lookup only as a fast path;
- * otherwise resolve via designspace location matching from the source layer.
- * Callers must not pass the source layer UUID as if it were the dependent's id.
+ * Drawing IDs are unique per glyph. Prefer same-id lookup only as a fast path;
+ * otherwise resolve via designspace location matching from the source drawing.
+ * Callers must not pass the source drawing UUID as if it were the dependent's id.
  */
-export function resolveDependentLayerTarget(
+export function resolveDependentDrawingTarget(
     fontModel: FontModelLike,
     glyphName: string,
-    activeLayerId: string | null | undefined,
-    sourceLayer: LayerLike | null
+    activeDrawingId: string | null | undefined,
+    sourceDrawing: DrawingLike | null
 ): WorkerReplayTarget | null {
     const glyph = fontModel.findGlyph?.(glyphName);
     if (!glyph) {
         return null;
     }
 
-    const matchedLayer =
-        (activeLayerId ? glyph.findLayerById?.(activeLayerId) : null) ??
-        sourceLayer?.getMatchingLayerOnGlyph?.(glyphName) ??
+    const matchedDrawing =
+        (activeDrawingId ? glyph.findDrawingById?.(activeDrawingId) : null) ??
+        sourceDrawing?.getMatchingDrawingOnGlyph?.(glyphName) ??
         null;
 
-    if (!matchedLayer?.id) {
+    if (!matchedDrawing?.id) {
         return null;
     }
 
-    return { glyphName, layerId: matchedLayer.id };
+    return { glyphName, layerId: matchedDrawing.id };
 }
 
-/** @deprecated Use {@link resolveDependentLayerTarget}. */
-function resolveMatchingLayerTarget(
+/** @deprecated Use {@link resolveDependentDrawingTarget}. */
+function resolveMatchingDrawingTarget(
     fontModel: FontModelLike,
     glyphName: string,
-    activeLayerId: string | null | undefined,
-    sourceLayer: LayerLike | null
+    activeDrawingId: string | null | undefined,
+    sourceDrawing: DrawingLike | null
 ): WorkerReplayTarget | null {
-    return resolveDependentLayerTarget(
+    return resolveDependentDrawingTarget(
         fontModel,
         glyphName,
-        activeLayerId,
-        sourceLayer
+        activeDrawingId,
+        sourceDrawing
     );
 }
 
@@ -418,19 +421,19 @@ function buildTargetsForGlyphNames(
     fontModel: FontModelLike,
     glyphNames: Iterable<string>,
     sourceGlyphNames: Set<string>,
-    activeLayerId: string | null | undefined,
-    sourceLayer: LayerLike | null
+    activeDrawingId: string | null | undefined,
+    sourceDrawing: DrawingLike | null
 ): WorkerReplayTarget[] {
     const targets: WorkerReplayTarget[] = [];
     for (const glyphName of glyphNames) {
         if (sourceGlyphNames.has(glyphName)) {
             continue;
         }
-        const target = resolveMatchingLayerTarget(
+        const target = resolveMatchingDrawingTarget(
             fontModel,
             glyphName,
-            activeLayerId,
-            sourceLayer
+            activeDrawingId,
+            sourceDrawing
         );
         if (target) {
             targets.push(target);
@@ -441,30 +444,30 @@ function buildTargetsForGlyphNames(
 
 /**
  * Among component-reference candidates, keep only glyphs whose matching
- * layer is fully automatic-aligned (eligible for model recomposition /
+ * drawing is fully automatic-aligned (eligible for model recomposition /
  * Yjs persistence).
  */
 function collectAutomaticAlignedDependentGlyphNames(
     fontModel: FontModelLike,
     candidateGlyphNames: Iterable<string>,
-    activeLayerId: string | null | undefined,
-    sourceLayer: LayerLike | null
+    activeDrawingId: string | null | undefined,
+    sourceDrawing: DrawingLike | null
 ): Set<string> {
     const automaticGlyphNames = new Set<string>();
     for (const glyphName of candidateGlyphNames) {
-        const target = resolveMatchingLayerTarget(
+        const target = resolveMatchingDrawingTarget(
             fontModel,
             glyphName,
-            activeLayerId,
-            sourceLayer
+            activeDrawingId,
+            sourceDrawing
         );
         if (!target) {
             continue;
         }
-        const layer = fontModel
+        const drawing = fontModel
             .findGlyph?.(glyphName)
-            ?.findLayerById?.(target.layerId);
-        if (layer?.isAutomaticAlignedLayer?.()) {
+            ?.findDrawingById?.(target.layerId);
+        if (drawing?.isAutomaticAlignedDrawing?.()) {
             automaticGlyphNames.add(glyphName);
         }
     }
@@ -476,26 +479,26 @@ function collectAutomaticAlignedDependentGlyphNames(
 /**
  * Compute the full recomposition closure for a visual edit.
  *
- * @param options.sourceTargets   The directly edited glyph/layer pairs.
+ * @param options.sourceTargets   The directly edited glyph/drawing pairs.
  * @param options.editKinds       Active edit kinds (outline, anchor, etc.).
  *                                Mixed selections produce a union.
  * @param options.scope           `'visible'` for live drag;
  *                                `'all'` for committed edits.
  * @param options.fontModel       Font model with the required methods.
- * @param options.activeLayerId   The active editing layer (master).
- * @param options.sourceGlyphName Optional source glyph for matching-layer
+ * @param options.activeDrawingId The active editing drawing (at a station).
+ * @param options.sourceGlyphName Optional source glyph for matching-drawing
  *                                lookups on dependents.
  * @param options.suppressor      Optional bridge-like object whose
  *                                `runWithoutRecording` wraps model mutations.
  * @param options.visibleGlyphNames Glyph names considered visible.  Used only
  *                                when scope is `'visible'` to limit dependents.
  */
-export function computeLayerRecompositionClosure(options: {
+export function computeDrawingRecompositionClosure(options: {
     sourceTargets: RecompositionSourceTarget[];
     editKinds: Set<RecompositionEditKind>;
     scope: RecompositionScope;
     fontModel: FontModelLike;
-    activeLayerId?: string | null;
+    activeDrawingId?: string | null;
     sourceGlyphName?: string | null;
     suppressor?: RecordingSuppressor | null;
     visibleGlyphNames?: Iterable<string>;
@@ -515,7 +518,7 @@ export function computeLayerRecompositionClosure(options: {
         editKinds,
         scope,
         fontModel,
-        activeLayerId,
+        activeDrawingId,
         sourceGlyphName,
         suppressor,
         visibleGlyphNames
@@ -556,7 +559,7 @@ export function computeLayerRecompositionClosure(options: {
     // ── Invalidate-only: all component-reference dependents ─────────────
     // Manual and automatic composites that *draw* the edited source need
     // cache/redraw refresh, but only automatic/metrics edges may mutate
-    // stored layer data (handled below). Visible scope expands intermediates
+    // stored drawing data (handled below). Visible scope expands intermediates
     // that reach a retained visible glyph.
     if (
         touchesGeometry &&
@@ -613,7 +616,7 @@ export function computeLayerRecompositionClosure(options: {
 
     // ── Model recomposition: automatic composites ───────────────────────
     // rebuildAutomaticCompositesForGlyphs already gates on
-    // isAutomaticAlignedLayer() and returns only glyphs whose stored
+    // isAutomaticAlignedDrawing() and returns only glyphs whose stored
     // placement/width actually changed.
     if (
         touchesGeometry &&
@@ -636,7 +639,7 @@ export function computeLayerRecompositionClosure(options: {
                     ...(allowedGlyphNames ? { allowedGlyphNames } : {}),
                     ...(preferredTarget?.layerId
                         ? {
-                              preferredLayerId: preferredTarget.layerId,
+                              preferredDrawingId: preferredTarget.layerId,
                               preferredSourceGlyphName:
                                   preferredTarget.glyphName
                           }
@@ -653,7 +656,7 @@ export function computeLayerRecompositionClosure(options: {
     // ── Model recomposition: metrics-key + automatic-offset dependents ──
     // Outline edits are included because moving the visual edge of a keyed
     // source glyph must refresh inherited sidebearings. Anchor-only edits
-    // do not drive metrics-key inheritance. Automatic layers are mutated only
+    // do not drive metrics-key inheritance. Automatic drawings are mutated only
     // via rebuild above — never via metrics translate/bake.
     if (
         needsMetricsPropagation &&
@@ -674,16 +677,16 @@ export function computeLayerRecompositionClosure(options: {
         }
     }
 
-    const sourceLayer =
-        sourceGlyphName && activeLayerId
+    const sourceDrawing =
+        sourceGlyphName && activeDrawingId
             ? (fontModel
                   .findGlyph?.(sourceGlyphName)
-                  ?.findLayerById?.(activeLayerId) ?? null)
+                  ?.findDrawingById?.(activeDrawingId) ?? null)
             : null;
 
     // Persist automatic composites / metrics-key dependents even when the
     // rebuild/metrics pass is a no-op. Live drag may already have applied the
-    // derived state; omitting those layers from changedLayerTargets leaves
+    // derived state; omitting those drawings from changedDrawingTargets leaves
     // stale Yjs data that post-commit overlay clear reveals as a rollback
     // (e.g. Adieresis mark stuck at the pre-drag transform).
     //
@@ -703,8 +706,8 @@ export function computeLayerRecompositionClosure(options: {
         for (const glyphName of collectAutomaticAlignedDependentGlyphNames(
             fontModel,
             invalidateGlyphNames,
-            activeLayerId,
-            sourceLayer
+            activeDrawingId,
+            sourceDrawing
         )) {
             recomposeGlyphNames.add(glyphName);
         }
@@ -729,8 +732,8 @@ export function computeLayerRecompositionClosure(options: {
         fontModel,
         recomposeGlyphNames,
         sourceGlyphNames,
-        activeLayerId,
-        sourceLayer
+        activeDrawingId,
+        sourceDrawing
     );
     const invalidateOnlyGlyphNames = new Set(
         [...invalidateGlyphNames].filter(
@@ -741,8 +744,8 @@ export function computeLayerRecompositionClosure(options: {
         fontModel,
         invalidateOnlyGlyphNames,
         sourceGlyphNames,
-        activeLayerId,
-        sourceLayer
+        activeDrawingId,
+        sourceDrawing
     );
     const dependentTargets = normalizeWorkerReplayTargets([
         ...recomposeTargets,
@@ -815,24 +818,24 @@ export function deriveEditKindsFromDrag(
 }
 
 /**
- * Resolve Yjs layer-sync targets from a closure result.
- * Replay stays wide; changed-layer snapshots stay lean (source + recompose).
+ * Resolve Yjs drawing-sync targets from a closure result.
+ * Replay stays wide; changed-drawing snapshots stay lean (source + recompose).
  */
-export function resolveLayerSyncTargetsFromClosure(
+export function resolveDrawingSyncTargetsFromClosure(
     closure: RecompositionClosure,
     sourceTargets: WorkerReplayTarget[],
     previouslyRecomposedTargets: WorkerReplayTarget[] = []
 ): {
-    changedLayerTargets: WorkerReplayTarget[];
+    changedDrawingTargets: WorkerReplayTarget[];
     workerReplayTargets: WorkerReplayTarget[];
 } {
     const normalizedSource = normalizeWorkerReplayTargets(sourceTargets);
     return {
-        changedLayerTargets: normalizeWorkerReplayTargets([
+        changedDrawingTargets: normalizeWorkerReplayTargets([
             ...normalizedSource,
             // Live drag may already have converged visible descendants before
             // the all-scope commit closure runs. A no-op final pass must still
-            // snapshot those layers into Yjs; otherwise the worker retains
+            // snapshot those drawings into Yjs; otherwise the worker retains
             // their pre-drag state and the full commit reshape rolls them back.
             ...previouslyRecomposedTargets,
             ...closure.recomposeTargets

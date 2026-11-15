@@ -34,16 +34,16 @@ describe('tour intro', () => {
                 </div>
             </div>
             <div id="glyph-properties-section">
-                <div class="editor-layers-widget">
-                    <div class="editor-section-title editor-layers-header">
+                <div class="editor-drawings-widget">
+                    <div class="editor-section-title editor-drawings-header">
                         <span class="editor-section-title-text">Layers</span>
                     </div>
-                    <div class="editor-layers-list">
-                        <div class="editor-layer-item" data-master-id="regular">
-                            <div class="master-item-name">Regular</div>
+                    <div class="editor-drawings-list">
+                        <div class="editor-drawing-item" data-station-id="regular">
+                            <div class="station-item-name">Regular</div>
                         </div>
-                        <div class="editor-layer-item" data-master-id="extrabold">
-                            <div class="master-item-name">ExtraBold</div>
+                        <div class="editor-drawing-item" data-station-id="extrabold">
+                            <div class="station-item-name">ExtraBold</div>
                         </div>
                     </div>
                 </div>
@@ -99,7 +99,7 @@ describe('tour intro', () => {
     function mockLss04Background() {
         window.glyphCanvas.outlineEditor.currentGlyphName = 'l.ss04';
         window.currentFontModel = {
-            masters: [
+            stations: [
                 {
                     id: 'extrabold',
                     name: { dflt: 'ExtraBold' }
@@ -108,14 +108,14 @@ describe('tour intro', () => {
             findGlyph: (name) =>
                 name === 'l.ss04'
                     ? {
-                          layers: [
+                          drawings: [
                               {
                                   is_background: false,
-                                  master: {
+                                  station: {
                                       type: 'DefaultForMaster',
                                       master: 'extrabold'
                                   },
-                                  backgroundLayer: {
+                                  backgroundDrawing: {
                                       is_background: true,
                                       paths: [
                                           {
@@ -149,7 +149,7 @@ describe('tour intro', () => {
         window.focusView = jest.fn();
         window.resizeView = jest.fn();
         window.currentFontModel = {
-            masters: [
+            stations: [
                 {
                     id: 'regular',
                     name: { dflt: 'Regular' },
@@ -168,7 +168,7 @@ describe('tour intro', () => {
                 active: false,
                 setGuidelinesVisible: jest.fn()
             },
-            selectMaster: jest.fn().mockResolvedValue(undefined),
+            selectStation: jest.fn().mockResolvedValue(undefined),
             textRunEditor: {
                 setTextBuffer: jest.fn(),
                 textBuffer: 'hëllo مَرْحَباً',
@@ -298,7 +298,7 @@ describe('tour intro', () => {
             window.glyphCanvas.textRunEditor.setTextBuffer
         ).toHaveBeenCalledWith('hëllo مَرْحَباً');
         expect(window.glyphCanvas.applyInitialViewportFit).toHaveBeenCalled();
-        expect(window.glyphCanvas.selectMaster).toHaveBeenCalledWith(
+        expect(window.glyphCanvas.selectStation).toHaveBeenCalledWith(
             'regular',
             { wght: 400 }
         );
@@ -491,10 +491,10 @@ describe('tour intro', () => {
         await delay(TOUR_AFTER_APPLY_MS + TOUR_FADE_MS * 2 + 400);
         expect(window.__tourHost.slideIndex).toBe(2);
         expect(document.querySelector('.tour-tooltip h3').textContent).toBe(
-            'Masters List'
+            'Stations List'
         );
         expect(
-            document.querySelector('[data-tour-master="ExtraBold"]')
+            document.querySelector('[data-tour-station="ExtraBold"]')
         ).not.toBeNull();
     }, 25000);
 
@@ -511,7 +511,7 @@ describe('tour intro', () => {
         await waitForActionAdvance();
         await waitForSlideFade();
         document
-            .querySelector('[data-master-id="extrabold"]')
+            .querySelector('[data-station-id="extrabold"]')
             .dispatchEvent(new MouseEvent('click', { bubbles: true }));
         await waitForActionAdvance();
 
@@ -741,9 +741,9 @@ describe('tour intro', () => {
         const { getTourSlide } = require('../js/tour-slides');
         const { showTourSlide } = require('../js/tour-spotlight');
         const list = document.querySelector(
-            '#glyph-properties-section .editor-layers-list'
+            '#glyph-properties-section .editor-drawings-list'
         );
-        const item = document.querySelector('[data-master-id="extrabold"]');
+        const item = document.querySelector('[data-station-id="extrabold"]');
         list.getBoundingClientRect = () => ({
             x: 40,
             y: 80,
@@ -785,7 +785,7 @@ describe('tour intro', () => {
         await showTourSlide(getTourSlide('cant-edit-interpolations'), () => {
             continued = true;
         });
-        const regular = document.querySelector('[data-master-id="regular"]');
+        const regular = document.querySelector('[data-station-id="regular"]');
         regular.dispatchEvent(new MouseEvent('click', { bubbles: true }));
         await delay(900);
         expect(continued).toBe(false);
@@ -794,7 +794,7 @@ describe('tour intro', () => {
     test('interpolations letter hole tracks layer interpolation while advancing', async () => {
         const { getTourSlide } = require('../js/tour-slides');
         const { showTourSlide } = require('../js/tour-spotlight');
-        const item = document.querySelector('[data-master-id="extrabold"]');
+        const item = document.querySelector('[data-station-id="extrabold"]');
         item.getBoundingClientRect = () => ({
             x: 40,
             y: 80,
@@ -808,7 +808,7 @@ describe('tour intro', () => {
         });
         window.glyphCanvas.outlineEditor = {
             active: true,
-            isLayerSwitchAnimating: true
+            isDrawingSwitchAnimating: true
         };
         window.glyphCanvas.textRunEditor.selectedGlyphIndex = 0;
         window.glyphCanvas.glyphBounds = [
@@ -836,7 +836,7 @@ describe('tour intro', () => {
         await new Promise((resolve) => requestAnimationFrame(resolve));
         await new Promise((resolve) => requestAnimationFrame(resolve));
         expect(path.getAttribute('d')).not.toBe(before);
-        window.glyphCanvas.outlineEditor.isLayerSwitchAnimating = false;
+        window.glyphCanvas.outlineEditor.isDrawingSwitchAnimating = false;
     }, 15000);
 
     test('node drag on the letter cutout advances the select-tool slide', async () => {
@@ -1045,7 +1045,7 @@ describe('tour intro', () => {
         const { showTourSlide } = require('../js/tour-spotlight');
         window.glyphCanvas.outlineEditor = {
             active: true,
-            layerData: { shapes: [] }
+            drawingData: { shapes: [] }
         };
         mockLss04Background();
         window.glyphCanvas.textRunEditor.selectedGlyphIndex = 0;
@@ -1076,7 +1076,7 @@ describe('tour intro', () => {
         const firstMark = document.querySelector('.tour-guide-ring');
         expect(firstMark.getAttribute('cx')).toBe('254');
         expect(firstMark.getAttribute('cy')).toBe('0');
-        window.glyphCanvas.outlineEditor.layerData = {
+        window.glyphCanvas.outlineEditor.drawingData = {
             shapes: [
                 {
                     closed: false,
@@ -1091,7 +1091,7 @@ describe('tour intro', () => {
         expect(document.querySelectorAll('.tour-guide-ring').length).toBe(4);
         expect(nextMark.getAttribute('cx')).toBe('254');
         expect(nextMark.getAttribute('cy')).toBe('119');
-        window.glyphCanvas.outlineEditor.layerData = {
+        window.glyphCanvas.outlineEditor.drawingData = {
             shapes: [
                 {
                     closed: false,
@@ -1120,7 +1120,7 @@ describe('tour intro', () => {
         const { showTourSlide } = require('../js/tour-spotlight');
         window.glyphCanvas.outlineEditor = {
             active: true,
-            layerData: { shapes: [] }
+            drawingData: { shapes: [] }
         };
         mockLss04Background();
         window.glyphCanvas.textRunEditor.selectedGlyphIndex = 0;
@@ -1142,7 +1142,7 @@ describe('tour intro', () => {
         await showTourSlide(getTourSlide('draw-tool'), () => {
             continued = true;
         });
-        window.glyphCanvas.outlineEditor.layerData = {
+        window.glyphCanvas.outlineEditor.drawingData = {
             shapes: [
                 {
                     closed: true,
@@ -1172,7 +1172,7 @@ describe('tour intro', () => {
                 { contourIndex: 0, nodeIndex: 0 },
                 { contourIndex: 0, nodeIndex: 1 }
             ],
-            layerData: {
+            drawingData: {
                 shapes: [
                     {
                         closed: true,
@@ -1217,7 +1217,7 @@ describe('tour intro', () => {
         await showTourSlide(getTourSlide('delete-objects'), () => {
             continued = true;
         });
-        window.glyphCanvas.outlineEditor.layerData = { shapes: [] };
+        window.glyphCanvas.outlineEditor.drawingData = { shapes: [] };
         document.dispatchEvent(
             new KeyboardEvent('keyup', { bubbles: true, key: 'Backspace' })
         );
@@ -1240,7 +1240,7 @@ describe('tour intro', () => {
         ];
         window.glyphCanvas.outlineEditor = {
             active: true,
-            layerData: { shapes: [{ closed: true, nodes }] }
+            drawingData: { shapes: [{ closed: true, nodes }] }
         };
         mockLss04Background();
         window.glyphCanvas.textRunEditor.selectedGlyphIndex = 0;
@@ -1304,7 +1304,7 @@ describe('tour intro', () => {
         window.glyphCanvas.outlineEditor = {
             active: true,
             currentGlyphName: 'l.ss04',
-            layerData: { shapes: [{ closed: true, nodes }] }
+            drawingData: { shapes: [{ closed: true, nodes }] }
         };
         mockLss04Background();
         window.glyphCanvas.textRunEditor.selectedGlyphIndex = 0;
@@ -1355,7 +1355,7 @@ describe('tour intro', () => {
             active: true,
             currentGlyphName: 'l.ss04',
             isDraggingPoint: false,
-            layerData: { shapes: [{ closed: true, nodes }] }
+            drawingData: { shapes: [{ closed: true, nodes }] }
         };
         mockLss04Background();
         window.glyphCanvas.textRunEditor.selectedGlyphIndex = 0;
@@ -1409,7 +1409,7 @@ describe('tour intro', () => {
         const { showTourSlide } = require('../js/tour-spotlight');
         window.glyphCanvas.outlineEditor = {
             active: true,
-            layerData: { shapes: [] },
+            drawingData: { shapes: [] },
             getEditToolUiSnapshot: () => ({ stickyTool: 'pen' })
         };
         mockLss04Background();
@@ -1647,7 +1647,7 @@ describe('tour intro', () => {
         window.glyphCanvas.outlineEditor = {
             active: true,
             isEditingComponent: () => false,
-            getCurrentLayerDataFromStack: () => ({
+            getCurrentDrawingDataFromStack: () => ({
                 shapes: [
                     {
                         reference: 'a.ss03',
@@ -1698,7 +1698,7 @@ describe('tour intro', () => {
         window.glyphCanvas.outlineEditor = {
             active: true,
             isEditingComponent: () => false,
-            getCurrentLayerDataFromStack: () => ({
+            getCurrentDrawingDataFromStack: () => ({
                 shapes: [
                     {
                         reference: 'dieresiscomb',
@@ -1777,7 +1777,7 @@ describe('tour slide order', () => {
         expect(TOUR_SLIDE_ORDER).toEqual([
             'text-mode',
             'ss04-features',
-            'masters-list',
+            'stations-list',
             'axis-sliders',
             'enter-edit-mode',
             'cant-edit-interpolations',
@@ -1819,7 +1819,9 @@ describe('tour slide order', () => {
         expect(getTourSlide('ss04-features').advanceOnClick).toBe(
             'button[data-feature-tag="ss04"]'
         );
-        expect(getTourSlide('masters-list').tooltip.title).toBe('Masters List');
+        expect(getTourSlide('stations-list').tooltip.title).toBe(
+            'Stations List'
+        );
         expect(getTourSlide('axis-sliders').axisClamp).toEqual({
             selector: '.editor-axis-slider[data-axis-tag="wght"]',
             min: 500,
@@ -1848,7 +1850,7 @@ describe('tour slide order', () => {
         ).toBe('letter-l');
         expect(
             getTourSlide('cant-edit-interpolations').cutouts.map((c) => c.id)
-        ).toEqual(['letter-l', 'extrabold-layer']);
+        ).toEqual(['letter-l', 'extrabold-drawing']);
         expect(
             getTourSlide('cant-edit-interpolations').cutouts[0].interactive
         ).toBe(false);

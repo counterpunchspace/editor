@@ -26,7 +26,7 @@ import type {
 } from './patch-sync-engine';
 import type { Babelfont } from './babelfont';
 import type { Font as BabelfontModelFont } from './babelfont-model';
-import type { MasterTopologyGate } from './filesystem-plugins/filesystem-plugin';
+import type { StationTopologyGate } from './filesystem-plugins/filesystem-plugin';
 import {
     getFeatureExecutionOrder,
     getFeatureName,
@@ -75,7 +75,7 @@ import {
 import {
     ADDITIONAL_METRICS_PANEL_KEYS,
     isAdditionalMetricsPanelKey,
-    isHiddenMasterMetricsPanelKey
+    isHiddenStationMetricsPanelKey
 } from './glyph-canvas/vertical-metrics';
 // Import FEA mode for Ace Editor (registers the mode automatically)
 import './mode-fea';
@@ -106,9 +106,9 @@ function featuresSectionHeaderHtml(
     return `
         <div class="sidebar-section-title features-section-header">
             <span>${title}</span>
-            <span class="editor-layers-header-actions">
-                <button type="button" class="editor-layer-add-button" data-features-action="add" data-features-type="${type}" aria-label="Add ${noun}" title="Add ${noun}">+</button>
-                <button type="button" class="editor-layer-add-button" data-features-action="remove" data-features-type="${type}" aria-label="Delete ${noun}" title="Delete ${noun}" disabled>−</button>
+            <span class="editor-drawings-header-actions">
+                <button type="button" class="editor-drawing-add-button" data-features-action="add" data-features-type="${type}" aria-label="Add ${noun}" title="Add ${noun}">+</button>
+                <button type="button" class="editor-drawing-add-button" data-features-action="remove" data-features-type="${type}" aria-label="Delete ${noun}" title="Delete ${noun}" disabled>−</button>
             </span>
         </div>`;
 }
@@ -158,7 +158,7 @@ type FeatureItemType = 'prefix' | 'class' | 'feature';
 type FontNameFieldKey = keyof Babelfont.Names;
 type FontRootFieldKey = 'upm' | 'version' | 'note' | 'date';
 type CustomOTFieldKey = keyof Babelfont.CustomOTValues;
-type MasterFieldKey = 'id';
+type StationFieldKey = 'id';
 type InstanceFieldKey = 'id' | 'variable' | 'linked_style';
 type RecordDropPlacement = 'before' | 'after';
 
@@ -211,7 +211,7 @@ const FONTINFO_SECTIONS: FontInfoSectionConfig[] = [
     },
     {
         id: 'masters',
-        label: 'Masters',
+        label: 'Stations',
         usesSearch: false
     },
     {
@@ -696,13 +696,13 @@ function asSummaryLines(summary: string | string[]): string[] {
 
 /** Extract a plain-data deep clone from an array that may contain model-wrapper objects.
  * Calls toJSON() on each element (if available) via JSON.parse/stringify so that
- * cloneMasterRecord / cloneInstanceRecord always receive plain Babelfont data objects.
+ * cloneStationRecord / cloneInstanceRecord always receive plain Babelfont data objects.
  */
 function rawArray<T>(arr: T[] | undefined): T[] {
     return JSON.parse(JSON.stringify(arr ?? []));
 }
 
-/** Plain JSON records from model wrappers (or plain data): axes, masters, instances. */
+/** Plain JSON records from model wrappers (or plain data): axes, stations, instances. */
 function plainRecords<T>(items: readonly object[] | undefined): T[] {
     return JSON.parse(JSON.stringify(items ?? []));
 }
@@ -719,18 +719,18 @@ function cloneKerningValue(value: unknown): unknown {
     return value;
 }
 
-function cloneMasterRecord(master: Babelfont.Master): Babelfont.Master {
+function cloneStationRecord(station: Babelfont.Master): Babelfont.Master {
     return {
-        ...master,
-        name: normalizeLocalizedStringValue(master.name),
+        ...station,
+        name: normalizeLocalizedStringValue(station.name),
         location: cloneNumericRecord(
-            master.location as Record<string, number> | undefined
+            station.location as Record<string, number> | undefined
         ),
-        metrics: cloneNumericRecord(master.metrics) ?? {},
-        kerning: cloneKerningValue(master.kerning) as any,
-        custom_ot_values: master.custom_ot_values
+        metrics: cloneNumericRecord(station.metrics) ?? {},
+        kerning: cloneKerningValue(station.kerning) as any,
+        custom_ot_values: station.custom_ot_values
             ? ({
-                  ...master.custom_ot_values
+                  ...station.custom_ot_values
               } as Babelfont.CustomOTValues)
             : undefined
     };
@@ -843,7 +843,7 @@ class FontInfoManager {
     private currentTab: FontInfoTab = 'names';
     private generalTab: HTMLElement | null = null;
     private namesTab: HTMLElement | null = null;
-    private mastersTab: HTMLElement | null = null;
+    private stationsTab: HTMLElement | null = null;
     private instancesTab: HTMLElement | null = null;
     private axesTab: HTMLElement | null = null;
     private customOTValuesTab: HTMLElement | null = null;
@@ -852,7 +852,7 @@ class FontInfoManager {
     private compileFiltersFieldsContainer: HTMLElement | null = null;
     private generalFieldsContainer: HTMLElement | null = null;
     private namesFieldsContainer: HTMLElement | null = null;
-    private mastersFieldsContainer: HTMLElement | null = null;
+    private stationsFieldsContainer: HTMLElement | null = null;
     private instancesFieldsContainer: HTMLElement | null = null;
     private axesFieldsContainer: HTMLElement | null = null;
     private customOTValuesFieldsContainer: HTMLElement | null = null;
@@ -866,29 +866,29 @@ class FontInfoManager {
     private pendingGeneralModelSyncRefresh = false;
     private namesDataLoaded = false;
     private pendingNamesModelSyncRefresh = false;
-    private mastersDataLoaded = false;
-    private pendingMastersModelSyncRefresh = false;
+    private stationsDataLoaded = false;
+    private pendingStationsModelSyncRefresh = false;
     private instancesDataLoaded = false;
     private pendingInstancesModelSyncRefresh = false;
     private axesDataLoaded = false;
     private pendingAxesModelSyncRefresh = false;
     private customOTValuesDataLoaded = false;
     private pendingCustomOTValuesModelSyncRefresh = false;
-    private selectedMasterIndex = 0;
+    private selectedStationIndex = 0;
     private selectedInstanceIndex = 0;
     private selectedAxisIndex = 0;
-    private selectedMasterIndices: Set<number> = new Set([0]);
+    private selectedStationIndices: Set<number> = new Set([0]);
     private selectedInstanceIndices: Set<number> = new Set([0]);
     private selectedAxisIndices: Set<number> = new Set([0]);
     private _deleteConfirmationHandler: boolean | null = null;
-    private renderedMasterListSignature = '';
-    private renderedMasterTopologyGateSignature = '';
+    private renderedStationListSignature = '';
+    private renderedStationTopologyGateSignature = '';
     private renderedInstanceListSignature = '';
     private renderedAxisListSignature = '';
-    private draggedMasterIndex: number | null = null;
-    private masterDragCommitted = false;
-    private masterDropTargetIndex: number | null = null;
-    private masterDropTargetPlacement: RecordDropPlacement | null = null;
+    private draggedStationIndex: number | null = null;
+    private stationDragCommitted = false;
+    private stationDropTargetIndex: number | null = null;
+    private stationDropTargetPlacement: RecordDropPlacement | null = null;
     private draggedInstanceIndex: number | null = null;
     private instanceDragCommitted = false;
     private instanceDropTargetIndex: number | null = null;
@@ -968,11 +968,11 @@ class FontInfoManager {
         window.addEventListener('fontModelReady', () => this.onFontLoaded());
         window.addEventListener('cloudSparseResidencyChanged', () => {
             if (
-                this.masterTopologyGateSignature(
-                    this.getMasterTopologyGate()
-                ) !== this.renderedMasterTopologyGateSignature
+                this.stationTopologyGateSignature(
+                    this.getStationTopologyGate()
+                ) !== this.renderedStationTopologyGateSignature
             ) {
-                this.forceRefreshVisibleMastersContent();
+                this.forceRefreshVisibleStationsContent();
             }
         });
         window.addEventListener('fontModelSync', () =>
@@ -2872,16 +2872,16 @@ class FontInfoManager {
         this.namesFieldsContainer.className = 'fontinfo-names-fields';
         this.namesTab.appendChild(this.namesFieldsContainer);
 
-        this.mastersTab = document.createElement('div');
-        this.mastersTab.id = 'fontinfo-masters-content';
-        this.mastersTab.style.display = 'none';
-        this.mastersTab.style.height = '100%';
-        this.mastersTab.style.overflow = 'hidden';
+        this.stationsTab = document.createElement('div');
+        this.stationsTab.id = 'fontinfo-stations-content';
+        this.stationsTab.style.display = 'none';
+        this.stationsTab.style.height = '100%';
+        this.stationsTab.style.overflow = 'hidden';
 
-        this.mastersFieldsContainer = document.createElement('div');
-        this.mastersFieldsContainer.id = 'fontinfo-masters-fields';
-        this.mastersFieldsContainer.className = 'fontinfo-records-pane';
-        this.mastersTab.appendChild(this.mastersFieldsContainer);
+        this.stationsFieldsContainer = document.createElement('div');
+        this.stationsFieldsContainer.id = 'fontinfo-stations-fields';
+        this.stationsFieldsContainer.className = 'fontinfo-records-pane';
+        this.stationsTab.appendChild(this.stationsFieldsContainer);
 
         this.instancesTab = document.createElement('div');
         this.instancesTab.id = 'fontinfo-instances-content';
@@ -2971,7 +2971,7 @@ class FontInfoManager {
 
         viewContent.appendChild(this.generalTab);
         viewContent.appendChild(this.namesTab);
-        viewContent.appendChild(this.mastersTab);
+        viewContent.appendChild(this.stationsTab);
         viewContent.appendChild(this.instancesTab);
         viewContent.appendChild(this.axesTab);
         this.compileFiltersTab = document.createElement('div');
@@ -3136,8 +3136,8 @@ class FontInfoManager {
         if (this.namesTab) {
             this.namesTab.style.display = tab === 'names' ? 'block' : 'none';
         }
-        if (this.mastersTab) {
-            this.mastersTab.style.display =
+        if (this.stationsTab) {
+            this.stationsTab.style.display =
                 tab === 'masters' ? 'block' : 'none';
         }
         if (this.instancesTab) {
@@ -3193,10 +3193,10 @@ class FontInfoManager {
 
                 if (
                     tab === 'masters' &&
-                    (!this.mastersDataLoaded ||
-                        this.pendingMastersModelSyncRefresh)
+                    (!this.stationsDataLoaded ||
+                        this.pendingStationsModelSyncRefresh)
                 ) {
-                    this.refreshVisibleMastersContent();
+                    this.refreshVisibleStationsContent();
                 }
 
                 if (
@@ -3250,8 +3250,8 @@ class FontInfoManager {
         this.pendingGeneralModelSyncRefresh = false;
         this.namesDataLoaded = false;
         this.pendingNamesModelSyncRefresh = false;
-        this.mastersDataLoaded = false;
-        this.pendingMastersModelSyncRefresh = false;
+        this.stationsDataLoaded = false;
+        this.pendingStationsModelSyncRefresh = false;
         this.instancesDataLoaded = false;
         this.pendingInstancesModelSyncRefresh = false;
         this.axesDataLoaded = false;
@@ -3277,7 +3277,7 @@ class FontInfoManager {
             requestAnimationFrame(() => this.refreshVisibleNamesContent());
         }
         if (this.currentTab === 'masters') {
-            requestAnimationFrame(() => this.refreshVisibleMastersContent());
+            requestAnimationFrame(() => this.refreshVisibleStationsContent());
         }
         if (this.currentTab === 'instances') {
             requestAnimationFrame(() => this.refreshVisibleInstancesContent());
@@ -3318,8 +3318,8 @@ class FontInfoManager {
         this.pendingGeneralModelSyncRefresh = true;
         this.namesDataLoaded = false;
         this.pendingNamesModelSyncRefresh = true;
-        this.mastersDataLoaded = false;
-        this.pendingMastersModelSyncRefresh = true;
+        this.stationsDataLoaded = false;
+        this.pendingStationsModelSyncRefresh = true;
         this.instancesDataLoaded = false;
         this.pendingInstancesModelSyncRefresh = true;
         this.axesDataLoaded = false;
@@ -3346,16 +3346,16 @@ class FontInfoManager {
         }
 
         if (this.currentTab === 'masters') {
-            if (this.hasMasterListStructureChanged()) {
+            if (this.hasStationListStructureChanged()) {
                 requestAnimationFrame(() =>
-                    this.forceRefreshVisibleMastersContent()
+                    this.forceRefreshVisibleStationsContent()
                 );
                 return;
             }
-            if (this.isMastersEditing()) {
+            if (this.isStationsEditing()) {
                 return;
             }
-            requestAnimationFrame(() => this.refreshVisibleMastersContent());
+            requestAnimationFrame(() => this.refreshVisibleStationsContent());
             return;
         }
 
@@ -3424,8 +3424,8 @@ class FontInfoManager {
         );
     }
 
-    private isMastersEditing(): boolean {
-        return this.isEditableControlWithin(this.mastersTab);
+    private isStationsEditing(): boolean {
+        return this.isEditableControlWithin(this.stationsTab);
     }
 
     private isInstancesEditing(): boolean {
@@ -3484,28 +3484,28 @@ class FontInfoManager {
         this.pendingNamesModelSyncRefresh = false;
     }
 
-    private refreshVisibleMastersContent() {
+    private refreshVisibleStationsContent() {
         if (this.currentTab !== 'masters' || !window.currentFontModel) {
             return;
         }
 
-        if (this.isMastersEditing()) {
+        if (this.isStationsEditing()) {
             return;
         }
 
-        this.preserveFontInfoScrollPosition(() => this.renderMastersContent());
-        this.mastersDataLoaded = true;
-        this.pendingMastersModelSyncRefresh = false;
+        this.preserveFontInfoScrollPosition(() => this.renderStationsContent());
+        this.stationsDataLoaded = true;
+        this.pendingStationsModelSyncRefresh = false;
     }
 
-    private forceRefreshVisibleMastersContent() {
+    private forceRefreshVisibleStationsContent() {
         if (this.currentTab !== 'masters' || !window.currentFontModel) {
             return;
         }
 
-        this.preserveFontInfoScrollPosition(() => this.renderMastersContent());
-        this.mastersDataLoaded = true;
-        this.pendingMastersModelSyncRefresh = false;
+        this.preserveFontInfoScrollPosition(() => this.renderStationsContent());
+        this.stationsDataLoaded = true;
+        this.pendingStationsModelSyncRefresh = false;
     }
 
     private refreshVisibleInstancesContent() {
@@ -3547,7 +3547,7 @@ class FontInfoManager {
             case 'names':
                 return this.namesTab;
             case 'masters':
-                return this.mastersTab;
+                return this.stationsTab;
             case 'instances':
                 return this.instancesTab;
             case 'axes':
@@ -3647,23 +3647,21 @@ class FontInfoManager {
         this.pendingAxesModelSyncRefresh = false;
     }
 
-    private getMasterListStructureSignature(
-        masters?: Babelfont.Master[] | undefined
+    private getStationListStructureSignature(
+        stations?: Babelfont.Master[] | undefined
     ): string {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
-        const sourceMasters = masters ?? font?.masters ?? [];
+        const font = window.currentFontModel ?? undefined;
+        const sourceStations = stations ?? font?.stations ?? [];
 
-        return sourceMasters
-            .map((master, index) => master.id ?? `index:${index}`)
+        return sourceStations
+            .map((station, index) => station.id ?? `index:${index}`)
             .join('|');
     }
 
     private getInstanceListStructureSignature(
         instances?: Babelfont.Instance[] | undefined
     ): string {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         const sourceInstances = instances ?? font?.instances ?? [];
 
         return sourceInstances
@@ -3671,10 +3669,10 @@ class FontInfoManager {
             .join('|');
     }
 
-    private hasMasterListStructureChanged(): boolean {
+    private hasStationListStructureChanged(): boolean {
         return (
-            this.renderedMasterListSignature !==
-            this.getMasterListStructureSignature()
+            this.renderedStationListSignature !==
+            this.getStationListStructureSignature()
         );
     }
 
@@ -3688,8 +3686,7 @@ class FontInfoManager {
     private getAxisListStructureSignature(
         axes?: Babelfont.Axis[] | undefined
     ): string {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         const sourceAxes = axes ?? font?.axes ?? [];
 
         return sourceAxes
@@ -3708,8 +3705,7 @@ class FontInfoManager {
         primary: string;
         secondary: string;
     } {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         const axis = font?.axes?.[axisIndex];
 
         return {
@@ -3721,22 +3717,21 @@ class FontInfoManager {
         };
     }
 
-    private getMasterListSummary(masterIndex: number): {
+    private getStationListSummary(stationIndex: number): {
         primary: string;
         secondary: string[];
     } {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
-        const master = font?.masters?.[masterIndex];
+        const font = window.currentFontModel ?? undefined;
+        const station = font?.stations?.[stationIndex];
 
         return {
             primary: getLocalizedDictionarySummary(
-                master?.name,
-                `Master ${masterIndex + 1}`
+                station?.name,
+                `Station ${stationIndex + 1}`
             ),
             secondary: formatLocationSummary(
                 font?.axes,
-                master?.location as Record<string, number> | undefined
+                station?.location as Record<string, number> | undefined
             )
         };
     }
@@ -3745,8 +3740,7 @@ class FontInfoManager {
         primary: string;
         secondary: string[];
     } {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         const instance = font?.instances?.[instanceIndex];
 
         return {
@@ -3761,9 +3755,9 @@ class FontInfoManager {
         };
     }
 
-    private getMasterListItems(): HTMLElement[] {
+    private getStationListItems(): HTMLElement[] {
         return Array.from(
-            this.mastersFieldsContainer?.querySelectorAll(
+            this.stationsFieldsContainer?.querySelectorAll(
                 '.fontinfo-records-list .fontinfo-record-item'
             ) ?? []
         ) as HTMLElement[];
@@ -3809,14 +3803,14 @@ class FontInfoManager {
         }
     }
 
-    private refreshMasterSidebarItemSummary(masterIndex: number) {
+    private refreshStationSidebarItemSummary(stationIndex: number) {
         if (this.currentTab !== 'masters') {
             return;
         }
 
         this.updateRecordListItemSummary(
-            this.getMasterListItems()[masterIndex],
-            this.getMasterListSummary(masterIndex)
+            this.getStationListItems()[stationIndex],
+            this.getStationListSummary(stationIndex)
         );
     }
 
@@ -4114,8 +4108,7 @@ class FontInfoManager {
             return;
         }
 
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         if (!font) {
             return;
         }
@@ -4274,7 +4267,7 @@ class FontInfoManager {
     }): HTMLButtonElement {
         const button = document.createElement('button');
         button.type = 'button';
-        button.className = `editor-layer-item fontinfo-record-item${options.selected ? ' selected' : ''}`;
+        button.className = `editor-drawing-item fontinfo-record-item${options.selected ? ' selected' : ''}`;
         button.addEventListener('click', options.onClick);
 
         if (options.draggable) {
@@ -4292,20 +4285,20 @@ class FontInfoManager {
 
         const content = document.createElement('div');
         content.className =
-            'editor-layer-item-content fontinfo-record-item-content';
+            'editor-drawing-item-content fontinfo-record-item-content';
 
         const primary = document.createElement('div');
-        primary.className = 'fontinfo-record-item-primary master-item-name';
+        primary.className = 'fontinfo-record-item-primary station-item-name';
         primary.textContent = options.primary;
 
         const secondary = document.createElement('div');
         secondary.className =
-            'fontinfo-record-item-secondary master-item-location';
+            'fontinfo-record-item-secondary station-item-location';
         secondary.replaceChildren(
             ...asSummaryLines(options.secondary).map((line) => {
                 const lineEl = document.createElement('div');
                 lineEl.className =
-                    'fontinfo-record-item-secondary-line master-item-location-line';
+                    'fontinfo-record-item-secondary-line station-item-location-line';
                 lineEl.textContent = line;
                 return lineEl;
             })
@@ -4333,7 +4326,7 @@ class FontInfoManager {
         disabledReason?: string;
     }): HTMLElement {
         const header = document.createElement('div');
-        header.className = 'editor-layers-header';
+        header.className = 'editor-drawings-header';
 
         const title = document.createElement('div');
         title.className = 'editor-section-title';
@@ -4343,11 +4336,11 @@ class FontInfoManager {
         title.appendChild(titleText);
 
         const actions = document.createElement('div');
-        actions.className = 'editor-layers-header-actions';
+        actions.className = 'editor-drawings-header-actions';
 
         const addButton = document.createElement('button');
         addButton.type = 'button';
-        addButton.className = 'editor-layer-add-button';
+        addButton.className = 'editor-drawing-add-button';
         addButton.setAttribute(
             'aria-label',
             `Add ${options.title.slice(0, -1).toLowerCase()}`
@@ -4364,7 +4357,7 @@ class FontInfoManager {
 
         const removeButton = document.createElement('button');
         removeButton.type = 'button';
-        removeButton.className = 'editor-layer-add-button';
+        removeButton.className = 'editor-drawing-add-button';
         removeButton.setAttribute(
             'aria-label',
             `Remove ${options.title.slice(0, -1).toLowerCase()}`
@@ -4571,8 +4564,7 @@ class FontInfoManager {
         location?: Record<string, number>;
         onCommit: (axisTag: string, nextValue: number | undefined) => void;
     }) {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         const section = document.createElement('section');
         section.className = 'fontinfo-name-group';
 
@@ -4636,65 +4628,64 @@ class FontInfoManager {
         options.container.appendChild(section);
     }
 
-    private renderMastersContent() {
-        if (!this.mastersFieldsContainer) {
+    private renderStationsContent() {
+        if (!this.stationsFieldsContainer) {
             return;
         }
 
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
-        const masters = font?.masters ?? [];
-        this.renderedMasterListSignature =
-            this.getMasterListStructureSignature(masters);
+        const font = window.currentFontModel ?? undefined;
+        const stations = plainRecords<Babelfont.Master>(font?.stations);
+        this.renderedStationListSignature =
+            this.getStationListStructureSignature(stations);
 
-        this.mastersFieldsContainer.innerHTML = '';
+        this.stationsFieldsContainer.innerHTML = '';
 
-        if (masters.length === 0) {
-            this.selectedMasterIndex = 0;
-            this.selectedMasterIndices = new Set();
+        if (stations.length === 0) {
+            this.selectedStationIndex = 0;
+            this.selectedStationIndices = new Set();
         } else {
-            this.selectedMasterIndex = Math.min(
-                this.selectedMasterIndex,
-                masters.length - 1
+            this.selectedStationIndex = Math.min(
+                this.selectedStationIndex,
+                stations.length - 1
             );
             const clamped = new Set(
-                [...this.selectedMasterIndices].filter(
-                    (i) => i < masters.length
+                [...this.selectedStationIndices].filter(
+                    (i) => i < stations.length
                 )
             );
-            this.selectedMasterIndices =
+            this.selectedStationIndices =
                 clamped.size > 0
                     ? clamped
-                    : new Set([this.selectedMasterIndex]);
+                    : new Set([this.selectedStationIndex]);
         }
-        const selectedMaster = masters[this.selectedMasterIndex];
+        const selectedStation = stations[this.selectedStationIndex];
 
         const layout = document.createElement('div');
         layout.className = 'fontinfo-records-layout';
 
-        const topologyGate = this.getMasterTopologyGate();
-        this.renderedMasterTopologyGateSignature =
-            this.masterTopologyGateSignature(topologyGate);
+        const topologyGate = this.getStationTopologyGate();
+        this.renderedStationTopologyGateSignature =
+            this.stationTopologyGateSignature(topologyGate);
         const topologyBlockedReason = topologyGate.allowed
             ? undefined
-            : topologyGate.reason || 'Masters cannot be changed right now.';
+            : topologyGate.reason || 'Stations cannot be changed right now.';
 
         const sidebar = document.createElement('aside');
         sidebar.className =
             'view-sidebar view-sidebar-left fontinfo-records-sidebar';
         sidebar.appendChild(
             this.createRecordsSidebarHeader({
-                title: 'Masters',
+                title: 'Stations',
                 canRemove:
-                    masters.length > 0 && this.selectedMasterIndices.size > 0,
-                onAdd: () => this.addMasterRecord(),
-                onRemove: () => this.removeSelectedMasterRecord(),
+                    stations.length > 0 && this.selectedStationIndices.size > 0,
+                onAdd: () => this.addStationRecord(),
+                onRemove: () => this.removeSelectedStationRecord(),
                 disabledReason: topologyBlockedReason
             })
         );
         if (topologyBlockedReason) {
             sidebar.appendChild(
-                this.createMasterTopologyBlockedNotice(
+                this.createStationTopologyBlockedNotice(
                     topologyBlockedReason,
                     topologyGate.canReopenWithAllGlyphs === true
                 )
@@ -4702,69 +4693,69 @@ class FontInfoManager {
         }
         const list = document.createElement('div');
         list.className =
-            'sidebar-list editor-layers-list fontinfo-records-list';
+            'sidebar-list editor-drawings-list fontinfo-records-list';
 
-        const masterContextMenuBackdrop = getOrCreateBackdrop(
-            'fontinfo-master-context-menu-backdrop'
+        const stationContextMenuBackdrop = getOrCreateBackdrop(
+            'fontinfo-station-context-menu-backdrop'
         );
 
-        masters.forEach((master, index) => {
-            const masterId = (master as any).id as string | undefined;
-            const summary = this.getMasterListSummary(index);
+        stations.forEach((station, index) => {
+            const stationId = (station as any).id as string | undefined;
+            const summary = this.getStationListSummary(index);
             const btn = this.createRecordListButton({
                 primary: summary.primary,
                 secondary: summary.secondary,
-                selected: this.selectedMasterIndices.has(index),
-                draggable: masters.length > 1,
+                selected: this.selectedStationIndices.has(index),
+                draggable: stations.length > 1,
                 onClick: (event: MouseEvent) => {
                     const isMulti = event.ctrlKey || event.metaKey;
                     const isRange = event.shiftKey;
                     if (isMulti) {
-                        if (this.selectedMasterIndices.has(index)) {
-                            if (this.selectedMasterIndices.size > 1) {
-                                this.selectedMasterIndices = new Set(
-                                    [...this.selectedMasterIndices].filter(
+                        if (this.selectedStationIndices.has(index)) {
+                            if (this.selectedStationIndices.size > 1) {
+                                this.selectedStationIndices = new Set(
+                                    [...this.selectedStationIndices].filter(
                                         (i) => i !== index
                                     )
                                 );
                             }
                         } else {
-                            this.selectedMasterIndices = new Set([
-                                ...this.selectedMasterIndices,
+                            this.selectedStationIndices = new Set([
+                                ...this.selectedStationIndices,
                                 index
                             ]);
-                            this.selectedMasterIndex = index;
+                            this.selectedStationIndex = index;
                         }
                     } else if (isRange) {
-                        const lo = Math.min(this.selectedMasterIndex, index);
-                        const hi = Math.max(this.selectedMasterIndex, index);
-                        const newSet = new Set(this.selectedMasterIndices);
+                        const lo = Math.min(this.selectedStationIndex, index);
+                        const hi = Math.max(this.selectedStationIndex, index);
+                        const newSet = new Set(this.selectedStationIndices);
                         for (let i = lo; i <= hi; i++) {
                             newSet.add(i);
                         }
-                        this.selectedMasterIndices = newSet;
-                        this.selectedMasterIndex = index;
+                        this.selectedStationIndices = newSet;
+                        this.selectedStationIndex = index;
                     } else {
-                        this.selectedMasterIndices = new Set([index]);
-                        this.selectedMasterIndex = index;
+                        this.selectedStationIndices = new Set([index]);
+                        this.selectedStationIndex = index;
                     }
-                    this.renderMastersContent();
+                    this.renderStationsContent();
                 },
-                onDragStart: (event) => this.onMasterDragStart(event, index),
-                onDragOver: (event) => this.onMasterDragOver(event, index),
-                onDrop: (event) => this.onMasterDrop(event, index),
-                onDragEnd: () => this.onMasterDragEnd()
+                onDragStart: (event) => this.onStationDragStart(event, index),
+                onDragOver: (event) => this.onStationDragOver(event, index),
+                onDrop: (event) => this.onStationDrop(event, index),
+                onDragEnd: () => this.onStationDragEnd()
             });
 
             // Context menu — appears on right-click.
-            if (masterId) {
+            if (stationId) {
                 const reinterpolateDisabled = topologyBlockedReason
                     ? ' disabled plugin-menu-item-disabled" aria-disabled="true'
                     : '';
                 const menuHtml = `<div class="plugin-menu" tabindex="0" role="menu">
                     <div class="plugin-menu-item${reinterpolateDisabled}" data-action="reinterpolate" role="menuitem">
                         <span class="material-symbols-outlined">refresh</span>
-                        <span>Reinterpolate all layers</span>
+                        <span>Reinterpolate all drawings</span>
                     </div>
                 </div>`;
                 const tippyInstance = tippy(btn, {
@@ -4803,12 +4794,12 @@ class FontInfoManager {
                                             'reinterpolate'
                                         ) {
                                             beginLoadingCursor();
-                                            this.reinterpolateLayersForMaster(
-                                                masterId
+                                            this.reinterpolateDrawingsForStation(
+                                                stationId
                                             )
                                                 .catch((err) => {
                                                     console.error(
-                                                        'Reinterpolate all layers error:',
+                                                        'Reinterpolate all drawings error:',
                                                         err
                                                     );
                                                 })
@@ -4823,7 +4814,7 @@ class FontInfoManager {
                 });
                 addTippyBackdropSupport(
                     tippyInstance,
-                    masterContextMenuBackdrop,
+                    stationContextMenuBackdrop,
                     {
                         targetElement: btn,
                         activeClass: 'context-menu-active'
@@ -4858,14 +4849,14 @@ class FontInfoManager {
         const detail = document.createElement('div');
         detail.className = 'fontinfo-records-detail';
 
-        if (!selectedMaster) {
+        if (!selectedStation) {
             const helper = document.createElement('div');
             helper.className = 'localized-string-helper';
-            helper.textContent = 'No masters defined.';
+            helper.textContent = 'No stations defined.';
             detail.appendChild(helper);
             layout.appendChild(sidebar);
             layout.appendChild(detail);
-            this.mastersFieldsContainer.appendChild(layout);
+            this.stationsFieldsContainer.appendChild(layout);
             return;
         }
 
@@ -4880,16 +4871,16 @@ class FontInfoManager {
 
         const nameEditor = createLocalizedStringEditor({
             label: 'Name',
-            value: selectedMaster.name,
+            value: selectedStation.name,
             onCommit: (nextValue) =>
-                this.commitMasterNameFieldValue(
-                    this.selectedMasterIndex,
+                this.commitStationNameFieldValue(
+                    this.selectedStationIndex,
                     nextValue
                 )
         });
         nameEditor.element.setAttribute(
             'data-font-field',
-            `masters.${this.selectedMasterIndex}.name`
+            `masters.${this.selectedStationIndex}.name`
         );
         identityFields.appendChild(nameEditor.element);
         identitySection.appendChild(identityFields);
@@ -4898,13 +4889,13 @@ class FontInfoManager {
         this.appendLocationSection({
             container: detail,
             title: 'Location',
-            dataFieldPrefix: `masters.${this.selectedMasterIndex}.location`,
+            dataFieldPrefix: `masters.${this.selectedStationIndex}.location`,
             location: cloneNumericRecord(
-                selectedMaster.location as Record<string, number> | undefined
+                selectedStation.location as Record<string, number> | undefined
             ),
             onCommit: (axisTag, nextValue) =>
-                this.commitMasterLocationValue(
-                    this.selectedMasterIndex,
+                this.commitStationLocationValue(
+                    this.selectedStationIndex,
                     axisTag,
                     nextValue
                 )
@@ -4928,9 +4919,9 @@ class FontInfoManager {
         const additionalMetricsFields = document.createElement('div');
         additionalMetricsFields.className = 'fontinfo-name-group-fields';
 
-        const masterMetrics = selectedMaster.metrics ?? {};
-        const metricEntries = Object.entries(masterMetrics).filter(
-            ([metricKey]) => !isHiddenMasterMetricsPanelKey(metricKey)
+        const stationMetrics = selectedStation.metrics ?? {};
+        const metricEntries = Object.entries(stationMetrics).filter(
+            ([metricKey]) => !isHiddenStationMetricsPanelKey(metricKey)
         );
         const coreMetricEntries = metricEntries
             .filter(([metricKey]) => !isAdditionalMetricsPanelKey(metricKey))
@@ -4938,11 +4929,11 @@ class FontInfoManager {
         const additionalMetricEntries = [
             ...ADDITIONAL_METRICS_PANEL_KEYS.filter(
                 (metricKey) =>
-                    masterMetrics[metricKey] !== undefined &&
-                    !isHiddenMasterMetricsPanelKey(metricKey)
+                    stationMetrics[metricKey] !== undefined &&
+                    !isHiddenStationMetricsPanelKey(metricKey)
             ).map(
                 (metricKey) =>
-                    [metricKey, masterMetrics[metricKey]] as [string, number]
+                    [metricKey, stationMetrics[metricKey]] as [string, number]
             ),
             ...metricEntries
                 .filter(
@@ -4965,16 +4956,16 @@ class FontInfoManager {
                     label: metricKey,
                     value: String(currentValue),
                     inputType: 'number',
-                    dataField: `masters.${this.selectedMasterIndex}.metrics.${metricKey}`,
-                    helperText: 'Master-specific numeric metric value.',
+                    dataField: `masters.${this.selectedStationIndex}.metrics.${metricKey}`,
+                    helperText: 'Station-specific numeric metric value.',
                     onCommit: (rawValue) => {
                         const parsedValue = parseNumericInput(rawValue);
                         if (parsedValue === null || parsedValue === undefined) {
                             return String(currentValue);
                         }
 
-                        this.commitMasterMetricValue(
-                            this.selectedMasterIndex,
+                        this.commitStationMetricValue(
+                            this.selectedStationIndex,
                             metricKey,
                             parsedValue
                         );
@@ -4999,7 +4990,7 @@ class FontInfoManager {
         if (metricsFields.childElementCount === 0) {
             const helper = document.createElement('div');
             helper.className = 'localized-string-helper';
-            helper.textContent = 'No master metrics are defined.';
+            helper.textContent = 'No station metrics are defined.';
             metricsSection.appendChild(helper);
         } else {
             metricsSection.appendChild(metricsFields);
@@ -5018,7 +5009,7 @@ class FontInfoManager {
 
         layout.appendChild(sidebar);
         layout.appendChild(detail);
-        this.mastersFieldsContainer.appendChild(layout);
+        this.stationsFieldsContainer.appendChild(layout);
     }
 
     private renderInstancesContent() {
@@ -5026,8 +5017,7 @@ class FontInfoManager {
             return;
         }
 
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         const instances = font?.instances ?? [];
         this.renderedInstanceListSignature =
             this.getInstanceListStructureSignature(instances);
@@ -5072,7 +5062,7 @@ class FontInfoManager {
         );
         const list = document.createElement('div');
         list.className =
-            'sidebar-list editor-layers-list fontinfo-records-list';
+            'sidebar-list editor-drawings-list fontinfo-records-list';
 
         instances.forEach((instance, index) => {
             const summary = this.getInstanceListSummary(index);
@@ -5250,8 +5240,7 @@ class FontInfoManager {
             return;
         }
 
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         const axes = font?.axes ?? [];
         this.renderedAxisListSignature =
             this.getAxisListStructureSignature(axes);
@@ -5290,7 +5279,7 @@ class FontInfoManager {
         );
         const list = document.createElement('div');
         list.className =
-            'sidebar-list editor-layers-list fontinfo-records-list';
+            'sidebar-list editor-drawings-list fontinfo-records-list';
 
         axes.forEach((axis, index) => {
             const summary = this.getAxisListSummary(index);
@@ -5571,8 +5560,7 @@ class FontInfoManager {
             return;
         }
 
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         if (!font) {
             return;
         }
@@ -5888,11 +5876,11 @@ class FontInfoManager {
                         newValue: c.newValue
                     })),
                     {
-                        compileChangeSource: options.label.includes('master')
-                            ? 'master-topology'
+                        compileChangeSource: options.label.includes('station')
+                            ? 'station-topology'
                             : 'font-info',
-                        compileEditType: options.label.includes('master')
-                            ? 'master-topology'
+                        compileEditType: options.label.includes('station')
+                            ? 'station-topology'
                             : null
                     }
                 );
@@ -5908,261 +5896,265 @@ class FontInfoManager {
         options.refresh?.();
     }
 
-    private applyLocalMasterNameFieldValue(
-        masterIndex: number,
+    private applyLocalStationNameFieldValue(
+        stationIndex: number,
         nextValue: Babelfont.I18NDictionary
     ) {
         const font = window.currentFontModel as any;
-        const master = font?.masters?.[masterIndex];
-        if (!master) {
+        const station = font?.stations?.[stationIndex];
+        if (!station) {
             return;
         }
 
         const normalizedNextValue = normalizeLocalizedStringValue(nextValue);
-        master.name = normalizedNextValue;
+        station.name = normalizedNextValue;
     }
 
-    private commitMasterNameFieldValue(
-        masterIndex: number,
+    private commitStationNameFieldValue(
+        stationIndex: number,
         nextValue: Babelfont.I18NDictionary
     ) {
         const font = window.currentFontModel as any;
-        const master = font?.masters?.[masterIndex];
-        if (!master) {
+        const station = font?.stations?.[stationIndex];
+        if (!station) {
             return;
         }
 
-        const previousValue = normalizeLocalizedStringValue(master.name);
+        const previousValue = normalizeLocalizedStringValue(station.name);
         const normalizedNextValue = normalizeLocalizedStringValue(nextValue);
         if (areLocalizedStringValuesEqual(previousValue, normalizedNextValue)) {
             if (
-                this.pendingMastersModelSyncRefresh &&
+                this.pendingStationsModelSyncRefresh &&
                 this.currentTab === 'masters'
             ) {
                 requestAnimationFrame(() =>
-                    this.refreshVisibleMastersContent()
+                    this.refreshVisibleStationsContent()
                 );
             }
             return;
         }
 
         this.commitFontPathChange({
-            label: 'Edit master name',
-            path: ['masters', masterIndex, 'name'],
+            label: 'Edit station name',
+            path: ['masters', stationIndex, 'name'],
             oldValue: { ...previousValue },
             newValue: { ...normalizedNextValue },
             applyLocal: () =>
-                this.applyLocalMasterNameFieldValue(
-                    masterIndex,
+                this.applyLocalStationNameFieldValue(
+                    stationIndex,
                     normalizedNextValue
                 ),
-            markDirtyKey: 'font-info-master-name',
-            refresh: () => this.refreshMasterSidebarItemSummary(masterIndex)
+            markDirtyKey: 'font-info-station-name',
+            refresh: () => this.refreshStationSidebarItemSummary(stationIndex)
         });
     }
 
-    private applyLocalMasterFieldValue(
-        masterIndex: number,
-        key: MasterFieldKey,
+    private applyLocalStationFieldValue(
+        stationIndex: number,
+        key: StationFieldKey,
         nextValue: string
     ) {
         const font = window.currentFontModel as any;
-        const master = font?.masters?.[masterIndex];
-        if (!master) {
+        const station = font?.stations?.[stationIndex];
+        if (!station) {
             return;
         }
 
-        master[key] = nextValue;
+        station[key] = nextValue;
     }
 
-    private commitMasterFieldValue(
-        masterIndex: number,
-        key: MasterFieldKey,
+    private commitStationFieldValue(
+        stationIndex: number,
+        key: StationFieldKey,
         nextValue: string
     ) {
         const font = window.currentFontModel as any;
-        const master = font?.masters?.[masterIndex];
-        if (!master) {
+        const station = font?.stations?.[stationIndex];
+        if (!station) {
             return;
         }
 
-        const previousValue = master[key];
+        const previousValue = station[key];
         if (previousValue === nextValue) {
             return;
         }
 
         this.commitFontPathChange({
-            label: 'Edit master field',
-            path: ['masters', masterIndex, key],
+            label: 'Edit station field',
+            path: ['masters', stationIndex, key],
             oldValue: previousValue,
             newValue: nextValue,
             applyLocal: () =>
-                this.applyLocalMasterFieldValue(masterIndex, key, nextValue),
-            markDirtyKey: 'font-info-master-field'
+                this.applyLocalStationFieldValue(stationIndex, key, nextValue),
+            markDirtyKey: 'font-info-station-field'
         });
     }
 
-    private applyLocalMasterLocationValue(
-        masterIndex: number,
+    private applyLocalStationLocationValue(
+        stationIndex: number,
         axisTag: string,
         nextValue: number | undefined
     ) {
         const font = window.currentFontModel as any;
-        const master = font?.masters?.[masterIndex];
-        if (!master) {
+        const station = font?.stations?.[stationIndex];
+        if (!station) {
             return;
         }
 
         if (nextValue === undefined) {
-            if (master.location) {
-                delete master.location[axisTag];
-                if (Object.keys(master.location).length === 0) {
-                    delete master.location;
+            if (station.location) {
+                delete station.location[axisTag];
+                if (Object.keys(station.location).length === 0) {
+                    delete station.location;
                 }
             }
             return;
         }
 
-        if (!master.location) {
-            master.location = {};
+        if (!station.location) {
+            station.location = {};
         }
 
-        master.location[axisTag] = nextValue;
+        station.location[axisTag] = nextValue;
     }
 
-    private commitMasterLocationValue(
-        masterIndex: number,
+    private commitStationLocationValue(
+        stationIndex: number,
         axisTag: string,
         nextValue: number | undefined
     ) {
         const font = window.currentFontModel as any;
-        const master = font?.masters?.[masterIndex];
-        if (!master) {
+        const station = font?.stations?.[stationIndex];
+        if (!station) {
             return;
         }
 
-        const previousValue = master.location?.[axisTag];
+        const previousValue = station.location?.[axisTag];
         if (previousValue === nextValue) {
             return;
         }
 
         this.commitFontPathChange({
-            label: 'Edit master location',
-            path: ['masters', masterIndex, 'location', axisTag],
+            label: 'Edit station location',
+            path: ['masters', stationIndex, 'location', axisTag],
             oldValue: previousValue,
             newValue: nextValue,
             remove: nextValue === undefined,
             applyLocal: () =>
-                this.applyLocalMasterLocationValue(
-                    masterIndex,
+                this.applyLocalStationLocationValue(
+                    stationIndex,
                     axisTag,
                     nextValue
                 ),
-            markDirtyKey: 'font-info-master-location',
-            refresh: () => this.refreshMasterSidebarItemSummary(masterIndex)
+            markDirtyKey: 'font-info-station-location',
+            refresh: () => this.refreshStationSidebarItemSummary(stationIndex)
         });
     }
 
-    private applyLocalMasterMetricValue(
-        masterIndex: number,
+    private applyLocalStationMetricValue(
+        stationIndex: number,
         metricKey: string,
         nextValue: number
     ) {
         const font = window.currentFontModel as any;
-        const master = font?.masters?.[masterIndex];
-        if (!master) {
+        const station = font?.stations?.[stationIndex];
+        if (!station) {
             return;
         }
 
-        if (!master.metrics) {
-            master.metrics = {};
+        if (!station.metrics) {
+            station.metrics = {};
         }
-        master.metrics[metricKey] = nextValue;
+        station.metrics[metricKey] = nextValue;
     }
 
-    private commitMasterMetricValue(
-        masterIndex: number,
+    private commitStationMetricValue(
+        stationIndex: number,
         metricKey: string,
         nextValue: number
     ) {
         const font = window.currentFontModel as any;
-        const master = font?.masters?.[masterIndex];
-        if (!master) {
+        const station = font?.stations?.[stationIndex];
+        if (!station) {
             return;
         }
 
-        const previousValue = master.metrics?.[metricKey];
+        const previousValue = station.metrics?.[metricKey];
         if (previousValue === nextValue) {
             return;
         }
 
         this.commitFontPathChange({
-            label: 'Edit master metric',
-            path: ['masters', masterIndex, 'metrics', metricKey],
+            label: 'Edit station metric',
+            path: ['masters', stationIndex, 'metrics', metricKey],
             oldValue: previousValue,
             newValue: nextValue,
             applyLocal: () =>
-                this.applyLocalMasterMetricValue(
-                    masterIndex,
+                this.applyLocalStationMetricValue(
+                    stationIndex,
                     metricKey,
                     nextValue
                 ),
-            markDirtyKey: 'font-info-master-metric'
+            markDirtyKey: 'font-info-station-metric'
         });
     }
 
-    private applyLocalMasterCustomOTValue(
-        masterIndex: number,
+    private applyLocalStationCustomOTValue(
+        stationIndex: number,
         key: CustomOTFieldKey,
         nextValue: unknown
     ) {
         const font = window.currentFontModel as any;
-        const master = font?.masters?.[masterIndex];
-        if (!master) {
+        const station = font?.stations?.[stationIndex];
+        if (!station) {
             return;
         }
 
         if (nextValue === undefined) {
-            if (master.custom_ot_values) {
-                delete master.custom_ot_values[key];
-                if (Object.keys(master.custom_ot_values).length === 0) {
-                    delete master.custom_ot_values;
+            if (station.custom_ot_values) {
+                delete station.custom_ot_values[key];
+                if (Object.keys(station.custom_ot_values).length === 0) {
+                    delete station.custom_ot_values;
                 }
             }
             return;
         }
 
-        if (!master.custom_ot_values) {
-            master.custom_ot_values = {};
+        if (!station.custom_ot_values) {
+            station.custom_ot_values = {};
         }
-        master.custom_ot_values[key] = nextValue;
+        station.custom_ot_values[key] = nextValue;
     }
 
-    private commitMasterCustomOTValue(
-        masterIndex: number,
+    private commitStationCustomOTValue(
+        stationIndex: number,
         key: CustomOTFieldKey,
         nextValue: unknown
     ) {
         const font = window.currentFontModel as any;
-        const master = font?.masters?.[masterIndex];
-        if (!master) {
+        const station = font?.stations?.[stationIndex];
+        if (!station) {
             return;
         }
 
-        const previousValue = master.custom_ot_values?.[key];
+        const previousValue = station.custom_ot_values?.[key];
         if (areCustomOTFieldValuesEqual(previousValue, nextValue)) {
             return;
         }
 
         this.commitFontPathChange({
-            label: 'Edit master custom OpenType value',
-            path: ['masters', masterIndex, 'custom_ot_values', key],
+            label: 'Edit station custom OpenType value',
+            path: ['masters', stationIndex, 'custom_ot_values', key],
             oldValue: cloneCustomOTFieldValue(previousValue),
             newValue: cloneCustomOTFieldValue(nextValue),
             remove: nextValue === undefined,
             applyLocal: () =>
-                this.applyLocalMasterCustomOTValue(masterIndex, key, nextValue),
-            markDirtyKey: 'font-info-master-custom-ot'
+                this.applyLocalStationCustomOTValue(
+                    stationIndex,
+                    key,
+                    nextValue
+                ),
+            markDirtyKey: 'font-info-station-custom-ot'
         });
     }
 
@@ -6406,8 +6398,7 @@ class FontInfoManager {
     }
 
     private getDefaultAxisLocation(): Record<string, number> | undefined {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         const locationEntries = (font?.axes ?? [])
             .filter((axis) => axis.default !== undefined)
             .map((axis) => [axis.tag, axis.default as number] as const);
@@ -6419,14 +6410,14 @@ class FontInfoManager {
         return Object.fromEntries(locationEntries);
     }
 
-    private getDefaultNewMasterLocation(): Record<string, number> | undefined {
+    private getDefaultNewStationLocation(): Record<string, number> | undefined {
         const font =
             window.currentFontModel as unknown as BabelfontModelFont | null;
         const axisDefaults = this.getDefaultAxisLocation() ?? {};
-        const lastMaster = rawArray(font?.masters)[
-            rawArray(font?.masters).length - 1
+        const lastStation = rawArray(font?.stations)[
+            rawArray(font?.stations).length - 1
         ];
-        const lastLocation = lastMaster?.location;
+        const lastLocation = lastStation?.location;
         const normalizedLastLocation = lastLocation
             ? Object.fromEntries(
                   Object.entries(lastLocation).filter(
@@ -6450,7 +6441,7 @@ class FontInfoManager {
         };
     }
 
-    private async promptForNewMasterLocation(): Promise<Record<
+    private async promptForNewStationLocation(): Promise<Record<
         string,
         number
     > | null> {
@@ -6463,42 +6454,42 @@ class FontInfoManager {
             return {};
         }
 
-        const defaultLocation = this.getDefaultNewMasterLocation() ?? {};
+        const defaultLocation = this.getDefaultNewStationLocation() ?? {};
 
         return await new Promise((resolve) => {
             const modal = document.createElement('div');
             modal.className =
-                'matplotlib-modal fontinfo-master-location-modal active';
+                'matplotlib-modal fontinfo-station-location-modal active';
             modal.innerHTML = `
-                <div class="matplotlib-modal-content fontinfo-master-location-modal-content">
+                <div class="matplotlib-modal-content fontinfo-station-location-modal-content">
                     <div class="matplotlib-modal-header">
-                        <h3>New Master Location</h3>
+                        <h3>New Station Location</h3>
                         <button type="button" class="matplotlib-modal-close" aria-label="Close">×</button>
                     </div>
-                    <div class="matplotlib-modal-body fontinfo-master-location-modal-body">
-                        <div class="fontinfo-master-location-description">
-                            Adjust the designspace location for the new master before creating it.
+                    <div class="matplotlib-modal-body fontinfo-station-location-modal-body">
+                        <div class="fontinfo-station-location-description">
+                            Adjust the designspace location for the new station before creating it.
                         </div>
-                        <div class="fontinfo-master-location-rows"></div>
-                        <div class="fontinfo-master-location-actions">
-                            <button type="button" class="dialog-button fontinfo-master-location-cancel">Cancel</button>
-                            <button type="button" class="dialog-button dialog-button-primary fontinfo-master-location-create">Create</button>
+                        <div class="fontinfo-station-location-rows"></div>
+                        <div class="fontinfo-station-location-actions">
+                            <button type="button" class="dialog-button fontinfo-station-location-cancel">Cancel</button>
+                            <button type="button" class="dialog-button dialog-button-primary fontinfo-station-location-create">Create</button>
                         </div>
                     </div>
                 </div>
             `;
 
             const rows = modal.querySelector(
-                '.fontinfo-master-location-rows'
+                '.fontinfo-station-location-rows'
             ) as HTMLElement;
             const closeButton = modal.querySelector(
                 '.matplotlib-modal-close'
             ) as HTMLButtonElement;
             const cancelButton = modal.querySelector(
-                '.fontinfo-master-location-cancel'
+                '.fontinfo-station-location-cancel'
             ) as HTMLButtonElement;
             const createButton = modal.querySelector(
-                '.fontinfo-master-location-create'
+                '.fontinfo-station-location-create'
             ) as HTMLButtonElement;
             const inputs = new Map<string, HTMLInputElement>();
 
@@ -6551,10 +6542,10 @@ class FontInfoManager {
 
             for (const axis of axes) {
                 const row = document.createElement('div');
-                row.className = 'fontinfo-master-location-row';
+                row.className = 'fontinfo-station-location-row';
 
                 const label = document.createElement('label');
-                label.className = 'fontinfo-master-location-label';
+                label.className = 'fontinfo-station-location-label';
                 label.textContent =
                     (typeof axis.name === 'string'
                         ? axis.name
@@ -6567,9 +6558,9 @@ class FontInfoManager {
                 input.type = 'number';
                 input.step = 'any';
                 input.id = `fontinfo-master-location-${axis.tag}`;
-                input.dataset.masterLocationAxis = axis.tag as string;
+                input.dataset.stationLocationAxis = axis.tag as string;
                 input.className =
-                    'localized-string-input localized-string-modal-input fontinfo-master-location-input';
+                    'localized-string-input localized-string-modal-input fontinfo-station-location-input';
                 const defaultValue = defaultLocation[axis.tag as string];
                 input.value =
                     typeof defaultValue === 'number'
@@ -6602,8 +6593,7 @@ class FontInfoManager {
     }
 
     private createDefaultInstanceRecord(): Babelfont.Instance {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         const nextIndex = (font?.instances?.length ?? 0) + 1;
 
         return {
@@ -6615,93 +6605,96 @@ class FontInfoManager {
         };
     }
 
-    private applyLocalMastersList(nextMasters: Babelfont.Master[]) {
+    private applyLocalStationsList(nextStations: Babelfont.Master[]) {
         const font = window.currentFontModel as any;
         if (!font) {
             return;
         }
 
-        font.masters = nextMasters;
+        font.stations = nextStations;
     }
 
-    private commitMastersListChange(
+    private commitStationsListChange(
         label: string,
-        nextMasters: Babelfont.Master[]
+        nextStations: Babelfont.Master[]
     ) {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         if (!font) {
             return;
         }
 
-        const previousMasters = rawArray(font.masters).map(cloneMasterRecord);
-        const clonedNextMasters = rawArray(nextMasters).map(cloneMasterRecord);
+        const previousStations = plainRecords<Babelfont.Master>(
+            font.stations
+        ).map(cloneStationRecord);
+        const clonedNextStations =
+            rawArray(nextStations).map(cloneStationRecord);
 
         this.commitFontPathChange({
             label,
             path: ['masters'],
-            oldValue: previousMasters.length > 0 ? previousMasters : undefined,
-            newValue: clonedNextMasters,
-            applyLocal: () => this.applyLocalMastersList(clonedNextMasters),
-            markDirtyKey: 'font-info-masters-list',
+            oldValue:
+                previousStations.length > 0 ? previousStations : undefined,
+            newValue: clonedNextStations,
+            applyLocal: () => this.applyLocalStationsList(clonedNextStations),
+            markDirtyKey: 'font-info-stations-list',
             refresh: () => {
-                this.forceRefreshVisibleMastersContent();
+                this.forceRefreshVisibleStationsContent();
                 void (
                     window.glyphCanvas as
                         | {
                               updatePropertiesUI?: (options?: {
-                                  skipAutoSelectMatchingLayer?: boolean;
+                                  skipAutoSelectMatchingDrawing?: boolean;
                               }) => Promise<void>;
                           }
                         | undefined
                 )?.updatePropertiesUI?.({
-                    skipAutoSelectMatchingLayer: true
+                    skipAutoSelectMatchingDrawing: true
                 });
             }
         });
     }
 
     /**
-     * Re-interpolates all glyph layers that are bound to the given master ID.
-     * Delegates to OutlineEditor.reinterpolateAllLayersForMaster which fires
+     * Re-interpolates all glyph drawings that are bound to the given station ID.
+     * Delegates to OutlineEditor.reinterpolateAllDrawingsForStation which fires
      * all interpolation requests concurrently (O(1) worker latency instead of
      * O(N)) and applies all results in a single synchronous pass.
      *
      */
-    private async reinterpolateLayersForMaster(
-        masterId: string
+    private async reinterpolateDrawingsForStation(
+        stationId: string
     ): Promise<void> {
         const font =
             window.currentFontModel as unknown as BabelfontModelFont | null;
-        const modelMaster = font?.findMaster(masterId);
-        if (!modelMaster) {
+        const modelStation = font?.findStation(stationId);
+        if (!modelStation) {
             return;
         }
 
-        await modelMaster.reinterpolateLayers();
+        await modelStation.reinterpolateDrawings();
     }
 
-    private masterTopologyGateSignature(gate: MasterTopologyGate): string {
+    private stationTopologyGateSignature(gate: StationTopologyGate): string {
         return gate.allowed
             ? 'allowed'
             : `${gate.canReopenWithAllGlyphs === true}:${gate.reason || ''}`;
     }
 
-    private getMasterTopologyGate(): MasterTopologyGate {
+    private getStationTopologyGate(): StationTopologyGate {
         const font = window.currentFontModel as
-            | { getMasterTopologyGate?: () => MasterTopologyGate }
+            | { getStationTopologyGate?: () => StationTopologyGate }
             | null
             | undefined;
-        return font?.getMasterTopologyGate?.() ?? { allowed: true };
+        return font?.getStationTopologyGate?.() ?? { allowed: true };
     }
 
-    private createMasterTopologyBlockedNotice(
+    private createStationTopologyBlockedNotice(
         reason: string,
         canReopenWithAllGlyphs: boolean
     ): HTMLElement {
         const notice = document.createElement('div');
-        notice.className = 'fontinfo-masters-blocked-notice';
-        notice.setAttribute('data-fontinfo-masters-blocked', 'true');
+        notice.className = 'fontinfo-stations-blocked-notice';
+        notice.setAttribute('data-fontinfo-stations-blocked', 'true');
 
         const text = document.createElement('div');
         text.className = 'localized-string-helper';
@@ -6714,7 +6707,7 @@ class FontInfoManager {
             reopen.className = 'dialog-button';
             reopen.setAttribute(
                 'data-fontinfo-list-action',
-                'masters-reopen-all-glyphs'
+                'stations-reopen-all-glyphs'
             );
             reopen.textContent = 'Reopen with all glyphs';
             reopen.addEventListener('click', async () => {
@@ -6734,129 +6727,130 @@ class FontInfoManager {
         return notice;
     }
 
-    private async addMasterRecord() {
+    private async addStationRecord() {
         const font =
             window.currentFontModel as unknown as BabelfontModelFont | null;
-        if (!font || typeof font.addMaster !== 'function') {
+        if (!font || typeof font.addStation !== 'function') {
             return;
         }
 
-        const requestedLocation = await this.promptForNewMasterLocation();
+        const requestedLocation = await this.promptForNewStationLocation();
         if (requestedLocation === null) {
             return;
         }
 
         try {
-            const metricTemplateMasterId = rawArray(font.masters)[
-                this.selectedMasterIndex
+            const metricTemplateStationId = rawArray(font.stations)[
+                this.selectedStationIndex
             ]?.id;
-            const createdMaster = await font.addMaster(undefined, {
+            const createdStation = await font.addStation(undefined, {
                 location:
                     Object.keys(requestedLocation).length > 0
                         ? requestedLocation
                         : undefined,
-                metricTemplateMasterId
+                metricTemplateStationId
             });
-            const selectedMasterIndex = createdMaster
-                ? rawArray(font.masters).findIndex(
-                      (master) => master.id === createdMaster.id
+            const selectedStationIndex = createdStation
+                ? rawArray(font.stations).findIndex(
+                      (station) => station.id === createdStation.id
                   )
-                : rawArray(font.masters).length - 1;
-            this.selectedMasterIndex = Math.max(0, selectedMasterIndex);
-            this.selectedMasterIndices = new Set([this.selectedMasterIndex]);
-            this.forceRefreshVisibleMastersContent();
+                : rawArray(font.stations).length - 1;
+            this.selectedStationIndex = Math.max(0, selectedStationIndex);
+            this.selectedStationIndices = new Set([this.selectedStationIndex]);
+            this.forceRefreshVisibleStationsContent();
         } catch (err) {
             console.error(
-                'addMasterRecord: object-model addMaster failed:',
+                'addStationRecord: object-model addStation failed:',
                 err
             );
             throw err;
         }
     }
 
-    private removeSelectedMasterRecord() {
+    private removeSelectedStationRecord() {
         const font =
             window.currentFontModel as unknown as BabelfontModelFont | null;
-        const masters = font?.masters ?? [];
-        if (masters.length === 0) {
+        const stations = font?.stations ?? [];
+        if (stations.length === 0) {
             return;
         }
 
         const indicesToRemove = new Set(
-            [...this.selectedMasterIndices].filter((i) => i < masters.length)
+            [...this.selectedStationIndices].filter((i) => i < stations.length)
         );
         if (indicesToRemove.size === 0) {
             return;
         }
 
-        const masterNames = [...indicesToRemove]
+        const stationNames = [...indicesToRemove]
             .sort((a, b) => a - b)
             .map((i) => {
-                const m = masters[i];
+                const m = stations[i];
                 const n = m?.name;
                 if (typeof n === 'string') return n;
                 if (n && typeof n === 'object' && 'dflt' in n)
                     return (n as { dflt: string }).dflt;
-                return `Master ${i + 1}`;
+                return `Station ${i + 1}`;
             })
             .join(', ');
         const count = indicesToRemove.size;
         const message =
             count === 1
-                ? `Delete master "${masterNames}"? This will also remove its layers from all glyphs.`
-                : `Delete ${count} masters (${masterNames})? This will also remove their layers from all glyphs.`;
+                ? `Delete station “${stationNames}”? This will also remove its drawings from all glyphs.`
+                : `Delete ${count} stations (${stationNames})? This will also remove their drawings from all glyphs.`;
 
         this.showDeleteConfirmDialog(message, async (confirmed) => {
             if (!confirmed) {
                 return;
             }
 
-            const masterIds = [...indicesToRemove]
-                .map((i) => (masters[i] as any)?.id as string | undefined)
+            const stationIds = [...indicesToRemove]
+                .map((i) => (stations[i] as any)?.id as string | undefined)
                 .filter((id): id is string => typeof id === 'string');
-            const nextMasterCount = Math.max(
+            const nextStationCount = Math.max(
                 0,
-                masters.length - indicesToRemove.size
+                stations.length - indicesToRemove.size
             );
 
             // Choose new primary selection: first remaining index
-            const firstRemaining = [...Array(masters.length).keys()].find(
+            const firstRemaining = [...Array(stations.length).keys()].find(
                 (i) => !indicesToRemove.has(i)
             );
-            this.selectedMasterIndex =
+            this.selectedStationIndex =
                 firstRemaining !== undefined
                     ? firstRemaining
-                    : Math.max(0, nextMasterCount - 1);
-            this.selectedMasterIndices =
-                nextMasterCount > 0
-                    ? new Set([this.selectedMasterIndex])
+                    : Math.max(0, nextStationCount - 1);
+            this.selectedStationIndices =
+                nextStationCount > 0
+                    ? new Set([this.selectedStationIndex])
                     : new Set();
 
-            if (typeof font?.removeMastersByIds !== 'function') {
+            if (typeof font?.removeStationsByIds !== 'function') {
                 return;
             }
 
-            await font.removeMastersByIds(masterIds);
+            await font.removeStationsByIds(stationIds);
 
-            this.forceRefreshVisibleMastersContent();
+            this.forceRefreshVisibleStationsContent();
         });
     }
 
-    private reorderMastersList(fromIndex: number, insertionIndex: number) {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
-        const masters = rawArray(font?.masters).map(cloneMasterRecord);
+    private reorderStationsList(fromIndex: number, insertionIndex: number) {
+        const font = window.currentFontModel ?? undefined;
+        const stations = plainRecords<Babelfont.Master>(font?.stations).map(
+            cloneStationRecord
+        );
         if (
             fromIndex < 0 ||
-            fromIndex >= masters.length ||
+            fromIndex >= stations.length ||
             insertionIndex < 0 ||
-            insertionIndex > masters.length
+            insertionIndex > stations.length
         ) {
             return;
         }
 
-        const [movedMaster] = masters.splice(fromIndex, 1);
-        if (!movedMaster) {
+        const [movedStation] = stations.splice(fromIndex, 1);
+        if (!movedStation) {
             return;
         }
 
@@ -6866,15 +6860,15 @@ class FontInfoManager {
             return;
         }
 
-        masters.splice(adjustedTargetIndex, 0, movedMaster);
-        this.selectedMasterIndex = adjustedTargetIndex;
-        this.commitMastersListChange('Reorder masters', masters);
+        stations.splice(adjustedTargetIndex, 0, movedStation);
+        this.selectedStationIndex = adjustedTargetIndex;
+        this.commitStationsListChange('Reorder stations', stations);
     }
 
-    private onMasterDragStart(event: DragEvent, index: number) {
-        this.draggedMasterIndex = index;
-        this.masterDragCommitted = false;
-        this.clearMasterDropIndicator();
+    private onStationDragStart(event: DragEvent, index: number) {
+        this.draggedStationIndex = index;
+        this.stationDragCommitted = false;
+        this.clearStationDropIndicator();
         (event.currentTarget as HTMLElement | null)?.classList.add('dragging');
         if (event.dataTransfer) {
             event.dataTransfer.effectAllowed = 'move';
@@ -6886,12 +6880,12 @@ class FontInfoManager {
         }
     }
 
-    private onMasterDragOver(event: DragEvent, targetIndex: number) {
+    private onStationDragOver(event: DragEvent, targetIndex: number) {
         event.preventDefault();
         if (event.dataTransfer) {
             event.dataTransfer.dropEffect = 'move';
         }
-        if (this.draggedMasterIndex === null) {
+        if (this.draggedStationIndex === null) {
             return;
         }
 
@@ -6903,64 +6897,64 @@ class FontInfoManager {
         const rect = target.getBoundingClientRect();
         const placement: RecordDropPlacement =
             event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
-        this.setMasterDropIndicator(targetIndex, placement);
+        this.setStationDropIndicator(targetIndex, placement);
     }
 
-    private onMasterDrop(event: DragEvent, targetIndex: number) {
+    private onStationDrop(event: DragEvent, targetIndex: number) {
         event.preventDefault();
-        const insertionIndex = this.getMasterDropInsertionIndex(targetIndex);
-        this.clearMasterDropIndicator();
+        const insertionIndex = this.getStationDropInsertionIndex(targetIndex);
+        this.clearStationDropIndicator();
 
-        if (this.draggedMasterIndex === null || insertionIndex === null) {
+        if (this.draggedStationIndex === null || insertionIndex === null) {
             return;
         }
 
-        const originalIndex = this.draggedMasterIndex;
-        this.masterDragCommitted = true;
-        this.draggedMasterIndex = null;
-        this.reorderMastersList(originalIndex, insertionIndex);
+        const originalIndex = this.draggedStationIndex;
+        this.stationDragCommitted = true;
+        this.draggedStationIndex = null;
+        this.reorderStationsList(originalIndex, insertionIndex);
     }
 
-    private onMasterDragEnd() {
-        const originalIndex = this.draggedMasterIndex;
+    private onStationDragEnd() {
+        const originalIndex = this.draggedStationIndex;
         const insertionIndex =
-            originalIndex !== null && this.masterDropTargetIndex !== null
-                ? this.getMasterDropInsertionIndex(this.masterDropTargetIndex)
+            originalIndex !== null && this.stationDropTargetIndex !== null
+                ? this.getStationDropInsertionIndex(this.stationDropTargetIndex)
                 : null;
         const shouldCommitFallback =
-            !this.masterDragCommitted &&
+            !this.stationDragCommitted &&
             originalIndex !== null &&
             insertionIndex !== null;
 
-        this.clearMasterDropIndicator();
-        this.draggedMasterIndex = null;
-        this.masterDragCommitted = false;
-        this.mastersFieldsContainer
+        this.clearStationDropIndicator();
+        this.draggedStationIndex = null;
+        this.stationDragCommitted = false;
+        this.stationsFieldsContainer
             ?.querySelectorAll('.fontinfo-record-item')
             .forEach((item) => item.classList.remove('dragging'));
 
         if (shouldCommitFallback) {
-            this.reorderMastersList(originalIndex, insertionIndex);
+            this.reorderStationsList(originalIndex, insertionIndex);
         } else {
             requestAnimationFrame(() =>
-                this.forceRefreshVisibleMastersContent()
+                this.forceRefreshVisibleStationsContent()
             );
         }
     }
 
-    private setMasterDropIndicator(
+    private setStationDropIndicator(
         targetIndex: number,
         placement: RecordDropPlacement
     ) {
         if (
-            this.masterDropTargetIndex === targetIndex &&
-            this.masterDropTargetPlacement === placement
+            this.stationDropTargetIndex === targetIndex &&
+            this.stationDropTargetPlacement === placement
         ) {
             return;
         }
 
-        this.clearMasterDropIndicator();
-        const target = this.getMasterListItems()[targetIndex];
+        this.clearStationDropIndicator();
+        const target = this.getStationListItems()[targetIndex];
         if (!target) {
             return;
         }
@@ -6970,33 +6964,33 @@ class FontInfoManager {
                 ? 'feature-drop-target-before'
                 : 'feature-drop-target-after'
         );
-        this.masterDropTargetIndex = targetIndex;
-        this.masterDropTargetPlacement = placement;
+        this.stationDropTargetIndex = targetIndex;
+        this.stationDropTargetPlacement = placement;
     }
 
-    private clearMasterDropIndicator() {
-        if (this.masterDropTargetIndex !== null) {
+    private clearStationDropIndicator() {
+        if (this.stationDropTargetIndex !== null) {
             const previousTarget =
-                this.getMasterListItems()[this.masterDropTargetIndex];
+                this.getStationListItems()[this.stationDropTargetIndex];
             previousTarget?.classList.remove(
                 'feature-drop-target-before',
                 'feature-drop-target-after'
             );
         }
 
-        this.masterDropTargetIndex = null;
-        this.masterDropTargetPlacement = null;
+        this.stationDropTargetIndex = null;
+        this.stationDropTargetPlacement = null;
     }
 
-    private getMasterDropInsertionIndex(
+    private getStationDropInsertionIndex(
         fallbackTargetIndex: number
     ): number | null {
-        if (this.draggedMasterIndex === null) {
+        if (this.draggedStationIndex === null) {
             return null;
         }
 
-        const targetIndex = this.masterDropTargetIndex ?? fallbackTargetIndex;
-        const placement = this.masterDropTargetPlacement ?? 'before';
+        const targetIndex = this.stationDropTargetIndex ?? fallbackTargetIndex;
+        const placement = this.stationDropTargetPlacement ?? 'before';
         return placement === 'after' ? targetIndex + 1 : targetIndex;
     }
 
@@ -7013,8 +7007,7 @@ class FontInfoManager {
         label: string,
         nextInstances: Babelfont.Instance[]
     ) {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         if (!font) {
             return;
         }
@@ -7038,8 +7031,7 @@ class FontInfoManager {
     }
 
     private addInstanceRecord() {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         if (!font) {
             return;
         }
@@ -7054,8 +7046,7 @@ class FontInfoManager {
     }
 
     private removeSelectedInstanceRecord() {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         const instances = font?.instances ?? [];
         if (instances.length === 0) {
             return;
@@ -7113,8 +7104,7 @@ class FontInfoManager {
     }
 
     private reorderInstancesList(fromIndex: number, insertionIndex: number) {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         const instances = rawArray(font?.instances).map(cloneInstanceRecord);
         if (
             fromIndex < 0 ||
@@ -7284,8 +7274,7 @@ class FontInfoManager {
     }
 
     private commitAxesListChange(label: string, nextAxes: Babelfont.Axis[]) {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         if (!font) {
             return;
         }
@@ -7313,14 +7302,14 @@ class FontInfoManager {
             return;
         }
 
-        const gate = this.getMasterTopologyGate();
+        const gate = this.getStationTopologyGate();
         const result = await openAddAxisDialog({
             font: this.buildAxisDialogFont(font),
             blockedNotice: gate.allowed
                 ? null
-                : this.createMasterTopologyBlockedNotice(
+                : this.createStationTopologyBlockedNotice(
                       gate.reason ||
-                          'Masters cannot be added to this font right now.',
+                          'Stations cannot be added to this font right now.',
                       gate.canReopenWithAllGlyphs === true
                   )
         });
@@ -7337,69 +7326,69 @@ class FontInfoManager {
             return;
         }
 
-        const { plan, masterCount } = result.model.buildPlan(
+        const { plan, stationCount } = result.model.buildPlan(
             plainRecords<Babelfont.Axis>(font.axes),
-            plainRecords<Babelfont.Master>(font.masters),
+            plainRecords<Babelfont.Master>(font.stations),
             plainRecords<Babelfont.Instance>(font.instances),
             () => this.createFontInfoRecordId('master')
         );
-        await font.addAxisWithMasterCopies(
+        await font.addAxisWithStationCopies(
             plan,
-            `Add ${result.model.name.trim()} axis with ${masterCount} master${masterCount === 1 ? '' : 's'}`
+            `Add ${result.model.name.trim()} axis with ${stationCount} station${stationCount === 1 ? '' : 's'}`
         );
         this.selectedAxisIndex = axisCount;
         this.selectedAxisIndices = new Set([axisCount]);
         this.forceRefreshVisibleAxesContent();
-        this.forceRefreshVisibleMastersContent();
+        this.forceRefreshVisibleStationsContent();
         void window.glyphCanvas?.axesManager?.updateAxesUI?.();
     }
 
     /** What the Add axis dialog needs to know about the open font. */
     private buildAxisDialogFont(font: BabelfontModelFont): AxisDialogFont {
         const axes = plainRecords<Babelfont.Axis>(font.axes);
-        const masters = plainRecords<Babelfont.Master>(font.masters).map(
-            (master) => ({
-                id: master.id,
+        const stations = plainRecords<Babelfont.Master>(font.stations).map(
+            (station) => ({
+                id: station.id,
                 name:
-                    (typeof master.name === 'string'
-                        ? master.name
-                        : master.name?.dflt) || 'Master',
+                    (typeof station.name === 'string'
+                        ? station.name
+                        : station.name?.dflt) || 'Station',
                 location: Object.fromEntries(
-                    Object.entries(master.location ?? {}).map(
+                    Object.entries(station.location ?? {}).map(
                         ([tag, value]) => [tag, Number(value)]
                     )
                 )
             })
         );
-        // The default master sits at every axis default (see babelfont's
-        // Font::default_master); a single master is always the default.
+        // The default station sits at every axis default (see babelfont's
+        // Font::default_master); a single station is always the default.
         const defaults = userspaceToDesignspace(
             Object.fromEntries(
                 axes.map((axis) => [axis.tag, axis.default ?? 0])
             ) as UserspaceLocation,
             axes
         ) as Record<string, number>;
-        const defaultMaster =
-            masters.find((master) =>
+        const defaultStation =
+            stations.find((station) =>
                 axes.every(
                     (axis) =>
-                        (master.location[axis.tag] ?? 0) ===
+                        (station.location[axis.tag] ?? 0) ===
                         (defaults[axis.tag] ?? 0)
                 )
-            ) ?? masters[0];
+            ) ?? stations[0];
 
         let braceGlyphCount = 0;
-        let braceLayerCount = 0;
+        let freeDrawingCount = 0;
         const glyphs = font.glyphs ?? [];
         for (const glyph of glyphs) {
-            const braces = (glyph.layers ?? []).filter(
-                (layer) =>
-                    !layer.is_background &&
-                    Object.keys(layer.location ?? {}).length > 0
+            const braces = (glyph.drawings ?? []).filter(
+                (drawing) =>
+                    !drawing.is_background &&
+                    Object.keys(drawing.location ?? {}).length > 0
             ).length;
             if (braces) {
                 braceGlyphCount += 1;
-                braceLayerCount += braces;
+                freeDrawingCount += braces;
             }
         }
 
@@ -7411,19 +7400,18 @@ class FontInfoManager {
                         ? axis.name
                         : axis.name?.dflt) || axis.tag
             })),
-            masters,
-            defaultMasterId: defaultMaster?.id ?? '',
+            masters: stations,
+            defaultStationId: defaultStation?.id ?? '',
             glyphCount: glyphs.length,
             braceGlyphCount,
-            braceLayerCount,
+            freeDrawingCount,
             instanceCount: rawArray(font.instances).length
         };
     }
 
-    /** Adds an axis on its own; masters and instances sit at `designspaceValue` on it. */
+    /** Adds an axis on its own; stations and instances sit at `designspaceValue` on it. */
     private commitNewAxis(newAxis: Babelfont.Axis, designspaceValue: number) {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         if (!font) {
             return;
         }
@@ -7448,9 +7436,9 @@ class FontInfoManager {
             }
         ];
 
-        (font.masters ?? []).forEach((master, index) => {
+        (font.stations ?? []).forEach((station, index) => {
             const prevLoc = {
-                ...((master.location as Record<string, number> | undefined) ??
+                ...((station.location as Record<string, number> | undefined) ??
                     {})
             };
             changes.push({
@@ -7477,10 +7465,10 @@ class FontInfoManager {
             changes,
             applyLocal: () => {
                 this.applyLocalAxesList(clonedNextAxes);
-                (window.currentFontModel as any)?.masters?.forEach(
-                    (master: any) => {
-                        master.location = {
-                            ...(master.location ?? {}),
+                (window.currentFontModel as any)?.stations?.forEach(
+                    (station: any) => {
+                        station.location = {
+                            ...(station.location ?? {}),
                             [tag]: designspaceValue
                         };
                     }
@@ -7503,8 +7491,7 @@ class FontInfoManager {
     }
 
     private removeSelectedAxisRecord() {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         const axes = font?.axes ?? [];
         if (axes.length === 0) {
             return;
@@ -7577,8 +7564,8 @@ class FontInfoManager {
             ];
 
             for (const tag of removedTags) {
-                (font?.masters ?? []).forEach((master, index) => {
-                    const loc = master.location as
+                (font?.stations ?? []).forEach((station, index) => {
+                    const loc = station.location as
                         Record<string, number> | undefined;
                     if (loc && tag in loc) {
                         const restLoc = { ...loc };
@@ -7618,10 +7605,10 @@ class FontInfoManager {
                 applyLocal: () => {
                     this.applyLocalAxesList(clonedNextAxes);
                     for (const tag of removedTags) {
-                        (window.currentFontModel as any)?.masters?.forEach(
-                            (master: any) => {
-                                if (master.location) {
-                                    delete master.location[tag];
+                        (window.currentFontModel as any)?.stations?.forEach(
+                            (station: any) => {
+                                if (station.location) {
+                                    delete station.location[tag];
                                 }
                             }
                         );
@@ -7644,8 +7631,7 @@ class FontInfoManager {
     }
 
     private reorderAxesList(fromIndex: number, insertionIndex: number) {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         const axes = rawArray(font?.axes).map(cloneAxisRecord);
         if (
             fromIndex < 0 ||
@@ -7805,8 +7791,7 @@ class FontInfoManager {
         axisIndex: number,
         nextValue: Babelfont.I18NDictionary
     ) {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         const axis = font?.axes?.[axisIndex];
         if (!axis) {
             return;
@@ -7830,10 +7815,9 @@ class FontInfoManager {
             oldValue: previousValue,
             newValue: normalizedNextValue,
             applyLocal: () => {
-                const liveAxis = (
-                    window.currentFontModel as unknown as
-                        Babelfont.Font | undefined
-                )?.axes?.[axisIndex] as any;
+                const liveAxis = (window.currentFontModel ?? undefined)?.axes?.[
+                    axisIndex
+                ] as any;
                 if (liveAxis) {
                     liveAxis.name = normalizedNextValue;
                 }
@@ -7844,8 +7828,7 @@ class FontInfoManager {
     }
 
     private commitAxisTagFieldValue(axisIndex: number, nextValue: string) {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         const axis = font?.axes?.[axisIndex];
         if (!axis) {
             return;
@@ -7862,10 +7845,9 @@ class FontInfoManager {
             oldValue: previousValue,
             newValue: nextValue,
             applyLocal: () => {
-                const liveAxis = (
-                    window.currentFontModel as unknown as
-                        Babelfont.Font | undefined
-                )?.axes?.[axisIndex] as any;
+                const liveAxis = (window.currentFontModel ?? undefined)?.axes?.[
+                    axisIndex
+                ] as any;
                 if (liveAxis) {
                     liveAxis.tag = nextValue;
                 }
@@ -7880,8 +7862,7 @@ class FontInfoManager {
         field: 'min' | 'max' | 'default',
         nextValue: number
     ) {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         const axis = font?.axes?.[axisIndex];
         if (!axis) {
             return;
@@ -7936,10 +7917,9 @@ class FontInfoManager {
             label: `Edit axis ${field}`,
             changes,
             applyLocal: () => {
-                const liveAxis = (
-                    window.currentFontModel as unknown as
-                        Babelfont.Font | undefined
-                )?.axes?.[axisIndex] as any;
+                const liveAxis = (window.currentFontModel ?? undefined)?.axes?.[
+                    axisIndex
+                ] as any;
                 if (!liveAxis) {
                     return;
                 }
@@ -7962,8 +7942,7 @@ class FontInfoManager {
     }
 
     private commitAxisHiddenValue(axisIndex: number, nextValue: boolean) {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         const axis = font?.axes?.[axisIndex];
         if (!axis) {
             return;
@@ -7980,10 +7959,9 @@ class FontInfoManager {
             oldValue: previousValue,
             newValue: nextValue,
             applyLocal: () => {
-                const liveAxis = (
-                    window.currentFontModel as unknown as
-                        Babelfont.Font | undefined
-                )?.axes?.[axisIndex] as any;
+                const liveAxis = (window.currentFontModel ?? undefined)?.axes?.[
+                    axisIndex
+                ] as any;
                 if (liveAxis) {
                     liveAxis.hidden = nextValue;
                 }
@@ -8013,8 +7991,7 @@ class FontInfoManager {
         field: 'min' | 'max' | 'default',
         nextDesignspaceValue: number | undefined
     ) {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         const axis = font?.axes?.[axisIndex];
         if (!axis) {
             return;
@@ -8056,8 +8033,7 @@ class FontInfoManager {
         nextMap: [number, number][],
         label: string = 'Edit axis mapping'
     ) {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         const axis = font?.axes?.[axisIndex];
         if (!axis) {
             return;
@@ -8117,10 +8093,9 @@ class FontInfoManager {
             label,
             changes,
             applyLocal: () => {
-                const liveAxis = (
-                    window.currentFontModel as unknown as
-                        Babelfont.Font | undefined
-                )?.axes?.[axisIndex] as any;
+                const liveAxis = (window.currentFontModel ?? undefined)?.axes?.[
+                    axisIndex
+                ] as any;
                 if (!liveAxis) {
                     return;
                 }
@@ -8293,8 +8268,7 @@ class FontInfoManager {
     }
 
     private applyLocalCustomOTValue(key: CustomOTFieldKey, nextValue: unknown) {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         if (!font) {
             return;
         }
@@ -8321,8 +8295,7 @@ class FontInfoManager {
     }
 
     private commitCustomOTValue(key: CustomOTFieldKey, nextValue: unknown) {
-        const font = window.currentFontModel as unknown as
-            Babelfont.Font | undefined;
+        const font = window.currentFontModel ?? undefined;
         if (!font) {
             return;
         }

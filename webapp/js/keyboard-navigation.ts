@@ -2022,7 +2022,7 @@ import {
             const {
                 rootGlyphName: effectiveRootGlyphName,
                 undoGlyphName,
-                undoLayerId,
+                undoDrawingId,
                 historyTargetKey,
                 surface
             } = window.getUndoRedoContext
@@ -2030,13 +2030,13 @@ import {
                 : {
                       rootGlyphName: undefined,
                       undoGlyphName: undefined,
-                      undoLayerId: null,
+                      undoDrawingId: null,
                       historyTargetKey: null,
                       surface: 'font' as const
                   };
 
             if (oe?.active && (!effectiveRootGlyphName || !undoGlyphName)) {
-                if (!undoGlyphName && !undoLayerId) {
+                if (!undoGlyphName && !undoDrawingId) {
                     window.runBridgeUndoRedo?.(
                         shiftKey ? 'redo' : 'undo',
                         undefined,
@@ -2058,7 +2058,7 @@ import {
                 shiftKey ? 'redo' : 'undo',
                 undoGlyphName,
                 effectiveRootGlyphName,
-                undoLayerId,
+                undoDrawingId,
                 historyTargetKey,
                 surface
             );

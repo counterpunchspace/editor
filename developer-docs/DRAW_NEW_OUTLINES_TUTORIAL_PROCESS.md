@@ -68,7 +68,7 @@ The script does not delete the original Fustat outline.
 
 - It leaves that contour visible as the reference.
 - It draws a duplicate contour to the right, offset beyond the original bounds.
-- The duplicate geometry is derived from the currently selected Regular layer at record time rather than from a hard-coded node list.
+- The duplicate geometry is derived from the currently selected Regular drawing at record time rather than from a hard-coded node list.
 - No additional thick contour overlay is drawn on top of the editor paths; the video uses the editor's native rendering.
 
 This is simpler and more legible than erasing the reference shape before recording.

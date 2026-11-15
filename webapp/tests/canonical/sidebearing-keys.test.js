@@ -31,10 +31,12 @@ const fs = require('fs');
 const path = require('path');
 const {
     Font,
-    Layer,
+    Drawing,
     DecomposedAffineTransform
 } = require('../../js/babelfont-model');
-const { LayerDataNormalizer } = require('../../js/layer-data-normalizer');
+const {
+    DrawingDataNormalizer: DrawingDataNormalizer
+} = require('../../js/drawing-data-normalizer');
 const fontManager = require('../../js/font-manager').default;
 const {
     inferSidebearingSideFromHistoryItem
@@ -87,11 +89,11 @@ function ensureParsedNodes(nodesData) {
 
 function setupCanvasForGlyph(font, glyphName) {
     const glyph = font.findGlyph(glyphName);
-    const layer = glyph.layers[0];
-    const masterId = layer.master.master;
+    const drawing = glyph.drawings[0];
+    const stationId = drawing.station.master;
 
     // Access model paths to trigger lazy string→array node conversion
-    void layer.paths;
+    void drawing.paths;
 
     currentFontSpy.mockRestore();
     currentFontSpy = jest
@@ -100,27 +102,27 @@ function setupCanvasForGlyph(font, glyphName) {
 
     // Normalize layer data the same way the outline editor does (parses string
     // nodes into arrays, etc.) — this matches real app behavior.
-    canvas.outlineEditor.layerData = LayerDataNormalizer.normalize(
-        { ...layer.toJSON(), isInterpolated: false },
+    canvas.outlineEditor.drawingData = DrawingDataNormalizer.normalize(
+        { ...drawing.toJSON(), isInterpolated: false },
         false
     );
-    canvas.outlineEditor.selectedLayerId = layer.id;
+    canvas.outlineEditor.selectedDrawingId = drawing.id;
     canvas.outlineEditor.parseGlyphStack = jest.fn(() => [{ glyphName }]);
     canvas.getCurrentGlyphName = jest.fn(() => glyphName);
     canvas.textRunEditor.selectedGlyphIndex = 0;
     canvas.textRunEditor.shapedGlyphs = [
-        { ax: layer.width, dx: 0, dy: 0, g: 0, cl: 0 }
+        { ax: drawing.width, dx: 0, dy: 0, g: 0, cl: 0 }
     ];
     canvas.textRunEditor.glyphNameBuffer = [glyphName];
     canvas.textRunEditor.refreshGlyphAdvanceDeltasLive = jest.fn(() => true);
 
-    return { glyph, layer, masterId };
+    return { glyph, drawing, stationId };
 }
 
 function getActiveGlyphAdvanceEdgesScreen() {
-    const currentLayerData =
-        canvas.outlineEditor.getCurrentLayerDataFromStack();
-    if (!currentLayerData) {
+    const currentDrawingData =
+        canvas.outlineEditor.getCurrentDrawingDataFromStack();
+    if (!currentDrawingData) {
         return null;
     }
 
@@ -128,7 +130,7 @@ function getActiveGlyphAdvanceEdgesScreen() {
         canvas.textRunEditor.selectedGlyphIndex
     );
     const leftWorldX = glyphPosition.xPosition + glyphPosition.xOffset;
-    const rightWorldX = leftWorldX + (Number(currentLayerData.width) || 0);
+    const rightWorldX = leftWorldX + (Number(currentDrawingData.width) || 0);
 
     return {
         panX: canvas.viewportManager.panX,
@@ -145,14 +147,14 @@ function getActiveGlyphAdvanceEdgesScreen() {
     };
 }
 
-function getActiveGlyphLayerCenterScreen() {
-    const currentLayerData =
-        canvas.outlineEditor.getCurrentLayerDataFromStack();
-    if (!currentLayerData) {
+function getActiveGlyphDrawingCenterScreen() {
+    const currentDrawingData =
+        canvas.outlineEditor.getCurrentDrawingDataFromStack();
+    if (!currentDrawingData) {
         return null;
     }
 
-    const bbox = Layer.calculateBoundingBox(currentLayerData, true);
+    const bbox = Drawing.calculateBoundingBox(currentDrawingData, true);
     if (!bbox) {
         return null;
     }
@@ -169,8 +171,8 @@ function getActiveGlyphLayerCenterScreen() {
     );
 }
 
-function expectActiveGlyphLayerCenterAnchored(beforeCenter) {
-    const afterCenter = getActiveGlyphLayerCenterScreen();
+function expectActiveGlyphDrawingCenterAnchored(beforeCenter) {
+    const afterCenter = getActiveGlyphDrawingCenterScreen();
 
     expect(afterCenter.x).toBeCloseTo(beforeCenter.x, 5);
     expect(afterCenter.y).toBeCloseTo(beforeCenter.y, 5);
@@ -315,7 +317,7 @@ function primeSnapCacheForAdjacentDependents(anchor) {
     canvas.outlineEditor._snapDragStartMouseX = 0;
     canvas.outlineEditor._snapDragStartMouseY = 0;
     const node =
-        canvas.outlineEditor.getCurrentLayerDataFromStack().shapes[
+        canvas.outlineEditor.getCurrentDrawingDataFromStack().shapes[
             anchor.contourIndex
         ].nodes[anchor.nodeIndex];
     canvas.outlineEditor._snapDragStartNodePos = { x: node.x, y: node.y };
@@ -333,8 +335,8 @@ function getSnapCandidateXs(source) {
 describe('Sidebearing keys: live recompute during mouse drags', () => {
     test('live LSB drags keep active and dependent background drawings aligned', () => {
         const font = makeBidirectionalNeighborMetricsFont();
-        const { glyph, layer } = setupCanvasForGlyph(font, 'l');
-        const sourceBackground = glyph.addBackgroundLayer(layer);
+        const { glyph, drawing } = setupCanvasForGlyph(font, 'l');
+        const sourceBackground = glyph.addBackgroundDrawing(drawing);
         const sourcePath = sourceBackground.addPath(true);
         sourcePath.nodes = [
             { x: 30, y: 0, nodetype: 'Line' },
@@ -343,9 +345,9 @@ describe('Sidebearing keys: live recompute during mouse drags', () => {
         sourceBackground.data.anchors = [{ name: 'origin', x: 15, y: 0 }];
 
         const dependentGlyph = font.findGlyph('a');
-        const dependentLayer = dependentGlyph.findLayerById('A0');
+        const dependentDrawing = dependentGlyph.findDrawingById('A0');
         const dependentBackground =
-            dependentGlyph.addBackgroundLayer(dependentLayer);
+            dependentGlyph.addBackgroundDrawing(dependentDrawing);
         const dependentPath = dependentBackground.addPath(true);
         dependentPath.nodes = [
             { x: 20, y: 0, nodetype: 'Line' },
@@ -355,7 +357,7 @@ describe('Sidebearing keys: live recompute during mouse drags', () => {
         const sourceBackgroundX = sourcePath.nodes[0].x;
         const sourceBackgroundAnchorX = sourceBackground.anchors[0].x;
         const dependentBackgroundX = dependentPath.nodes[0].x;
-        const dependentLsb = dependentLayer.lsb;
+        const dependentLsb = dependentDrawing.lsb;
         canvas.outlineEditor.selectedSidebearingHandle = {
             side: 'left',
             editable: true
@@ -369,17 +371,17 @@ describe('Sidebearing keys: live recompute during mouse drags', () => {
             sourceBackgroundAnchorX + 20
         );
         expect(dependentPath.nodes[0].x).toBeCloseTo(
-            dependentBackgroundX + (dependentLayer.lsb - dependentLsb),
+            dependentBackgroundX + (dependentDrawing.lsb - dependentLsb),
             8
         );
     });
 
     test('automatic offset rebuild keeps a dependent background aligned', () => {
         const font = makeBidirectionalNeighborMetricsFont();
-        const sourceLayer = font.findGlyph('l').findLayerById('L0');
+        const sourceDrawing = font.findGlyph('l').findDrawingById('L0');
         const dependentGlyph = font.findGlyph('a');
-        const dependentLayer = dependentGlyph.findLayerById('A0');
-        dependentLayer.data.shapes = [
+        const dependentDrawing = dependentGlyph.findDrawingById('A0');
+        dependentDrawing.data.shapes = [
             {
                 reference: 'l',
                 transform: {
@@ -393,10 +395,11 @@ describe('Sidebearing keys: live recompute during mouse drags', () => {
                 }
             }
         ];
-        dependentLayer.invalidateShapeCache();
+        dependentDrawing.invalidateShapeCache();
         dependentGlyph.leftMetricsKey = '=+20';
 
-        const background = dependentGlyph.addBackgroundLayer(dependentLayer);
+        const background =
+            dependentGlyph.addBackgroundDrawing(dependentDrawing);
         const backgroundPath = background.addPath(true);
         backgroundPath.nodes = [
             { x: 25, y: 0, nodetype: 'Line' },
@@ -404,12 +407,12 @@ describe('Sidebearing keys: live recompute during mouse drags', () => {
         ];
 
         const backgroundX = backgroundPath.nodes[0].x;
-        const lsbBefore = dependentLayer.lsb;
+        const lsbBefore = dependentDrawing.lsb;
         // Automatic layers are mutated only via rebuild, not the removed
         // metrics translate/bake fast path.
         font.rebuildAutomaticCompositesForGlyphs(new Set(['l']), {
             allowedGlyphNames: new Set(['l', 'a']),
-            preferredLayerId: 'L0',
+            preferredDrawingId: 'L0',
             preferredSourceGlyphName: 'l'
         });
         font.recomputeMetricsKeys(new Set(['l']), {
@@ -420,25 +423,25 @@ describe('Sidebearing keys: live recompute during mouse drags', () => {
         // =+20 on an automatic layer widens width; derived LSB of the
         // composed ink stays logical (unoffset). Background alignment for
         // physical LSB shifts is covered by non-automatic metrics paths.
-        expect(dependentLayer.width).toBeGreaterThan(0);
-        expect(dependentLayer.isAutomaticAlignedLayer()).toBe(true);
+        expect(dependentDrawing.width).toBeGreaterThan(0);
+        expect(dependentDrawing.isAutomaticAlignedDrawing()).toBe(true);
         // Logical resting LSB is still the composed ink minX (not baked +20).
-        expect(dependentLayer.lsb).toBeCloseTo(lsbBefore, 5);
+        expect(dependentDrawing.lsb).toBeCloseTo(lsbBefore, 5);
         expect(backgroundPath.nodes[0].x).toBeCloseTo(backgroundX, 5);
     });
 
     test('dragging a point on a glyph with right sidebearing key adjusts width to preserve RSB', () => {
         const font = Font.fromData(loadFontFixture('metricskeys.glyphs'));
-        const { glyph, layer, masterId } = setupCanvasForGlyph(font, 'n');
+        const { glyph, drawing, stationId } = setupCanvasForGlyph(font, 'n');
 
         // n has rightMetricsKey = "=l-10", so n's RSB should always be l's RSB - 10
-        const lLayer = font.findGlyph('l').findLayerByMasterId(masterId);
-        const targetRsb = lLayer.rsb - 10;
+        const lDrawing = font.findGlyph('l').findDrawingByStationId(stationId);
+        const targetRsb = lDrawing.rsb - 10;
 
         // Record the initial state
         const initialWidth =
-            canvas.outlineEditor.getCurrentLayerDataFromStack().width;
-        const initialRsb = layer.rsb;
+            canvas.outlineEditor.getCurrentDrawingDataFromStack().width;
+        const initialRsb = drawing.rsb;
 
         // Verify initial RSB matches the key
         expect(Math.abs(initialRsb - targetRsb)).toBeLessThanOrEqual(1);
@@ -450,11 +453,11 @@ describe('Sidebearing keys: live recompute during mouse drags', () => {
             { contourIndex: 0, nodeIndex: 0 }
         ];
 
-        const currentLayerData =
-            canvas.outlineEditor.getCurrentLayerDataFromStack();
+        const currentDrawingData =
+            canvas.outlineEditor.getCurrentDrawingDataFromStack();
 
         // Find the rightmost node and move it
-        const shapes = currentLayerData.shapes || [];
+        const shapes = currentDrawingData.shapes || [];
         let maxX = -Infinity;
         let rightmostNode = null;
         for (const shape of shapes) {
@@ -473,10 +476,10 @@ describe('Sidebearing keys: live recompute during mouse drags', () => {
 
         // Call the metrics key recompute that happens during drag
         const result =
-            canvas.outlineEditor.applyMetricsKeysToCurrentEditedLayer();
+            canvas.outlineEditor.applyMetricsKeysToCurrentEditedDrawing();
 
         // Width must have increased to maintain RSB
-        const newWidth = currentLayerData.width;
+        const newWidth = currentDrawingData.width;
         expect(newWidth).toBeGreaterThan(initialWidth);
         expect(newWidth - initialWidth).toBeCloseTo(20, 0);
 
@@ -488,19 +491,19 @@ describe('Sidebearing keys: live recompute during mouse drags', () => {
 
     test('dragging a sidebearing on glyph l updates downstream glyph n width', () => {
         const font = Font.fromData(loadFontFixture('metricskeys.glyphs'));
-        const { glyph, layer, masterId } = setupCanvasForGlyph(font, 'l');
+        const { glyph, drawing, stationId } = setupCanvasForGlyph(font, 'l');
         canvas.textRunEditor.glyphNameBuffer = ['l', 'n', 'a'];
         canvas.textRunEditor.shapedGlyphs = [
-            { ax: layer.width, dx: 0, dy: 0, g: 0, cl: 0 },
+            { ax: drawing.width, dx: 0, dy: 0, g: 0, cl: 0 },
             {
-                ax: font.findGlyph('n').findLayerByMasterId(masterId).width,
+                ax: font.findGlyph('n').findDrawingByStationId(stationId).width,
                 dx: 0,
                 dy: 0,
                 g: 0,
                 cl: 1
             },
             {
-                ax: font.findGlyph('a').findLayerByMasterId(masterId).width,
+                ax: font.findGlyph('a').findDrawingByStationId(stationId).width,
                 dx: 0,
                 dy: 0,
                 g: 0,
@@ -510,8 +513,10 @@ describe('Sidebearing keys: live recompute during mouse drags', () => {
 
         // n has metricLeft = "=l-5" and metricRight = "=l-10"
         // Changing l's width should cascade to n, and from n possibly to a
-        const nLayerBefore = font.findGlyph('n').findLayerByMasterId(masterId);
-        const nWidthBefore = nLayerBefore.width;
+        const nDrawingBefore = font
+            .findGlyph('n')
+            .findDrawingByStationId(stationId);
+        const nWidthBefore = nDrawingBefore.width;
 
         canvas.outlineEditor.isDraggingSidebearing = true;
         canvas.outlineEditor.selectedSidebearingHandle = {
@@ -523,7 +528,7 @@ describe('Sidebearing keys: live recompute during mouse drags', () => {
         canvas.outlineEditor._updateDraggedSidebearing(17);
 
         // n's width should have changed because n's sidebearing key references l
-        const nWidthAfter = nLayerBefore.width;
+        const nWidthAfter = nDrawingBefore.width;
         expect(nWidthAfter).not.toBe(nWidthBefore);
 
         // Advance widths should be refreshed
@@ -540,10 +545,10 @@ describe('Sidebearing keys: live recompute during mouse drags', () => {
 
     test('Fustat A LSB drag mirrors RSB via glyph-level =|', () => {
         const font = Font.fromData(loadFontFixture('Fustat.glyphs'));
-        const { glyph, layer } = setupCanvasForGlyph(font, 'A');
+        const { glyph, drawing } = setupCanvasForGlyph(font, 'A');
         expect(glyph.rightMetricsKey).toBe('=|');
 
-        const lsbBefore = layer.lsb;
+        const lsbBefore = drawing.lsb;
         canvas.outlineEditor.isDraggingSidebearing = true;
         canvas.outlineEditor.selectedSidebearingHandle = {
             side: 'left',
@@ -552,8 +557,8 @@ describe('Sidebearing keys: live recompute during mouse drags', () => {
 
         canvas.outlineEditor._updateDraggedSidebearing(-20);
 
-        expect(layer.lsb).toBe(lsbBefore + 20);
-        expect(layer.rsb).toBe(layer.lsb);
+        expect(drawing.lsb).toBe(lsbBefore + 20);
+        expect(drawing.rsb).toBe(drawing.lsb);
     });
 
     test('LSB handle drag mirrors =| after glyph.layers objects are replaced under a warm metrics-key cache', () => {
@@ -622,13 +627,13 @@ describe('Sidebearing keys: live recompute during mouse drags', () => {
         expect(font._metricsKeyDependencyEntries?.length).toBeGreaterThan(0);
 
         const glyphData = font.findGlyph('A').data;
-        glyphData.layers = glyphData.layers.map((layerRecord) =>
-            JSON.parse(JSON.stringify(layerRecord))
+        glyphData.layers = glyphData.layers.map((drawingRecord) =>
+            JSON.parse(JSON.stringify(drawingRecord))
         );
 
-        const { layer } = setupCanvasForGlyph(font, 'A');
-        const lsbBefore = layer.lsb;
-        expect(layer.rsb).toBe(lsbBefore);
+        const { drawing } = setupCanvasForGlyph(font, 'A');
+        const lsbBefore = drawing.lsb;
+        expect(drawing.rsb).toBe(lsbBefore);
 
         canvas.outlineEditor.isDraggingSidebearing = true;
         canvas.outlineEditor.selectedSidebearingHandle = {
@@ -637,17 +642,17 @@ describe('Sidebearing keys: live recompute during mouse drags', () => {
         };
         canvas.outlineEditor._updateDraggedSidebearing(-20);
 
-        const liveLayer = font.findGlyph('A').findLayerById('A0');
-        expect(liveLayer.lsb).toBe(lsbBefore + 20);
-        expect(liveLayer.rsb).toBe(liveLayer.lsb);
+        const liveDrawing = font.findGlyph('A').findDrawingById('A0');
+        expect(liveDrawing.lsb).toBe(lsbBefore + 20);
+        expect(liveDrawing.rsb).toBe(liveDrawing.lsb);
         expect(canvas.outlineEditor.getCurrentDirectSidebearing('right')).toBe(
-            liveLayer.rsb
+            liveDrawing.rsb
         );
     });
 
     test('empty metrics-key dependency cache does not stick while keys exist', () => {
         const font = Font.fromData(loadFontFixture('Fustat.glyphs'));
-        const { layer } = setupCanvasForGlyph(font, 'A');
+        const { drawing } = setupCanvasForGlyph(font, 'A');
 
         // Simulate a premature empty graph build (layers not ready yet).
         font._metricsKeyDependencyEntries = [];
@@ -658,23 +663,23 @@ describe('Sidebearing keys: live recompute during mouse drags', () => {
             editable: true
         };
 
-        const lsbBefore = layer.lsb;
+        const lsbBefore = drawing.lsb;
         canvas.outlineEditor._updateDraggedSidebearing(-20);
-        expect(layer.lsb).toBe(lsbBefore + 20);
-        expect(layer.rsb).toBe(layer.lsb);
+        expect(drawing.lsb).toBe(lsbBefore + 20);
+        expect(drawing.rsb).toBe(drawing.lsb);
         expect(font._metricsKeyDependencyEntries?.length).toBeGreaterThan(0);
     });
 
     test('non-drag sidebearing edits refresh recomposed geometry before persistence', () => {
         const font = Font.fromData(loadFontFixture('metricskeys.glyphs'));
-        const { layer, masterId } = setupCanvasForGlyph(font, 'l');
-        const nLayer = font.findGlyph('n').findLayerByMasterId(masterId);
-        const nWidthBefore = nLayer.width;
+        const { drawing, stationId } = setupCanvasForGlyph(font, 'l');
+        const nDrawing = font.findGlyph('n').findDrawingByStationId(stationId);
+        const nWidthBefore = nDrawing.width;
         const syncSpy = jest.spyOn(
             canvas.outlineEditor,
-            'syncCurrentExactLayerDataFromModel'
+            'syncCurrentExactDrawingDataFromModel'
         );
-        jest.spyOn(canvas.outlineEditor, 'saveLayerData').mockResolvedValue();
+        jest.spyOn(canvas.outlineEditor, 'saveDrawingData').mockResolvedValue();
 
         canvas.outlineEditor.selectedSidebearingHandle = {
             side: 'right',
@@ -682,24 +687,24 @@ describe('Sidebearing keys: live recompute during mouse drags', () => {
         };
 
         expect(
-            canvas.outlineEditor.setSidebearingValue('right', layer.rsb + 17)
+            canvas.outlineEditor.setSidebearingValue('right', drawing.rsb + 17)
         ).toBe(true);
         expect(canvas.outlineEditor.moveSelectedSidebearing(5)).toBe(true);
 
         expect(syncSpy).toHaveBeenCalledTimes(2);
-        expect(nLayer.width).not.toBe(nWidthBefore);
+        expect(nDrawing.width).not.toBe(nWidthBefore);
     });
 
     test('sidebearing drag defers hidden downstream glyphs until final recompute', () => {
         const font = Font.fromData(loadFontFixture('metricskeys.glyphs'));
-        const { layer, masterId } = setupCanvasForGlyph(font, 'l');
+        const { drawing, stationId } = setupCanvasForGlyph(font, 'l');
         canvas.textRunEditor.glyphNameBuffer = ['l'];
         canvas.textRunEditor.shapedGlyphs = [
-            { ax: layer.width, dx: 0, dy: 0, g: 0, cl: 0 }
+            { ax: drawing.width, dx: 0, dy: 0, g: 0, cl: 0 }
         ];
 
-        const nLayer = font.findGlyph('n').findLayerByMasterId(masterId);
-        const nWidthBefore = nLayer.width;
+        const nDrawing = font.findGlyph('n').findDrawingByStationId(stationId);
+        const nWidthBefore = nDrawing.width;
 
         canvas.outlineEditor.isDraggingSidebearing = true;
         canvas.outlineEditor.selectedSidebearingHandle = {
@@ -709,7 +714,7 @@ describe('Sidebearing keys: live recompute during mouse drags', () => {
 
         canvas.outlineEditor._updateDraggedSidebearing(17);
 
-        expect(nLayer.width).toBe(nWidthBefore);
+        expect(nDrawing.width).toBe(nWidthBefore);
         const liveAdvances =
             canvas.textRunEditor.refreshGlyphAdvanceDeltasLive.mock.calls[0][0];
         expect(liveAdvances).toHaveProperty('l');
@@ -717,9 +722,9 @@ describe('Sidebearing keys: live recompute during mouse drags', () => {
 
         canvas.outlineEditor.isDraggingSidebearing = false;
         const finalUpdate =
-            canvas.outlineEditor.applyMetricsKeysToCurrentEditedLayer(false);
+            canvas.outlineEditor.applyMetricsKeysToCurrentEditedDrawing(false);
 
-        expect(nLayer.width).not.toBe(nWidthBefore);
+        expect(nDrawing.width).not.toBe(nWidthBefore);
         expect(finalUpdate.affectedGlyphNames.has('n')).toBe(true);
     });
 
@@ -727,23 +732,23 @@ describe('Sidebearing keys: live recompute during mouse drags', () => {
         const font = Font.fromData(loadFontFixture('Fustat.glyphs'));
         setupCanvasForGlyph(font, 'o');
 
-        const hLayer = font
+        const hDrawing = font
             .findGlyph('h')
-            .findLayerById(canvas.outlineEditor.selectedLayerId);
-        const hWidthBefore = hLayer.width;
+            .findDrawingById(canvas.outlineEditor.selectedDrawingId);
+        const hWidthBefore = hDrawing.width;
 
         const result =
-            canvas.outlineEditor.applyMetricsKeysToCurrentEditedLayer(true, {
+            canvas.outlineEditor.applyMetricsKeysToCurrentEditedDrawing(true, {
                 rebuildAutomaticComposites: true
             });
 
         expect(result.affectedGlyphNames.has('h')).toBe(true);
-        expect(hLayer.width).toBe(hWidthBefore);
+        expect(hDrawing.width).toBe(hWidthBefore);
     });
 
     test('point drag on glyph with LEFT sidebearing key keeps the right edge anchored', () => {
         const font = Font.fromData(loadFontFixture('metricskeys.glyphs'));
-        const { masterId } = setupCanvasForGlyph(font, 'n');
+        const { stationId } = setupCanvasForGlyph(font, 'n');
 
         const scale = 2;
         canvas.viewportManager.scale = scale;
@@ -759,12 +764,12 @@ describe('Sidebearing keys: live recompute during mouse drags', () => {
             { contourIndex: 0, nodeIndex: 0 }
         ];
 
-        const currentLayerData =
-            canvas.outlineEditor.getCurrentLayerDataFromStack();
-        const widthBefore = currentLayerData.width;
+        const currentDrawingData =
+            canvas.outlineEditor.getCurrentDrawingDataFromStack();
+        const widthBefore = currentDrawingData.width;
 
         // Move ONLY the leftmost node left by 20 units.
-        const shapes = currentLayerData.shapes || [];
+        const shapes = currentDrawingData.shapes || [];
         let minX = Infinity;
         let leftmostNode = null;
         for (const shape of shapes) {
@@ -783,9 +788,9 @@ describe('Sidebearing keys: live recompute during mouse drags', () => {
         const anchorEdges = getActiveGlyphAdvanceEdgesScreen();
 
         const result =
-            canvas.outlineEditor.applyMetricsKeysToCurrentEditedLayer();
+            canvas.outlineEditor.applyMetricsKeysToCurrentEditedDrawing();
 
-        const widthAfter = currentLayerData.width;
+        const widthAfter = currentDrawingData.width;
         const widthDelta = widthAfter - widthBefore;
 
         // Width must increase: LSB key translates nodes right, advance widens.
@@ -809,7 +814,7 @@ describe('Sidebearing keys: live recompute during mouse drags', () => {
             { contourIndex: 0, nodeIndex: 0 }
         ];
 
-        canvas.outlineEditor.applyMetricsKeysToCurrentEditedLayer();
+        canvas.outlineEditor.applyMetricsKeysToCurrentEditedDrawing();
 
         expect(fullRecomputeSpy).toHaveBeenCalledWith(new Set(['n']), {});
         fullRecomputeSpy.mockRestore();
@@ -817,12 +822,12 @@ describe('Sidebearing keys: live recompute during mouse drags', () => {
 
     test('editing fully keyed n does not spuriously cascade to a+adieresis+aring when n sidebearings stay locked', () => {
         const font = Font.fromData(loadFontFixture('metricskeys.glyphs'));
-        const { masterId } = setupCanvasForGlyph(font, 'n');
+        const { stationId } = setupCanvasForGlyph(font, 'n');
 
         // record pre-drag widths
         const aWidthBefore = font
             .findGlyph('a')
-            .findLayerByMasterId(masterId).width;
+            .findDrawingByStationId(stationId).width;
 
         canvas.outlineEditor.isDraggingPoint = true;
         canvas.outlineEditor.selectedPoints = [
@@ -832,9 +837,9 @@ describe('Sidebearing keys: live recompute during mouse drags', () => {
         // Move only the rightmost node so n widens while its own keyed RSB
         // stays fixed. Because a inherits n's sidebearing value rather than
         // n's width, this must NOT cascade to a or its component dependents.
-        const currentLayerData =
-            canvas.outlineEditor.getCurrentLayerDataFromStack();
-        const shapes = currentLayerData.shapes || [];
+        const currentDrawingData =
+            canvas.outlineEditor.getCurrentDrawingDataFromStack();
+        const shapes = currentDrawingData.shapes || [];
         let maxX = -Infinity;
         let rightmostNode = null;
         for (const shape of shapes) {
@@ -852,13 +857,13 @@ describe('Sidebearing keys: live recompute during mouse drags', () => {
         rightmostNode.x += 20;
 
         const result =
-            canvas.outlineEditor.applyMetricsKeysToCurrentEditedLayer();
+            canvas.outlineEditor.applyMetricsKeysToCurrentEditedDrawing();
 
         expect(result).not.toBeNull();
-        expect(result.glyphAdvances).toEqual({ n: currentLayerData.width });
-        expect(font.findGlyph('a').findLayerByMasterId(masterId).width).toBe(
-            aWidthBefore
-        );
+        expect(result.glyphAdvances).toEqual({ n: currentDrawingData.width });
+        expect(
+            font.findGlyph('a').findDrawingByStationId(stationId).width
+        ).toBe(aWidthBefore);
     });
 });
 
@@ -868,7 +873,7 @@ describe('Sidebearing keys: viewport anchoring', () => {
     test('RSB-only key: point drag keeps the left edge anchored', () => {
         const font = Font.fromData(loadFontFixture('metricskeys.glyphs'));
         // glyph a has only metricRight = n (RSB key, no LSB key)
-        const { masterId } = setupCanvasForGlyph(font, 'a');
+        const { stationId } = setupCanvasForGlyph(font, 'a');
 
         canvas.viewportManager.scale = 2;
         const initialPanX = 100;
@@ -879,10 +884,10 @@ describe('Sidebearing keys: viewport anchoring', () => {
             { contourIndex: 0, nodeIndex: 0 }
         ];
 
-        const currentLayerData =
-            canvas.outlineEditor.getCurrentLayerDataFromStack();
+        const currentDrawingData =
+            canvas.outlineEditor.getCurrentDrawingDataFromStack();
         // Move all nodes right to trigger RSB key
-        const shapes = currentLayerData.shapes || [];
+        const shapes = currentDrawingData.shapes || [];
         for (const shape of shapes) {
             const nodes = shape.nodes || (shape.Path && shape.Path.nodes) || [];
             const nodesArray = ensureParsedNodes(nodes);
@@ -892,7 +897,7 @@ describe('Sidebearing keys: viewport anchoring', () => {
         }
         const anchorEdges = getActiveGlyphAdvanceEdgesScreen();
 
-        canvas.outlineEditor.applyMetricsKeysToCurrentEditedLayer();
+        canvas.outlineEditor.applyMetricsKeysToCurrentEditedDrawing();
 
         expectViewportUnchanged(anchorEdges);
     });
@@ -917,12 +922,12 @@ describe('Sidebearing keys: viewport anchoring', () => {
             { contourIndex: 0, nodeIndex: 0 }
         ];
 
-        const currentLayerData =
-            canvas.outlineEditor.getCurrentLayerDataFromStack();
-        const widthBefore = currentLayerData.width;
+        const currentDrawingData =
+            canvas.outlineEditor.getCurrentDrawingDataFromStack();
+        const widthBefore = currentDrawingData.width;
 
         // Move ONLY the leftmost node left by 20 units.
-        const shapes = currentLayerData.shapes || [];
+        const shapes = currentDrawingData.shapes || [];
         let minX = Infinity;
         let leftmostNode = null;
         for (const shape of shapes) {
@@ -940,9 +945,9 @@ describe('Sidebearing keys: viewport anchoring', () => {
         leftmostNode.x -= 20;
         const anchorEdges = getActiveGlyphAdvanceEdgesScreen();
 
-        canvas.outlineEditor.applyMetricsKeysToCurrentEditedLayer();
+        canvas.outlineEditor.applyMetricsKeysToCurrentEditedDrawing();
 
-        const widthAfter = currentLayerData.width;
+        const widthAfter = currentDrawingData.width;
         const widthDelta = widthAfter - widthBefore;
 
         // Width must increase: the LSB key translates nodes right, widening the advance.
@@ -965,10 +970,10 @@ describe('Sidebearing keys: viewport anchoring', () => {
             { contourIndex: 0, nodeIndex: 0 }
         ];
 
-        const currentLayerData =
-            canvas.outlineEditor.getCurrentLayerDataFromStack();
+        const currentDrawingData =
+            canvas.outlineEditor.getCurrentDrawingDataFromStack();
 
-        const shapes = currentLayerData.shapes || [];
+        const shapes = currentDrawingData.shapes || [];
         let maxX = -Infinity;
         let rightmostNode = null;
         for (const shape of shapes) {
@@ -987,7 +992,7 @@ describe('Sidebearing keys: viewport anchoring', () => {
         rightmostNode.x += 20;
         const anchorEdges = getActiveGlyphAdvanceEdgesScreen();
 
-        canvas.outlineEditor.applyMetricsKeysToCurrentEditedLayer();
+        canvas.outlineEditor.applyMetricsKeysToCurrentEditedDrawing();
 
         expectViewportUnchanged(anchorEdges);
     });
@@ -1003,9 +1008,9 @@ describe('Sidebearing keys: viewport anchoring', () => {
             { contourIndex: 0, nodeIndex: 0 }
         ];
 
-        const currentLayerData =
-            canvas.outlineEditor.getCurrentLayerDataFromStack();
-        const shapes = currentLayerData.shapes || [];
+        const currentDrawingData =
+            canvas.outlineEditor.getCurrentDrawingDataFromStack();
+        const shapes = currentDrawingData.shapes || [];
         let minX = Infinity;
         let leftmostNode = null;
         for (const shape of shapes) {
@@ -1022,7 +1027,7 @@ describe('Sidebearing keys: viewport anchoring', () => {
         expect(leftmostNode).not.toBeNull();
         leftmostNode.x -= 20; // move leftmost node left → LSB key fires
 
-        canvas.outlineEditor.applyMetricsKeysToCurrentEditedLayer();
+        canvas.outlineEditor.applyMetricsKeysToCurrentEditedDrawing();
 
         expect(canvas.outlineEditor._metricsKeyEditedSide).toBe('left');
     });
@@ -1036,9 +1041,9 @@ describe('Sidebearing keys: viewport anchoring', () => {
             { contourIndex: 0, nodeIndex: 0 }
         ];
 
-        const currentLayerData =
-            canvas.outlineEditor.getCurrentLayerDataFromStack();
-        const shapes = currentLayerData.shapes || [];
+        const currentDrawingData =
+            canvas.outlineEditor.getCurrentDrawingDataFromStack();
+        const shapes = currentDrawingData.shapes || [];
         let maxX = -Infinity;
         let rightmostNode = null;
         for (const shape of shapes) {
@@ -1055,7 +1060,7 @@ describe('Sidebearing keys: viewport anchoring', () => {
         expect(rightmostNode).not.toBeNull();
         rightmostNode.x += 20; // move rightmost node right → RSB key fires
 
-        canvas.outlineEditor.applyMetricsKeysToCurrentEditedLayer();
+        canvas.outlineEditor.applyMetricsKeysToCurrentEditedDrawing();
 
         expect(canvas.outlineEditor._metricsKeyEditedSide).toBe('right');
     });
@@ -1167,13 +1172,13 @@ describe('Sidebearing keys: viewport anchoring', () => {
             { contourIndex: 0, nodeIndex: 0 }
         ];
 
-        const currentLayerData =
-            canvas.outlineEditor.getCurrentLayerDataFromStack();
-        const widthBefore = currentLayerData.width;
+        const currentDrawingData =
+            canvas.outlineEditor.getCurrentDrawingDataFromStack();
+        const widthBefore = currentDrawingData.width;
 
         // Move the leftmost node further left by 15 units so the LSB key fires
         // and translates the entire content rightward (adjusting width).
-        const shapes = currentLayerData.shapes || [];
+        const shapes = currentDrawingData.shapes || [];
         for (const shape of shapes) {
             const nodes = shape.nodes || (shape.Path && shape.Path.nodes) || [];
             const nodesArray = ensureParsedNodes(nodes);
@@ -1185,9 +1190,9 @@ describe('Sidebearing keys: viewport anchoring', () => {
         }
         const anchorEdges = getActiveGlyphAdvanceEdgesScreen();
 
-        canvas.outlineEditor.applyMetricsKeysToCurrentEditedLayer();
+        canvas.outlineEditor.applyMetricsKeysToCurrentEditedDrawing();
 
-        const widthAfter = currentLayerData.width;
+        const widthAfter = currentDrawingData.width;
         const widthDelta = widthAfter - widthBefore;
 
         // Width must have changed for this test to be meaningful
@@ -1226,7 +1231,7 @@ describe('Sidebearing keys: viewport anchoring', () => {
 
     test('RSB handle drag on l anchors the layer center through preceding a+n advance changes in "anl" text run', () => {
         const font = Font.fromData(loadFontFixture('metricskeys.glyphs'));
-        const { masterId } = setupCanvasForGlyph(font, 'l');
+        const { stationId } = setupCanvasForGlyph(font, 'l');
 
         const scale = 2;
         canvas.viewportManager.scale = scale;
@@ -1238,13 +1243,13 @@ describe('Sidebearing keys: viewport anchoring', () => {
         // mutated in-place during the drag and would no longer hold the old width.
         const lOldWidth = font
             .findGlyph('l')
-            .findLayerByMasterId(masterId).width;
+            .findDrawingByStationId(stationId).width;
         const nOldWidth = font
             .findGlyph('n')
-            .findLayerByMasterId(masterId).width;
+            .findDrawingByStationId(stationId).width;
         const aOldWidth = font
             .findGlyph('a')
-            .findLayerByMasterId(masterId).width;
+            .findDrawingByStationId(stationId).width;
 
         // Simulate text run "anl": a at index 0, n at index 1, l at index 2.
         // Set the existing TextRunEditor's shapedGlyphs/glyphNameBuffer so that
@@ -1257,7 +1262,7 @@ describe('Sidebearing keys: viewport anchoring', () => {
         canvas.textRunEditor.glyphNameBuffer = ['a', 'n', 'l'];
         // Mark l as the selected (active) glyph in the run.
         canvas.textRunEditor.selectedGlyphIndex = 2;
-        const beforeCenter = getActiveGlyphLayerCenterScreen();
+        const beforeCenter = getActiveGlyphDrawingCenterScreen();
 
         canvas.outlineEditor.isDraggingSidebearing = true;
         canvas.outlineEditor.selectedSidebearingHandle = {
@@ -1283,7 +1288,7 @@ describe('Sidebearing keys: viewport anchoring', () => {
         expect(advancesArg.a).toBeGreaterThan(0.5);
         expect(advancesArg.n).toBeGreaterThan(0.5);
 
-        expectActiveGlyphLayerCenterAnchored(beforeCenter);
+        expectActiveGlyphDrawingCenterAnchored(beforeCenter);
     });
 
     // ── LSB sidebearing handle drag on l: leading selected glyph keeps layer center ──
@@ -1297,9 +1302,10 @@ describe('Sidebearing keys: viewport anchoring', () => {
         const initialPanX = 100;
         canvas.viewportManager.panX = initialPanX;
 
-        const layerData = canvas.outlineEditor.getCurrentLayerDataFromStack();
-        const widthBefore = layerData.width;
-        const beforeCenter = getActiveGlyphLayerCenterScreen();
+        const drawingData =
+            canvas.outlineEditor.getCurrentDrawingDataFromStack();
+        const widthBefore = drawingData.width;
+        const beforeCenter = getActiveGlyphDrawingCenterScreen();
 
         canvas.outlineEditor.isDraggingSidebearing = true;
         canvas.outlineEditor.selectedSidebearingHandle = {
@@ -1311,19 +1317,19 @@ describe('Sidebearing keys: viewport anchoring', () => {
         canvas.outlineEditor._updateDraggedSidebearing(15);
 
         const widthAfter =
-            canvas.outlineEditor.getCurrentLayerDataFromStack().width;
+            canvas.outlineEditor.getCurrentDrawingDataFromStack().width;
         const widthDelta = widthAfter - widthBefore;
 
         // Width must have changed
         expect(Math.abs(widthDelta)).toBeGreaterThan(0.5);
 
-        expectActiveGlyphLayerCenterAnchored(beforeCenter);
+        expectActiveGlyphDrawingCenterAnchored(beforeCenter);
     });
 
     // ── Sequential drags: RSB drag followed by LSB drag both correct correctly ──
 
     test('after RSB drag widens advance, subsequent leftmost drag still anchors the opposite edge', () => {
-        // Regression: after saveLayerData the layer model's _shapeWrappers can
+        // Regression: after saveDrawingData the layer model's _shapeWrappers can
         // become stale. syncLiveLayerData must invalidate them so that
         // translateLayerContentsX (called from setDirectSidebearing inside
         // recomputeOwnMetricsKeys) operates on the current drag-state shapes.
@@ -1334,9 +1340,9 @@ describe('Sidebearing keys: viewport anchoring', () => {
         canvas.viewportManager.scale = scale;
         canvas.viewportManager.panX = 100;
 
-        const currentLayerData =
-            canvas.outlineEditor.getCurrentLayerDataFromStack();
-        const initialWidth = currentLayerData.width;
+        const currentDrawingData =
+            canvas.outlineEditor.getCurrentDrawingDataFromStack();
+        const initialWidth = currentDrawingData.width;
 
         // ── Phase 1: RSB drag (moves rightmost node right by 20) ──────────────
         canvas.outlineEditor.isDraggingPoint = true;
@@ -1345,7 +1351,7 @@ describe('Sidebearing keys: viewport anchoring', () => {
         ];
 
         {
-            const shapes = currentLayerData.shapes || [];
+            const shapes = currentDrawingData.shapes || [];
             let maxX = -Infinity;
             let rightmostNode = null;
             for (const shape of shapes) {
@@ -1365,11 +1371,11 @@ describe('Sidebearing keys: viewport anchoring', () => {
 
         let anchorEdges = getActiveGlyphAdvanceEdgesScreen();
 
-        canvas.outlineEditor.applyMetricsKeysToCurrentEditedLayer();
+        canvas.outlineEditor.applyMetricsKeysToCurrentEditedDrawing();
         canvas.outlineEditor.isDraggingPoint = false;
         expectViewportUnchanged(anchorEdges);
 
-        const widthAfterRsb = currentLayerData.width;
+        const widthAfterRsb = currentDrawingData.width;
         // RSB key maintained → advance widened by rightmost-node displacement
         expect(widthAfterRsb).toBeGreaterThan(initialWidth);
 
@@ -1377,7 +1383,7 @@ describe('Sidebearing keys: viewport anchoring', () => {
         canvas.outlineEditor.isDraggingPoint = true;
 
         {
-            const shapes = currentLayerData.shapes || [];
+            const shapes = currentDrawingData.shapes || [];
             let minX = Infinity;
             let leftmostNode = null;
             for (const shape of shapes) {
@@ -1397,9 +1403,9 @@ describe('Sidebearing keys: viewport anchoring', () => {
 
         anchorEdges = getActiveGlyphAdvanceEdgesScreen();
 
-        canvas.outlineEditor.applyMetricsKeysToCurrentEditedLayer();
+        canvas.outlineEditor.applyMetricsKeysToCurrentEditedDrawing();
 
-        const widthAfterLsb = currentLayerData.width;
+        const widthAfterLsb = currentDrawingData.width;
 
         // LSB key must still fire and update the width even after a prior RSB drag.
         expect(widthAfterLsb).not.toBe(widthAfterRsb);
@@ -1424,17 +1430,17 @@ describe('Sidebearing keys: adjacent snap candidate compensation', () => {
         ];
         canvas.textRunEditor.selectedGlyphIndex = 1;
 
-        const currentLayerData =
-            canvas.outlineEditor.getCurrentLayerDataFromStack();
-        const widthBefore = currentLayerData.width;
+        const currentDrawingData =
+            canvas.outlineEditor.getCurrentDrawingDataFromStack();
+        const widthBefore = currentDrawingData.width;
         primeSnapCacheForAdjacentDependents({ contourIndex: 0, nodeIndex: 0 });
         const rightBefore = getSnapCandidateXs('right');
 
-        currentLayerData.shapes[0].nodes[0].x -= 20;
+        currentDrawingData.shapes[0].nodes[0].x -= 20;
         const result =
-            canvas.outlineEditor.applyMetricsKeysToCurrentEditedLayer();
+            canvas.outlineEditor.applyMetricsKeysToCurrentEditedDrawing();
 
-        const widthDelta = currentLayerData.width - widthBefore;
+        const widthDelta = currentDrawingData.width - widthBefore;
         const rightNeighborDelta = result.glyphAdvances.adieresis - 360;
         const rightAfter = getSnapCandidateXs('right');
 
@@ -1460,14 +1466,14 @@ describe('Sidebearing keys: adjacent snap candidate compensation', () => {
         ];
         canvas.textRunEditor.selectedGlyphIndex = 1;
 
-        const currentLayerData =
-            canvas.outlineEditor.getCurrentLayerDataFromStack();
+        const currentDrawingData =
+            canvas.outlineEditor.getCurrentDrawingDataFromStack();
         primeSnapCacheForAdjacentDependents({ contourIndex: 0, nodeIndex: 1 });
         const leftBefore = getSnapCandidateXs('left');
 
-        currentLayerData.shapes[0].nodes[1].x += 20;
+        currentDrawingData.shapes[0].nodes[1].x += 20;
         const result =
-            canvas.outlineEditor.applyMetricsKeysToCurrentEditedLayer();
+            canvas.outlineEditor.applyMetricsKeysToCurrentEditedDrawing();
 
         const leftNeighborDelta = result.glyphAdvances.adieresis - 360;
         const leftAfter = getSnapCandidateXs('left');
@@ -1506,7 +1512,7 @@ describe('Sidebearing keys: adjacent snap candidate compensation', () => {
  *               width=500
  */
 function buildComponentFont() {
-    const master = {
+    const station = {
         id: 'master-1',
         name: { en: 'Regular' },
         location: {},
@@ -1514,7 +1520,7 @@ function buildComponentFont() {
         metrics: {},
         kerning: new Map()
     };
-    const defaultMaster = {
+    const defaultStation = {
         type: 'DefaultForMaster',
         master: 'master-1'
     };
@@ -1534,7 +1540,7 @@ function buildComponentFont() {
         version: [1, 0],
         axes: [],
         instances: [],
-        masters: [master],
+        masters: [station],
         glyphs: [
             {
                 name: 'base',
@@ -1544,7 +1550,7 @@ function buildComponentFont() {
                     {
                         id: 'base-layer',
                         width: 520,
-                        master: defaultMaster,
+                        master: defaultStation,
                         shapes: [
                             {
                                 nodes: [
@@ -1569,7 +1575,7 @@ function buildComponentFont() {
                     {
                         id: 'accent-layer',
                         width: 100,
-                        master: defaultMaster,
+                        master: defaultStation,
                         shapes: [
                             {
                                 nodes: [
@@ -1597,7 +1603,7 @@ function buildComponentFont() {
                     {
                         id: 'composite-layer',
                         width: 520,
-                        master: defaultMaster,
+                        master: defaultStation,
                         shapes: [
                             {
                                 reference: 'base',
@@ -1630,7 +1636,7 @@ function buildComponentFont() {
                     {
                         id: 'comp_rsb-layer',
                         width: 580,
-                        master: defaultMaster,
+                        master: defaultStation,
                         shapes: [
                             {
                                 reference: 'base',
@@ -1662,7 +1668,7 @@ function buildComponentFont() {
                     {
                         id: 'mixed-layer',
                         width: 500,
-                        master: defaultMaster,
+                        master: defaultStation,
                         shapes: [
                             {
                                 nodes: [
@@ -1701,7 +1707,7 @@ function buildComponentFont() {
 }
 
 /**
- * Get the X translation from a component shape in layerData.
+ * Get the X translation from a component shape in drawing data.
  */
 function getComponentTranslationX(shape) {
     const t = shape.transform;
@@ -1722,17 +1728,17 @@ describe('Sidebearing keys: component drags', () => {
         canvas.outlineEditor._dragType = 'component';
         canvas.outlineEditor._componentDragDeltaX = 0;
 
-        const currentLayerData =
-            canvas.outlineEditor.getCurrentLayerDataFromStack();
-        const widthBefore = currentLayerData.width;
+        const currentDrawingData =
+            canvas.outlineEditor.getCurrentDrawingDataFromStack();
+        const widthBefore = currentDrawingData.width;
 
         // Move accent right by 30 (tx 420→450, accent paths 450..550, maxX 520→550)
-        currentLayerData.shapes[1].transform.translation[0] += 30;
+        currentDrawingData.shapes[1].transform.translation[0] += 30;
 
         const result =
-            canvas.outlineEditor.applyMetricsKeysToCurrentEditedLayer();
+            canvas.outlineEditor.applyMetricsKeysToCurrentEditedDrawing();
 
-        const widthAfter = currentLayerData.width;
+        const widthAfter = currentDrawingData.width;
         expect(widthAfter).toBeGreaterThan(widthBefore);
         expect(widthAfter - widthBefore).toBeCloseTo(30, 0);
         expect(result).not.toBeNull();
@@ -1757,20 +1763,20 @@ describe('Sidebearing keys: component drags', () => {
         canvas.outlineEditor._dragType = 'component';
         canvas.outlineEditor._componentDragDeltaX = 0;
 
-        const currentLayerData =
-            canvas.outlineEditor.getCurrentLayerDataFromStack();
-        const widthBefore = currentLayerData.width;
+        const currentDrawingData =
+            canvas.outlineEditor.getCurrentDrawingDataFromStack();
+        const widthBefore = currentDrawingData.width;
         const accentTxBefore = getComponentTranslationX(
-            currentLayerData.shapes[1]
+            currentDrawingData.shapes[1]
         );
 
         // Move base component left by 20
-        currentLayerData.shapes[0].transform.translation[0] -= 20;
+        currentDrawingData.shapes[0].transform.translation[0] -= 20;
         const anchorEdges = getActiveGlyphAdvanceEdgesScreen();
 
-        canvas.outlineEditor.applyMetricsKeysToCurrentEditedLayer();
+        canvas.outlineEditor.applyMetricsKeysToCurrentEditedDrawing();
 
-        const widthAfter = currentLayerData.width;
+        const widthAfter = currentDrawingData.width;
         const widthDelta = widthAfter - widthBefore;
 
         // Width must increase (LSB key shifts content right, widening advance)
@@ -1778,7 +1784,7 @@ describe('Sidebearing keys: component drags', () => {
 
         // The accent (non-dragged)'s tx must have increased by the LSB restore offset
         const accentTxAfter = getComponentTranslationX(
-            currentLayerData.shapes[1]
+            currentDrawingData.shapes[1]
         );
         expect(accentTxAfter).toBeGreaterThan(accentTxBefore);
 
@@ -1806,17 +1812,17 @@ describe('Sidebearing keys: component drags', () => {
         canvas.outlineEditor._dragType = 'component';
         canvas.outlineEditor._componentDragDeltaX = 0;
 
-        const currentLayerData =
-            canvas.outlineEditor.getCurrentLayerDataFromStack();
-        const widthBefore = currentLayerData.width;
+        const currentDrawingData =
+            canvas.outlineEditor.getCurrentDrawingDataFromStack();
+        const widthBefore = currentDrawingData.width;
 
         // Move base far enough right so that base maxX exceeds accent maxX
-        currentLayerData.shapes[0].transform.translation[0] += 80;
+        currentDrawingData.shapes[0].transform.translation[0] += 80;
         const anchorEdges = getActiveGlyphAdvanceEdgesScreen();
 
-        canvas.outlineEditor.applyMetricsKeysToCurrentEditedLayer();
+        canvas.outlineEditor.applyMetricsKeysToCurrentEditedDrawing();
 
-        const widthAfter = currentLayerData.width;
+        const widthAfter = currentDrawingData.width;
         expect(widthAfter).toBeGreaterThan(widthBefore);
 
         expectViewportUnchanged(anchorEdges);
@@ -1843,23 +1849,23 @@ describe('Sidebearing keys: component drags', () => {
         canvas.outlineEditor._componentDragDeltaX = 0;
         const anchorEdges = getActiveGlyphAdvanceEdgesScreen();
 
-        const currentLayerData =
-            canvas.outlineEditor.getCurrentLayerDataFromStack();
-        const widthBefore = currentLayerData.width;
+        const currentDrawingData =
+            canvas.outlineEditor.getCurrentDrawingDataFromStack();
+        const widthBefore = currentDrawingData.width;
 
         // Move accent component left by 340 → tx=300-340=-40
-        currentLayerData.shapes[1].transform.translation[0] -= 340;
+        currentDrawingData.shapes[1].transform.translation[0] -= 340;
 
-        canvas.outlineEditor.applyMetricsKeysToCurrentEditedLayer();
+        canvas.outlineEditor.applyMetricsKeysToCurrentEditedDrawing();
 
-        const widthAfter = currentLayerData.width;
+        const widthAfter = currentDrawingData.width;
         const widthDelta = widthAfter - widthBefore;
 
         // Width should increase
         expect(widthDelta).toBeGreaterThan(0.5);
 
         // Path nodes should have been shifted right by the LSB restoration
-        const pathShape = currentLayerData.shapes[0];
+        const pathShape = currentDrawingData.shapes[0];
         const pathNodes =
             pathShape.nodes || (pathShape.Path && pathShape.Path.nodes) || [];
         const nodesArray = ensureParsedNodes(pathNodes);
@@ -1879,13 +1885,13 @@ describe('Sidebearing keys: component drags', () => {
         canvas.outlineEditor._dragType = 'component';
         canvas.outlineEditor._componentDragDeltaX = 0;
 
-        const currentLayerData =
-            canvas.outlineEditor.getCurrentLayerDataFromStack();
+        const currentDrawingData =
+            canvas.outlineEditor.getCurrentDrawingDataFromStack();
 
         // Move base component left → LSB changes → side = 'left'
-        currentLayerData.shapes[0].transform.translation[0] -= 20;
+        currentDrawingData.shapes[0].transform.translation[0] -= 20;
 
-        canvas.outlineEditor.applyMetricsKeysToCurrentEditedLayer();
+        canvas.outlineEditor.applyMetricsKeysToCurrentEditedDrawing();
 
         expect(canvas.outlineEditor._metricsKeyEditedSide).toBe('left');
     });

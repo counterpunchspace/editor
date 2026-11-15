@@ -7,7 +7,7 @@ import {
     multiplyAffineTransforms,
     normalizeAffineTransform
 } from '../glyph-path-geometry';
-import { LayerDataNormalizer } from '../layer-data-normalizer';
+import { DrawingDataNormalizer } from '../drawing-data-normalizer';
 
 const console: Logger = new Logger('StackPreviewAnimator');
 
@@ -16,8 +16,8 @@ const IDENTITY_TRANSFORM = createIdentityAffine();
 /**
  * Layer tree node representing a single component instance at a nesting level
  */
-export interface LayerTreeNode {
-    componentLayerData: Babelfont.Layer;
+export interface DrawingTreeNode {
+    componentDrawingData: Babelfont.Layer;
     glyphName: string;
     depth: number;
     transform: number[]; // Accumulated 2D affine transform [a, b, c, d, tx, ty]
@@ -48,9 +48,9 @@ export class StackPreviewAnimator {
     isReversing = false;
     currentTiltAngle = 0;
     animationStartTime = 0;
-    layerTree: LayerTreeNode[] = [];
-    hoveredLayerTreeIndex: number | null = null;
-    highlightedLayerTreeIndex: number | null = null;
+    drawingTree: DrawingTreeNode[] = [];
+    hoveredDrawingTreeIndex: number | null = null;
+    highlightedDrawingTreeIndex: number | null = null;
     highlightedComponentPath: number[] = [];
     transitionTargetComponentPath: number[] | null = null;
     private reverseCompletionCallbacks: Array<() => void> = [];
@@ -100,9 +100,9 @@ export class StackPreviewAnimator {
         this.isActive = true;
         this.isAnimating = true;
         this.isReversing = false;
-        this.hoveredLayerTreeIndex = null;
+        this.hoveredDrawingTreeIndex = null;
         this.highlightedComponentPath = this.getCurrentGlyphStackPath();
-        this.highlightedLayerTreeIndex = null;
+        this.highlightedDrawingTreeIndex = null;
         this.transitionTargetComponentPath = null;
         this.cmdZeroViewportTarget =
             this.glyphCanvas.getCmdZeroViewportTarget();
@@ -112,7 +112,7 @@ export class StackPreviewAnimator {
         this.savedPanY = viewport.panY;
         this.savedScale = viewport.scale;
 
-        this.buildLayerTree();
+        this.buildDrawingTree();
         this.calculateTargetViewport();
         this.animate();
     }
@@ -134,8 +134,8 @@ export class StackPreviewAnimator {
             this.highlightedComponentPath = [
                 ...this.transitionTargetComponentPath
             ];
-            if (this.layerTree.length > 0) {
-                this.resolveHighlightedLayerTreeIndex();
+            if (this.drawingTree.length > 0) {
+                this.resolveHighlightedDrawingTreeIndex();
             }
         }
 
@@ -154,7 +154,7 @@ export class StackPreviewAnimator {
 
         this.isAnimating = true;
         this.isReversing = true;
-        this.hoveredLayerTreeIndex = null;
+        this.hoveredDrawingTreeIndex = null;
         this.animationStartTime = performance.now();
 
         if (this.cmdZeroViewportTarget) {
@@ -210,9 +210,9 @@ export class StackPreviewAnimator {
             if (this.isReversing) {
                 this.isActive = false;
                 this.currentTiltAngle = 0;
-                this.layerTree = [];
-                this.hoveredLayerTreeIndex = null;
-                this.highlightedLayerTreeIndex = null;
+                this.drawingTree = [];
+                this.hoveredDrawingTreeIndex = null;
+                this.highlightedDrawingTreeIndex = null;
                 this.highlightedComponentPath = [];
                 this.transitionTargetComponentPath = null;
                 this.cmdZeroViewportTarget = null;
@@ -237,14 +237,14 @@ export class StackPreviewAnimator {
     }
 
     /** Build layer tree by recursively traversing all component instances */
-    buildLayerTree(): void {
-        this.layerTree = [];
+    buildDrawingTree(): void {
+        this.drawingTree = [];
 
-        const layerData = this.glyphCanvas.outlineEditor.layerData;
-        if (!layerData?.shapes) return;
+        const drawingData = this.glyphCanvas.outlineEditor.drawingData;
+        if (!drawingData?.shapes) return;
 
-        this.layerTree.push({
-            componentLayerData: layerData,
+        this.drawingTree.push({
+            componentDrawingData: drawingData,
             glyphName: this.glyphCanvas.getCurrentGlyphName(),
             depth: 0,
             transform: IDENTITY_TRANSFORM,
@@ -252,8 +252,8 @@ export class StackPreviewAnimator {
             componentPath: []
         });
 
-        this.processComponents(layerData.shapes, IDENTITY_TRANSFORM, 1, []);
-        this.resolveHighlightedLayerTreeIndex();
+        this.processComponents(drawingData.shapes, IDENTITY_TRANSFORM, 1, []);
+        this.resolveHighlightedDrawingTreeIndex();
     }
 
     private getCurrentGlyphStackPath(): number[] {
@@ -272,22 +272,24 @@ export class StackPreviewAnimator {
         return componentPath;
     }
 
-    private resolveHighlightedLayerTreeIndex(): void {
+    private resolveHighlightedDrawingTreeIndex(): void {
         const targetPath = this.highlightedComponentPath;
-        this.highlightedLayerTreeIndex = this.layerTree.findIndex((node) => {
-            if (node.componentPath.length !== targetPath.length) {
-                return false;
-            }
-            for (let i = 0; i < targetPath.length; i++) {
-                if (node.componentPath[i] !== targetPath[i]) {
+        this.highlightedDrawingTreeIndex = this.drawingTree.findIndex(
+            (node) => {
+                if (node.componentPath.length !== targetPath.length) {
                     return false;
                 }
+                for (let i = 0; i < targetPath.length; i++) {
+                    if (node.componentPath[i] !== targetPath[i]) {
+                        return false;
+                    }
+                }
+                return true;
             }
-            return true;
-        });
+        );
 
-        if (this.highlightedLayerTreeIndex < 0) {
-            this.highlightedLayerTreeIndex = 0;
+        if (this.highlightedDrawingTreeIndex < 0) {
+            this.highlightedDrawingTreeIndex = 0;
         }
     }
 
@@ -310,12 +312,12 @@ export class StackPreviewAnimator {
                 accumulatedTransform,
                 transformArray
             );
-            const componentLayerData = (shape as any).layerData;
+            const componentDrawingData = (shape as any).layerData;
             const nextPath = [...componentPath, index];
 
-            if (componentLayerData?.shapes) {
-                this.layerTree.push({
-                    componentLayerData,
+            if (componentDrawingData?.shapes) {
+                this.drawingTree.push({
+                    componentDrawingData,
                     glyphName: (shape as any).reference,
                     depth,
                     transform: newTransform,
@@ -323,7 +325,7 @@ export class StackPreviewAnimator {
                     componentPath: nextPath
                 });
                 this.processComponents(
-                    componentLayerData.shapes,
+                    componentDrawingData.shapes,
                     newTransform,
                     depth + 1,
                     nextPath
@@ -341,12 +343,12 @@ export class StackPreviewAnimator {
     }
 
     shouldRenderStackPreview(): boolean {
-        return this.isActive && this.layerTree.length > 0;
+        return this.isActive && this.drawingTree.length > 0;
     }
 
     /** Calculate target viewport (pan/zoom) to fit the entire stack */
     private calculateTargetViewport(): void {
-        if (this.layerTree.length === 0) {
+        if (this.drawingTree.length === 0) {
             this.targetPanX = this.savedPanX;
             this.targetPanY = this.savedPanY;
             this.targetScale = this.savedScale;
@@ -456,16 +458,16 @@ export class StackPreviewAnimator {
             maxY: -Infinity
         };
 
-        for (const node of this.layerTree) {
-            const layerData = node.componentLayerData;
-            if (!layerData?.shapes) continue;
+        for (const node of this.drawingTree) {
+            const drawingData = node.componentDrawingData;
+            if (!drawingData?.shapes) continue;
 
             const offsetDistance = node.depth * this.config.verticalSpacing;
             const diagXOffset = offsetDistance * Math.cos(diagonalAngleRad);
             const diagYOffset = offsetDistance * Math.sin(diagonalAngleRad);
 
             this.addShapeBounds(
-                layerData.shapes,
+                drawingData.shapes,
                 node.transform,
                 baseX,
                 baseY,

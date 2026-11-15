@@ -26,8 +26,8 @@ describe('ensureStartupStateReady', () => {
 
         const setAxisValue = jest.fn();
         const updateAxisSliders = jest.fn();
-        const autoSelectMatchingMaster = jest.fn().mockResolvedValue();
-        const alignTextModeEscapeStateWithCurrentMaster = jest.fn();
+        const autoSelectMatchingStation = jest.fn().mockResolvedValue();
+        const alignTextModeEscapeStateWithCurrentStation = jest.fn();
         const applyInitialViewportFit = jest.fn().mockResolvedValue();
         const render = jest.fn();
         const glyphCanvas = {
@@ -40,8 +40,9 @@ describe('ensureStartupStateReady', () => {
             textRunEditor: null,
             outlineEditor: { active: false },
             renderer: { render },
-            autoSelectMatchingMaster,
-            alignTextModeEscapeStateWithCurrentMaster,
+            autoSelectMatchingStation: autoSelectMatchingStation,
+            alignTextModeEscapeStateWithCurrentStation:
+                alignTextModeEscapeStateWithCurrentStation,
             applyInitialViewportFit
         };
 
@@ -67,10 +68,10 @@ describe('ensureStartupStateReady', () => {
         expect(glyphCanvas.hasInitializedStateSync).toBe(true);
         expect(setAxisValue).toHaveBeenCalledWith('wght', 540);
         expect(updateAxisSliders).toHaveBeenCalledTimes(1);
-        expect(autoSelectMatchingMaster).toHaveBeenCalledTimes(1);
-        expect(alignTextModeEscapeStateWithCurrentMaster).toHaveBeenCalledTimes(
-            1
-        );
+        expect(autoSelectMatchingStation).toHaveBeenCalledTimes(1);
+        expect(
+            alignTextModeEscapeStateWithCurrentStation
+        ).toHaveBeenCalledTimes(1);
         expect(render).toHaveBeenCalledTimes(1);
         expect(applyInitialViewportFit).toHaveBeenCalledTimes(1);
         expect(variationListener).toHaveBeenCalledTimes(1);
@@ -151,7 +152,7 @@ describe('ensureStartupStateReady', () => {
             });
         const setTextBuffer = jest.fn();
         const updateCursorVisualPosition = jest.fn();
-        const fetchLayerData = jest.fn().mockResolvedValue(undefined);
+        const fetchDrawingData = jest.fn().mockResolvedValue(undefined);
         const syncActiveGlyphFocus = jest.fn();
         const render = jest.fn();
 
@@ -169,14 +170,14 @@ describe('ensureStartupStateReady', () => {
             },
             outlineEditor: {
                 active: false,
-                selectedLayerId: 'layer-1',
-                fetchLayerData,
+                selectedDrawingId: 'layer-1',
+                fetchDrawingData: fetchDrawingData,
                 interpolateCurrentGlyph: jest.fn(),
                 parseGlyphStack: jest.fn(() => [{ glyphName: 'b' }])
             },
             renderer: { render },
-            autoSelectMatchingMaster: jest.fn().mockResolvedValue(undefined),
-            alignTextModeEscapeStateWithCurrentMaster: jest.fn()
+            autoSelectMatchingStation: jest.fn().mockResolvedValue(undefined),
+            alignTextModeEscapeStateWithCurrentStation: jest.fn()
         };
 
         window.stateManager = {
@@ -195,7 +196,7 @@ describe('ensureStartupStateReady', () => {
         await restoreStateFromUrl(glyphCanvas);
 
         expect(selectGlyphByIndex).toHaveBeenCalledWith(1);
-        expect(fetchLayerData).toHaveBeenCalledWith(true);
+        expect(fetchDrawingData).toHaveBeenCalledWith(true);
         expect(glyphCanvas.outlineEditor.active).toBe(true);
         expect(window.stateManager.editor_cursor_position).toBe(1);
         // Overview highlight/scroll waits for the single fontReady overview paint.
@@ -246,8 +247,8 @@ describe('ensureStartupStateReady', () => {
                 textRunEditor: null,
                 outlineEditor: { active: false },
                 renderer: null,
-                autoSelectMatchingMaster: jest.fn(),
-                alignTextModeEscapeStateWithCurrentMaster: jest.fn()
+                autoSelectMatchingStation: jest.fn(),
+                alignTextModeEscapeStateWithCurrentStation: jest.fn()
             })
         ).rejects.toThrow('bad url state');
 
@@ -285,8 +286,8 @@ describe('ensureStartupStateReady', () => {
             textRunEditor: null,
             outlineEditor: { active: false },
             renderer: null,
-            autoSelectMatchingMaster: jest.fn().mockResolvedValue(undefined),
-            alignTextModeEscapeStateWithCurrentMaster: jest.fn()
+            autoSelectMatchingStation: jest.fn().mockResolvedValue(undefined),
+            alignTextModeEscapeStateWithCurrentStation: jest.fn()
         };
 
         window.stateManager = {
@@ -344,13 +345,13 @@ describe('ensureStartupStateReady', () => {
             },
             outlineEditor: {
                 active: false,
-                selectedLayerId: 'layer-1',
-                fetchLayerData: jest.fn().mockResolvedValue(undefined),
+                selectedDrawingId: 'layer-1',
+                fetchDrawingData: jest.fn().mockResolvedValue(undefined),
                 interpolateCurrentGlyph: jest.fn()
             },
             renderer: { render: jest.fn() },
-            autoSelectMatchingMaster: jest.fn().mockResolvedValue(undefined),
-            alignTextModeEscapeStateWithCurrentMaster: jest.fn()
+            autoSelectMatchingStation: jest.fn().mockResolvedValue(undefined),
+            alignTextModeEscapeStateWithCurrentStation: jest.fn()
         };
 
         window.stateManager = {
@@ -405,8 +406,8 @@ describe('ensureStartupStateReady', () => {
             textRunEditor: null,
             outlineEditor: { active: false },
             renderer: { render: jest.fn() },
-            autoSelectMatchingMaster: jest.fn().mockResolvedValue(undefined),
-            alignTextModeEscapeStateWithCurrentMaster: jest.fn()
+            autoSelectMatchingStation: jest.fn().mockResolvedValue(undefined),
+            alignTextModeEscapeStateWithCurrentStation: jest.fn()
         };
 
         window.stateManager = {

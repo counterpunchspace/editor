@@ -2,7 +2,7 @@ import { test, expect } from './fixtures';
 import { type BrowserContext } from '@playwright/test';
 import {
     alignEditorCanvas,
-    waitUntilGlyphLayerDataMatches
+    waitUntilGlyphDrawingDataMatches
 } from './helpers/change-bridge-cross-window';
 import { cleanupCloudCollabUsers } from './helpers/cloud-collab-session';
 import {
@@ -188,7 +188,7 @@ test.describe('Cloud P0 integrity Playwright gates', () => {
                 })
                 .toBe(dirtyB.newX);
             await alignEditorCanvas(ownerPage, 'b', { wght: 200 });
-            await waitUntilGlyphLayerDataMatches(
+            await waitUntilGlyphDrawingDataMatches(
                 ownerPage,
                 reader.inviteePage,
                 ['b']

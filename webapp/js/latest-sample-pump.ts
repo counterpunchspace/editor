@@ -3,7 +3,7 @@
  *
  * The browser serves pointer input and frame callbacks before everything
  * else. When each pointer move costs most of a frame (a drag that recomposes
- * layers and repaints), a fast pointer keeps the main thread busy with input
+ * drawings and repaints), a fast pointer keeps the main thread busy with input
  * alone: worker results, messages from other windows and timers wait until
  * the pointer stops. A drag then shows no compiled text, and linked windows
  * get nothing, exactly while it matters.

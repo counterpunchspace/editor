@@ -22,8 +22,8 @@ export const GLYPH_FILTER_EVENT_TYPES = [
     'glyph.component.transform.changed',
     'glyph.anchors.changed',
     'glyph.guides.changed',
-    'glyph.layers.changed',
-    'glyph.layer.location.changed',
+    'glyph.drawings.changed',
+    'glyph.drawing.location.changed',
     'glyph.metrics.changed',
     'glyph.metrics-key.changed',
     'glyph.compatibility.changed'
@@ -54,10 +54,10 @@ const GLYPH_NAME_FIELD: GlyphFilterEventMetadataField = {
     required: true
 };
 
-const LAYER_IDS_FIELD: GlyphFilterEventMetadataField = {
-    name: 'layerIds',
+const DRAWING_IDS_FIELD: GlyphFilterEventMetadataField = {
+    name: 'drawingIds',
     type: 'string[]',
-    description: 'Layer IDs touched by the change, when known.',
+    description: 'Drawing IDs touched by the change, when known.',
     required: false
 };
 
@@ -104,58 +104,58 @@ export const GLYPH_FILTER_EVENT_REGISTRY = {
     'glyph.paths.changed': {
         name: 'Glyph Paths Changed',
         description:
-            'Path geometry or path structure on one or more layers of a glyph changed.',
-        metadataFields: [GLYPH_NAME_FIELD, LAYER_IDS_FIELD]
+            'Path geometry or path structure on one or more drawings of a glyph changed.',
+        metadataFields: [GLYPH_NAME_FIELD, DRAWING_IDS_FIELD]
     },
     'glyph.components.changed': {
         name: 'Glyph Components Changed',
         description:
-            'Component membership on one or more layers of a glyph changed (add, remove, or replace).',
-        metadataFields: [GLYPH_NAME_FIELD, LAYER_IDS_FIELD]
+            'Component membership on one or more drawings of a glyph changed (add, remove, or replace).',
+        metadataFields: [GLYPH_NAME_FIELD, DRAWING_IDS_FIELD]
     },
     'glyph.component.reference.changed': {
         name: 'Glyph Component Reference Changed',
         description: 'A component instance changed which glyph it references.',
-        metadataFields: [GLYPH_NAME_FIELD, LAYER_IDS_FIELD]
+        metadataFields: [GLYPH_NAME_FIELD, DRAWING_IDS_FIELD]
     },
     'glyph.component.transform.changed': {
         name: 'Glyph Component Transform Changed',
         description: 'A component instance transform changed.',
-        metadataFields: [GLYPH_NAME_FIELD, LAYER_IDS_FIELD]
+        metadataFields: [GLYPH_NAME_FIELD, DRAWING_IDS_FIELD]
     },
     'glyph.anchors.changed': {
         name: 'Glyph Anchors Changed',
-        description: 'Anchors on one or more layers of a glyph changed.',
-        metadataFields: [GLYPH_NAME_FIELD, LAYER_IDS_FIELD]
+        description: 'Anchors on one or more drawings of a glyph changed.',
+        metadataFields: [GLYPH_NAME_FIELD, DRAWING_IDS_FIELD]
     },
     'glyph.guides.changed': {
         name: 'Glyph Guides Changed',
-        description: 'Guides on one or more layers of a glyph changed.',
-        metadataFields: [GLYPH_NAME_FIELD, LAYER_IDS_FIELD]
+        description: 'Guides on one or more drawings of a glyph changed.',
+        metadataFields: [GLYPH_NAME_FIELD, DRAWING_IDS_FIELD]
     },
-    'glyph.layers.changed': {
-        name: 'Glyph Layers Changed',
+    'glyph.drawings.changed': {
+        name: 'Glyph Drawings Changed',
         description:
-            'A glyph layer was added, removed, or otherwise structurally changed.',
-        metadataFields: [GLYPH_NAME_FIELD, LAYER_IDS_FIELD]
+            'A glyph drawing was added, removed, or otherwise structurally changed.',
+        metadataFields: [GLYPH_NAME_FIELD, DRAWING_IDS_FIELD]
     },
-    'glyph.layer.location.changed': {
-        name: 'Glyph Layer Location Changed',
+    'glyph.drawing.location.changed': {
+        name: 'Glyph Drawing Location Changed',
         description:
-            'An intermediate layer location (designspace coordinates) changed.',
-        metadataFields: [GLYPH_NAME_FIELD, LAYER_IDS_FIELD]
+            'A free drawing’s location (designspace coordinates) changed.',
+        metadataFields: [GLYPH_NAME_FIELD, DRAWING_IDS_FIELD]
     },
     'glyph.metrics.changed': {
         name: 'Glyph Metrics Changed',
         description:
-            'Layer metrics such as advance width or sidebearings changed.',
-        metadataFields: [GLYPH_NAME_FIELD, LAYER_IDS_FIELD]
+            'Drawing metrics such as advance width or sidebearings changed.',
+        metadataFields: [GLYPH_NAME_FIELD, DRAWING_IDS_FIELD]
     },
     'glyph.metrics-key.changed': {
         name: 'Glyph Metrics Key Changed',
         description:
-            'A glyph- or layer-level metrics key (LSB/RSB formula) changed.',
-        metadataFields: [GLYPH_NAME_FIELD, LAYER_IDS_FIELD]
+            'A glyph- or drawing-level metrics key (LSB/RSB formula) changed.',
+        metadataFields: [GLYPH_NAME_FIELD, DRAWING_IDS_FIELD]
     },
     'glyph.compatibility.changed': {
         name: 'Glyph Compatibility Changed',
@@ -172,14 +172,14 @@ export const GLYPH_FILTER_EVENT_REGISTRY = {
                 name: 'compatible',
                 type: 'boolean',
                 description:
-                    "Whether the glyph's relevant layers are compatible after the change.",
+                    'Whether the glyph’s relevant drawings are compatible after the change.',
                 required: true
             },
             {
-                name: 'layerIds',
+                name: 'drawingIds',
                 type: 'string[]',
                 description:
-                    'The layer IDs considered by the compatibility check.',
+                    'The drawing IDs considered by the compatibility check.',
                 required: true
             }
         ]

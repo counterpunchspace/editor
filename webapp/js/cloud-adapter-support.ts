@@ -49,7 +49,7 @@ export const CLOUD_GLYPH_CATCH_UP_MAX_ATTEMPTS = 8;
 export const CLOUD_GLYPH_CATCH_UP_RETRY_MS = 50;
 export const CLOUD_GLYPH_CATCH_UP_CONCURRENCY = 4;
 // Shards without a live socket publish over HTTP, and each request waits
-// for a cold shard room to load its baseline. A master change publishes
+// for a cold shard room to load its baseline. A station change publishes
 // every glyph shard, so two at a time took ~15 minutes for ~1,000 glyphs
 // on staging.
 export const CLOUD_GLYPH_PUBLISH_CONCURRENCY = 6;
@@ -412,7 +412,7 @@ function editorGlyphNamesShowingCloudDocument(documentId: string): string[] {
  * After a main window applies cloud state for a glyph, its linked windows get
  * the glyph document as main now holds it. A catch-up or socket bootstrap may
  * bring only a tail of transactions, and a linked window that lacks what the
- * tail builds on would keep it pending and never show it, or compile a layer
+ * tail builds on would keep it pending and never show it, or compile a drawing
  * without its width. The full state merges into whatever the linked window
  * has.
  */
@@ -439,8 +439,8 @@ export function relayGlyphStateToLinkedWindows(
 
 /**
  * Glyph catch-up patches the Y.Doc and overview tiles, but the outline
- * editor keeps the layer snapshot loaded at restore. Reload that snapshot
- * the same way a layer switch does.
+ * editor keeps the drawing snapshot loaded at restore. Reload that snapshot
+ * the same way a drawing switch does.
  */
 export function refreshEditorAfterGlyphDocumentCatchUp(
     documentId: string
@@ -452,13 +452,13 @@ export function refreshEditorAfterGlyphDocumentCatchUp(
     const refresh = window.syncRustCacheAndRefreshCanvas;
     if (typeof refresh === 'function') {
         void refresh(showing[0], showing[0], {
-            allowSelectedLayerFallback: true
+            allowSelectedDrawingFallback: true
         });
         return;
     }
     const outlineEditor = window.glyphCanvas?.outlineEditor;
-    if (outlineEditor?.selectedLayerId) {
-        void outlineEditor.fetchLayerData?.(true, showing[0]);
+    if (outlineEditor?.selectedDrawingId) {
+        void outlineEditor.fetchDrawingData?.(true, showing[0]);
         return;
     }
     void outlineEditor?.interpolateCurrentGlyph?.(true);
@@ -1131,7 +1131,7 @@ export async function runCloudVisibleReconnectRebaseline(): Promise<CloudVisible
 
     if (typeof window.syncRustCacheAndRefreshCanvas === 'function') {
         await window.syncRustCacheAndRefreshCanvas(undefined, undefined, {
-            allowSelectedLayerFallback: true
+            allowSelectedDrawingFallback: true
         });
         refreshed.canvasRefreshed = true;
     }

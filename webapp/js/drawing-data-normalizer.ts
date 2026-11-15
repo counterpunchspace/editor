@@ -18,42 +18,42 @@ import type { Babelfont } from './babelfont';
 import { buildGlyphPathFromNodes } from './glyph-path-geometry';
 import { Logger } from './logger';
 
-const console = new Logger('LayerDataNormalizer');
+const console = new Logger('DrawingDataNormalizer');
 
 /**
- * Layer Data Normalizer
+ * Drawing Data Normalizer
  *
- * Transforms layer data from multiple sources (Python layer.to_dict() and
+ * Transforms drawing data from multiple sources (Python drawing.to_dict() and
  * babelfont-rs interpolate_glyph JSON) into a unified format for GlyphCanvas rendering.
  *
- * This ensures both editable Python layers and read-only interpolated layers
+ * This ensures both editable Python drawings and read-only interpolated drawings
  * can be displayed using the same rendering code.
  */
 
-export class LayerDataNormalizer {
+export class DrawingDataNormalizer {
     /**
-     * Normalize layer data from any source
+     * Normalize drawing data from any source
      *
-     * @param {Object} layerData - Layer data from either Python or babelfont-rs
+     * @param {Object} drawingData - Drawing data from either Python or babelfont-rs
      * @param {boolean} isInterpolated - Whether this is interpolated data (optional, defaults to false)
-     * @returns {Object} Normalized layer data with isInterpolated flag
+     * @returns {Object} Normalized drawing data with isInterpolated flag
      */
-    static normalize(layerData: any, isInterpolated: boolean = false) {
-        if (!layerData) {
+    static normalize(drawingData: any, isInterpolated: boolean = false) {
+        if (!drawingData) {
             return null;
         }
 
         // Both Python and Rust now return identical structure with nested component layerData
         const normalized = {
-            ...layerData,
+            ...drawingData,
             shapes: this.normalizeShapes(
-                layerData.shapes || [],
+                drawingData.shapes || [],
                 isInterpolated
             ),
-            anchors: this.normalizeAnchors(layerData.anchors || []),
-            guides: layerData.guides || [],
-            format_specific: layerData.format_specific || {},
-            _verticalMetrics: layerData._verticalMetrics || null,
+            anchors: this.normalizeAnchors(drawingData.anchors || []),
+            guides: drawingData.guides || [],
+            format_specific: drawingData.format_specific || {},
+            _verticalMetrics: drawingData._verticalMetrics || null,
             // Add metadata flag for rendering
             isInterpolated
         };
@@ -73,7 +73,7 @@ export class LayerDataNormalizer {
             if ('nodes' in shape) {
                 if (!Array.isArray(shape.nodes)) {
                     throw new TypeError(
-                        `Path shape nodes must be an array before layer data normalization (shape ${shapeIndex}).`
+                        `Path shape nodes must be an array before drawing data normalization (shape ${shapeIndex}).`
                     );
                 }
 
@@ -86,7 +86,7 @@ export class LayerDataNormalizer {
                     ...shape,
                     reference: shape.reference,
                     transform: shape.transform || [1, 0, 0, 1, 0, 0],
-                    // Recursively normalize nested component layer data
+                    // Recursively normalize nested component drawing data
                     // Component layerData comes with the same isInterpolated flag as parent
                     layerData: shape.layerData
                         ? this.normalize(shape.layerData, isInterpolated)
@@ -114,20 +114,20 @@ export class LayerDataNormalizer {
     }
 
     /**
-     * Check if layer data is from an exact layer (not interpolated)
+     * Check if drawing data is from an exact drawing (not interpolated)
      *
-     * @param {Object} normalizedData - Normalized layer data
-     * @returns {boolean} True if this is an exact layer
+     * @param {Object} normalizedData - Normalized drawing data
+     * @returns {boolean} True if this is an exact drawing
      */
-    static isExactLayer(normalizedData: any) {
+    static isExactDrawing(normalizedData: any) {
         return normalizedData && !normalizedData.isInterpolated;
     }
 
     /**
-     * Restore exact layer via Rust
+     * Restore exact drawing via Rust
      */
-    static async restoreExactLayer(outlineEditor: OutlineEditor) {
-        await outlineEditor.fetchLayerData();
+    static async restoreExactDrawing(outlineEditor: OutlineEditor) {
+        await outlineEditor.fetchDrawingData();
     }
 
     /**

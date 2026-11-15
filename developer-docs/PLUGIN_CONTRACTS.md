@@ -16,6 +16,8 @@ A plugin that uses only these contracts may be under its own license, including 
 
 Plugin versions are `MAJOR.MINOR.PATCH` only. Any change to how a host calls a plugin bumps that type's contract. Additive optional hooks do not. The editor keeps an adapter for the previous contract for at least one release.
 
+Contract 2 of `compilefilter`, `glyphfilter`, `composition` and `feature` moved to the station and drawing terms (see `../AGENTS.md`), as a hard break without an adapter: compile filters implement `filter_drawing_json` and `filter_drawing_json_propagated_anchors` and read `ctx["station"]` and `ctx["stationId"]`, guide and transient-anchor payloads carry `stationId`, `drawingId` and the guide scope `station` or `drawing`, composition requests carry `station_id`, glyph filters subscribe to `glyph.drawings.changed` and `glyph.drawing.location.changed`, and every hook that receives a live model object sees `font.stations`, `glyph.drawings` and `drawing.station`. JSON hooks still receive Babelfont data with its own `masters` and `layers` keys.
+
 ## Dependencies and the sandbox
 
 A wheel may depend only on packages listed in `allowedDependencies`. Anything else is vendored into the wheel. Preflight has no network. Each probe has 5 seconds, the run has 60 seconds, and the container is destroyed after 120 seconds. Output is capped. Preflight checks the contract surface. It does not prove a plugin is safe to run in the editor.

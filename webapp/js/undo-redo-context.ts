@@ -3,7 +3,7 @@ import type { HistoryUndoSurface } from './change-log';
 export type UndoRedoContext = {
     rootGlyphName: string | undefined;
     undoGlyphName: string | undefined;
-    undoLayerId: string | null;
+    undoDrawingId: string | null;
     historyTargetKey: string | null;
     surface: HistoryUndoSurface;
 };
@@ -60,12 +60,12 @@ function rememberMainUndoContext(context: UndoRedoContext): UndoRedoContext {
 function buildCanvasContext(
     rootGlyphName: string | undefined,
     undoGlyphName: string | undefined,
-    undoLayerId: string | null
+    undoDrawingId: string | null
 ): UndoRedoContext {
     return {
         rootGlyphName,
         undoGlyphName,
-        undoLayerId,
+        undoDrawingId,
         historyTargetKey: null,
         surface: 'canvas'
     };
@@ -75,7 +75,7 @@ function buildFontContext(rootGlyphName: string | undefined): UndoRedoContext {
     return {
         rootGlyphName,
         undoGlyphName: undefined,
-        undoLayerId: null,
+        undoDrawingId: null,
         historyTargetKey: null,
         surface: 'font'
     };
@@ -87,7 +87,7 @@ function buildOverviewContext(
     return {
         rootGlyphName,
         undoGlyphName: undefined,
-        undoLayerId: null,
+        undoDrawingId: null,
         historyTargetKey: null,
         surface: 'overview'
     };
@@ -100,7 +100,7 @@ function buildFeatureContext(
     return {
         rootGlyphName,
         undoGlyphName: undefined,
-        undoLayerId: null,
+        undoDrawingId: null,
         historyTargetKey,
         surface: 'feature'
     };
@@ -112,7 +112,7 @@ function buildAutomationContext(
     return {
         rootGlyphName,
         undoGlyphName: undefined,
-        undoLayerId: null,
+        undoDrawingId: null,
         historyTargetKey: null,
         surface: 'automation'
     };
@@ -134,7 +134,7 @@ export function getUndoRedoContext(): UndoRedoContext {
     const rootGlyphName = parsedStack[0]?.glyphName ?? currentGlyphName;
     const fallbackUndoGlyphName =
         parsedStack[parsedStack.length - 1]?.glyphName ?? currentGlyphName;
-    const fallbackUndoLayerId = oe?.selectedLayerId ?? null;
+    const fallbackUndoDrawingId = oe?.selectedDrawingId ?? null;
 
     const fontInfoFocused = isFontInfoViewFocused();
     const overviewFocused = isOverviewViewFocused();
@@ -166,33 +166,33 @@ export function getUndoRedoContext(): UndoRedoContext {
         editorFocused &&
         oe?.active &&
         fallbackUndoGlyphName &&
-        fallbackUndoLayerId
+        fallbackUndoDrawingId
     ) {
         return rememberMainUndoContext(
             buildCanvasContext(
                 rootGlyphName,
                 fallbackUndoGlyphName,
-                fallbackUndoLayerId
+                fallbackUndoDrawingId
             )
         );
     }
 
     if (editorFocused) {
-        // Text mode (or editor without a selected layer): Editing View /
+        // Text mode (or editor without a selected drawing): Editing View /
         // canvas surface. Kerning and other editor-owned font edits join
-        // via undoSurfaceAffinity; layer-origin edits for the caret glyph
-        // remain reachable without inventing a fake layer id.
+        // via undoSurfaceAffinity; drawing-origin edits for the caret glyph
+        // remain reachable without inventing a fake drawing id.
         return rememberMainUndoContext(
             buildCanvasContext(
                 rootGlyphName,
                 fallbackUndoGlyphName,
-                fallbackUndoLayerId
+                fallbackUndoDrawingId
             )
         );
     }
 
     // Scripts / Konsole / Assistant: undo Python- and Assistant-sourced edits
-    // regardless of derived font/glyph/layer scope. Do not sticky this as the
+    // regardless of derived font/glyph/drawing scope. Do not sticky this as the
     // main-view context — History keeps the last Editor/Overview/Font Info.
     if (automationFocused) {
         return buildAutomationContext(rootGlyphName);

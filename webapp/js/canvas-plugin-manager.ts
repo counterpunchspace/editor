@@ -209,20 +209,20 @@ export class CanvasPluginManager {
     /**
      * Call draw_above() on all loaded plugins.
      *
-     * @param layerData - The layer data object
+     * @param drawingData - The drawing data object
      * @param glyphName - The name of the glyph
      * @param ctx - The canvas 2D rendering context
      * @param viewportManager - The viewport manager
      */
     async drawPluginsAbove(
-        layerData: any,
+        drawingData: any,
         glyphName: string,
         ctx: CanvasRenderingContext2D,
         viewportManager: any
     ): Promise<void> {
         await this._drawPlugins(
             'draw_above',
-            layerData,
+            drawingData,
             glyphName,
             ctx,
             viewportManager
@@ -232,20 +232,20 @@ export class CanvasPluginManager {
     /**
      * Call draw_below() on all loaded plugins.
      *
-     * @param layerData - The layer data object
+     * @param drawingData - The drawing data object
      * @param glyphName - The name of the glyph
      * @param ctx - The canvas 2D rendering context
      * @param viewportManager - The viewport manager
      */
     async drawPluginsBelow(
-        layerData: any,
+        drawingData: any,
         glyphName: string,
         ctx: CanvasRenderingContext2D,
         viewportManager: any
     ): Promise<void> {
         await this._drawPlugins(
             'draw_below',
-            layerData,
+            drawingData,
             glyphName,
             ctx,
             viewportManager
@@ -256,14 +256,14 @@ export class CanvasPluginManager {
      * Internal method to call a specific hook on all loaded plugins.
      *
      * @param hookName - The name of the hook method to call (draw_above or draw_below)
-     * @param layerData - The layer data object
+     * @param drawingData - The drawing data object
      * @param glyphName - The name of the glyph
      * @param ctx - The canvas 2D rendering context
      * @param viewportManager - The viewport manager
      */
     private async _drawPlugins(
         hookName: string,
-        layerData: any,
+        drawingData: any,
         glyphName: string,
         ctx: CanvasRenderingContext2D,
         viewportManager: any
@@ -286,7 +286,7 @@ export class CanvasPluginManager {
 
         try {
             // Make the data available in the global JavaScript namespace temporarily
-            (window as any)._pluginLayerData = layerData;
+            (window as any)._pluginLayerData = drawingData;
             (window as any)._pluginGlyphName = glyphName;
             (window as any)._pluginCtx = ctx;
             (window as any)._pluginViewportManager = viewportManager;
@@ -318,18 +318,18 @@ export class CanvasPluginManager {
                     );
 
                     // Convert JS objects to Python
-                    const layerDataPy = window.pyodide.toPy(layerData);
+                    const drawingDataPy = window.pyodide.toPy(drawingData);
 
                     // Call the hook method
                     pluginPy[hookName](
-                        layerDataPy,
+                        drawingDataPy,
                         glyphName,
                         ctx,
                         viewportManager
                     );
 
                     // Clean up Python proxy
-                    layerDataPy.destroy();
+                    drawingDataPy.destroy();
                 } catch (error) {
                     console.error(
                         `Error drawing plugin ${plugin.name} (${hookName}):`,

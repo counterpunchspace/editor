@@ -64,11 +64,11 @@ describe('FontCompilation worker document readiness', () => {
 
     test.each([
         {
-            type: 'applyPreviewLayerOverlay',
-            payload: { layerUpdates: [], changedGlyphs: [] }
+            type: 'applyPreviewDrawingOverlay',
+            payload: { drawingUpdates: [], changedGlyphs: [] }
         },
         {
-            type: 'clearPreviewLayerOverlay',
+            type: 'clearPreviewDrawingOverlay',
             payload: {}
         }
     ])(
@@ -277,11 +277,11 @@ describe('FontCompilation worker document readiness', () => {
         expect(sendMessageSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 type: 'compileEditingCached',
-                babelfontJson: '__incremental_layer__',
+                babelfontJson: '__incremental_drawing__',
                 subsetGlyphs: ['a'],
                 subsetKey: 'a',
                 layoutClosureKey: 'a\u001e',
-                _usePreviewLayerOverlay: false
+                _usePreviewDrawingOverlay: false
             })
         );
     });
@@ -299,14 +299,14 @@ describe('FontCompilation worker document readiness', () => {
 
         await fontCompilation.compileEditingFromJsonCached('8', ['a'], {
             compileSource: 'mouse-drag-outline',
-            usePreviewLayerOverlay: true
+            usePreviewDrawingOverlay: true
         });
 
         expect(sendMessageSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 type: 'compileEditingCached',
-                babelfontJson: '__incremental_layer__',
-                _usePreviewLayerOverlay: true
+                babelfontJson: '__incremental_drawing__',
+                _usePreviewDrawingOverlay: true
             })
         );
     });
@@ -331,7 +331,7 @@ describe('FontCompilation worker document readiness', () => {
         expect(sendMessageSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 type: 'compileEditingCached',
-                babelfontJson: '__incremental_layer__',
+                babelfontJson: '__incremental_drawing__',
                 subsetGlyphs: ['a'],
                 _compileSource: 'feature-code'
             })

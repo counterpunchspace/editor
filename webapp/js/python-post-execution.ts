@@ -10,7 +10,7 @@ import { Logger } from './logger';
 import type { WorkerReplayTarget } from './change-log';
 import {
     deriveGlyphNameFromPath,
-    deriveLayerIdFromPath,
+    deriveDrawingIdFromPath,
     normalizeWorkerReplayTargets
 } from './change-log';
 import {
@@ -141,12 +141,12 @@ function createNamedPatchPairsFromJsonSnapshots(
             }
         );
         const inferredGlyph = deriveGlyphNameFromPath(namedPair.forward.path);
-        const inferredLayer = deriveLayerIdFromPath(namedPair.forward.path);
+        const inferredDrawing = deriveDrawingIdFromPath(namedPair.forward.path);
         const inferredTargets = normalizeWorkerReplayTargets(
             workerReplayTargets.length > 0
                 ? workerReplayTargets
-                : inferredGlyph && inferredLayer
-                  ? [{ glyphName: inferredGlyph, layerId: inferredLayer }]
+                : inferredGlyph && inferredDrawing
+                  ? [{ glyphName: inferredGlyph, layerId: inferredDrawing }]
                   : []
         );
         return {

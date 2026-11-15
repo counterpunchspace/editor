@@ -57,7 +57,7 @@ const provider = {
     async anchorPositions(requests) {
         return requests.map((request) => ({
             glyph_name: request.glyph_name,
-            master_id: request.master_id,
+            station_id: request.station_id,
             positions: { top: [10, 20] }
         }));
     },
@@ -162,7 +162,7 @@ const arabicProvider = {
     async anchorPositions(requests) {
         return requests.map((request) => ({
             glyph_name: request.glyph_name,
-            master_id: request.master_id,
+            station_id: request.station_id,
             positions: {}
         }));
     },
@@ -188,7 +188,7 @@ const font = {
     hasGlyph() {
         return false;
     },
-    masters: [{ id: 'm', metrics: { xheight: 500, capheight: 700 } }]
+    stations: [{ id: 'm', metrics: { xheight: 500, capheight: 700 } }]
 };
 
 describe('language packs', () => {
@@ -312,25 +312,25 @@ describe('language packs', () => {
         const glyphs = {
             shell: {
                 codepoints: [0xe4],
-                layers: [{ shapes: [] }]
+                drawings: [{ shapes: [] }]
             },
             composite: {
                 codepoints: [0xe1],
-                layers: [
+                drawings: [
                     { shapes: [{ reference: 'a' }, { reference: 'acute' }] }
                 ]
             },
             mixed: {
                 codepoints: [0xe9],
-                layers: [{ shapes: [{ reference: 'e' }, { nodes: [] }] }]
+                drawings: [{ shapes: [{ reference: 'e' }, { nodes: [] }] }]
             },
             drawn: {
                 codepoints: [0xe9],
-                layers: [{ shapes: [{ nodes: [] }] }]
+                drawings: [{ shapes: [{ nodes: [] }] }]
             },
             plain: {
                 codepoints: [0x62],
-                layers: [{ shapes: [{ nodes: [] }] }]
+                drawings: [{ shapes: [{ nodes: [] }] }]
             }
         };
         const decomposition = { shell: ['a', 'diaeresis'] };
@@ -377,11 +377,11 @@ describe('language packs', () => {
             asComponent: () => ({ reference: 'a.custom' })
         };
         expect(
-            glyphComponentNames({ layers: [{ shapes: [wrapped] }] })
+            glyphComponentNames({ drawings: [{ shapes: [wrapped] }] })
         ).toEqual(['a.custom']);
         expect(
             classifyComposition(['wrapped'], {
-                glyph: () => ({ layers: [{ shapes: [wrapped] }] }),
+                glyph: () => ({ drawings: [{ shapes: [wrapped] }] }),
                 isCcmp: () => false,
                 components: () => ['a.custom'],
                 decomposition: () => []
@@ -995,7 +995,7 @@ describe('language packs', () => {
                 ['behDotless-ar.medi', 'beh-ar.medi', 'reh-ar.fina'].includes(
                     name
                 ),
-            masters: [],
+            stations: [],
             glyphNames: () => [
                 'behDotless-ar.medi',
                 'beh-ar.medi',

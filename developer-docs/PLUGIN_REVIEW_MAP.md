@@ -47,14 +47,14 @@ Settings for every type go through `webapp/js/plugin-settings/plugin-settings-re
 
 ## Python API
 
-Every plugin runs in the same Pyodide as the editor's own scripts, so it can call the editor's Python API whatever its type. `Font()`, `Glyph()`, `Layer()` and `Master()` return live objects: a write changes the open font at once, and in a cloud font it syncs to every collaborator. A plugin that writes through this API outside what its contract allows changes font data outside the contract, for example a canvas plugin that edits outlines while it draws.
+Every plugin runs in the same Pyodide as the editor’s own scripts, so it can call the editor’s Python API whatever its type. `Font()`, `Glyph()`, `Drawing()` and `Station()` return live objects: a write changes the open font at once, and in a cloud font it syncs to every collaborator. A plugin that writes through this API outside what its contract allows changes font data outside the contract, for example a canvas plugin that edits outlines while it draws.
 
 | Path | Symbols | What it gives |
 | --- | --- | --- |
-| `documentation/python/06-python-api.md` | `Font`, `Glyph`, `Layer`, `Master` | Reference for the font object model, generated from `babelfont-model.ts` |
+| `documentation/python/06-python-api.md` | `Font`, `Glyph`, `Drawing`, `Station` | Reference for the font object model, generated from `babelfont-model.ts` |
 | `documentation/python/01-python-in-counterpunch.md` |  | How Python runs in the editor |
-| `webapp/py/fonteditor.py` | `Font`, `Glyph`, `Layer`, `Master`, `Context`, `SetContextPatch`, `Notification`, `_cp_get_host_object` | The preloaded `fonteditor` module. The accessors wrap the live JS model. `_cp_get_host_object` reaches the editor's page object |
-| `webapp/js/babelfont-model.ts` | `Font`, `Glyph`, `Layer`, `Master` | The JS object model behind the Python wrappers. Every read and write goes through it |
+| `webapp/py/fonteditor.py` | `Font`, `Glyph`, `Drawing`, `Station`, `Context`, `SetContextPatch`, `Notification`, `_cp_get_host_object` | The preloaded `fonteditor` module. The accessors wrap the live JS model. `_cp_get_host_object` reaches the editor’s page object |
+| `webapp/js/babelfont-model.ts` | `Font`, `Glyph`, `Drawing`, `Station` | The JS object model behind the Python wrappers. Every read and write goes through it |
 
 ## Ways a plugin can reach the browser
 

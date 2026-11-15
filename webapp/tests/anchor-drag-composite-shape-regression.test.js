@@ -57,26 +57,26 @@ function expectPlainShapeStructure(shapes, context) {
     }
 }
 
-function getMatchingLayerTargets(
+function getMatchingDrawingTargets(
     fontModel,
     sourceGlyphName,
-    sourceLayerId,
+    sourceDrawingId,
     glyphNames
 ) {
     const sourceGlyph = fontModel.findGlyph(sourceGlyphName);
-    const sourceLayer = sourceGlyph?.findLayerById(sourceLayerId);
+    const sourceDrawing = sourceGlyph?.findDrawingById(sourceDrawingId);
 
     return Array.from(new Set(glyphNames))
         .map((glyphName) => {
             const glyph = fontModel.findGlyph(glyphName);
-            const matchedLayer =
-                glyph?.findLayerById(sourceLayerId) ||
-                sourceLayer?.getMatchingLayerOnGlyph?.(glyphName) ||
+            const matchedDrawing =
+                glyph?.findDrawingById(sourceDrawingId) ||
+                sourceDrawing?.getMatchingDrawingOnGlyph?.(glyphName) ||
                 glyph?.layers?.[0] ||
                 null;
 
-            return matchedLayer?.id
-                ? { glyphName, layerId: matchedLayer.id }
+            return matchedDrawing?.id
+                ? { glyphName, layerId: matchedDrawing.id }
                 : null;
         })
         .filter(Boolean);
@@ -129,14 +129,14 @@ describe('Fustat anchor drag component serialization', () => {
         const fontModel = fontManager.currentFont.fontModel;
         const glyphO = fontModel.findGlyph('o');
         const glyphOacute = fontModel.findGlyph('oacute');
-        const layerO = glyphO.layers[0];
-        const topAnchor = layerO.anchors.find(
+        const drawingO = glyphO.drawings[0];
+        const topAnchor = drawingO.anchors.find(
             (anchor) => anchor.name === 'top'
         );
 
         expect(glyphO).toBeTruthy();
         expect(glyphOacute).toBeTruthy();
-        expect(layerO).toBeTruthy();
+        expect(drawingO).toBeTruthy();
         expect(topAnchor).toBeTruthy();
         for (let moveIndex = 0; moveIndex < 3; moveIndex += 1) {
             withSuppressedModelRecording(() => {
@@ -145,33 +145,34 @@ describe('Fustat anchor drag component serialization', () => {
 
             const affectedGlyphNames =
                 fontModel.rebuildAutomaticCompositesForGlyphs(new Set(['o']), {
-                    preferredLayerId: layerO.id,
+                    preferredDrawingId: drawingO.id,
                     preferredSourceGlyphName: 'o'
                 });
 
             expect(affectedGlyphNames.has('oacute')).toBe(false);
 
-            const oacuteLayer =
-                glyphOacute.findLayerById(layerO.id) || glyphOacute.layers[0];
-            const rawLayerData = oacuteLayer.toJSON();
+            const oacuteDrawing =
+                glyphOacute.findDrawingById(drawingO.id) ||
+                glyphOacute.drawings[0];
+            const rawDrawingData = oacuteDrawing.toJSON();
             expectPlainShapeStructure(
-                rawLayerData.shapes,
+                rawDrawingData.shapes,
                 `raw oacute layer after move ${moveIndex + 1}`
             );
 
-            const serializedLayer = fontManager.serializeLayerForStorage(
+            const serializedDrawing = fontManager.serializeDrawingForStorage(
                 'o',
-                layerO.id,
-                rawLayerData
+                drawingO.id,
+                rawDrawingData
             );
-            expect(serializedLayer).toBeTruthy();
+            expect(serializedDrawing).toBeTruthy();
             expectPlainShapeStructure(
-                serializedLayer.shapes,
+                serializedDrawing.shapes,
                 `serialized o layer after move ${moveIndex + 1}`
             );
 
             await expect(
-                fontManager.refreshGlyphsAfterModelBatch(['o'], layerO.id, {
+                fontManager.refreshGlyphsAfterModelBatch(['o'], drawingO.id, {
                     skipFingerprintBaseline: true
                 })
             ).resolves.toBeUndefined();
@@ -186,14 +187,14 @@ describe('Fustat anchor drag component serialization', () => {
 
         const glyphO = fontModel.findGlyph('o');
         const glyphOacute = fontModel.findGlyph('oacute');
-        const layerO = glyphO.layers[0];
-        const topAnchor = layerO.anchors.find(
+        const drawingO = glyphO.drawings[0];
+        const topAnchor = drawingO.anchors.find(
             (anchor) => anchor.name === 'top'
         );
 
         expect(glyphO).toBeTruthy();
         expect(glyphOacute).toBeTruthy();
-        expect(layerO).toBeTruthy();
+        expect(drawingO).toBeTruthy();
         expect(topAnchor).toBeTruthy();
         for (let moveIndex = 0; moveIndex < 3; moveIndex += 1) {
             withSuppressedModelRecording(() => {
@@ -202,18 +203,18 @@ describe('Fustat anchor drag component serialization', () => {
 
             const affectedGlyphNames =
                 fontModel.rebuildAutomaticCompositesForGlyphs(new Set(['o']), {
-                    preferredLayerId: layerO.id,
+                    preferredDrawingId: drawingO.id,
                     preferredSourceGlyphName: 'o'
                 });
-            const layerTargets = getMatchingLayerTargets(
+            const drawingTargets = getMatchingDrawingTargets(
                 fontModel,
                 'o',
-                layerO.id,
+                drawingO.id,
                 ['o']
             );
 
-            bridge.syncLayersFromJson(
-                layerTargets,
+            bridge.syncDrawingsFromJson(
+                drawingTargets,
                 'Drag anchor',
                 undefined,
                 undefined,
@@ -230,12 +231,14 @@ describe('Fustat anchor drag component serialization', () => {
                 : null;
             expect(bridgeGlyph).toBeTruthy();
 
-            const bridgeLayer = Array.isArray(bridgeGlyph.layers)
-                ? bridgeGlyph.layers.find((layer) => layer?.id === layerO.id)
+            const bridgeDrawing = Array.isArray(bridgeGlyph.layers)
+                ? bridgeGlyph.layers.find(
+                      (drawing) => drawing?.id === drawingO.id
+                  )
                 : null;
-            expect(bridgeLayer).toBeTruthy();
+            expect(bridgeDrawing).toBeTruthy();
             expectPlainShapeStructure(
-                bridgeLayer.shapes,
+                bridgeDrawing.shapes,
                 `bridge o layer after move ${moveIndex + 1}`
             );
         }

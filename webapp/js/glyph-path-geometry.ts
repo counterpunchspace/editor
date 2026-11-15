@@ -767,7 +767,7 @@ export type FlattenShapesOptions = {
     /**
      * Used when a component has no pre-populated layerData.
      * `resolve` replaces the resolver for shapes returned from that component,
-     * so deeper references are looked up from the component's own layer.
+     * so deeper references are looked up from the component's own drawing.
      */
     resolveComponentShapes?: ComponentShapeResolver;
     /** Fall back to stand-in contours when a component contributes no paths. */
@@ -839,12 +839,12 @@ export function flattenShapesToPaths(
                     componentData.transform || createIdentityDecomposedAffine()
                 )
             );
-            const layerData = componentData.layerData;
+            const drawingData = componentData.layerData;
             const before = flattened.length;
-            if (layerData && typeof layerData === 'object') {
+            if (drawingData && typeof drawingData === 'object') {
                 flattened.push(
                     ...flattenShapesToPaths(
-                        layerData.shapes as Unsafe[] | undefined,
+                        drawingData.shapes as Unsafe[] | undefined,
                         composed,
                         options
                     )

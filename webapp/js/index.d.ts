@@ -58,7 +58,7 @@ declare global {
                   options?: {
                       skipDeferredCanvasRepaint?: boolean;
                       workerReplayTargets?: WorkerReplayTarget[];
-                      allowSelectedLayerFallback?: boolean;
+                      allowSelectedDrawingFallback?: boolean;
                   }
               ) => Promise<void>)
             | undefined;
@@ -67,7 +67,7 @@ declare global {
                   action: 'undo' | 'redo',
                   glyphName?: string,
                   refreshRootGlyphName?: string,
-                  layerId?: string | null,
+                  drawingId?: string | null,
                   historyTargetKey?: string | null,
                   surface?:
                       | 'canvas'
@@ -96,7 +96,7 @@ declare global {
             | (() => {
                   rootGlyphName: string | undefined;
                   undoGlyphName: string | undefined;
-                  undoLayerId: string | null;
+                  undoDrawingId: string | null;
                   historyTargetKey: string | null;
                   surface:
                       'canvas' | 'overview' | 'font' | 'feature' | 'automation';
@@ -320,13 +320,13 @@ declare global {
         canvasPluginManager: {
             discoverPlugins: () => Promise<void>;
             drawPluginsAbove: (
-                layerData: any,
+                drawingData: any,
                 glyphName: string,
                 ctx: CanvasRenderingContext2D,
                 viewportManager: any
             ) => Promise<void>;
             drawPluginsBelow: (
-                layerData: any,
+                drawingData: any,
                 glyphName: string,
                 ctx: CanvasRenderingContext2D,
                 viewportManager: any

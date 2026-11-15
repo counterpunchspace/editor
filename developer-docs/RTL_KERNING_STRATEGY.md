@@ -20,9 +20,9 @@ Round-tripping `.glyphs` files currently:
 
 The Rust model stays unchanged. RTL kerning lives in
 `format_specific["com.schriftgestalt.Glyphs.kerningRTL"]` as it does today.
-The editor's TypeScript object model adds a virtual `master.kerningRTL`
+The editor’s TypeScript object model adds a virtual `station.kerningRTL`
 property that reads/writes transparently from that `format_specific` key.
-The canvas kerning editor uses `master.kerningRTL` when the HarfBuzz cluster
+The canvas kerning editor uses `station.kerningRTL` when the HarfBuzz cluster
 context has `isRTL=true`.
 
 A single shared `merge_kerning()` function in babelfont-rs reads from both
@@ -66,8 +66,8 @@ adapted to their respective data structures:
                     ┌──────▼───────────────┐
                     │ babelfont-model.ts   │
                     │                      │
-                    │ master.kerning       │ ← LTR pairs (real field)
-                    │ master.kerningRTL    │ ← RTL pairs (virtual, backed by
+                    │ station.kerning      │ ← LTR pairs (real field)
+                    │ station.kerningRTL   │ ← RTL pairs (virtual, backed by
                     │                      │    format_specific["...kerningRTL"])
                     └──────┬───────────────┘
                            │ serialized
@@ -318,15 +318,15 @@ normal model round-trip.
 
 ## Editor changes
 
-### 1. Add virtual `kerningRTL` to `Master`
+### 1. Add virtual `kerningRTL` to `Station`
 
 **File:** `webapp/js/babelfont-model.ts`
 
-Add a getter/setter on the `Master` class that reads/writes
+Add a getter/setter on the `Station` class that reads/writes
 `format_specific["com.schriftgestalt.Glyphs.kerningRTL"]`:
 
 ```typescript
-class Master {
+class Station {
     // Real field — maps to babelfont-rs master.kerning
     kerning: KerningContainer;
 
@@ -351,26 +351,26 @@ const KEY_KERNING_RTL = 'com.schriftgestalt.Glyphs.kerningRTL';
 
 **Backwards compatibility**: On load from any format, if
 `format_specific[KEY_KERNING_RTL]` is present, it becomes readable via
-`master.kerningRTL`. On save, any value set via `master.kerningRTL` is
+`station.kerningRTL`. On save, any value set via `station.kerningRTL` is
 persisted in `format_specific` — which babelfont-rs's Glyphs3 export already
 reads correctly.
 
-### 2. Update `setKerningPairValueOnMaster` for direction
+### 2. Update `setKerningPairValueOnStation` for direction
 
 **File:** `webapp/js/glyph-canvas.ts`, line 5645.
 
 Add an `isRTL` parameter:
 
 ```typescript
-private setKerningPairValueOnMaster(
-    master: Master,
+private setKerningPairValueOnStation(
+    station: Station,
     firstKey: string,
     secondKey: string,
     nextValue: number | null,
     isRTL: boolean = false
 ): void {
-    const target = isRTL ? master.kerningRTL : master.kerning;
-    // ... existing logic using `target` instead of `master.kerning` ...
+    const target = isRTL ? station.kerningRTL : station.kerning;
+    // ... existing logic using `target` instead of `station.kerning` ...
 }
 ```
 
@@ -381,8 +381,8 @@ private setKerningPairValueOnMaster(
 `TextModeKerningContext` already has `isRTL`. Pass it:
 
 ```typescript
-this.setKerningPairValueOnMaster(
-    context.master,
+this.setKerningPairValueOnStation(
+    context.station,
     context.selectedFirstKey,
     context.selectedSecondKey,
     nextValue,
@@ -398,7 +398,7 @@ this.setKerningPairValueOnMaster(
 pair's value, read from the correct dict:
 
 ```typescript
-const kerns = entry.isRTL ? master.kerningRTL : master.kerning;
+const kerns = entry.isRTL ? station.kerningRTL : station.kerning;
 const value = resolveKerningValue(kerns, firstKey, secondKey);
 ```
 
@@ -406,7 +406,7 @@ const value = resolveKerningValue(kerns, firstKey, secondKey);
 
 Marking kerning as dirty for compilation should note that both dicts trigger a
 kerning-only recompile. The `'kerning-property-panel'` reason already handles
-this — verify it covers edits to `master.kerningRTL` as well.
+this — verify it covers edits to `station.kerningRTL` as well.
 
 ### 6. Property panel display
 
@@ -431,10 +431,10 @@ resolves values from the active context.
 ### Editor
 
 5. **RTL kerning editing**: create an RTL text run in the preview, adjust
-   kerning, verify the value is stored in `master.kerningRTL` (i.e.,
+   kerning, verify the value is stored in `station.kerningRTL` (i.e.,
    `format_specific["...kerningRTL"]`).
 6. **LTR kerning editing**: adjacent LTR text run, adjust kerning, verify
-   stored in `master.kerning` (not RTL).
+   stored in `station.kerning` (not RTL).
 7. **Round-trip through `.glyphs`**: save to `.glyphs`, reload, verify RTL
    kerning values survive.
 8. **Backwards compatibility**: load a `.glyphs` file saved by old editor
@@ -449,4 +449,4 @@ resolves values from the active context.
    in `format_specific` will be preserved in the round-trip babelfont JSON but
    is lost when saving to Glyphs v2. Acceptable — same as glyphsLib behavior.
 2. **Vertical kerning**: same approach if needed — add virtual
-   `master.kerningVertical` backed by `format_specific["...kerningVertical"]`.
+   `station.kerningVertical` backed by `format_specific["...kerningVertical"]`.

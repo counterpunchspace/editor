@@ -5,18 +5,18 @@ Use a general-purpose Python script for a reusable font operation that you run f
 Counterpunch already provides the font API. Start with `Font()`, which does not need to be imported:
 
 ```python
-# Report glyph and master counts
+# Report glyph and station counts
 #
-# Prints the font's glyphs and masters
+# Prints the font's glyphs and stations
 #
-# Keywords: glyphs, masters
+# Keywords: glyphs, stations
 
 font = Font()
 print(f'Glyphs: {len(font.glyphs)}')
-print(f'Masters: {len(font.masters)}')
+print(f'Stations: {len(font.stations)}')
 ```
 
-`Font()` returns the current open font and raises when none is open. In outline editing, `Glyph()` and `Layer()` return the glyph and layer being edited. `Master()` returns the selected master, or `None` when the location is not a stored master. Use the [Python API](06-python-api.md) when you need an exact property or method.
+`Font()` returns the current open font and raises when none is open. In outline editing, `Glyph()` and `Drawing()` return the glyph and drawing being edited. `Station()` returns the selected station, or `None` when the current location is not at a station. Use the [Python API](06-python-api.md) when you need an exact property or method.
 
 ## Working with other open fonts
 
@@ -85,7 +85,7 @@ else:
 
 The file header is shown in the Run Python Script dialog. The first commented line is a short title and becomes the suggested file name with a `.py` suffix. Optional following lines are the description. An optional `Keywords:` line is a comma-separated list shown as a keyword cloud.
 
-Choose keywords from this set when they describe the actual target of the script: glyphs, layers, paths, nodes, anchors, components, metrics, names, masters, unicode, kerning, groups, features, guidelines. If glyphs are only used to loop, omit them. Do not remove keywords a user added. Update the header if the purpose of the script changes.
+Choose keywords from this set when they describe the actual target of the script: glyphs, drawings, paths, nodes, anchors, components, metrics, names, stations, unicode, kerning, groups, features, guidelines. If glyphs are only used to loop, omit them. Do not remove keywords a user added. Update the header if the purpose of the script changes.
 
 ```python
 # Update glyphs

@@ -35,89 +35,90 @@ function asJsonRecordArray(value: unknown): JsonRecord[] {
         : [];
 }
 
-/** Normalize imported layer master syntax to the tagged representation used at runtime. */
-function normalizeImportedLayerMasters(fontData: Babelfont.Font): void {
+/** Normalize the `master` field of imported drawings to the tagged representation used at runtime. */
+function normalizeImportedDrawingStations(fontData: Babelfont.Font): void {
     const fontRecord = fontData as unknown as JsonRecord;
-    const masters = asJsonRecordArray(fontRecord.masters);
-    const knownMasterIds = new Set(
-        masters.flatMap((master) =>
-            typeof master.id === 'string' ? [master.id] : []
+    const stations = asJsonRecordArray(fontRecord.masters);
+    const knownStationIds = new Set(
+        stations.flatMap((station) =>
+            typeof station.id === 'string' ? [station.id] : []
         )
     );
 
     for (const glyph of asJsonRecordArray(fontRecord.glyphs)) {
-        for (const layer of asJsonRecordArray(glyph.layers)) {
-            const layerId = typeof layer.id === 'string' ? layer.id : null;
-            const masterValue = layer.master;
+        for (const drawing of asJsonRecordArray(glyph.layers)) {
+            const drawingId =
+                typeof drawing.id === 'string' ? drawing.id : null;
+            const stationValue = drawing.master;
 
-            if (!masterValue) {
+            if (!stationValue) {
                 if (
-                    layer.is_background !== true &&
-                    layerId &&
-                    knownMasterIds.has(layerId)
+                    drawing.is_background !== true &&
+                    drawingId &&
+                    knownStationIds.has(drawingId)
                 ) {
-                    layer.master = {
+                    drawing.master = {
                         type: 'DefaultForMaster',
-                        master: layerId
+                        master: drawingId
                     };
                 }
                 continue;
             }
 
-            if (typeof masterValue === 'string') {
-                layer.master = {
+            if (typeof stationValue === 'string') {
+                drawing.master = {
                     type: 'DefaultForMaster',
-                    master: masterValue
+                    master: stationValue
                 };
                 continue;
             }
 
-            const masterRecord = asJsonRecord(masterValue);
+            const stationRecord = asJsonRecord(stationValue);
             if (
-                !masterRecord ||
-                Object.prototype.hasOwnProperty.call(masterRecord, 'type')
+                !stationRecord ||
+                Object.prototype.hasOwnProperty.call(stationRecord, 'type')
             ) {
                 continue;
             }
 
-            const masterId =
-                typeof masterRecord.master === 'string'
-                    ? masterRecord.master
-                    : typeof masterRecord.DefaultForMaster === 'string'
-                      ? masterRecord.DefaultForMaster
-                      : typeof masterRecord.default_for_master === 'string'
-                        ? masterRecord.default_for_master
+            const stationId =
+                typeof stationRecord.master === 'string'
+                    ? stationRecord.master
+                    : typeof stationRecord.DefaultForMaster === 'string'
+                      ? stationRecord.DefaultForMaster
+                      : typeof stationRecord.default_for_master === 'string'
+                        ? stationRecord.default_for_master
                         : null;
-            if (masterId) {
-                layer.master = {
+            if (stationId) {
+                drawing.master = {
                     type: 'DefaultForMaster',
-                    master: masterId
+                    master: stationId
                 };
                 continue;
             }
 
-            const associatedMasterId =
-                typeof masterRecord.associated_with_master === 'string'
-                    ? masterRecord.associated_with_master
-                    : typeof masterRecord.AssociatedWithMaster === 'string'
-                      ? masterRecord.AssociatedWithMaster
+            const associatedStationId =
+                typeof stationRecord.associated_with_master === 'string'
+                    ? stationRecord.associated_with_master
+                    : typeof stationRecord.AssociatedWithMaster === 'string'
+                      ? stationRecord.AssociatedWithMaster
                       : null;
-            if (associatedMasterId) {
-                layer.master = {
+            if (associatedStationId) {
+                drawing.master = {
                     type: 'AssociatedWithMaster',
-                    master: associatedMasterId
+                    master: associatedStationId
                 };
                 continue;
             }
 
             if (
                 Object.prototype.hasOwnProperty.call(
-                    masterRecord,
+                    stationRecord,
                     'FreeFloating'
                 ) ||
-                Object.keys(masterRecord).length === 0
+                Object.keys(stationRecord).length === 0
             ) {
-                layer.master = { type: 'FreeFloating' };
+                drawing.master = { type: 'FreeFloating' };
             }
         }
     }
@@ -149,11 +150,11 @@ export function canonicalizeImportedFontData(
     );
     ensureStableIds(fontRecord);
     timelineSpanEnd(stableIdsSpan);
-    const mastersSpan = timelineSpanStart(
+    const stationsSpan = timelineSpanStart(
         'font.canonicalize.normalizeLayerMasters'
     );
-    normalizeImportedLayerMasters(fontData);
-    timelineSpanEnd(mastersSpan);
+    normalizeImportedDrawingStations(fontData);
+    timelineSpanEnd(stationsSpan);
 
     const fromDataSpan = timelineSpanStart('font.canonicalize.fromData');
     const fontModel = Font.fromData(fontData);
@@ -171,20 +172,20 @@ export function canonicalizeImportedFontData(
 
 /**
  * Canonicalize glyphs re-read from their own source files, with the font's
- * masters as context: stable ids, tagged layer masters and model defaults, as
+ * stations as context: stable ids, tagged drawing `master` fields and model defaults, as
  * a whole import gives them. Metrics keys are not recomputed; as on a whole reload, the
  * files on disk are taken as they are.
  */
 export function canonicalizeImportedGlyphs(
     glyphs: Babelfont.Glyph[],
-    masters: Babelfont.Master[]
+    stations: Babelfont.Master[]
 ): Babelfont.Glyph[] {
     const fontData = {
-        masters,
+        masters: stations,
         glyphs: JSON.parse(JSON.stringify(glyphs))
     } as unknown as Babelfont.Font;
     ensureStableIds(fontData as unknown as JsonRecord);
-    normalizeImportedLayerMasters(fontData);
+    normalizeImportedDrawingStations(fontData);
     // Building the model fills in the defaults a whole import gets too.
     Font.fromData(fontData);
     return fontData.glyphs;

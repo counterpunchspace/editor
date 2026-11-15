@@ -23,12 +23,12 @@ converted to `.babelfont`. That corpus supports two models and several jobs:
      a type designer would have drawn at that size, not the result of naive
      `scale()`. Examples: stretch a letter; make small caps from capitals
      (and the reverse); turn a small `/schwa` into a capital `/Schwa`.
-   - **Infer a new master / axis** at a chosen location (`wght`, `wdth`,
+   - **Infer a new station / axis** at a chosen location (`wght`, `wdth`,
      `opsz`, or any other inventoried tag).
    - **Derive a glyph set** with the same scale call, applied in batch —
-     e.g. auto-smallcaps from capitals. Operationally this is the infer-master
+     e.g. auto-smallcaps from capitals. Operationally this is the infer-station
      job (every chosen glyph, throughput latency) with a geometric condition
-     instead of an axis slot, writing new glyphs rather than a new master.
+     instead of an axis slot, writing new glyphs rather than a new station.
 
 Jobs 2’s call sites are **the same model**. They differ only in conditioning
 and in how much of the font the caller runs it on. They are not two networks.
@@ -46,7 +46,7 @@ Do not train one “font brain.” Train two artifacts:
 - Everything that moves outlines is **one deformer**: ordered cubic nodes in,
   residual `(Δx, Δy)` per node out. Conditioning is either a 2D geometric
   scale `(sx, sy)` or an axis location (masked tag slots), or both. Affine
-  scale (or the source master) is the baseline; the net learns the designed
+  scale (or the source station) is the baseline; the net learns the designed
   correction to stems, contrast, joins, and terminals.
 
 Closest published architecture (idea only, not weights or data): [NIV: Neural
@@ -70,14 +70,14 @@ gfsources/*.babelfont
               one fp16 ONNX deformer
                     |
                     +---> typographic scale (sx, sy) on a path or glyph
-                    +---> infer master (axis slot)
+                    +---> infer station (axis slot)
                     +---> derive glyphs, e.g. small caps (sx, sy, batch)
 ```
 
 ## Goals
 
 1. Inventory **every** axis tag in the corpus (registered and custom), with
-   source counts and default→other-master example counts, then decide which
+   source counts and default→other-station example counts, then decide which
    tags the deformer gets — including the option to take all of them.
 2. Ship QA that can label “missing component X” / “missing anchor Y” on a
    glyph when confidence ≥ a threshold, without a neural net.
@@ -96,7 +96,7 @@ gfsources/*.babelfont
 - Converting cubics to quadratics “for easier deltas.”
 - Pairing sibling static files that share a family name but have no axes
   (`ZillaSlab-Regular.babelfont` next to `-Bold.babelfont`). Those are not
-  compatible masters.
+  compatible stations.
 - Requiring `/A` and `/A.sc` (or `/a` and `/A`, `/schwa` and `/Schwa`) to
   share construction. Small caps are a separate glyph set, not an axis.
   They are optional bonus supervision when topology happens to match. They
@@ -106,13 +106,13 @@ gfsources/*.babelfont
 - Making the Zhang–Suen skeleton offset solver the product path. It already
   exists in the outline editor and did not produce usable type. It may remain
   a debug/fallback, not the trained system.
-- A second network for small caps, case conversion, or infer-master.
+- A second network for small caps, case conversion, or infer-station.
 - Running training in the browser.
 - Silent overwrite of user outlines. Every generative result is a draft the
   rest of the app can commit through existing Yjs paths.
 - Kerning, hinting, and OpenType layout as deformer outputs (phantom advance
   / sidebearings are in scope when the caller scales a whole glyph or infers
-  a master; pair kerning is not).
+  a station; pair kerning is not).
 
 ## Constraints that apply to all jobs
 
@@ -122,11 +122,11 @@ The editor’s outline model is cubic: on-curve nodes plus off-curve cubic
 handles, in contour order. Inference input and output are that same list.
 
 Axis-bearing sources in the corpus already have **compatible outlines**
-across masters: same contour count, same node count, same node kinds, in
-correspondence. A master-pair label is:
+across stations: same contour count, same node count, same node kinds, in
+correspondence. A station-pair label is:
 
 ```text
-delta[i] = target_master.nodes[i] - source_master.nodes[i]
+delta[i] = target_station.nodes[i] - source_station.nodes[i]
 ```
 
 including handles. There is no densified `gvar` step.
@@ -138,13 +138,13 @@ implement.
 
 ### Where deformer labels come from
 
-- **Axis residuals:** masters inside one axis-bearing `.babelfont`. Skip
+- **Axis residuals:** stations inside one axis-bearing `.babelfont`. Skip
   sources with no `axes` array. Do not invent pairs across files. These
   outlines are compatible by construction.
-- **Geometric `(sx, sy)` residuals (primary):** those same master pairs,
+- **Geometric `(sx, sy)` residuals (primary):** those same station pairs,
   whenever the bounding box (or a robust x/y extent) actually changes
   (`wdth`, `opsz`, and any other tag that moves x or y size). Point-wise
-  residuals are valid because masters correspond.
+  residuals are valid because stations correspond.
 - **Geometric residuals from small-cap / case glyph pairs (optional,
   gappy):** see below. Never required. Never a mill failure.
 
@@ -169,7 +169,7 @@ run on the cubic node list the caller already has. A capital with no `.sc`
 in the font, and a capital whose `.sc` was drawn with a different
 construction, both scale. The deformer never needs the other glyph at
 run time. It learned “scale this outline, keep stems in range” from
-compatible **master** pairs (and from the rare matching `.sc` pairs). That
+compatible **station** pairs (and from the rare matching `.sc` pairs). That
 is why gappy small-cap sets do not block resize.
 
 Optional later, not v1: mismatch pairs can still contribute a **peer-free
@@ -218,7 +218,7 @@ whatever else is in the tree):
 | --- | --- |
 | `tag` | Four-character (or custom) axis tag as stored |
 | `n_sources` | Sources that declare this tag |
-| `n_examples` | Default-master → other-master cubic glyph pairs where this tag’s location actually changes |
+| `n_examples` | Default-station → other-station cubic glyph pairs where this tag’s location actually changes |
 | `min` / `default` / `max` | Typical userspace or designspace extents (report both if they differ) |
 
 No pre-filter to the “big four.” After the table exists, decide include-all
@@ -239,10 +239,10 @@ side product of this deformer mill.
 
 For **deformer shards**:
 
-- Ordered cubic node sequence per glyph layer (expanded nodes).
-- Master location as a dict of tag → designspace value (axis-bearing
+- Ordered cubic node sequence per glyph drawing (expanded nodes).
+- Station location as a dict of tag → designspace value (axis-bearing
   sources).
-- **Axis-pair examples:** source layer, target layer, per-node `delta`,
+- **Axis-pair examples:** source drawing, target drawing, per-node `delta`,
   which tags differ (those slots unmasked; all others masked). Geometric
   slots masked (or set to 1).
 - **Geometric-pair examples:** same or other pairings where a 2D scale is
@@ -258,16 +258,16 @@ For **deformer shards**:
   both directions, **only on topology match**. Mismatch and missing peer:
   skip the pair, log the gap, continue. Do not drop the font. Do not try
   to align unequal node lists.
-- Phantom / metric extras: LSB, RSB, advance (layer `width`), UPM.
+- Phantom / metric extras: LSB, RSB, advance (drawing `width`), UPM.
 - Optional 64–128px baseline-aligned raster of the source, for a later
   conditioning CNN — not as an output representation.
 
 For **QA tables** (all sources, including static):
 
 - Glyph identity (see use case 1).
-- Component recipe per layer (referenced glyph identities, order, not
+- Component recipe per drawing (referenced glyph identities, order, not
   precise transforms).
-- Anchor name set per layer.
+- Anchor name set per drawing.
 - Unicode / name maps.
 - Sample size per identity.
 
@@ -288,7 +288,7 @@ Each node:
 - normalized position along its contour in `[0, 1]`
 
 Optional trailing phantom points for advance and sidebearings (needed when
-the caller wants metrics to move with a whole glyph or a new master).
+the caller wants metrics to move with a whole glyph or a new station).
 
 Variable length. Latin glyphs are tens to a few hundred nodes; CJK can be
 much longer. The network must accept variable `N`.
@@ -299,7 +299,7 @@ A property embedding (NIV-style AdaLN). Two families of slots, independently
 maskable:
 
 - **Axis slots:** one per inventoried tag. Normalized value in `[-1, 1]`
-  relative to the source master, plus a mask bit. A Regular→Bold example
+  relative to the source station, plus a mask bit. A Regular→Bold example
   unmasks `wght` only.
 - **Geometric slots:** `sx`, `sy` as log-scale (or linear; pick one and
   stick to it in the mill). Masked on pure axis examples. Unmasked on
@@ -313,7 +313,7 @@ not required to start.
 
 ### Residual outputs (not absolute coordinates)
 
-**Axis call (infer master)**
+**Axis call (infer station)**
 
 ```text
 output_points = source_points + predicted_delta(axis_slots)
@@ -359,8 +359,8 @@ vectorize a predicted bitmap back into nodes.
 ### What this deformer is not
 
 It does not decompose or compose glyphs. It does not retarget a capital
-drawing onto a lowercase topology. Composites: run on layers that have path
-nodes; leave `reference` shapes in place (policy A under infer-master).
+drawing onto a lowercase topology. Composites: run on drawings that have path
+nodes; leave `reference` shapes in place (policy A under infer-station).
 Automatic composition can rest after bases and marks move.
 
 ---
@@ -431,7 +431,7 @@ row.
 
 ### Components in the same scheme
 
-Each `reference` on a non-background layer is passed through **the same
+Each `reference` on a non-background drawing is passed through **the same
 identity function**. Store the identity, not the authored name.
 
 Work Sans: `Aacute` components `A` + `acutecomb.case` become `uni0041` +
@@ -441,13 +441,13 @@ If a ref cannot be keyed, **omit it** from the component list. Do not mix
 raw names into the recipe. `A.swsh` referencing only `_part.swsh_topleft`
 therefore has `components: []`.
 
-Dedup by identity, first-seen order, union across non-background layers of
-that glyph (v1 does not emit one row per master).
+Dedup by identity, first-seen order, union across non-background drawings of
+that glyph (v1 does not emit one row per station).
 
 ### Anchors
 
 Authored names only (`top`, `_top`, `bottom`, `ogonek`, `top_ring`). Not
-passed through `uniXXXX`. Union across non-background layers, first-seen
+passed through `uniXXXX`. Union across non-background drawings, first-seen
 order, unique.
 
 Role: missing-anchor labels apply to identities that usually **have**
@@ -505,7 +505,7 @@ Ship as a versioned JSON asset with the app (same idea as wheels). No ONNX.
 
 1. Port `split_glyph_name`, `uni_label`, `glyph_identity`,
    `component_identities`, `anchor_names` to TypeScript against
-   `window.currentFontModel` (skip background layers).
+   `window.currentFontModel` (skip background drawings).
 2. For each glyph that keys to an identity `G` present in the corpus table
    with `n` large enough (ignore identities with `n < n_min`, default 20):
    - Let `C_obs` / `A_obs` be that glyph’s component identities and anchor
@@ -612,10 +612,10 @@ Offline, against the aggregated table, no UI:
 
 ### What v1 does not include
 
-- The deformer, axes, or compatible masters.
+- The deformer, axes, or compatible stations.
 - Unicode-vs-name mismatch, shape outliers, contour-count heuristics.
 - Auto-fix, AGL fallback, raster models.
-- Per-master (sparse Bold) rows; union across layers is enough to start.
+- Per-station (sparse Bold) rows; union across drawings is enough to start.
 - Resolving unkeyed component parts into the recipe.
 
 ### What this use case does not need
@@ -627,7 +627,7 @@ Offline, against the aggregated table, no UI:
 
 ## Use cases 2 and 3 — Same deformer, different calls
 
-There is no resize-net and master-net. One forward pass. The caller sets
+There is no resize-net and station-net. One forward pass. The caller sets
 masks and how many glyphs to run.
 
 ### Why the mathematical attempt failed
@@ -635,7 +635,7 @@ masks and how many glyphs to run.
 A geometric stroke-aware resize (rasterize the fill, thin to a skeleton,
 attach each node to a centerline with a `normalOffset`, scale the skeleton,
 and try to keep the offset) was tried and removed. Type
-designers do not work that way. Designed masters move **corresponding cubic nodes**. Junctions, serifs,
+designers do not work that way. Designed stations move **corresponding cubic nodes**. Junctions, serifs,
 and contrast are not a constant offset from a Zhang–Suen skeleton. The
 deformer learns those residuals on top of affine scale (or on top of the
 source, for an axis call). Matching `/A` vs `/A.sc` pairs, when they exist,
@@ -644,7 +644,7 @@ are extra geometric examples — not a dependency.
 ### Call: typographic scale (any `sx`, `sy`)
 
 **Job.** Given an existing cubic path (one contour, several contours, or a
-whole glyph layer), a pivot, and independent `sx`, `sy`, write a new
+whole glyph drawing), a pivot, and independent `sx`, `sy`, write a new
 coordinate for each existing node (handles included) such that the requested
 size is met and stems/contrast stay in designed range.
 
@@ -663,44 +663,44 @@ been paired with a `.sc` in the mill still resize.
 a typical Latin glyph on WebGPU or WASM SIMD. One sequence, not the font.
 If that budget cannot be met, live dragging is out; one-shot apply remains.
 
-### Call: infer master / axis
+### Call: infer station / axis
 
-**Job.** Given a font with one or more cubic masters, a target axis tag `T`
-from the trained set, and a target location on `T`, produce a new master:
-for every glyph, a layer topology-identical to the source, with predicted
+**Job.** Given a font with one or more cubic stations, a target axis tag `T`
+from the trained set, and a target location on `T`, produce a new station:
+for every glyph, a drawing topology-identical to the source, with predicted
 outlines (and metrics).
 
-Existing `Font.addMaster` interpolation, given a single master, copies. The
+Existing `Font.addStation` interpolation, given a single station, copies. The
 deformer supplies the designed delta.
 
 **Contract.** Unmask slot `T`, set its normalized value from
 `(target - source) / (axis_extent)`, mask geometric slots. Residuals add to
-the source nodes (not to an affine). Source layer: default master, or the
-master nearest the target in the existing design space. If the font already
+the source nodes (not to an affine). Source drawing: default station, or the
+station nearest the target in the existing design space. If the font already
 has `T`, interpolation/extrapolation should be used instead of the net.
 
 Inventory min/default/max per tag exist so a numeric location (e.g. CSS
 weight 700) can be mapped. That mapping is data.
 
-**Scope.** Every glyph that has outline data in the source master. Tens of
+**Scope.** Every glyph that has outline data in the source station. Tens of
 milliseconds per glyph is acceptable; seconds to tens of seconds for Latin
 is acceptable; CJK may take minutes. Throughput, not interactive.
 
 **Metrics.** Phantoms on, so advance and sidebearings move. Kerning is out
 of scope.
 
-**Composites.** v1: **policy A** — deform layers that have path nodes; leave
+**Composites.** v1: **policy A** — deform drawings that have path nodes; leave
 `reference` shapes. Automatic composition can rest after bases/marks move.
 Policy B (predict component translations) only if A fails on a real family.
 
-**Axes.** One new tag at a time in v1. Train on default → every other master,
-not only extremes. A second new axis is a second inferred master after the
+**Axes.** One new tag at a time in v1. Train on default → every other station,
+not only extremes. A second new axis is a second inferred station after the
 first exists.
 
 ### Call: derive glyphs (auto-smallcaps, case conversion)
 
 **Job.** Same geometric forward pass as typographic scale, run in batch like
-infer-master. Examples:
+infer-station. Examples:
 
 - Capitals → small caps: `sy` (and usually `sx`) ≈ small-cap height / cap
   height; stems must not collapse to the naive thin.
@@ -714,10 +714,10 @@ infer-master. Examples:
 Gaps in the derived set are allowed: if the source font or the corpus has
 small caps for only some letters, the rest still scale.
 
-Output is new glyph data (or replacement drafts), not a new master and not
+Output is new glyph data (or replacement drafts), not a new station and not
 a new axis. That is a usage difference, not a model difference.
 
-**Scope and latency.** Same as infer-master: a set of glyphs, throughput
+**Scope and latency.** Same as infer-station: a set of glyphs, throughput
 budget.
 
 **Metrics.** Phantoms on if the derived glyph should get a new advance.
@@ -728,8 +728,8 @@ One multi-task batch:
 
 | Example type | Unmasked slots | Residual target |
 | --- | --- | --- |
-| Master pair, tags differ | those axis tags | `target - source` |
-| Master pair, `|log sx|` or `|log sy|` above threshold | `sx`, `sy` | `target - affine(source)` |
+| Station pair, tags differ | those axis tags | `target - source` |
+| Station pair, `|log sx|` or `|log sy|` above threshold | `sx`, `sy` | `target - affine(source)` |
 | Glyph pair, topology **match** only (`/A`↔`/A.sc`, …) | `sx`, `sy` | `target - affine(source)` |
 | Glyph pair, mismatch or missing peer | — | skip (count as a gap) |
 
@@ -755,15 +755,15 @@ resize must work even if the bonus row is almost empty.
   also report node RMSE. Mismatch pairs are not an RMSE target; at most
   compare raster/stems.
 
-**Axis / infer-master**
+**Axis / infer-station**
 
-- Strip a non-default master on a held-out source; predict it from the
+- Strip a non-default station on a held-out source; predict it from the
   default; RMSE on nodes and advance.
 - Overlays on `/n`, `/o`, `/a`, `/e`, `/H` for several tags, not only
   `wght`.
 
 **Ship bar.** A designer would start from the draft (scaled glyph, inferred
-master, or derived small caps), not redraw. QA does not wait on this bar.
+station, or derived small caps), not redraw. QA does not wait on this bar.
 If geometric stem-preservation fails, none of the deformer call sites ship.
 
 ### Data needed
@@ -771,9 +771,9 @@ If geometric stem-preservation fails, none of the deformer call sites ship.
 - Axis inventory (all tags) and the include-all vs cutoff decision.
 - Case/small-cap inventory (match / mismatch / missing peer). Bonus
   point-pairs only on match; mill succeeds if match is rare.
-- Deformer shards as in the mill section (axis + geometric master pairs;
+- Deformer shards as in the mill section (axis + geometric station pairs;
   optional matching glyph pairs).
-- Phantom / width targets for whole-glyph and master calls.
+- Phantom / width targets for whole-glyph and station calls.
 
 ### What these calls do not need
 
@@ -801,7 +801,7 @@ Auto QA is independent of the deformer and goes first:
    + eval (see Use case 1 build sequence).
 2. **Inventory** every axis tag and case/small-cap match–mismatch–missing
    counts (deformer only).
-3. **Mill** cubic shards (axis + 2D geometric residuals from masters;
+3. **Mill** cubic shards (axis + 2D geometric residuals from stations;
    optional matching glyph pairs; skip gaps).
 4. **Train one deformer.** Export ONNX.
 5. **Eval** deformer call sites. Only then integrate deformer inference
@@ -825,9 +825,9 @@ Auto QA is independent of the deformer and goes first:
 
 - Corpus: `../gfsources/babelfont`, mill notes in `../gfsources/README.md`
   (compact node expansion already exists in gfsources sizing scripts).
-- Cubic model: `webapp/js/babelfont-model.ts` (paths, nodes, layers,
-  masters, axes).
+- Cubic model: `webapp/js/babelfont-model.ts` (paths, nodes, drawings,
+  stations, axes).
 - Failed geometric resize (context only): a stroke-aware skeleton path used
   to live in `webapp/js/glyph-canvas/outline-editor.ts` and has been removed.
-- Existing add-master interpolation (copies when there is nothing to
-  interpolate): `Font.addMaster` in `webapp/js/babelfont-model.ts`.
+- Existing add-station interpolation (copies when there is nothing to
+  interpolate): `Font.addStation` in `webapp/js/babelfont-model.ts`.

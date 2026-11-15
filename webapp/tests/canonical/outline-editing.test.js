@@ -17,22 +17,22 @@
 const { Font } = require('../../js/babelfont-model');
 const fontManager = require('../../js/font-manager').default;
 
-function activateEditableLayer(canvas, layerData) {
+function activateEditableDrawing(canvas, drawingData) {
     canvas.outlineEditor.active = true;
     canvas.outlineEditor.currentGlyphName = 'A';
-    canvas.outlineEditor.selectedLayerId = 'layer-1';
+    canvas.outlineEditor.selectedDrawingId = 'layer-1';
     canvas.outlineEditor.glyphStack = 'A@layer-1';
-    canvas.outlineEditor.layerData = {
+    canvas.outlineEditor.drawingData = {
         id: 'layer-1',
         width: 520,
         shapes: [],
         anchors: [],
         guides: [],
-        ...layerData
+        ...drawingData
     };
 }
 
-function makeOpenTripletLayer({ smooth = true } = {}) {
+function makeOpenTripletDrawing({ smooth = true } = {}) {
     return {
         width: 520,
         shapes: [
@@ -54,7 +54,7 @@ function makeOpenTripletLayer({ smooth = true } = {}) {
     };
 }
 
-function makeEligibleToggleLayer() {
+function makeEligibleToggleDrawing() {
     return {
         width: 520,
         shapes: [
@@ -76,7 +76,7 @@ function makeEligibleToggleLayer() {
     };
 }
 
-function makeNearAxisSnapToggleLayer() {
+function makeNearAxisSnapToggleDrawing() {
     return {
         width: 520,
         shapes: [
@@ -98,7 +98,7 @@ function makeNearAxisSnapToggleLayer() {
     };
 }
 
-function makeOneSidedCurveLayer() {
+function makeOneSidedCurveDrawing() {
     return {
         width: 520,
         shapes: [
@@ -216,19 +216,19 @@ function makeFontWithShapes(shapes, anchors = []) {
 
 function bindActiveGlyphModel(canvas, font) {
     const glyph = font.findGlyph('A');
-    const layer = glyph.findLayerById('layer-1');
-    const layerSpy = jest
-        .spyOn(canvas.outlineEditor, 'getCurrentLayerModel')
-        .mockReturnValue(layer);
+    const drawing = glyph.findDrawingById('layer-1');
+    const drawingSpy = jest
+        .spyOn(canvas.outlineEditor, 'getCurrentDrawingModel')
+        .mockReturnValue(drawing);
     const glyphSpy = jest
         .spyOn(canvas.outlineEditor, 'getCurrentGlyphModel')
         .mockReturnValue(glyph);
 
     return {
         glyph,
-        layer,
+        drawing,
         restore() {
-            layerSpy.mockRestore();
+            drawingSpy.mockRestore();
             glyphSpy.mockRestore();
         }
     };
@@ -257,14 +257,14 @@ describe('Outline Editing canonical behavior', () => {
     });
 
     test('shift-constrained smooth off-curve dragging moves the handle on one axis from its start', () => {
-        const saveLayerDataSpy = jest
-            .spyOn(canvas.outlineEditor, 'saveLayerData')
+        const saveDrawingDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'saveDrawingData')
             .mockResolvedValue(undefined);
 
         try {
-            activateEditableLayer(
+            activateEditableDrawing(
                 canvas,
-                makeOpenTripletLayer({ smooth: true })
+                makeOpenTripletDrawing({ smooth: true })
             );
             canvas.outlineEditor.hoveredPointIndex = {
                 contourIndex: 0,
@@ -310,13 +310,13 @@ describe('Outline Editing canonical behavior', () => {
             });
 
             const draggedHandle =
-                canvas.outlineEditor.layerData.shapes[0].nodes[4];
+                canvas.outlineEditor.drawingData.shapes[0].nodes[4];
             expect(draggedHandle.x).toBe(80);
             expect(draggedHandle.y).not.toBe(60);
 
             pointerSpy.mockRestore();
         } finally {
-            saveLayerDataSpy.mockRestore();
+            saveDrawingDataSpy.mockRestore();
         }
     });
 
@@ -346,7 +346,7 @@ describe('Outline Editing canonical behavior', () => {
     }
 
     test('shift lock on a blue anchor keeps the anchor start line, not the click', () => {
-        activateEditableLayer(canvas, { shapes: [], anchors: [] });
+        activateEditableDrawing(canvas, { shapes: [], anchors: [] });
         canvas.viewportManager.scale = 1;
         const anchor = {
             pluginId: 'de.yanone.harakat',
@@ -373,7 +373,7 @@ describe('Outline Editing canonical behavior', () => {
     });
 
     test('a blue anchor drag does not leave its shift origin for the next object', async () => {
-        activateEditableLayer(canvas, {
+        activateEditableDrawing(canvas, {
             shapes: [
                 {
                     nodes: [
@@ -431,14 +431,14 @@ describe('Outline Editing canonical behavior', () => {
         pointer = { glyphX: 50, glyphY: 70 };
         movePointer(pointer, true);
 
-        const dragged = canvas.outlineEditor.layerData.shapes[0].nodes[1];
+        const dragged = canvas.outlineEditor.drawingData.shapes[0].nodes[1];
         expect(dragged.y).toBe(40);
         expect(dragged.x).toBe(50);
         pointerSpy.mockRestore();
     });
 
     test('a blue anchor snaps to an on-curve node like a font anchor', () => {
-        activateEditableLayer(canvas, {
+        activateEditableDrawing(canvas, {
             shapes: [
                 {
                     nodes: [
@@ -474,7 +474,7 @@ describe('Outline Editing canonical behavior', () => {
     });
 
     test('snap candidates include every anchor of the active glyph except the one being dragged', () => {
-        activateEditableLayer(canvas, {
+        activateEditableDrawing(canvas, {
             width: 520,
             shapes: [
                 {
@@ -563,14 +563,14 @@ describe('Outline Editing canonical behavior', () => {
     });
 
     test('alt toggling during smooth on-curve dragging freezes the handles and slides only the on-curve point between them', () => {
-        const saveLayerDataSpy = jest
-            .spyOn(canvas.outlineEditor, 'saveLayerData')
+        const saveDrawingDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'saveDrawingData')
             .mockResolvedValue(undefined);
 
         try {
-            activateEditableLayer(
+            activateEditableDrawing(
                 canvas,
-                makeOpenTripletLayer({ smooth: true })
+                makeOpenTripletDrawing({ smooth: true })
             );
             canvas.outlineEditor.hoveredPointIndex = {
                 contourIndex: 0,
@@ -615,7 +615,7 @@ describe('Outline Editing canonical behavior', () => {
                 ctrlKey: false
             });
 
-            let nodes = canvas.outlineEditor.layerData.shapes[0].nodes;
+            let nodes = canvas.outlineEditor.drawingData.shapes[0].nodes;
             expect(nodes[3].x).toBe(90);
             expect(nodes[3].y).toBe(90);
             expect(nodes[2].y).toBe(90);
@@ -624,7 +624,7 @@ describe('Outline Editing canonical behavior', () => {
             expect(nodes[4].x).toBe(110);
 
             canvas.outlineEditor.setAltKeyPressed(true);
-            nodes = canvas.outlineEditor.layerData.shapes[0].nodes;
+            nodes = canvas.outlineEditor.drawingData.shapes[0].nodes;
             expect(nodes[3].x).toBe(90);
             expect(nodes[3].y).toBe(90);
             expect(nodes[2].x).toBe(70);
@@ -642,7 +642,7 @@ describe('Outline Editing canonical behavior', () => {
                 ctrlKey: false
             });
 
-            nodes = canvas.outlineEditor.layerData.shapes[0].nodes;
+            nodes = canvas.outlineEditor.drawingData.shapes[0].nodes;
             expect(nodes[3].x).toBe(95);
             expect(nodes[3].y).toBe(90);
             expect(nodes[2].x).toBe(70);
@@ -651,7 +651,7 @@ describe('Outline Editing canonical behavior', () => {
             expect(nodes[4].y).toBe(90);
 
             canvas.outlineEditor.setAltKeyPressed(false);
-            nodes = canvas.outlineEditor.layerData.shapes[0].nodes;
+            nodes = canvas.outlineEditor.drawingData.shapes[0].nodes;
             expect(nodes[3].x).toBe(95);
             expect(nodes[3].y).toBe(120);
             expect(nodes[2].x).toBe(70);
@@ -669,7 +669,7 @@ describe('Outline Editing canonical behavior', () => {
                 ctrlKey: false
             });
 
-            nodes = canvas.outlineEditor.layerData.shapes[0].nodes;
+            nodes = canvas.outlineEditor.drawingData.shapes[0].nodes;
             expect(nodes[3].x).toBe(100);
             expect(nodes[3].y).toBe(130);
             expect(nodes[2].x).toBe(75);
@@ -679,17 +679,17 @@ describe('Outline Editing canonical behavior', () => {
 
             pointerSpy.mockRestore();
         } finally {
-            saveLayerDataSpy.mockRestore();
+            saveDrawingDataSpy.mockRestore();
         }
     });
 
     test('alt toggling during one-sided smooth on-curve dragging freezes the handle and slides only the on-curve point on the fixed axis', () => {
-        const saveLayerDataSpy = jest
-            .spyOn(canvas.outlineEditor, 'saveLayerData')
+        const saveDrawingDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'saveDrawingData')
             .mockResolvedValue(undefined);
 
         try {
-            activateEditableLayer(canvas, {
+            activateEditableDrawing(canvas, {
                 width: 520,
                 shapes: [
                     {
@@ -754,13 +754,13 @@ describe('Outline Editing canonical behavior', () => {
                 ctrlKey: false
             });
 
-            let nodes = canvas.outlineEditor.layerData.shapes[0].nodes;
+            let nodes = canvas.outlineEditor.drawingData.shapes[0].nodes;
             expect(nodes[2].x).toBe(80);
             expect(nodes[2].y).toBe(90);
             const preAltHandle = { x: nodes[1].x, y: nodes[1].y };
 
             canvas.outlineEditor.setAltKeyPressed(true);
-            nodes = canvas.outlineEditor.layerData.shapes[0].nodes;
+            nodes = canvas.outlineEditor.drawingData.shapes[0].nodes;
             expect(nodes[1].x).toBeCloseTo(preAltHandle.x, 5);
             expect(nodes[1].y).toBeCloseTo(preAltHandle.y, 5);
 
@@ -774,7 +774,7 @@ describe('Outline Editing canonical behavior', () => {
                 ctrlKey: false
             });
 
-            nodes = canvas.outlineEditor.layerData.shapes[0].nodes;
+            nodes = canvas.outlineEditor.drawingData.shapes[0].nodes;
             expect(nodes[1].x).toBeCloseTo(preAltHandle.x, 5);
             expect(nodes[1].y).toBeCloseTo(preAltHandle.y, 5);
             expect(nodes[2].x).not.toBeCloseTo(80, 5);
@@ -795,19 +795,19 @@ describe('Outline Editing canonical behavior', () => {
 
             pointerSpy.mockRestore();
         } finally {
-            saveLayerDataSpy.mockRestore();
+            saveDrawingDataSpy.mockRestore();
         }
     });
 
     test('alt toggling during non-smooth on-curve dragging freezes the handles and moves the on-curve point freely', () => {
-        const saveLayerDataSpy = jest
-            .spyOn(canvas.outlineEditor, 'saveLayerData')
+        const saveDrawingDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'saveDrawingData')
             .mockResolvedValue(undefined);
 
         try {
-            activateEditableLayer(
+            activateEditableDrawing(
                 canvas,
-                makeOpenTripletLayer({ smooth: false })
+                makeOpenTripletDrawing({ smooth: false })
             );
             canvas.outlineEditor.hoveredPointIndex = {
                 contourIndex: 0,
@@ -852,7 +852,7 @@ describe('Outline Editing canonical behavior', () => {
                 ctrlKey: false
             });
 
-            let nodes = canvas.outlineEditor.layerData.shapes[0].nodes;
+            let nodes = canvas.outlineEditor.drawingData.shapes[0].nodes;
             expect(nodes[3].x).toBe(90);
             expect(nodes[3].y).toBe(90);
             expect(nodes[2].x).toBe(70);
@@ -871,7 +871,7 @@ describe('Outline Editing canonical behavior', () => {
                 ctrlKey: false
             });
 
-            nodes = canvas.outlineEditor.layerData.shapes[0].nodes;
+            nodes = canvas.outlineEditor.drawingData.shapes[0].nodes;
             expect(nodes[3].x).toBe(95);
             expect(nodes[3].y).toBe(120);
             expect(nodes[2].x).toBe(70);
@@ -881,17 +881,17 @@ describe('Outline Editing canonical behavior', () => {
 
             pointerSpy.mockRestore();
         } finally {
-            saveLayerDataSpy.mockRestore();
+            saveDrawingDataSpy.mockRestore();
         }
     });
 
     test('alt toggling during one-sided non-smooth on-curve dragging freezes the handle and moves the on-curve point freely', () => {
-        const saveLayerDataSpy = jest
-            .spyOn(canvas.outlineEditor, 'saveLayerData')
+        const saveDrawingDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'saveDrawingData')
             .mockResolvedValue(undefined);
 
         try {
-            activateEditableLayer(canvas, makeOneSidedCurveLayer());
+            activateEditableDrawing(canvas, makeOneSidedCurveDrawing());
             canvas.outlineEditor.hoveredPointIndex = {
                 contourIndex: 0,
                 nodeIndex: 3
@@ -936,7 +936,7 @@ describe('Outline Editing canonical behavior', () => {
                 ctrlKey: false
             });
 
-            let nodes = canvas.outlineEditor.layerData.shapes[0].nodes;
+            let nodes = canvas.outlineEditor.drawingData.shapes[0].nodes;
             expect(nodes[3].x).toBe(80);
             expect(nodes[3].y).toBe(90);
             const preAltHandle = { x: nodes[2].x, y: nodes[2].y };
@@ -953,7 +953,7 @@ describe('Outline Editing canonical behavior', () => {
                 ctrlKey: false
             });
 
-            nodes = canvas.outlineEditor.layerData.shapes[0].nodes;
+            nodes = canvas.outlineEditor.drawingData.shapes[0].nodes;
             expect(nodes[3].x).toBe(90);
             expect(nodes[3].y).toBe(140);
             expect(nodes[2].x).toBe(preAltHandle.x);
@@ -965,12 +965,15 @@ describe('Outline Editing canonical behavior', () => {
 
             pointerSpy.mockRestore();
         } finally {
-            saveLayerDataSpy.mockRestore();
+            saveDrawingDataSpy.mockRestore();
         }
     });
 
     test('cmd+alt click on a smooth on-curve point starts a slide along the combined curve', () => {
-        activateEditableLayer(canvas, makeOpenTripletLayer({ smooth: true }));
+        activateEditableDrawing(
+            canvas,
+            makeOpenTripletDrawing({ smooth: true })
+        );
         canvas.outlineEditor.selectedPoints = [
             {
                 contourIndex: 0,
@@ -1013,7 +1016,10 @@ describe('Outline Editing canonical behavior', () => {
     });
 
     test('tracked Alt blocks cmd cut and slides even when the click omits altKey', () => {
-        activateEditableLayer(canvas, makeOpenTripletLayer({ smooth: true }));
+        activateEditableDrawing(
+            canvas,
+            makeOpenTripletDrawing({ smooth: true })
+        );
         canvas.outlineEditor.hoveredPointIndex = {
             contourIndex: 0,
             nodeIndex: 3
@@ -1043,7 +1049,7 @@ describe('Outline Editing canonical behavior', () => {
     });
 
     test('cmd+alt does not cut a corner node', () => {
-        activateEditableLayer(canvas, {
+        activateEditableDrawing(canvas, {
             width: 520,
             shapes: [
                 {
@@ -1083,12 +1089,12 @@ describe('Outline Editing canonical behavior', () => {
     });
 
     test('alt re-press during non-smooth off-curve dragging returns to the original drag-start direction', () => {
-        const saveLayerDataSpy = jest
-            .spyOn(canvas.outlineEditor, 'saveLayerData')
+        const saveDrawingDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'saveDrawingData')
             .mockResolvedValue(undefined);
 
         try {
-            activateEditableLayer(canvas, {
+            activateEditableDrawing(canvas, {
                 width: 520,
                 shapes: [
                     {
@@ -1162,17 +1168,18 @@ describe('Outline Editing canonical behavior', () => {
                 ctrlKey: false
             });
 
-            let draggedNode = canvas.outlineEditor.layerData.shapes[0].nodes[1];
+            let draggedNode =
+                canvas.outlineEditor.drawingData.shapes[0].nodes[1];
             expect(draggedNode.x).toBe(60);
             expect(draggedNode.y).toBe(30);
 
             canvas.outlineEditor.setAltKeyPressed(true);
-            draggedNode = canvas.outlineEditor.layerData.shapes[0].nodes[1];
+            draggedNode = canvas.outlineEditor.drawingData.shapes[0].nodes[1];
             expect(draggedNode.x).toBe(60);
             expect(draggedNode.y).toBe(0);
 
             canvas.outlineEditor.setAltKeyPressed(false);
-            draggedNode = canvas.outlineEditor.layerData.shapes[0].nodes[1];
+            draggedNode = canvas.outlineEditor.drawingData.shapes[0].nodes[1];
             expect(draggedNode.x).toBe(60);
             expect(draggedNode.y).toBe(30);
 
@@ -1187,61 +1194,61 @@ describe('Outline Editing canonical behavior', () => {
             });
             canvas.outlineEditor.setAltKeyPressed(true);
 
-            draggedNode = canvas.outlineEditor.layerData.shapes[0].nodes[1];
+            draggedNode = canvas.outlineEditor.drawingData.shapes[0].nodes[1];
             expect(draggedNode.x).toBe(90);
             expect(draggedNode.y).toBe(0);
 
             pointerSpy.mockRestore();
         } finally {
-            saveLayerDataSpy.mockRestore();
+            saveDrawingDataSpy.mockRestore();
         }
     });
 
     test('triplet on-curve points can toggle smooth and align the opposite handle to an existing axis', () => {
-        activateEditableLayer(canvas, makeEligibleToggleLayer());
-        canvas.outlineEditor.saveLayerData = jest.fn();
+        activateEditableDrawing(canvas, makeEligibleToggleDrawing());
+        canvas.outlineEditor.saveDrawingData = jest.fn();
 
         canvas.outlineEditor.togglePointSmooth({
             contourIndex: 0,
             nodeIndex: 3
         });
 
-        const nodes = canvas.outlineEditor.layerData.shapes[0].nodes;
+        const nodes = canvas.outlineEditor.drawingData.shapes[0].nodes;
         expect(nodes[3].smooth).toBe(true);
         expect(nodes[4].y).toBe(60);
     });
 
     test('triplet smooth toggling fully snaps to horizontal or vertical when the averaged direction lands within 10 degrees of an axis after previously divergent handles are aligned', () => {
-        activateEditableLayer(canvas, makeNearAxisSnapToggleLayer());
-        canvas.outlineEditor.saveLayerData = jest.fn();
+        activateEditableDrawing(canvas, makeNearAxisSnapToggleDrawing());
+        canvas.outlineEditor.saveDrawingData = jest.fn();
 
         canvas.outlineEditor.togglePointSmooth({
             contourIndex: 0,
             nodeIndex: 3
         });
 
-        const nodes = canvas.outlineEditor.layerData.shapes[0].nodes;
+        const nodes = canvas.outlineEditor.drawingData.shapes[0].nodes;
         expect(nodes[3].smooth).toBe(true);
         expect(nodes[2].y).toBe(60);
         expect(nodes[4].y).toBe(60);
     });
 
     test('on-curve points with a curve on only one side can be toggled smooth and align to the straight segment', () => {
-        activateEditableLayer(canvas, makeOneSidedCurveLayer());
-        canvas.outlineEditor.saveLayerData = jest.fn();
+        activateEditableDrawing(canvas, makeOneSidedCurveDrawing());
+        canvas.outlineEditor.saveDrawingData = jest.fn();
 
         canvas.outlineEditor.togglePointSmooth({
             contourIndex: 0,
             nodeIndex: 3
         });
 
-        const nodes = canvas.outlineEditor.layerData.shapes[0].nodes;
+        const nodes = canvas.outlineEditor.drawingData.shapes[0].nodes;
         expect(nodes[3].smooth).toBe(true);
         expect(nodes[2].y).toBe(60);
     });
 
     test('open-path endpoints cannot be toggled smooth', () => {
-        activateEditableLayer(canvas, {
+        activateEditableDrawing(canvas, {
             width: 520,
             shapes: [
                 {
@@ -1257,20 +1264,20 @@ describe('Outline Editing canonical behavior', () => {
             anchors: [],
             guides: []
         });
-        canvas.outlineEditor.saveLayerData = jest.fn();
+        canvas.outlineEditor.saveDrawingData = jest.fn();
 
         canvas.outlineEditor.togglePointSmooth({
             contourIndex: 0,
             nodeIndex: 3
         });
 
-        expect(canvas.outlineEditor.layerData.shapes[0].nodes[3].smooth).toBe(
+        expect(canvas.outlineEditor.drawingData.shapes[0].nodes[3].smooth).toBe(
             false
         );
     });
 
     test('moving the straight segment of a one-sided smooth node realigns the remaining handle', () => {
-        activateEditableLayer(canvas, {
+        activateEditableDrawing(canvas, {
             width: 520,
             shapes: [
                 {
@@ -1291,14 +1298,14 @@ describe('Outline Editing canonical behavior', () => {
             { contourIndex: 0, nodeIndex: 3 }
         ];
         canvas.outlineEditor.applySelectedPointMove(
-            canvas.outlineEditor.layerData,
+            canvas.outlineEditor.drawingData,
             0,
             60,
             false,
             false
         );
 
-        const nodes = canvas.outlineEditor.layerData.shapes[0].nodes;
+        const nodes = canvas.outlineEditor.drawingData.shapes[0].nodes;
         const handleVector = {
             x: nodes[2].x - nodes[1].x,
             y: nodes[2].y - nodes[1].y
@@ -1327,7 +1334,7 @@ describe('Outline Editing canonical behavior', () => {
             ],
             false
         );
-        const path = font.glyphs[0].layers[0].paths[0];
+        const path = font.glyphs[0].drawings[0].paths[0];
 
         expect(path._deleteNode(3)).toBe(true);
         expect(path.nodes.map((node) => node.nodetype)).toEqual([
@@ -1350,7 +1357,7 @@ describe('Outline Editing canonical behavior', () => {
             ],
             false
         );
-        const path = font.glyphs[0].layers[0].paths[0];
+        const path = font.glyphs[0].drawings[0].paths[0];
 
         expect(path._deleteNode(3)).toBe(true);
         expect(path.nodes.map((node) => node.nodetype)).toEqual([
@@ -1485,7 +1492,7 @@ describe('Outline Editing canonical behavior', () => {
             .mockReturnValue(font);
         window.currentFontModel = font;
 
-        activateEditableLayer(canvas, {
+        activateEditableDrawing(canvas, {
             id: 'active-layer',
             width: 400,
             master: {
@@ -1506,7 +1513,7 @@ describe('Outline Editing canonical behavior', () => {
             anchors: [],
             guides: []
         });
-        canvas.textRunEditor.selectedMasterId = 'master-1';
+        canvas.textRunEditor.selectedStationId = 'master-1';
         canvas.textRunEditor.glyphNameBuffer = [
             'leftGlyph',
             'activeGlyph',
@@ -1565,7 +1572,7 @@ describe('Outline Editing canonical behavior', () => {
 
     test('skips alignment snapping when Node Snapping is off', () => {
         localStorage.setItem('editorNodeSnapping', 'false');
-        activateEditableLayer(canvas, {
+        activateEditableDrawing(canvas, {
             width: 520,
             shapes: [
                 {
@@ -1605,7 +1612,7 @@ describe('Outline Editing canonical behavior', () => {
 
     test('still snaps to open contour ends when Node Snapping is off', () => {
         localStorage.setItem('editorNodeSnapping', 'false');
-        activateEditableLayer(canvas, {
+        activateEditableDrawing(canvas, {
             width: 520,
             shapes: [
                 {
@@ -1663,7 +1670,7 @@ describe('Outline Editing canonical behavior', () => {
 
     test('still snaps drawing to open contour ends when Node Snapping is off', () => {
         localStorage.setItem('editorNodeSnapping', 'false');
-        activateEditableLayer(canvas, {
+        activateEditableDrawing(canvas, {
             width: 520,
             shapes: [
                 {
@@ -1716,7 +1723,7 @@ describe('Outline Editing canonical behavior', () => {
     });
 
     test('aligns to an open contour end on one axis', () => {
-        activateEditableLayer(canvas, {
+        activateEditableDrawing(canvas, {
             width: 520,
             shapes: [
                 {
@@ -1765,7 +1772,7 @@ describe('Outline Editing canonical behavior', () => {
     });
 
     test('aligns a drawing point to the contour origin on one axis', () => {
-        activateEditableLayer(canvas, {
+        activateEditableDrawing(canvas, {
             width: 520,
             shapes: [
                 {
@@ -1813,7 +1820,7 @@ describe('Outline Editing canonical behavior', () => {
 
     test('uses the shared snap distance for open-end joins', () => {
         canvas.viewportManager.scale = 1;
-        activateEditableLayer(canvas, {
+        activateEditableDrawing(canvas, {
             width: 520,
             shapes: [
                 {
@@ -1847,7 +1854,7 @@ describe('Outline Editing canonical behavior', () => {
     });
 
     test('does not offer a cut on an open contour end', () => {
-        activateEditableLayer(canvas, {
+        activateEditableDrawing(canvas, {
             width: 520,
             shapes: [
                 {
@@ -1883,7 +1890,7 @@ describe('Outline Editing canonical behavior', () => {
     });
 
     test('command-click on an on-curve point cuts the contour open instead of selecting it', async () => {
-        activateEditableLayer(canvas, {
+        activateEditableDrawing(canvas, {
             width: 520,
             shapes: [
                 {
@@ -1928,11 +1935,11 @@ describe('Outline Editing canonical behavior', () => {
     });
 
     test('shift pressed during a drag constrains the node to the drag origin axis', () => {
-        const saveLayerDataSpy = jest
-            .spyOn(canvas.outlineEditor, 'saveLayerData')
+        const saveDrawingDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'saveDrawingData')
             .mockResolvedValue(undefined);
         try {
-            activateEditableLayer(canvas, {
+            activateEditableDrawing(canvas, {
                 width: 520,
                 shapes: [
                     {
@@ -1985,12 +1992,12 @@ describe('Outline Editing canonical behavior', () => {
                 metaKey: false,
                 ctrlKey: false
             });
-            const node = canvas.outlineEditor.layerData.shapes[0].nodes[0];
+            const node = canvas.outlineEditor.drawingData.shapes[0].nodes[0];
             expect(node.x).toBe(10);
             expect(node.y).not.toBe(10);
             pointerSpy.mockRestore();
         } finally {
-            saveLayerDataSpy.mockRestore();
+            saveDrawingDataSpy.mockRestore();
         }
     });
 
@@ -2003,7 +2010,7 @@ describe('Outline Editing canonical behavior', () => {
         document.body.appendChild(view);
         button.focus();
         window.glyphCanvas = canvas;
-        activateEditableLayer(canvas, {
+        activateEditableDrawing(canvas, {
             width: 520,
             shapes: [
                 {
@@ -2049,7 +2056,7 @@ describe('Outline Editing canonical behavior', () => {
     });
 
     test('shift+command arrow nudges by 100 and command arrow still changes layer', async () => {
-        activateEditableLayer(canvas, {
+        activateEditableDrawing(canvas, {
             width: 520,
             shapes: [
                 {
@@ -2067,7 +2074,7 @@ describe('Outline Editing canonical behavior', () => {
             .spyOn(canvas.outlineEditor, 'moveSelectedPoints')
             .mockReturnValue(new Set());
         const cycle = jest
-            .spyOn(canvas.outlineEditor, 'cycleLayers')
+            .spyOn(canvas.outlineEditor, 'cycleDrawings')
             .mockResolvedValue(undefined);
         const key = (overrides) =>
             canvas.outlineEditor.onKeyDown({
@@ -2088,7 +2095,7 @@ describe('Outline Editing canonical behavior', () => {
     });
 
     test('alt-constrained smooth on-curve dragging still honors reachable snap candidates', () => {
-        activateEditableLayer(canvas, {
+        activateEditableDrawing(canvas, {
             width: 520,
             shapes: [
                 {
@@ -2150,7 +2157,7 @@ describe('Outline Editing canonical behavior', () => {
         );
 
         canvas.outlineEditor.applySelectedPointMove(
-            canvas.outlineEditor.layerData,
+            canvas.outlineEditor.drawingData,
             snapped.deltaX,
             snapped.deltaY,
             false,
@@ -2160,7 +2167,7 @@ describe('Outline Editing canonical behavior', () => {
             true
         );
 
-        const nodes = canvas.outlineEditor.layerData.shapes[0].nodes;
+        const nodes = canvas.outlineEditor.drawingData.shapes[0].nodes;
         expect(nodes[2].x).toBe(120);
         expect(nodes[2].y).toBe(90);
         expect(nodes[1].x).toBe(70);
@@ -2176,7 +2183,7 @@ describe('Outline Editing canonical behavior', () => {
     });
 
     test('smooth on-curve dragging honors reachable snap candidates without alt', () => {
-        activateEditableLayer(canvas, {
+        activateEditableDrawing(canvas, {
             width: 520,
             shapes: [
                 {
@@ -2238,7 +2245,7 @@ describe('Outline Editing canonical behavior', () => {
         );
 
         canvas.outlineEditor.applySelectedPointMove(
-            canvas.outlineEditor.layerData,
+            canvas.outlineEditor.drawingData,
             snapped.deltaX,
             snapped.deltaY,
             false,
@@ -2248,7 +2255,7 @@ describe('Outline Editing canonical behavior', () => {
             false
         );
 
-        const nodes = canvas.outlineEditor.layerData.shapes[0].nodes;
+        const nodes = canvas.outlineEditor.drawingData.shapes[0].nodes;
         expect(nodes[2].x).toBe(120);
         expect(nodes[2].y).toBe(90);
         expect(nodes[1].x).toBe(100);
@@ -2264,12 +2271,12 @@ describe('Outline Editing canonical behavior', () => {
     });
 
     test('live smooth on-curve dragging without alt snaps to candidate nodes instead of raw pointer increments', () => {
-        const saveLayerDataSpy = jest
-            .spyOn(canvas.outlineEditor, 'saveLayerData')
+        const saveDrawingDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'saveDrawingData')
             .mockResolvedValue(undefined);
 
         try {
-            activateEditableLayer(canvas, {
+            activateEditableDrawing(canvas, {
                 width: 520,
                 shapes: [
                     {
@@ -2341,7 +2348,7 @@ describe('Outline Editing canonical behavior', () => {
                 ctrlKey: false
             });
 
-            const nodes = canvas.outlineEditor.layerData.shapes[0].nodes;
+            const nodes = canvas.outlineEditor.drawingData.shapes[0].nodes;
             expect(nodes[2].x).toBe(120);
             expect(nodes[2].y).toBe(90);
             expect(nodes[1].x).toBe(100);
@@ -2357,17 +2364,17 @@ describe('Outline Editing canonical behavior', () => {
 
             pointerSpy.mockRestore();
         } finally {
-            saveLayerDataSpy.mockRestore();
+            saveDrawingDataSpy.mockRestore();
         }
     });
 
     test('live off-curve dragging without alt snaps to candidate nodes', () => {
-        const saveLayerDataSpy = jest
-            .spyOn(canvas.outlineEditor, 'saveLayerData')
+        const saveDrawingDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'saveDrawingData')
             .mockResolvedValue(undefined);
 
         try {
-            activateEditableLayer(canvas, {
+            activateEditableDrawing(canvas, {
                 width: 520,
                 shapes: [
                     {
@@ -2450,7 +2457,7 @@ describe('Outline Editing canonical behavior', () => {
                 ctrlKey: false
             });
 
-            const nodes = canvas.outlineEditor.layerData.shapes[0].nodes;
+            const nodes = canvas.outlineEditor.drawingData.shapes[0].nodes;
             expect(nodes[1].x).toBe(120);
             expect(nodes[1].y).toBe(90);
             expect(canvas.outlineEditor.activeSnapTarget).toEqual(
@@ -2462,7 +2469,7 @@ describe('Outline Editing canonical behavior', () => {
 
             pointerSpy.mockRestore();
         } finally {
-            saveLayerDataSpy.mockRestore();
+            saveDrawingDataSpy.mockRestore();
         }
     });
 
@@ -2535,11 +2542,11 @@ describe('Outline Editing canonical behavior', () => {
         window.currentFontModel = font;
 
         const glyph = font.findGlyph('A');
-        const layer = glyph.findLayerById('layer-1');
+        const drawing = glyph.findDrawingById('layer-1');
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
-        activateEditableLayer(
+        activateEditableDrawing(
             canvas,
-            JSON.parse(JSON.stringify(layer.toJSON()))
+            JSON.parse(JSON.stringify(drawing.toJSON()))
         );
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 1 }
@@ -2575,7 +2582,7 @@ describe('Outline Editing canonical behavior', () => {
 
         expect(canvas.outlineEditor.beginCommandPathDrawing()).toBe(true);
 
-        const modelNodes = layer.paths[0].nodes;
+        const modelNodes = drawing.paths[0].nodes;
         expect(modelNodes[modelNodes.length - 1]).toEqual(
             expect.objectContaining({ x: 120, y: 90, nodetype: 'Line' })
         );
@@ -2585,7 +2592,7 @@ describe('Outline Editing canonical behavior', () => {
     });
 
     test('cmd-hover exposes node and metric snapping before the first drawing point exists', () => {
-        activateEditableLayer(canvas, {
+        activateEditableDrawing(canvas, {
             width: 520,
             shapes: [
                 {
@@ -2630,7 +2637,7 @@ describe('Outline Editing canonical behavior', () => {
     });
 
     test('cmd-hover repaints even before a preview line exists so metric snap feedback is visible', () => {
-        activateEditableLayer(canvas, {
+        activateEditableDrawing(canvas, {
             width: 520,
             shapes: [],
             anchors: [],
@@ -2661,7 +2668,7 @@ describe('Outline Editing canonical behavior', () => {
     });
 
     test('cmd-hover snaps to the active glyph edge before the first drawing point exists', () => {
-        activateEditableLayer(canvas, {
+        activateEditableDrawing(canvas, {
             width: 520,
             shapes: [],
             anchors: [],
@@ -2689,7 +2696,7 @@ describe('Outline Editing canonical behavior', () => {
     });
 
     test('dragging an existing point snaps to the active glyph edge', () => {
-        activateEditableLayer(canvas, {
+        activateEditableDrawing(canvas, {
             width: 520,
             shapes: [
                 {
@@ -2735,7 +2742,7 @@ describe('Outline Editing canonical behavior', () => {
     });
 
     test('dragging an anchor reuses point snap candidates and its origin candidate', () => {
-        activateEditableLayer(canvas, {
+        activateEditableDrawing(canvas, {
             width: 520,
             shapes: [
                 {
@@ -2799,11 +2806,11 @@ describe('Outline Editing canonical behavior', () => {
         window.currentFontModel = font;
 
         const glyph = font.findGlyph('A');
-        const layer = glyph.findLayerById('layer-1');
+        const drawing = glyph.findDrawingById('layer-1');
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
-        activateEditableLayer(
+        activateEditableDrawing(
             canvas,
-            JSON.parse(JSON.stringify(layer.toJSON()))
+            JSON.parse(JSON.stringify(drawing.toJSON()))
         );
         canvas.outlineEditor.renderVerticalMetrics = { xHeight: 90 };
         const pointerSpy = jest
@@ -2828,13 +2835,13 @@ describe('Outline Editing canonical behavior', () => {
 
         expect(canvas.outlineEditor.beginCommandPathDrawing()).toBe(true);
 
-        const liveShape = canvas.outlineEditor.layerData.shapes.at(-1);
+        const liveShape = canvas.outlineEditor.drawingData.shapes.at(-1);
         expect(liveShape.nodes[0]).toEqual(
             expect.objectContaining({ x: 54, y: 90 })
         );
 
-        const liveLayer = glyph.findLayerById('layer-1');
-        expect(liveLayer.paths.at(-1).nodes[0]).toEqual(
+        const liveDrawing = glyph.findDrawingById('layer-1');
+        expect(liveDrawing.paths.at(-1).nodes[0]).toEqual(
             expect.objectContaining({ x: 54, y: 90 })
         );
 
@@ -2896,11 +2903,11 @@ describe('Outline Editing canonical behavior', () => {
         window.currentFontModel = font;
 
         const glyph = font.findGlyph('A');
-        const layer = glyph.findLayerById('layer-1');
+        const drawing = glyph.findDrawingById('layer-1');
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
-        activateEditableLayer(
+        activateEditableDrawing(
             canvas,
-            JSON.parse(JSON.stringify(layer.toJSON()))
+            JSON.parse(JSON.stringify(drawing.toJSON()))
         );
 
         let pointer = { glyphX: 90, glyphY: 30 };
@@ -2953,11 +2960,11 @@ describe('Outline Editing canonical behavior', () => {
         window.currentFontModel = font;
 
         const glyph = font.findGlyph('A');
-        const layer = glyph.findLayerById('layer-1');
+        const drawing = glyph.findDrawingById('layer-1');
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
-        activateEditableLayer(
+        activateEditableDrawing(
             canvas,
-            JSON.parse(JSON.stringify(layer.toJSON()))
+            JSON.parse(JSON.stringify(drawing.toJSON()))
         );
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 2 }
@@ -3010,11 +3017,11 @@ describe('Outline Editing canonical behavior', () => {
         ]);
         window.currentFontModel = font;
         const modelBinding = bindActiveGlyphModel(canvas, font);
-        const { layer } = modelBinding;
+        const { drawing } = modelBinding;
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
-        activateEditableLayer(
+        activateEditableDrawing(
             canvas,
-            JSON.parse(JSON.stringify(layer.toJSON()))
+            JSON.parse(JSON.stringify(drawing.toJSON()))
         );
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 1 }
@@ -3103,11 +3110,11 @@ describe('Outline Editing canonical behavior', () => {
         window.currentFontModel = font;
 
         const glyph = font.findGlyph('A');
-        const layer = glyph.findLayerById('layer-1');
+        const drawing = glyph.findDrawingById('layer-1');
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
-        activateEditableLayer(
+        activateEditableDrawing(
             canvas,
-            JSON.parse(JSON.stringify(layer.toJSON()))
+            JSON.parse(JSON.stringify(drawing.toJSON()))
         );
         canvas.outlineEditor.renderVerticalMetrics = { xHeight: 90 };
         canvas.outlineEditor.activePathDrawingSession = {
@@ -3158,11 +3165,11 @@ describe('Outline Editing canonical behavior', () => {
         );
         window.currentFontModel = font;
         const modelBinding = bindActiveGlyphModel(canvas, font);
-        const { glyph, layer } = modelBinding;
+        const { glyph, drawing } = modelBinding;
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
-        activateEditableLayer(
+        activateEditableDrawing(
             canvas,
-            JSON.parse(JSON.stringify(layer.toJSON()))
+            JSON.parse(JSON.stringify(drawing.toJSON()))
         );
         canvas.outlineEditor.setActiveEditTool('cut');
         canvas.outlineEditor.hoveredPointIndex = {
@@ -3188,9 +3195,9 @@ describe('Outline Editing canonical behavior', () => {
                 ctrlKey: false
             });
 
-            expect(layer.shapes).toHaveLength(1);
-            expect(layer.paths[0].closed).toBe(false);
-            expect(layer.paths[0].nodes[0]).toEqual(
+            expect(drawing.shapes).toHaveLength(1);
+            expect(drawing.paths[0].closed).toBe(false);
+            expect(drawing.paths[0].nodes[0]).toEqual(
                 expect.objectContaining({
                     x: 60,
                     y: 0,
@@ -3199,7 +3206,7 @@ describe('Outline Editing canonical behavior', () => {
                 })
             );
             expect(
-                layer.paths[0].nodes[layer.paths[0].nodes.length - 1]
+                drawing.paths[0].nodes[drawing.paths[0].nodes.length - 1]
             ).toEqual(expect.objectContaining({ x: 60, y: 0, smooth: false }));
         } finally {
             compileSpy.mockRestore();
@@ -3223,11 +3230,11 @@ describe('Outline Editing canonical behavior', () => {
         ]);
         window.currentFontModel = font;
         const modelBinding = bindActiveGlyphModel(canvas, font);
-        const { glyph, layer } = modelBinding;
+        const { glyph, drawing } = modelBinding;
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
-        activateEditableLayer(
+        activateEditableDrawing(
             canvas,
-            JSON.parse(JSON.stringify(layer.toJSON()))
+            JSON.parse(JSON.stringify(drawing.toJSON()))
         );
         canvas.outlineEditor.setActiveEditTool('cut');
         canvas.outlineEditor.hoveredPointIndex = {
@@ -3246,13 +3253,13 @@ describe('Outline Editing canonical behavior', () => {
                 ctrlKey: false
             });
 
-            expect(layer.shapes).toHaveLength(2);
-            expect(layer.paths[0].closed).toBe(false);
-            expect(layer.paths[1].closed).toBe(false);
+            expect(drawing.shapes).toHaveLength(2);
+            expect(drawing.paths[0].closed).toBe(false);
+            expect(drawing.paths[1].closed).toBe(false);
             expect(
-                layer.paths[0].nodes[layer.paths[0].nodes.length - 1]
+                drawing.paths[0].nodes[drawing.paths[0].nodes.length - 1]
             ).toEqual(expect.objectContaining({ x: 60, y: 0, smooth: false }));
-            expect(layer.paths[1].nodes[0]).toEqual(
+            expect(drawing.paths[1].nodes[0]).toEqual(
                 expect.objectContaining({
                     x: 60,
                     y: 0,
@@ -3281,11 +3288,11 @@ describe('Outline Editing canonical behavior', () => {
         );
         window.currentFontModel = font;
         const modelBinding = bindActiveGlyphModel(canvas, font);
-        const { layer } = modelBinding;
+        const { drawing } = modelBinding;
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
-        activateEditableLayer(
+        activateEditableDrawing(
             canvas,
-            JSON.parse(JSON.stringify(layer.toJSON()))
+            JSON.parse(JSON.stringify(drawing.toJSON()))
         );
         canvas.outlineEditor.setActiveEditTool('cut');
         canvas.outlineEditor.hoveredPointIndex = {
@@ -3317,7 +3324,7 @@ describe('Outline Editing canonical behavior', () => {
                     nodeIndex: 5
                 }
             ]);
-            expect(layer.paths[0].closed).toBe(false);
+            expect(drawing.paths[0].closed).toBe(false);
         } finally {
             compileSpy.mockRestore();
             modelBinding.restore();
@@ -3343,11 +3350,11 @@ describe('Outline Editing canonical behavior', () => {
         ]);
         window.currentFontModel = font;
         const modelBinding = bindActiveGlyphModel(canvas, font);
-        const { glyph, layer } = modelBinding;
+        const { glyph, drawing } = modelBinding;
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
-        activateEditableLayer(
+        activateEditableDrawing(
             canvas,
-            JSON.parse(JSON.stringify(layer.toJSON()))
+            JSON.parse(JSON.stringify(drawing.toJSON()))
         );
         canvas.outlineEditor.activePathDrawingSession = {
             shapeIndex: 0,
@@ -3392,11 +3399,11 @@ describe('Outline Editing canonical behavior', () => {
             });
 
             expect(commitSpy).not.toHaveBeenCalled();
-            expect(layer.paths[0].nodes).toHaveLength(3);
-            expect(layer.paths[0].nodes[2]).toEqual(
+            expect(drawing.paths[0].nodes).toHaveLength(3);
+            expect(drawing.paths[0].nodes[2]).toEqual(
                 expect.objectContaining({ x: 80, y: 20, nodetype: 'Line' })
             );
-            expect(layer.paths[1].nodes).toHaveLength(2);
+            expect(drawing.paths[1].nodes).toHaveLength(2);
         } finally {
             compileSpy.mockRestore();
             commitSpy.mockRestore();
@@ -3417,11 +3424,11 @@ describe('Outline Editing canonical behavior', () => {
         ]);
         window.currentFontModel = font;
         const modelBinding = bindActiveGlyphModel(canvas, font);
-        const { layer } = modelBinding;
+        const { drawing } = modelBinding;
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
-        activateEditableLayer(
+        activateEditableDrawing(
             canvas,
-            JSON.parse(JSON.stringify(layer.toJSON()))
+            JSON.parse(JSON.stringify(drawing.toJSON()))
         );
         canvas.textRunEditor.selectedGlyphIndex = 0;
         canvas.outlineEditor.selectedPoints = [
@@ -3450,8 +3457,8 @@ describe('Outline Editing canonical behavior', () => {
                 ctrlKey: false
             });
 
-            expect(layer.paths[0].nodes).toHaveLength(3);
-            expect(layer.paths[0].nodes[2]).toEqual(
+            expect(drawing.paths[0].nodes).toHaveLength(3);
+            expect(drawing.paths[0].nodes[2]).toEqual(
                 expect.objectContaining({ x: 560, y: 20, nodetype: 'Line' })
             );
             expect(canvas.outlineEditor.activePathDrawingSession).toEqual(
@@ -3487,11 +3494,11 @@ describe('Outline Editing canonical behavior', () => {
         ]);
         window.currentFontModel = font;
         const modelBinding = bindActiveGlyphModel(canvas, font);
-        const { glyph, layer } = modelBinding;
+        const { glyph, drawing } = modelBinding;
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
-        activateEditableLayer(
+        activateEditableDrawing(
             canvas,
-            JSON.parse(JSON.stringify(layer.toJSON()))
+            JSON.parse(JSON.stringify(drawing.toJSON()))
         );
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 1 }
@@ -3519,9 +3526,9 @@ describe('Outline Editing canonical behavior', () => {
                 ctrlKey: false
             });
 
-            expect(layer.shapes).toHaveLength(1);
-            expect(layer.paths[0].closed).toBe(false);
-            expect(layer.paths[0].nodes.map((node) => node.x)).toEqual([
+            expect(drawing.shapes).toHaveLength(1);
+            expect(drawing.paths[0].closed).toBe(false);
+            expect(drawing.paths[0].nodes.map((node) => node.x)).toEqual([
                 0, 80, 120
             ]);
             expect(canvas.outlineEditor.selectedPoints).toEqual([
@@ -3552,27 +3559,27 @@ describe('Outline Editing canonical behavior', () => {
         ]);
         window.currentFontModel = font;
         const modelBinding = bindActiveGlyphModel(canvas, font);
-        const { glyph, layer } = modelBinding;
+        const { glyph, drawing } = modelBinding;
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
-        activateEditableLayer(
+        activateEditableDrawing(
             canvas,
-            JSON.parse(JSON.stringify(layer.toJSON()))
+            JSON.parse(JSON.stringify(drawing.toJSON()))
         );
 
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 0 }
         ];
         canvas.outlineEditor.isDraggingPoint = true;
-        canvas.outlineEditor.layerData.shapes[0].nodes[0].x = 40;
-        canvas.outlineEditor.layerData.shapes[0].nodes[0].y = 0;
+        canvas.outlineEditor.drawingData.shapes[0].nodes[0].x = 40;
+        canvas.outlineEditor.drawingData.shapes[0].nodes[0].y = 0;
 
         try {
             canvas.outlineEditor._checkOpenPathEndpointSnap();
             canvas.outlineEditor.onMouseUp({});
 
-            expect(layer.shapes).toHaveLength(1);
-            expect(layer.paths[0].closed).toBe(false);
-            expect(layer.paths[0].nodes.map((node) => node.x)).toEqual([
+            expect(drawing.shapes).toHaveLength(1);
+            expect(drawing.paths[0].closed).toBe(false);
+            expect(drawing.paths[0].nodes.map((node) => node.x)).toEqual([
                 120, 40, 0
             ]);
             expect(canvas.outlineEditor.selectedPoints).toEqual([
@@ -3606,27 +3613,27 @@ describe('Outline Editing canonical behavior', () => {
         ]);
         window.currentFontModel = font;
         const modelBinding = bindActiveGlyphModel(canvas, font);
-        const { layer } = modelBinding;
+        const { drawing } = modelBinding;
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
-        activateEditableLayer(
+        activateEditableDrawing(
             canvas,
-            JSON.parse(JSON.stringify(layer.toJSON()))
+            JSON.parse(JSON.stringify(drawing.toJSON()))
         );
 
         canvas.outlineEditor.selectedPoints = [
             { contourIndex: 0, nodeIndex: 3 }
         ];
         canvas.outlineEditor.isDraggingPoint = true;
-        canvas.outlineEditor.layerData.shapes[0].nodes[3].x = 100;
-        canvas.outlineEditor.layerData.shapes[0].nodes[3].y = 0;
+        canvas.outlineEditor.drawingData.shapes[0].nodes[3].x = 100;
+        canvas.outlineEditor.drawingData.shapes[0].nodes[3].y = 0;
 
         try {
             canvas.outlineEditor._checkOpenPathEndpointSnap();
             canvas.outlineEditor.onMouseUp({});
 
-            expect(layer.shapes).toHaveLength(1);
-            expect(layer.paths[0].closed).toBe(false);
-            expect(layer.paths[0].nodes[3]).toEqual(
+            expect(drawing.shapes).toHaveLength(1);
+            expect(drawing.paths[0].closed).toBe(false);
+            expect(drawing.paths[0].nodes[3]).toEqual(
                 expect.objectContaining({ x: 100, y: 0, smooth: true })
             );
         } finally {
@@ -3653,11 +3660,11 @@ describe('Outline Editing canonical behavior', () => {
         ]);
         window.currentFontModel = font;
         const modelBinding = bindActiveGlyphModel(canvas, font);
-        const { layer } = modelBinding;
+        const { drawing } = modelBinding;
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
-        activateEditableLayer(
+        activateEditableDrawing(
             canvas,
-            JSON.parse(JSON.stringify(layer.toJSON()))
+            JSON.parse(JSON.stringify(drawing.toJSON()))
         );
 
         canvas.outlineEditor.selectedPoints = [
@@ -3669,15 +3676,15 @@ describe('Outline Editing canonical behavior', () => {
             contourIndex: 0,
             nodeIndex: 0
         };
-        canvas.outlineEditor.layerData.shapes[0].nodes[0].x = 40;
-        canvas.outlineEditor.layerData.shapes[0].nodes[0].y = 0;
+        canvas.outlineEditor.drawingData.shapes[0].nodes[0].x = 40;
+        canvas.outlineEditor.drawingData.shapes[0].nodes[0].y = 0;
 
         try {
             canvas.outlineEditor._checkOpenPathEndpointSnap();
             canvas.outlineEditor.onMouseUp({});
 
-            expect(layer.shapes).toHaveLength(1);
-            expect(layer.paths[0].nodes.map((node) => node.x)).toEqual([
+            expect(drawing.shapes).toHaveLength(1);
+            expect(drawing.paths[0].nodes.map((node) => node.x)).toEqual([
                 120, 40, 0
             ]);
         } finally {
@@ -3700,11 +3707,11 @@ describe('Outline Editing canonical behavior', () => {
         ]);
         window.currentFontModel = font;
         const modelBinding = bindActiveGlyphModel(canvas, font);
-        const { layer } = modelBinding;
+        const { drawing } = modelBinding;
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
-        activateEditableLayer(
+        activateEditableDrawing(
             canvas,
-            JSON.parse(JSON.stringify(layer.toJSON()))
+            JSON.parse(JSON.stringify(drawing.toJSON()))
         );
 
         canvas.outlineEditor.selectedPoints = [
@@ -3719,22 +3726,22 @@ describe('Outline Editing canonical behavior', () => {
         canvas.outlineEditor._dragSeparatedFromCoincidentEndpointPair = false;
 
         try {
-            canvas.outlineEditor.layerData.shapes[0].nodes[0].x = 200;
-            canvas.outlineEditor.layerData.shapes[0].nodes[0].y = 0;
+            canvas.outlineEditor.drawingData.shapes[0].nodes[0].x = 200;
+            canvas.outlineEditor.drawingData.shapes[0].nodes[0].y = 0;
             canvas.outlineEditor._checkOpenPathEndpointSnap();
             expect(canvas.outlineEditor.isSnappedToCloseOpenPath).toBe(false);
 
-            canvas.outlineEditor.layerData.shapes[0].nodes[0].x = 0;
-            canvas.outlineEditor.layerData.shapes[0].nodes[0].y = 0;
+            canvas.outlineEditor.drawingData.shapes[0].nodes[0].x = 0;
+            canvas.outlineEditor.drawingData.shapes[0].nodes[0].y = 0;
             canvas.outlineEditor._checkOpenPathEndpointSnap();
             expect(canvas.outlineEditor.isSnappedToCloseOpenPath).toBe(true);
 
             canvas.outlineEditor.onMouseUp({});
 
-            expect(layer.paths[0].closed).toBe(true);
-            expect(layer.paths[0].nodes[0].x).toBe(0);
-            expect(layer.paths[0].nodes[0].y).toBe(0);
-            expect(layer.paths[0].nodes[0].smooth).toBe(true);
+            expect(drawing.paths[0].closed).toBe(true);
+            expect(drawing.paths[0].nodes[0].x).toBe(0);
+            expect(drawing.paths[0].nodes[0].y).toBe(0);
+            expect(drawing.paths[0].nodes[0].smooth).toBe(true);
         } finally {
             modelBinding.restore();
         }
@@ -3773,11 +3780,11 @@ describe('Outline Editing canonical behavior', () => {
         ]);
         window.currentFontModel = font;
         const modelBinding = bindActiveGlyphModel(canvas, font);
-        const { layer } = modelBinding;
+        const { drawing } = modelBinding;
         canvas.getCurrentGlyphName = jest.fn(() => 'A');
-        activateEditableLayer(
+        activateEditableDrawing(
             canvas,
-            JSON.parse(JSON.stringify(layer.toJSON()))
+            JSON.parse(JSON.stringify(drawing.toJSON()))
         );
         window.changeBridge = {
             beginTransaction: jest.fn(),
@@ -3789,18 +3796,18 @@ describe('Outline Editing canonical behavior', () => {
             { contourIndex: 0, nodeIndex: 0 }
         ];
         canvas.outlineEditor.isDraggingPoint = true;
-        canvas.outlineEditor.layerData.shapes[0].nodes[0].x = 40;
-        canvas.outlineEditor.layerData.shapes[0].nodes[0].y = 0;
+        canvas.outlineEditor.drawingData.shapes[0].nodes[0].x = 40;
+        canvas.outlineEditor.drawingData.shapes[0].nodes[0].y = 0;
 
         try {
             canvas.outlineEditor._checkOpenPathEndpointSnap();
             canvas.outlineEditor.onMouseUp({});
 
-            expect(layer.shapes).toHaveLength(2);
-            expect(layer.paths[0].nodes.map((node) => node.x)).toEqual([
+            expect(drawing.shapes).toHaveLength(2);
+            expect(drawing.paths[0].nodes.map((node) => node.x)).toEqual([
                 120, 40, 0
             ]);
-            expect(layer.paths[1].nodes.map((node) => node.x)).toEqual([
+            expect(drawing.paths[1].nodes.map((node) => node.x)).toEqual([
                 240, 200, 160
             ]);
             expect(window.changeBridge.syncGlyphFromJson).toHaveBeenCalledTimes(
@@ -3814,7 +3821,7 @@ describe('Outline Editing canonical behavior', () => {
     test('drawOutlineEditor marks duplicate node positions with a red circle underline even across separate paths', () => {
         canvas.textRunEditor.selectedGlyphIndex = 0;
         canvas.textRunEditor.shapedGlyphs = [{ ax: 520, dx: 0, dy: 0, g: 0 }];
-        activateEditableLayer(canvas, {
+        activateEditableDrawing(canvas, {
             width: 520,
             shapes: [
                 {
@@ -3858,7 +3865,7 @@ describe('Outline Editing canonical behavior', () => {
     });
 
     test('a snapped curved open endpoint does not keep dragging its attached handle after the endpoint is pinned', () => {
-        activateEditableLayer(canvas, {
+        activateEditableDrawing(canvas, {
             width: 520,
             shapes: [
                 {
@@ -3907,7 +3914,7 @@ describe('Outline Editing canonical behavior', () => {
             .spyOn(canvas, 'updatePropertyPanel')
             .mockImplementation(() => {});
         const saveSpy = jest
-            .spyOn(canvas.outlineEditor, 'saveLayerData')
+            .spyOn(canvas.outlineEditor, 'saveDrawingData')
             .mockResolvedValue(undefined);
 
         try {
@@ -3919,10 +3926,10 @@ describe('Outline Editing canonical behavior', () => {
             });
 
             const snappedHandle = {
-                x: canvas.outlineEditor.layerData.shapes[0].nodes[2].x,
-                y: canvas.outlineEditor.layerData.shapes[0].nodes[2].y
+                x: canvas.outlineEditor.drawingData.shapes[0].nodes[2].x,
+                y: canvas.outlineEditor.drawingData.shapes[0].nodes[2].y
             };
-            expect(canvas.outlineEditor.layerData.shapes[0].nodes[3]).toEqual(
+            expect(canvas.outlineEditor.drawingData.shapes[0].nodes[3]).toEqual(
                 expect.objectContaining({ x: 70, y: 0 })
             );
 
@@ -3934,10 +3941,10 @@ describe('Outline Editing canonical behavior', () => {
                 altKey: false
             });
 
-            expect(canvas.outlineEditor.layerData.shapes[0].nodes[3]).toEqual(
+            expect(canvas.outlineEditor.drawingData.shapes[0].nodes[3]).toEqual(
                 expect.objectContaining({ x: 70, y: 0 })
             );
-            expect(canvas.outlineEditor.layerData.shapes[0].nodes[2]).toEqual(
+            expect(canvas.outlineEditor.drawingData.shapes[0].nodes[2]).toEqual(
                 expect.objectContaining(snappedHandle)
             );
         } finally {
@@ -3966,21 +3973,21 @@ describe('Outline Editing canonical behavior', () => {
         const modelBinding = bindActiveGlyphModel(canvas, font);
 
         try {
-            activateEditableLayer(
+            activateEditableDrawing(
                 canvas,
-                JSON.parse(JSON.stringify(modelBinding.layer.toJSON()))
+                JSON.parse(JSON.stringify(modelBinding.drawing.toJSON()))
             );
             canvas.outlineEditor.selectedPoints = [
                 { contourIndex: 0, nodeIndex: 1 }
             ];
             canvas.outlineEditor.selectedAnchors = [0];
 
-            const savedSelection = [...modelBinding.layer.selection];
+            const savedSelection = [...modelBinding.drawing.selection];
             expect(savedSelection).toHaveLength(2);
 
             canvas.outlineEditor.selectedPoints = [];
             canvas.outlineEditor.selectedAnchors = [];
-            modelBinding.layer.selection = savedSelection;
+            modelBinding.drawing.selection = savedSelection;
 
             expect(canvas.outlineEditor.selectedPoints).toEqual([
                 { contourIndex: 0, nodeIndex: 1 }

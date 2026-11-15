@@ -148,7 +148,7 @@ The host handles them universally for every loaded filter:
 
 `glyph.compatibility.changed` is the targeted event for compatibility filters.
 The host emits it only when `Glyph.isCompatible` actually toggles. Simple
-filters do not subscribe to `font.masters.changed`; master changes are
+filters do not subscribe to `font.stations.changed`; master changes are
 translated by the host into the targeted glyph events whose values changed.
 
 ## Execution And Cache Lifecycle
@@ -190,7 +190,7 @@ Source validation is structural and rejects:
 - Missing or non-literal `EVENT_TYPES`.
 - Unknown event names.
 - Lifecycle events in `EVENT_TYPES`.
-- Font-wide events in `EVENT_TYPES`, including `font.masters.changed`.
+- Font-wide events in `EVENT_TYPES`, including `font.stations.changed`.
 - Missing or incorrectly declared `classify_glyph(glyph)`.
 - Incorrectly declared optional `is_candidate(glyph)`.
 - Invalid classifications or group records without non-empty `name` and

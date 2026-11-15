@@ -1,14 +1,14 @@
 import {
     createLogEntry,
     deriveGlyphNameFromPath,
-    deriveLayerIdFromPath,
+    deriveDrawingIdFromPath,
     deriveObjectInfoFromPath,
     getPathSegments,
     historyReplayValue,
     joinPathWithGlyphSeparator,
     normalizeGlyphRenames,
     normalizeWorkerReplayTargets,
-    resolveCollaborationOriginatingLayer,
+    resolveCollaborationOriginatingDrawing,
     type ChangeLogEntry,
     type ChangeOp,
     type HistoryAction,
@@ -250,7 +250,7 @@ function buildSummaryFromEntries(entries: ChangeLogEntry[]): string {
 
 /**
  * Collaboration envelopes are room metadata (64 KiB cap), not a JSON
- * snapshot bus. Glyph/layer apply payloads already travel in the Yjs
+ * snapshot bus. Glyph/drawing apply payloads already travel in the Yjs
  * update; putting them on the envelope makes the room reject the whole
  * live packet (`metadata-limit`), so cloud peers never apply the mutation.
  * Keep only JSON primitives (property edits, labels, revision tokens).
@@ -273,7 +273,7 @@ export function collaborationWireReplayValue(value: unknown): unknown {
 /**
  * The cloud wire keeps only string, number and boolean replay values. A linked
  * window shares its main window’s history, so it must get the full values,
- * objects included (a component’s `format_specific`, a layer snapshot), or
+ * objects included (a component’s `format_specific`, a drawing snapshot), or
  * it cannot undo or redo the other window’s edit. Fills them in from the
  * change-log entries the envelope was built from.
  */
@@ -351,7 +351,7 @@ export function toWireReplayValues(
 /**
  * Both lists must already be normalized. The envelope builder compares every
  * entry against the commit-wide list, so normalizing here again made a
- * per-glyph add-master commit quadratic in the number of glyphs.
+ * per-glyph add-station commit quadratic in the number of glyphs.
  */
 function haveMatchingNormalizedReplayTargets(
     left: WorkerReplayTarget[],
@@ -388,11 +388,11 @@ export function createCollaborationMessageEnvelopeFromChangeLogEntries(
                 .filter((glyphName): glyphName is string => !!glyphName)
         )
     ];
-    const changedLayerIds = [
+    const changedDrawingIds = [
         ...new Set(
             entries
-                .map((entry) => deriveLayerIdFromPath(entry.path))
-                .filter((layerId): layerId is string => !!layerId)
+                .map((entry) => deriveDrawingIdFromPath(entry.path))
+                .filter((drawingId): drawingId is string => !!drawingId)
         )
     ];
     const workerReplayTargets = normalizeWorkerReplayTargets(
@@ -439,7 +439,7 @@ export function createCollaborationMessageEnvelopeFromChangeLogEntries(
             compileChangeSource: entries[0].compileChangeSource ?? null,
             compileEditType: entries[0].compileEditType ?? null,
             changedGlyphNames,
-            changedLayerIds,
+            changedLayerIds: changedDrawingIds,
             workerReplayTargets,
             transactionDurationMs: entries[0].transactionDurationMs,
             historyItemId: entries[0].historyItemId,
@@ -453,7 +453,7 @@ export function createCollaborationMessageEnvelopeFromChangeLogEntries(
             undoScope: entries[0].undoScope,
             undoSurfaceAffinity: entries[0].undoSurfaceAffinity ?? null,
             ...(() => {
-                const origin = resolveCollaborationOriginatingLayer(
+                const origin = resolveCollaborationOriginatingDrawing(
                     entries[0].undoScope,
                     entries
                 );
@@ -650,19 +650,19 @@ function fromJsonPointerPath(
             segments[1] = glyph.name;
 
             if (segments[2] === 'layers' && segments.length >= 4) {
-                const layerIndex = Number.parseInt(String(segments[3]), 10);
-                const layers = Array.isArray(glyph.layers)
+                const drawingIndex = Number.parseInt(String(segments[3]), 10);
+                const drawings = Array.isArray(glyph.layers)
                     ? (glyph.layers as Unsafe[])
                     : null;
-                const layer = Number.isFinite(layerIndex)
-                    ? layers?.[layerIndex]
+                const drawing = Number.isFinite(drawingIndex)
+                    ? drawings?.[drawingIndex]
                     : null;
                 if (
-                    layer &&
-                    typeof layer === 'object' &&
-                    typeof layer.id === 'string'
+                    drawing &&
+                    typeof drawing === 'object' &&
+                    typeof drawing.id === 'string'
                 ) {
-                    segments[3] = layer.id;
+                    segments[3] = drawing.id;
                 }
             }
         }

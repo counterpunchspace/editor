@@ -61,13 +61,13 @@ type OverviewPropertyInputState = {
     selectionEnd: number | null;
 };
 
-type OverviewSidebearingLayer = {
+type OverviewSidebearingDrawing = {
     lsb: number;
     rsb: number;
     width: number;
     leftMetricsKey?: string;
     rightMetricsKey?: string;
-    isAutomaticAlignedLayer: () => boolean;
+    isAutomaticAlignedDrawing: () => boolean;
     getBoundingBox?: (includeAnchors?: boolean) => {
         minX: number;
         maxX: number;
@@ -101,7 +101,7 @@ type OverviewSidebearingLayer = {
 type OverviewSidebearingDisplayState = {
     displayedValue: string;
     resolvedValue: number;
-    automaticLayer: boolean;
+    automaticDrawing: boolean;
     showAutoPlaceholder: boolean;
     error: string | null;
 };
@@ -112,7 +112,7 @@ type OverviewSidebearingSideSummary = {
     allAutomatic: boolean;
     anyError: boolean;
     showAutoPlaceholder: boolean;
-    /** First-layer state for arrow-adjust fallback when values are shared. */
+    /** First-drawing state for arrow-adjust fallback when values are shared. */
     sampleState: OverviewSidebearingDisplayState | null;
 };
 
@@ -129,22 +129,22 @@ function isPlainNumericInputValue(value: string): boolean {
 }
 
 function locationsMatchWithinTolerance(
-    masterLocation: Record<string, number> | undefined,
+    stationLocation: Record<string, number> | undefined,
     currentLocation: Record<string, number>,
     tolerance = 0.001
 ): boolean {
-    if (!masterLocation) {
+    if (!stationLocation) {
         return false;
     }
-    for (const tag in masterLocation) {
-        const masterValue = Number(masterLocation[tag]);
+    for (const tag in stationLocation) {
+        const stationValue = Number(stationLocation[tag]);
         const currentValue =
             currentLocation[tag] === undefined
                 ? undefined
                 : Number(currentLocation[tag]);
         if (
             currentValue === undefined ||
-            Math.abs(masterValue - currentValue) > tolerance
+            Math.abs(stationValue - currentValue) > tolerance
         ) {
             return false;
         }
@@ -1994,37 +1994,37 @@ class GlyphOverview extends GlyphOverviewView {
         };
     }
 
-    private resolveOverviewMasterId(): string | null {
-        const selectedMasterId =
-            window.glyphCanvas?.textRunEditor?.selectedMasterId;
-        if (typeof selectedMasterId === 'string' && selectedMasterId) {
-            return selectedMasterId;
+    private resolveOverviewStationId(): string | null {
+        const selectedStationId =
+            window.glyphCanvas?.textRunEditor?.selectedStationId;
+        if (typeof selectedStationId === 'string' && selectedStationId) {
+            return selectedStationId;
         }
 
-        const masters = window.currentFontModel?.masters;
-        if (!Array.isArray(masters) || masters.length === 0) {
+        const stations = window.currentFontModel?.stations;
+        if (!Array.isArray(stations) || stations.length === 0) {
             return null;
         }
 
-        for (const master of masters) {
-            const masterLocation = master?.location as
+        for (const station of stations) {
+            const stationLocation = station?.location as
                 Record<string, number> | undefined;
             if (
                 locationsMatchWithinTolerance(
-                    masterLocation,
+                    stationLocation,
                     this.currentLocation
                 )
             ) {
-                return master.id || null;
+                return station.id || null;
             }
         }
 
-        return masters[0]?.id || null;
+        return stations[0]?.id || null;
     }
 
-    private resolveOverviewLayerForGlyph(
+    private resolveOverviewDrawingForGlyph(
         glyphName: string
-    ): OverviewSidebearingLayer | null {
+    ): OverviewSidebearingDrawing | null {
         const fontModel = window.currentFontModel;
         if (!fontModel || typeof fontModel.findGlyph !== 'function') {
             return null;
@@ -2035,62 +2035,63 @@ class GlyphOverview extends GlyphOverviewView {
             return null;
         }
 
-        const masterId = this.resolveOverviewMasterId();
-        if (masterId && typeof glyph.findLayerByMasterId === 'function') {
-            const masterLayer = glyph.findLayerByMasterId(masterId);
-            if (masterLayer) {
-                return masterLayer;
+        const stationId = this.resolveOverviewStationId();
+        if (stationId && typeof glyph.findDrawingByStationId === 'function') {
+            const stationDrawing = glyph.findDrawingByStationId(stationId);
+            if (stationDrawing) {
+                return stationDrawing;
             }
         }
 
-        const layers = Array.isArray(glyph.layers) ? glyph.layers : [];
-        const defaultLayer = layers.find(
-            (layer: { master?: { type?: string } }) =>
-                layer?.master?.type === 'DefaultForMaster'
+        const drawings = Array.isArray(glyph.drawings) ? glyph.drawings : [];
+        const defaultDrawing = drawings.find(
+            (drawing: { station?: { type?: string } }) =>
+                drawing?.station?.type === 'DefaultForMaster'
         );
-        return defaultLayer || layers[0] || null;
+        return defaultDrawing || drawings[0] || null;
     }
 
-    private getSelectedOverviewLayers(): OverviewSidebearingLayer[] {
-        const layers: OverviewSidebearingLayer[] = [];
+    private getSelectedOverviewDrawings(): OverviewSidebearingDrawing[] {
+        const drawings: OverviewSidebearingDrawing[] = [];
         for (const glyphName of this.getSelectedGlyphNames()) {
-            const layer = this.resolveOverviewLayerForGlyph(glyphName);
-            if (layer) {
-                layers.push(layer);
+            const drawing = this.resolveOverviewDrawingForGlyph(glyphName);
+            if (drawing) {
+                drawings.push(drawing);
             }
         }
-        return layers;
+        return drawings;
     }
 
     private getStoredSidebearingKey(
-        layer: OverviewSidebearingLayer,
+        drawing: OverviewSidebearingDrawing,
         side: SidebearingSide
     ): string | undefined {
         const parent =
-            typeof layer.parent === 'function' ? layer.parent() : null;
+            typeof drawing.parent === 'function' ? drawing.parent() : null;
         return (
             (side === 'left'
-                ? layer.leftMetricsKey || parent?.leftMetricsKey
-                : layer.rightMetricsKey || parent?.rightMetricsKey) || undefined
+                ? drawing.leftMetricsKey || parent?.leftMetricsKey
+                : drawing.rightMetricsKey || parent?.rightMetricsKey) ||
+            undefined
         );
     }
 
-    private getDirectSidebearingsFromLayer(
-        layer: OverviewSidebearingLayer,
+    private getDirectSidebearingsFromDrawing(
+        drawing: OverviewSidebearingDrawing,
         bboxCache: WeakMap<
-            OverviewSidebearingLayer,
+            OverviewSidebearingDrawing,
             { lsb: number; rsb: number }
         >
     ): { lsb: number; rsb: number } {
-        const cached = bboxCache.get(layer);
+        const cached = bboxCache.get(drawing);
         if (cached) {
             return cached;
         }
 
         let pair: { lsb: number; rsb: number };
-        if (typeof layer.getBoundingBox === 'function') {
-            const bbox = layer.getBoundingBox(false);
-            const width = Number(layer.width) || 0;
+        if (typeof drawing.getBoundingBox === 'function') {
+            const bbox = drawing.getBoundingBox(false);
+            const width = Number(drawing.width) || 0;
             if (!bbox) {
                 pair = { lsb: 0, rsb: Math.round(width) };
             } else {
@@ -2100,30 +2101,35 @@ class GlyphOverview extends GlyphOverviewView {
                 };
             }
         } else {
-            // Fallback: layer.lsb/rsb each recompute bbox independently.
-            pair = { lsb: Number(layer.lsb) || 0, rsb: Number(layer.rsb) || 0 };
+            // Fallback: drawing.lsb/rsb each recompute bbox independently.
+            pair = {
+                lsb: Number(drawing.lsb) || 0,
+                rsb: Number(drawing.rsb) || 0
+            };
         }
-        bboxCache.set(layer, pair);
+        bboxCache.set(drawing, pair);
         return pair;
     }
 
     /**
      * Build LSB/RSB panel summaries with early mixed-value exit and one shared
-     * bbox per layer when numeric sidebearings are needed.
+     * bbox per drawing when numeric sidebearings are needed.
      */
-    private summarizeOverviewSidebearings(layers: OverviewSidebearingLayer[]): {
+    private summarizeOverviewSidebearings(
+        drawings: OverviewSidebearingDrawing[]
+    ): {
         left: OverviewSidebearingSideSummary;
         right: OverviewSidebearingSideSummary;
     } {
         const bboxCache = new WeakMap<
-            OverviewSidebearingLayer,
+            OverviewSidebearingDrawing,
             { lsb: number; rsb: number }
         >();
 
         const summarizeSide = (
             side: SidebearingSide
         ): OverviewSidebearingSideSummary => {
-            if (layers.length === 0) {
+            if (drawings.length === 0) {
                 return {
                     sharedDisplay: null,
                     sharedResolved: null,
@@ -2141,19 +2147,19 @@ class GlyphOverview extends GlyphOverviewView {
             let anyError = false;
             let sampleState: OverviewSidebearingDisplayState | null = null;
 
-            for (let index = 0; index < layers.length; index++) {
-                const layer = layers[index];
-                const automaticLayer = layer.isAutomaticAlignedLayer();
-                if (!automaticLayer) {
+            for (let index = 0; index < drawings.length; index++) {
+                const drawing = drawings[index];
+                const automaticDrawing = drawing.isAutomaticAlignedDrawing();
+                if (!automaticDrawing) {
                     allAutomatic = false;
                 }
 
-                const storedKey = this.getStoredSidebearingKey(layer, side);
+                const storedKey = this.getStoredSidebearingKey(drawing, side);
                 let displayedValue: string;
                 let resolvedValue: number;
                 let error: string | null = null;
 
-                if (!storedKey && automaticLayer) {
+                if (!storedKey && automaticDrawing) {
                     displayedValue = '';
                     // Avoid bbox for auto placeholders unless we need a shared
                     // resolved value later for a non-mixed single-path case.
@@ -2165,8 +2171,8 @@ class GlyphOverview extends GlyphOverviewView {
                     displayedValue = storedKey;
                     resolvedValue = Number.NaN;
                 } else {
-                    const pair = this.getDirectSidebearingsFromLayer(
-                        layer,
+                    const pair = this.getDirectSidebearingsFromDrawing(
+                        drawing,
                         bboxCache
                     );
                     displayedValue = String(
@@ -2175,9 +2181,9 @@ class GlyphOverview extends GlyphOverviewView {
                     resolvedValue = side === 'left' ? pair.lsb : pair.rsb;
                 }
 
-                const showAutoPlaceholderForLayer =
-                    !storedKey && automaticLayer;
-                if (!showAutoPlaceholderForLayer) {
+                const showAutoPlaceholderForDrawing =
+                    !storedKey && automaticDrawing;
+                if (!showAutoPlaceholderForDrawing) {
                     showAutoPlaceholder = false;
                 }
 
@@ -2186,8 +2192,8 @@ class GlyphOverview extends GlyphOverviewView {
                     sampleState = {
                         displayedValue,
                         resolvedValue,
-                        automaticLayer,
-                        showAutoPlaceholder: showAutoPlaceholderForLayer,
+                        automaticDrawing,
+                        showAutoPlaceholder: showAutoPlaceholderForDrawing,
                         error
                     };
                 } else if (displayedValue !== sharedDisplay) {
@@ -2195,13 +2201,16 @@ class GlyphOverview extends GlyphOverviewView {
                     // Still finish the automatic/placeholder scan without more
                     // numeric bbox work when the display fingerprint already
                     // diverged.
-                    for (let rest = index + 1; rest < layers.length; rest++) {
-                        if (!layers[rest].isAutomaticAlignedLayer()) {
+                    for (let rest = index + 1; rest < drawings.length; rest++) {
+                        if (!drawings[rest].isAutomaticAlignedDrawing()) {
                             allAutomatic = false;
                         }
                         if (
-                            this.getStoredSidebearingKey(layers[rest], side) ||
-                            !layers[rest].isAutomaticAlignedLayer()
+                            this.getStoredSidebearingKey(
+                                drawings[rest],
+                                side
+                            ) ||
+                            !drawings[rest].isAutomaticAlignedDrawing()
                         ) {
                             showAutoPlaceholder = false;
                         }
@@ -2221,22 +2230,22 @@ class GlyphOverview extends GlyphOverviewView {
                 };
             }
 
-            // Shared display: resolve metrics / bbox once on the sample layer
+            // Shared display: resolve metrics / bbox once on the sample drawing
             // for arrow-adjust and invalid marking.
-            const sampleLayer = layers[0];
-            if (sampleLayer && sampleState) {
+            const sampleDrawing = drawings[0];
+            if (sampleDrawing && sampleState) {
                 const storedKey = this.getStoredSidebearingKey(
-                    sampleLayer,
+                    sampleDrawing,
                     side
                 );
                 if (storedKey) {
-                    const resolution = sampleLayer.resolveMetricsKey(side);
+                    const resolution = sampleDrawing.resolveMetricsKey(side);
                     sampleState = {
                         ...sampleState,
                         resolvedValue:
                             resolution.value ??
-                            this.getDirectSidebearingsFromLayer(
-                                sampleLayer,
+                            this.getDirectSidebearingsFromDrawing(
+                                sampleDrawing,
                                 bboxCache
                             )[side === 'left' ? 'lsb' : 'rsb'],
                         error: resolution.error
@@ -2246,8 +2255,8 @@ class GlyphOverview extends GlyphOverviewView {
                     !sampleState.showAutoPlaceholder &&
                     !Number.isFinite(sampleState.resolvedValue)
                 ) {
-                    const pair = this.getDirectSidebearingsFromLayer(
-                        sampleLayer,
+                    const pair = this.getDirectSidebearingsFromDrawing(
+                        sampleDrawing,
                         bboxCache
                     );
                     sampleState = {
@@ -2297,8 +2306,8 @@ class GlyphOverview extends GlyphOverviewView {
             nameEditable &&
             sparseEditable &&
             this.isGlyphHydrated(singleGlyph?.name || '');
-        const layers = this.getSelectedOverviewLayers();
-        const sidebearingSummary = this.summarizeOverviewSidebearings(layers);
+        const drawings = this.getSelectedOverviewDrawings();
+        const sidebearingSummary = this.summarizeOverviewSidebearings(drawings);
         const fontModel = window.currentFontModel;
 
         const nameControl = document.createElement('div');
@@ -2377,7 +2386,7 @@ class GlyphOverview extends GlyphOverviewView {
             this.createOverviewSidebearingControl(
                 'left',
                 'LSB',
-                layers.length > 0 && sparseEditable,
+                drawings.length > 0 && sparseEditable,
                 sidebearingSummary.left
             )
         );
@@ -2387,7 +2396,7 @@ class GlyphOverview extends GlyphOverviewView {
             this.createOverviewSidebearingControl(
                 'right',
                 'RSB',
-                layers.length > 0 && sparseEditable,
+                drawings.length > 0 && sparseEditable,
                 sidebearingSummary.right
             )
         );
@@ -2482,7 +2491,7 @@ class GlyphOverview extends GlyphOverviewView {
 
         if (summary.allAutomatic) {
             input.title =
-                'Automatic layers only accept =+/- or ==+/- sidebearing adjustments';
+                'Automatic drawings only accept =+/- or ==+/- sidebearing adjustments';
         }
         if (summary.anyError) {
             input.classList.add('invalid');
@@ -2573,9 +2582,9 @@ class GlyphOverview extends GlyphOverviewView {
             this.updatePropertyPanel();
             return;
         }
-        const layers = this.getSelectedOverviewLayers();
+        const drawings = this.getSelectedOverviewDrawings();
         if (
-            layers.length === 0 ||
+            drawings.length === 0 ||
             !this.canEditSparseGlyphs(this.getSelectedGlyphNames())
         ) {
             this.updatePropertyPanel();
@@ -2594,10 +2603,13 @@ class GlyphOverview extends GlyphOverviewView {
             compileEditType: null
         });
         try {
-            for (const layer of layers) {
-                const resolution = layer.applySidebearingInput(side, rawValue);
+            for (const drawing of drawings) {
+                const resolution = drawing.applySidebearingInput(
+                    side,
+                    rawValue
+                );
                 if (resolution?.rejected) {
-                    // The same key is refused for every layer.
+                    // The same key is refused for every drawing.
                     if (resolution.error) {
                         showNotice(resolution.error);
                     }

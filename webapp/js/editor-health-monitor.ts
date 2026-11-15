@@ -35,7 +35,7 @@ export type EditorHealthSnapshot = {
     editMode: boolean;
     selectedGlyphName: string | null;
     glyphStack: string;
-    layerDataPresent: boolean;
+    drawingDataPresent: boolean;
     glyphSelectedAt: number | null;
     pendingInterpolateCount: number;
     oldestPendingInterpolateAt: number | null;
@@ -98,7 +98,7 @@ export function evaluateEditorHealth(
         snapshot.editMode &&
         glyphLooksReal &&
         !snapshot.glyphStack &&
-        !snapshot.layerDataPresent &&
+        !snapshot.drawingDataPresent &&
         !hasExplainedWork(snapshot) &&
         snapshot.glyphSelectedAt != null &&
         now - snapshot.glyphSelectedAt >= STACK_STALL_REVEAL_MS
@@ -303,7 +303,7 @@ class EditorHealthMonitor {
             editMode,
             selectedGlyphName,
             glyphStack: canvas?.outlineEditor?.glyphStack || '',
-            layerDataPresent: Boolean(canvas?.outlineEditor?.layerData),
+            drawingDataPresent: Boolean(canvas?.outlineEditor?.drawingData),
             glyphSelectedAt: this.glyphSelectedAt,
             pendingInterpolateCount: pending?.size ?? 0,
             oldestPendingInterpolateAt,

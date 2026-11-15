@@ -1,7 +1,7 @@
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-describe('fonteditor Layer.selection bridge', () => {
+describe('fonteditor Drawing.selection bridge', () => {
     test('supports live list mutation and assignment in Python', () => {
         const helperPath = path.join(
             __dirname,

@@ -207,7 +207,7 @@ function buildComponentsTableHtml(glyphNames: string[]): string {
 
 function buildKernPairTableHtml(
     heading: string,
-    masters: Array<{ id: string; label: string }>,
+    stations: Array<{ id: string; label: string }>,
     pairs: Array<{
         left: string;
         right: string;
@@ -221,8 +221,8 @@ function buildKernPairTableHtml(
             <div class="delete-glyphs-preview-empty">No pairs</div>
         </section>`;
     }
-    const masterHeaders = masters
-        .map((master) => `<th>${escapeHtml(master.label || master.id)}</th>`)
+    const stationHeaders = stations
+        .map((station) => `<th>${escapeHtml(station.label || station.id)}</th>`)
         .join('');
     const body = pairs
         .map((pair) => {
@@ -251,7 +251,7 @@ function buildKernPairTableHtml(
                 <tr>
                     <th>Left</th>
                     <th>Right</th>
-                    ${masterHeaders}
+                    ${stationHeaders}
                 </tr>
             </thead>
             <tbody>${body}</tbody>
@@ -266,15 +266,15 @@ function buildKerningPreviewHtml(preflight: GlyphDeletePreflight): string {
     ) {
         return '<div class="delete-glyphs-preview-empty">No kerning pairs</div>';
     }
-    const masters = preflight.kerningMasters || [];
+    const stations = preflight.kerningStations || [];
     const legend = `<p class="delete-glyphs-preview-legend">
         <span class="delete-glyphs-kern-legend-remove">Bold red</span> pairs are removed.
         Normal pairs keep their class kerning; only the deleted glyph leaves the class.
     </p>`;
     return (
         legend +
-        buildKernPairTableHtml('LTR', masters, preflight.kerningLtrHits) +
-        buildKernPairTableHtml('RTL', masters, preflight.kerningRtlHits)
+        buildKernPairTableHtml('LTR', stations, preflight.kerningLtrHits) +
+        buildKernPairTableHtml('RTL', stations, preflight.kerningRtlHits)
     );
 }
 

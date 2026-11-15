@@ -36,41 +36,41 @@ function updateStoredFontJsonFromYDoc() {
     storedFontJson = JSON.stringify(jsonValue);
 }
 
-function normalizeLayerMaster(master, isBackground) {
-    if (!master || typeof master !== 'object') {
-        return master;
+function normalizeDrawingStation(station, isBackground) {
+    if (!station || typeof station !== 'object') {
+        return station;
     }
 
     if (
-        master.type === 'DefaultForMaster' ||
-        master.type === 'AssociatedWithMaster' ||
-        master.type === 'FreeFloating'
+        station.type === 'DefaultForMaster' ||
+        station.type === 'AssociatedWithMaster' ||
+        station.type === 'FreeFloating'
     ) {
-        return master;
+        return station;
     }
 
-    if (typeof master.DefaultForMaster === 'string') {
-        if (master.DefaultForMaster || !isBackground) {
+    if (typeof station.DefaultForMaster === 'string') {
+        if (station.DefaultForMaster || !isBackground) {
             return {
                 type: 'DefaultForMaster',
-                master: master.DefaultForMaster
+                master: station.DefaultForMaster
             };
         }
         return { type: 'FreeFloating' };
     }
 
-    if (typeof master.AssociatedWithMaster === 'string') {
+    if (typeof station.AssociatedWithMaster === 'string') {
         return {
             type: 'AssociatedWithMaster',
-            master: master.AssociatedWithMaster
+            master: station.AssociatedWithMaster
         };
     }
 
-    if ('FreeFloating' in master) {
+    if ('FreeFloating' in station) {
         return { type: 'FreeFloating' };
     }
 
-    return master;
+    return station;
 }
 
 function normalizeBabelfontFixture(data) {
@@ -83,10 +83,10 @@ function normalizeBabelfontFixture(data) {
             continue;
         }
 
-        for (const layer of glyph.layers) {
-            layer.master = normalizeLayerMaster(
-                layer.master,
-                Boolean(layer.is_background)
+        for (const drawing of glyph.layers) {
+            drawing.master = normalizeDrawingStation(
+                drawing.master,
+                Boolean(drawing.is_background)
             );
         }
     }
@@ -139,13 +139,13 @@ initBabelfontWasm.apply_yjs_update = jest.fn((update, changedGlyphsJson) => {
     const changedGlyphs = Array.isArray(parsedMetadata)
         ? parsedMetadata
         : parsedMetadata.changedGlyphs || [];
-    const layerTargets = Array.isArray(parsedMetadata)
+    const drawingTargets = Array.isArray(parsedMetadata)
         ? []
         : parsedMetadata.layerTargets || [];
     if (!storedYDoc) {
         return JSON.stringify({
             changedGlyphs,
-            changedLayerIds: layerTargets.map((target) => target.layerId),
+            changedLayerIds: drawingTargets.map((target) => target.layerId),
             skipped: 'ydoc_not_initialized'
         });
     }
@@ -155,7 +155,7 @@ initBabelfontWasm.apply_yjs_update = jest.fn((update, changedGlyphsJson) => {
 
     return JSON.stringify({
         changedGlyphs,
-        changedLayerIds: layerTargets.map((target) => target.layerId)
+        changedLayerIds: drawingTargets.map((target) => target.layerId)
     });
 });
 initBabelfontWasm.reinterpolate_master_layers_yjs = jest.fn(() => ({

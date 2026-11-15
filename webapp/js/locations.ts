@@ -149,7 +149,7 @@ function extrapolateUserspaceForDesignspace(
 }
 
 /**
- * Extend axis userspace min/max (and map endpoints when present) so a master
+ * Extend axis userspace min/max (and map endpoints when present) so a station
  * designspace location is inside the declared axis range. Returns a cloned
  * axes array; `changed` is false when no extension was required.
  */

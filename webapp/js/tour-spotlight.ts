@@ -44,7 +44,7 @@ export const TOUR_FADE_MS = 500;
 const FADE_MS = TOUR_FADE_MS;
 /** After the text-buffer spotlight fades in, pause so the user can refocus. */
 export const TOUR_POST_FADE_BEFORE_APPLY_MS = 500;
-/** Watch the applied click (feature / master) before the next slide. */
+/** Watch the applied click (feature / station) before the next slide. */
 export const TOUR_AFTER_APPLY_MS = 1500;
 /** Native slider / glyph reaction: short hold before the next slide. */
 export const TOUR_AFTER_SLIDER_MS = 500;
@@ -76,7 +76,7 @@ type SpotlightHost = {
     maskBg: SVGRectElement | null;
     dimmerRect: SVGRectElement | null;
     maskPath: SVGPathElement | null;
-    hitLayer: HTMLElement | null;
+    hitDrawing: HTMLElement | null;
     tooltip: HTMLElement | null;
     tippy: TippyInstance | null;
     slide: TourSlide | null;
@@ -104,7 +104,7 @@ function getHost(): SpotlightHost {
             maskBg: null,
             dimmerRect: null,
             maskPath: null,
-            hitLayer: null,
+            hitDrawing: null,
             tooltip: null,
             tippy: null,
             slide: null,
@@ -546,19 +546,19 @@ function shouldPaintTourGeometry(host: SpotlightHost): boolean {
     );
 }
 
-async function waitUntilLayerSwitchSettled(): Promise<true> {
+async function waitUntilDrawingSwitchSettled(): Promise<true> {
     const editor = window.glyphCanvas?.outlineEditor;
-    if (typeof editor?.isLayerSwitchAnimating !== 'boolean') {
+    if (typeof editor?.isDrawingSwitchAnimating !== 'boolean') {
         return true;
     }
     const started = Date.now();
     while (Date.now() - started < 400) {
-        if (editor.isLayerSwitchAnimating) {
+        if (editor.isDrawingSwitchAnimating) {
             break;
         }
         await wait(16);
     }
-    while (editor.isLayerSwitchAnimating && Date.now() - started < 4000) {
+    while (editor.isDrawingSwitchAnimating && Date.now() - started < 4000) {
         await wait(16);
     }
     return true;
@@ -862,7 +862,7 @@ function bindSlideInteraction(slide: TourSlide): void {
             if (slide.advanceOnClickPassThrough) {
                 void finishWithReaction(
                     slide.trackCutoutsWhileAdvancing
-                        ? waitUntilLayerSwitchSettled
+                        ? waitUntilDrawingSwitchSettled
                         : undefined,
                     {
                         previewTextBeforeApply: false,
@@ -1312,7 +1312,7 @@ function paintSpotlight(
         !host.maskPath ||
         !host.maskBg ||
         !host.dimmerRect ||
-        !host.hitLayer ||
+        !host.hitDrawing ||
         !host.tippy
     ) {
         return;
@@ -1348,7 +1348,7 @@ function paintSpotlight(
               .filter(({ cutout }) => cutout.interactive)
               .map(({ hitRect }) => hitRect)
         : [];
-    host.hitLayer.replaceChildren();
+    host.hitDrawing.replaceChildren();
     for (const piece of coverViewportMinusHoles(
         width,
         height,
@@ -1362,7 +1362,7 @@ function paintSpotlight(
         el.style.top = `${piece.top}px`;
         el.style.width = `${piece.width}px`;
         el.style.height = `${piece.height}px`;
-        host.hitLayer.append(el);
+        host.hitDrawing.append(el);
     }
 
     if (options?.showTooltip === false) {
@@ -1508,8 +1508,8 @@ function bindSpotlightChrome(): void {
     dimmerRect.setAttribute('mask', 'url(#tour-cutout-mask)');
     svg.append(defs, dimmerRect);
 
-    const hitLayer = document.createElement('div');
-    hitLayer.className = 'tour-spotlight-hit';
+    const hitDrawing = document.createElement('div');
+    hitDrawing.className = 'tour-spotlight-hit';
 
     const anchor = document.createElement('div');
     anchor.className = 'tour-tooltip-anchor';
@@ -1519,7 +1519,7 @@ function bindSpotlightChrome(): void {
     tooltip.setAttribute('role', 'dialog');
     tooltip.setAttribute('aria-modal', 'true');
 
-    root.append(svg, hitLayer, anchor);
+    root.append(svg, hitDrawing, anchor);
     document.body.append(root);
 
     host.root = root;
@@ -1527,7 +1527,7 @@ function bindSpotlightChrome(): void {
     host.maskBg = maskBg;
     host.dimmerRect = dimmerRect;
     host.maskPath = path;
-    host.hitLayer = hitLayer;
+    host.hitDrawing = hitDrawing;
     host.tooltip = tooltip;
     host.tippy = tippy(anchor, {
         content: tooltip,
@@ -1813,11 +1813,11 @@ export async function beginTourSlideRestore(): Promise<void> {
     setTooltipVisible(false);
     setCutoutsVisible(false);
     clearTourDrawingGuides();
-    host.hitLayer?.replaceChildren();
+    host.hitDrawing?.replaceChildren();
     const blocker = document.createElement('div');
     blocker.className = 'tour-spotlight-hit-piece';
     blocker.style.inset = '0';
-    host.hitLayer?.append(blocker);
+    host.hitDrawing?.append(blocker);
     await wait(FADE_MS);
 }
 
@@ -1877,7 +1877,7 @@ export function hideTourSpotlight(): void {
         host.maskBg = null;
         host.dimmerRect = null;
         host.maskPath = null;
-        host.hitLayer = null;
+        host.hitDrawing = null;
         host.tooltip = null;
     }, FADE_MS);
 }

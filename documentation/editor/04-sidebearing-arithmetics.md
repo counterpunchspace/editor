@@ -8,7 +8,7 @@ With nothing selected on the canvas, the editor property panel shows left and ri
 
 Each field takes a number or a metrics key. The resolved value sits next to the input, so you can keep `=n+10` in the field and still see the spacing that is applied.
 
-An empty field clears the metrics key for that side. On a fully auto-aligned component layer with no key, the field stays empty.
+An empty field clears the metrics key for that side. On a fully auto-aligned component drawing with no key, the field stays empty.
 
 ## Notation
 
@@ -22,13 +22,13 @@ A number stores that sidebearing and **clears** any metrics key:
 - `-15`
 - `+20`
 
-### Glyph-wide keys (`=`) versus layer-local keys (`==`)
+### Glyph-wide keys (`=`) versus drawing-local keys (`==`)
 
-A leading `=` stores a **glyph-wide** metrics key: every layer of that glyph uses it unless a layer overrides it.
+A leading `=` stores a **glyph-wide** metrics key: every drawing of that glyph uses it unless a drawing overrides it.
 
-A leading `==` stores the same kind of key **only on the current layer**. After the extra `=`, the rest of the string is parsed the same way. Use `==` when most layers should follow the glyph-wide key but one master needs an exception.
+A leading `==` stores the same kind of key **only on the current drawing**. After the extra `=`, the rest of the string is parsed the same way. Use `==` when most drawings should follow the glyph-wide key but one drawing needs an exception.
 
-`==n`, `==+10`, `==-20`, and `==|H-10` are the layer-local counterparts of `=n`, `=+10`, `=-20`, and `=|H-10`.
+`==n`, `==+10`, `==-20`, and `==|H-10` are the drawing-local counterparts of `=n`, `=+10`, `=-20`, and `=|H-10`.
 
 ### Constants (`=40`)
 
@@ -36,18 +36,18 @@ A leading `==` stores the same kind of key **only on the current layer**. After 
 
 - `=40`
 
-Unsigned constants are rejected on fully auto-aligned component layers. For a signed pin such as `-20` on a normal layer, use `=-20` (below).
+Unsigned constants are rejected on fully auto-aligned component drawings. For a signed pin such as `-20` on a normal drawing, use `=-20` (below).
 
 ### Signed formulas (`=+10`, `=-15`)
 
 `=` or `==` followed immediately by a **signed** number (has + or - sign) is one syntax with two meanings:
 
 - `=+10`, `=-15`
-- `==+10`, `==-15` (layer-local)
+- `==+10`, `==-15` (drawing-local)
 
-On a **normal layer**, `=+40` pins the sidebearing to that number and keeps the formula after later outline edits. `=-20` means the sidebearing is always `-20`. A plain `-20` (no `=`) also sets `-20`, but **clears** the formula.
+On a **normal drawing**, `=+40` pins the sidebearing to that number and keeps the formula after later outline edits. `=-20` means the sidebearing is always `-20`. A plain `-20` (no `=`) also sets `-20`, but **clears** the formula.
 
-On a **fully auto-aligned component layer**, the same syntax is an **offset**: auto-aligned spacing plus that delta. Those layers accept **only** this signed form (`=+…` / `=-…` / `==+…` / `==-…`). References, unsigned constants, and plain numbers are rejected there.
+On a **fully auto-aligned component drawing**, the same syntax is an **offset**: auto-aligned spacing plus that delta. Those drawings accept **only** this signed form (`=+…` / `=-…` / `==+…` / `==-…`). References, unsigned constants, and plain numbers are rejected there.
 
 ### Glyph References
 
@@ -61,7 +61,7 @@ The leading `=` is optional for references, so `n` is accepted as well as `=n`.
 | `=H+20`, `=o-10` | Referenced sidebearing plus or minus a value |
 | `=H*2`, `=n/2` | Multiply or divide the referenced sidebearing |
 | `=\|n`, `=\|H-10` | Opposite side of the referenced glyph, then optional arithmetic |
-| `=\|` | Opposite side of **this** layer (nothing after the pipe symbol) |
+| `=\|` | Opposite side of **this** drawing (nothing after the pipe symbol) |
 | `=c@200` | Measure this outline and `c` at y = 200, then apply the difference (not a copy of `c`’s stored sidebearing) |
 | `=o@300+15`, `=c@-50` | Height sample, then optional `+` `-` `*` `/` number. Height may be signed. |
 | `=\|c@200+15` | Mirror, height, and arithmetic together |
@@ -70,7 +70,7 @@ The arithmetic suffix is exactly one operator and a number: `+`, `-`, `*`, or `/
 
 ### Combinations with `==`
 
-Any reference form can be layer-local:
+Any reference form can be drawing-local:
 
 - `==n`
 - `==|H-10`
@@ -83,8 +83,8 @@ Dependents recompute when a source glyph’s spacing changes. If a formula canno
 
 ## Best practice
 
-A useful pattern: set spacing on a few base glyphs, formula-link similar-looking other base glyphs on either side, use `==` only for a layer that must break the shared rule, and use `@height` when the optical relationship lives at a vertical slice rather than the overall margin.
+A useful pattern: set spacing on a few base glyphs, formula-link similar-looking other base glyphs on either side, use `==` only for a drawing that must break the shared rule, and use `@height` when the optical relationship lives at a vertical slice rather than the overall margin.
 
 Automatically composed base glyphs inherit the base glyph’s sidebearings by default. Set sidebearings on composed glyphs only for overrides. Which alignments the engine can produce is in [Automatic composition](07-automatic-composition.md).
 
-Related: [Glyph editor](01-glyph-editor.md), [Axes and masters](03-axes-masters.md), [Undo and history](../reference/undo-and-history-scopes.md).
+Related: [Glyph editor](01-glyph-editor.md), [Axes and stations](03-axes-stations.md), [Undo and history](../reference/undo-and-history-scopes.md).

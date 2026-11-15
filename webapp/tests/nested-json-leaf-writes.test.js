@@ -13,12 +13,12 @@ const {
     stabilizeIndexedMapPath
 } = require('../js/change-bridge-ydoc');
 const {
-    writeLayerGeometry,
+    writeDrawingGeometry,
     writeNodePosition,
-    readLayerGeometry,
-    LAYER_GEOMETRY_TOPOLOGY_KEY,
-    LAYER_NODE_POSITIONS_KEY
-} = require('../js/layer-geometry-ydoc');
+    readDrawingGeometry,
+    DRAWING_GEOMETRY_TOPOLOGY_KEY,
+    DRAWING_NODE_POSITIONS_KEY
+} = require('../js/drawing-geometry-ydoc');
 
 function captureIncremental(doc, mutate) {
     const stateVector = Y.encodeStateVector(doc);
@@ -272,10 +272,10 @@ describe('nested JSON leaf writes', () => {
     test('two writers dragging different nodes merge both packed positions', () => {
         const Y = require('yjs');
         const {
-            writeLayerGeometry,
+            writeDrawingGeometry,
             writeNodePosition,
-            readLayerGeometry
-        } = require('../js/layer-geometry-ydoc');
+            readDrawingGeometry
+        } = require('../js/drawing-geometry-ydoc');
 
         const shapes = [
             {
@@ -288,20 +288,20 @@ describe('nested JSON leaf writes', () => {
             }
         ];
         const docA = new Y.Doc();
-        const layerA = docA.getMap('layer');
-        writeLayerGeometry(layerA, shapes);
+        const drawingA = docA.getMap('layer');
+        writeDrawingGeometry(drawingA, shapes);
         const updateA = Y.encodeStateAsUpdate(docA);
 
         const docB = new Y.Doc();
         Y.applyUpdate(docB, updateA);
-        const layerB = docB.getMap('layer');
+        const drawingB = docB.getMap('layer');
 
-        writeNodePosition(layerA, 'n1', 1, 2);
-        writeNodePosition(layerB, 'n2', 3, 4);
+        writeNodePosition(drawingA, 'n1', 1, 2);
+        writeNodePosition(drawingB, 'n2', 3, 4);
         Y.applyUpdate(docB, Y.encodeStateAsUpdate(docA));
         Y.applyUpdate(docA, Y.encodeStateAsUpdate(docB));
 
-        const reconstructed = readLayerGeometry(layerA);
+        const reconstructed = readDrawingGeometry(drawingA);
         expect(reconstructed[0].nodes[0]).toMatchObject({ x: 1, y: 2 });
         expect(reconstructed[0].nodes[1]).toMatchObject({ x: 3, y: 4 });
     });
@@ -309,9 +309,9 @@ describe('nested JSON leaf writes', () => {
     test('concurrent structural edits keep one complete topology', () => {
         const Y = require('yjs');
         const {
-            writeLayerGeometry,
-            readLayerGeometry
-        } = require('../js/layer-geometry-ydoc');
+            writeDrawingGeometry,
+            readDrawingGeometry
+        } = require('../js/drawing-geometry-ydoc');
 
         const base = [
             {
@@ -324,12 +324,12 @@ describe('nested JSON leaf writes', () => {
             }
         ];
         const docA = new Y.Doc();
-        writeLayerGeometry(docA.getMap('layer'), base);
+        writeDrawingGeometry(docA.getMap('layer'), base);
         const state = Y.encodeStateAsUpdate(docA);
         const docB = new Y.Doc();
         Y.applyUpdate(docB, state);
 
-        writeLayerGeometry(docA.getMap('layer'), [
+        writeDrawingGeometry(docA.getMap('layer'), [
             {
                 id: 'path-1',
                 closed: true,
@@ -338,7 +338,7 @@ describe('nested JSON leaf writes', () => {
                 ]
             }
         ]);
-        writeLayerGeometry(docB.getMap('layer'), [
+        writeDrawingGeometry(docB.getMap('layer'), [
             {
                 id: 'path-1',
                 closed: false,
@@ -351,7 +351,7 @@ describe('nested JSON leaf writes', () => {
         Y.applyUpdate(docB, Y.encodeStateAsUpdate(docA));
         Y.applyUpdate(docA, Y.encodeStateAsUpdate(docB));
 
-        const result = readLayerGeometry(docA.getMap('layer'));
+        const result = readDrawingGeometry(docA.getMap('layer'));
         expect(result).toHaveLength(1);
         expect(Array.isArray(result[0].nodes)).toBe(true);
         expect(result[0].nodes.length).toBeGreaterThan(0);
@@ -458,10 +458,10 @@ describe('nested JSON leaf writes', () => {
     test('two writers dragging the same node keep one coherent packed pair', () => {
         const Y = require('yjs');
         const {
-            writeLayerGeometry,
+            writeDrawingGeometry,
             writeNodePosition,
-            readLayerGeometry
-        } = require('../js/layer-geometry-ydoc');
+            readDrawingGeometry
+        } = require('../js/drawing-geometry-ydoc');
 
         const shapes = [
             {
@@ -473,7 +473,7 @@ describe('nested JSON leaf writes', () => {
             }
         ];
         const docA = new Y.Doc();
-        writeLayerGeometry(docA.getMap('layer'), shapes);
+        writeDrawingGeometry(docA.getMap('layer'), shapes);
         const state = Y.encodeStateAsUpdate(docA);
         const docB = new Y.Doc();
         Y.applyUpdate(docB, state);
@@ -483,8 +483,8 @@ describe('nested JSON leaf writes', () => {
         Y.applyUpdate(docB, Y.encodeStateAsUpdate(docA));
         Y.applyUpdate(docA, Y.encodeStateAsUpdate(docB));
 
-        const a = readLayerGeometry(docA.getMap('layer'))[0].nodes[0];
-        const b = readLayerGeometry(docB.getMap('layer'))[0].nodes[0];
+        const a = readDrawingGeometry(docA.getMap('layer'))[0].nodes[0];
+        const b = readDrawingGeometry(docB.getMap('layer'))[0].nodes[0];
         expect(a).toEqual(b);
         expect((a.x === 1 && a.y === 2) || (a.x === 8 && a.y === 9)).toBe(true);
     });
@@ -492,12 +492,12 @@ describe('nested JSON leaf writes', () => {
     test('coordinate edit survives reverse; removed-node orphans are ignored', () => {
         const Y = require('yjs');
         const {
-            writeLayerGeometry,
+            writeDrawingGeometry,
             writeNodePosition,
-            readLayerGeometry,
-            repairLayerGeometryOrphans,
-            LAYER_NODE_POSITIONS_KEY
-        } = require('../js/layer-geometry-ydoc');
+            readDrawingGeometry,
+            repairDrawingGeometryOrphans,
+            DRAWING_NODE_POSITIONS_KEY
+        } = require('../js/drawing-geometry-ydoc');
 
         const base = [
             {
@@ -510,13 +510,13 @@ describe('nested JSON leaf writes', () => {
             }
         ];
         const docA = new Y.Doc();
-        writeLayerGeometry(docA.getMap('layer'), base);
+        writeDrawingGeometry(docA.getMap('layer'), base);
         const state = Y.encodeStateAsUpdate(docA);
         const docB = new Y.Doc();
         Y.applyUpdate(docB, state);
 
         writeNodePosition(docA.getMap('layer'), 'n1', 5, 6);
-        writeLayerGeometry(docB.getMap('layer'), [
+        writeDrawingGeometry(docB.getMap('layer'), [
             {
                 id: 'path-1',
                 closed: true,
@@ -529,7 +529,7 @@ describe('nested JSON leaf writes', () => {
         Y.applyUpdate(docB, Y.encodeStateAsUpdate(docA));
         Y.applyUpdate(docA, Y.encodeStateAsUpdate(docB));
 
-        const reconstructed = readLayerGeometry(docA.getMap('layer'));
+        const reconstructed = readDrawingGeometry(docA.getMap('layer'));
         expect(reconstructed).toHaveLength(1);
         const n1 = reconstructed[0].nodes.find((node) => node.id === 'n1');
         expect(n1).toMatchObject({ x: 5, y: 6 });
@@ -538,7 +538,7 @@ describe('nested JSON leaf writes', () => {
             'n2'
         ]);
 
-        writeLayerGeometry(docA.getMap('layer'), [
+        writeDrawingGeometry(docA.getMap('layer'), [
             {
                 id: 'path-1',
                 closed: true,
@@ -548,7 +548,7 @@ describe('nested JSON leaf writes', () => {
             }
         ]);
         writeNodePosition(docA.getMap('layer'), 'n2', 99, 99);
-        writeLayerGeometry(docA.getMap('layer'), [
+        writeDrawingGeometry(docA.getMap('layer'), [
             {
                 id: 'path-1',
                 closed: true,
@@ -558,24 +558,24 @@ describe('nested JSON leaf writes', () => {
             }
         ]);
         expect(
-            docA.getMap('layer').get(LAYER_NODE_POSITIONS_KEY).get('n2')
+            docA.getMap('layer').get(DRAWING_NODE_POSITIONS_KEY).get('n2')
         ).toBe('99 99');
-        expect(readLayerGeometry(docA.getMap('layer'))[0].nodes).toHaveLength(
+        expect(readDrawingGeometry(docA.getMap('layer'))[0].nodes).toHaveLength(
             1
         );
-        repairLayerGeometryOrphans(docA.getMap('layer'));
+        repairDrawingGeometryOrphans(docA.getMap('layer'));
         expect(
-            docA.getMap('layer').get(LAYER_NODE_POSITIONS_KEY).get('n2')
+            docA.getMap('layer').get(DRAWING_NODE_POSITIONS_KEY).get('n2')
         ).toBeUndefined();
     });
 
     test('packed position write is much smaller than a topology replacement', () => {
         const Y = require('yjs');
         const {
-            writeLayerGeometry,
+            writeDrawingGeometry,
             writeNodePosition,
-            LAYER_GEOMETRY_TOPOLOGY_KEY
-        } = require('../js/layer-geometry-ydoc');
+            DRAWING_GEOMETRY_TOPOLOGY_KEY
+        } = require('../js/drawing-geometry-ydoc');
 
         const nodes = [];
         for (let i = 0; i < 40; i++) {
@@ -589,22 +589,24 @@ describe('nested JSON leaf writes', () => {
         }
         const shapes = [{ id: 'path-1', closed: true, nodes }];
         const doc = new Y.Doc();
-        const layer = doc.getMap('layer');
-        writeLayerGeometry(layer, shapes);
+        const drawing = doc.getMap('layer');
+        writeDrawingGeometry(drawing, shapes);
 
         const afterSeed = Y.encodeStateVector(doc);
-        writeNodePosition(layer, 'n0', 100, 200);
+        writeNodePosition(drawing, 'n0', 100, 200);
         const packedUpdate = Y.encodeStateAsUpdate(doc, afterSeed);
 
         const afterPacked = Y.encodeStateVector(doc);
         const moved = nodes.map((node, index) =>
             index === 0 ? { ...node, nodetype: 'Curve' } : node
         );
-        writeLayerGeometry(layer, [
+        writeDrawingGeometry(drawing, [
             { id: 'path-1', closed: true, nodes: moved }
         ]);
         const topologyUpdate = Y.encodeStateAsUpdate(doc, afterPacked);
-        expect(typeof layer.get(LAYER_GEOMETRY_TOPOLOGY_KEY)).toBe('string');
+        expect(typeof drawing.get(DRAWING_GEOMETRY_TOPOLOGY_KEY)).toBe(
+            'string'
+        );
         expectSparseYjsPacket(packedUpdate, topologyUpdate, 200);
     });
 });
@@ -851,15 +853,15 @@ describe('section 1 sparse Yjs packets', () => {
             setYPath(doc.getMap('font'), path, nextTransform);
         });
         const fat = captureIncremental(fatDoc, () => {
-            const layer = fatDoc
+            const drawing = fatDoc
                 .getMap('font')
                 .get('glyphs')
                 .get('A')
                 .get('layers')
                 .get('layer-1');
-            const shapes = fromYType(layer).shapes;
+            const shapes = fromYType(drawing).shapes;
             shapes[1].transform = nextTransform;
-            layer.set('shapes', toYType(shapes));
+            drawing.set('shapes', toYType(shapes));
         });
         expectSparseYjsPacket(sparse, fat);
     });
@@ -980,10 +982,10 @@ describe('section 1 sparse Yjs packets', () => {
         }
         const shapes = [{ id: 'path-1', closed: true, nodes }];
         const doc = new Y.Doc();
-        const layer = doc.getMap('layer');
-        writeLayerGeometry(layer, shapes);
+        const drawing = doc.getMap('layer');
+        writeDrawingGeometry(drawing, shapes);
         const sparse = captureIncremental(doc, () => {
-            writeNodePosition(layer, 'n0', 100, 200);
+            writeNodePosition(drawing, 'n0', 100, 200);
         });
         // Coordinate-only writeLayerGeometry now skips unchanged topology, so
         // compare against an explicit topology rewrite (node type change).
@@ -992,7 +994,7 @@ describe('section 1 sparse Yjs packets', () => {
             const moved = nodes.map((node, index) =>
                 index === 0 ? { ...node, nodetype: 'Curve' } : node
             );
-            writeLayerGeometry(topologyDoc.getMap('layer'), [
+            writeDrawingGeometry(topologyDoc.getMap('layer'), [
                 { id: 'path-1', closed: true, nodes: moved }
             ]);
         });
@@ -1009,28 +1011,28 @@ describe('section 1 sparse Yjs packets', () => {
             smooth: false
         }));
         const packedDoc = new Y.Doc({ gc: false });
-        const packedLayer = packedDoc.getMap('layer');
-        writeLayerGeometry(packedLayer, [
+        const packedDrawing = packedDoc.getMap('layer');
+        writeDrawingGeometry(packedDrawing, [
             { id: 'path-1', closed: true, nodes }
         ]);
         const undo = new Y.UndoManager(
-            packedLayer.get(LAYER_NODE_POSITIONS_KEY)
+            packedDrawing.get(DRAWING_NODE_POSITIONS_KEY)
         );
         for (let index = 0; index < 6; index++) {
-            writeNodePosition(packedLayer, 'n0', index + 100, 0);
+            writeNodePosition(packedDrawing, 'n0', index + 100, 0);
             undo.stopCapturing();
         }
         undo.undo();
-        expect(readLayerGeometry(packedLayer)[0].nodes[0].x).toBe(104);
+        expect(readDrawingGeometry(packedDrawing)[0].nodes[0].x).toBe(104);
         const packedRetention = Y.encodeStateAsUpdate(packedDoc).byteLength;
 
         const topologyDoc = new Y.Doc({ gc: false });
-        const topologyLayer = topologyDoc.getMap('layer');
-        writeLayerGeometry(topologyLayer, [
+        const topologyDrawing = topologyDoc.getMap('layer');
+        writeDrawingGeometry(topologyDrawing, [
             { id: 'path-1', closed: true, nodes }
         ]);
         for (let index = 0; index < 6; index++) {
-            writeLayerGeometry(topologyLayer, [
+            writeDrawingGeometry(topologyDrawing, [
                 {
                     id: 'path-1',
                     closed: true,
@@ -1061,27 +1063,27 @@ describe('section 1 sparse Yjs packets', () => {
             });
         }
         const doc = new Y.Doc();
-        const layer = doc.getMap('layer');
-        writeLayerGeometry(layer, [{ id: 'path-1', closed: true, nodes }]);
+        const drawing = doc.getMap('layer');
+        writeDrawingGeometry(drawing, [{ id: 'path-1', closed: true, nodes }]);
         const fatDoc = cloneDoc(doc);
         const reversed = [...nodes].reverse();
         const sparse = captureIncremental(doc, () => {
-            writeLayerGeometry(layer, [
+            writeDrawingGeometry(drawing, [
                 { id: 'path-1', closed: true, nodes: reversed }
             ]);
         });
         const fat = captureIncremental(fatDoc, () => {
-            const fatLayer = fatDoc.getMap('layer');
-            writeLayerGeometry(fatLayer, [
+            const fatDrawing = fatDoc.getMap('layer');
+            writeDrawingGeometry(fatDrawing, [
                 { id: 'path-1', closed: true, nodes: reversed }
             ]);
             for (const node of reversed) {
-                writeNodePosition(fatLayer, node.id, node.x, node.y);
+                writeNodePosition(fatDrawing, node.id, node.x, node.y);
             }
         });
         expectSparseYjsPacket(sparse, fat);
-        expect(layer.get(LAYER_NODE_POSITIONS_KEY).get('n0')).toBe('0 0');
-        expect(layer.get(LAYER_GEOMETRY_TOPOLOGY_KEY)).toContain('"n39"');
+        expect(drawing.get(DRAWING_NODE_POSITIONS_KEY).get('n0')).toBe('0 0');
+        expect(drawing.get(DRAWING_GEOMETRY_TOPOLOGY_KEY)).toContain('"n39"');
     });
 
     test('deleting a node leaves a harmless orphan, not a full position rewrite', () => {
@@ -1096,27 +1098,29 @@ describe('section 1 sparse Yjs packets', () => {
             });
         }
         const doc = new Y.Doc();
-        const layer = doc.getMap('layer');
-        writeLayerGeometry(layer, [{ id: 'path-1', closed: true, nodes }]);
+        const drawing = doc.getMap('layer');
+        writeDrawingGeometry(drawing, [{ id: 'path-1', closed: true, nodes }]);
         const fatDoc = cloneDoc(doc);
         const kept = nodes.slice(0, -1);
         const sparse = captureIncremental(doc, () => {
-            writeLayerGeometry(layer, [
+            writeDrawingGeometry(drawing, [
                 { id: 'path-1', closed: true, nodes: kept }
             ]);
         });
         const fat = captureIncremental(fatDoc, () => {
-            const fatLayer = fatDoc.getMap('layer');
-            writeLayerGeometry(fatLayer, [
+            const fatDrawing = fatDoc.getMap('layer');
+            writeDrawingGeometry(fatDrawing, [
                 { id: 'path-1', closed: true, nodes: kept }
             ]);
             for (const node of kept) {
-                writeNodePosition(fatLayer, node.id, node.x, node.y);
+                writeNodePosition(fatDrawing, node.id, node.x, node.y);
             }
         });
         expectSparseYjsPacket(sparse, fat);
-        expect(layer.get(LAYER_NODE_POSITIONS_KEY).get('n19')).toBe('19 19');
-        expect(layer.get(LAYER_NODE_POSITIONS_KEY).get('n0')).toBe('0 0');
+        expect(drawing.get(DRAWING_NODE_POSITIONS_KEY).get('n19')).toBe(
+            '19 19'
+        );
+        expect(drawing.get(DRAWING_NODE_POSITIONS_KEY).get('n0')).toBe('0 0');
     });
 
     test('live getter leaf write emits a sparse collab packet', () => {
@@ -1226,7 +1230,7 @@ describe('section 1 sparse Yjs packets', () => {
         const font = Font.fromData(json);
         const fatDoc = cloneDoc(bridge.yDoc);
         const packets = captureBridgePackets(bridge, () => {
-            font.masters[0].kerning_rtl = { 'a:v': -20 };
+            font.stations[0].kerning_rtl = { 'a:v': -20 };
         });
         expect(packetBytes(packets)).toBeGreaterThan(0);
         const fat = captureIncremental(fatDoc, () => {
@@ -1273,7 +1277,7 @@ describe('section 1 sparse Yjs packets', () => {
         );
         const fatDoc = cloneDoc(glyphDoc);
         const packets = captureBridgePackets(bridge, () => {
-            font.findGlyph('A').layers[0].lsb = 50;
+            font.findGlyph('A').drawings[0].lsb = 50;
         });
         expect(packetBytes(packets)).toBeGreaterThan(0);
         const moved = json.glyphs[0].layers[0].shapes[0].nodes.map((node) => ({
@@ -1282,8 +1286,8 @@ describe('section 1 sparse Yjs packets', () => {
         }));
         const fatUpdate = captureIncremental(fatDoc, () => {
             const glyphMap = fatDoc.getMap('glyph');
-            const layer = glyphMap.get('layers').get('layer-1');
-            layer.set(
+            const drawing = glyphMap.get('layers').get('layer-1');
+            drawing.set(
                 'shapes',
                 toYType([
                     {
@@ -1323,7 +1327,7 @@ describe('section 1 sparse Yjs packets', () => {
         const font = Font.fromData(json);
         const oldNodes = font
             .findGlyph('A')
-            .layers[0].shapes[0].asPath()
+            .drawings[0].shapes[0].asPath()
             .toJSON().nodes;
         const kept = oldNodes.slice(0, 1);
         const removedId = oldNodes[1].id;
@@ -1370,15 +1374,15 @@ describe('section 1 sparse Yjs packets', () => {
         for (const packet of packets) {
             Y.applyUpdate(replica, packet.update);
         }
-        const replicaLayer = replica
+        const replicaDrawing = replica
             .getMap('glyph')
             .get('layers')
             .get('layer-1');
-        expect(replicaLayer.get(LAYER_NODE_POSITIONS_KEY).get(removedId)).toBe(
-            '10 10'
-        );
         expect(
-            replicaLayer.get(LAYER_NODE_POSITIONS_KEY).get(oldNodes[0].id)
+            replicaDrawing.get(DRAWING_NODE_POSITIONS_KEY).get(removedId)
+        ).toBe('10 10');
+        expect(
+            replicaDrawing.get(DRAWING_NODE_POSITIONS_KEY).get(oldNodes[0].id)
         ).toBe('0 0');
         bridge.destroy();
     });

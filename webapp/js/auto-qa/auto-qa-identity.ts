@@ -152,18 +152,18 @@ export function componentIdentity(
     };
 }
 
-export function layerComponentIdentities(
+export function drawingComponentIdentities(
     glyph: Glyph,
     glyphsByName: Map<string, Glyph>
 ): string[][] {
     const sequences: string[][] = [];
-    for (const layer of glyph.layers || []) {
-        if (layer.is_background) {
+    for (const drawing of glyph.drawings || []) {
+        if (drawing.is_background) {
             continue;
         }
         const identities: string[] = [];
         const seen = new Set<string>();
-        for (const component of layer.components || []) {
+        for (const component of drawing.components || []) {
             const ref = component.reference;
             if (typeof ref !== 'string' || !ref) {
                 continue;
@@ -186,7 +186,7 @@ export function componentIdentities(
 ): string[] {
     const identities: string[] = [];
     const seen = new Set<string>();
-    for (const sequence of layerComponentIdentities(glyph, glyphsByName)) {
+    for (const sequence of drawingComponentIdentities(glyph, glyphsByName)) {
         for (const identity of sequence) {
             if (!seen.has(identity)) {
                 seen.add(identity);
@@ -200,11 +200,11 @@ export function componentIdentities(
 export function anchorNames(glyph: Glyph): string[] {
     const names: string[] = [];
     const seen = new Set<string>();
-    for (const layer of glyph.layers || []) {
-        if (layer.is_background) {
+    for (const drawing of glyph.drawings || []) {
+        if (drawing.is_background) {
             continue;
         }
-        for (const anchor of layer.anchors || []) {
+        for (const anchor of drawing.anchors || []) {
             const name = anchor.name;
             if (typeof name === 'string' && name && !seen.has(name)) {
                 seen.add(name);
@@ -236,7 +236,7 @@ export function observeGlyph(
     if (!keyed) {
         return null;
     }
-    const sequences = layerComponentIdentities(glyph, glyphsByName);
+    const sequences = drawingComponentIdentities(glyph, glyphsByName);
     const components: string[] = [];
     const seen = new Set<string>();
     for (const sequence of sequences) {

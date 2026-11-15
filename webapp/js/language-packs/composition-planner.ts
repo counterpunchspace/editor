@@ -32,7 +32,7 @@ export interface CompositionRecipe {
 
 export interface AnchorPositionRequest {
     glyph_name: string;
-    master_id: string;
+    station_id: string;
     names: string[];
     role: string;
     band: string | null;
@@ -47,7 +47,7 @@ export interface CompositionProvider {
     anchorPositions(requests: AnchorPositionRequest[]): Promise<
         Array<{
             glyph_name: string;
-            master_id: string;
+            station_id: string;
             positions: Record<string, [number, number]>;
         }>
     >;
@@ -78,7 +78,7 @@ export interface GlyphDrawing {
 }
 
 export interface PlannedAnchor {
-    masterId: string;
+    stationId: string;
     name: string;
     x: number;
     y: number;
@@ -112,7 +112,7 @@ export interface CompositionPlan {
 export interface PlanFont {
     glyphNameForCodepoint(codepoint: number): string | undefined;
     hasGlyph(name: string): boolean;
-    masters: Array<{ id: string; metrics: Record<string, number> }>;
+    stations: Array<{ id: string; metrics: Record<string, number> }>;
     glyphNames?(): readonly string[];
     composition?(name: string): readonly string[];
 }
@@ -558,7 +558,7 @@ async function planRecords(
             }
             for (const [name, point] of Object.entries(row.positions)) {
                 glyph.anchors.push({
-                    masterId: row.master_id,
+                    stationId: row.station_id,
                     name,
                     x: point[0],
                     y: point[1]
@@ -593,14 +593,14 @@ function queueAnchors(
               : attaching === '_center'
                 ? 'overlay'
                 : 'above';
-    for (const master of font.masters) {
+    for (const station of font.stations) {
         requests.push({
             glyph_name: glyphName,
-            master_id: master.id,
+            station_id: station.id,
             names,
             role,
             band,
-            metrics: master.metrics,
+            metrics: station.metrics,
             width: 500,
             bbox: null
         });

@@ -43,7 +43,7 @@ export interface SaveSummary {
     fontName: string;
     /** Glyphs the save changed; null when it wrote the whole font. */
     glyphs: string[] | null;
-    /** Whether font-level data (info, masters, kerning, features) changed. */
+    /** Whether font-level data (info, stations, kerning, features) changed. */
     fontLevel: boolean;
 }
 
@@ -53,7 +53,7 @@ export interface CanAddGlyphsResult {
     reason?: string;
 }
 
-export interface MasterTopologyGate {
+export interface StationTopologyGate {
     allowed: boolean;
     reason?: string;
     /** Reopening with every glyph resident would lift the block. */
@@ -311,10 +311,10 @@ export abstract class FilesystemPlugin {
     }
 
     /**
-     * Whether masters may be added, removed, or reinterpolated. Those edits
-     * rewrite a layer on every glyph, so every glyph must be resident.
+     * Whether stations may be added, removed, or reinterpolated. Those edits
+     * rewrite a drawing on every glyph, so every glyph must be resident.
      */
-    getMasterTopologyGate(): MasterTopologyGate {
+    getStationTopologyGate(): StationTopologyGate {
         return { allowed: true };
     }
 

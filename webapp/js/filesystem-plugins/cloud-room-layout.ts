@@ -4,7 +4,7 @@
  *   features      `font.features`, stored as in font-core (root map `font`,
  *                 key `features`)
  *   catalog:<n>   the glyph catalog, glyphId → entry, root map `catalog`
- *   kerning:<n>   kerning pairs of every master, root map `kerning`,
+ *   kerning:<n>   kerning pairs of every station, root map `kerning`,
  *                 key `<masterId>|<l|r>|<first>:<second>` → value
  *
  * The bucket counts are fixed per asset and stored in font-core's `layout`
@@ -323,11 +323,11 @@ export function kerningPairFirstSide(pair: string): string {
 }
 
 export function kerningKey(
-    masterId: string,
+    stationId: string,
     direction: KerningDirection,
     pair: string
 ): string {
-    return `${masterId}|${direction}|${pair}`;
+    return `${stationId}|${direction}|${pair}`;
 }
 
 export function parseKerningKey(
@@ -358,7 +358,7 @@ export function readRoomLayoutFromCoreDoc(coreDoc: Y.Doc): RoomLayout | null {
 }
 
 /**
- * Put features, the catalog and master kerning from the layout rooms back
+ * Put features, the catalog and station kerning from the layout rooms back
  * into a font JSON assembled from font-core. Rooms that were not loaded
  * leave their part as it is.
  */
@@ -409,13 +409,13 @@ export function mergeLayoutDocumentsIntoFontJson(
         fontJson.codepointIndex = codepointIndexFromCatalog(catalog);
     }
     if (hasKerning && Array.isArray(fontJson.masters)) {
-        for (const master of fontJson.masters as Array<
+        for (const station of fontJson.masters as Array<
             Record<string, unknown>
         >) {
-            if (!master || typeof master !== 'object') continue;
-            const pairs = kerning.get(String(master.id ?? ''));
-            master.kerning = pairs?.l ?? {};
-            master.kerning_rtl = pairs?.r ?? {};
+            if (!station || typeof station !== 'object') continue;
+            const pairs = kerning.get(String(station.id ?? ''));
+            station.kerning = pairs?.l ?? {};
+            station.kerning_rtl = pairs?.r ?? {};
         }
     }
     return fontJson;
@@ -428,10 +428,10 @@ export function roomLayoutCounts(fontJson: Record<string, unknown>): {
 } {
     const glyphs = Array.isArray(fontJson.glyphs) ? fontJson.glyphs.length : 0;
     let kerningPairs = 0;
-    for (const master of Array.isArray(fontJson.masters)
+    for (const station of Array.isArray(fontJson.masters)
         ? fontJson.masters
         : []) {
-        const record = (master ?? {}) as Record<string, unknown>;
+        const record = (station ?? {}) as Record<string, unknown>;
         for (const field of ['kerning', 'kerning_rtl']) {
             kerningPairs += Object.keys(
                 flattenKerningMap(record[field])

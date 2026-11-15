@@ -25,15 +25,17 @@ type FontModel = {
     findGlyph?: (name: string) =>
         | {
               codepoints?: number[];
-              findLayerByMasterId?: (masterId: string) => FontLayer | null;
-              layers?: FontLayer[];
+              findDrawingByStationId?: (
+                  stationId: string
+              ) => FontDrawing | null;
+              drawings?: FontDrawing[];
           }
         | null
         | undefined;
 };
 
-type FontLayer = {
-    master?: { type?: string; master?: string };
+type FontDrawing = {
+    station?: { type?: string; master?: string };
     paths?: Array<{ nodes?: Array<{ x: number }> }>;
     anchors?: Array<{ name?: string; x?: number; y?: number }>;
     components?: Array<{
@@ -83,68 +85,73 @@ function fontUpm(): number {
     return upm && upm > 0 ? upm : 1000;
 }
 
-function glyphLayers(name: string): FontLayer[] {
-    return fontModel()?.findGlyph?.(name)?.layers || [];
+function glyphDrawings(name: string): FontDrawing[] {
+    return fontModel()?.findGlyph?.(name)?.drawings || [];
 }
 
-function isMasterLayer(layer: FontLayer): boolean {
-    return layer.master?.type === 'DefaultForMaster';
+function isStationDrawing(drawing: FontDrawing): boolean {
+    return drawing.station?.type === 'DefaultForMaster';
 }
 
 /**
- * The master layer for the selected master, else the first master layer.
+ * The drawing for the selected station, else the first station drawing.
  * `layers[0]` is only a fallback: Glyphs sources often list an associated
- * or intermediate layer before the master, and that layer can be empty.
+ * or free drawing before the station drawing, and that drawing can be empty.
  */
-function glyphLayer(name: string): FontLayer | null {
-    const layers = glyphLayers(name);
+function glyphDrawing(name: string): FontDrawing | null {
+    const layers = glyphDrawings(name);
     if (!layers.length) {
         return null;
     }
-    const masterId = (
+    const stationId = (
         window as Window & {
             glyphCanvas?: {
-                textRunEditor?: { selectedMasterId?: string | null };
+                textRunEditor?: { selectedStationId?: string | null };
             };
         }
-    ).glyphCanvas?.textRunEditor?.selectedMasterId;
-    if (masterId) {
+    ).glyphCanvas?.textRunEditor?.selectedStationId;
+    if (stationId) {
         const selected = layers.find(
-            (layer) => isMasterLayer(layer) && layer.master?.master === masterId
+            (drawing) =>
+                isStationDrawing(drawing) &&
+                drawing.station?.master === stationId
         );
         if (selected) {
             return selected;
         }
     }
-    return layers.find(isMasterLayer) || layers[0] || null;
+    return layers.find(isStationDrawing) || layers[0] || null;
 }
 
-function layerHasPathNodes(layer: FontLayer | null | undefined): boolean {
-    return (layer?.paths || []).some((path) => (path.nodes?.length || 0) > 0);
+function drawingHasPathNodes(drawing: FontDrawing | null | undefined): boolean {
+    return (drawing?.paths || []).some((path) => (path.nodes?.length || 0) > 0);
 }
 
-function layerHasComponents(layer: FontLayer | null | undefined): boolean {
-    return (layer?.components || []).some((component) => component.reference);
+function drawingHasComponents(
+    drawing: FontDrawing | null | undefined
+): boolean {
+    return (drawing?.components || []).some((component) => component.reference);
 }
 
-function masterLayers(name: string): FontLayer[] {
-    const layers = glyphLayers(name);
-    const masters = layers.filter(isMasterLayer);
-    return masters.length ? masters : layers;
+function stationDrawings(name: string): FontDrawing[] {
+    const layers = glyphDrawings(name);
+    const stations = layers.filter(isStationDrawing);
+    return stations.length ? stations : layers;
 }
 
 /**
- * True when any master layer already has outlines or components.
+ * True when any station drawing already has outlines or components.
  * Component names are not compared with a recipe: any reference counts.
  */
 function glyphIsComposed(name: string): boolean {
-    return masterLayers(name).some(
-        (layer) => layerHasPathNodes(layer) || layerHasComponents(layer)
+    return stationDrawings(name).some(
+        (drawing) =>
+            drawingHasPathNodes(drawing) || drawingHasComponents(drawing)
     );
 }
 
 function glyphHasPathInk(name: string): boolean {
-    return layerHasPathNodes(glyphLayer(name));
+    return drawingHasPathNodes(glyphDrawing(name));
 }
 
 function codepointOf(name: string): number | null {
@@ -181,8 +188,8 @@ function componentIsAutomatic(component: {
 }
 
 function modelComponents(name: string): PlaceholderComponentRef[] {
-    const layer = glyphLayer(name);
-    const components = layer?.components || [];
+    const drawing = glyphDrawing(name);
+    const components = drawing?.components || [];
     return components
         .filter((component) => component.reference)
         .map((component) => ({
@@ -500,7 +507,7 @@ function paintLeaf(
     applyPlaceholderInk(ctx, emphasis, appearance, token, muted);
     ctx.font = `${upm}px ui-sans-serif, system-ui, sans-serif`;
     ctx.textBaseline = 'alphabetic';
-    const markAnchor = (glyphLayer(name)?.anchors || []).find((anchor) =>
+    const markAnchor = (glyphDrawing(name)?.anchors || []).find((anchor) =>
         anchor.name?.startsWith('_')
     );
     const text = String.fromCodePoint(codepoint);

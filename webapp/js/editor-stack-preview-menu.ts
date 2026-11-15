@@ -61,9 +61,9 @@ export function createStackPreviewMenuHtml(): string {
     const guidelinesVisible =
         window.glyphCanvas?.outlineEditor?.guidelinesVisible === true;
     const guidelinesCheckmark = guidelinesVisible ? 'check' : '';
-    const pairedLayerVisible =
-        window.glyphCanvas?.outlineEditor?.isPairedLayerVisible() ?? false;
-    const pairedLayerCheckmark = pairedLayerVisible ? 'check' : '';
+    const pairedDrawingVisible =
+        window.glyphCanvas?.outlineEditor?.isPairedDrawingVisible() ?? false;
+    const pairedDrawingCheckmark = pairedDrawingVisible ? 'check' : '';
     const followStackScroll = isOverviewFollowStackScrollEnabled();
     const followStackCheckmark = followStackScroll ? 'check' : '';
     const showAllMetrics = isShowAllMetricsEnabled();
@@ -112,8 +112,8 @@ export function createStackPreviewMenuHtml(): string {
                 <span>Guidelines</span>
                 ${keyboardShortcutHtml('⌘⌥G', 'plugin-menu-shortcut')}
             </div>
-            <div class="plugin-menu-item${viewMenuItemClass(isEditMode)}" data-action="toggle-paired-layer" role="menuitemcheckbox" aria-checked="${pairedLayerVisible}"${viewMenuItemDisabledAttr(isEditMode)} tabindex="-1">
-                <span class="plugin-menu-check material-symbols-outlined${pairedLayerVisible ? '' : ' empty'}">${pairedLayerCheckmark}</span>
+            <div class="plugin-menu-item${viewMenuItemClass(isEditMode)}" data-action="toggle-paired-drawing" role="menuitemcheckbox" aria-checked="${pairedDrawingVisible}"${viewMenuItemDisabledAttr(isEditMode)} tabindex="-1">
+                <span class="plugin-menu-check material-symbols-outlined${pairedDrawingVisible ? '' : ' empty'}">${pairedDrawingCheckmark}</span>
                 <span>Show Foreground/Background</span>
                 ${keyboardShortcutHtml('⌘⌥B', 'plugin-menu-shortcut')}
             </div>
@@ -245,8 +245,8 @@ function initEditorStackPreviewMenu(): void {
                 } else if (action === 'toggle-guidelines') {
                     window.glyphCanvas?.outlineEditor?.toggleGuidelinesVisible();
                     refreshStackPreviewMenuContent();
-                } else if (action === 'toggle-paired-layer') {
-                    window.glyphCanvas?.outlineEditor?.togglePairedLayerVisible();
+                } else if (action === 'toggle-paired-drawing') {
+                    window.glyphCanvas?.outlineEditor?.togglePairedDrawingVisible();
                     refreshStackPreviewMenuContent();
                 } else if (action === 'toggle-follow-stack-scroll') {
                     toggleOverviewFollowStackScrollEnabled();
@@ -313,7 +313,7 @@ function initEditorStackPreviewMenu(): void {
         refreshStackPreviewMenuContent();
     });
 
-    window.addEventListener('outlinePairedLayerVisibilityChanged', () => {
+    window.addEventListener('outlinePairedDrawingVisibilityChanged', () => {
         refreshStackPreviewMenuContent();
     });
 

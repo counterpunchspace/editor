@@ -57,15 +57,15 @@ function cloneJson(value) {
     return JSON.parse(JSON.stringify(value));
 }
 
-function stripLayerStableIds(layer) {
-    if (!layer || typeof layer !== 'object') {
-        return layer;
+function stripLayerStableIds(drawing) {
+    if (!drawing || typeof drawing !== 'object') {
+        return drawing;
     }
 
     return {
-        ...layer,
-        shapes: Array.isArray(layer.shapes)
-            ? layer.shapes.map((shape) => {
+        ...drawing,
+        shapes: Array.isArray(drawing.shapes)
+            ? drawing.shapes.map((shape) => {
                   const nextShape = { ...shape };
                   delete nextShape.id;
                   if (Array.isArray(nextShape.nodes)) {
@@ -76,21 +76,21 @@ function stripLayerStableIds(layer) {
                   }
                   return nextShape;
               })
-            : layer.shapes,
-        anchors: Array.isArray(layer.anchors)
-            ? layer.anchors.map((anchor) => {
+            : drawing.shapes,
+        anchors: Array.isArray(drawing.anchors)
+            ? drawing.anchors.map((anchor) => {
                   const nextAnchor = { ...anchor };
                   delete nextAnchor.id;
                   return nextAnchor;
               })
-            : layer.anchors,
-        guides: Array.isArray(layer.guides)
-            ? layer.guides.map((guide) => {
+            : drawing.anchors,
+        guides: Array.isArray(drawing.guides)
+            ? drawing.guides.map((guide) => {
                   const nextGuide = { ...guide };
                   delete nextGuide.id;
                   return nextGuide;
               })
-            : layer.guides
+            : drawing.guides
     };
 }
 
@@ -122,13 +122,13 @@ afterAll(() => {
 
 describe('FontManager committed layer serialization', () => {
     test('preserves opaque layer and object fields', () => {
-        const serialized = fontManager.serializeLayerForCommittedSync(
+        const serialized = fontManager.serializeDrawingForCommittedSync(
             'A',
             'layer-1',
             {
                 id: 'layer-1',
                 width: 500,
-                customLayerData: { retained: true },
+                customDrawingData: { retained: true },
                 isInterpolated: true,
                 _verticalMetrics: { ascender: 700 },
                 _interpolationLocation: { wght: 0 },
@@ -169,7 +169,7 @@ describe('FontManager committed layer serialization', () => {
         );
 
         expect(serialized).toMatchObject({
-            customLayerData: { retained: true },
+            customDrawingData: { retained: true },
             shapes: [
                 { customPathData: { retained: true } },
                 {
@@ -193,13 +193,13 @@ describe('FontManager committed layer serialization', () => {
     });
 });
 
-describe('FontManager saveLayerData', () => {
+describe('FontManager saveDrawingData', () => {
     let originalOpenedFonts;
     let originalCurrentFontId;
     let originalPendingBabelfontJsonSyncAfterDrag;
     let originalScheduleFullCompileDebounce;
     let updateDirtyIndicatorSpy;
-    let intermediateLayerData;
+    let freeDrawingData;
     let originalFontCompilationInitialized;
     let originalLastStoredFontJson;
     let sendMessageSpy;
@@ -211,7 +211,7 @@ describe('FontManager saveLayerData', () => {
             'examples',
             'intermediate_layer_on_a.glyphs'
         );
-        intermediateLayerData = loadFontFile(fixturePath);
+        freeDrawingData = loadFontFile(fixturePath);
     });
 
     beforeEach(() => {
@@ -222,7 +222,7 @@ describe('FontManager saveLayerData', () => {
         originalScheduleFullCompileDebounce =
             fontManager.scheduleFullCompileDebounce;
 
-        const fontData = cloneJson(intermediateLayerData);
+        const fontData = cloneJson(freeDrawingData);
         const fakeCurrentFont = {
             babelfontJson: JSON.stringify(fontData),
             babelfontData: fontData,
@@ -276,15 +276,15 @@ describe('FontManager saveLayerData', () => {
     test('serializes structurally edited layers only at the storage boundary', () => {
         const font = fontManager.currentFont.fontModel;
         const glyph = font.glyphs.find((candidate) =>
-            candidate.layers?.some((layer) => layer.paths?.length)
+            candidate.drawings?.some((drawing) => drawing.paths?.length)
         );
-        const layer = glyph?.layers?.find(
+        const drawing = glyph?.drawings?.find(
             (candidate) => candidate.paths?.length
         );
-        const path = layer?.paths?.[0];
+        const path = drawing?.paths?.[0];
 
         expect(glyph?.name).toBeTruthy();
-        expect(layer?.id).toBeTruthy();
+        expect(drawing?.id).toBeTruthy();
         expect(path).toBeTruthy();
 
         const nodeCountBefore = path.nodes.length;
@@ -292,22 +292,22 @@ describe('FontManager saveLayerData', () => {
             expect(path._addPoint(0, 0.5)).not.toBeNull();
         });
 
-        const serializedLayer = fontManager.serializeLayerForStorage(
+        const serializedDrawing = fontManager.serializeDrawingForStorage(
             glyph.name,
-            layer.id,
-            layer.toJSON()
+            drawing.id,
+            drawing.toJSON()
         );
 
-        expect(Array.isArray(serializedLayer.shapes[0].nodes)).toBe(true);
+        expect(Array.isArray(serializedDrawing.shapes[0].nodes)).toBe(true);
         expect(path.nodes.length).toBeGreaterThan(nodeCountBefore);
-        expect(layer.getBoundingBox()).not.toBeNull();
+        expect(drawing.getBoundingBox()).not.toBeNull();
     });
 
     test('preserves guide format_specific when serializing layer snapshots', () => {
         const glyph = fontManager.currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === 'a'
         );
-        const layer = glyph.layers.find(
+        const drawing = glyph.layers.find(
             (entry) => entry.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
         );
         const guideFormatSpecific = {
@@ -322,8 +322,8 @@ describe('FontManager saveLayerData', () => {
             type: 'Line',
             userData: null
         };
-        const layerData = {
-            ...cloneJson(layer),
+        const drawingData = {
+            ...cloneJson(drawing),
             guides: [
                 {
                     id: 'guide-with-format-specific',
@@ -333,13 +333,13 @@ describe('FontManager saveLayerData', () => {
             ]
         };
 
-        const serializedLayer = fontManager.serializeLayerForStorage(
+        const serializedDrawing = fontManager.serializeDrawingForStorage(
             glyph.name,
-            layer.id,
-            layerData
+            drawing.id,
+            drawingData
         );
 
-        expect(serializedLayer.guides).toEqual([
+        expect(serializedDrawing.guides).toEqual([
             expect.objectContaining({
                 format_specific: guideFormatSpecific
             })
@@ -350,38 +350,39 @@ describe('FontManager saveLayerData', () => {
         const glyph = fontManager.currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === 'a'
         );
-        const braceLayer = glyph.layers.find(
-            (layer) => layer.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
+        const freeDrawing = glyph.layers.find(
+            (drawing) => drawing.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
         );
 
-        expect(braceLayer).toBeDefined();
-        expect(braceLayer.location).toEqual({ wght: 155, KSHD: 0, SWSH: 0 });
+        expect(freeDrawing).toBeDefined();
+        expect(freeDrawing.location).toEqual({ wght: 155, KSHD: 0, SWSH: 0 });
         expect(fontCompilation.lastStoredFontJson).toBeNull();
-        const editedLayerData = {
-            ...cloneJson(braceLayer),
+        const editedDrawingData = {
+            ...cloneJson(freeDrawing),
             location: undefined,
             width: 538.25
         };
 
-        await fontManager.saveLayerData(
+        await fontManager.saveDrawingData(
             'a',
             '1FA54028-AD2E-4209-AA7B-72DF2DF16264',
-            editedLayerData,
+            editedDrawingData,
             'mouse-drag-outline'
         );
 
-        const savedBraceLayer = fontManager.currentFont.babelfontData.glyphs
+        const savedFreeDrawing = fontManager.currentFont.babelfontData.glyphs
             .find((entry) => entry.name === 'a')
             .layers.find(
-                (layer) => layer.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
+                (drawing) =>
+                    drawing.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
             );
 
-        expect(savedBraceLayer.location).toEqual({
+        expect(savedFreeDrawing.location).toEqual({
             wght: 155,
             KSHD: 0,
             SWSH: 0
         });
-        expect(savedBraceLayer.master).toEqual({
+        expect(savedFreeDrawing.master).toEqual({
             type: 'AssociatedWithMaster',
             master: '3E7589AA-8194-470F-8E2F-13C1C581BE24'
         });
@@ -406,7 +407,7 @@ describe('FontManager saveLayerData', () => {
         };
         glyph.layers.push(background);
 
-        await fontManager.saveLayerData(
+        await fontManager.saveDrawingData(
             'a',
             background.id,
             {
@@ -425,7 +426,7 @@ describe('FontManager saveLayerData', () => {
         );
 
         const savedBackground = glyph.layers.find(
-            (layer) => layer.id === background.id
+            (drawing) => drawing.id === background.id
         );
         expect(savedBackground).toEqual(
             expect.objectContaining({
@@ -442,19 +443,19 @@ describe('FontManager saveLayerData', () => {
         const glyph = fontManager.currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === 'a'
         );
-        const layer = glyph.layers.find(
+        const drawing = glyph.layers.find(
             (entry) => entry.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
         );
 
-        await fontManager.saveLayerData(
+        await fontManager.saveDrawingData(
             'a',
-            layer.id,
-            cloneJson(layer),
+            drawing.id,
+            cloneJson(drawing),
             'mouse-drag-outline'
         );
 
         // scheduleFullCompileDebounce is now handled by CompiledEditFunnel,
-        // not by saveLayerData itself.
+        // not by saveDrawingData itself.
         expect(fontManager.scheduleFullCompileDebounce).toHaveBeenCalledTimes(
             0
         );
@@ -473,19 +474,19 @@ describe('FontManager saveLayerData', () => {
         const glyph = fontManager.currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === 'a'
         );
-        const layer = glyph.layers.find(
+        const drawing = glyph.layers.find(
             (entry) => entry.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
         );
 
-        await fontManager.saveLayerData(
+        await fontManager.saveDrawingData(
             'a',
-            layer.id,
-            cloneJson(layer),
+            drawing.id,
+            cloneJson(drawing),
             'mouse-drag-anchor'
         );
 
         // scheduleFullCompileDebounce is now handled by CompiledEditFunnel,
-        // not by saveLayerData itself.
+        // not by saveDrawingData itself.
         expect(fontManager.scheduleFullCompileDebounce).toHaveBeenCalledTimes(
             0
         );
@@ -504,36 +505,38 @@ describe('FontManager saveLayerData', () => {
         const glyph = fontManager.currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === 'a'
         );
-        const layer = glyph.layers.find(
+        const drawing = glyph.layers.find(
             (entry) => entry.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
         );
-        const currentShapes = cloneJson(layer.shapes);
+        const currentShapes = cloneJson(drawing.shapes);
         const staleStoredShapes = [];
-        glyph.layers.find((entry) => entry.id === layer.id).shapes =
+        glyph.layers.find((entry) => entry.id === drawing.id).shapes =
             staleStoredShapes;
 
-        await fontManager.saveLayerData(
+        await fontManager.saveDrawingData(
             'a',
-            layer.id,
+            drawing.id,
             {
-                ...cloneJson(layer),
+                ...cloneJson(drawing),
                 shapes: currentShapes,
                 anchors: [{ name: 'top', x: 180, y: 760 }]
             },
             'mouse-drag-anchor'
         );
 
-        const savedLayer = glyph.layers.find((entry) => entry.id === layer.id);
+        const savedDrawing = glyph.layers.find(
+            (entry) => entry.id === drawing.id
+        );
 
         expect(
-            stripLayerStableIds({ shapes: savedLayer.shapes }).shapes
+            stripLayerStableIds({ shapes: savedDrawing.shapes }).shapes
         ).toEqual(stripLayerStableIds({ shapes: currentShapes }).shapes);
-        expect(savedLayer.shapes).not.toBe(staleStoredShapes);
-        expect(savedLayer.anchors).toEqual([{ name: 'top', x: 180, y: 760 }]);
+        expect(savedDrawing.shapes).not.toBe(staleStoredShapes);
+        expect(savedDrawing.anchors).toEqual([{ name: 'top', x: 180, y: 760 }]);
     });
 
-    test('normalizeLayerForRust canonicalizes malformed component transforms', () => {
-        const normalized = fontManager.normalizeLayerForRust({
+    test('normalizeDrawingForRust canonicalizes malformed component transforms', () => {
+        const normalized = fontManager.normalizeDrawingForRust({
             width: 500,
             shapes: [
                 {
@@ -562,8 +565,8 @@ describe('FontManager saveLayerData', () => {
         expect(normalized.shapes[0].transform.tcenter).toBeUndefined();
     });
 
-    test('normalizeLayerForRust drops null optional numeric fields', () => {
-        const normalized = fontManager.normalizeLayerForRust({
+    test('normalizeDrawingForRust drops null optional numeric fields', () => {
+        const normalized = fontManager.normalizeDrawingForRust({
             width: 500,
             height: null,
             vertWidth: null,
@@ -606,8 +609,8 @@ describe('FontManager saveLayerData', () => {
         expect(normalized.guides[0].pos).toEqual({ x: 1, y: 2 });
     });
 
-    test('normalizeLayerForRust preserves anchor and guide metadata', () => {
-        const normalized = fontManager.normalizeLayerForRust({
+    test('normalizeDrawingForRust preserves anchor and guide metadata', () => {
+        const normalized = fontManager.normalizeDrawingForRust({
             id: 'layer-a',
             width: 500,
             anchors: [
@@ -652,30 +655,30 @@ describe('FontManager saveLayerData', () => {
         const glyph = fontManager.currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === 'a'
         );
-        const layer = glyph.layers.find(
+        const drawing = glyph.layers.find(
             (entry) => entry.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
         );
-        const editedLayer = cloneJson(layer);
-        editedLayer.width = 612;
-        editedLayer.anchors = (editedLayer.anchors || []).map((anchor) =>
+        const editedDrawing = cloneJson(drawing);
+        editedDrawing.width = 612;
+        editedDrawing.anchors = (editedDrawing.anchors || []).map((anchor) =>
             anchor.name === 'top' ? { ...anchor, x: 333, y: anchor.y } : anchor
         );
 
-        await fontManager.saveLayerData(
+        await fontManager.saveDrawingData(
             'a',
-            layer.id,
-            editedLayer,
+            drawing.id,
+            editedDrawing,
             'mouse-drag-anchor'
         );
 
-        const modelLayer = fontManager.currentFont.fontModel
+        const modelDrawing = fontManager.currentFont.fontModel
             .findGlyph('a')
-            .findLayerById(layer.id);
-        const topAnchor = (modelLayer.anchors || []).find(
+            .findDrawingById(drawing.id);
+        const topAnchor = (modelDrawing.anchors || []).find(
             (anchor) => anchor.name === 'top'
         );
 
-        expect(modelLayer.toJSON().width).toBe(612);
+        expect(modelDrawing.toJSON().width).toBe(612);
         expect(topAnchor?.x).toBe(333);
     });
 
@@ -683,42 +686,42 @@ describe('FontManager saveLayerData', () => {
         const glyph = fontManager.currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === 'a'
         );
-        const layer = glyph.layers.find(
+        const drawing = glyph.layers.find(
             (entry) => entry.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
         );
-        const originalLayerRef = layer;
-        const editedLayer = cloneJson(layer);
-        editedLayer.shapes = [
+        const originalDrawingRef = drawing;
+        const editedDrawing = cloneJson(drawing);
+        editedDrawing.shapes = [
             {
-                ...cloneJson(layer.shapes[0]),
+                ...cloneJson(drawing.shapes[0]),
                 nodes: 42
             }
         ];
 
         await expect(
-            fontManager.saveLayerData(
+            fontManager.saveDrawingData(
                 'a',
-                layer.id,
-                editedLayer,
+                drawing.id,
+                editedDrawing,
                 'keyboard-outline'
             )
         ).rejects.toThrow(
-            /Path shape nodes must be an array before layer storage serialization/
+            /Path shape nodes must be an array before drawing storage serialization/
         );
 
-        const savedLayer = fontManager.currentFont.babelfontData.glyphs
+        const savedDrawing = fontManager.currentFont.babelfontData.glyphs
             .find((entry) => entry.name === 'a')
-            .layers.find((entry) => entry.id === layer.id);
-        const modelLayer = fontManager.currentFont.fontModel
+            .layers.find((entry) => entry.id === drawing.id);
+        const modelDrawing = fontManager.currentFont.fontModel
             .findGlyph('a')
-            .findLayerById(layer.id);
+            .findDrawingById(drawing.id);
 
-        expect(savedLayer).toBe(originalLayerRef);
-        expect(stripLayerStableIds(savedLayer).shapes).toEqual(
-            stripLayerStableIds(layer).shapes
+        expect(savedDrawing).toBe(originalDrawingRef);
+        expect(stripLayerStableIds(savedDrawing).shapes).toEqual(
+            stripLayerStableIds(drawing).shapes
         );
-        expect(stripLayerStableIds(modelLayer.toJSON()).shapes).toEqual(
-            stripLayerStableIds(layer).shapes
+        expect(stripLayerStableIds(modelDrawing.toJSON()).shapes).toEqual(
+            stripLayerStableIds(drawing).shapes
         );
         expect(fontManager.pendingBabelfontJsonSyncAfterDrag).toBe(false);
     });
@@ -727,20 +730,20 @@ describe('FontManager saveLayerData', () => {
         const glyph = fontManager.currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === 'a'
         );
-        const layer = glyph.layers.find(
+        const drawing = glyph.layers.find(
             (entry) => entry.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
         );
-        const editedLayer = cloneJson(layer);
-        editedLayer.width = 645;
+        const editedDrawing = cloneJson(drawing);
+        editedDrawing.width = 645;
 
         window.patchSyncEngine = {
             setFontJson: jest.fn()
         };
 
-        await fontManager.saveLayerData(
+        await fontManager.saveDrawingData(
             'a',
-            layer.id,
-            editedLayer,
+            drawing.id,
+            editedDrawing,
             'keyboard-outline'
         );
 
@@ -753,10 +756,10 @@ describe('FontManager saveLayerData', () => {
         const glyph = fontManager.currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === 'a'
         );
-        const layer = glyph.layers.find(
+        const drawing = glyph.layers.find(
             (entry) => entry.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
         );
-        const editedLayer = cloneJson(layer);
+        const editedDrawing = cloneJson(drawing);
         let resolveDirtyIndicator = null;
         const pendingDirtyIndicator = new Promise((resolve) => {
             resolveDirtyIndicator = resolve;
@@ -767,10 +770,10 @@ describe('FontManager saveLayerData', () => {
             .spyOn(fontManager, 'updateDirtyIndicator')
             .mockImplementation(() => pendingDirtyIndicator);
 
-        const savePromise = fontManager.saveLayerData(
+        const savePromise = fontManager.saveDrawingData(
             'a',
-            layer.id,
-            editedLayer,
+            drawing.id,
+            editedDrawing,
             'keyboard-outline'
         );
 
@@ -782,7 +785,7 @@ describe('FontManager saveLayerData', () => {
         expect(sendMessageSpy).not.toHaveBeenCalled();
         expect(fontManager.getBoundaryCrossingStats()).toEqual({
             submitBatchCalls: 0,
-            layersTransmitted: 0,
+            drawingsTransmitted: 0,
             glyphsTransmitted: 0,
             fullFontCrossings: 0
         });
@@ -792,62 +795,62 @@ describe('FontManager saveLayerData', () => {
         const glyph = fontManager.currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === 'a'
         );
-        const layer = glyph.layers.find(
+        const drawing = glyph.layers.find(
             (entry) => entry.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
         );
-        const originalWidth = layer.width;
-        const originalShapes = cloneJson(layer.shapes);
-        const originalAnchors = cloneJson(layer.anchors);
+        const originalWidth = drawing.width;
+        const originalShapes = cloneJson(drawing.shapes);
+        const originalAnchors = cloneJson(drawing.anchors);
 
-        await fontManager.saveLayerData(
+        await fontManager.saveDrawingData(
             'a',
-            layer.id,
+            drawing.id,
             {
-                id: layer.id,
+                id: drawing.id,
                 width: originalWidth + 25,
-                master: cloneJson(layer.master)
+                master: cloneJson(drawing.master)
             },
             'mouse-drag-outline'
         );
 
-        const savedLayer = fontManager.currentFont.babelfontData.glyphs
+        const savedDrawing = fontManager.currentFont.babelfontData.glyphs
             .find((entry) => entry.name === 'a')
-            .layers.find((entry) => entry.id === layer.id);
-        const modelLayer = fontManager.currentFont.fontModel
+            .layers.find((entry) => entry.id === drawing.id);
+        const modelDrawing = fontManager.currentFont.fontModel
             .findGlyph('a')
-            .findLayerById(layer.id);
+            .findDrawingById(drawing.id);
 
-        expect(savedLayer.width).toBe(originalWidth + 25);
-        expect(stripLayerStableIds(savedLayer).shapes).toEqual(
+        expect(savedDrawing.width).toBe(originalWidth + 25);
+        expect(stripLayerStableIds(savedDrawing).shapes).toEqual(
             stripLayerStableIds({ shapes: originalShapes }).shapes
         );
-        expect(savedLayer.anchors).toEqual(originalAnchors);
-        expect(stripLayerStableIds(modelLayer.toJSON()).shapes).toEqual(
+        expect(savedDrawing.anchors).toEqual(originalAnchors);
+        expect(stripLayerStableIds(modelDrawing.toJSON()).shapes).toEqual(
             stripLayerStableIds({ shapes: originalShapes }).shapes
         );
-        expect(modelLayer.toJSON().anchors).toEqual(originalAnchors);
+        expect(modelDrawing.toJSON().anchors).toEqual(originalAnchors);
     });
 
-    test('serializeLayerForStorage does not synthesize empty shapes for skeletal layers', () => {
+    test('serializeDrawingForStorage does not synthesize empty shapes for skeletal layers', () => {
         const glyph = fontManager.currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === 'a'
         );
-        const layer = glyph.layers.find(
+        const drawing = glyph.layers.find(
             (entry) => entry.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
         );
-        glyph.layers[glyph.layers.indexOf(layer)] = {
-            id: layer.id,
+        glyph.layers[glyph.layers.indexOf(drawing)] = {
+            id: drawing.id,
             width: 0,
-            master: cloneJson(layer.master)
+            master: cloneJson(drawing.master)
         };
 
-        const serialized = fontManager.serializeLayerForStorage(
+        const serialized = fontManager.serializeDrawingForStorage(
             'a',
-            layer.id,
+            drawing.id,
             {
-                id: layer.id,
+                id: drawing.id,
                 width: 640,
-                master: cloneJson(layer.master)
+                master: cloneJson(drawing.master)
             },
             undefined
         );
@@ -856,19 +859,19 @@ describe('FontManager saveLayerData', () => {
         expect(serialized.shapes).toBeUndefined();
     });
 
-    test('serializeLayerForStorage rejects malformed path nodes instead of repairing them', () => {
+    test('serializeDrawingForStorage rejects malformed path nodes instead of repairing them', () => {
         const glyph = fontManager.currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === 'a'
         );
-        const layer = glyph.layers.find(
+        const drawing = glyph.layers.find(
             (entry) => entry.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
         );
         expect(() =>
-            fontManager.serializeLayerForStorage(
+            fontManager.serializeDrawingForStorage(
                 'a',
-                layer.id,
+                drawing.id,
                 {
-                    ...cloneJson(layer),
+                    ...cloneJson(drawing),
                     shapes: [
                         {
                             nodes: 42,
@@ -879,22 +882,22 @@ describe('FontManager saveLayerData', () => {
                 undefined
             )
         ).toThrow(
-            /Path shape nodes must be an array before layer storage serialization/
+            /Path shape nodes must be an array before drawing storage serialization/
         );
     });
 
-    test('serializeLayerForStorage strips interpolator keys and affine transforms', () => {
+    test('serializeDrawingForStorage strips interpolator keys and affine transforms', () => {
         const glyph = fontManager.currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === 'a'
         );
-        const layer = glyph.layers.find(
+        const drawing = glyph.layers.find(
             (entry) => entry.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
         );
-        const serialized = fontManager.serializeLayerForStorage(
+        const serialized = fontManager.serializeDrawingForStorage(
             'a',
-            layer.id,
+            drawing.id,
             {
-                ...cloneJson(layer),
+                ...cloneJson(drawing),
                 _interpolationRequestId: 12,
                 isInterpolated: true,
                 shapes: [
@@ -910,24 +913,28 @@ describe('FontManager saveLayerData', () => {
 
         expect(serialized._interpolationRequestId).toBeUndefined();
         expect(serialized.isInterpolated).toBeUndefined();
-        expect(serialized.width).toBe(layer.width);
-        expect(serialized.master).toEqual(layer.master);
+        expect(serialized.width).toBe(drawing.width);
+        expect(serialized.master).toEqual(drawing.master);
         expect(serialized.shapes[0].layerData).toBeUndefined();
         expect(Array.isArray(serialized.shapes[0].transform)).toBe(false);
         expect(serialized.shapes[0].transform.translation[0]).toBe(40);
     });
 
-    test('serializeLayerForStorage fills missing width from the stored layer', () => {
+    test('serializeDrawingForStorage fills missing width from the stored layer', () => {
         const glyph = fontManager.currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === 'a'
         );
-        const layer = glyph.layers.find(
+        const drawing = glyph.layers.find(
             (entry) => entry.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
         );
-        const { width: _width, master: _master, ...sparse } = cloneJson(layer);
-        const serialized = fontManager.serializeLayerForStorage(
+        const {
+            width: _width,
+            master: _station,
+            ...sparse
+        } = cloneJson(drawing);
+        const serialized = fontManager.serializeDrawingForStorage(
             'a',
-            layer.id,
+            drawing.id,
             {
                 ...sparse,
                 _interpolationRequestId: 3
@@ -935,29 +942,29 @@ describe('FontManager saveLayerData', () => {
             undefined
         );
 
-        expect(serialized.width).toBe(layer.width);
-        expect(serialized.master).toEqual(layer.master);
+        expect(serialized.width).toBe(drawing.width);
+        expect(serialized.master).toEqual(drawing.master);
         expect(serialized._interpolationRequestId).toBeUndefined();
     });
 
-    test('serializeLayerForStorage prunes semantically empty optional containers', () => {
+    test('serializeDrawingForStorage prunes semantically empty optional containers', () => {
         const glyph = fontManager.currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === 'a'
         );
-        const layer = glyph.layers.find(
+        const drawing = glyph.layers.find(
             (entry) => entry.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
         );
-        glyph.layers[glyph.layers.indexOf(layer)] = {
-            ...cloneJson(layer),
+        glyph.layers[glyph.layers.indexOf(drawing)] = {
+            ...cloneJson(drawing),
             format_specific: undefined,
             guides: undefined
         };
 
-        const serialized = fontManager.serializeLayerForStorage(
+        const serialized = fontManager.serializeDrawingForStorage(
             'a',
-            layer.id,
+            drawing.id,
             {
-                ...cloneJson(layer),
+                ...cloneJson(drawing),
                 format_specific: {},
                 guides: [],
                 anchors: [
@@ -983,26 +990,26 @@ describe('FontManager saveLayerData', () => {
         ]);
     });
 
-    test('serializeLayerForStorage does not materialize normalized empty anchors', () => {
+    test('serializeDrawingForStorage does not materialize normalized empty anchors', () => {
         const glyph = fontManager.currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === 'a'
         );
-        const layer = glyph.layers.find(
+        const drawing = glyph.layers.find(
             (entry) => entry.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
         );
-        glyph.layers[glyph.layers.indexOf(layer)] = {
-            ...cloneJson(layer),
+        glyph.layers[glyph.layers.indexOf(drawing)] = {
+            ...cloneJson(drawing),
             anchors: undefined,
             format_specific: {
                 'com.schriftgestalt.Glyphs.attr': {}
             }
         };
 
-        const serialized = fontManager.serializeLayerForStorage(
+        const serialized = fontManager.serializeDrawingForStorage(
             'a',
-            layer.id,
+            drawing.id,
             {
-                ...cloneJson(layer),
+                ...cloneJson(drawing),
                 anchors: [],
                 format_specific: {}
             },
@@ -1015,19 +1022,19 @@ describe('FontManager saveLayerData', () => {
         });
     });
 
-    test('serializeLayerForStorage preserves an explicit empty anchor list', () => {
+    test('serializeDrawingForStorage preserves an explicit empty anchor list', () => {
         const glyph = fontManager.currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === 'a'
         );
-        const layer = glyph.layers.find(
+        const drawing = glyph.layers.find(
             (entry) => entry.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
         );
 
-        const serialized = fontManager.serializeLayerForStorage(
+        const serialized = fontManager.serializeDrawingForStorage(
             'a',
-            layer.id,
+            drawing.id,
             {
-                ...cloneJson(layer),
+                ...cloneJson(drawing),
                 anchors: []
             },
             undefined
@@ -1036,31 +1043,31 @@ describe('FontManager saveLayerData', () => {
         expect(serialized.anchors).toEqual([]);
     });
 
-    test('serializeLayerForStorage preserves declared empty optional fields', () => {
+    test('serializeDrawingForStorage preserves declared empty optional fields', () => {
         const glyph = fontManager.currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === 'a'
         );
-        const layer = glyph.layers.find(
+        const drawing = glyph.layers.find(
             (entry) => entry.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
         );
-        glyph.layers[glyph.layers.indexOf(layer)] = {
-            ...cloneJson(layer),
+        glyph.layers[glyph.layers.indexOf(drawing)] = {
+            ...cloneJson(drawing),
             anchors: [{ name: 'top', x: 100, y: 200 }],
             guides: [{ pos: { x: 100, y: 200, angle: 0 } }],
             format_specific: { 'com.schriftgestalt.Glyphs.attr': {} }
         };
 
-        const serialized = fontManager.serializeLayerForStorage(
+        const serialized = fontManager.serializeDrawingForStorage(
             'a',
-            layer.id,
+            drawing.id,
             {
-                ...cloneJson(layer),
+                ...cloneJson(drawing),
                 anchors: [],
                 guides: [],
                 format_specific: {}
             },
             {
-                authoritativeOptionalLayerFields: [
+                authoritativeOptionalDrawingFields: [
                     'anchors',
                     'guides',
                     'format_specific'
@@ -1073,33 +1080,33 @@ describe('FontManager saveLayerData', () => {
         expect(serialized.format_specific).toEqual({});
     });
 
-    test('saveLayerData rejects missing layer widths before mutating stored data', async () => {
+    test('saveDrawingData rejects missing layer widths before mutating stored data', async () => {
         const glyph = fontManager.currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === 'a'
         );
-        const layer = glyph.layers.find(
+        const drawing = glyph.layers.find(
             (entry) => entry.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
         );
-        const originalLayer = cloneJson(layer);
-        const editedLayer = cloneJson(layer);
-        delete editedLayer.width;
-        delete layer.width;
+        const originalDrawing = cloneJson(drawing);
+        const editedDrawing = cloneJson(drawing);
+        delete editedDrawing.width;
+        delete drawing.width;
 
         await expect(
-            fontManager.saveLayerData(
+            fontManager.saveDrawingData(
                 'a',
-                layer.id,
-                editedLayer,
+                drawing.id,
+                editedDrawing,
                 'mouse-drag-outline'
             )
         ).rejects.toThrow(/invalid width/);
 
-        const storedLayer = fontManager.currentFont.babelfontData.glyphs
+        const storedDrawing = fontManager.currentFont.babelfontData.glyphs
             .find((entry) => entry.name === 'a')
-            .layers.find((entry) => entry.id === layer.id);
+            .layers.find((entry) => entry.id === drawing.id);
 
-        expect(storedLayer.width).toBeUndefined();
-        expect(storedLayer.shapes).toEqual(originalLayer.shapes);
+        expect(storedDrawing.width).toBeUndefined();
+        expect(storedDrawing.shapes).toEqual(originalDrawing.shapes);
         expect(fontManager.currentFont.markDirty).not.toHaveBeenCalled();
         expect(sendMessageSpy).not.toHaveBeenCalled();
     });
@@ -1108,14 +1115,14 @@ describe('FontManager saveLayerData', () => {
         const glyph = fontManager.currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === 'a'
         );
-        const layer = glyph.layers.find(
+        const drawing = glyph.layers.find(
             (entry) => entry.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
         );
 
-        await fontManager.saveLayerData(
+        await fontManager.saveDrawingData(
             'a',
-            layer.id,
-            cloneJson(layer),
+            drawing.id,
+            cloneJson(drawing),
             'keyboard-outline'
         );
         expect(fontManager.scheduleFullCompileDebounce).toHaveBeenCalledTimes(
@@ -1131,14 +1138,14 @@ describe('FontManager saveLayerData', () => {
         const glyph = fontManager.currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === 'a'
         );
-        const layer = glyph.layers.find(
+        const drawing = glyph.layers.find(
             (entry) => entry.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
         );
 
-        await fontManager.saveLayerData(
+        await fontManager.saveDrawingData(
             'a',
-            layer.id,
-            cloneJson(layer),
+            drawing.id,
+            cloneJson(drawing),
             'keyboard-anchor'
         );
 
@@ -1155,14 +1162,14 @@ describe('FontManager saveLayerData', () => {
         const glyph = fontManager.currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === 'a'
         );
-        const layer = glyph.layers.find(
+        const drawing = glyph.layers.find(
             (entry) => entry.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
         );
 
-        await fontManager.saveLayerData(
+        await fontManager.saveDrawingData(
             'a',
-            layer.id,
-            cloneJson(layer),
+            drawing.id,
+            cloneJson(drawing),
             'keyboard'
         );
 
@@ -1177,14 +1184,14 @@ describe('FontManager saveLayerData', () => {
         const glyph = fontManager.currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === 'a'
         );
-        const layer = glyph.layers.find(
+        const drawing = glyph.layers.find(
             (entry) => entry.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
         );
 
-        await fontManager.saveLayerData(
+        await fontManager.saveDrawingData(
             'a',
-            layer.id,
-            cloneJson(layer),
+            drawing.id,
+            cloneJson(drawing),
             'mouse-drag-guide'
         );
 
@@ -1198,13 +1205,13 @@ describe('FontManager saveLayerData', () => {
         const currentFont = fontManager.currentFont;
         const syncSpy = jest.spyOn(currentFont, 'syncJsonFromModel');
         const glyphChangedHandler = jest.fn();
-        const layerId = '1FA54028-AD2E-4209-AA7B-72DF2DF16264';
+        const drawingId = '1FA54028-AD2E-4209-AA7B-72DF2DF16264';
 
         fontCompilation.lastStoredFontJson = currentFont.babelfontJson;
         window.addEventListener('glyphChanged', glyphChangedHandler);
 
         try {
-            await fontManager.refreshGlyphsAfterModelBatch(['a'], layerId);
+            await fontManager.refreshGlyphsAfterModelBatch(['a'], drawingId);
         } finally {
             window.removeEventListener('glyphChanged', glyphChangedHandler);
             syncSpy.mockRestore();
@@ -1218,36 +1225,36 @@ describe('FontManager saveLayerData', () => {
         expect(glyphChangedHandler).toHaveBeenCalledTimes(1);
         expect(glyphChangedHandler.mock.calls[0][0].detail).toEqual({
             glyphName: 'a',
-            layerId
+            layerId: drawingId
         });
     });
 
     test('refreshGlyphsAfterModelBatch can skip glyphChanged for explicit live layer data', async () => {
         const currentFont = fontManager.currentFont;
-        const layerId = '1FA54028-AD2E-4209-AA7B-72DF2DF16264';
-        const modelLayer = currentFont.fontModel
+        const drawingId = '1FA54028-AD2E-4209-AA7B-72DF2DF16264';
+        const modelDrawing = currentFont.fontModel
             .findGlyph('a')
-            .findLayerById(layerId);
-        const storedLayer = currentFont.babelfontData.glyphs
+            .findDrawingById(drawingId);
+        const storedDrawing = currentFont.babelfontData.glyphs
             .find((entry) => entry.name === 'a')
-            .layers.find((entry) => entry.id === layerId);
-        const explicitLayer = {
-            ...cloneJson(storedLayer),
-            width: storedLayer.width + 37
+            .layers.find((entry) => entry.id === drawingId);
+        const explicitDrawing = {
+            ...cloneJson(storedDrawing),
+            width: storedDrawing.width + 37
         };
-        const toJSONSpy = jest.spyOn(modelLayer, 'toJSON');
+        const toJSONSpy = jest.spyOn(modelDrawing, 'toJSON');
         const glyphChangedHandler = jest.fn();
         window.addEventListener('glyphChanged', glyphChangedHandler);
 
         try {
-            await fontManager.refreshGlyphsAfterModelBatch(['a'], layerId, {
+            await fontManager.refreshGlyphsAfterModelBatch(['a'], drawingId, {
                 dispatchGlyphChanged: false,
                 skipFingerprintBaseline: true,
-                explicitLayerData: [
+                explicitDrawingData: [
                     {
                         glyphName: 'a',
-                        layerId,
-                        layerData: explicitLayer
+                        layerId: drawingId,
+                        layerData: explicitDrawing
                     }
                 ]
             });
@@ -1263,8 +1270,8 @@ describe('FontManager saveLayerData', () => {
         expect(
             currentFont.babelfontData.glyphs
                 .find((entry) => entry.name === 'a')
-                .layers.find((entry) => entry.id === layerId).width
-        ).toBe(storedLayer.width);
+                .layers.find((entry) => entry.id === drawingId).width
+        ).toBe(storedDrawing.width);
     });
 
     test('refreshGlyphsAfterModelBatch does not serialize invalid path nodes on the dispatch path', async () => {
@@ -1272,10 +1279,10 @@ describe('FontManager saveLayerData', () => {
         const glyph = currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === 'a'
         );
-        const layerId = '1FA54028-AD2E-4209-AA7B-72DF2DF16264';
-        const layer = glyph.layers.find((entry) => entry.id === layerId);
+        const drawingId = '1FA54028-AD2E-4209-AA7B-72DF2DF16264';
+        const drawing = glyph.layers.find((entry) => entry.id === drawingId);
 
-        layer.shapes = [
+        drawing.shapes = [
             {
                 Path: {
                     nodes: 42,
@@ -1292,7 +1299,7 @@ describe('FontManager saveLayerData', () => {
         ];
 
         await expect(
-            fontManager.refreshGlyphsAfterModelBatch(['a'], layerId)
+            fontManager.refreshGlyphsAfterModelBatch(['a'], drawingId)
         ).resolves.toBeUndefined();
         expect(sendMessageSpy).not.toHaveBeenCalled();
     });
@@ -1306,18 +1313,18 @@ describe('FontManager saveLayerData', () => {
         expect(firstGlyph).toBeDefined();
         expect(secondGlyph).toBeDefined();
 
-        const firstLayer = firstGlyph.layers[0];
-        const secondLayer = secondGlyph.layers[0];
+        const firstDrawing = firstGlyph.drawings[0];
+        const secondDrawing = secondGlyph.drawings[0];
 
-        firstLayer.width += 11;
-        secondLayer.width += 17;
+        firstDrawing.width += 11;
+        secondDrawing.width += 17;
 
         window.addEventListener('glyphChanged', glyphChangedHandler);
 
         try {
             await fontManager.refreshGlyphsAfterModelBatch(
                 [firstGlyph.name, secondGlyph.name],
-                firstLayer.id
+                firstDrawing.id
             );
         } finally {
             window.removeEventListener('glyphChanged', glyphChangedHandler);
@@ -1330,7 +1337,7 @@ describe('FontManager saveLayerData', () => {
         expect(glyphChangedHandler.mock.calls[0][0].detail).toEqual({
             glyphName: firstGlyph.name,
             glyphNames: [firstGlyph.name, secondGlyph.name],
-            layerId: firstLayer.id
+            layerId: firstDrawing.id
         });
     });
 
@@ -1491,7 +1498,7 @@ describe('FontManager editing subset inclusion', () => {
         window.glyphCanvas = {
             outlineEditor: {
                 currentGlyphName: 'n',
-                selectedLayerId: 'layer-1',
+                selectedDrawingId: 'layer-1',
                 draggingSomething: false,
                 active: false
             },
@@ -1532,10 +1539,10 @@ describe('FontManager editing subset inclusion', () => {
         const fontData = cloneJson(fontManager.currentFont.babelfontData);
         fontData.glyphs[0].name = 'a';
         fontData.glyphs[0].layers[0].id = 'temp-layer-id';
-        const masterId = fontData.masters[0].id;
+        const stationId = fontData.masters[0].id;
         fontData.glyphs[0].layers[0].master = {
             type: 'DefaultForMaster',
-            master: masterId
+            master: stationId
         };
 
         const validatedData = cloneJson(fontData);
@@ -1547,7 +1554,7 @@ describe('FontManager editing subset inclusion', () => {
         expect(fontData.glyphs[0].layers[0].id).toBe('temp-layer-id');
         expect(fontData.glyphs[0].layers[0].master).toEqual({
             type: 'DefaultForMaster',
-            master: masterId
+            master: stationId
         });
     });
 
@@ -1743,7 +1750,7 @@ describe('FontManager editing subset inclusion', () => {
         expect(compileEditingSpy.mock.calls[0][2]).toMatchObject({
             compileSource: 'mouse-drag-outline',
             usePatchedWorkerCache: true,
-            usePreviewLayerOverlay: true
+            usePreviewDrawingOverlay: true
         });
     });
 
@@ -1879,7 +1886,7 @@ describe('FontManager editing subset inclusion', () => {
     });
 
     test('committed master reinterpolation compiles full', async () => {
-        setRequestCompileContext('master-reinterpolate-batch', 'outline');
+        setRequestCompileContext('station-reinterpolate-batch', 'outline');
 
         await fontManager.compileEditingFont('a', [], ['a']);
 
@@ -1888,7 +1895,7 @@ describe('FontManager editing subset inclusion', () => {
         ).not.toHaveBeenCalled();
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
         expect(compileEditingSpy.mock.calls[0][2]).toMatchObject({
-            compileSource: 'master-reinterpolate-batch'
+            compileSource: 'station-reinterpolate-batch'
         });
         expect(
             compileEditingSpy.mock.calls[0][2].optionOverrides
@@ -2292,7 +2299,7 @@ describe('FontManager editing subset inclusion', () => {
                         produce_varc_table: false
                     }),
                     usePatchedWorkerCache: true,
-                    usePreviewLayerOverlay: true
+                    usePreviewDrawingOverlay: true
                 })
             );
         } finally {
@@ -3110,7 +3117,7 @@ describe('FontManager loadFont', () => {
     let originalOpenedFonts;
     let originalCurrentFontId;
     let originalCurrentFontModel;
-    let intermediateLayerData;
+    let freeDrawingData;
 
     beforeAll(() => {
         const fixturePath = path.join(
@@ -3119,7 +3126,7 @@ describe('FontManager loadFont', () => {
             'examples',
             'intermediate_layer_on_a.glyphs'
         );
-        intermediateLayerData = loadFontFile(fixturePath);
+        freeDrawingData = loadFontFile(fixturePath);
     });
 
     beforeEach(() => {
@@ -3166,7 +3173,7 @@ describe('FontManager loadFont', () => {
     test('saves a .babelfont source byte for byte without a whole-font string', async () => {
         const { writable, fileHandle, diskPlugin } = diskSaveTarget();
         await fontManager.loadFont(
-            JSON.stringify(cloneJson(intermediateLayerData)),
+            JSON.stringify(cloneJson(freeDrawingData)),
             '/user/intermediate_layer_on_a.babelfont',
             diskPlugin,
             fileHandle
@@ -3192,7 +3199,7 @@ describe('FontManager loadFont', () => {
     test('saves a .babelfont source too long for one string as its UTF-8 bytes', async () => {
         const { writable, fileHandle, diskPlugin } = diskSaveTarget();
         await fontManager.loadFont(
-            JSON.stringify(cloneJson(intermediateLayerData)),
+            JSON.stringify(cloneJson(freeDrawingData)),
             '/user/intermediate_layer_on_a.babelfont',
             diskPlugin,
             fileHandle
@@ -3220,7 +3227,7 @@ describe('FontManager loadFont', () => {
     test('saves a .glyphs source from the same data without a whole-font string', async () => {
         const { fileHandle, diskPlugin } = diskSaveTarget();
         await fontManager.loadFont(
-            JSON.stringify(cloneJson(intermediateLayerData)),
+            JSON.stringify(cloneJson(freeDrawingData)),
             '/user/intermediate_layer_on_a.glyphs',
             diskPlugin,
             fileHandle
@@ -3245,7 +3252,7 @@ describe('FontManager loadFont', () => {
 
     test('syncs and validates the model for a compile without a whole-font string', async () => {
         await fontManager.loadFont(
-            JSON.stringify(cloneJson(intermediateLayerData)),
+            JSON.stringify(cloneJson(freeDrawingData)),
             '/user/intermediate_layer_on_a.glyphs',
             {}
         );
@@ -3277,7 +3284,7 @@ describe('FontManager loadFont', () => {
             });
         try {
             await fontManager.loadFont(
-                JSON.stringify(cloneJson(intermediateLayerData)),
+                JSON.stringify(cloneJson(freeDrawingData)),
                 '/user/intermediate_layer_on_a.glyphs',
                 {}
             );
@@ -3297,7 +3304,7 @@ describe('FontManager loadFont', () => {
 
     test('preserves stored keyed sidebearing fallback when opening a font without marking it dirty', async () => {
         await fontManager.loadFont(
-            JSON.stringify(cloneJson(intermediateLayerData)),
+            JSON.stringify(cloneJson(freeDrawingData)),
             '/user/intermediate_layer_on_a.glyphs',
             {}
         );
@@ -3309,22 +3316,22 @@ describe('FontManager loadFont', () => {
         currentFont.syncJsonFromModel();
 
         const glyph = currentFont.fontModel.findGlyph('a');
-        const braceLayer = glyph.layers.find(
-            (layer) => layer.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
+        const freeDrawing = glyph.drawings.find(
+            (drawing) => drawing.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
         );
 
-        expect(braceLayer.resolveMetricsKey('right').value).toBe(94);
-        expect(braceLayer.rsb).toBe(94);
+        expect(freeDrawing.resolveMetricsKey('right').value).toBe(94);
+        expect(freeDrawing.rsb).toBe(94);
         expect(currentFont.hasUnsavedChanges).toBe(false);
         expect(currentFont.needsRecompile).toBe(false);
         expect(
             JSON.parse(currentFont.babelfontJson)
                 .glyphs.find((entry) => entry.name === 'a')
                 .layers.find(
-                    (layer) =>
-                        layer.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
+                    (drawing) =>
+                        drawing.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
                 ).width
-        ).toBeCloseTo(braceLayer.width);
+        ).toBeCloseTo(freeDrawing.width);
     });
 
     test('writes a disk Glyphs source with Glyphs serialization', async () => {
@@ -3343,7 +3350,7 @@ describe('FontManager loadFont', () => {
         };
 
         await fontManager.loadFont(
-            JSON.stringify(cloneJson(intermediateLayerData)),
+            JSON.stringify(cloneJson(freeDrawingData)),
             '/user/intermediate_layer_on_a.glyphs',
             diskPlugin,
             fileHandle
@@ -3382,7 +3389,7 @@ describe('FontManager loadFont', () => {
         };
 
         await fontManager.loadFont(
-            JSON.stringify(cloneJson(intermediateLayerData)),
+            JSON.stringify(cloneJson(freeDrawingData)),
             '/user/intermediate_layer_on_a.vfj',
             diskPlugin,
             fileHandle
@@ -3448,7 +3455,7 @@ describe('FontManager boundary-crossing budget', () => {
         fontManager.currentFontId = 'test-font';
         fontManager.pendingBabelfontJsonSyncAfterDrag = false;
         fontManager.scheduleFullCompileDebounce = jest.fn();
-        fontManager.workerLayerFingerprintCache = new Map();
+        fontManager.workerDrawingFingerprintCache = new Map();
         fontManager.workerYjsSendQueue = Promise.resolve();
         fontManager.workerPreviewSendQueue = Promise.resolve();
         fontManager.workerCacheUpdatePromise = null;
@@ -3510,14 +3517,17 @@ describe('FontManager boundary-crossing budget', () => {
         fontCompilation.isInitialized = originalFontCompilationInitialized;
     });
 
-    test('getLayerFingerprintsFromStoredJson does not parse babelfontJson on the hot path', () => {
+    test('getDrawingFingerprintsFromStoredJson does not parse babelfontJson on the hot path', () => {
         const currentFont = fontManager.currentFont;
         const parseSpy = jest.spyOn(JSON, 'parse');
 
         try {
-            const fingerprints = fontManager.getLayerFingerprintsFromStoredJson(
-                ['a', 'aacute', 'n']
-            );
+            const fingerprints =
+                fontManager.getDrawingFingerprintsFromStoredJson([
+                    'a',
+                    'aacute',
+                    'n'
+                ]);
             expect(fingerprints.size).toBe(0);
             // Must NOT touch the megabyte-scale babelfontJson string.
             const touched = parseSpy.mock.calls.some(
@@ -3531,24 +3541,24 @@ describe('FontManager boundary-crossing budget', () => {
 
     test('single-layer commit crosses the boundary exactly once with no full-font sync', async () => {
         const currentFont = fontManager.currentFont;
-        const layerId = '1FA54028-AD2E-4209-AA7B-72DF2DF16264';
-        const modelLayer = currentFont.fontModel
+        const drawingId = '1FA54028-AD2E-4209-AA7B-72DF2DF16264';
+        const modelDrawing = currentFont.fontModel
             .findGlyph('a')
-            .findLayerById(layerId);
-        modelLayer.width += 23;
+            .findDrawingById(drawingId);
+        modelDrawing.width += 23;
 
         await fontManager.forwardWorkerYjsUpdate(
             new Uint8Array([1, 2, 3]),
             ['a'],
             {
                 invalidateLayoutClosure: false,
-                layerTargets: [{ glyphName: 'a', layerId }]
+                layerTargets: [{ glyphName: 'a', layerId: drawingId }]
             }
         );
 
         const stats = fontManager.getBoundaryCrossingStats();
         expect(stats.submitBatchCalls).toBe(1);
-        expect(stats.layersTransmitted).toBe(1);
+        expect(stats.drawingsTransmitted).toBe(1);
         expect(stats.glyphsTransmitted).toBe(1);
         expect(stats.fullFontCrossings).toBe(0);
 
@@ -3561,11 +3571,11 @@ describe('FontManager boundary-crossing budget', () => {
     test('multi-glyph cascade batches all layers into a single boundary crossing', async () => {
         const currentFont = fontManager.currentFont;
         const [first, second] = currentFont.fontModel.glyphs;
-        const firstLayer = first.layers[0];
-        const secondLayer = second.layers[0];
+        const firstDrawing = first.drawings[0];
+        const secondDrawing = second.drawings[0];
 
-        firstLayer.width += 11;
-        secondLayer.width += 17;
+        firstDrawing.width += 11;
+        secondDrawing.width += 17;
 
         await fontManager.forwardWorkerYjsUpdate(
             new Uint8Array([1, 2, 3]),
@@ -3573,31 +3583,31 @@ describe('FontManager boundary-crossing budget', () => {
             {
                 invalidateLayoutClosure: false,
                 layerTargets: [
-                    { glyphName: first.name, layerId: firstLayer.id },
-                    { glyphName: second.name, layerId: secondLayer.id }
+                    { glyphName: first.name, layerId: firstDrawing.id },
+                    { glyphName: second.name, layerId: secondDrawing.id }
                 ]
             }
         );
 
         const stats = fontManager.getBoundaryCrossingStats();
         expect(stats.submitBatchCalls).toBe(1);
-        expect(stats.layersTransmitted).toBe(2);
+        expect(stats.drawingsTransmitted).toBe(2);
         expect(stats.glyphsTransmitted).toBe(2);
         expect(stats.fullFontCrossings).toBe(0);
     });
 
     test('refreshWorkerCacheForReplayTargets updates fingerprints without whole-layer encode', async () => {
         const currentFont = fontManager.currentFont;
-        const layerId = currentFont.fontModel.findGlyph('a').layers[0].id;
-        const layerN = currentFont.fontModel.findGlyph('n');
-        const layerNId = layerN ? layerN.layers[0].id : null;
+        const drawingId = currentFont.fontModel.findGlyph('a').drawings[0].id;
+        const drawingN = currentFont.fontModel.findGlyph('n');
+        const drawingNId = drawingN ? drawingN.drawings[0].id : null;
         const awaitWorkerDocumentSyncSpy = jest
             .spyOn(fontCompilation, 'awaitWorkerDocumentSync')
             .mockResolvedValue();
 
-        const targets = [{ glyphName: 'a', layerId }];
-        if (layerNId) {
-            targets.push({ glyphName: 'n', layerId: layerNId });
+        const targets = [{ glyphName: 'a', layerId: drawingId }];
+        if (drawingNId) {
+            targets.push({ glyphName: 'n', layerId: drawingNId });
         }
 
         try {
@@ -3611,12 +3621,12 @@ describe('FontManager boundary-crossing budget', () => {
                 fontManager.getBoundaryCrossingStats().submitBatchCalls
             ).toBe(0);
             expect(
-                fontManager.workerLayerFingerprintCache.has(`a::${layerId}`)
+                fontManager.workerDrawingFingerprintCache.has(`a::${drawingId}`)
             ).toBe(true);
-            if (layerNId) {
+            if (drawingNId) {
                 expect(
-                    fontManager.workerLayerFingerprintCache.has(
-                        `n::${layerNId}`
+                    fontManager.workerDrawingFingerprintCache.has(
+                        `n::${drawingNId}`
                     )
                 ).toBe(true);
             }
@@ -3629,7 +3639,8 @@ describe('FontManager boundary-crossing budget', () => {
         const currentFont = fontManager.currentFont;
         const originalPatchSyncEngine = window.patchSyncEngine;
         const glyphName = 'a';
-        const layerId = currentFont.fontModel.findGlyph(glyphName).layers[0].id;
+        const drawingId =
+            currentFont.fontModel.findGlyph(glyphName).drawings[0].id;
         const bridgeDoc = new Y.Doc();
         jsonToYDoc(
             cloneJson(currentFont.babelfontData),
@@ -3638,13 +3649,13 @@ describe('FontManager boundary-crossing budget', () => {
         window.patchSyncEngine = {
             fontMap: bridgeDoc.getMap('font')
         };
-        const bridgeLayer = yDocToJson(bridgeDoc.getMap('font'))
+        const bridgeDrawing = yDocToJson(bridgeDoc.getMap('font'))
             .glyphs.find((glyph) => glyph.name === glyphName)
-            .layers.find((layer) => layer.id === layerId);
-        const pathIndex = bridgeLayer.shapes.findIndex((shape) =>
+            .layers.find((drawing) => drawing.id === drawingId);
+        const pathIndex = bridgeDrawing.shapes.findIndex((shape) =>
             Array.isArray(shape.nodes)
         );
-        const bridgeNodes = bridgeLayer.shapes[pathIndex].nodes;
+        const bridgeNodes = bridgeDrawing.shapes[pathIndex].nodes;
         const bridgeNodeX = bridgeNodes[0].x + 101;
         const staleNodeX = bridgeNodes[0].x - 101;
 
@@ -3654,7 +3665,7 @@ describe('FontManager boundary-crossing budget', () => {
                 'glyphs',
                 glyphName,
                 'layers',
-                layerId,
+                drawingId,
                 'shapes',
                 pathIndex,
                 'nodes',
@@ -3665,7 +3676,7 @@ describe('FontManager boundary-crossing budget', () => {
         );
         currentFont.babelfontData.glyphs
             .find((glyph) => glyph.name === glyphName)
-            .layers.find((layer) => layer.id === layerId).shapes[
+            .layers.find((drawing) => drawing.id === drawingId).shapes[
             pathIndex
         ].nodes[0].x = staleNodeX;
         currentFont.fontModel = Font.fromData(
@@ -3675,13 +3686,13 @@ describe('FontManager boundary-crossing budget', () => {
         try {
             await expect(
                 fontManager.refreshWorkerCacheForReplayTargets([
-                    { glyphName, layerId }
+                    { glyphName, layerId: drawingId }
                 ])
             ).resolves.toBe(true);
 
             expect(sendMessageSpy).not.toHaveBeenCalled();
-            const fingerprint = fontManager.workerLayerFingerprintCache.get(
-                `${glyphName}::${layerId}`
+            const fingerprint = fontManager.workerDrawingFingerprintCache.get(
+                `${glyphName}::${drawingId}`
             );
             expect(fingerprint).toEqual(expect.any(String));
             expect(JSON.parse(fingerprint).shapes[pathIndex].nodes[0].x).toBe(
@@ -3694,10 +3705,10 @@ describe('FontManager boundary-crossing budget', () => {
 
     test('refreshWorkerCacheForReplayTargets does not preserve shapes for non-active anchor targets', async () => {
         const currentFont = fontManager.currentFont;
-        const layerId = currentFont.fontModel.findGlyph('a').layers[0].id;
-        const serializeLayerForStorageSpy = jest.spyOn(
+        const drawingId = currentFont.fontModel.findGlyph('a').drawings[0].id;
+        const serializeDrawingForStorageSpy = jest.spyOn(
             fontManager,
-            'serializeLayerForStorage'
+            'serializeDrawingForStorage'
         );
 
         window.glyphCanvas = {
@@ -3706,7 +3717,7 @@ describe('FontManager boundary-crossing budget', () => {
                 ...(window.glyphCanvas?.outlineEditor || {}),
                 draggingSomething: false,
                 currentGlyphName: 'a',
-                selectedLayerId: 'different-layer'
+                selectedDrawingId: 'different-layer'
             }
         };
         fontManager.lastEditType = 'anchor';
@@ -3714,22 +3725,22 @@ describe('FontManager boundary-crossing budget', () => {
 
         try {
             await fontManager.refreshWorkerCacheForReplayTargets([
-                { glyphName: 'a', layerId }
+                { glyphName: 'a', layerId: drawingId }
             ]);
 
-            expect(serializeLayerForStorageSpy).toHaveBeenCalledWith(
+            expect(serializeDrawingForStorageSpy).toHaveBeenCalledWith(
                 'a',
-                layerId,
+                drawingId,
                 expect.anything()
             );
-            expect(serializeLayerForStorageSpy).not.toHaveBeenCalledWith(
+            expect(serializeDrawingForStorageSpy).not.toHaveBeenCalledWith(
                 'a',
-                layerId,
+                drawingId,
                 expect.anything(),
                 { preserveExistingShapes: true }
             );
         } finally {
-            serializeLayerForStorageSpy.mockRestore();
+            serializeDrawingForStorageSpy.mockRestore();
             fontManager.lastEditType = null;
             fontManager.lastChangeSource = null;
         }
@@ -3738,8 +3749,11 @@ describe('FontManager boundary-crossing budget', () => {
     test('refreshWorkerCacheForReplayTargets drops fingerprints when the bridge omits a layer', async () => {
         const currentFont = fontManager.currentFont;
         const originalPatchSyncEngine = window.patchSyncEngine;
-        const layerId = currentFont.fontModel.findGlyph('a').layers[0].id;
-        fontManager.workerLayerFingerprintCache.set(`a::${layerId}`, 'stale');
+        const drawingId = currentFont.fontModel.findGlyph('a').drawings[0].id;
+        fontManager.workerDrawingFingerprintCache.set(
+            `a::${drawingId}`,
+            'stale'
+        );
 
         const bridgeDoc = new Y.Doc();
         jsonToYDoc(
@@ -3750,20 +3764,20 @@ describe('FontManager boundary-crossing budget', () => {
             'glyphs',
             'a',
             'layers',
-            layerId
+            drawingId
         ]);
         window.patchSyncEngine = { fontMap: bridgeDoc.getMap('font') };
 
         try {
             await expect(
                 fontManager.refreshWorkerCacheForReplayTargets([
-                    { glyphName: 'a', layerId }
+                    { glyphName: 'a', layerId: drawingId }
                 ])
             ).resolves.toBe(true);
 
             expect(sendMessageSpy).not.toHaveBeenCalled();
             expect(
-                fontManager.workerLayerFingerprintCache.has(`a::${layerId}`)
+                fontManager.workerDrawingFingerprintCache.has(`a::${drawingId}`)
             ).toBe(false);
         } finally {
             window.patchSyncEngine = originalPatchSyncEngine;
@@ -3772,25 +3786,25 @@ describe('FontManager boundary-crossing budget', () => {
 
     test('refreshWorkerCacheForReplayTargets does not require a JS worker Y.Doc mirror', async () => {
         const currentFont = fontManager.currentFont;
-        const layerId = currentFont.fontModel.findGlyph('a').layers[0].id;
+        const drawingId = currentFont.fontModel.findGlyph('a').drawings[0].id;
 
         expect(fontManager.workerCacheYDoc).toBeUndefined();
 
         await expect(
             fontManager.refreshWorkerCacheForReplayTargets([
-                { glyphName: 'a', layerId }
+                { glyphName: 'a', layerId: drawingId }
             ])
         ).resolves.toBe(true);
 
         expect(sendMessageSpy).not.toHaveBeenCalled();
         expect(
-            fontManager.workerLayerFingerprintCache.has(`a::${layerId}`)
+            fontManager.workerDrawingFingerprintCache.has(`a::${drawingId}`)
         ).toBe(true);
     });
 
     test('refreshWorkerCacheForReplayTargets fails closed when worker document sync rejects', async () => {
         const currentFont = fontManager.currentFont;
-        const layerId = currentFont.fontModel.findGlyph('a').layers[0].id;
+        const drawingId = currentFont.fontModel.findGlyph('a').drawings[0].id;
         const awaitWorkerDocumentSyncSpy = jest
             .spyOn(fontCompilation, 'awaitWorkerDocumentSync')
             .mockRejectedValueOnce(new Error('seed failed'));
@@ -3798,7 +3812,7 @@ describe('FontManager boundary-crossing budget', () => {
         try {
             await expect(
                 fontManager.refreshWorkerCacheForReplayTargets([
-                    { glyphName: 'a', layerId }
+                    { glyphName: 'a', layerId: drawingId }
                 ])
             ).resolves.toBe(false);
             expect(sendMessageSpy).not.toHaveBeenCalled();
@@ -3807,16 +3821,16 @@ describe('FontManager boundary-crossing budget', () => {
         }
     });
 
-    test('submitLayerToWorkerCache updates fingerprints without whole-layer encode', async () => {
+    test('submitDrawingToWorkerCache updates fingerprints without whole-layer encode', async () => {
         const currentFont = fontManager.currentFont;
-        const layerId = currentFont.fontModel.findGlyph('a').layers[0].id;
+        const drawingId = currentFont.fontModel.findGlyph('a').drawings[0].id;
         const awaitWorkerDocumentSyncSpy = jest
             .spyOn(fontCompilation, 'awaitWorkerDocumentSync')
             .mockResolvedValue();
 
         try {
             await expect(
-                fontManager.submitLayerToWorkerCache('a', layerId)
+                fontManager.submitDrawingToWorkerCache('a', drawingId)
             ).resolves.toBe(true);
 
             expect(awaitWorkerDocumentSyncSpy).toHaveBeenCalled();
@@ -3825,7 +3839,7 @@ describe('FontManager boundary-crossing budget', () => {
                 fontManager.getBoundaryCrossingStats().submitBatchCalls
             ).toBe(0);
             expect(
-                fontManager.workerLayerFingerprintCache.has(`a::${layerId}`)
+                fontManager.workerDrawingFingerprintCache.has(`a::${drawingId}`)
             ).toBe(true);
         } finally {
             awaitWorkerDocumentSyncSpy.mockRestore();
@@ -3835,12 +3849,12 @@ describe('FontManager boundary-crossing budget', () => {
     test('multi-layer Yjs batches preserve unrelated worker fingerprints while updating transmitted layers', async () => {
         const currentFont = fontManager.currentFont;
         const [first, second] = currentFont.fontModel.glyphs;
-        const firstLayer = first.layers[0];
-        const secondLayer = second.layers[0];
+        const firstDrawing = first.drawings[0];
+        const secondDrawing = second.drawings[0];
 
-        firstLayer.width += 9;
-        secondLayer.width += 13;
-        fontManager.workerLayerFingerprintCache.set('stale::layer', 'stale');
+        firstDrawing.width += 9;
+        secondDrawing.width += 13;
+        fontManager.workerDrawingFingerprintCache.set('stale::layer', 'stale');
 
         await fontManager.forwardWorkerYjsUpdate(
             new Uint8Array([1, 2, 3]),
@@ -3848,36 +3862,36 @@ describe('FontManager boundary-crossing budget', () => {
             {
                 invalidateLayoutClosure: false,
                 layerTargets: [
-                    { glyphName: first.name, layerId: firstLayer.id },
-                    { glyphName: second.name, layerId: secondLayer.id }
+                    { glyphName: first.name, layerId: firstDrawing.id },
+                    { glyphName: second.name, layerId: secondDrawing.id }
                 ]
             }
         );
 
         expect(
-            fontManager.workerLayerFingerprintCache.get('stale::layer')
+            fontManager.workerDrawingFingerprintCache.get('stale::layer')
         ).toBe('stale');
         expect(
-            fontManager.workerLayerFingerprintCache.has(
-                `${first.name}::${firstLayer.id}`
+            fontManager.workerDrawingFingerprintCache.has(
+                `${first.name}::${firstDrawing.id}`
             )
         ).toBe(true);
         expect(
-            fontManager.workerLayerFingerprintCache.has(
-                `${second.name}::${secondLayer.id}`
+            fontManager.workerDrawingFingerprintCache.has(
+                `${second.name}::${secondDrawing.id}`
             )
         ).toBe(true);
     });
 
     test('recordFullFontCrossing clears the layer fingerprint cache', () => {
-        fontManager.workerLayerFingerprintCache.set('a::layer-1', 'abc');
-        fontManager.workerLayerFingerprintCache.set('n::layer-1', 'def');
+        fontManager.workerDrawingFingerprintCache.set('a::layer-1', 'abc');
+        fontManager.workerDrawingFingerprintCache.set('n::layer-1', 'def');
 
         fontManager.recordFullFontCrossing();
 
         const stats = fontManager.getBoundaryCrossingStats();
         expect(stats.fullFontCrossings).toBe(1);
-        expect(fontManager.workerLayerFingerprintCache.size).toBe(0);
+        expect(fontManager.workerDrawingFingerprintCache.size).toBe(0);
     });
 
     test('forceFullWorkerCacheUpdate reseeds the worker from authoritative bridge state', async () => {
@@ -3888,7 +3902,7 @@ describe('FontManager boundary-crossing budget', () => {
         };
         seedWorkerYDocFromStateSpy.mockClear();
         trackWorkerDocumentSyncSpy.mockClear();
-        fontManager.workerLayerFingerprintCache.set('a::layer', 'stale');
+        fontManager.workerDrawingFingerprintCache.set('a::layer', 'stale');
         fontManager.workerMirrorQuarantined = true;
 
         try {
@@ -3901,7 +3915,7 @@ describe('FontManager boundary-crossing budget', () => {
             expect(trackWorkerDocumentSyncSpy).toHaveBeenCalled();
             expect(sendMessageSpy).not.toHaveBeenCalled();
             expect(fontManager.workerMirrorQuarantined).toBe(false);
-            expect(fontManager.workerLayerFingerprintCache.size).toBe(0);
+            expect(fontManager.workerDrawingFingerprintCache.size).toBe(0);
             expect(fontCompilation.hasWorkerCacheDocument()).toBe(true);
             expect(
                 fontManager.getBoundaryCrossingStats().fullFontCrossings
@@ -3919,17 +3933,17 @@ describe('FontManager boundary-crossing budget', () => {
             )
         };
         seedWorkerYDocFromStateSpy.mockClear();
-        fontManager.workerLayerFingerprintCache.set(
+        fontManager.workerDrawingFingerprintCache.set(
             'a::removed-layer',
             'stale'
         );
-        fontManager.workerLayerFingerprintCache.set('gone::layer', 'stale');
+        fontManager.workerDrawingFingerprintCache.set('gone::layer', 'stale');
 
         try {
             await fontManager.forceFullWorkerCacheUpdate();
 
             expect(seedWorkerYDocFromStateSpy).toHaveBeenCalled();
-            expect(fontManager.workerLayerFingerprintCache.size).toBe(0);
+            expect(fontManager.workerDrawingFingerprintCache.size).toBe(0);
             expect(fontManager.workerMirrorQuarantined).toBe(false);
         } finally {
             window.patchSyncEngine = originalPatchSyncEngine;
@@ -3946,24 +3960,24 @@ describe('FontManager boundary-crossing budget', () => {
 
     test('stageLiveDragPreviewFromModel sends preview layer overlays without applyYjsUpdate', async () => {
         const currentFont = fontManager.currentFont;
-        const layerId = '1FA54028-AD2E-4209-AA7B-72DF2DF16264';
-        const storedLayer = currentFont.babelfontData.glyphs
+        const drawingId = '1FA54028-AD2E-4209-AA7B-72DF2DF16264';
+        const storedDrawing = currentFont.babelfontData.glyphs
             .find((entry) => entry.name === 'a')
-            .layers.find((entry) => entry.id === layerId);
-        const previewLayer = {
-            ...cloneJson(storedLayer),
-            width: storedLayer.width + 21
+            .layers.find((entry) => entry.id === drawingId);
+        const previewDrawing = {
+            ...cloneJson(storedDrawing),
+            width: storedDrawing.width + 21
         };
         const encodeStateSpy = jest.spyOn(Y, 'encodeStateAsUpdate');
 
         try {
-            await fontManager.stageLiveDragPreviewFromModel(['a'], layerId, {
+            await fontManager.stageLiveDragPreviewFromModel(['a'], drawingId, {
                 dispatchGlyphChanged: false,
-                explicitLayerData: [
+                explicitDrawingData: [
                     {
                         glyphName: 'a',
-                        layerId,
-                        layerData: previewLayer
+                        layerId: drawingId,
+                        layerData: previewDrawing
                     }
                 ]
             });
@@ -3977,19 +3991,19 @@ describe('FontManager boundary-crossing budget', () => {
         expect(sendMessageSpy).toHaveBeenCalledTimes(1);
         expect(sendMessageSpy).toHaveBeenCalledWith(
             expect.objectContaining({
-                type: 'applyPreviewLayerOverlay',
+                type: 'applyPreviewDrawingOverlay',
                 invalidateLayoutClosure: false,
                 changedGlyphs: ['a'],
                 layerUpdates: [
                     expect.objectContaining({
                         glyphName: 'a',
-                        layerId,
+                        layerId: drawingId,
                         layerData: expect.objectContaining({
-                            width: previewLayer.width
+                            width: previewDrawing.width
                         })
                     })
                 ],
-                layerTargets: [{ glyphName: 'a', layerId }]
+                layerTargets: [{ glyphName: 'a', layerId: drawingId }]
             })
         );
         expect(sendMessageSpy.mock.calls[0][0]).not.toHaveProperty('update');
@@ -4002,19 +4016,19 @@ describe('FontManager boundary-crossing budget', () => {
 
     test('stageLiveDragPreviewFromModel does not write compile-facing layers into resting storage', async () => {
         const currentFont = fontManager.currentFont;
-        const layerId = '1FA54028-AD2E-4209-AA7B-72DF2DF16264';
-        const storedLayerBefore = cloneJson(
+        const drawingId = '1FA54028-AD2E-4209-AA7B-72DF2DF16264';
+        const storedDrawingBefore = cloneJson(
             currentFont.babelfontData.glyphs
                 .find((entry) => entry.name === 'a')
-                .layers.find((entry) => entry.id === layerId)
+                .layers.find((entry) => entry.id === drawingId)
         );
         const updateStoredSpy = jest.spyOn(
             fontManager,
-            'updateStoredLayerData'
+            'updateStoredDrawingData'
         );
 
         try {
-            await fontManager.stageLiveDragPreviewFromModel(['a'], layerId, {
+            await fontManager.stageLiveDragPreviewFromModel(['a'], drawingId, {
                 dispatchGlyphChanged: false
             });
         } finally {
@@ -4025,28 +4039,28 @@ describe('FontManager boundary-crossing budget', () => {
         expect(
             currentFont.babelfontData.glyphs
                 .find((entry) => entry.name === 'a')
-                .layers.find((entry) => entry.id === layerId)
-        ).toEqual(storedLayerBefore);
+                .layers.find((entry) => entry.id === drawingId)
+        ).toEqual(storedDrawingBefore);
     });
 
     test('clearLiveDragPreview drops preview state without applyYjsUpdate', async () => {
         const currentFont = fontManager.currentFont;
-        const layerId = '1FA54028-AD2E-4209-AA7B-72DF2DF16264';
-        const storedLayer = currentFont.babelfontData.glyphs
+        const drawingId = '1FA54028-AD2E-4209-AA7B-72DF2DF16264';
+        const storedDrawing = currentFont.babelfontData.glyphs
             .find((entry) => entry.name === 'a')
-            .layers.find((entry) => entry.id === layerId);
-        const previewLayer = {
-            ...cloneJson(storedLayer),
-            width: storedLayer.width + 17
+            .layers.find((entry) => entry.id === drawingId);
+        const previewDrawing = {
+            ...cloneJson(storedDrawing),
+            width: storedDrawing.width + 17
         };
 
-        await fontManager.stageLiveDragPreviewFromModel(['a'], layerId, {
+        await fontManager.stageLiveDragPreviewFromModel(['a'], drawingId, {
             dispatchGlyphChanged: false,
-            explicitLayerData: [
+            explicitDrawingData: [
                 {
                     glyphName: 'a',
-                    layerId,
-                    layerData: previewLayer
+                    layerId: drawingId,
+                    layerData: previewDrawing
                 }
             ]
         });
@@ -4061,7 +4075,7 @@ describe('FontManager boundary-crossing budget', () => {
         expect(sendMessageSpy).toHaveBeenCalledTimes(1);
         expect(sendMessageSpy).toHaveBeenCalledWith(
             expect.objectContaining({
-                type: 'clearPreviewLayerOverlay'
+                type: 'clearPreviewDrawingOverlay'
             })
         );
         expect(
@@ -4334,13 +4348,13 @@ describe('FontManager boundary-crossing budget', () => {
 
     test('acknowledgeWorkerBridgeReseed clears quarantine after an external bridge reseed', () => {
         fontManager.workerMirrorQuarantined = true;
-        fontManager.workerLayerFingerprintCache.set('a::layer', 'stale');
+        fontManager.workerDrawingFingerprintCache.set('a::layer', 'stale');
         fontCompilation.setWorkerCacheDocumentReady(false);
 
         fontManager.acknowledgeWorkerBridgeReseed();
 
         expect(fontManager.workerMirrorQuarantined).toBe(false);
-        expect(fontManager.workerLayerFingerprintCache.size).toBe(0);
+        expect(fontManager.workerDrawingFingerprintCache.size).toBe(0);
         expect(fontCompilation.hasWorkerCacheDocument()).toBe(true);
     });
 
@@ -4348,40 +4362,41 @@ describe('FontManager boundary-crossing budget', () => {
         const currentFont = fontManager.currentFont;
         const originalPatchSyncEngine = window.patchSyncEngine;
         const glyphName = 'a';
-        const layerId = currentFont.fontModel.findGlyph(glyphName).layers[0].id;
+        const drawingId =
+            currentFont.fontModel.findGlyph(glyphName).drawings[0].id;
         const originalFontData = cloneJson(currentFont.babelfontData);
         const firstEditedFontData = cloneJson(originalFontData);
         const firstEditedGlyph = firstEditedFontData.glyphs.find(
             (glyph) => glyph.name === glyphName
         );
-        const firstEditedLayer = firstEditedGlyph.layers.find(
-            (layer) => layer.id === layerId
+        const firstEditedDrawing = firstEditedGlyph.layers.find(
+            (drawing) => drawing.id === drawingId
         );
-        const editedPathIndex = firstEditedLayer.shapes.findIndex((shape) =>
+        const editedPathIndex = firstEditedDrawing.shapes.findIndex((shape) =>
             Array.isArray(shape.nodes)
         );
         const firstNextX =
-            firstEditedLayer.shapes[editedPathIndex].nodes[0].x + 37;
+            firstEditedDrawing.shapes[editedPathIndex].nodes[0].x + 37;
         const firstNextY =
-            firstEditedLayer.shapes[editedPathIndex].nodes[0].y + 19;
+            firstEditedDrawing.shapes[editedPathIndex].nodes[0].y + 19;
         const secondEditedFontData = cloneJson(firstEditedFontData);
         const secondEditedGlyph = secondEditedFontData.glyphs.find(
             (glyph) => glyph.name === glyphName
         );
-        const secondEditedLayer = secondEditedGlyph.layers.find(
-            (layer) => layer.id === layerId
+        const secondEditedDrawing = secondEditedGlyph.layers.find(
+            (drawing) => drawing.id === drawingId
         );
         const secondNextX =
-            secondEditedLayer.shapes[editedPathIndex].nodes[1].x - 21;
+            secondEditedDrawing.shapes[editedPathIndex].nodes[1].x - 21;
         const secondNextY =
-            secondEditedLayer.shapes[editedPathIndex].nodes[1].y + 14;
+            secondEditedDrawing.shapes[editedPathIndex].nodes[1].y + 14;
 
-        firstEditedLayer.shapes[editedPathIndex].nodes[0].x = firstNextX;
-        firstEditedLayer.shapes[editedPathIndex].nodes[0].y = firstNextY;
-        secondEditedLayer.shapes[editedPathIndex].nodes[0].x = firstNextX;
-        secondEditedLayer.shapes[editedPathIndex].nodes[0].y = firstNextY;
-        secondEditedLayer.shapes[editedPathIndex].nodes[1].x = secondNextX;
-        secondEditedLayer.shapes[editedPathIndex].nodes[1].y = secondNextY;
+        firstEditedDrawing.shapes[editedPathIndex].nodes[0].x = firstNextX;
+        firstEditedDrawing.shapes[editedPathIndex].nodes[0].y = firstNextY;
+        secondEditedDrawing.shapes[editedPathIndex].nodes[0].x = firstNextX;
+        secondEditedDrawing.shapes[editedPathIndex].nodes[0].y = firstNextY;
+        secondEditedDrawing.shapes[editedPathIndex].nodes[1].x = secondNextX;
+        secondEditedDrawing.shapes[editedPathIndex].nodes[1].y = secondNextY;
 
         const workerDoc = new Y.Doc();
         jsonToYDoc(cloneJson(originalFontData), workerDoc.getMap('font'));
@@ -4397,7 +4412,7 @@ describe('FontManager boundary-crossing budget', () => {
                         'glyphs',
                         glyphName,
                         'layers',
-                        layerId,
+                        drawingId,
                         'shapes',
                         editedPathIndex,
                         'nodes',
@@ -4412,7 +4427,7 @@ describe('FontManager boundary-crossing budget', () => {
                         'glyphs',
                         glyphName,
                         'layers',
-                        layerId,
+                        drawingId,
                         'shapes',
                         editedPathIndex,
                         'nodes',
@@ -4427,14 +4442,14 @@ describe('FontManager boundary-crossing budget', () => {
                 beforeStateVector
             );
 
-            fontManager.workerLayerFingerprintCache.clear();
-            fontManager.workerLayerFingerprintCache.set(
-                `${glyphName}::${layerId}`,
+            fontManager.workerDrawingFingerprintCache.clear();
+            fontManager.workerDrawingFingerprintCache.set(
+                `${glyphName}::${drawingId}`,
                 JSON.stringify(
-                    fontManager.normalizeLayerForRust(
+                    fontManager.normalizeDrawingForRust(
                         originalFontData.glyphs
                             .find((glyph) => glyph.name === glyphName)
-                            .layers.find((layer) => layer.id === layerId)
+                            .layers.find((drawing) => drawing.id === drawingId)
                     )
                 )
             );
@@ -4449,7 +4464,7 @@ describe('FontManager boundary-crossing budget', () => {
                     [glyphName],
                     {
                         invalidateLayoutClosure: false,
-                        layerTargets: [{ glyphName, layerId }]
+                        layerTargets: [{ glyphName, layerId: drawingId }]
                     }
                 )
             ).resolves.toBe(true);
@@ -4462,7 +4477,7 @@ describe('FontManager boundary-crossing budget', () => {
                         'glyphs',
                         glyphName,
                         'layers',
-                        layerId,
+                        drawingId,
                         'shapes',
                         editedPathIndex,
                         'nodes',
@@ -4477,7 +4492,7 @@ describe('FontManager boundary-crossing budget', () => {
                         'glyphs',
                         glyphName,
                         'layers',
-                        layerId,
+                        drawingId,
                         'shapes',
                         editedPathIndex,
                         'nodes',
@@ -4504,7 +4519,7 @@ describe('FontManager boundary-crossing budget', () => {
                     [glyphName],
                     {
                         invalidateLayoutClosure: false,
-                        layerTargets: [{ glyphName, layerId }]
+                        layerTargets: [{ glyphName, layerId: drawingId }]
                     }
                 )
             ).resolves.toBe(true);
@@ -4515,7 +4530,7 @@ describe('FontManager boundary-crossing budget', () => {
                     type: 'applyYjsUpdate',
                     update: firstRawUpdate,
                     changedGlyphs: [glyphName],
-                    layerTargets: [{ glyphName, layerId }],
+                    layerTargets: [{ glyphName, layerId: drawingId }],
                     invalidateLayoutClosure: false
                 })
             );
@@ -4525,7 +4540,7 @@ describe('FontManager boundary-crossing budget', () => {
                     type: 'applyYjsUpdate',
                     update: secondRawUpdate,
                     changedGlyphs: [glyphName],
-                    layerTargets: [{ glyphName, layerId }],
+                    layerTargets: [{ glyphName, layerId: drawingId }],
                     invalidateLayoutClosure: false
                 })
             );
@@ -4548,7 +4563,7 @@ describe('FontManager boundary-crossing budget', () => {
             .spyOn(fontManager, 'syncBabelfontJsonFromCurrentModel')
             .mockReturnValue(false);
         const glyph = fontManager.currentFont.fontModel.findGlyph('a');
-        const layerId = glyph.layers[0].id;
+        const drawingId = glyph.drawings[0].id;
         fontManager.pendingBabelfontJsonSyncAfterDrag = true;
 
         expect(rawUpdate).toBeInstanceOf(Uint8Array);
@@ -4557,7 +4572,7 @@ describe('FontManager boundary-crossing budget', () => {
             await expect(
                 fontManager.forwardWorkerYjsUpdate(rawUpdate, ['a'], {
                     invalidateLayoutClosure: false,
-                    layerTargets: [{ glyphName: 'a', layerId }]
+                    layerTargets: [{ glyphName: 'a', layerId: drawingId }]
                 })
             ).resolves.toBe(true);
 
@@ -4568,13 +4583,13 @@ describe('FontManager boundary-crossing budget', () => {
                     type: 'applyYjsUpdate',
                     update: rawUpdate,
                     changedGlyphs: ['a'],
-                    layerTargets: [{ glyphName: 'a', layerId }],
+                    layerTargets: [{ glyphName: 'a', layerId: drawingId }],
                     invalidateLayoutClosure: false
                 })
             );
             expect(fontManager.getBoundaryCrossingStats()).toEqual({
                 submitBatchCalls: 1,
-                layersTransmitted: 1,
+                drawingsTransmitted: 1,
                 glyphsTransmitted: 1,
                 fullFontCrossings: 0
             });
@@ -4592,40 +4607,43 @@ describe('FontManager boundary-crossing budget', () => {
         const sourceGlyph = originalFontData.glyphs.find(
             (glyph) => glyph.name === sourceGlyphName
         );
-        const concreteLayers = sourceGlyph.layers.filter(
-            (layer) =>
-                Number.isFinite(layer.width) &&
-                layer.width > 0 &&
-                !layer.is_background &&
-                !layer.id.endsWith('.bg')
+        const concreteDrawings = sourceGlyph.layers.filter(
+            (drawing) =>
+                Number.isFinite(drawing.width) &&
+                drawing.width > 0 &&
+                !drawing.is_background &&
+                !drawing.id.endsWith('.bg')
         );
-        const [sourceLayer] = concreteLayers;
-        const dependentLayer = {
+        const [sourceDrawing] = concreteDrawings;
+        const dependentDrawing = {
             id: 'worker-replay-target-layer',
             width: 500,
-            master: cloneJson(sourceLayer.master),
+            master: cloneJson(sourceDrawing.master),
             shapes: []
         };
         originalFontData.glyphs.push({
             name: dependentGlyphName,
             exported: false,
-            layers: [cloneJson(dependentLayer)]
+            layers: [cloneJson(dependentDrawing)]
         });
-        const sourceWidth = sourceLayer.width + 17;
-        const dependentWidth = dependentLayer.width + 23;
+        const sourceWidth = sourceDrawing.width + 17;
+        const dependentWidth = dependentDrawing.width + 23;
         const updatedFontData = cloneJson(originalFontData);
-        const updatedSourceLayer = updatedFontData.glyphs
+        const updatedSourceDrawing = updatedFontData.glyphs
             .find((glyph) => glyph.name === sourceGlyphName)
-            .layers.find((layer) => layer.id === sourceLayer.id);
-        const updatedDependentLayer = updatedFontData.glyphs
+            .layers.find((drawing) => drawing.id === sourceDrawing.id);
+        const updatedDependentDrawing = updatedFontData.glyphs
             .find((glyph) => glyph.name === dependentGlyphName)
-            .layers.find((layer) => layer.id === dependentLayer.id);
-        updatedSourceLayer.width = sourceWidth;
-        updatedDependentLayer.width = dependentWidth;
+            .layers.find((drawing) => drawing.id === dependentDrawing.id);
+        updatedSourceDrawing.width = sourceWidth;
+        updatedDependentDrawing.width = dependentWidth;
 
         const bridgeDoc = new Y.Doc();
         jsonToYDoc(originalFontData, bridgeDoc.getMap('font'));
-        fontManager.workerLayerFingerprintCache.set('baseline::layer', 'base');
+        fontManager.workerDrawingFingerprintCache.set(
+            'baseline::layer',
+            'base'
+        );
         window.patchSyncEngine = { fontMap: bridgeDoc.getMap('font') };
 
         bridgeDoc.transact(() => {
@@ -4635,7 +4653,7 @@ describe('FontManager boundary-crossing budget', () => {
                     'glyphs',
                     dependentGlyphName,
                     'layers',
-                    dependentLayer.id,
+                    dependentDrawing.id,
                     'width'
                 ],
                 dependentWidth
@@ -4645,7 +4663,13 @@ describe('FontManager boundary-crossing budget', () => {
         bridgeDoc.transact(() => {
             setYPath(
                 bridgeDoc.getMap('font'),
-                ['glyphs', sourceGlyphName, 'layers', sourceLayer.id, 'width'],
+                [
+                    'glyphs',
+                    sourceGlyphName,
+                    'layers',
+                    sourceDrawing.id,
+                    'width'
+                ],
                 sourceWidth
             );
         });
@@ -4673,7 +4697,7 @@ describe('FontManager boundary-crossing budget', () => {
                         layerTargets: [
                             {
                                 glyphName: dependentGlyphName,
-                                layerId: dependentLayer.id
+                                layerId: dependentDrawing.id
                             }
                         ]
                     }
@@ -4691,7 +4715,7 @@ describe('FontManager boundary-crossing budget', () => {
                     layerTargets: [
                         {
                             glyphName: dependentGlyphName,
-                            layerId: dependentLayer.id
+                            layerId: dependentDrawing.id
                         }
                     ],
                     invalidateLayoutClosure: false
@@ -4712,7 +4736,7 @@ describe('FontManager boundary-crossing budget', () => {
             // no whole-layer repair/encode is appended for missing targets.
             expect(fontManager.getBoundaryCrossingStats()).toEqual({
                 submitBatchCalls: 1,
-                layersTransmitted: 1,
+                drawingsTransmitted: 1,
                 glyphsTransmitted: 1,
                 fullFontCrossings: 0
             });
@@ -4727,7 +4751,7 @@ describe('FontManager boundary-crossing budget', () => {
         const originalPatchSyncEngine = window.patchSyncEngine;
         const glyphName = 'a';
         const glyph = currentFont.fontModel.findGlyph(glyphName);
-        const layerId = glyph.layers[0].id;
+        const drawingId = glyph.drawings[0].id;
         const bridgeDoc = new Y.Doc();
         jsonToYDoc(
             cloneJson(currentFont.babelfontData),
@@ -4739,7 +4763,7 @@ describe('FontManager boundary-crossing budget', () => {
 
         setYPath(
             bridgeDoc.getMap('font'),
-            ['glyphs', glyphName, 'layers', layerId, 'shapes'],
+            ['glyphs', glyphName, 'layers', drawingId, 'shapes'],
             []
         );
 
@@ -4749,13 +4773,13 @@ describe('FontManager boundary-crossing budget', () => {
             await expect(
                 fontManager.forwardWorkerYjsUpdate(rawUpdate, [glyphName], {
                     invalidateLayoutClosure: false,
-                    layerTargets: [{ glyphName, layerId }]
+                    layerTargets: [{ glyphName, layerId: drawingId }]
                 })
             ).resolves.toBe(true);
 
             const fingerprint = JSON.parse(
-                fontManager.workerLayerFingerprintCache.get(
-                    `${glyphName}::${layerId}`
+                fontManager.workerDrawingFingerprintCache.get(
+                    `${glyphName}::${drawingId}`
                 )
             );
             expect(Array.isArray(fingerprint.shapes)).toBe(true);
@@ -4764,7 +4788,7 @@ describe('FontManager boundary-crossing budget', () => {
                 expect.objectContaining({
                     type: 'applyYjsUpdate',
                     changedGlyphs: [glyphName],
-                    layerTargets: [{ glyphName, layerId }],
+                    layerTargets: [{ glyphName, layerId: drawingId }],
                     invalidateLayoutClosure: false
                 })
             );
@@ -4777,11 +4801,11 @@ describe('FontManager boundary-crossing budget', () => {
         const glyphName = 'a';
         const modelGlyph =
             fontManager.currentFont.fontModel.findGlyph(glyphName);
-        const removedLayerId = '1FA54028-AD2E-4209-AA7B-72DF2DF16264';
-        const removedLayer = modelGlyph.data.layers.find(
-            (entry) => entry.id === removedLayerId
+        const removedDrawingId = '1FA54028-AD2E-4209-AA7B-72DF2DF16264';
+        const removedDrawing = modelGlyph.data.layers.find(
+            (entry) => entry.id === removedDrawingId
         );
-        expect(removedLayer).toBeTruthy();
+        expect(removedDrawing).toBeTruthy();
         const sourceGlyph = fontManager.currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === glyphName
         );
@@ -4800,31 +4824,33 @@ describe('FontManager boundary-crossing budget', () => {
                 'glyphs',
                 glyphName,
                 'layers',
-                removedLayerId
+                removedDrawingId
             ]);
         });
         const rawUpdate = Y.encodeStateAsUpdate(doc, previousStateVector);
 
-        const removedLayerIndex = modelGlyph.data.layers.findIndex(
-            (entry) => entry.id === removedLayerId
+        const removedDrawingIndex = modelGlyph.data.layers.findIndex(
+            (entry) => entry.id === removedDrawingId
         );
-        expect(removedLayerIndex).toBeGreaterThanOrEqual(0);
-        modelGlyph.removeLayer(removedLayerIndex);
-        if (sourceGlyph.layers.some((entry) => entry.id === removedLayerId)) {
+        expect(removedDrawingIndex).toBeGreaterThanOrEqual(0);
+        modelGlyph.removeDrawing(removedDrawingIndex);
+        if (sourceGlyph.layers.some((entry) => entry.id === removedDrawingId)) {
             sourceGlyph.layers = sourceGlyph.layers.filter(
-                (entry) => entry.id !== removedLayerId
+                (entry) => entry.id !== removedDrawingId
             );
         }
         expect(
-            modelGlyph.data.layers.some((entry) => entry.id === removedLayerId)
+            modelGlyph.data.layers.some(
+                (entry) => entry.id === removedDrawingId
+            )
         ).toBe(false);
         expect(
             fontManager.currentFont.fontModel.glyphs
                 .find((entry) => entry.name === glyphName)
-                .data.layers.some((entry) => entry.id === removedLayerId)
+                .data.layers.some((entry) => entry.id === removedDrawingId)
         ).toBe(false);
-        fontManager.workerLayerFingerprintCache.set(
-            `${glyphName}::${removedLayerId}`,
+        fontManager.workerDrawingFingerprintCache.set(
+            `${glyphName}::${removedDrawingId}`,
             'stale-fingerprint'
         );
         fontManager.resetBoundaryCrossingStats();
@@ -4832,7 +4858,7 @@ describe('FontManager boundary-crossing budget', () => {
         await expect(
             fontManager.forwardWorkerYjsUpdate(rawUpdate, [], {
                 invalidateLayoutClosure: false,
-                layerTargets: [{ glyphName, layerId: removedLayerId }]
+                layerTargets: [{ glyphName, layerId: removedDrawingId }]
             })
         ).resolves.toBe(true);
 
@@ -4840,18 +4866,18 @@ describe('FontManager boundary-crossing budget', () => {
             expect.objectContaining({
                 type: 'applyYjsUpdate',
                 changedGlyphs: [],
-                layerTargets: [{ glyphName, layerId: removedLayerId }],
+                layerTargets: [{ glyphName, layerId: removedDrawingId }],
                 invalidateLayoutClosure: false
             })
         );
         expect(
-            fontManager.workerLayerFingerprintCache.has(
-                `${glyphName}::${removedLayerId}`
+            fontManager.workerDrawingFingerprintCache.has(
+                `${glyphName}::${removedDrawingId}`
             )
         ).toBe(false);
         expect(fontManager.getBoundaryCrossingStats()).toEqual({
             submitBatchCalls: 1,
-            layersTransmitted: 1,
+            drawingsTransmitted: 1,
             glyphsTransmitted: 1,
             fullFontCrossings: 0
         });
@@ -4863,8 +4889,8 @@ describe('FontManager boundary-crossing budget', () => {
             fontManager.currentFont.babelfontData.glyphs.find(
                 (entry) => entry.name === glyphName
             );
-        const removedLayerIds = removedGlyphEntry.layers.map(
-            (layer) => layer.id
+        const removedDrawingIds = removedGlyphEntry.layers.map(
+            (drawing) => drawing.id
         );
         const doc = new Y.Doc();
         const fontMap = doc.getMap('font');
@@ -4881,9 +4907,9 @@ describe('FontManager boundary-crossing budget', () => {
         });
         const rawUpdate = Y.encodeStateAsUpdate(doc, previousStateVector);
 
-        for (const layerId of removedLayerIds) {
-            fontManager.workerLayerFingerprintCache.set(
-                `${glyphName}::${layerId}`,
+        for (const drawingId of removedDrawingIds) {
+            fontManager.workerDrawingFingerprintCache.set(
+                `${glyphName}::${drawingId}`,
                 'stale-fingerprint'
             );
         }
@@ -4905,7 +4931,7 @@ describe('FontManager boundary-crossing budget', () => {
             })
         );
         expect(
-            Array.from(fontManager.workerLayerFingerprintCache.keys()).some(
+            Array.from(fontManager.workerDrawingFingerprintCache.keys()).some(
                 (key) => key.startsWith(`${glyphName}::`)
             )
         ).toBe(false);
@@ -4919,7 +4945,7 @@ describe('FontManager boundary-crossing budget', () => {
         window.glyphCanvas = {
             outlineEditor: {
                 currentGlyphName: 'missing',
-                selectedLayerId: 'missing-layer'
+                selectedDrawingId: 'missing-layer'
             },
             getCurrentGlyphName: jest.fn(() => 'missing')
         };
@@ -4950,7 +4976,7 @@ describe('FontManager boundary-crossing budget', () => {
         window.glyphCanvas = {
             outlineEditor: {
                 currentGlyphName: 'a',
-                selectedLayerId: '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
+                selectedDrawingId: '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
             },
             getCurrentGlyphName: jest.fn(() => 'a')
         };
@@ -4976,18 +5002,18 @@ describe('FontManager boundary-crossing budget', () => {
 
     test('refreshGlyphsAfterModelBatch dispatches glyphChanged without worker encode', async () => {
         const currentFont = fontManager.currentFont;
-        const layerId = '1FA54028-AD2E-4209-AA7B-72DF2DF16264';
-        const modelLayer = currentFont.fontModel
+        const drawingId = '1FA54028-AD2E-4209-AA7B-72DF2DF16264';
+        const modelDrawing = currentFont.fontModel
             .findGlyph('a')
-            .findLayerById(layerId);
+            .findDrawingById(drawingId);
         const glyphChanged = jest.fn();
         window.addEventListener('glyphChanged', glyphChanged);
 
-        modelLayer.width += 19;
+        modelDrawing.width += 19;
 
         try {
             await expect(
-                fontManager.refreshGlyphsAfterModelBatch(['a'], layerId)
+                fontManager.refreshGlyphsAfterModelBatch(['a'], drawingId)
             ).resolves.toBeUndefined();
 
             expect(sendMessageSpy).not.toHaveBeenCalled();
@@ -5026,7 +5052,7 @@ describe('FontManager boundary-crossing budget', () => {
 
     test('forwardWorkerYjsUpdate quarantines on unseeded worker doc and does not resend the failed update', async () => {
         const originalPatchSyncEngine = window.patchSyncEngine;
-        const layerId = '1FA54028-AD2E-4209-AA7B-72DF2DF16264';
+        const drawingId = '1FA54028-AD2E-4209-AA7B-72DF2DF16264';
         window.patchSyncEngine = {
             encodeBridgeState: jest.fn(() => null)
         };
@@ -5042,7 +5068,7 @@ describe('FontManager boundary-crossing budget', () => {
                     ['a'],
                     {
                         invalidateLayoutClosure: false,
-                        layerTargets: [{ glyphName: 'a', layerId }]
+                        layerTargets: [{ glyphName: 'a', layerId: drawingId }]
                     }
                 )
             ).resolves.toBe(false);
@@ -5054,7 +5080,7 @@ describe('FontManager boundary-crossing budget', () => {
             // Later fingerprint-only refresh must not replay the failed packet.
             await expect(
                 fontManager.refreshWorkerCacheForReplayTargets([
-                    { glyphName: 'a', layerId }
+                    { glyphName: 'a', layerId: drawingId }
                 ])
             ).resolves.toBe(true);
             expect(sendMessageSpy).toHaveBeenCalledTimes(1);
@@ -5116,28 +5142,28 @@ describe('FontManager boundary-crossing budget', () => {
 
     test('per-edit boundary cost stays flat across 50 sequential commits', async () => {
         const currentFont = fontManager.currentFont;
-        const layerId = '1FA54028-AD2E-4209-AA7B-72DF2DF16264';
-        const modelLayer = currentFont.fontModel
+        const drawingId = '1FA54028-AD2E-4209-AA7B-72DF2DF16264';
+        const modelDrawing = currentFont.fontModel
             .findGlyph('a')
-            .findLayerById(layerId);
+            .findDrawingById(drawingId);
 
         for (let i = 0; i < 50; i++) {
             fontManager.resetBoundaryCrossingStats();
-            modelLayer.width += 1;
+            modelDrawing.width += 1;
 
             await fontManager.forwardWorkerYjsUpdate(
                 new Uint8Array([1, i, 3]),
                 ['a'],
                 {
                     invalidateLayoutClosure: false,
-                    layerTargets: [{ glyphName: 'a', layerId }]
+                    layerTargets: [{ glyphName: 'a', layerId: drawingId }]
                 }
             );
 
             const stats = fontManager.getBoundaryCrossingStats();
             expect(stats).toEqual({
                 submitBatchCalls: 1,
-                layersTransmitted: 1,
+                drawingsTransmitted: 1,
                 glyphsTransmitted: 1,
                 fullFontCrossings: 0
             });
@@ -5145,7 +5171,7 @@ describe('FontManager boundary-crossing budget', () => {
     });
 
     test('serializes overlapping incremental worker Yjs sends', async () => {
-        const layerId = '1FA54028-AD2E-4209-AA7B-72DF2DF16264';
+        const drawingId = '1FA54028-AD2E-4209-AA7B-72DF2DF16264';
 
         let inFlight = 0;
         let maxInFlight = 0;
@@ -5185,7 +5211,7 @@ describe('FontManager boundary-crossing budget', () => {
                 ['a'],
                 {
                     invalidateLayoutClosure: false,
-                    layerTargets: [{ glyphName: 'a', layerId }]
+                    layerTargets: [{ glyphName: 'a', layerId: drawingId }]
                 }
             );
 
@@ -5198,7 +5224,7 @@ describe('FontManager boundary-crossing budget', () => {
                 ['a'],
                 {
                     invalidateLayoutClosure: false,
-                    layerTargets: [{ glyphName: 'a', layerId }]
+                    layerTargets: [{ glyphName: 'a', layerId: drawingId }]
                 }
             );
 
@@ -5228,21 +5254,21 @@ describe('FontManager boundary-crossing budget', () => {
     });
 
     test('undo/redo replay targets keep boundary crossing budget at zero full-font crossings', async () => {
-        const layerId = '1FA54028-AD2E-4209-AA7B-72DF2DF16264';
+        const drawingId = '1FA54028-AD2E-4209-AA7B-72DF2DF16264';
 
         await fontManager.forwardWorkerYjsUpdate(
             new Uint8Array([1, 2, 3]),
             ['a'],
             {
                 invalidateLayoutClosure: false,
-                layerTargets: [{ glyphName: 'a', layerId }]
+                layerTargets: [{ glyphName: 'a', layerId: drawingId }]
             }
         );
 
         fontManager.resetBoundaryCrossingStats();
         sendMessageSpy.mockClear();
         await fontManager.refreshWorkerCacheForReplayTargets([
-            { glyphName: 'a', layerId }
+            { glyphName: 'a', layerId: drawingId }
         ]);
 
         const stats = fontManager.getBoundaryCrossingStats();
@@ -5250,7 +5276,7 @@ describe('FontManager boundary-crossing budget', () => {
         expect(stats.fullFontCrossings).toBe(0);
         expect(sendMessageSpy).not.toHaveBeenCalled();
         expect(
-            fontManager.workerLayerFingerprintCache.has(`a::${layerId}`)
+            fontManager.workerDrawingFingerprintCache.has(`a::${drawingId}`)
         ).toBe(true);
     });
 });
@@ -5327,8 +5353,8 @@ describe('FontManager worker seed export', () => {
             const firstGlyph = roundTripJson.glyphs.find(
                 (glyph) => glyph.name === 'a'
             );
-            const firstLayer = firstGlyph.layers[0];
-            const firstPathShape = firstLayer.shapes.find(
+            const firstDrawing = firstGlyph.layers[0];
+            const firstPathShape = firstDrawing.shapes.find(
                 (shape) => !shape.reference && Array.isArray(shape.nodes)
             );
 
@@ -5489,7 +5515,7 @@ describe('FontManager handleNewFont', () => {
         // Font.fromData still accepts the structure.
         const fontObj = Font.fromData(parsed);
         expect(fontObj.glyphs[0].exported).toBe(true);
-        expect(fontObj.glyphs[0].layers[0].shapes).toHaveLength(2);
+        expect(fontObj.glyphs[0].drawings[0].shapes).toHaveLength(2);
         expect(fontObj.findGlyph('space')).toBeDefined();
         expect(parsed.date).toBeTruthy();
         expect(parsed.version).toEqual([1, 0]);
@@ -5503,7 +5529,7 @@ describe('FontManager handleNewFont', () => {
         expect(fontObj).toBeDefined();
         expect(fontObj.names.family_name.dflt).toBe('Untitled');
         expect(fontObj.names.preferred_subfamily_name.dflt).toBe('Regular');
-        expect(fontObj.masters[0].name.dflt).toBe('Regular');
+        expect(fontObj.stations[0].name.dflt).toBe('Regular');
         expect(fontObj.findGlyph('.notdef')).toBeDefined();
         expect(fontObj.findGlyph('space')).toBeDefined();
     });
@@ -5534,35 +5560,35 @@ describe('FontManager handleNewFont', () => {
         const json = fontManager.generateEmptyFontJson();
         const fontData = JSON.parse(json);
         const space = fontData.glyphs.find((glyph) => glyph.name === 'space');
-        const layerFor = (id) => {
-            const layer = JSON.parse(JSON.stringify(space.layers[0]));
-            layer.id = id;
-            return layer;
+        const drawingFor = (id) => {
+            const drawing = JSON.parse(JSON.stringify(space.layers[0]));
+            drawing.id = id;
+            return drawing;
         };
         fontData.glyphs.push(
             {
                 name: 'a',
                 codepoints: [97],
                 exported: true,
-                layers: [layerFor('layer-a')]
+                layers: [drawingFor('layer-a')]
             },
             {
                 name: 'a.init',
                 codepoints: [],
                 exported: true,
-                layers: [layerFor('layer-a-init')]
+                layers: [drawingFor('layer-a-init')]
             },
             {
                 name: 'g',
                 codepoints: [103],
                 exported: true,
-                layers: [layerFor('layer-g')]
+                layers: [drawingFor('layer-g')]
             },
             {
                 name: 'g.ss03',
                 codepoints: [],
                 exported: true,
-                layers: [layerFor('layer-g-ss03')]
+                layers: [drawingFor('layer-g-ss03')]
             }
         );
         fontData.features = {
@@ -5595,11 +5621,11 @@ describe('FontManager handleNewFont', () => {
         const json = fontManager.generateEmptyFontJson();
         const fontData = JSON.parse(json);
         const space = fontData.glyphs.find((glyph) => glyph.name === 'space');
-        const layerFor = (id, shapes = []) => {
-            const layer = JSON.parse(JSON.stringify(space.layers[0]));
-            layer.id = id;
-            layer.shapes = shapes;
-            return layer;
+        const drawingFor = (id, shapes = []) => {
+            const drawing = JSON.parse(JSON.stringify(space.layers[0]));
+            drawing.id = id;
+            drawing.shapes = shapes;
+            return drawing;
         };
         fontData.glyphs.push(
             {
@@ -5607,7 +5633,7 @@ describe('FontManager handleNewFont', () => {
                 codepoints: [0xeb],
                 exported: true,
                 layers: [
-                    layerFor('layer-edieresis', [
+                    drawingFor('layer-edieresis', [
                         { reference: 'e' },
                         { reference: 'dieresiscomb' }
                     ])
@@ -5617,14 +5643,14 @@ describe('FontManager handleNewFont', () => {
                 name: 'e',
                 codepoints: [101],
                 exported: true,
-                layers: [layerFor('layer-e')]
+                layers: [drawingFor('layer-e')]
             },
             {
                 name: 'dieresiscomb',
                 codepoints: [],
                 exported: true,
                 layers: [
-                    layerFor('layer-dieresiscomb', [
+                    drawingFor('layer-dieresiscomb', [
                         { reference: 'dotaccentcomb' },
                         { reference: 'dotaccentcomb' }
                     ])
@@ -5634,27 +5660,27 @@ describe('FontManager handleNewFont', () => {
                 name: 'dotaccentcomb',
                 codepoints: [],
                 exported: true,
-                layers: [layerFor('layer-dotaccentcomb')]
+                layers: [drawingFor('layer-dotaccentcomb')]
             },
             {
                 name: 'beh-ar',
                 codepoints: [0x628],
                 exported: true,
-                layers: [layerFor('layer-beh')]
+                layers: [drawingFor('layer-beh')]
             },
             {
                 name: 'dotbelow-ar',
                 codepoints: [],
                 exported: true,
                 layers: [
-                    layerFor('layer-dotbelow', [{ reference: 'dotabove-ar' }])
+                    drawingFor('layer-dotbelow', [{ reference: 'dotabove-ar' }])
                 ]
             },
             {
                 name: 'dotabove-ar',
                 codepoints: [],
                 exported: true,
-                layers: [layerFor('layer-dotabove')]
+                layers: [drawingFor('layer-dotabove')]
             }
         );
         fontData.features = {
@@ -5801,7 +5827,7 @@ describe('FontCompilation worker cache readiness', () => {
         expect(sendMessageSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 type: 'compileEditingCached',
-                babelfontJson: '__incremental_layer__'
+                babelfontJson: '__incremental_drawing__'
             })
         );
     });
@@ -5862,7 +5888,7 @@ describe('FontCompilation worker cache readiness', () => {
         expect(sendMessageSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 type: 'compileEditingCached',
-                babelfontJson: '__incremental_layer__',
+                babelfontJson: '__incremental_drawing__',
                 subsetGlyphs: ['o', 'odieresis'],
                 _compileSource: 'feature-code'
             })
@@ -6131,29 +6157,29 @@ describe('FontManager external source reload', () => {
         const originalTargetGlyph = sourceBaseline.glyphs.find(
             (glyph) => glyph.name === '.notdef'
         );
-        const originalTargetLayer = originalTargetGlyph.layers.find(
-            (layer) => layer.id === 'L1'
+        const originalTargetDrawing = originalTargetGlyph.layers.find(
+            (drawing) => drawing.id === 'L1'
         );
-        originalTargetLayer.anchors = [{ name: 'top', x: 300, y: 700 }];
-        originalTargetLayer.guides = [{ x: 0, y: 0, angle: 90 }];
-        const unchangedComponentLayer = originalTargetGlyph.layers.find(
-            (layer) => layer.id === 'L2'
+        originalTargetDrawing.anchors = [{ name: 'top', x: 300, y: 700 }];
+        originalTargetDrawing.guides = [{ x: 0, y: 0, angle: 90 }];
+        const unchangedComponentDrawing = originalTargetGlyph.layers.find(
+            (drawing) => drawing.id === 'L2'
         );
-        unchangedComponentLayer.shapes.push({ reference: 'A' });
-        originalTargetLayer.master = sourceBaseline.masters[0].id;
-        const originalMaster = sourceBaseline.masters[0];
-        originalMaster.guides = [{ pos: { x: 0, y: 700 } }];
+        unchangedComponentDrawing.shapes.push({ reference: 'A' });
+        originalTargetDrawing.master = sourceBaseline.masters[0].id;
+        const originalStation = sourceBaseline.masters[0];
+        originalStation.guides = [{ pos: { x: 0, y: 700 } }];
         sourceBaseline.format_specific = {
             ...(sourceBaseline.format_specific || {}),
             'com.schriftgestalt.Glyphs.kerningRTL': {
-                [originalMaster.id]: {
+                [originalStation.id]: {
                     '@MMK_R_test': { '@MMK_L_test': -100 }
                 }
             }
         };
         for (const glyph of sourceBaseline.glyphs) {
-            for (const layer of glyph.layers || []) {
-                for (const shape of layer.shapes || []) {
+            for (const drawing of glyph.layers || []) {
+                for (const shape of drawing.shapes || []) {
                     if ('nodes' in shape) {
                         shape.nodes = [];
                     }
@@ -6165,8 +6191,8 @@ describe('FontManager external source reload', () => {
         const sourceData = cloneJson(initialImport.fontData);
         for (const fontData of [originalData, sourceData]) {
             for (const glyph of fontData.glyphs) {
-                for (const layer of glyph.layers || []) {
-                    for (const shape of layer.shapes || []) {
+                for (const drawing of glyph.layers || []) {
+                    for (const shape of drawing.shapes || []) {
                         if ('nodes' in shape) {
                             shape.nodes = [];
                         }
@@ -6176,14 +6202,16 @@ describe('FontManager external source reload', () => {
         }
         let stableShapeId = 0;
         for (const glyph of originalData.glyphs) {
-            for (const layer of glyph.layers || []) {
-                for (const shape of layer.shapes || []) {
+            for (const drawing of glyph.layers || []) {
+                for (const shape of drawing.shapes || []) {
                     shape.id = `editor-shape-${stableShapeId++}`;
                 }
-                for (const [index, anchor] of (layer.anchors || []).entries()) {
+                for (const [index, anchor] of (
+                    drawing.anchors || []
+                ).entries()) {
                     anchor.id = `editor-anchor-${index}`;
                 }
-                for (const [index, guide] of (layer.guides || []).entries()) {
+                for (const [index, guide] of (drawing.guides || []).entries()) {
                     guide.id = `editor-guide-${index}`;
                 }
             }
@@ -6191,10 +6219,10 @@ describe('FontManager external source reload', () => {
         const targetGlyph = sourceData.glyphs.find(
             (glyph) => glyph.name === '.notdef'
         );
-        const targetLayer = targetGlyph.layers.find(
-            (layer) => layer.id === 'L1'
+        const targetDrawing = targetGlyph.layers.find(
+            (drawing) => drawing.id === 'L1'
         );
-        const targetShape = targetLayer.shapes[0];
+        const targetShape = targetDrawing.shapes[0];
         targetShape.nodes = [{ x: 0, y: 0, nodetype: 'Move' }];
         const targetNodes = targetShape.nodes;
         const beforeY = targetNodes[0].y;

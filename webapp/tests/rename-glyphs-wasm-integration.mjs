@@ -46,11 +46,11 @@ function setGlyph(glyphs, name, reference) {
         format_specific: {}
     });
 
-    const layers = new Y.Map();
-    glyph.set('layers', layers);
-    const layer = new Y.Map();
-    layers.set('layer-1', layer);
-    setRecord(layer, {
+    const drawings = new Y.Map();
+    glyph.set('layers', drawings);
+    const drawing = new Y.Map();
+    drawings.set('layer-1', drawing);
+    setRecord(drawing, {
         id: 'layer-1',
         master: { type: 'DefaultForMaster', master: 'master-regular' },
         width: 600,
@@ -233,15 +233,15 @@ try {
     const composite = createFontDocument();
     setGlyph(composite.glyphs, 'seven-ar.tf');
     setGlyph(composite.glyphs, 'sevenFarsi-ar.tf', 'seven-ar.tf');
-    const compositeLayerId = '3114FB65-9464-41A5-B67E-A8F9F43C0EF1';
+    const compositeDrawingId = '3114FB65-9464-41A5-B67E-A8F9F43C0EF1';
     {
         const tfGlyph = composite.glyphs.get('sevenFarsi-ar.tf');
-        const layers = tfGlyph.get('layers');
-        layers.delete('layer-1');
-        const layer = new Y.Map();
-        layers.set(compositeLayerId, layer);
-        setRecord(layer, {
-            id: compositeLayerId,
+        const drawings = tfGlyph.get('layers');
+        drawings.delete('layer-1');
+        const drawing = new Y.Map();
+        drawings.set(compositeDrawingId, drawing);
+        setRecord(drawing, {
+            id: compositeDrawingId,
             master: { type: 'DefaultForMaster', master: 'master-regular' },
             width: 600,
             shapes: [{ reference: 'seven-ar.tf', transform: {} }],
@@ -256,12 +256,12 @@ try {
         composite.glyphs.delete('sevenFarsi-ar.tf');
         setGlyph(composite.glyphs, 'sevenFarsi-arabic.tf', 'seven-ar.tf');
         const renamed = composite.glyphs.get('sevenFarsi-arabic.tf');
-        const layers = renamed.get('layers');
-        layers.delete('layer-1');
-        const layer = new Y.Map();
-        layers.set(compositeLayerId, layer);
-        setRecord(layer, {
-            id: compositeLayerId,
+        const drawings = renamed.get('layers');
+        drawings.delete('layer-1');
+        const drawing = new Y.Map();
+        drawings.set(compositeDrawingId, drawing);
+        setRecord(drawing, {
+            id: compositeDrawingId,
             master: { type: 'DefaultForMaster', master: 'master-regular' },
             width: 600,
             shapes: [{ reference: 'seven-ar.tf', transform: {} }],
@@ -279,7 +279,7 @@ try {
                 layerTargets: [
                     {
                         glyphName: 'sevenFarsi-ar.tf',
-                        layerId: compositeLayerId
+                        layerId: compositeDrawingId
                     }
                 ],
                 nonGlyphChangeHints: ['feature-code'],

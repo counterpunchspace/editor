@@ -1,4 +1,4 @@
-/** Always-drawn master metrics (plus baseline `0`). */
+/** Always-drawn station metrics (plus baseline `0`). */
 export const CORE_VERTICAL_METRIC_KEYS = new Set([
     'Ascender',
     'Descender',
@@ -25,7 +25,7 @@ export const ADDITIONAL_DRAWABLE_VERTICAL_METRIC_KEYS = new Set([
 ]);
 
 /**
- * Masters panel "Additional metrics" fields. Canvas Show All Metrics draws
+ * Stations panel "Additional metrics" fields. Canvas Show All Metrics draws
  * the geometric keys plus non-zero Typo/Hhea line gaps under their descenders.
  */
 export const ADDITIONAL_METRICS_PANEL_KEYS = [
@@ -348,10 +348,10 @@ export function isAdditionalMetricsPanelKey(metricKey: string): boolean {
 }
 
 /**
- * Master metrics that exist on Glyphs imports but are not useful in Font Info.
+ * Station metrics that exist on Glyphs imports but are not useful in Font Info.
  * `baseline` is always 0; italic angle has no meaningful overshoot zone.
  */
-export function isHiddenMasterMetricsPanelKey(metricKey: string): boolean {
+export function isHiddenStationMetricsPanelKey(metricKey: string): boolean {
     const normalized = metricKey.trim().toLowerCase();
     return normalized === 'baseline' || normalized === 'italicangle overshoot';
 }

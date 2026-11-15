@@ -326,8 +326,8 @@ function collectMainJsDomain(): MemoryDomain {
             inSum: true
         });
         rows.push({
-            id: 'layer-fingerprints',
-            label: 'Worker layer fingerprints',
+            id: 'drawing-fingerprints',
+            label: 'Worker drawing fingerprints',
             bytes: estimateRowBytes(fontSnapshot.fingerprintCache),
             method: 'est.',
             inSum: true

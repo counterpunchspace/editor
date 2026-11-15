@@ -14,9 +14,9 @@ const PYTHON_MODEL_ACCESS_PROBE = `
 import json
 
 font = Font()
-master = font.masters[0]
+master = font.stations[0]
 glyph = font.glyphs[0]
-layer = glyph.layers[0]
+layer = glyph.drawings[0]
 
 if "A:V" not in master.kerning:
     master.kerning["A:V"] = 0
@@ -132,7 +132,7 @@ async function runPythonJson(
     }, code);
 }
 
-async function enterFustatNodeEditLayer(page: Page): Promise<void> {
+async function enterFustatNodeEditDrawing(page: Page): Promise<void> {
     await page.evaluate(async () => {
         const win = window as any;
         const glyphCanvas = win.glyphCanvas;
@@ -181,7 +181,7 @@ async function enterFustatNodeEditLayer(page: Page): Promise<void> {
         await textRunEditor.selectGlyphByIndex(0, true);
         outlineEditor.currentGlyphName = 'o';
         await glyphCanvas.doUIUpdateAsync?.();
-        await outlineEditor.autoSelectMatchingLayer?.();
+        await outlineEditor.autoSelectMatchingDrawing?.();
         await glyphCanvas.enterGlyphEditModeAtCursor?.();
         await glyphCanvas.doUIUpdateAsync?.();
     });
@@ -191,16 +191,16 @@ async function enterFustatNodeEditLayer(page: Page): Promise<void> {
         () => {
             const win = window as any;
             const outlineEditor = win.glyphCanvas?.outlineEditor;
-            const layer = outlineEditor?.getCurrentLayerDataFromStack?.();
+            const drawing = outlineEditor?.getCurrentDrawingDataFromStack?.();
             return (
                 typeof win.pyodide?.runPythonAsync === 'function' &&
                 win.pyodide?.__counterpunchPythonExecutionWrapperInstalled ===
                     true &&
                 outlineEditor?.active === true &&
                 outlineEditor?.currentGlyphName === 'o' &&
-                typeof outlineEditor?.selectedLayerId === 'string' &&
-                Array.isArray(layer?.shapes) &&
-                layer.shapes.some(
+                typeof outlineEditor?.selectedDrawingId === 'string' &&
+                Array.isArray(drawing?.shapes) &&
+                drawing.shapes.some(
                     (shape: any) =>
                         Array.isArray(shape?.nodes) &&
                         typeof shape.nodes[0]?.y === 'number'
@@ -225,18 +225,18 @@ test('Python in the live runtime: node history and model mapping access', async 
     await waitForEditingFontBytes(page);
 
     await test.step('records only the active layer shape change for one Python node move', async () => {
-        await enterFustatNodeEditLayer(page);
+        await enterFustatNodeEditDrawing(page);
 
         const result = await page.evaluate(async () => {
             const win = window as any;
             const bridge = win.patchSyncEngine;
             const outlineEditor = win.glyphCanvas?.outlineEditor;
             const glyph = win.currentFontModel?.findGlyph?.('o');
-            const layerId = outlineEditor?.selectedLayerId;
-            const layer = glyph?.layers?.find(
-                (candidate: any) => candidate.id === layerId
+            const drawingId = outlineEditor?.selectedDrawingId;
+            const drawing = glyph?.drawings?.find(
+                (candidate: any) => candidate.id === drawingId
             );
-            if (!bridge || !outlineEditor || !layer || !layerId) {
+            if (!bridge || !outlineEditor || !drawing || !drawingId) {
                 throw new Error('Missing bridge or active Fustat layer');
             }
 
@@ -273,18 +273,18 @@ test('Python in the live runtime: node history and model mapping access', async 
             bridge.onLocalUpdate(listener);
 
             try {
-                const pathShape = layer.paths?.[0];
+                const pathShape = drawing.paths?.[0];
                 if (!pathShape) {
                     throw new Error('Missing active Fustat path shape');
                 }
                 const beforeY = pathShape.nodes[0].y;
                 await win.pyodide.runPythonAsync(
-                    'Layer().paths[0].nodes[0].y += 100'
+                    'Drawing().paths[0].nodes[0].y += 100'
                 );
-                const updatedLayer = glyph.layers.find(
-                    (candidate: any) => candidate.id === layerId
+                const updatedDrawing = glyph.drawings.find(
+                    (candidate: any) => candidate.id === drawingId
                 );
-                const updatedPathShape = updatedLayer?.paths?.[0];
+                const updatedPathShape = updatedDrawing?.paths?.[0];
                 if (!updatedPathShape) {
                     throw new Error('Missing updated Fustat path shape');
                 }
@@ -298,10 +298,11 @@ test('Python in the live runtime: node history and model mapping access', async 
                     const glyph = parsed?.glyphs?.find(
                         (candidate: any) => candidate.name === 'o'
                     );
-                    const layer = glyph?.layers?.find(
-                        (candidate: any) => candidate.id === layerId
+                    const drawing = glyph?.layers?.find(
+                        (candidate: any) => candidate.id === drawingId
                     );
-                    serializedNodeY = layer?.shapes?.[0]?.nodes?.[0]?.y ?? null;
+                    serializedNodeY =
+                        drawing?.shapes?.[0]?.nodes?.[0]?.y ?? null;
                 } catch {
                     serializedNodeY = 'parse-error';
                 }
@@ -309,7 +310,7 @@ test('Python in the live runtime: node history and model mapping access', async 
                 return {
                     beforeY,
                     afterY,
-                    layerId,
+                    layerId: drawingId,
                     packets,
                     txDepth: bridge._txDepth ?? bridge.txDepth ?? null,
                     recordingSuppressed: bridge._suppressRecording ?? null,
@@ -387,7 +388,7 @@ test('Python in the live runtime: node history and model mapping access', async 
             const win = window as any;
             try {
                 await win.pyodide.runPythonAsync(
-                    'Font().masters[0].name.this_language_does_not_exist'
+                    'Font().stations[0].name.this_language_does_not_exist'
                 );
                 return null;
             } catch (error) {

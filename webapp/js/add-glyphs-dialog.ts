@@ -1144,12 +1144,12 @@ export class AddGlyphsDialog {
         upm: number;
     } {
         const font = window.currentFontModel;
-        const master = font?.masters?.[0];
+        const station = font?.stations?.[0];
         const upm = font?.upm && font.upm > 0 ? font.upm : 1000;
         return {
             upm,
-            ascender: master?.metrics?.Ascender ?? upm * 0.8,
-            descender: master?.metrics?.Descender ?? -upm * 0.2
+            ascender: station?.metrics?.Ascender ?? upm * 0.8,
+            descender: station?.metrics?.Descender ?? -upm * 0.2
         };
     }
 
@@ -1541,15 +1541,15 @@ export class AddGlyphsDialog {
                     glyphNameForCodepoint: (codepoint) =>
                         font.findGlyphByCodepoint(codepoint)?.name,
                     hasGlyph: (name) => Boolean(font.findGlyph(name)),
-                    masters: (font.masters || []).map((master) => ({
-                        id: master.id,
+                    stations: (font.stations || []).map((station) => ({
+                        id: station.id,
                         metrics: {
-                            xheight: master.metrics?.XHeight ?? 500,
-                            capheight: master.metrics?.CapHeight ?? 700,
-                            ascender: master.metrics?.Ascender ?? 800,
-                            descender: master.metrics?.Descender ?? -200,
+                            xheight: station.metrics?.XHeight ?? 500,
+                            capheight: station.metrics?.CapHeight ?? 700,
+                            ascender: station.metrics?.Ascender ?? 800,
+                            descender: station.metrics?.Descender ?? -200,
                             upm: font.upm ?? 1000,
-                            italic_angle: master.metrics?.ItalicAngle ?? 0
+                            italic_angle: station.metrics?.ItalicAngle ?? 0
                         }
                     })),
                     glyphNames: () =>

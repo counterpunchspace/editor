@@ -356,8 +356,8 @@ async function installEditingWorkerPipelineTracker(page: Page): Promise<void> {
                           message.invalidateLayoutClosure ?? null,
                       fontRevisionKey: message.fontRevisionKey ?? null,
                       dragActive: message._dragActive ?? null,
-                      usePreviewLayerOverlay:
-                          message._usePreviewLayerOverlay ?? null,
+                      usePreviewDrawingOverlay:
+                          message._usePreviewDrawingOverlay ?? null,
                       resultHash: null,
                       workerCacheStatus: null
                   }
@@ -394,7 +394,7 @@ async function getEditingWorkerPipelineTracker(page: Page): Promise<{
         invalidateLayoutClosure: boolean | null;
         fontRevisionKey: string | number | null;
         dragActive: boolean | null;
-        usePreviewLayerOverlay: boolean | null;
+        usePreviewDrawingOverlay: boolean | null;
         resultHash: string | null;
         workerCacheStatus: {
             documentEpoch?: number;
@@ -714,9 +714,9 @@ async function openAutomaticAdieresisEditScenario(page: Page): Promise<void> {
         glyphCanvas.outlineEditor.active = true;
         glyphCanvas.outlineEditor.currentGlyphName = 'a';
         await glyphCanvas.enterGlyphEditModeAtCursor?.();
-        const firstLayer = glyphCanvas.getSortedLayers?.()[0] || null;
-        if (firstLayer) {
-            await glyphCanvas.outlineEditor.selectLayer(firstLayer);
+        const firstDrawing = glyphCanvas.getSortedDrawings?.()[0] || null;
+        if (firstDrawing) {
+            await glyphCanvas.outlineEditor.selectDrawing(firstDrawing);
         }
         await glyphCanvas.doUIUpdateAsync?.();
         glyphCanvas.render();
@@ -752,8 +752,8 @@ async function getTopAnchorClientPoint(page: Page): Promise<{
         const canvas = glyphCanvas?.canvas as HTMLCanvasElement | null;
         const textRunEditor = glyphCanvas?.textRunEditor;
 
-        const layerData = outlineEditor?.getCurrentLayerDataFromStack?.();
-        const topAnchor = layerData?.anchors?.find(
+        const drawingData = outlineEditor?.getCurrentDrawingDataFromStack?.();
+        const topAnchor = drawingData?.anchors?.find(
             (anchor: any) => anchor?.name === 'top'
         );
         if (!topAnchor || !canvas || !viewportManager || !textRunEditor) {
@@ -791,16 +791,16 @@ async function commitTopAnchorMoveThroughEditor(
             throw new Error('Missing editor dependencies for anchor move');
         }
 
-        const layerData = outlineEditor.getCurrentLayerDataFromStack?.();
-        const topAnchorIndex = layerData?.anchors?.findIndex(
+        const drawingData = outlineEditor.getCurrentDrawingDataFromStack?.();
+        const topAnchorIndex = drawingData?.anchors?.findIndex(
             (anchor: any) => anchor?.name === 'top'
         );
         if (typeof topAnchorIndex !== 'number' || topAnchorIndex < 0) {
             throw new Error('Missing top anchor on active glyph');
         }
 
-        const layerId = outlineEditor.getCurrentLayerId?.() || 'M0';
-        outlineEditor.selectedLayerId = layerId;
+        const drawingId = outlineEditor.getCurrentDrawingId?.() || 'M0';
+        outlineEditor.selectedDrawingId = drawingId;
         outlineEditor.selectedAnchors = [topAnchorIndex];
         outlineEditor.parseGlyphStack = () => [{ glyphName: 'a' }];
         glyphCanvas.getCurrentGlyphName = () => 'a';
@@ -813,7 +813,7 @@ async function commitTopAnchorMoveThroughEditor(
             outlineEditor.rebuildAutomaticCompositesForCurrentEditedGlyph();
         fontManager.currentFont.syncJsonFromModel?.();
 
-        const sourceTargets = [{ glyphName: 'a', layerId }];
+        const sourceTargets = [{ glyphName: 'a', layerId: drawingId }];
         const closure = outlineEditor.computeRecompositionClosure?.({
             sourceTargets,
             editKinds: new Set(['anchor']),
@@ -830,7 +830,7 @@ async function commitTopAnchorMoveThroughEditor(
             undefined,
             null,
             {
-                changedLayerTargets: replayTargets,
+                changedDrawingTargets: replayTargets,
                 workerReplayTargets: replayTargets
             },
             {
@@ -946,10 +946,10 @@ async function dragTopAnchorThroughUi(page: Page, screenDeltaY: number) {
     await page.evaluate(async () => {
         const win = window as any;
         const readTranslation = () => {
-            const layer = win.currentFontModel
+            const drawing = win.currentFontModel
                 ?.findGlyph?.('adieresis')
-                ?.layers?.[0]?.toJSON?.();
-            const shape = layer?.shapes?.find(
+                ?.drawings?.[0]?.toJSON?.();
+            const shape = drawing?.shapes?.find(
                 (candidate: { reference?: string }) =>
                     candidate?.reference === 'dieresiscomb'
             );
@@ -1005,9 +1005,9 @@ async function dragTopAnchorThroughUi(page: Page, screenDeltaY: number) {
     await page.waitForFunction(
         ({ previousAnchorY }) => {
             const glyphCanvas = (window as any).glyphCanvas;
-            const layerData =
-                glyphCanvas?.outlineEditor?.getCurrentLayerDataFromStack?.();
-            const topAnchor = layerData?.anchors?.find(
+            const drawingData =
+                glyphCanvas?.outlineEditor?.getCurrentDrawingDataFromStack?.();
+            const topAnchor = drawingData?.anchors?.find(
                 (anchor: any) => anchor?.name === 'top'
             );
             return Number(topAnchor?.y || 0) !== previousAnchorY;
@@ -1019,7 +1019,7 @@ async function dragTopAnchorThroughUi(page: Page, screenDeltaY: number) {
     return getTopAnchorClientPoint(page);
 }
 
-async function commitExplicitAdieresisLayerSetThroughBridge(
+async function commitExplicitAdieresisDrawingSetThroughBridge(
     page: Page,
     nextMarkTranslation: [number, number]
 ): Promise<void> {
@@ -1028,8 +1028,9 @@ async function commitExplicitAdieresisLayerSetThroughBridge(
         const win = window as any;
         const bridge = win.patchSyncEngine;
         const fontJson = bridge?.getFontJsonSnapshot?.();
-        const layerId = win.currentFontModel?.findGlyph?.('a')?.layers?.[0]?.id;
-        if (!bridge?.syncLayerSnapshotsFromJson || !fontJson || !layerId) {
+        const drawingId =
+            win.currentFontModel?.findGlyph?.('a')?.drawings?.[0]?.id;
+        if (!bridge?.syncDrawingSnapshotsFromJson || !fontJson || !drawingId) {
             throw new Error('Missing bridge state for explicit layer set');
         }
 
@@ -1039,24 +1040,28 @@ async function commitExplicitAdieresisLayerSetThroughBridge(
         const adieresisGlyph = fontJson.glyphs?.find(
             (glyph: any) => glyph?.name === 'adieresis'
         );
-        const sourceLayer = clone(
-            sourceGlyph?.layers?.find((layer: any) => layer?.id === layerId)
+        const sourceDrawing = clone(
+            sourceGlyph?.layers?.find(
+                (drawing: any) => drawing?.id === drawingId
+            )
         );
-        const adieresisLayer = clone(
-            adieresisGlyph?.layers?.find((layer: any) => layer?.id === layerId)
+        const adieresisDrawing = clone(
+            adieresisGlyph?.layers?.find(
+                (drawing: any) => drawing?.id === drawingId
+            )
         );
-        if (!sourceLayer || !adieresisLayer) {
+        if (!sourceDrawing || !adieresisDrawing) {
             throw new Error('Missing source or adieresis layer for layer set');
         }
 
-        const topAnchor = sourceLayer.anchors?.find(
+        const topAnchor = sourceDrawing.anchors?.find(
             (anchor: any) => anchor?.name === 'top'
         );
         if (topAnchor) {
             topAnchor.y = Number(topAnchor.y || 0) + 80;
         }
 
-        const markComponent = adieresisLayer.shapes?.find(
+        const markComponent = adieresisDrawing.shapes?.find(
             (shape: any) => shape?.reference === 'dieresiscomb'
         );
         if (!markComponent?.transform) {
@@ -1065,16 +1070,20 @@ async function commitExplicitAdieresisLayerSetThroughBridge(
         markComponent.transform.translation = translation;
 
         const replayTargets = [
-            { glyphName: 'a', layerId },
-            { glyphName: 'adieresis', layerId }
+            { glyphName: 'a', layerId: drawingId },
+            { glyphName: 'adieresis', layerId: drawingId }
         ];
-        bridge.syncLayerSnapshotsFromJson(
+        bridge.syncDrawingSnapshotsFromJson(
             [
-                { glyphName: 'a', layerId, layerJson: sourceLayer },
+                {
+                    glyphName: 'a',
+                    layerId: drawingId,
+                    drawingJson: sourceDrawing
+                },
                 {
                     glyphName: 'adieresis',
-                    layerId,
-                    layerJson: adieresisLayer
+                    layerId: drawingId,
+                    drawingJson: adieresisDrawing
                 }
             ],
             'Drag anchor',
@@ -1089,17 +1098,17 @@ async function commitExplicitAdieresisLayerSetThroughBridge(
     }, nextMarkTranslation);
 }
 
-function getLayer(fontJson: any, glyphName: string, layerId: string): any {
+function getDrawing(fontJson: any, glyphName: string, drawingId: string): any {
     return fontJson?.glyphs
         ?.find((glyph: any) => glyph?.name === glyphName)
-        ?.layers?.find((layer: any) => layer?.id === layerId);
+        ?.layers?.find((drawing: any) => drawing?.id === drawingId);
 }
 
-function getComponentTranslationFromLayer(
-    layer: any,
+function getComponentTranslationFromDrawing(
+    drawing: any,
     reference: string
 ): Translation {
-    const shape = layer?.shapes?.find(
+    const shape = drawing?.shapes?.find(
         (candidate: any) => candidate?.reference === reference
     );
     const transform = shape?.transform;
@@ -1126,15 +1135,19 @@ async function getAdieresisCommitState(page: Page): Promise<{
     workerCanonicalTranslation: Translation;
     workerSubsetTranslation: Translation;
     workerFontCacheTranslation: Translation;
-    recentLayerEntry: any;
+    recentDrawingEntry: any;
 }> {
     return page.evaluate(async () => {
-        const getLayer = (fontJson: any, glyphName: string, layerId: string) =>
+        const getDrawing = (
+            fontJson: any,
+            glyphName: string,
+            drawingId: string
+        ) =>
             fontJson?.glyphs
                 ?.find((glyph: any) => glyph?.name === glyphName)
-                ?.layers?.find((layer: any) => layer?.id === layerId);
-        const getTranslation = (layer: any, reference: string) => {
-            const shape = layer?.shapes?.find(
+                ?.layers?.find((drawing: any) => drawing?.id === drawingId);
+        const getTranslation = (drawing: any, reference: string) => {
+            const shape = drawing?.shapes?.find(
                 (candidate: any) => candidate?.reference === reference
             );
             const transform = shape?.transform;
@@ -1153,25 +1166,25 @@ async function getAdieresisCommitState(page: Page): Promise<{
         const win = window as any;
         const fontModel = win.currentFontModel;
         const currentFont = win.fontManager?.currentFont;
-        const layerId = fontModel?.findGlyph?.('a')?.layers?.[0]?.id;
-        if (!layerId) {
+        const drawingId = fontModel?.findGlyph?.('a')?.drawings?.[0]?.id;
+        if (!drawingId) {
             throw new Error('Could not resolve test layer id');
         }
 
         const bridgeJson = win.patchSyncEngine?.getFontJsonSnapshot?.();
-        const bridgeLayer = getLayer(bridgeJson, 'adieresis', layerId);
-        const storedLayer = getLayer(
+        const bridgeDrawing = getDrawing(bridgeJson, 'adieresis', drawingId);
+        const storedDrawing = getDrawing(
             currentFont?.babelfontData,
             'adieresis',
-            layerId
+            drawingId
         );
-        const modelLayer = fontModel
+        const modelDrawing = fontModel
             ?.findGlyph?.('adieresis')
-            ?.findLayerById?.(layerId)
+            ?.findDrawingById?.(drawingId)
             ?.toJSON?.();
         const workerResponse = await win.fontCompilation?.sendMessage?.({
-            type: 'dumpLayerState',
-            layerTargets: [{ glyphName: 'adieresis', layerId }]
+            type: 'dumpDrawingState',
+            layerTargets: [{ glyphName: 'adieresis', layerId: drawingId }]
         });
         if (workerResponse?.error) {
             throw new Error(workerResponse.error);
@@ -1185,13 +1198,14 @@ async function getAdieresisCommitState(page: Page): Promise<{
               )
             : null;
         const recentEntries = win.patchSyncEngine?.getChangeLog?.() || [];
-        const recentLayerEntry = recentEntries
+        const recentDrawingEntry = recentEntries
             .slice()
             .reverse()
             .find(
                 (entry: any) =>
-                    (entry?.path === `glyphs.adieresis:layers.${layerId}:` ||
-                        entry?.path === `glyphs.adieresis:layers.${layerId}`) &&
+                    (entry?.path === `glyphs.adieresis:layers.${drawingId}:` ||
+                        entry?.path ===
+                            `glyphs.adieresis:layers.${drawingId}`) &&
                     entry?.newValue?.shapes
             );
         const recentTranslationXEntry = recentEntries
@@ -1200,7 +1214,7 @@ async function getAdieresisCommitState(page: Page): Promise<{
             .find(
                 (entry: any) =>
                     entry?.path ===
-                    `glyphs.adieresis:layers.${layerId}:shapes.1.transform.translation.0`
+                    `glyphs.adieresis:layers.${drawingId}:shapes.1.transform.translation.0`
             );
         const recentTranslationYEntry = recentEntries
             .slice()
@@ -1208,11 +1222,11 @@ async function getAdieresisCommitState(page: Page): Promise<{
             .find(
                 (entry: any) =>
                     entry?.path ===
-                    `glyphs.adieresis:layers.${layerId}:shapes.1.transform.translation.1`
+                    `glyphs.adieresis:layers.${drawingId}:shapes.1.transform.translation.1`
             );
-        const bridgeTranslation = getTranslation(bridgeLayer, 'dieresiscomb');
-        const entryNewTranslation = recentLayerEntry?.newValue?.shapes
-            ? getTranslation(recentLayerEntry.newValue, 'dieresiscomb')
+        const bridgeTranslation = getTranslation(bridgeDrawing, 'dieresiscomb');
+        const entryNewTranslation = recentDrawingEntry?.newValue?.shapes
+            ? getTranslation(recentDrawingEntry.newValue, 'dieresiscomb')
             : typeof recentTranslationXEntry?.newValue === 'number' ||
                 typeof recentTranslationYEntry?.newValue === 'number'
               ? [
@@ -1220,8 +1234,8 @@ async function getAdieresisCommitState(page: Page): Promise<{
                     recentTranslationYEntry?.newValue ?? bridgeTranslation?.[1]
                 ]
               : null;
-        const entryOldTranslation = recentLayerEntry?.oldValue?.shapes
-            ? getTranslation(recentLayerEntry.oldValue, 'dieresiscomb')
+        const entryOldTranslation = recentDrawingEntry?.oldValue?.shapes
+            ? getTranslation(recentDrawingEntry.oldValue, 'dieresiscomb')
             : typeof recentTranslationXEntry?.oldValue === 'number' ||
                 typeof recentTranslationYEntry?.oldValue === 'number'
               ? [
@@ -1235,19 +1249,19 @@ async function getAdieresisCommitState(page: Page): Promise<{
               : null;
 
         return {
-            layerId,
+            layerId: drawingId,
             sourceTopAnchor: (() => {
-                const sourceLayer = fontModel
+                const sourceDrawing = fontModel
                     ?.findGlyph?.('a')
-                    ?.findLayerById?.(layerId)
+                    ?.findDrawingById?.(drawingId)
                     ?.toJSON?.();
-                return sourceLayer?.anchors?.find(
+                return sourceDrawing?.anchors?.find(
                     (anchor: any) => anchor?.name === 'top'
                 );
             })(),
             bridgeTranslation,
-            storedTranslation: getTranslation(storedLayer, 'dieresiscomb'),
-            modelTranslation: getTranslation(modelLayer, 'dieresiscomb'),
+            storedTranslation: getTranslation(storedDrawing, 'dieresiscomb'),
+            modelTranslation: getTranslation(modelDrawing, 'dieresiscomb'),
             entryNewTranslation,
             entryOldTranslation,
             workerYDocTranslation: getTranslation(
@@ -1266,8 +1280,8 @@ async function getAdieresisCommitState(page: Page): Promise<{
                 workerTarget?.fontCacheLayer,
                 'dieresiscomb'
             ),
-            recentLayerEntry:
-                recentLayerEntry ||
+            recentDrawingEntry:
+                recentDrawingEntry ||
                 (recentTranslationXEntry || recentTranslationYEntry
                     ? {
                           path: 'granular-adieresis-translation',
@@ -1307,12 +1321,12 @@ async function getEditorLoadedAdieresisTranslation(
         const deadline = Date.now() + 5000;
         while (Date.now() < deadline) {
             const glyphCanvas = (window as any).glyphCanvas;
-            const layerData =
-                glyphCanvas?.outlineEditor?.getCurrentLayerDataFromStack?.();
+            const drawingData =
+                glyphCanvas?.outlineEditor?.getCurrentDrawingDataFromStack?.();
             if (
                 glyphCanvas?.textRunEditor?.selectedGlyphIndex === 1 &&
                 glyphCanvas?.outlineEditor?.currentGlyphName === 'adieresis' &&
-                Array.isArray(layerData?.shapes)
+                Array.isArray(drawingData?.shapes)
             ) {
                 return true;
             }
@@ -1326,37 +1340,39 @@ async function getEditorLoadedAdieresisTranslation(
             const glyphCanvas = (window as any).glyphCanvas;
             const textRunEditor = glyphCanvas?.textRunEditor;
             const outlineEditor = glyphCanvas?.outlineEditor;
-            const layerData = outlineEditor?.getCurrentLayerDataFromStack?.();
-            const rootLayerData = outlineEditor?.layerData;
-            const targetLayerData = outlineEditor?.targetLayerData;
+            const drawingData =
+                outlineEditor?.getCurrentDrawingDataFromStack?.();
+            const rootDrawingData = outlineEditor?.drawingData;
+            const targetDrawingData = outlineEditor?.targetDrawingData;
             return {
                 selectedGlyphIndex: textRunEditor.selectedGlyphIndex,
                 currentGlyphName: outlineEditor?.currentGlyphName ?? null,
                 glyphStack: outlineEditor?.glyphStack ?? null,
                 active: outlineEditor?.active ?? null,
-                selectedLayerId: outlineEditor?.selectedLayerId ?? null,
-                suppressAutoLayerMatching:
-                    outlineEditor?.suppressAutoLayerMatching ?? null,
+                selectedDrawingId: outlineEditor?.selectedDrawingId ?? null,
+                suppressAutoDrawingMatching:
+                    outlineEditor?.suppressAutoDrawingMatching ?? null,
                 isInterpolating: outlineEditor?.isInterpolating ?? null,
-                isLayerSwitchAnimating:
-                    outlineEditor?.isLayerSwitchAnimating ?? null,
-                matchingLayerId:
-                    outlineEditor?.findMatchingLayer?.('adieresis')?.id ?? null,
-                hasLayerData: !!layerData,
-                rootLayerId: rootLayerData?.id ?? null,
-                rootShapeReferences: Array.isArray(rootLayerData?.shapes)
-                    ? rootLayerData.shapes.map(
+                isDrawingSwitchAnimating:
+                    outlineEditor?.isDrawingSwitchAnimating ?? null,
+                matchingDrawingId:
+                    outlineEditor?.findMatchingDrawing?.('adieresis')?.id ??
+                    null,
+                hasDrawingData: !!drawingData,
+                rootDrawingId: rootDrawingData?.id ?? null,
+                rootShapeReferences: Array.isArray(rootDrawingData?.shapes)
+                    ? rootDrawingData.shapes.map(
                           (shape: any) => shape?.reference ?? null
                       )
                     : null,
-                targetLayerId: targetLayerData?.id ?? null,
-                targetShapeReferences: Array.isArray(targetLayerData?.shapes)
-                    ? targetLayerData.shapes.map(
+                targetDrawingId: targetDrawingData?.id ?? null,
+                targetShapeReferences: Array.isArray(targetDrawingData?.shapes)
+                    ? targetDrawingData.shapes.map(
                           (shape: any) => shape?.reference ?? null
                       )
                     : null,
-                shapeReferences: Array.isArray(layerData?.shapes)
-                    ? layerData.shapes.map(
+                shapeReferences: Array.isArray(drawingData?.shapes)
+                    ? drawingData.shapes.map(
                           (shape: any) => shape?.reference ?? null
                       )
                     : null
@@ -1369,8 +1385,8 @@ async function getEditorLoadedAdieresisTranslation(
         const glyphCanvas = (window as any).glyphCanvas;
         const outlineEditor = glyphCanvas?.outlineEditor;
 
-        const layerData = outlineEditor.getCurrentLayerDataFromStack?.();
-        const markComponent = layerData?.shapes?.find(
+        const drawingData = outlineEditor.getCurrentDrawingDataFromStack?.();
+        const markComponent = drawingData?.shapes?.find(
             (shape: any) => shape?.reference === 'dieresiscomb'
         );
         const transform = markComponent?.transform;
@@ -1579,9 +1595,9 @@ async function openNonAutomaticAdieresisEditScenario(
         glyphCanvas.outlineEditor.active = true;
         glyphCanvas.outlineEditor.currentGlyphName = 'a';
         await glyphCanvas.enterGlyphEditModeAtCursor?.();
-        const firstLayer = glyphCanvas.getSortedLayers?.()[0] || null;
-        if (firstLayer) {
-            await glyphCanvas.outlineEditor.selectLayer(firstLayer);
+        const firstDrawing = glyphCanvas.getSortedDrawings?.()[0] || null;
+        if (firstDrawing) {
+            await glyphCanvas.outlineEditor.selectDrawing(firstDrawing);
         }
         await glyphCanvas.doUIUpdateAsync?.();
         glyphCanvas.render();
@@ -1604,7 +1620,7 @@ async function openNonAutomaticAdieresisEditScenario(
     );
 }
 
-function makeMultiMasterAutomaticAdieresisFont(): string {
+function makeMultiStationAutomaticAdieresisFont(): string {
     const component = (
         reference: string,
         translation: [number, number],
@@ -1623,16 +1639,16 @@ function makeMultiMasterAutomaticAdieresisFont(): string {
         }
     });
 
-    const masterLayer = (
-        masterId: string,
+    const stationDrawing = (
+        stationId: string,
         width: number,
         shapes: any[],
         anchors: any[],
         topAnchorY: number
     ) => ({
         width,
-        id: masterId,
-        master: { type: 'DefaultForMaster' as const, master: masterId },
+        id: stationId,
+        master: { type: 'DefaultForMaster' as const, master: stationId },
         shapes,
         anchors: [{ name: 'top', x: 300, y: topAnchorY }],
         guides: [],
@@ -1715,8 +1731,8 @@ function makeMultiMasterAutomaticAdieresisFont(): string {
                 category: 'Base',
                 codepoints: [97],
                 layers: [
-                    masterLayer('M0', 600, aShapes, [], 720),
-                    masterLayer('M1', 600, aShapes, [], 500)
+                    stationDrawing('M0', 600, aShapes, [], 720),
+                    stationDrawing('M1', 600, aShapes, [], 500)
                 ],
                 exported: true
             },
@@ -1801,7 +1817,7 @@ test.describe('automatic adieresis anchor browser commit', () => {
             () =>
                 (window as any).currentFontModel
                     ?.findGlyph?.('adieresis')
-                    ?.layers?.[0]?.isAutomaticAlignedLayer?.() === true
+                    ?.drawings?.[0]?.isAutomaticAlignedDrawing?.() === true
         );
         expect(adieresisIsAutomatic).toBe(true);
         expect(beforeState.bridgeTranslation).toEqual([150, 720]);
@@ -1877,7 +1893,7 @@ test.describe('automatic adieresis anchor browser commit', () => {
                 event.type === 'compileEditingCached' &&
                 Number(event.fontRevisionKey) >=
                     committedCompileRequestVersion &&
-                event.usePreviewLayerOverlay === false
+                event.usePreviewDrawingOverlay === false
         );
         expect(
             committedWorkerCompile,
@@ -1899,7 +1915,7 @@ test.describe('automatic adieresis anchor browser commit', () => {
         expect(afterState.entryOldTranslation).toEqual(
             beforeState.bridgeTranslation
         );
-        expect(afterState.recentLayerEntry?.newValue).toBeTruthy();
+        expect(afterState.recentDrawingEntry?.newValue).toBeTruthy();
         expect(
             afterState.bridgeTranslation,
             JSON.stringify(afterState)
@@ -1981,7 +1997,7 @@ test.describe('automatic adieresis anchor browser commit', () => {
                         action: string,
                         glyphName: string,
                         refreshRoot: string,
-                        layerId: string
+                        drawingId: string
                     ) => Promise<void>;
                 }
             ).runBridgeUndoRedo?.('undo', 'a', 'a', 'M0');
@@ -2019,11 +2035,11 @@ test.describe('automatic adieresis anchor browser commit', () => {
             if (!adieresisGlyph) {
                 throw new Error('Could not find adieresis glyph');
             }
-            const layer = adieresisGlyph.layers?.[0];
-            if (!layer) {
+            const drawing = adieresisGlyph.drawings?.[0];
+            if (!drawing) {
                 throw new Error('Could not find adieresis layer');
             }
-            const shapes = layer.shapes || [];
+            const shapes = drawing.shapes || [];
             for (const shape of shapes) {
                 if (shape.isComponent?.()) {
                     shape.asComponent().format_specific = {
@@ -2037,8 +2053,8 @@ test.describe('automatic adieresis anchor browser commit', () => {
         const isAutoAligned = await page.evaluate(() => {
             const fontModel = (window as any).currentFontModel;
             const adieresisGlyph = fontModel?.findGlyph?.('adieresis');
-            const layer = adieresisGlyph?.layers?.[0];
-            return layer?.isAutomaticAlignedLayer?.() ?? false;
+            const drawing = adieresisGlyph?.drawings?.[0];
+            return drawing?.isAutomaticAlignedDrawing?.() ?? false;
         });
         expect(
             isAutoAligned,
@@ -2061,8 +2077,8 @@ test.describe('automatic adieresis anchor browser commit', () => {
             const adieresisGlyph = snapshot.glyphs?.find(
                 (g: any) => g?.name === 'adieresis'
             );
-            const layer = adieresisGlyph?.layers?.[0];
-            const dieresisShape = layer?.shapes?.find(
+            const drawing = adieresisGlyph?.layers?.[0];
+            const dieresisShape = drawing?.shapes?.find(
                 (s: any) => s?.reference === 'dieresiscomb'
             );
             return (
@@ -2124,7 +2140,7 @@ test.describe('automatic adieresis anchor browser commit', () => {
         expect(afterState.entryOldTranslation).toEqual(
             beforeState.bridgeTranslation
         );
-        expect(afterState.recentLayerEntry?.newValue).toBeTruthy();
+        expect(afterState.recentDrawingEntry?.newValue).toBeTruthy();
         expect(
             afterState.bridgeTranslation,
             JSON.stringify(afterState)
@@ -2183,7 +2199,7 @@ test.describe('automatic adieresis anchor browser commit', () => {
             const shaped = win.glyphCanvas.textRunEditor.shapedGlyphs || [];
             const ligature = win.currentFontModel
                 ?.findGlyph?.('aalig')
-                ?.layers?.[0]?.toJSON?.();
+                ?.drawings?.[0]?.toJSON?.();
             const second = ligature?.shapes?.[1]?.transform?.translation;
             return {
                 firstAx: Number(shaped[0]?.ax ?? 0),
@@ -2195,9 +2211,9 @@ test.describe('automatic adieresis anchor browser commit', () => {
         const compileBefore = await getEditingFontCompileTracker(page);
         await page.evaluate(() => {
             const win = window as any;
-            const master = win.currentFontModel.masters[0];
+            const station = win.currentFontModel.stations[0];
             win.glyphCanvas.writeTextModeKerningPairValue(
-                master,
+                station,
                 'a',
                 'a',
                 180,
@@ -2211,25 +2227,25 @@ test.describe('automatic adieresis anchor browser commit', () => {
 
         const after = await page.evaluate(async () => {
             const win = window as any;
-            const master = win.currentFontModel.masters[0];
+            const station = win.currentFontModel.stations[0];
             const shaped = win.glyphCanvas.textRunEditor.shapedGlyphs || [];
             const ligature = win.currentFontModel
                 ?.findGlyph?.('aalig')
-                ?.layers?.[0]?.toJSON?.();
+                ?.drawings?.[0]?.toJSON?.();
             const second = ligature?.shapes?.[1]?.transform?.translation;
             const worker = await win.fontCompilation?.sendMessage?.({
-                type: 'dumpLayerState',
+                type: 'dumpDrawingState',
                 layerTargets: [{ glyphName: 'aalig', layerId: 'M0' }]
             });
             const dump = worker?.dumpJson ? JSON.parse(worker.dumpJson) : null;
-            const workerLayer = dump?.targets?.find(
+            const workerDrawing = dump?.targets?.find(
                 (target: { glyphName?: string }) =>
                     target?.glyphName === 'aalig'
             )?.ydocLayer;
             const workerTranslation =
-                workerLayer?.shapes?.[1]?.transform?.translation;
+                workerDrawing?.shapes?.[1]?.transform?.translation;
             return {
-                kerning: master.kerning?.['a:a'] ?? master.kerning?.['a']?.a,
+                kerning: station.kerning?.['a:a'] ?? station.kerning?.['a']?.a,
                 firstAx: Number(shaped[0]?.ax ?? 0),
                 secondX: Number(shaped[1]?.x ?? 0),
                 ligatureX: Array.isArray(second) ? Number(second[0]) : null,

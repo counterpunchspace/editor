@@ -86,77 +86,77 @@
             "identifier": "toCompileJSON",
             "allowedSites": [
                 "webapp/js/babelfont-model.ts::Font.jsonSerialization",
-                "webapp/js/font-manager.ts::FontManager.collectChangedLayerUpdatesFromModel",
-                "webapp/js/font-manager.ts::FontManager.collectChangedLayerUpdatesFromTargets",
-                "webapp/js/glyph-canvas/outline-editor.ts::OutlineEditor.buildExactLayerDataFromModel",
-                "webapp/js/glyph-canvas/outline-editor.ts::OutlineEditor.resolveComponentLayerDataFromModel"
+                "webapp/js/font-manager.ts::FontManager.collectChangedDrawingUpdatesFromModel",
+                "webapp/js/font-manager.ts::FontManager.collectChangedDrawingUpdatesFromTargets",
+                "webapp/js/glyph-canvas/outline-editor.ts::OutlineEditor.buildExactDrawingDataFromModel",
+                "webapp/js/glyph-canvas/outline-editor.ts::OutlineEditor.resolveComponentDrawingDataFromModel"
             ]
         }
     ],
     "requiredCallRules": [
         {
             "id": "resting-layer-codec-write-sites",
-            "description": "Layer JSON writeback into the model, Y.Doc, history, and storage must call the resting-layer codec so interpolator/compile payloads cannot enter as Shape.",
+            "description": "Drawing JSON writeback into the model, Y.Doc, history, and storage must call the resting-layer codec so interpolator/compile payloads cannot enter as Shape.",
             "sites": [
                 {
                     "path": "webapp/js/babelfont-model.ts",
-                    "symbol": "Layer.syncFromEditorLayerData",
-                    "mustCall": ["toRestingLayerJson"]
+                    "symbol": "Drawing.syncFromEditorDrawingData",
+                    "mustCall": ["toRestingDrawingJson"]
                 },
                 {
                     "path": "webapp/js/change-bridge-ydoc.ts",
-                    "symbol": "applyLayerDelta",
-                    "mustCall": ["toRestingLayerJson"]
+                    "symbol": "applyDrawingDelta",
+                    "mustCall": ["toRestingDrawingJson"]
                 },
                 {
                     "path": "webapp/js/change-bridge-ydoc.ts",
-                    "symbol": "layerToYMap",
-                    "mustCall": ["toRestingLayerJson"]
+                    "symbol": "drawingToYMap",
+                    "mustCall": ["toRestingDrawingJson"]
                 },
                 {
                     "path": "webapp/js/font-manager.ts",
-                    "symbol": "FontManager.serializeLayerForStorage",
-                    "mustCall": ["toRestingShapeJson", "toRestingLayerJson"]
+                    "symbol": "FontManager.serializeDrawingForStorage",
+                    "mustCall": ["toRestingShapeJson", "toRestingDrawingJson"]
                 },
                 {
                     "path": "webapp/js/font-manager.ts",
                     "symbol": "FontManager.sendWorkerYjsUpdate",
-                    "mustCall": ["workerLayerTargetsAreResting"]
+                    "mustCall": ["workerDrawingTargetsAreResting"]
                 },
                 {
                     "path": "webapp/js/font-manager.ts",
-                    "symbol": "FontManager.workerLayerTargetsAreResting",
-                    "mustCall": ["describeRestingLayerViolation"]
+                    "symbol": "FontManager.workerDrawingTargetsAreResting",
+                    "mustCall": ["describeRestingDrawingViolation"]
                 },
                 {
                     "path": "webapp/js/patch-sync-engine.ts",
-                    "symbol": "PatchSyncEngine._applyLayerDelta",
-                    "mustCall": ["toRestingLayerJson"]
+                    "symbol": "PatchSyncEngine._applyDrawingDelta",
+                    "mustCall": ["toRestingDrawingJson"]
                 },
                 {
                     "path": "webapp/js/patch-sync-engine.ts",
-                    "symbol": "PatchSyncEngine._normalizeLayerSnapshot",
-                    "mustCall": ["toRestingLayerJson"]
+                    "symbol": "PatchSyncEngine._normalizeDrawingSnapshot",
+                    "mustCall": ["toRestingDrawingJson"]
                 },
                 {
                     "path": "webapp/js/patch-sync-engine.ts",
-                    "symbol": "PatchSyncEngine._replaceLayerMapContents",
-                    "mustCall": ["toRestingLayerJson"]
+                    "symbol": "PatchSyncEngine._replaceDrawingMapContents",
+                    "mustCall": ["toRestingDrawingJson"]
                 },
                 {
                     "path": "webapp/js/patch-sync-engine.ts",
-                    "symbol": "PatchSyncEngine._prepareLayerSnapshotForHistory",
-                    "mustCall": ["_normalizeLayerSnapshot"]
+                    "symbol": "PatchSyncEngine._prepareDrawingSnapshotForHistory",
+                    "mustCall": ["_normalizeDrawingSnapshot"]
                 },
                 {
                     "path": "webapp/js/patch-sync-engine.ts",
-                    "symbol": "PatchSyncEngine.syncLayerSnapshotsFromJson",
-                    "mustCall": ["_prepareLayerSnapshotForHistory"]
+                    "symbol": "PatchSyncEngine.syncDrawingSnapshotsFromJson",
+                    "mustCall": ["_prepareDrawingSnapshotForHistory"]
                 },
                 {
                     "path": "webapp/js/patch-sync-engine.ts",
-                    "symbol": "PatchSyncEngine._trySyncSingleLayer",
-                    "mustCall": ["_prepareLayerSnapshotForHistory"]
+                    "symbol": "PatchSyncEngine._trySyncSingleDrawing",
+                    "mustCall": ["_prepareDrawingSnapshotForHistory"]
                 }
             ]
         }

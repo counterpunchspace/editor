@@ -67,7 +67,7 @@ files. What remains of this plan is editing the feature files themselves
    flattened buffer position.
 5. Preserve arbitrary binary UFO resources end to end.
 6. Support each source UFO in a Designspace independently; do not collapse
-   per-master source state into a single global feature string.
+   per-station source state into a single global feature string.
 7. Keep normal editing compilation incremental and avoid full-document
    transport after initial source open, per [APP.md](../APP.md).
 
@@ -118,7 +118,7 @@ must not replace the literal authored `include()` statements.
 For a standalone UFO, attach one `UfoFeatureProject` to the opened UFO root.
 
 For a Designspace project, retain one feature project for every referenced UFO,
-keyed by its normalized project-relative UFO path and associated master/source.
+keyed by its normalized project-relative UFO path and associated station (Designspace source).
 The model must not assume the sources are identical merely because a variable
 font normally expects compatible feature code.
 
@@ -268,8 +268,8 @@ The Babelfont Designspace bridge must preserve or deliberately model:
 
 The current focused Designspace round-trip test demonstrates that background
 layers are lost. This must be fixed before writable Designspace support is
-advertised. The UFO conversion must honor the requested master index and
-source-layer selection instead of assuming a single/default master.
+advertised. The UFO conversion must honor the requested station index and
+source-layer selection instead of assuming a single/default station.
 
 ## Delivery Plan
 
@@ -304,7 +304,7 @@ source-layer selection instead of assuming a single/default master.
    project per source UFO.
 2. Implement an in-memory Designspace entry writer.
 3. Preserve the full Designspace document metadata listed above.
-4. Correct master, source-layer, and background-layer serialization.
+4. Correct station, source-layer, and background-layer serialization.
 5. Add `.designspace` save dispatch only after project replacement semantics
    and complete-source tests pass.
 
@@ -332,7 +332,7 @@ source-layer selection instead of assuming a single/default master.
 
 ### Designspace Tests
 
-- Round-trip a multi-master Designspace including axis mappings, rules,
+- Round-trip a multi-source Designspace including axis mappings, rules,
   libraries, source-layer selections, and instance metadata.
 - Round-trip foreground and `public.background` layers for each source UFO.
 - Preserve separate feature trees for different source UFOs.

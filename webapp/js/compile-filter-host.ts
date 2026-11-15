@@ -17,7 +17,7 @@ export interface CompileFilterInfo {
     id: string;
     name: string;
     description: string;
-    hasLayer: boolean;
+    hasDrawing: boolean;
     hasPropagated: boolean;
     hasFont: boolean;
     hasSetup: boolean;
@@ -27,21 +27,21 @@ export interface CompileFilterInfo {
 
 export interface GuideChange {
     kind: 'position' | 'rename' | 'remove' | 'scope';
-    scope: 'master' | 'layer';
-    masterId?: string;
+    scope: 'station' | 'drawing';
+    stationId?: string;
     name?: string;
     pos?: { x?: number; y?: number; angle?: number };
     previous?: { x?: number; y?: number; name?: string };
 }
 
-interface LayerJob {
+interface DrawingJob {
     glyphName: string;
-    layer: Record<string, unknown>;
+    drawing: Record<string, unknown>;
     inherited?: Record<string, { x: number; y: number }>;
 }
 
 const discovered: CompileFilterInfo[] = [];
-const layerCache = new Map<string, string>();
+const drawingCache = new Map<string, string>();
 let cachedFeatureKey = '';
 let cachedFeatures = '';
 
@@ -191,16 +191,16 @@ export async function discoverCompileFilters(): Promise<CompileFilterInfo[]> {
 let legacyGuidesRetiredFor: unknown = null;
 
 function retireHarakatGuides(font: {
-    masters?: Array<{
+    stations?: Array<{
         guides?: Array<{ name?: string }>;
         removeGuide?: (index: number) => void;
     }>;
 }): void {
-    for (const master of font.masters || []) {
-        const guides = master.guides || [];
+    for (const station of font.stations || []) {
+        const guides = station.guides || [];
         for (let index = guides.length - 1; index >= 0; index -= 1) {
             if (guides[index]?.name === 'min_top_harakat') {
-                master.removeGuide?.(index);
+                station.removeGuide?.(index);
             }
         }
     }
@@ -223,7 +223,7 @@ function harakatSetting(
 
 export function ensureHarakatMinimums(font: {
     upm?: number;
-    masters?: Array<{ id?: string }>;
+    stations?: Array<{ id?: string }>;
     getPluginSetting?: (pluginId: string, settingId: string) => unknown;
     format_specific?: Record<string, unknown>;
 }): void {
@@ -234,11 +234,11 @@ export function ensureHarakatMinimums(font: {
             : {};
     const fallback = Number(font.upm || 1000) / 2;
     let changed = false;
-    for (const master of font.masters || []) {
-        if (!master.id || settings[master.id] != null) {
+    for (const station of font.stations || []) {
+        if (!station.id || settings[station.id] != null) {
             continue;
         }
-        settings[master.id] = fallback;
+        settings[station.id] = fallback;
         changed = true;
     }
     if (changed) {
@@ -255,7 +255,7 @@ export async function retireLegacyCompileFilterGuides(): Promise<void> {
     const font = (
         window as unknown as {
             currentFontModel?: {
-                masters?: Array<{
+                stations?: Array<{
                     guides?: Array<{ name?: string }>;
                     removeGuide?: (index: number) => void;
                 }>;
@@ -266,8 +266,10 @@ export async function retireLegacyCompileFilterGuides(): Promise<void> {
         return;
     }
     legacyGuidesRetiredFor = font;
-    const hasLegacyGuide = (font.masters || []).some((master) =>
-        (master.guides || []).some((guide) => guide?.name === 'min_top_harakat')
+    const hasLegacyGuide = (font.stations || []).some((station) =>
+        (station.guides || []).some(
+            (guide) => guide?.name === 'min_top_harakat'
+        )
     );
     if (!hasLegacyGuide) {
         return;
@@ -319,7 +321,7 @@ export async function takedownCompileFilter(pluginId: string): Promise<void> {
 }
 
 export function invalidateCompileFilterCache(): void {
-    layerCache.clear();
+    drawingCache.clear();
     cachedFeatureKey = '';
     cachedFeatures = '';
 }
@@ -415,7 +417,7 @@ export async function onCompileFilterGuideChange(
 
 function componentDepth(
     glyphName: string,
-    glyphs: Map<string, { layers?: Array<Record<string, unknown>> }>,
+    glyphs: Map<string, { drawings?: Array<Record<string, unknown>> }>,
     seen: Set<string>
 ): number {
     if (seen.has(glyphName)) {
@@ -428,11 +430,11 @@ function componentDepth(
     const next = new Set(seen);
     next.add(glyphName);
     let best = 0;
-    for (const layer of glyph.layers || []) {
+    for (const drawing of glyph.drawings || []) {
         const shapes = [
-            ...((layer.shapes as Array<{ reference?: string }> | undefined) ||
+            ...((drawing.shapes as Array<{ reference?: string }> | undefined) ||
                 []),
-            ...((layer.components as
+            ...((drawing.components as
                 Array<{ reference?: string }> | undefined) || [])
         ];
         for (const shape of shapes) {
@@ -514,9 +516,9 @@ const VOWEL_CODEPOINTS = new Set<number>([
 type InkGlyph = {
     name: string;
     codepoints?: number[];
-    layers?: Array<{
+    drawings?: Array<{
         anchors?: Array<{ name?: string }>;
-        master?: { master?: string };
+        station?: { master?: string };
         data?: { shapes?: RawShape[] };
     }>;
 };
@@ -537,8 +539,8 @@ function isAboveVowel(glyph: InkGlyph): boolean {
     ) {
         return false;
     }
-    return (glyph.layers || []).some((layer) =>
-        (layer.anchors || []).some((anchor) => anchor.name === '_top')
+    return (glyph.drawings || []).some((drawing) =>
+        (drawing.anchors || []).some((anchor) => anchor.name === '_top')
     );
 }
 
@@ -585,8 +587,10 @@ function shapeMatrix(transform: unknown): number[] | null {
     }
 }
 
-function layerInkBounds(
-    layer: InkGlyph['layers'] extends Array<infer T> | undefined ? T : never,
+function drawingInkBounds(
+    drawing: InkGlyph['drawings'] extends Array<infer T> | undefined
+        ? T
+        : never,
     glyphName: string,
     glyphs: Map<string, InkGlyph>,
     seen: Set<string>,
@@ -611,8 +615,8 @@ function layerInkBounds(
             yMax = transformed;
         }
     };
-    const masterId = layer.master?.master;
-    for (const shape of layer.data?.shapes || []) {
+    const stationId = drawing.station?.master;
+    for (const shape of drawing.data?.shapes || []) {
         const nodes = shapeNodes(shape);
         if (nodes) {
             for (const node of nodes) {
@@ -627,11 +631,11 @@ function layerInkBounds(
             continue;
         }
         const referenced = glyphs.get(component.reference);
-        const referencedLayer =
-            (referenced?.layers || []).find(
-                (item) => item.master?.master === masterId
-            ) || referenced?.layers?.[0];
-        if (!referencedLayer) {
+        const referencedDrawing =
+            (referenced?.drawings || []).find(
+                (item) => item.station?.master === stationId
+            ) || referenced?.drawings?.[0];
+        if (!referencedDrawing) {
             continue;
         }
         const matrix = shapeMatrix(component.transform);
@@ -642,8 +646,8 @@ function layerInkBounds(
                       matrix[1] * x + matrix[3] * y + (matrix[5] || 0)
                   )
             : apply;
-        const nested = layerInkBounds(
-            referencedLayer,
+        const nested = drawingInkBounds(
+            referencedDrawing,
             component.reference,
             glyphs,
             next,
@@ -665,10 +669,10 @@ function layerInkBounds(
     return { yMin, yMax };
 }
 
-function pluginSettingsRecord(layer: {
+function pluginSettingsRecord(drawing: {
     format_specific?: Record<string, unknown>;
 }): { format_specific?: Record<string, unknown> } {
-    const bag = layer.format_specific?.['com.counterpunch.plugin-settings'];
+    const bag = drawing.format_specific?.['com.counterpunch.plugin-settings'];
     if (!bag || typeof bag !== 'object') {
         return {};
     }
@@ -679,11 +683,11 @@ function pluginSettingsRecord(layer: {
     };
 }
 
-function componentRecords(layer: { data?: { shapes?: RawShape[] } }): {
+function componentRecords(drawing: { data?: { shapes?: RawShape[] } }): {
     components?: Array<{ reference: string; matrix: number[] }>;
 } {
     const components: Array<{ reference: string; matrix: number[] }> = [];
-    for (const shape of layer.data?.shapes || []) {
+    for (const shape of drawing.data?.shapes || []) {
         const component = shapeComponent(shape);
         if (!component) {
             continue;
@@ -706,9 +710,9 @@ export interface TransientAnchor {
 
 export async function queryTransientAnchors(
     glyphName: string,
-    layerId: string
+    drawingId: string
 ): Promise<TransientAnchor[]> {
-    if (!glyphName || !layerId) {
+    if (!glyphName || !drawingId) {
         return [];
     }
     // Glyph windows ask before fonteditor.py has defined the helpers.
@@ -726,7 +730,7 @@ export async function queryTransientAnchors(
         await discoverCompileFilters();
     }
     const raw = await runHostPythonAsync(
-        `_cp_compile_filter_transient_anchors(${pythonString(glyphName)}, ${pythonString(layerId)})`
+        `_cp_compile_filter_transient_anchors(${pythonString(glyphName)}, ${pythonString(drawingId)})`
     );
     const parsed = JSON.parse(String(raw)) as TransientAnchor[];
     return Array.isArray(parsed) ? parsed : [];
@@ -735,14 +739,14 @@ export async function queryTransientAnchors(
 function applyTransientAnchorDecision(
     change: {
         glyphName: string;
-        layerId: string;
-        masterId: string;
+        drawingId: string;
+        stationId: string;
     },
     decision: {
         y?: number;
         x?: number;
         clearX?: boolean;
-        masterId?: string;
+        stationId?: string;
     }
 ): void {
     const font = (
@@ -750,7 +754,7 @@ function applyTransientAnchorDecision(
             currentFontModel?: {
                 glyphs?: Array<{
                     name?: string;
-                    layers?: Array<{
+                    drawings?: Array<{
                         id?: string;
                         format_specific?: Record<string, unknown>;
                         setPluginSetting?: (
@@ -772,17 +776,17 @@ function applyTransientAnchorDecision(
         return;
     }
     if (typeof decision.y === 'number') {
-        const masterId = decision.masterId || change.masterId;
+        const stationId = decision.stationId || change.stationId;
         const stored = harakatSetting(font, 'minimum_by_master');
         if (stored && typeof stored === 'object') {
-            (stored as Record<string, number>)[masterId] = decision.y;
+            (stored as Record<string, number>)[stationId] = decision.y;
         } else {
             writePluginSettingValue(
                 font,
                 HARAKAT_PLUGIN_ID,
                 'minimum_by_master',
                 {
-                    [masterId]: decision.y
+                    [stationId]: decision.y
                 }
             );
         }
@@ -791,12 +795,14 @@ function applyTransientAnchorDecision(
         return;
     }
     const glyph = font.glyphs?.find((item) => item.name === change.glyphName);
-    const layer = glyph?.layers?.find((item) => item.id === change.layerId);
-    if (!layer) {
+    const drawing = glyph?.drawings?.find(
+        (item) => item.id === change.drawingId
+    );
+    if (!drawing) {
         return;
     }
     writePluginSettingValue(
-        layer,
+        drawing,
         HARAKAT_PLUGIN_ID,
         'anchor_x',
         decision.clearX ? null : decision.x
@@ -807,8 +813,8 @@ export async function commitTransientAnchor(change: {
     pluginId: string;
     name: string;
     glyphName: string;
-    layerId: string;
-    masterId: string;
+    drawingId: string;
+    stationId: string;
     x: number;
     y: number;
     defaultX: number;
@@ -845,7 +851,7 @@ export async function commitTransientAnchor(change: {
             y?: number;
             x?: number;
             clearX?: boolean;
-            masterId?: string;
+            stationId?: string;
         };
         wroteResult = decision.ok !== false;
         applyTransientAnchorDecision(change, decision);
@@ -924,11 +930,11 @@ function shiftCompileLayerX(
     }
 }
 
-function anchorShiftLayerUpdates(
+function anchorShiftDrawingUpdates(
     font: {
         glyphs?: Array<{
             name: string;
-            layers?: Array<{
+            drawings?: Array<{
                 id?: string;
                 toJSON?: () => {
                     anchors?: Array<{ name?: string; x?: number }>;
@@ -940,7 +946,7 @@ function anchorShiftLayerUpdates(
             }>;
         }>;
     },
-    shifts: Array<{ glyph: string; layerId: string; dx: number }> | undefined
+    shifts: Array<{ glyph: string; drawingId: string; dx: number }> | undefined
 ): Array<{ glyphName: string; layerId: string; layerData: unknown }> {
     const updates = [];
     for (const shift of shifts || []) {
@@ -948,11 +954,13 @@ function anchorShiftLayerUpdates(
             continue;
         }
         const glyph = font.glyphs?.find((item) => item.name === shift.glyph);
-        const layer = glyph?.layers?.find((item) => item.id === shift.layerId);
-        if (!layer || typeof layer.toJSON !== 'function') {
+        const drawing = glyph?.drawings?.find(
+            (item) => item.id === shift.drawingId
+        );
+        if (!drawing || typeof drawing.toJSON !== 'function') {
             continue;
         }
-        const data = JSON.parse(JSON.stringify(layer.toJSON())) as {
+        const data = JSON.parse(JSON.stringify(drawing.toJSON())) as {
             anchors?: Array<{ name?: string; x?: number }>;
             shapes?: Array<{
                 reference?: string;
@@ -962,28 +970,28 @@ function anchorShiftLayerUpdates(
         shiftCompileLayerX(data, shift.dx);
         updates.push({
             glyphName: shift.glyph,
-            layerId: shift.layerId,
+            layerId: shift.drawingId,
             layerData: data
         });
     }
     return updates;
 }
 
-function anchorOnlyLayerRecord(layer: {
+function anchorOnlyDrawingRecord(drawing: {
     id?: string;
     is_background?: boolean;
-    master?: { type?: string; master?: string };
+    station?: { type?: string; master?: string };
     location?: Record<string, number>;
     anchors?: Array<{ name?: string; x?: number; y?: number }>;
 }): Record<string, unknown> {
     return {
-        id: layer.id,
-        is_background: layer.is_background === true,
-        master: layer.master
-            ? { type: layer.master.type, master: layer.master.master }
+        id: drawing.id,
+        is_background: drawing.is_background === true,
+        master: drawing.station
+            ? { type: drawing.station.type, master: drawing.station.master }
             : undefined,
-        location: layer.location ? { ...layer.location } : undefined,
-        anchors: (layer.anchors || [])
+        location: drawing.location ? { ...drawing.location } : undefined,
+        anchors: (drawing.anchors || [])
             .filter((anchor) => Boolean(anchor.name))
             .map((anchor) => ({
                 name: anchor.name,
@@ -991,29 +999,29 @@ function anchorOnlyLayerRecord(layer: {
                 y: Number(anchor.y) || 0
             })),
         ...pluginSettingsRecord(
-            layer as {
+            drawing as {
                 format_specific?: Record<string, unknown>;
             }
         ),
-        ...componentRecords(layer as { data?: { shapes?: RawShape[] } })
+        ...componentRecords(drawing as { data?: { shapes?: RawShape[] } })
     };
 }
 
-function layerRecord(layer: {
+function drawingRecord(drawing: {
     toJSON?: () => Record<string, unknown>;
     id?: string;
     computedAnchors?: () => Record<string, { x: number; y: number }>;
 }): Record<string, unknown> {
-    if (typeof layer.toJSON === 'function') {
-        return layer.toJSON();
+    if (typeof drawing.toJSON === 'function') {
+        return drawing.toJSON();
     }
-    return JSON.parse(JSON.stringify(layer)) as Record<string, unknown>;
+    return JSON.parse(JSON.stringify(drawing)) as Record<string, unknown>;
 }
 
 export async function prepareCompileFilters(
     glyphNames: string[] | null
 ): Promise<{
-    layerUpdates: Array<{
+    drawingUpdates: Array<{
         glyphName: string;
         layerId: string;
         layerData: unknown;
@@ -1029,7 +1037,7 @@ export async function prepareCompileFilters(
                     exported?: boolean;
                     category?: string;
                     codepoints?: number[];
-                    layers?: Array<{
+                    drawings?: Array<{
                         id?: string;
                         is_background?: boolean;
                         toJSON?: () => Record<string, unknown>;
@@ -1039,7 +1047,7 @@ export async function prepareCompileFilters(
                         >;
                     }>;
                 }>;
-                masters?: unknown[];
+                stations?: unknown[];
                 axes?: unknown[];
                 features?: unknown;
                 upm?: number;
@@ -1049,20 +1057,20 @@ export async function prepareCompileFilters(
     ).currentFontModel;
     const ids = activeCompileFilterIds(font);
     if (!font || ids.length === 0 || !pyodide()) {
-        return { layerUpdates: [], features: '' };
+        return { drawingUpdates: [], features: '' };
     }
     if (discovered.length === 0) {
         await discoverCompileFilters();
     }
     const active = discovered.filter((info) => ids.includes(info.id));
     if (active.length === 0) {
-        return { layerUpdates: [], features: '' };
+        return { drawingUpdates: [], features: '' };
     }
     // Layer hooks need outlines. Font-only hooks (Harakat) need anchors,
     // names, and codepoints, and serializing every outline on each edit
     // dominated compile time.
-    const needsLayerData = active.some(
-        (info) => info.hasLayer || info.hasPropagated
+    const needsDrawingData = active.some(
+        (info) => info.hasDrawing || info.hasPropagated
     );
     const wantsAnchors = active.some((info) => info.hasPropagated);
     const selected = new Set(glyphNames || []);
@@ -1089,21 +1097,21 @@ export async function prepareCompileFilters(
     const jobs: Array<{
         glyphName: string;
         depth: number;
-        layer: LayerJob['layer'];
-        inherited?: LayerJob['inherited'];
+        drawing: DrawingJob['drawing'];
+        inherited?: DrawingJob['inherited'];
     }> = [];
-    if (needsLayerData) {
+    if (needsDrawingData) {
         for (const glyph of included) {
-            for (const layer of glyph.layers || []) {
-                if (layer.is_background) {
+            for (const drawing of glyph.drawings || []) {
+                if (drawing.is_background) {
                     continue;
                 }
                 jobs.push({
                     glyphName: glyph.name,
                     depth: componentDepth(glyph.name, glyphs, new Set()),
-                    layer: layerRecord(layer),
+                    drawing: drawingRecord(drawing),
                     inherited: wantsAnchors
-                        ? layer.computedAnchors?.() || {}
+                        ? drawing.computedAnchors?.() || {}
                         : undefined
                 });
             }
@@ -1119,7 +1127,7 @@ export async function prepareCompileFilters(
             isAboveVowel(glyph as InkGlyph) &&
             !includedNames.has(glyph.name)
     );
-    const layerJson = (
+    const drawingJson = (
         glyph: (typeof included)[number],
         boundsOnlyGlyph: boolean
     ) => ({
@@ -1128,11 +1136,11 @@ export async function prepareCompileFilters(
         category: glyph.category,
         codepoints: glyph.codepoints,
         ...(boundsOnlyGlyph ? { boundsOnly: true } : {}),
-        layers: (glyph.layers || []).map((layer) => {
-            const record = needsLayerData
-                ? layerRecord(layer)
-                : anchorOnlyLayerRecord(
-                      layer as {
+        layers: (glyph.drawings || []).map((drawing) => {
+            const record = needsDrawingData
+                ? drawingRecord(drawing)
+                : anchorOnlyDrawingRecord(
+                      drawing as {
                           id?: string;
                           is_background?: boolean;
                           master?: { type?: string; master?: string };
@@ -1147,8 +1155,9 @@ export async function prepareCompileFilters(
             if (!isAboveVowel(glyph as InkGlyph)) {
                 return record;
             }
-            const bounds = layerInkBounds(
-                layer as InkGlyph['layers'] extends Array<infer T> | undefined
+            const bounds = drawingInkBounds(
+                drawing as InkGlyph['drawings'] extends
+                    Array<infer T> | undefined
                     ? T
                     : never,
                 glyph.name,
@@ -1163,45 +1172,48 @@ export async function prepareCompileFilters(
 
     const fontJson = {
         upm: font.upm,
-        masters: font.masters,
+        masters: font.stations,
         axes: font.axes,
         features: font.features,
         format_specific: font.format_specific,
         glyphs: [
-            ...included.map((glyph) => layerJson(glyph, false)),
-            ...boundsOnly.map((glyph) => layerJson(glyph, true))
+            ...included.map((glyph) => drawingJson(glyph, false)),
+            ...boundsOnly.map((glyph) => drawingJson(glyph, true))
         ]
     };
     const payload = {
         ids: active.map((info) => info.id),
         font: fontJson,
-        layers: jobs.map((job) => ({
+        drawings: jobs.map((job) => ({
             glyphName: job.glyphName,
-            layer: job.layer,
+            drawing: job.drawing,
             inherited: job.inherited
         }))
     };
-    if (!needsLayerData) {
+    if (!needsDrawingData) {
         const featureKey = JSON.stringify(fontJson);
         if (featureKey === cachedFeatureKey) {
-            return { layerUpdates: [], features: cachedFeatures };
+            return { drawingUpdates: [], features: cachedFeatures };
         }
         const raw = await runHostPythonAsync(
             `_cp_compile_filters_run(${pythonString(JSON.stringify(payload))})`
         );
         const parsed = JSON.parse(String(raw)) as {
-            layers: Record<string, unknown>;
+            drawings: Record<string, unknown>;
             features: string;
             anchorShifts?: Array<{
                 glyph: string;
-                layerId: string;
+                drawingId: string;
                 dx: number;
             }>;
         };
         cachedFeatureKey = featureKey;
         cachedFeatures = parsed.features || '';
         return {
-            layerUpdates: anchorShiftLayerUpdates(font, parsed.anchorShifts),
+            drawingUpdates: anchorShiftDrawingUpdates(
+                font,
+                parsed.anchorShifts
+            ),
             features: cachedFeatures
         };
     }
@@ -1209,28 +1221,28 @@ export async function prepareCompileFilters(
         `_cp_compile_filters_run(${pythonString(JSON.stringify(payload))})`
     );
     const parsed = JSON.parse(String(raw)) as {
-        layers: Record<string, unknown>;
+        drawings: Record<string, unknown>;
         features: string;
         anchorShifts?: Array<{
             glyph: string;
-            layerId: string;
+            drawingId: string;
             dx: number;
         }>;
     };
-    layerCache.set('last', JSON.stringify(parsed));
+    drawingCache.set('last', JSON.stringify(parsed));
 
-    const layerUpdates = [
-        ...Object.entries(parsed.layers || {}).map(([key, layerData]) => {
+    const drawingUpdates = [
+        ...Object.entries(parsed.drawings || {}).map(([key, drawingData]) => {
             const separator = key.indexOf('\u001f');
             return {
                 glyphName: key.slice(0, separator),
                 layerId: key.slice(separator + 1),
-                layerData
+                layerData: drawingData
             };
         }),
-        ...anchorShiftLayerUpdates(font, parsed.anchorShifts)
+        ...anchorShiftDrawingUpdates(font, parsed.anchorShifts)
     ];
-    return { layerUpdates, features: parsed.features || '' };
+    return { drawingUpdates, features: parsed.features || '' };
 }
 
 declare global {
@@ -1241,15 +1253,15 @@ declare global {
                 pluginId: string;
                 name: string;
                 glyphName: string;
-                layerId: string;
-                masterId: string;
+                drawingId: string;
+                stationId: string;
                 x: number;
                 y: number;
                 defaultX: number;
             }) => Promise<boolean>;
             queryTransientAnchors: (
                 glyphName: string,
-                layerId: string
+                drawingId: string
             ) => Promise<TransientAnchor[]>;
             discover: () => Promise<CompileFilterInfo[]>;
             invalidate: () => void;

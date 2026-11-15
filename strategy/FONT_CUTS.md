@@ -53,7 +53,7 @@ type Cut = {
     kerning_rtl: KerningOverrides; // RTL
 };
 
-// masterId -> "left:right" or "first:second" -> value. null removes the pair.
+// station id -> "left:right" or "first:second" -> value. null removes the pair.
 type KerningOverrides = Record<string, Record<string, number | null>>;
 ```
 
@@ -68,7 +68,7 @@ A clone is a real glyph, `exported: false`, stamped `format_specific['com.counte
 - Spacing, kerning, names, and features are contract fields. They do not create a glyph.
 - An override equal to the parent's effective value is not stored.
 
-`kerning` and `kerning_rtl` are separate. LTR keys are `"left:right"`. RTL keys are `"first:second"` in reading order. The same string in both maps is two pairs. A cut write to `kerning_rtl` must not touch the retail mirror `format_specific['com.schriftgestalt.Glyphs.kerningRTL']`. Retail's `Master.kerning_rtl` setter still mirrors there.
+`kerning` and `kerning_rtl` are separate. LTR keys are `"left:right"`. RTL keys are `"first:second"` in reading order. The same string in both maps is two pairs. A cut write to `kerning_rtl` must not touch the retail mirror `format_specific['com.schriftgestalt.Glyphs.kerningRTL']`. Retail’s `Station.kerning_rtl` setter still mirrors there.
 
 `Font.renameGlyphs` rewrites every cut's `replace` keys, `delete`, `restore`, `add.after`, `spacing` keys, and both kerning maps, in the same transaction as the retail rename.
 
@@ -100,8 +100,8 @@ Key rule: `^[A-Z][A-Za-z0-9]{1,23}$`. One shared `validateCutKey` rejects spaces
 
 While a cut is active:
 
-- Width, LSB, and RSB write `cut.spacing[glyph][master]`. Getters return the effective value.
-- `Master.kerning` and `Master.kerning_rtl` write the cut's maps. `null` removes a pair. Getters return the merged map.
+- Width, LSB, and RSB write `cut.spacing[glyph][station]`. Getters return the effective value.
+- `Station.kerning` and `Station.kerning_rtl` write the cut’s maps. `null` removes a pair. Getters return the merged map.
 - Name setters write `cut.custom_names`.
 - The features setter writes `{ mode: 'replaceSet', features }`.
 - Adding or removing a glyph writes `glyphs.add` or `glyphs.delete`.
@@ -194,7 +194,7 @@ Layer A, `babelfont-fontc-build/src/cut_binary_tests.rs`, compiles retail and th
 
 Layer B, `webapp/tests/cuts-binary.spec.ts`, does the same edits through the UI and through Python and requires byte-identical exports, a live-canvas compile that matches the export, the family-name filename, a separate remembered destination per cut, and a linked window that follows the switch and cannot mutate.
 
-Also cover: nested fold, middle-ancestor comparison, deleted tiles under filters and search, collab round trip of a key rename, and `bool(font)`, `bool(glyph)`, `bool(layer)`, `bool(font.names)` plus `len(font.cuts)` in the Python model spec.
+Also cover: nested fold, middle-ancestor comparison, deleted tiles under filters and search, collab round trip of a key rename, and `bool(font)`, `bool(glyph)`, `bool(drawing)`, `bool(font.names)` plus `len(font.cuts)` in the Python model spec.
 
 Playwright stays at `workers: 1`. A native `cargo test` that builds a `JsValue` aborts. CI runs `wasm-pack test --node`.
 
@@ -207,7 +207,7 @@ Done means one final run, after a WASM rebuild from the final Rust: `cargo test`
 Uncommitted. Keep it or commit it on purpose. Do not commit `babelfont/noto-cjk-varco/` (about 190 MB, test data only).
 
 - `babelfont/src/filters/applycut.rs`. The fold. Wire it from the editor crate. It is not wired today. The editor tree was reset.
-- `babelfont/src/convertors/ufo.rs`. `as_norad(font, master_ix)` emits that master's layers, its background layer, and that master's kerning. It used to merge every master into the first UFO and drop backgrounds.
+- `babelfont/src/convertors/ufo.rs`. `as_norad(font, master_ix)` emits that station’s drawings as UFO layers, its background drawings, and that station’s kerning. It used to merge every station into the first UFO and drop backgrounds.
 - `babelfont/src/layout/closure.rs`. A class substituted by one glyph closes every member of the class. The closure round limit is the glyph count plus one, not 10.
 - Six `.babelfont` fixtures, plus the inline fixtures in `shape.rs`, `cubic2quadratic.rs`, and `quadratic2cubic.rs`, converted to JSON node arrays.
 - `noto-cjk-varco/` cloned under `babelfont/` because those tests read it.

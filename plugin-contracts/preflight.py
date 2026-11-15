@@ -61,7 +61,7 @@ def _probe(instance, spec, fixtures, report):
     try:
         if kind == "canvas":
             _emit("start", "canvas.draw")
-            layer = fixtures["layer"]
+            drawing = fixtures["drawing"]
             ctx = {"calls": []}
 
             class Ctx:
@@ -72,9 +72,9 @@ def _probe(instance, spec, fixtures, report):
                     return fn
 
             if callable(getattr(instance, "draw_above", None)):
-                instance.draw_above(layer, Ctx())
+                instance.draw_above(drawing, Ctx())
             if callable(getattr(instance, "draw_below", None)):
-                instance.draw_below(layer, Ctx())
+                instance.draw_below(drawing, Ctx())
             if callable(getattr(instance, "get_ui_elements", None)):
                 instance.get_ui_elements()
             _emit("done", "canvas.draw")
@@ -96,13 +96,13 @@ def _probe(instance, spec, fixtures, report):
             _emit("done", "character_set.metadata")
         elif kind == "compilefilter":
             _emit("start", "compilefilter.filter")
-            layer = fixtures["layer"]
+            drawing = fixtures["drawing"]
             font = {"upm": 1000, "masters": [], "axes": [], "glyphs": fixtures["glyphs"]}
-            ctx = {"master": None, "masterId": None, "axes": [], "settings": {}}
-            if callable(getattr(instance, "filter_layer_json", None)):
-                instance.filter_layer_json(layer, ctx)
-            if callable(getattr(instance, "filter_layer_json_propagated_anchors", None)):
-                instance.filter_layer_json_propagated_anchors(layer, ctx)
+            ctx = {"station": None, "stationId": None, "axes": [], "settings": {}}
+            if callable(getattr(instance, "filter_drawing_json", None)):
+                instance.filter_drawing_json(drawing, ctx)
+            if callable(getattr(instance, "filter_drawing_json_propagated_anchors", None)):
+                instance.filter_drawing_json_propagated_anchors(drawing, ctx)
             if callable(getattr(instance, "filter_font_json", None)):
                 instance.filter_font_json(font, ctx)
             _emit("done", "compilefilter.filter")
@@ -204,7 +204,7 @@ def main():
         contracts = json.load(handle)
     fixtures = {}
     fixture_dir = job.get("fixturesDir") or os.path.join(root, "fixtures")
-    for name in ("layer", "glyphs", "lookups"):
+    for name in ("drawing", "glyphs", "lookups"):
         with open(os.path.join(fixture_dir, f"{name}.json"), "r", encoding="utf-8") as handle:
             fixtures[name] = json.load(handle)
     report = run(job["manifest"], contracts, fixtures)

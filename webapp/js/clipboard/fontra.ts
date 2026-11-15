@@ -25,9 +25,9 @@ import type {
     PastePath
 } from './types';
 import type {
-    PasteClipboardMaster,
+    PasteClipboardStation,
     PasteGlyph,
-    PasteGlyphLayer,
+    PasteGlyphDrawing,
     PasteGlyphsDocument
 } from './json';
 import { COUNTERPUNCH_CLIPBOARD_VERSION } from './json';
@@ -139,8 +139,8 @@ export function parseFontraClipboard(
 function parseFontraLayerGlyphs(
     data: Record<string, unknown>
 ): PasteFragment | null {
-    const layerGlyphs = data.layerGlyphs;
-    if (!Array.isArray(layerGlyphs) || layerGlyphs.length === 0) {
+    const drawingGlyphs = data.layerGlyphs;
+    if (!Array.isArray(drawingGlyphs) || drawingGlyphs.length === 0) {
         return null;
     }
 
@@ -149,7 +149,7 @@ function parseFontraLayerGlyphs(
     const anchors: PasteAnchor[] = [];
     const guides: PasteGuide[] = [];
 
-    for (const entry of layerGlyphs) {
+    for (const entry of drawingGlyphs) {
         if (!isRecord(entry) || !isRecord(entry.glyph)) {
             continue;
         }
@@ -190,8 +190,8 @@ function parseFontraGlyphArray(
     const sourceLocations = isRecord(data.sourceLocations)
         ? data.sourceLocations
         : {};
-    const masterIds = Object.keys(sourceLocations);
-    if (masterIds.length === 0) {
+    const stationIds = Object.keys(sourceLocations);
+    if (stationIds.length === 0) {
         // Fall back to source order from the first variable glyph.
         const first = glyphsRaw.find((entry) => isRecord(entry));
         const vg =
@@ -206,19 +206,19 @@ function parseFontraGlyphArray(
             const id =
                 optionalString(source.layerName) ||
                 optionalString(source.locationBase);
-            if (id && !masterIds.includes(id)) {
-                masterIds.push(id);
+            if (id && !stationIds.includes(id)) {
+                stationIds.push(id);
             }
         }
     }
-    if (masterIds.length === 0) {
+    if (stationIds.length === 0) {
         return null;
     }
 
-    const masterIndexById = new Map(
-        masterIds.map((id, index) => [id, index] as const)
+    const stationIndexById = new Map(
+        stationIds.map((id, index) => [id, index] as const)
     );
-    const masters: PasteClipboardMaster[] = masterIds.map((id) => {
+    const stations: PasteClipboardStation[] = stationIds.map((id) => {
         const locationRaw = sourceLocations[id];
         const location = isRecord(locationRaw)
             ? Object.fromEntries(
@@ -248,39 +248,42 @@ function parseFontraGlyphArray(
         if (!name) {
             continue;
         }
-        const layersMap = isRecord(variableGlyph.layers)
+        const drawingsMap = isRecord(variableGlyph.layers)
             ? variableGlyph.layers
             : {};
         const sources = Array.isArray(variableGlyph.sources)
             ? variableGlyph.sources
             : [];
 
-        const layers: PasteGlyphLayer[] = [];
+        const drawings: PasteGlyphDrawing[] = [];
         for (const source of sources) {
             if (!isRecord(source)) {
                 continue;
             }
-            const layerName =
+            const drawingName =
                 optionalString(source.layerName) ||
                 optionalString(source.locationBase);
-            if (!layerName || !isRecord(layersMap[layerName])) {
+            if (!drawingName || !isRecord(drawingsMap[drawingName])) {
                 continue;
             }
-            const masterIndex = masterIndexById.get(layerName);
-            if (masterIndex === undefined) {
+            const stationIndex = stationIndexById.get(drawingName);
+            if (stationIndex === undefined) {
                 continue;
             }
-            const layerEntry = layersMap[layerName] as Record<string, unknown>;
-            const staticGlyph = isRecord(layerEntry.glyph)
-                ? (layerEntry.glyph as FontraStaticGlyph)
+            const drawingEntry = drawingsMap[drawingName] as Record<
+                string,
+                unknown
+            >;
+            const staticGlyph = isRecord(drawingEntry.glyph)
+                ? (drawingEntry.glyph as FontraStaticGlyph)
                 : null;
             if (!staticGlyph) {
                 continue;
             }
-            layers.push({
-                layerId: layerName,
-                name: layerName,
-                master: { type: 'DefaultForMaster', masterIndex },
+            drawings.push({
+                layerId: drawingName,
+                name: drawingName,
+                master: { type: 'DefaultForMaster', masterIndex: stationIndex },
                 width: optionalNumber(staticGlyph.xAdvance) ?? undefined,
                 paths: parseFontraPackedPath(staticGlyph.path),
                 components: parseFontraComponents(staticGlyph.components),
@@ -289,11 +292,11 @@ function parseFontraGlyphArray(
             });
         }
 
-        if (layers.length === 0) {
+        if (drawings.length === 0) {
             continue;
         }
 
-        glyphs.push({ name, layers });
+        glyphs.push({ name, layers: drawings });
     }
 
     if (glyphs.length === 0) {
@@ -304,7 +307,7 @@ function parseFontraGlyphArray(
         format: 'counterpunch-json',
         kind: 'glyphs',
         version: COUNTERPUNCH_CLIPBOARD_VERSION,
-        masters,
+        masters: stations,
         glyphs,
         nodeOrder: 'start-first'
     };
@@ -599,7 +602,7 @@ export function stringifyFontraClipboardDocument(
 /**
  * Build a tag/id/name → Fontra axis-name map from font axes.
  * Fontra `sourceLocations` use the axis display name ("Weight"), not the
- * OpenType tag ("wght") that Counterpunch stores on masters.
+ * OpenType tag ("wght") that Counterpunch stores on stations.
  */
 export function buildFontraAxisNameByKey(
     axes: Array<{
@@ -670,13 +673,13 @@ function buildFontraLayerGlyphs(
         codePoints?: number[];
     }
 ): Record<string, unknown> {
-    const layerId = options?.layerId || 'clipboard';
+    const drawingId = options?.layerId || 'clipboard';
     return {
         type: FONTRA_LAYER_GLYPHS,
         data: {
             layerGlyphs: [
                 {
-                    layerName: layerId,
+                    layerName: drawingId,
                     location: {},
                     glyph: serializeStaticGlyph({
                         width: options?.layerWidth,
@@ -700,49 +703,49 @@ function buildFontraGlyphArray(
         axisNameByKey?: Record<string, string>;
     }
 ): Record<string, unknown> {
-    const masters = document.masters || [];
+    const stations = document.masters || [];
     const sourceLocations: Record<string, Record<string, number>> = {};
-    for (const master of masters) {
+    for (const station of stations) {
         // Fontra binds sources via locationBase → sourceLocations, and matches
         // those locations to the destination font using axis *names* (Weight),
-        // not Counterpunch's master location tags (wght).
-        sourceLocations[master.id] = remapLocationToFontraAxisNames(
-            master.location,
+        // not Counterpunch's station location tags (wght).
+        sourceLocations[station.id] = remapLocationToFontraAxisNames(
+            station.location,
             options?.axisNameByKey
         );
     }
 
     const glyphs = document.glyphs.map((glyph) => {
-        const layers: Record<
+        const drawings: Record<
             string,
             { glyph: FontraStaticGlyph; customData: Record<string, unknown> }
         > = {};
         const sources: Array<Record<string, unknown>> = [];
 
-        for (const layer of glyph.layers) {
-            if (layer.master.type !== 'DefaultForMaster') {
+        for (const drawing of glyph.layers) {
+            if (drawing.master.type !== 'DefaultForMaster') {
                 continue;
             }
-            const master = masters[layer.master.masterIndex];
-            if (!master) {
+            const station = stations[drawing.master.masterIndex];
+            if (!station) {
                 continue;
             }
-            layers[master.id] = {
+            drawings[station.id] = {
                 glyph: serializeStaticGlyph({
-                    width: layer.width,
-                    paths: layer.paths,
-                    components: layer.components,
-                    anchors: layer.anchors,
-                    guides: layer.guides
+                    width: drawing.width,
+                    paths: drawing.paths,
+                    components: drawing.components,
+                    anchors: drawing.anchors,
+                    guides: drawing.guides
                 }),
                 customData: {}
             };
             // Match native Fontra copy: locationBase + empty location.
             sources.push({
                 name: '',
-                locationBase: master.id,
+                locationBase: station.id,
                 location: {},
-                layerName: master.id,
+                layerName: station.id,
                 inactive: false,
                 customData: {}
             });
@@ -754,7 +757,7 @@ function buildFontraGlyphArray(
                 name: glyph.name,
                 axes: [],
                 sources,
-                layers,
+                layers: drawings,
                 customData: {}
             }
         };

@@ -6,9 +6,9 @@ Undo follows the **focused undo surface**, not merely whatever glyph name appear
 
 | Surface | Focused view | `Cmd/Ctrl+Z` undoes |
 | --- | --- | --- |
-| **Canvas** (Editing View) | Glyph editor in edit mode **or** text mode | Layer-origin edits for the current glyph/layer (and other written layers of that glyph), plus Editing View–owned font edits such as text-mode kerning, kern-group membership, and canvas master-guide promotions |
+| **Canvas** (Editing View) | Glyph editor in edit mode **or** text mode | Drawing-origin edits for the current glyph/drawing (and other written drawings of that glyph), plus Editing View–owned font edits such as text-mode kerning, kern-group membership, and promoting a guide to a station guide on the canvas |
 | **Overview** | Glyph overview | Glyph-structural edits (paste, cut, duplicate, delete, reorder, codepoints, rename, …) |
-| **Font Info** | Font Info (non-Features) | Pure font-wide edits made there (names, UPM, axes, master topology, …) — not Editing View–owned kerning |
+| **Font Info** | Font Info (non-Features) | Pure font-wide edits made there (names, UPM, axes, stations, …) — not Editing View–owned kerning |
 | **Features** | Font Info Features with an item selected | That feature / class / prefix only |
 | **Automation** | Scripts, Konsole, or Assistant | Font mutations produced by Python or the Assistant |
 
@@ -24,15 +24,15 @@ Each undo surface is one last-in, first-out stack:
 
 ## Editing View–owned font edits
 
-Some writes live under font-root paths (`masters.*.kerning`, kern groups, promoting a guide to the master) but were made from the Editing View. Those commits stamp an **undo surface affinity** of `canvas` so they stay on the Editing View stack for both History and `Cmd/Ctrl+Z`. Font Info does not claim them.
+Some writes live under font-root paths (`masters.*.kerning`, kern groups, promoting a guide to the station) but were made from the Editing View. Those commits stamp an **undo surface affinity** of `canvas` so they stay on the Editing View stack for both History and `Cmd/Ctrl+Z`. Font Info does not claim them.
 
-## Originating layer
+## Originating drawing
 
-Canvas undo keys off where the forward edit **started**, not every layer touched afterward.
+Canvas undo keys off where the forward edit **started**, not every drawing touched afterward.
 
-- Edit layer A → cascade updates dependents → undoable on **A**, not on a dependent layer or from Font Info. Undo and redo restore the dependents together with A.
+- Edit drawing A → cascade updates dependents → undoable on **A**, not on a dependent drawing or from Font Info. Undo and redo restore the dependents together with A.
 - Paste a glyph in Overview → open it on the canvas → creation stays **overview-only**, even if the history item names that glyph.
-- In text mode (no selected layer), layer-origin edits for the caret glyph remain reachable, and affinity-stamped kerning edits are reachable too.
+- In text mode (no selected drawing), drawing-origin edits for the caret glyph remain reachable, and affinity-stamped kerning edits are reachable too.
 
 ## History visibility
 
@@ -55,10 +55,10 @@ While Scripts, Konsole, or Assistant is focused, the same font-history shortcuts
 
 - **Title** — transaction summary
 - **Action chip** — `edit` (grayscale), `undo` / `redo` (colored)
-- **Origin** — follows the item’s **undo surface**: `Layer · {glyph} / {master}`, `Editing View`, `Overview`, `Font`, or `Feature · …`
-- **`account_tree`** — transaction recomposed dependent layers
+- **Origin** — follows the item’s **undo surface**: `Drawing · {glyph} / {station}`, `Editing View`, `Overview`, `Font`, or `Feature · …`
+- **`account_tree`** — transaction recomposed dependent drawings
 - Time / duration / size — development builds only
 
-Practical checks: confirm which view is focused; for a missing scripted edit, focus Scripts / Konsole / Assistant or reveal rows from other undo surfaces; for canvas cascades, return to the layer you edited.
+Practical checks: confirm which view is focused; for a missing scripted edit, focus Scripts / Konsole / Assistant or reveal rows from other undo surfaces; for canvas cascades, return to the drawing you edited.
 
 Related: [Glyph editor](../editor/01-glyph-editor.md), [Feature code editor](../features/01-feature-code-editor.md), [Keyboard shortcuts](keyboard-shortcuts.md), [Common problems](../troubleshooting/common-problems.md).

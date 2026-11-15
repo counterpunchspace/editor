@@ -15,7 +15,7 @@ export type SeedableFontCompiler = {
 /**
  * Seed an isolated compiler with the committed font. While the sync bridge
  * is active, glyph bodies live only in per-glyph shards: the core snapshot
- * has masters and features but no glyphs, and compiling it traps in the
+ * has stations and features but no glyphs, and compiling it traps in the
  * metrics pass. The single snapshot is only valid without a bridge.
  */
 export async function seedCompilerFromCommittedFont(

@@ -6,12 +6,12 @@ describe('TextRunEditor explicit-token model kerning', () => {
             { getHarfBuzzFeatures: jest.fn(() => null) },
             { variationSettings: {} }
         );
-        editor.selectedMasterId = 'master-1';
+        editor.selectedStationId = 'master-1';
         return editor;
     };
 
     const makeFontModel = ({ kerning = {}, kerningRtl = {} } = {}) => ({
-        masters: [
+        stations: [
             {
                 id: 'master-1',
                 kerning,
@@ -190,7 +190,7 @@ describe('TextRunEditor explicit-token model kerning', () => {
             if (name === 'A' || name === 'V') {
                 return {
                     name,
-                    layers: [{ width: name === 'A' ? 500 : 480 }]
+                    drawings: [{ width: name === 'A' ? 500 : 480 }]
                 };
             }
             return null;
