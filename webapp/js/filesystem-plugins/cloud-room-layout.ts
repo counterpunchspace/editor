@@ -9,8 +9,9 @@
  *
  * The bucket counts are fixed per asset and stored in font-core's `layout`
  * map, so every window routes a key to the same room. They are chosen with
- * room to double before a bucket reaches its budget; re-bucketing is part of
- * a room rebase. See strategy/CLOUD_COLLABORATION_ARCHITECTURE.md.
+ * room to double before a bucket reaches its budget; re-bucketing, when the
+ * font outgrew its buckets or shrank to half of them, is part of a room
+ * rebase. See strategy/CLOUD_COLLABORATION_ARCHITECTURE.md.
  */
 
 import * as Y from 'yjs';
@@ -203,9 +204,15 @@ export const CATALOG_GLYPHS_BUCKET_BUDGET = CATALOG_GLYPHS_PER_BUCKET * 2;
 export const KERNING_PAIRS_BUCKET_BUDGET = KERNING_PAIRS_PER_BUCKET * 2;
 
 /**
- * The layout a rebase moves to when a bucket outgrew its budget, or null
- * when the current layout still fits. New rooms take ids that do not
- * overlap the current ones; null too when no such ids are left.
+ * The layout a rebase moves to, or null when the current one still suits the
+ * font. The catalog or kerning grows to at least twice as many buckets when
+ * one bucket outgrew its budget, and shrinks to the buckets a new font of
+ * this size would get when that is half the current count or fewer (the
+ * font lost at least half its glyphs or pairs since the buckets were chosen,
+ * so the two rules never undo each other). Each move takes room ids past
+ * every id the font has used, so a room of an earlier layout, which waits
+ * out its purge on the server, is never read again. Null too when no such
+ * ids are left.
  */
 export function rebasedRoomLayout(
     current: RoomLayout,
@@ -216,50 +223,66 @@ export function rebasedRoomLayout(
         kerningPairs: number;
     }
 ): RoomLayout | null {
-    const catalogFull =
-        fill.largestCatalogBucket > CATALOG_GLYPHS_BUCKET_BUDGET;
-    const kerningFull = fill.largestKerningBucket > KERNING_PAIRS_BUCKET_BUDGET;
-    if (!catalogFull && !kerningFull) {
-        return null;
-    }
     const chosen = chooseRoomLayout({
         glyphs: fill.glyphs,
         kerningPairs: fill.kerningPairs
     });
-    const moved = (
+    const plan = (
+        count: number,
+        largest: number,
+        budget: number,
+        chosenCount: number
+    ): number | null => {
+        if (largest > budget) {
+            return Math.min(
+                MAX_LAYOUT_BUCKETS,
+                Math.max(chosenCount, count * 2)
+            );
+        }
+        return chosenCount * 2 <= count ? chosenCount : null;
+    };
+    const catalogBuckets = plan(
+        current.catalogBuckets,
+        fill.largestCatalogBucket,
+        CATALOG_GLYPHS_BUCKET_BUDGET,
+        chosen.catalogBuckets
+    );
+    const kerningBuckets = plan(
+        current.kerningBuckets,
+        fill.largestKerningBucket,
+        KERNING_PAIRS_BUCKET_BUDGET,
+        chosen.kerningBuckets
+    );
+    if (catalogBuckets === null && kerningBuckets === null) {
+        return null;
+    }
+    const freshBase = (
         base: number,
         count: number,
         nextCount: number
     ): number | null => {
-        if (nextCount <= base) return 0;
         const after = base + count;
         return after + nextCount <= MAX_LAYOUT_BUCKETS ? after : null;
     };
     const next: RoomLayout = { ...current };
-    if (catalogFull) {
-        const base = moved(
+    if (catalogBuckets !== null) {
+        const base = freshBase(
             current.catalogBase ?? 0,
             current.catalogBuckets,
-            Math.max(chosen.catalogBuckets, current.catalogBuckets * 2)
+            catalogBuckets
         );
         if (base === null) return null;
-        next.catalogBuckets = Math.max(
-            chosen.catalogBuckets,
-            current.catalogBuckets * 2
-        );
+        next.catalogBuckets = catalogBuckets;
         next.catalogBase = base;
     }
-    if (kerningFull) {
-        const base = moved(
+    if (kerningBuckets !== null) {
+        const base = freshBase(
             current.kerningBase ?? 0,
             current.kerningBuckets,
-            Math.max(chosen.kerningBuckets, current.kerningBuckets * 2)
+            kerningBuckets
         );
         if (base === null) return null;
-        next.kerningBuckets = Math.max(
-            chosen.kerningBuckets,
-            current.kerningBuckets * 2
-        );
+        next.kerningBuckets = kerningBuckets;
         next.kerningBase = base;
     }
     return parseRoomLayout(next);

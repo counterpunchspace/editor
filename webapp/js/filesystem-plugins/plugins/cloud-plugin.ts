@@ -10,10 +10,13 @@ import {
     roomFitRefusalMessage
 } from '../cloud-room-fit';
 import {
+    catalogRoomIds,
     chooseRoomLayout,
+    kerningRoomIds,
     layoutDocumentKind,
     rebasedRoomLayout,
-    roomLayoutCounts
+    roomLayoutCounts,
+    type RoomLayout
 } from '../cloud-room-layout';
 import { ROOM_LAYOUT_VERSION } from '../cloud-room-layout';
 import { showNotice } from '../../font-windows/dialogs';
@@ -3557,7 +3560,11 @@ export class CloudPlugin extends FilesystemPlugin {
                 await this.ensureSparseHydration({ text });
             }
         }
-        await this._upgradeRoomLayoutOnOpen(options.bridge, session);
+        await this._upgradeRoomLayoutOnOpen(
+            options.bridge,
+            session,
+            options.assetId
+        );
         // A peer that upgrades the font to room layout 2 points core at the
         // new rooms; join them.
         this._roomLayoutUnsubscribe?.();
@@ -3600,7 +3607,8 @@ export class CloudPlugin extends FilesystemPlugin {
      */
     private async _upgradeRoomLayoutOnOpen(
         bridge: PatchSyncEngine,
-        session: CloudLiveSession
+        session: CloudLiveSession,
+        assetId: string
     ): Promise<void> {
         if (
             this.getCurrentAssetRole() !== 'owner' ||
@@ -3610,12 +3618,27 @@ export class CloudPlugin extends FilesystemPlugin {
         }
         if (bridge.roomLayout) {
             // A bucket that outgrew its budget moves the catalog or kerning
-            // to more buckets (a rebase), the same way an upgrade does.
+            // to more buckets (a rebase), the same way an upgrade does; a
+            // font that shrank to half its buckets moves to fewer. A rebase
+            // copies the rooms' content, so it waits until this window has
+            // all of it: collaborators' latest edits included.
+            try {
+                await session.syncLiveDocumentIds(
+                    liveGlyphDocumentIdsFromSubset(
+                        bridge,
+                        activeEditorGlyphNames()
+                    )
+                );
+                await session.waitForLiveRoomsSynced(60_000);
+            } catch {
+                return;
+            }
             const fill = bridge.roomLayoutFill?.();
             const next = fill
                 ? rebasedRoomLayout(bridge.roomLayout, fill)
                 : null;
             if (!next || !bridge.rebaseRoomLayout(next)) {
+                void this._reportLayoutRooms(assetId, bridge.roomLayout);
                 return;
             }
         } else {
@@ -3638,7 +3661,54 @@ export class CloudPlugin extends FilesystemPlugin {
         );
         await session.waitForLiveRoomsSynced(60_000);
         await session.waitForLayoutRoomsStored(60_000);
-        bridge.publishAdoptedRoomLayout();
+        if (bridge.publishAdoptedRoomLayout() && bridge.roomLayout) {
+            void this._reportLayoutRooms(assetId, bridge.roomLayout);
+        }
+    }
+
+    /** First retry delay of a failed layout room report; doubles after. */
+    _layoutRoomsRetryDelayMs = 1000;
+
+    /**
+     * Tell the website which catalog and kerning rooms the font's layout
+     * uses. Rooms of earlier layouts (left behind by a rebase) are purged
+     * after the same window as deleted glyphs. Sent by the owner on every
+     * open, so a missed report after a rebase is made up the next time.
+     */
+    private async _reportLayoutRooms(
+        assetId: string,
+        layout: RoomLayout
+    ): Promise<void> {
+        const live = [...catalogRoomIds(layout), ...kerningRoomIds(layout)];
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            if (attempt > 0) {
+                await new Promise((resolve) =>
+                    setTimeout(
+                        resolve,
+                        this._layoutRoomsRetryDelayMs * 2 ** (attempt - 1)
+                    )
+                );
+            }
+            try {
+                const resp = await fetch(
+                    `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(assetId)}/layout-rooms`,
+                    {
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: getCloudRequestHeaders({
+                            'Content-Type': 'application/json'
+                        }),
+                        body: JSON.stringify({ live })
+                    }
+                );
+                if (resp.ok || (resp.status >= 400 && resp.status < 500)) {
+                    return;
+                }
+                console.warn(`Layout room report failed (${resp.status})`);
+            } catch (error) {
+                console.warn('Layout room report failed:', error);
+            }
+        }
     }
 
     private _liveGlyphNamesForSync(): string[] {

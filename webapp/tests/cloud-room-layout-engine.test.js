@@ -395,5 +395,95 @@ describe('room layout 2 in the engine', () => {
             'kerning:1',
             'kerning:2'
         ]);
+
+        // The font shrinks back: one bucket, under room ids never used.
+        const shrunk = rebasedRoomLayout(
+            owner.roomLayout,
+            owner.roomLayoutFill()
+        );
+        expect(shrunk).toMatchObject({ kerningBuckets: 1, kerningBase: 3 });
+        expect(owner.rebaseRoomLayout(shrunk)).toBe(true);
+        expect(owner.layoutDocumentIds()).toEqual([
+            'features',
+            'catalog:0',
+            'kerning:3'
+        ]);
+        expect(snapshotOf(owner)).toEqual(before);
+        packets.length = 0;
+        heard.length = 0;
+        expect(owner.publishAdoptedRoomLayout()).toBe(true);
+        for (const packet of packets) {
+            peer.applyRemoteUpdate(
+                packet.update,
+                undefined,
+                [packet.message],
+                packet.documentId
+            );
+        }
+        expect(heard).toEqual([shrunk]);
+        for (const shard of owner.encodeDocumentSet()) {
+            if (shard.documentId.startsWith('kerning:')) {
+                peer.applyDocumentCatchUp(shard.documentId, shard.bytes);
+            }
+        }
+        expect(snapshotOf(peer)).toEqual(before);
+        expect([...peer._layoutDocs.keys()].sort()).toEqual([
+            'catalog:0',
+            'features',
+            'kerning:3'
+        ]);
+    });
+
+    test('a rebase grows when a bucket is full and shrinks when half the buckets would do', () => {
+        const {
+            rebasedRoomLayout
+        } = require('../js/filesystem-plugins/cloud-room-layout');
+        const layout = (kerningBuckets, kerningBase = 0) => ({
+            version: 2,
+            catalogBuckets: 1,
+            kerningBuckets,
+            kerningBase
+        });
+        const fill = (pairs, largest = pairs) => ({
+            largestCatalogBucket: 10,
+            largestKerningBucket: largest,
+            glyphs: 10,
+            kerningPairs: pairs
+        });
+        // Grows past the budget, to fresh ids past the current ones.
+        expect(rebasedRoomLayout(layout(1), fill(40001))).toMatchObject({
+            kerningBuckets: 3,
+            kerningBase: 1
+        });
+        // Between the two thresholds nothing moves.
+        expect(rebasedRoomLayout(layout(2, 1), fill(30000, 20000))).toBeNull();
+        expect(rebasedRoomLayout(layout(1), fill(40000))).toBeNull();
+        // Half the buckets or fewer would do: shrink, again to fresh ids.
+        expect(
+            rebasedRoomLayout(layout(2, 1), fill(20000, 10500))
+        ).toMatchObject({ kerningBuckets: 1, kerningBase: 3 });
+        expect(
+            rebasedRoomLayout(layout(8, 7), fill(50000, 7000))
+        ).toMatchObject({ kerningBuckets: 3, kerningBase: 15 });
+        // A shrunk layout does not grow or shrink again at the same size.
+        expect(rebasedRoomLayout(layout(3, 15), fill(50000, 17000))).toBeNull();
+        // The catalog follows the same rules.
+        expect(
+            rebasedRoomLayout(
+                { version: 2, catalogBuckets: 4, kerningBuckets: 1 },
+                {
+                    largestCatalogBucket: 300,
+                    largestKerningBucket: 0,
+                    glyphs: 1000,
+                    kerningPairs: 0
+                }
+            )
+        ).toMatchObject({
+            catalogBuckets: 1,
+            catalogBase: 4,
+            kerningBuckets: 1
+        });
+        // No room ids left: stay.
+        expect(rebasedRoomLayout(layout(2, 1022), fill(10))).toBeNull();
     });
 });

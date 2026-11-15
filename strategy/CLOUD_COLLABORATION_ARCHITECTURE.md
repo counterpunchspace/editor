@@ -140,6 +140,7 @@ Worker/DO must both enforce.
 | `GET /api/cloud/assets/:id/limits` | Asset owner | Open cloud font, Save, `canAddGlyphs` |
 | `POST /api/cloud/assets/:id/glyph-count` | Owner or editor | Persist `font_assets.glyph_count`, capped by glyph reservations |
 | `POST /api/cloud/assets/:id/glyph-orphans` | Owner or editor | Mark deleted glyph ids, clear them on undo, reconcile with the live list |
+| `POST /api/cloud/assets/:id/layout-rooms` | Owner | Report the room layout's catalog and kerning rooms; rooms of earlier layouts are purged after the orphan window |
 | `GET /api/internal/cloud/assets/:id/limits` | Asset owner (service token) | Collab seed / catalog insert |
 
 **Basic** (and current no-membership cloud grant) reads `maxFontsOwned`,
@@ -248,10 +249,23 @@ Bucket counts are fixed per asset when it is seeded or upgraded, at about
 2,000 glyphs and 20,000 pairs per bucket, so a font can double before a
 bucket reaches its 4,000 / 40,000 budget. When the owner opens a font with a
 bucket past its budget, the font is rebased: the catalog or kerning moves to
-twice as many buckets under fresh room ids (`catalogBase` / `kerningBase` in
-the layout, so old and new rooms never share an id), seeded by the owner
-before font-core's layout points peers at them. Old bucket rooms are no
-longer read; they are removed with the asset.
+at least twice as many buckets. When the owner opens a font that would get
+half its buckets or fewer if it were new (it lost at least half its glyphs
+or pairs), the catalog or kerning moves to that smaller count; the two
+thresholds never undo each other. Every rebase takes fresh room ids past
+every id the font has used (`catalogBase` / `kerningBase` in the layout), so
+a room of an earlier layout is never read again, and the owner seeds the new
+rooms before font-core's layout points peers at them
+(`rebasedRoomLayout` in `cloud-room-layout.ts`).
+
+The owner reports the layout's catalog and kerning rooms to the website on
+every open and after a rebase (`POST /api/cloud/assets/:id/layout-rooms`).
+Every other catalog or kerning room the asset stored (R2 folders, D1 rows,
+the hub's registry) is marked `orphan-pending` like a deleted glyph's room,
+and the hourly cron purges it after the same 24 hour window; a later report
+that names a marked room again clears its mark. A report that does not name
+at least one catalog and one kerning room is refused, so it can never mark
+them all.
 
 Live writes may be up to 1 MiB (`MAX_YJS_PACKET_BYTES`): every layout 2 room
 compacts with a 1 MiB write in at most 24 MB of local heap and in the

@@ -496,11 +496,14 @@ test('collaborators converge on every layout 2 room, across rooms and through a 
                     // Several catalog and kerning rooms, as large fonts get.
                     // The refused save below already moves this window to
                     // the layout; the later save keeps it.
+                    // A layout this large for Fustat would shrink when the
+                    // owner opens the font; this window keeps it.
                     await page.evaluate((layout) => {
                         const engine = (window as any).patchSyncEngine;
                         const adopt = engine.adoptRoomLayout.bind(engine);
                         engine.adoptRoomLayout = (chosen: any, options: any) =>
                             adopt({ ...chosen, ...layout }, options);
+                        engine.roomLayoutFill = () => null;
                     }, FORCED_LAYOUT);
                     // A part over the cloud's 5 MiB room limit: the upload
                     // is refused before it starts, with a message that says
@@ -819,7 +822,9 @@ test('collaborators converge on every layout 2 room, across rooms and through a 
                             const fill = value.roomLayoutFill.bind(value);
                             value.roomLayoutFill = () => {
                                 const real = fill();
-                                if (!real || reported) return real;
+                                // Report once; then hold the new layout, so
+                                // only the window opened later shrinks it.
+                                if (!real || reported) return null;
                                 reported = true;
                                 return {
                                     ...real,
@@ -872,13 +877,51 @@ test('collaborators converge on every layout 2 room, across rooms and through a 
             33
         );
 
-        // ── A window that opens now loads it all from the cloud ─────────
+        // ── The font is smaller than its rooms: the next open shrinks ───
+        // Fustat's catalog and kerning fit in far fewer rooms than the six
+        // kerning and three catalog rooms; the owner window that opens now
+        // moves them back to fewer rooms, under fresh ids, and the windows
+        // already open follow. It loads everything from the cloud first.
         const late = await openAsOwner(browser, request, emails.owner, assetId);
         contexts.push(late.context);
-        await expectSameLayoutState(
+        const shrunk = (page: Page) =>
+            page.waitForFunction(
+                () => {
+                    const layout = (window as any).patchSyncEngine?.roomLayout;
+                    return (
+                        layout?.catalogBuckets === 1 &&
+                        layout?.kerningBuckets < 6 &&
+                        layout?.kerningBase > 0
+                    );
+                },
+                undefined,
+                { timeout: 120000 }
+            );
+        await shrunk(late.page);
+        await waitForCloudLiveIdle(late.page);
+        await shrunk(ownerAgain);
+        await shrunk(inviteePage);
+        const afterShrink = await expectSameLayoutState(
             [ownerAgain, inviteePage, late.page],
-            'a window opened afterwards'
+            'after the font shrank to fewer rooms'
         );
+        expect(afterShrink.kerning).toEqual(edited.kerning);
+        expect(afterShrink.glyphs).toEqual(edited.glyphs);
+        await transact(
+            inviteePage,
+            'Edit kerning pair',
+            'keyboard-kerning-value',
+            'kerning-value',
+            setPair,
+            { master: masterId, pair: sharedPair, value: 44 }
+        );
+        const editedAfterShrink = await expectSameLayoutState(
+            [ownerAgain, inviteePage, late.page],
+            'kerning edit in the shrunk rooms'
+        );
+        expect(
+            (editedAfterShrink.kerning[0] as Record<string, number>)[sharedPair]
+        ).toBe(44);
     } finally {
         for (const context of contexts) {
             await context.close().catch(() => undefined);

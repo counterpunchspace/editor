@@ -251,6 +251,21 @@ test.describe('cloud collaboration fuzz', () => {
         const roomTraffic: CloudRoomTraffic[] = [];
         const newContext = async (session: typeof ownerSession) => {
             const context = await browser.newContext();
+            // The fixture is far smaller than FUZZ_ROOM_LAYOUT's rooms; keep
+            // them when the owner opens the font instead of shrinking.
+            await context.addInitScript(() => {
+                let engine: any;
+                Object.defineProperty(window, 'patchSyncEngine', {
+                    configurable: true,
+                    get: () => engine,
+                    set: (value) => {
+                        engine = value;
+                        if (value?.roomLayoutFill) {
+                            value.roomLayoutFill = () => null;
+                        }
+                    }
+                });
+            });
             roomTraffic.push(recordCloudRoomTraffic(context));
             await installCrossWindowTrackersOnContext(context);
             await attachCloudCollabCookies(context, session);

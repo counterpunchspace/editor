@@ -3479,6 +3479,129 @@ describe('CloudPlugin glyph catch-up from core revision map', () => {
         }
     });
 
+    describe('layout room report', () => {
+        const makeOwnerPlugin = () => {
+            const plugin = new CloudPlugin();
+            Object.defineProperty(plugin, '_websiteBaseUrl', {
+                get: () => 'https://site.test'
+            });
+            plugin.getCurrentAssetRole = () => 'owner';
+            plugin._sessionAllowsMutation = () => true;
+            plugin._layoutRoomsRetryDelayMs = 0;
+            return plugin;
+        };
+        const session = {
+            syncLiveDocumentIds: jest.fn(async () => {}),
+            waitForLiveRoomsSynced: jest.fn(async () => {}),
+            waitForLayoutRoomsStored: jest.fn(async () => {})
+        };
+        const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+        test('the owner reports the layout’s rooms on open, and the new ones after a shrink rebase', async () => {
+            const plugin = makeOwnerPlugin();
+            const fetchMock = jest.fn(async () => ({ ok: true, status: 200 }));
+            const originalFetch = global.fetch;
+            global.fetch = fetchMock;
+            let layout = {
+                version: 2,
+                catalogBuckets: 1,
+                kerningBuckets: 2,
+                kerningBase: 1
+            };
+            const bridge = {
+                get roomLayout() {
+                    return layout;
+                },
+                roomLayoutFill: () => ({
+                    largestCatalogBucket: 10,
+                    largestKerningBucket: 30000,
+                    glyphs: 10,
+                    kerningPairs: 50000
+                }),
+                rebaseRoomLayout: jest.fn((next) => {
+                    layout = next;
+                    return true;
+                }),
+                publishAdoptedRoomLayout: jest.fn(() => true)
+            };
+            try {
+                // Still fits: no rebase, the current rooms are reported.
+                await plugin._upgradeRoomLayoutOnOpen(
+                    bridge,
+                    session,
+                    'asset-1'
+                );
+                await flush();
+                expect(bridge.rebaseRoomLayout).not.toHaveBeenCalled();
+                // The font lost most of its kerning: one bucket is enough.
+                bridge.roomLayoutFill = () => ({
+                    largestCatalogBucket: 10,
+                    largestKerningBucket: 900,
+                    glyphs: 10,
+                    kerningPairs: 1500
+                });
+                await plugin._upgradeRoomLayoutOnOpen(
+                    bridge,
+                    session,
+                    'asset-1'
+                );
+                await flush();
+            } finally {
+                global.fetch = originalFetch;
+            }
+            expect(bridge.rebaseRoomLayout).toHaveBeenCalledWith({
+                version: 2,
+                catalogBuckets: 1,
+                kerningBuckets: 1,
+                kerningBase: 3
+            });
+            expect(bridge.publishAdoptedRoomLayout).toHaveBeenCalledTimes(1);
+            // The rebase copies the rooms' content, so it waited for them.
+            expect(
+                session.waitForLiveRoomsSynced.mock.invocationCallOrder[1]
+            ).toBeLessThan(bridge.rebaseRoomLayout.mock.invocationCallOrder[0]);
+            const sent = fetchMock.mock.calls.map(([url, init]) => ({
+                url,
+                body: JSON.parse(init.body)
+            }));
+            expect(sent).toEqual([
+                {
+                    url: 'https://site.test/api/cloud/assets/asset-1/layout-rooms',
+                    body: { live: ['catalog:0', 'kerning:1', 'kerning:2'] }
+                },
+                {
+                    url: 'https://site.test/api/cloud/assets/asset-1/layout-rooms',
+                    body: { live: ['catalog:0', 'kerning:3'] }
+                }
+            ]);
+        });
+
+        test('a collaborator who is not the owner reports nothing', async () => {
+            const plugin = makeOwnerPlugin();
+            plugin.getCurrentAssetRole = () => 'editor';
+            const fetchMock = jest.fn(async () => ({ ok: true, status: 200 }));
+            const originalFetch = global.fetch;
+            global.fetch = fetchMock;
+            try {
+                await plugin._upgradeRoomLayoutOnOpen(
+                    {
+                        roomLayout: {
+                            version: 2,
+                            catalogBuckets: 1,
+                            kerningBuckets: 1
+                        }
+                    },
+                    session,
+                    'asset-1'
+                );
+                await flush();
+            } finally {
+                global.fetch = originalFetch;
+            }
+            expect(fetchMock).not.toHaveBeenCalled();
+        });
+    });
+
     describe('glyph orphan sync', () => {
         const makePlugin = (ids) => {
             const plugin = new CloudPlugin();
