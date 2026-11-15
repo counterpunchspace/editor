@@ -113,6 +113,20 @@ function featuresSectionHeaderHtml(
         </div>`;
 }
 
+/**
+ * Fill `element` with a prefix or class name that a narrow sidebar may wrap
+ * at camelCase boundaries and after “.”, “_” and “-”.
+ */
+function setBreakableName(element: HTMLElement, name: string): void {
+    element.replaceChildren();
+    name.split(/(?<=[a-z0-9])(?=[A-Z])|(?<=[._-])/).forEach((part, index) => {
+        if (index > 0) {
+            element.appendChild(document.createElement('wbr'));
+        }
+        element.appendChild(document.createTextNode(part));
+    });
+}
+
 /** Deep copy of plain JSON data; also unwraps live model proxies. */
 function clonePlainData<T>(value: T): T {
     return JSON.parse(JSON.stringify(value)) as T;
@@ -2166,7 +2180,9 @@ class FontInfoManager {
         errorIcon.className = 'material-symbols-outlined feature-error-icon';
         errorIcon.textContent = 'warning';
         errorIcon.title = message || 'Feature compilation error';
-        item.appendChild(errorIcon);
+        (item.querySelector('.feature-item-icons') ?? item).appendChild(
+            errorIcon
+        );
     }
 
     private refreshFeatureErrorIconInSidebar() {
@@ -8902,7 +8918,7 @@ class FontInfoManager {
 
             const label = document.createElement('span');
             label.className = 'feature-script-selector-label';
-            label.textContent = 'Shaper:';
+            label.textContent = 'Shaper';
 
             const select = document.createElement('select');
             select.className = 'feature-script-dropdown';
@@ -9623,6 +9639,16 @@ class FontInfoManager {
             item.addEventListener('dragend', () => this.onFeatureDragEnd());
         }
 
+        // Three columns line every row up: the GSUB/GPOS dots (empty for
+        // classes), the name, and the status icons.
+        const lead = document.createElement('div');
+        lead.className = 'feature-item-lead';
+        const main = document.createElement('div');
+        main.className = 'feature-item-main';
+        const icons = document.createElement('div');
+        icons.className = 'feature-item-icons';
+        item.append(lead, main, icons);
+
         // For features and prefixes, show GSUB/GPOS indicators
         if (type === 'feature' || type === 'prefix') {
             // Analyze code for GSUB/GPOS content
@@ -9665,47 +9691,38 @@ class FontInfoManager {
             }
             tableIndicator.appendChild(gposCircle);
 
-            item.appendChild(tableIndicator);
+            lead.appendChild(tableIndicator);
+        }
 
-            if (type === 'feature' && tag) {
-                // Feature tag (4-digit code)
-                const tagSpan = document.createElement('span');
-                tagSpan.className = 'feature-tag';
-                tagSpan.textContent = tag;
-                item.appendChild(tagSpan);
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'feature-name';
+        if (type === 'feature' && tag) {
+            // Feature tag (4-digit code)
+            const tagSpan = document.createElement('span');
+            tagSpan.className = 'feature-tag';
+            tagSpan.textContent = tag;
+            main.appendChild(tagSpan);
 
-                // Feature name
-                const tagCheck = validateFeatureTag(tag);
-                const nameSpan = document.createElement('span');
-                nameSpan.className = 'feature-name';
-                nameSpan.textContent =
-                    getFeatureName(tag) ||
-                    (tagCheck.level === 'ok'
-                        ? tagCheck.message
-                        : 'Unregistered tag');
-                item.appendChild(nameSpan);
-                if (tagCheck.level !== 'ok') {
-                    const issueIcon = document.createElement('span');
-                    issueIcon.className = `material-symbols-outlined feature-tag-issue-icon is-${tagCheck.level}`;
-                    issueIcon.textContent =
-                        tagCheck.level === 'error' ? 'error' : 'warning';
-                    issueIcon.title = tagCheck.message;
-                    item.appendChild(issueIcon);
-                }
-            } else {
-                // For prefixes, show the key in feature-name style
-                const nameSpan = document.createElement('span');
-                nameSpan.className = 'feature-name';
-                nameSpan.textContent = String(key);
-                item.appendChild(nameSpan);
+            // Feature name
+            const tagCheck = validateFeatureTag(tag);
+            nameSpan.textContent =
+                getFeatureName(tag) ||
+                (tagCheck.level === 'ok'
+                    ? tagCheck.message
+                    : 'Unregistered tag');
+            if (tagCheck.level !== 'ok') {
+                const issueIcon = document.createElement('span');
+                issueIcon.className = `material-symbols-outlined feature-tag-issue-icon is-${tagCheck.level}`;
+                issueIcon.textContent =
+                    tagCheck.level === 'error' ? 'error' : 'warning';
+                issueIcon.title = tagCheck.message;
+                icons.appendChild(issueIcon);
             }
         } else {
-            // For classes, show the key in feature-name style without indicators
-            const nameSpan = document.createElement('span');
-            nameSpan.className = 'feature-name';
-            nameSpan.textContent = String(key);
-            item.appendChild(nameSpan);
+            // Prefixes and classes show their key
+            setBreakableName(nameSpan, String(key));
         }
+        main.appendChild(nameSpan);
 
         // Automatic generation indicator
         if (codeData.automatic) {
@@ -9723,7 +9740,7 @@ class FontInfoManager {
             autoIcon.title = managed
                 ? `Generated by Counterpunch${described ? ` (${described.title})` : ''}`
                 : 'Automatic in source. Counterpunch does not update it.';
-            item.appendChild(autoIcon);
+            icons.appendChild(autoIcon);
             if (stamp) {
                 item.dataset.generator = stamp.generator;
             }

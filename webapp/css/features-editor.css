@@ -280,17 +280,28 @@
 /* Section titles with add and delete buttons */
 .features-section-header {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    justify-content: space-between;
-    gap: 4px;
+    gap: 2px 4px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border-primary);
+    /* The line spans the full sidebar width; the content keeps its inset. */
+    margin-left: calc(var(--top-row-sidebar-padding, 12px) * -1);
+    margin-right: calc(var(--top-row-sidebar-padding, 12px) * -1);
+    padding-left: var(--top-row-sidebar-padding, 12px);
+    padding-right: var(--top-row-sidebar-padding, 12px);
 }
 
-/* In a narrow sidebar the title shortens; the buttons stay visible. */
+/* The title is never shortened: when it doesn't fit beside the buttons, the
+   buttons move to the next line. */
 .features-section-header > span:first-child {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    flex: 1 0 auto;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+}
+
+.features-section-header .editor-layers-header-actions {
+    margin-left: auto;
 }
 
 .features-section-header .editor-layer-add-button {
@@ -472,4 +483,187 @@
 .feature-tag-option:hover,
 .feature-tag-option.active {
     background: var(--background-hover);
+}
+
+/* Features sidebar layout. The sidebar is 100–200px wide: narrow widths wrap
+   text instead of cutting it off, and nothing scrolls sideways. */
+.features-sidebar {
+    overflow-x: hidden;
+    container: features-sidebar / inline-size;
+}
+
+.features-sidebar .feature-manage-checkbox {
+    display: block;
+    width: auto;
+    align-self: stretch;
+    padding: 0;
+    font-size: 11px;
+    line-height: 1.35;
+}
+
+/* A floated checkbox lets a word that doesn't fit beside it move to the next
+   line whole, instead of breaking in the middle. */
+.features-sidebar .feature-manage-checkbox input[type='checkbox'] {
+    float: left;
+    margin: 1px 6px 0 0;
+}
+
+.features-sidebar .feature-manage-checkbox span {
+    overflow-wrap: normal;
+}
+
+/* Rows: GSUB/GPOS dots, name, status icons */
+.features-sidebar .feature-list-item[data-item-type] {
+    display: grid;
+    /* The icon column exists only on rows that have an icon. */
+    grid-template-columns: 11px minmax(0, 1fr);
+    grid-auto-flow: column;
+    grid-auto-columns: auto;
+    align-items: start;
+    column-gap: 3px;
+    line-height: 1.35;
+}
+
+.features-sidebar .feature-list-item[data-item-type='class'] {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.features-sidebar
+    .feature-list-item[data-item-type='class']
+    .feature-item-lead {
+    display: none;
+}
+
+.feature-item-lead {
+    display: flex;
+    align-items: center;
+    height: 1.35em;
+}
+
+.feature-item-main {
+    min-width: 0;
+}
+
+.features-sidebar .feature-item-main .feature-name {
+    display: block;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    /* Prefer the break points that setBreakableName marks; split a word
+       only when nothing else fits. */
+    overflow-wrap: break-word;
+}
+
+.feature-item-icons {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    height: 1.35em;
+}
+
+.feature-item-icons:empty {
+    display: none;
+}
+
+.features-sidebar .feature-item-icons .material-symbols-outlined {
+    font-size: 12px !important;
+}
+
+.features-sidebar .feature-item-main .feature-rename-input {
+    width: 100%;
+}
+
+/* Feature rows: when narrow, the tag shares the first line with the dots
+   and icons, and the name uses the full row width below. When wide, tag and
+   name sit side by side. */
+.features-sidebar .feature-list-item[data-item-type='feature'] {
+    grid-template-columns: 11px minmax(0, 1fr) auto;
+}
+
+.features-sidebar
+    .feature-list-item[data-item-type='feature']
+    .feature-item-main {
+    display: contents;
+}
+
+.features-sidebar .feature-list-item[data-item-type='feature'] .feature-tag {
+    grid-row: 1;
+    grid-column: 2;
+}
+
+.features-sidebar
+    .feature-list-item[data-item-type='feature']
+    .feature-item-icons {
+    grid-row: 1;
+    grid-column: 3;
+}
+
+.features-sidebar
+    .feature-list-item[data-item-type='feature']
+    .feature-item-main
+    .feature-name {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    color: var(--text-secondary);
+    /* Feature names are English words; glyph names are never hyphenated. */
+    hyphens: auto;
+}
+
+/* Shaper picker: label above the picker when narrow, beside it when wide.
+   The picker never makes the sidebar wider. */
+.features-sidebar .feature-script-selector {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 3px;
+    min-width: 0;
+}
+
+.features-sidebar .feature-script-dropdown {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    text-overflow: ellipsis;
+}
+
+@container features-sidebar (min-width: 140px) {
+    .features-sidebar .feature-list-item[data-item-type='feature'] .feature-item-main {
+        grid-row: 1;
+        grid-column: 2;
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+    }
+
+    .features-sidebar .feature-list-item[data-item-type='feature'] .feature-item-main .feature-name {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .features-sidebar .feature-script-selector {
+        flex-direction: row;
+        align-items: center;
+    }
+}
+
+/* Group labels inside Features: uppercase, under a lighter line than the
+   section lines. Narrow widths start them at the row edge; wide widths line
+   them up with the names. */
+.features-sidebar .feature-section-separator {
+    margin-top: 6px;
+    padding-top: 10px;
+    padding-left: var(--top-row-sidebar-item-inline-padding, 12px);
+    padding-right: var(--top-row-sidebar-item-inline-padding, 12px);
+    border-top: 1px solid
+        color-mix(in srgb, var(--border-primary) 50%, transparent);
+    color: var(--text-faint);
+    opacity: 1;
+    overflow-wrap: break-word;
+}
+
+@container features-sidebar (min-width: 140px) {
+    .features-sidebar .feature-section-separator {
+        padding-left: calc(
+            var(--top-row-sidebar-item-inline-padding, 12px) + 14px
+        );
+    }
 }
