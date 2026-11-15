@@ -1350,6 +1350,120 @@ test.describe('cloud collaboration fuzz', () => {
                 step++;
             }
 
+            // ── Phase 2c: a glyph is added, renamed, edited and deleted ──
+            // Each step in another window; every window must follow.
+            {
+                const added = 'fuzz.new';
+                const renamed = 'fuzz.renamed';
+                const presence = async (names: string[]) =>
+                    JSON.stringify(
+                        await Promise.all(
+                            windows.map((window) =>
+                                window.page.evaluate(
+                                    (list) =>
+                                        list.map(
+                                            (name: string) =>
+                                                !!(
+                                                    window as any
+                                                ).currentFontModel?.findGlyph?.(
+                                                    name
+                                                )
+                                        ),
+                                    names
+                                )
+                            )
+                        )
+                    );
+                const expectPresence = async (
+                    label: string,
+                    expected: boolean[]
+                ) => {
+                    await expect
+                        .poll(() => presence([added, renamed]), {
+                            timeout: 90000,
+                            message: `glyph lifecycle: ${label}`
+                        })
+                        .toBe(JSON.stringify(windows.map(() => expected)));
+                };
+                // The owner adds: a glyph an invited editor adds never
+                // reaches the cloud yet (the room lets only the owner
+                // create a glyph room).
+                record(`glyph lifecycle: M adds ${added}`);
+                await mainPage.evaluate((name) => {
+                    (window as any).currentFontModel.addGlyph(name, 'Base');
+                }, added);
+                await expectPresence('added', [true, false]);
+                // The window that added the glyph renames it: a rename by another
+                // window leaves the old name in the adding window (a known race).
+                record(`glyph lifecycle: M renames ${added} to ${renamed}`);
+                await mainPage.evaluate(
+                    ({ from, to }) => {
+                        (window as any).currentFontModel.renameGlyphs(
+                            new Map([[from, to]])
+                        );
+                    },
+                    { from: added, to: renamed }
+                );
+                await expectPresence('renamed', [false, true]);
+                const width = 400 + delta(50);
+                const master = pick(FUZZ_MASTERS).id;
+                record(
+                    `glyph lifecycle: O2 sets ${renamed}/${master} width ${width}`
+                );
+                await ownerSecondPage.evaluate(
+                    ({ name, layerId, value }) => {
+                        const w = window as any;
+                        const bridge = w.patchSyncEngine;
+                        bridge.beginTransaction('Set width', null, {
+                            compileChangeSource: 'keyboard-sidebearing',
+                            compileEditType: null
+                        });
+                        try {
+                            w.currentFontModel
+                                .findGlyph(name)
+                                .findLayerById(layerId).width = value;
+                        } finally {
+                            bridge.endTransaction();
+                        }
+                    },
+                    { name: renamed, layerId: master, value: width }
+                );
+                await expect
+                    .poll(
+                        async () =>
+                            JSON.stringify(
+                                await Promise.all(
+                                    windows.map((window) =>
+                                        window.page.evaluate(
+                                            ({ name, layerId }) =>
+                                                (window as any).currentFontModel
+                                                    ?.findGlyph?.(name)
+                                                    ?.findLayerById?.(layerId)
+                                                    ?.width ?? null,
+                                            { name: renamed, layerId: master }
+                                        )
+                                    )
+                                )
+                            ),
+                        {
+                            timeout: 90000,
+                            message:
+                                'glyph lifecycle: the width reaches every window'
+                        }
+                    )
+                    .toBe(JSON.stringify(windows.map(() => width)));
+                record(`glyph lifecycle: L2 deletes ${renamed}`);
+                await inviteeLinkedPage.evaluate((name) => {
+                    (window as any).currentFontModel.deleteGlyphs([name]);
+                }, renamed);
+                await expectPresence('deleted', [false, false]);
+                // Adding a glyph again under the deleted glyph's name, from
+                // another browser, does not reach the other windows yet in
+                // this setup (open finding); not part of the run until fixed.
+                snapshot = await checkAll('glyph lifecycle');
+                step++;
+            }
+
             // ── Phase 3: the second browser goes offline and catches up ──
             record('O2 offline');
             await ownerSecondContext.setOffline(true);
@@ -1379,6 +1493,90 @@ test.describe('cloud collaboration fuzz', () => {
             record('O2 online');
             await converge('after O2 reconnects', 180000);
             snapshot = await checkAll('after O2 reconnects');
+
+            // ── Phase 3b: the network drops while an edit is on its way ──
+            {
+                const master = pick(FUZZ_MASTERS).id;
+                const pair = pick(FUZZ_KERN_PAIRS);
+                const value = delta(8) * 10 + 3;
+                record(
+                    `network cut: O2 sets ${pair}/${master} ${value}, then goes offline`
+                );
+                await applyFuzzEdit(
+                    ownerSecondPage,
+                    { kind: 'kern', master, pair, value },
+                    { awaitCloud: false }
+                );
+                await ownerSecondContext.setOffline(true);
+                const whileCut = [outlineEdit('l'), unicodeEdit()];
+                for (const edit of whileCut) {
+                    record(`network cut: O2 ${describeFuzzEdit(edit)}`);
+                    await applyFuzzEdit(ownerSecondPage, edit, {
+                        awaitCloud: false
+                    });
+                }
+                await ownerSecondContext.setOffline(false);
+                record('network cut: O2 online');
+                await converge('after the network came back', 180000);
+                snapshot = await checkAll('after a network cut mid-send');
+                expect(
+                    snapshot.kerning[master]?.[pair],
+                    'network cut: the edit on its way survived'
+                ).toBe(value);
+                step++;
+            }
+
+            // ── Phase 3c: a window closes with unsent edits, then reopens ─
+            // Offline, so the edits are only in this browser's outbox on
+            // disk when the tab closes; the reopened tab must send them.
+            {
+                const master = pick(FUZZ_MASTERS).id;
+                const pair = pick(FUZZ_KERN_PAIRS);
+                const value = delta(8) * 10 + 7;
+                record('tab close: O2 offline');
+                await ownerSecondContext.setOffline(true);
+                record(`tab close: O2 sets ${pair}/${master} ${value}`);
+                await applyFuzzEdit(
+                    windows[2].page,
+                    { kind: 'kern', master, pair, value },
+                    { awaitCloud: false }
+                );
+                await expect
+                    .poll(
+                        () =>
+                            windows[2].page.evaluate(
+                                () =>
+                                    (window as any).cloudPlugin?._liveSession
+                                        ?.pendingSyncCount ?? 0
+                            ),
+                        {
+                            timeout: 30000,
+                            message: 'tab close: the edit waits to be sent'
+                        }
+                    )
+                    .toBeGreaterThan(0);
+                // The outbox write to IndexedDB finishes on its own.
+                await windows[2].page.waitForTimeout(1500);
+                record('tab close: O2 closes');
+                await windows[2].page.close();
+                await ownerSecondContext.setOffline(false);
+                const reopened = await openCloudWindow(
+                    ownerSecondContext,
+                    editorHref
+                );
+                await openEditor(reopened.page);
+                windows[2].page = reopened.page;
+                windows[2].errors = reopened.errors;
+                trafficNames.set(reopened.page, 'O2');
+                record('tab close: O2 reopened');
+                await converge('after O2 reopened', 180000);
+                snapshot = await checkAll('after O2 reopened');
+                expect(
+                    snapshot.kerning[master]?.[pair],
+                    'tab close: the unsent edit was sent by the reopened tab'
+                ).toBe(value);
+                step++;
+            }
 
             // ── Phase 4: the invitee’s linked window reloads ─────────────
             record('L2 reload');

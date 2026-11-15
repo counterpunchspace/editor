@@ -511,7 +511,15 @@ Websocket sync is **checkpoint-relative**. Clients send
 log id applied). Server:
 
 - If `appliedLogId < currentCheckpointLogId` → `rebaseline-required` (those
-  rows were truncated into the newer checkpoint).
+  rows were truncated into the newer checkpoint), unless the request's
+  `checkpointSha256` is the current checkpoint's: the client loaded that very
+  checkpoint (a font opened from the pack notes it per always-live room), so
+  the room replays `id > currentCheckpointLogId` instead.
+- A socket that had synced keeps its `appliedLogId` when it drops or its
+  room token expires (every 15 minutes) and resumes from it without an R2
+  bootstrap; only a socket without a cursor downloads the checkpoint. The
+  reconnect barrier loads a layout room over HTTP only when its socket is not
+  synced (a layout room's `/state` is its checkpoint alone).
 - If `currentCheckpointLogId ≤ appliedLogId ≤ lastLogId` → replay
   `id > appliedLogId` page/frame-wise.
 - Reject impossible future IDs; never silently clamp them.
@@ -1273,6 +1281,18 @@ The hourly `website-cloud-cron` Worker then purges the room, its hub
 registration, the R2 prefix, the attestation and the reservation. A font delete
 is a resumable purge (rooms, R2, D1 rows) that the cron also finishes. Sparse hydrate retries until the published core/deps
 revision pair matches.
+
+Before the cron purges a glyph room it asks the room worker which marked
+glyphs the font's catalog still lists (`POST
+/room/:asset/internal/catalog-glyphs`, folded font-core and catalog rooms):
+those keep their room and lose the mark, since windows report deletions and
+undos independently and a late report must not cost a restored glyph. An
+asset whose catalog cannot be read purges no glyph room.
+
+Only the hub (font-core) rechecks the access epoch with the website every
+five minutes; it passes a newer epoch it finds on to every registered room
+(`POST /internal/access-epoch`), which closes stale sockets. Shard rooms wake
+only for token expiry.
 
 Reconnect carries `checkpointLogId` and `appliedLogId`. If
 `appliedLogId < currentCheckpointLogId`, the client must rebaseline.
