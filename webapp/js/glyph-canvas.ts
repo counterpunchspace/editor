@@ -174,6 +174,17 @@ function isNativeEditableClipboardTarget(target: EventTarget | null): boolean {
     );
 }
 
+// Text the user selected in panels or sidebars. Copy must give them that
+// text even while the editor or overview view is focused.
+function hasNativeTextSelection(): boolean {
+    const selection = window.getSelection();
+    return (
+        !!selection &&
+        !selection.isCollapsed &&
+        selection.toString().trim() !== ''
+    );
+}
+
 function abbreviateGlyphNameMiddle(
     glyphName: string,
     maximumLength: number = 20
@@ -2188,6 +2199,9 @@ class GlyphCanvas {
         // windows wait until the pointer stops. Every other pointer event
         // first handles a move that is still waiting.
         this.canvas!.addEventListener('mousedown', (e) => {
+            // A text selection left in a panel would otherwise win the
+            // next copy over the outline selection.
+            window.getSelection()?.removeAllRanges();
             this.pointerMoves.flush();
             this.onMouseDown(e);
         });
@@ -2493,6 +2507,9 @@ class GlyphCanvas {
                     return;
                 }
                 if (isNativeEditableClipboardTarget(e.target)) {
+                    return;
+                }
+                if (hasNativeTextSelection()) {
                     return;
                 }
                 const overviewFocused = isViewFocused('view-overview');
