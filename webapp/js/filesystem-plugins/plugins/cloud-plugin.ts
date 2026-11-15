@@ -116,6 +116,7 @@ import {
 import type { CollaborationMessageEnvelope } from '../../collaboration-message';
 import { getCloudRequestHeaders } from '../../cloud-website-api';
 import { deleteCloudAssetUntilComplete } from '../../cloud-delete-asset';
+import { OFFLINE_EDIT_LIMIT_MS, OfflineEditLimit } from '../offline-edit-limit';
 import './cloud-plugin-open';
 import './cloud-plugin-save-as';
 import './cloud-plugin-live';
@@ -226,6 +227,7 @@ export type CloudAssetNotice = {
 
 const WRITE_ACCESS_LOST_NOTICE = 'write-access-lost';
 const SUBSCRIPTION_LAPSE_NOTICE = 'subscription-lapse';
+const OFFLINE_EDIT_PAUSED_NOTICE = 'offline-edit-paused';
 
 const console = new Logger('CloudPlugin');
 const CLOUD_PLUGIN_UI_ENABLED = true;
@@ -276,6 +278,13 @@ export class CloudPlugin extends FilesystemPlugin {
     private _relayedTransferActivity: CloudTransferActivity = 'idle';
     /** Main's own verdict; null until main has relayed one. */
     private _relayedCanMutate: boolean | null = null;
+    /** Pauses editing after a long disconnect; see offline-edit-limit.ts. */
+    _offlineEditLimit = new OfflineEditLimit({
+        limitMs: OFFLINE_EDIT_LIMIT_MS,
+        onPause: () => this._onOfflineEditPause(),
+        onReconnectAfterPause: () => this._reloadAfterOfflinePause()
+    });
+    _reloadWindow: () => void = () => window.location.reload();
     /**
      * Lasting messages per font, shown in the cloud warning badge until the
      * cause goes away (role change that discarded edits, billing lapse).
@@ -947,8 +956,37 @@ export class CloudPlugin extends FilesystemPlugin {
         return true;
     }
 
+    private _onOfflineEditPause(): void {
+        const assetId = this._activeAssetId;
+        if (!assetId) return;
+        const minutes = Math.round(OFFLINE_EDIT_LIMIT_MS / 60000);
+        this.setAssetNotice(assetId, {
+            kind: OFFLINE_EDIT_PAUSED_NOTICE,
+            tone: 'warning',
+            title: `You’ve been offline for more than ${minutes} minutes, so editing is paused. The font reloads when you’re back online, and the edits you made are kept.`
+        });
+        window.dispatchEvent(
+            new CustomEvent('cloudConnectionStatusChanged', {
+                detail: {
+                    assetId,
+                    status: this.getAssetConnectionStatus(assetId),
+                    pendingSyncCount: this.getAssetPendingSyncCount(assetId),
+                    transferActivity: this.getAssetTransferActivity(assetId)
+                }
+            })
+        );
+    }
+
+    private _reloadAfterOfflinePause(): void {
+        console.log('Back online after editing paused: reloading');
+        this._reloadWindow();
+    }
+
     /** Role, access, connection and outbox health; nothing glyph-specific. */
     private _sessionAllowsMutation(): boolean {
+        if (this._offlineEditLimit.paused) {
+            return false;
+        }
         const sessionSnapshot = this._liveSession?.getAccessSnapshot();
         if (
             sessionSnapshot?.accessRevoked === true ||
@@ -1246,6 +1284,13 @@ export class CloudPlugin extends FilesystemPlugin {
         if (status === 'connected') {
             this._connectedAssetIds.add(assetId);
         }
+        if (
+            assetId === this._activeAssetId &&
+            this._liveSession &&
+            !window.windowRole?.isLinkedWindow?.()
+        ) {
+            this._offlineEditLimit.noteStatus(status);
+        }
         if (status !== 'error') {
             this._lastAlertedConnectionErrorByAssetId.delete(assetId);
         } else if (detail === CLOUD_ASSET_DELETED_MESSAGE) {
@@ -1475,6 +1520,9 @@ export class CloudPlugin extends FilesystemPlugin {
         bridge: PatchSyncEngine
     ): void {
         this._stopTrackingActiveAssetSize();
+        if (this._activeAssetId !== assetId) {
+            this._offlineEditLimit.reset();
+        }
         this._activeAssetId = assetId;
         this._activeAssetSizeBridge = bridge;
         this._activeAssetSizeListener = () => {
@@ -3473,6 +3521,7 @@ export class CloudPlugin extends FilesystemPlugin {
             this._updateConnectionStatus(this._activeAssetId, 'disconnected');
         }
         this._activeAssetId = null;
+        this._offlineEditLimit.reset();
         this._hydrationGeneration += 1;
         this._overviewHydrateQueued = [];
         window.windowSync?.notifyCloudBootstrapPending?.();

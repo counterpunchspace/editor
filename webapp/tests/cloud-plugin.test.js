@@ -3964,3 +3964,65 @@ describe('cloud status tooltip', () => {
         expect(html).not.toContain('<b>oops</b>');
     });
 });
+
+describe('CloudPlugin offline edit limit', () => {
+    let plugin;
+    let originalFontManager;
+
+    beforeEach(() => {
+        jest.useFakeTimers();
+        originalFontManager = window.fontManager;
+        window.fontManager = {
+            currentFont: {
+                path: 'cloud://asset-1',
+                isCloudBacked: () => true
+            }
+        };
+        plugin = new CloudPlugin();
+        window.fontManager.currentFont.sourcePlugin = plugin;
+        plugin._reloadWindow = jest.fn();
+        plugin.getAdapter().getCachedAssetRole.mockReturnValue('owner');
+        plugin._activeAssetId = 'asset-1';
+        plugin._liveSession = {
+            walHealth: 'ready',
+            getAccessSnapshot: () => ({})
+        };
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+        window.fontManager = originalFontManager;
+    });
+
+    test('pauses editing after a long disconnect and reloads on reconnect', () => {
+        plugin._updateConnectionStatus('asset-1', 'connected');
+        expect(plugin.canMutateCurrentAsset()).toBe(true);
+
+        plugin._updateConnectionStatus('asset-1', 'disconnected');
+        // Offline edits still work for a while; the outbox keeps them.
+        jest.advanceTimersByTime(60_000);
+        expect(plugin.canMutateCurrentAsset()).toBe(true);
+
+        jest.advanceTimersByTime(5 * 60_000);
+        expect(plugin.canMutateCurrentAsset()).toBe(false);
+        expect(plugin.getRelayConnectionState().canMutate).toBe(false);
+        expect(plugin.getAssetNotice('asset-1')).toMatchObject({
+            kind: 'offline-edit-paused',
+            tone: 'warning'
+        });
+        expect(plugin._reloadWindow).not.toHaveBeenCalled();
+
+        plugin._updateConnectionStatus('asset-1', 'connected');
+        expect(plugin._reloadWindow).toHaveBeenCalledTimes(1);
+    });
+
+    test('a short drop reconnects without a reload', () => {
+        plugin._updateConnectionStatus('asset-1', 'connected');
+        plugin._updateConnectionStatus('asset-1', 'disconnected');
+        jest.advanceTimersByTime(30_000);
+        plugin._updateConnectionStatus('asset-1', 'connected');
+        jest.advanceTimersByTime(10 * 60_000);
+        expect(plugin._reloadWindow).not.toHaveBeenCalled();
+        expect(plugin.canMutateCurrentAsset()).toBe(true);
+    });
+});

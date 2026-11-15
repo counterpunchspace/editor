@@ -729,6 +729,15 @@ byte-less prepared phase and no generation quarantine. One pending count
 comes from the WAL. Disconnect must not zero `pendingSyncCount`.
 `tail_full` is read-only. Save As and Open are exclusive.
 
+**Offline limit.** A main window that has been connected keeps taking edits
+while it is disconnected, for at most `OFFLINE_EDIT_LIMIT_MS` (five
+minutes, `offline-edit-limit.ts`). Past that, `canMutateCurrentAsset()` is
+false with an `offline-edit-paused` notice, and the next `connected`
+reloads the window instead of merging. The reconnect also checks elapsed
+time, because timers stop while a computer sleeps. Edits made before the
+pause stay in the WAL and replay after the reload. Linked windows follow
+main’s relayed `canMutate`.
+
 Sparse open plans from live `font-deps` (not a published generation
 manifest). Live rooms are the only content truth.
 
