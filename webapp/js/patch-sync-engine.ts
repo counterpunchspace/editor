@@ -4158,17 +4158,63 @@ export class PatchSyncEngine {
     private _rebuildGlyphNameIndexFromDocs(): void {
         this._glyphIdByName.clear();
         this._glyphNameById.clear();
+        // A deleted glyph's document can stay resident a while, still named.
+        // It must not take the name back: a glyph added again under that
+        // name would then write into the deleted glyph's room, which never
+        // sends.
+        const catalog = this._fontJson
+            ? catalogFromCoreJson(this._fontJson as Record<string, unknown>)
+                  ?.glyphCatalog
+            : undefined;
         for (const [glyphId, doc] of this._glyphDocs) {
+            if (
+                isCatalogTombstone(catalog, glyphId) ||
+                this._pendingDestroyedGlyphIds.has(glyphId)
+            ) {
+                continue;
+            }
             const glyphMap = doc.getMap('glyph');
             const nameValue = glyphMap.get('name');
             const name =
                 typeof nameValue === 'string' && nameValue
                     ? nameValue
                     : glyphId;
+            const holder = this._glyphIdByName.get(name);
+            if (holder && holder !== glyphId) {
+                // Two documents with one name: the catalog's glyph keeps it.
+                if (catalog?.[glyphId]?.name !== name) {
+                    continue;
+                }
+                this._glyphNameById.delete(holder);
+            }
             this._glyphIdByName.set(name, glyphId);
             this._glyphNameById.set(glyphId, name);
         }
         this._aliasResidentGlyphNamesFromCatalog();
+    }
+
+    /**
+     * A name the index gave a glyph the catalog has since deleted is free: a
+     * catalog tombstone can arrive after the glyph's last catch-up indexed
+     * it, and a glyph added again under that name must not resolve to the
+     * deleted glyph.
+     */
+    private _dropDeletedGlyphNamesFromIndex(): void {
+        if (!this._fontJson) {
+            return;
+        }
+        const catalog = catalogFromCoreJson(
+            this._fontJson as Record<string, unknown>
+        )?.glyphCatalog;
+        if (!catalog) {
+            return;
+        }
+        for (const [glyphName, glyphId] of [...this._glyphIdByName]) {
+            if (isCatalogTombstone(catalog, glyphId)) {
+                this._glyphIdByName.delete(glyphName);
+                this._glyphNameById.delete(glyphId);
+            }
+        }
     }
 
     /**
@@ -9173,6 +9219,7 @@ export class PatchSyncEngine {
             );
         }
         if (key === CORE_GLYPH_CATALOG_KEY) {
+            this._dropDeletedGlyphNamesFromIndex();
             this._aliasResidentGlyphNamesFromCatalog();
             // Checkpoint and live font-core applies both land here. The
             // committed-change listener misses a catalog that arrived as a
