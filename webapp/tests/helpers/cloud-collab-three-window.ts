@@ -311,7 +311,7 @@ export async function waitForCloudLiveIdle(
 export async function glyphNodeX(page: Page, glyphName = 'a'): Promise<number> {
     return page.evaluate((name) => {
         const glyph = (window as any).currentFontModel.findGlyph(name);
-        return glyph.layers[0].paths[0].nodes[0].x;
+        return glyph.drawings[0].paths[0].nodes[0].x;
     }, glyphName);
 }
 

@@ -456,7 +456,7 @@ export async function waitForAutomaticComposites(page: Page) {
         (names) => {
             const font = (window as any).currentFontModel;
             return names.every((name: string) =>
-                (font?.findGlyph?.(name)?.layers ?? []).every(
+                (font?.findGlyph?.(name)?.drawings ?? []).every(
                     (drawing: any) =>
                         drawing?.isAutomaticAlignedDrawing?.() === true
                 )
@@ -550,14 +550,14 @@ export async function readFuzzSnapshot(page: Page): Promise<FuzzSnapshot> {
                     );
                     glyphs[name] = glyph
                         ? Object.fromEntries(
-                              (glyph.layers ?? []).map((item: any) => [
+                              (glyph.drawings ?? []).map((item: any) => [
                                   item.id,
                                   drawing(item)
                               ])
                           )
                         : null;
                 }
-                for (const station of font?.masters ?? []) {
+                for (const station of font?.stations ?? []) {
                     kerning[station.id] = { ...(station.kerning ?? {}) };
                 }
             }
@@ -755,7 +755,7 @@ export async function applyFuzzEdit(
                     );
                 }
             } else if (step.kind === 'kern-delete') {
-                const station = font.masters.find(
+                const station = font.stations.find(
                     (item: any) => item.id === step.master
                 );
                 transact(
@@ -852,7 +852,7 @@ export async function applyFuzzEdit(
                     glyph.codepoints = next.length ? next : undefined;
                 });
             } else if (step.kind === 'kern') {
-                const station = font.masters.find(
+                const station = font.stations.find(
                     (item: any) => item.id === step.master
                 );
                 transact(
@@ -911,7 +911,7 @@ export async function applyFuzzEdit(
                         for (const name of font.rebuildAutomaticCompositesForGlyphs(
                             new Set([step.glyph]),
                             {
-                                preferredLayerId: step.master,
+                                preferredDrawingId: step.master,
                                 preferredSourceGlyphName: step.glyph
                             }
                         )) {
@@ -1039,7 +1039,7 @@ export async function readCompositionMismatches(page: Page): Promise<string[]> {
             const font = (window as any).currentFontModel;
             const mismatches: string[] = [];
             for (const name of names) {
-                for (const drawing of font?.findGlyph?.(name)?.layers ?? []) {
+                for (const drawing of font?.findGlyph?.(name)?.drawings ?? []) {
                     if (!drawing.isAutomaticAlignedDrawing?.()) {
                         continue;
                     }

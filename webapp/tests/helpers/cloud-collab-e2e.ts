@@ -241,7 +241,7 @@ export async function dumpCollabIntegrity(
 export async function glyphNodeX(page: Page, glyphName = 'a'): Promise<number> {
     return page.evaluate((name) => {
         const glyph = (window as any).currentFontModel.findGlyph(name);
-        return glyph.layers[0].paths[0].nodes[0].x;
+        return glyph.drawings[0].paths[0].nodes[0].x;
     }, glyphName);
 }
 
@@ -257,7 +257,7 @@ export async function nudgeGlyphNode(
             const fontModel = (window as any).currentFontModel;
             const currentFont = (window as any).fontManager?.currentFont;
             const glyph = fontModel.findGlyph(name);
-            const drawing = glyph.layers[0];
+            const drawing = glyph.drawings[0];
             const node = drawing.paths[0].nodes[0];
             const oldX = node.x;
             bridge.runWithoutRecording(() => {
@@ -308,7 +308,7 @@ export async function moveGlyphNodeThroughModel(
         const glyph = w.currentFontModel.findGlyph(args.glyphName);
         const drawing = args.layerId
             ? glyph.findDrawingById(args.layerId)
-            : glyph.layers[0];
+            : glyph.drawings[0];
         const nodes = drawing.paths[0].nodes;
         const index =
             args.nodeIndex < 0 ? nodes.length + args.nodeIndex : args.nodeIndex;

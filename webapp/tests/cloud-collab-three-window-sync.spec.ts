@@ -1094,9 +1094,15 @@ test.describe('three-window sync scenarios', () => {
                 await getLastFontModelSyncTime(linkedPage);
             await setAxisSliderValue(mainPage, 'wght', 600);
             await expect(
-                mainPage.locator('.editor-drawing-add-button')
+                mainPage.locator(
+                    '.editor-drawings-header-actions .editor-drawing-add-button'
+                )
             ).toBeEnabled();
-            await mainPage.locator('.editor-drawing-add-button').click();
+            await mainPage
+                .locator(
+                    '.editor-drawings-header-actions .editor-drawing-add-button'
+                )
+                .click();
 
             await waitForRemoteChange(linkedPage, addDrawingLastSyncTime);
             await waitUntilGlyphDrawingDataMatches(
