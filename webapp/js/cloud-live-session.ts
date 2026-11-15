@@ -807,11 +807,48 @@ export class CloudLiveSession {
         return true;
     }
 
+    /**
+     * Keep a held burst (not sent yet) in the device outbox, replacing the
+     * burst's earlier row `replaceId`. A tab closed mid-burst sends it on
+     * the next open, like any unsent edit.
+     */
+    async stageHeldUpdate(
+        update: Uint8Array,
+        collaborationMessage: CollaborationMessageEnvelope,
+        documentId: string,
+        replaceId?: string | null
+    ): Promise<boolean> {
+        const ok = await this.persistOutgoingUpdate(
+            update,
+            collaborationMessage,
+            documentId,
+            undefined,
+            { staged: true }
+        );
+        if (ok && replaceId) {
+            await this.dropStagedUpdate(documentId, replaceId);
+        }
+        return ok;
+    }
+
+    /** Drop a held burst's row once its merged row is in the outbox. */
+    async dropStagedUpdate(
+        documentId: string,
+        clientTransactionId: string
+    ): Promise<void> {
+        await this._ensureWalLoaded();
+        await this._wal.acknowledgeMany(this._options.assetId, documentId, [
+            clientTransactionId
+        ]);
+        this._emitPendingSyncCount();
+    }
+
     async persistOutgoingUpdate(
         update: Uint8Array,
         collaborationMessage?: CollaborationMessageEnvelope | null,
         documentId?: string,
-        dependsOn?: string[]
+        dependsOn?: string[],
+        options: { staged?: boolean } = {}
     ): Promise<boolean> {
         if (this._disconnected) {
             return false;
@@ -853,7 +890,12 @@ export class CloudLiveSession {
                 attempts: existing?.attempts || 0
             });
             this._emitPendingSyncCount();
-            this._adapters.get(resolvedDocumentId)?.noteOutboundWalReady?.();
+            if (!options.staged) {
+                // A staged row waits for its burst; nothing is sent yet.
+                this._adapters
+                    .get(resolvedDocumentId)
+                    ?.noteOutboundWalReady?.();
+            }
             pushCollabIntegrityEvent('persist-outgoing', {
                 documentId: documentId || FONT_CORE_DOCUMENT_ID,
                 bytes: update.length,

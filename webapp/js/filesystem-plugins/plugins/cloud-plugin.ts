@@ -1093,6 +1093,35 @@ export class CloudPlugin extends FilesystemPlugin {
         );
     }
 
+    /** Keep a held (not yet sent) burst in the device outbox. */
+    async stageHeldCloudUpdate(
+        update: Uint8Array,
+        collaborationMessage: CollaborationMessageEnvelope,
+        documentId: string,
+        replaceId?: string | null
+    ): Promise<boolean> {
+        if (!this._liveSession) {
+            return false;
+        }
+        return this._liveSession.stageHeldUpdate(
+            update,
+            collaborationMessage,
+            documentId,
+            replaceId
+        );
+    }
+
+    /** Drop a held burst's outbox row once its merged row is written. */
+    async dropStagedCloudUpdate(
+        documentId: string,
+        clientTransactionId: string
+    ): Promise<void> {
+        await this._liveSession?.dropStagedUpdate(
+            documentId,
+            clientTransactionId
+        );
+    }
+
     async persistCloudMutationIntent(
         documentIds: string[],
         intentBytes?: Uint8Array | null

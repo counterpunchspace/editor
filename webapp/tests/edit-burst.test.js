@@ -1,3 +1,4 @@
+const { collaborationMessageKey } = require('../js/collaboration-message');
 const { webcrypto } = require('crypto');
 const { TextDecoder, TextEncoder } = require('util');
 Object.defineProperty(global, 'crypto', {
@@ -317,8 +318,39 @@ describe('PatchSyncEngine edit bursts', () => {
                     return true;
                 }
             ),
-            relayPeerWindowUpdateToCloud: jest.fn()
+            relayPeerWindowUpdateToCloud: jest.fn(),
+            // The device outbox, keyed by row id: staged held bursts land
+            // here too, and the merged row replaces them.
+            outbox: new Map(),
+            stageHeldCloudUpdate: jest.fn(
+                async (update, message, documentId, replaceId) => {
+                    const outbox = window.cloudPlugin.outbox;
+                    outbox.set(collaborationMessageKey(message), {
+                        update,
+                        message,
+                        documentId,
+                        staged: true
+                    });
+                    if (replaceId) outbox.delete(replaceId);
+                    return true;
+                }
+            ),
+            dropStagedCloudUpdate: jest.fn(async (_documentId, id) => {
+                window.cloudPlugin.outbox.delete(id);
+            })
         };
+        const persist = window.cloudPlugin.persistOutgoingCloudUpdate;
+        window.cloudPlugin.persistOutgoingCloudUpdate = jest.fn(
+            async (update, message, documentId, dependsOn) => {
+                if (message) {
+                    window.cloudPlugin.outbox.set(
+                        collaborationMessageKey(message),
+                        { update, message, documentId, staged: false }
+                    );
+                }
+                return persist(update, message, documentId, dependsOn);
+            }
+        );
         const fontJson = makeFont();
         applyCloudOwnedData(fontJson);
         bridge = new PatchSyncEngine('burst-test');
@@ -402,6 +434,73 @@ describe('PatchSyncEngine edit bursts', () => {
         expect(cloudGlyph[cloudGlyph.length - 1].update).toBe(
             glyphRows[0].update
         );
+    });
+
+    function nodeX(engine) {
+        const glyph = engine
+            .getFontJsonSnapshot()
+            .glyphs.find((candidate) => candidate.name === 'A');
+        return glyph.layers.find((layer) => layer.id === 'layer-1').shapes[0]
+            .nodes[0].x;
+    }
+
+    async function heldBurst(key, last) {
+        nudge(11, 10);
+        await settle();
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        const before = bridge.encodeDocumentSet();
+        for (let value = 12; value <= last; value += 1) {
+            bridge.runInEditBurst(key, () => nudge(value, value - 1));
+        }
+        await settle();
+        return before;
+    }
+
+    function stagedRows(documentId) {
+        return [...window.cloudPlugin.outbox.values()].filter(
+            (row) => row.staged && row.documentId === documentId
+        );
+    }
+
+    it('keeps a held burst in the device outbox, and the merged row replaces it', async () => {
+        const glyphDoc = glyphDocumentId('id-a');
+        const sentBefore = persisted.length + 1;
+        await heldBurst('nudge', 16);
+        // Nothing went to the room, but the burst is on the device, in one
+        // row that holds every tick.
+        expect(
+            persisted.filter((row) => row.documentId === glyphDoc)
+        ).toHaveLength(1);
+        const staged = stagedRows(glyphDoc);
+        expect(staged).toHaveLength(1);
+        expect(staged[0].message.changes[0].replayOldValue).toBe(11);
+        expect(staged[0].message.changes.at(-1).replayNewValue).toBe(16);
+
+        await bridge.flushPendingCloudSends();
+        await settle();
+        // The merged row is written and the staged copy is gone.
+        expect(stagedRows(glyphDoc)).toHaveLength(0);
+        const burstRows = persisted
+            .slice(sentBefore - 1)
+            .filter((row) => row.documentId === glyphDoc);
+        expect(burstRows.at(-1).message.changes[0].replayNewValue).toBe(16);
+    });
+
+    it('closing the tab mid-burst leaves the whole burst on the device', async () => {
+        const glyphDoc = glyphDocumentId('id-a');
+        const before = await heldBurst('drag', 20);
+        // The tab closes before the burst ends: nothing was flushed.
+        const [row] = stagedRows(glyphDoc);
+        expect(row).toBeTruthy();
+        // The next open sends that row. A peer with the glyph as it was
+        // before the burst ends at the last tick from the row alone.
+        const peer = new PatchSyncEngine('burst-peer');
+        peer.initFromJson({});
+        peer.applyDocumentSetState(before);
+        expect(nodeX(peer)).toBe(11);
+        peer.applyDocumentCatchUp(glyphDoc, row.update);
+        expect(nodeX(peer)).toBe(20);
+        peer.destroy();
     });
 
     it('merges a burst into the state the last tick left', async () => {

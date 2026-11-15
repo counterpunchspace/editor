@@ -4773,7 +4773,16 @@ export class PatchSyncEngine {
             );
             if (holdDecision === 'held') {
                 // Every local consumer sees the edit now; the room gets the
-                // burst once, merged, when it ends.
+                // burst once, merged, when it ends. The device outbox gets it
+                // now, so a tab closed mid-burst does not lose it.
+                this._stageHeldCloudPacket({
+                    kind: 'local',
+                    burstKey,
+                    documentId,
+                    update,
+                    envelope: collaborationMessage,
+                    entries: describedEntries
+                });
                 deliver(false);
                 return;
             }
@@ -5296,6 +5305,15 @@ export class PatchSyncEngine {
         );
         if (decision === 'passthrough') {
             relay(update, collaborationMessage, documentId);
+        } else {
+            this._stageHeldCloudPacket({
+                kind: 'relay',
+                burstKey: key,
+                documentId: documentId || FONT_CORE_DOCUMENT_ID,
+                update,
+                envelope: collaborationMessage,
+                entries: []
+            });
         }
     }
 
@@ -5309,6 +5327,104 @@ export class PatchSyncEngine {
     /** True while a burst's cloud send is still held. */
     get hasHeldCloudSends(): boolean {
         return this._cloudHold.hasPending();
+    }
+
+    /**
+     * Held packets already in the device outbox, per kind and document: one
+     * row per burst, rewritten with the merged burst so far. A tab that
+     * closes (or crashes) mid-burst leaves it there, and the next open
+     * sends it like any unsent edit.
+     */
+    private _stagedHeld = new Map<
+        string,
+        {
+            documentId: string;
+            update: Uint8Array;
+            envelope: CollaborationMessageEnvelope;
+            stagedId: string | null;
+            written: Promise<unknown>;
+        }
+    >();
+
+    private _stageHeldCloudPacket(packet: HeldCloudPacket): void {
+        const plugin = window.cloudPlugin;
+        if (
+            !packet.envelope ||
+            typeof plugin?.stageHeldCloudUpdate !== 'function'
+        ) {
+            return;
+        }
+        const groupKey = `${packet.kind}\u0000${packet.documentId}`;
+        const previous = this._stagedHeld.get(groupKey);
+        const update = previous
+            ? Y.mergeUpdates([previous.update, packet.update])
+            : packet.update;
+        const envelope = previous
+            ? (mergeBurstEnvelopes(
+                  [previous.envelope, packet.envelope],
+                  packet.documentId,
+                  true
+              ) ?? packet.envelope)
+            : packet.envelope;
+        const stagedId = collaborationMessageKey(envelope);
+        const replaced =
+            previous?.stagedId && previous.stagedId !== stagedId
+                ? previous.stagedId
+                : null;
+        const written = (previous?.written ?? Promise.resolve())
+            .then(() =>
+                plugin.stageHeldCloudUpdate?.(
+                    update,
+                    envelope,
+                    packet.documentId,
+                    replaced
+                )
+            )
+            .catch((error) => {
+                console.warn(
+                    'Could not keep a held edit on this device',
+                    error
+                );
+            });
+        this._stagedHeld.set(groupKey, {
+            documentId: packet.documentId,
+            update,
+            envelope,
+            stagedId,
+            written
+        });
+    }
+
+    /**
+     * The staged row of a held group being flushed: `written` settles once
+     * its outbox writes are done; `release` drops the row after the merged
+     * row is written, unless the merged row replaced it (same id).
+     */
+    private _takeStagedHeldGroup(
+        groupKey: string,
+        finalEnvelope: CollaborationMessageEnvelope | null
+    ): { written: Promise<unknown>; release: () => void } {
+        const staged = this._stagedHeld.get(groupKey);
+        this._stagedHeld.delete(groupKey);
+        if (!staged) {
+            return { written: Promise.resolve(), release: () => {} };
+        }
+        const finalId = finalEnvelope
+            ? collaborationMessageKey(finalEnvelope)
+            : null;
+        return {
+            written: staged.written,
+            release: () => {
+                if (staged.stagedId && staged.stagedId !== finalId) {
+                    void Promise.resolve(
+                        window.cloudPlugin?.dropStagedCloudUpdate?.(
+                            staged.documentId,
+                            staged.stagedId
+                        )
+                    ).catch(() => {});
+                }
+            }
+        };
     }
 
     private _flushHeldCloudPackets(packets: HeldCloudPacket[]): void {
@@ -5349,12 +5465,19 @@ export class PatchSyncEngine {
                           group.every((packet) => packet.burstKey)
                       ) ?? envelopes[envelopes.length - 1])
                     : (envelopes[0] ?? null);
+            const staged = this._takeStagedHeldGroup(
+                `${group[0].kind}\u0000${documentId}`,
+                envelope
+            );
             if (group[0].kind === 'relay') {
-                window.cloudPlugin?.relayPeerWindowUpdateToCloud?.(
-                    update,
-                    envelope,
-                    documentId
-                );
+                void staged.written.then(async () => {
+                    await window.cloudPlugin?.relayPeerWindowUpdateToCloud?.(
+                        update,
+                        envelope,
+                        documentId
+                    );
+                    staged.release();
+                });
                 continue;
             }
             const entries = group.flatMap((packet) => packet.entries);
@@ -5363,7 +5486,8 @@ export class PatchSyncEngine {
                 envelope,
                 documentId,
                 entries,
-                documentId.startsWith('glyph:') ? undefined : [...dependsOn]
+                documentId.startsWith('glyph:') ? undefined : [...dependsOn],
+                staged
             );
             if (envelope && documentId.startsWith('glyph:')) {
                 dependsOn.push(collaborationMessageKey(envelope));
@@ -5377,7 +5501,8 @@ export class PatchSyncEngine {
         envelope: CollaborationMessageEnvelope | null,
         documentId: string,
         entries: ChangeLogEntry[],
-        dependsOn?: string[]
+        dependsOn?: string[],
+        staged?: { written: Promise<unknown>; release: () => void }
     ): void {
         const plugin = window.cloudPlugin;
         const meta: LocalUpdateMeta = { burstKey: null };
@@ -5397,6 +5522,9 @@ export class PatchSyncEngine {
         }
         this._cloudEmitPersistsInFlight += 1;
         this._cloudEmitPersistChain = this._cloudEmitPersistChain
+            // The burst's outbox row is written first, so the merged row
+            // below is the one that stays.
+            .then(() => staged?.written)
             .then(() =>
                 Promise.resolve(
                     plugin.persistOutgoingCloudUpdate(
@@ -5409,6 +5537,7 @@ export class PatchSyncEngine {
             )
             .then(
                 (ok) => {
+                    staged?.release();
                     pushCollabIntegrityEvent('emit-persist', {
                         documentId,
                         bytes: update.length,
