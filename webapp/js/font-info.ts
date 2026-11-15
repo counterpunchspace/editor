@@ -28,15 +28,19 @@ import type { Babelfont } from './babelfont';
 import type { Font as BabelfontModelFont } from './babelfont-model';
 import type { MasterTopologyGate } from './filesystem-plugins/filesystem-plugin';
 import {
-    getFeatureDescription,
     getFeatureExecutionOrder,
+    getFeatureName,
     isDiscretionary,
-    SCRIPT_TO_SHAPER
+    SCRIPT_TO_SHAPER,
+    validateFeatureTag
 } from './opentype-features';
 import { extractPrimaryFeatureIssue } from './feature-error-parser';
 import { pluginSettingsRegistry } from './plugin-settings/plugin-settings-registry';
 import { featureGeneratorEngine } from './language-packs/feature-generator-engine';
-import { generatorStamp } from './language-packs/managed-features';
+import {
+    GENERATOR_KEY,
+    generatorStamp
+} from './language-packs/managed-features';
 import {
     confirmAutomaticFeaturesTakeover,
     enableAutomaticFeatures
@@ -60,6 +64,14 @@ import { openAddAxisDialog } from './add-axis-dialog';
 import type { AxisDialogFont } from './add-axis-plan';
 import { AxisMapEditor } from './axis-map-editor';
 import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
+import { showChoiceDialog } from './ui/confirm-dialog';
+import { showFeatureTagDialog } from './feature-tag-dialog';
+import {
+    planClassReferenceRename,
+    uniqueFeaName,
+    validateFeaName,
+    type FeaNamedKind
+} from './features-structure';
 import {
     ADDITIONAL_METRICS_PANEL_KEYS,
     isAdditionalMetricsPanelKey,
@@ -77,6 +89,33 @@ function escapeFeatureHtml(value: string): string {
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
+}
+
+const FEATURE_ITEM_NOUN: Record<FeatureItemType, string> = {
+    prefix: 'prefix',
+    class: 'class',
+    feature: 'feature'
+};
+
+/** Section title in the Features sidebar, with add and delete buttons. */
+function featuresSectionHeaderHtml(
+    title: string,
+    type: FeatureItemType
+): string {
+    const noun = FEATURE_ITEM_NOUN[type];
+    return `
+        <div class="sidebar-section-title features-section-header">
+            <span>${title}</span>
+            <span class="editor-layers-header-actions">
+                <button type="button" class="editor-layer-add-button" data-features-action="add" data-features-type="${type}" aria-label="Add ${noun}" title="Add ${noun}">+</button>
+                <button type="button" class="editor-layer-add-button" data-features-action="remove" data-features-type="${type}" aria-label="Delete ${noun}" title="Delete ${noun}" disabled>−</button>
+            </span>
+        </div>`;
+}
+
+/** Deep copy of plain JSON data; also unwraps live model proxies. */
+function clonePlainData<T>(value: T): T {
+    return JSON.parse(JSON.stringify(value)) as T;
 }
 
 function featureSourceHeaderText(
@@ -861,7 +900,10 @@ class FontInfoManager {
     private pluginSettingsOpenId: string | null = null;
     private pendingGeneratedFeatureReveal = false;
     private featureContextMenu: TippyInstance | null = null;
-    private featureContextGeneratorId: string | null = null;
+    private featureContextTarget: {
+        type: FeatureItemType;
+        key: string | number;
+    } | null = null;
     private featureSourcePopup: TippyInstance | null = null;
 
     // Search-related properties
@@ -1010,6 +1052,17 @@ class FontInfoManager {
             } else if (e.key === 'ArrowDown') {
                 e.preventDefault();
                 this.navigateSidebar('down');
+            } else if (
+                e.key === 'Enter' &&
+                this.selectedItem &&
+                activeElement?.tagName !== 'BUTTON' &&
+                !document.querySelector('.info-popup-overlay')
+            ) {
+                e.preventDefault();
+                this.startRenameItem(
+                    this.selectedItem.type,
+                    this.selectedItem.key
+                );
             }
         });
     }
@@ -2868,19 +2921,27 @@ class FontInfoManager {
                     </label>
                     <div class="sidebar-section-title" id="plugin-settings-heading">Settings</div>
                     <div class="features-list sidebar-list" id="plugin-settings-list"></div>
-                    <div class="sidebar-section-title">Prefixes</div>
+                    ${featuresSectionHeaderHtml('Prefixes', 'prefix')}
                     <div class="features-list sidebar-list" id="prefixes-list"></div>
-                    <div class="sidebar-section-title">Classes</div>
+                    ${featuresSectionHeaderHtml('Classes', 'class')}
                     <div class="features-list sidebar-list" id="classes-list"></div>
-                    <div class="sidebar-section-title">Features</div>
+                    ${featuresSectionHeaderHtml('Features', 'feature')}
                     <div class="features-list sidebar-list" id="features-list"></div>
                 </div>
                 <div class="features-editor-container">
                     <div class="glyph-filter-legend feature-editor-header">
                         <button type="button" class="feature-source-summary" id="feature-source-summary" hidden></button>
+                        <div class="feature-header-notice" id="feature-tag-issue" hidden>
+                            <span class="feature-header-notice-text"></span>
+                            <button type="button" class="dialog-button" id="feature-tag-issue-rename">Rename…</button>
+                        </div>
+                        <div class="feature-header-notice" id="feature-automatic-notice" hidden>
+                            <span class="feature-header-notice-text"></span>
+                            <button type="button" class="dialog-button" id="feature-keep-code-button">Keep my code</button>
+                        </div>
                         <div class="feature-editor-header-actions">
                             <button type="button" class="dialog-button feature-regenerate-button" id="feature-regenerate-button" hidden>Regenerate</button>
-                            <label class="feature-auto-checkbox">
+                            <label class="feature-auto-checkbox" id="feature-automatic-label">
                                 <input type="checkbox" id="feature-automatic-checkbox" />
                                 <span>Automatically Generated</span>
                             </label>
@@ -2934,6 +2995,7 @@ class FontInfoManager {
             });
         this.initFeatureSourcePopup();
         this.initFeatureContextMenu();
+        this.initFeatureStructureControls();
     }
 
     private initializeFeaturesEditor() {
@@ -2994,6 +3056,8 @@ class FontInfoManager {
         this.featuresEditor.session.setOption('indentedSoftWrap', true);
 
         // Set up change handler
+        // Read-only until an item that is not automatic is selected.
+        this.setFeatureEditorEditable(false);
         this.featuresEditor.on('change', () => this.onFeatureCodeChanged());
         this.featuresEditor.on('blur', () => this.commitFeatureCodeChanges());
         this.featuresEditor.commands.addCommand({
@@ -9374,19 +9438,15 @@ class FontInfoManager {
     }
 
     private initFeatureContextMenu() {
-        const list = document.getElementById('features-list');
-        if (!list || this.featureContextMenu) {
+        const sidebar = this.featuresTab?.querySelector(
+            '.features-sidebar'
+        ) as HTMLElement | null;
+        if (!sidebar || this.featureContextMenu) {
             return;
         }
         const backdrop = getOrCreateBackdrop('feature-context-menu-backdrop');
-        const tippyResult = tippy(list, {
-            content: `
-                <div class="plugin-menu" tabindex="0" role="menu" aria-label="Feature">
-                    <div class="plugin-menu-item" data-action="regenerate" role="menuitem">
-                        <span class="material-symbols-outlined">refresh</span>
-                        <span>Regenerate</span>
-                    </div>
-                </div>`,
+        const tippyResult = tippy(sidebar, {
+            content: '',
             allowHTML: true,
             trigger: 'manual',
             interactive: true,
@@ -9417,14 +9477,16 @@ class FontInfoManager {
                     const action = (event.target as HTMLElement | null)
                         ?.closest('.plugin-menu-item')
                         ?.getAttribute('data-action');
-                    if (action !== 'regenerate') {
+                    const target = this.featureContextTarget;
+                    if (!action || !target) {
                         return;
                     }
-                    const generatorId = this.featureContextGeneratorId;
                     instance.hide();
-                    if (generatorId) {
-                        featureGeneratorEngine.regenerate(generatorId);
-                    }
+                    this.runFeatureContextAction(
+                        action,
+                        target.type,
+                        target.key
+                    );
                 });
             }
         });
@@ -9433,20 +9495,29 @@ class FontInfoManager {
             : tippyResult;
         if (this.featureContextMenu) {
             addTippyBackdropSupport(this.featureContextMenu, backdrop, {
-                targetElement: list
+                targetElement: sidebar
             });
         }
-        list.addEventListener('contextmenu', (event) => {
+        sidebar.addEventListener('contextmenu', (event) => {
             const row = (event.target as HTMLElement | null)?.closest(
-                '.feature-list-item'
-            );
-            const generatorId = row?.getAttribute('data-generator');
-            if (!row || !generatorId || !this.featureContextMenu) {
+                '.feature-list-item[data-item-type]'
+            ) as HTMLElement | null;
+            if (!row || !this.featureContextMenu) {
+                return;
+            }
+            const type = row.dataset.itemType as FeatureItemType;
+            const key =
+                type === 'feature'
+                    ? Number(row.dataset.itemKey)
+                    : String(row.dataset.itemKey);
+            const html = this.featureContextMenuHtml(type, key);
+            if (!html) {
                 return;
             }
             event.preventDefault();
             event.stopPropagation();
-            this.featureContextGeneratorId = generatorId;
+            this.featureContextTarget = { type, key };
+            this.featureContextMenu.setContent(html);
             this.featureContextMenu.setProps({
                 getReferenceClientRect: () =>
                     ({
@@ -9465,6 +9536,63 @@ class FontInfoManager {
         });
     }
 
+    private featureContextMenuHtml(
+        type: FeatureItemType,
+        key: string | number
+    ): string {
+        const codeData = this.codeDataFor(type, key);
+        if (!codeData) {
+            return '';
+        }
+        const row = (action: string, icon: string, label: string) => `
+            <div class="plugin-menu-item" data-action="${action}" role="menuitem">
+                <span class="material-symbols-outlined">${icon}</span>
+                <span>${label}</span>
+            </div>`;
+        const rows = [
+            row('rename', 'edit', 'Rename…'),
+            row('duplicate', 'content_copy', 'Duplicate'),
+            row('delete', 'delete', 'Delete…')
+        ];
+        const stamp = generatorStamp(codeData);
+        if (stamp && codeData.automatic) {
+            rows.push(row('regenerate', 'refresh', 'Regenerate'));
+        }
+        if (!stamp && !codeData.automatic) {
+            rows.push(
+                row(
+                    'mark-automatic',
+                    'sync_disabled',
+                    'Mark as automatic for Glyphs'
+                )
+            );
+        }
+        return `<div class="plugin-menu" tabindex="0" role="menu" aria-label="${FEATURE_ITEM_NOUN[type]}">${rows.join('')}</div>`;
+    }
+
+    private runFeatureContextAction(
+        action: string,
+        type: FeatureItemType,
+        key: string | number
+    ): void {
+        if (action === 'rename') {
+            this.startRenameItem(type, key);
+        } else if (action === 'duplicate') {
+            this.duplicateFeatureItem(type, key);
+        } else if (action === 'delete') {
+            void this.deleteFeatureItem(type, key);
+        } else if (action === 'regenerate') {
+            const stamp = generatorStamp(this.codeDataFor(type, key));
+            if (stamp) {
+                featureGeneratorEngine.regenerate(stamp.generator);
+            }
+        } else if (action === 'mark-automatic') {
+            this.closePluginSettingsForm();
+            this.selectItem(type, key);
+            this.setSelectedAutomatic(true, 'Mark as automatic for Glyphs');
+        }
+    }
+
     private createListItem(
         type: FeatureItemType,
         key: string | number,
@@ -9475,6 +9603,8 @@ class FontInfoManager {
     ): HTMLElement {
         const item = document.createElement('div');
         item.className = 'feature-list-item sidebar-item';
+        item.dataset.itemType = type;
+        item.dataset.itemKey = String(key);
 
         // Add draggable attribute for discretionary features
         if (isDiscretionaryFeature && isUserFeature) {
@@ -9545,11 +9675,23 @@ class FontInfoManager {
                 item.appendChild(tagSpan);
 
                 // Feature name
-                const description = getFeatureDescription(tag);
+                const tagCheck = validateFeatureTag(tag);
                 const nameSpan = document.createElement('span');
                 nameSpan.className = 'feature-name';
-                nameSpan.textContent = description.split(' - ')[0] || tag;
+                nameSpan.textContent =
+                    getFeatureName(tag) ||
+                    (tagCheck.level === 'ok'
+                        ? tagCheck.message
+                        : 'Unregistered tag');
                 item.appendChild(nameSpan);
+                if (tagCheck.level !== 'ok') {
+                    const issueIcon = document.createElement('span');
+                    issueIcon.className = `material-symbols-outlined feature-tag-issue-icon is-${tagCheck.level}`;
+                    issueIcon.textContent =
+                        tagCheck.level === 'error' ? 'error' : 'warning';
+                    issueIcon.title = tagCheck.message;
+                    item.appendChild(issueIcon);
+                }
             } else {
                 // For prefixes, show the key in feature-name style
                 const nameSpan = document.createElement('span');
@@ -9594,6 +9736,13 @@ class FontInfoManager {
         item.addEventListener('click', () => {
             this.closePluginSettingsForm();
             this.selectItem(type, key);
+        });
+        item.addEventListener('dblclick', (event) => {
+            if ((event.target as HTMLElement).closest('input')) {
+                return;
+            }
+            event.preventDefault();
+            this.startRenameItem(type, key);
         });
 
         return item;
@@ -9656,7 +9805,7 @@ class FontInfoManager {
             selectedElement.classList.add('selected');
             // Scroll into view if navigating with keyboard
             if (scrollIntoView) {
-                selectedElement.scrollIntoView({
+                selectedElement.scrollIntoView?.({
                     block: 'nearest',
                     behavior: 'smooth'
                 });
@@ -9669,6 +9818,7 @@ class FontInfoManager {
             this.featuresEditor.setValue(codeData.code || '', -1);
             this.suppressFeatureEditorChange = false;
             this.featureCodeDirty = false;
+            this.setFeatureEditorEditable(!codeData.automatic);
             // Enable line wrapping for all cases (prefixes, classes, and features)
             this.featuresEditor.session.setUseWrapMode(true);
             // Highlight search terms in the loaded content
@@ -9684,6 +9834,9 @@ class FontInfoManager {
             autoCheckbox.disabled = false;
         }
         this.updateFeatureSourceHeader(codeData);
+        this.updateAutomaticControl(codeData);
+        this.updateFeatureTagIssue();
+        this.refreshStructureButtons();
 
         this.updateFeatureErrorDisplayForSelection();
         this.notifyHistoryScopeChange();
@@ -9717,6 +9870,10 @@ class FontInfoManager {
             autoCheckbox.disabled = true;
         }
         this.updateFeatureSourceHeader();
+        this.setFeatureEditorEditable(false);
+        this.updateAutomaticControl();
+        this.updateFeatureTagIssue();
+        this.refreshStructureButtons();
     }
 
     /**
@@ -9839,6 +9996,12 @@ class FontInfoManager {
         if (autoCheckbox && previousAutomatic) {
             autoCheckbox.checked = nextAutomatic;
         }
+        if (previousAutomatic) {
+            this.updateAutomaticControl({
+                ...codeData,
+                automatic: nextAutomatic
+            });
+        }
 
         if (fontManager && currentFont) {
             fontManager.setEditingCompileContext('feature-code', null);
@@ -9914,20 +10077,11 @@ class FontInfoManager {
         }
 
         const { type, key } = this.selectedItem;
-        if (type === 'prefix' && typeof key === 'string') {
-            return {
-                type: 'prefix',
-                key,
-                label: key
-            };
-        }
-
-        if (type === 'class' && typeof key === 'string') {
-            return {
-                type: 'class',
-                key,
-                label: key
-            };
+        if (
+            (type === 'prefix' || type === 'class') &&
+            typeof key === 'string'
+        ) {
+            return this.keyedHistoryTarget(type, key);
         }
 
         if (type === 'feature' && typeof key === 'number') {
@@ -9983,81 +10137,75 @@ class FontInfoManager {
     }
 
     private onAutomaticCheckboxChanged() {
-        const font = window.currentFontModel;
-        if (!font || !font.features || !this.selectedItem) return;
-
-        const { type, key } = this.selectedItem;
-        let codeData: Babelfont.PossiblyAutomaticCode | undefined;
-
-        if (type === 'prefix' && typeof key === 'string') {
-            codeData = font.features.prefixes?.[key];
-        } else if (type === 'class' && typeof key === 'string') {
-            codeData = font.features.classes?.[key];
-        } else if (type === 'feature' && typeof key === 'number') {
-            const features = font.features.features || [];
-            if (key < features.length) {
-                codeData = features[key][1];
-            }
-        }
-
-        if (!codeData) return;
-
         const autoCheckbox = document.getElementById(
             'feature-automatic-checkbox'
-        ) as HTMLInputElement;
-
+        ) as HTMLInputElement | null;
         if (autoCheckbox) {
-            const nextAutomatic = autoCheckbox.checked;
-            const previousAutomatic = Boolean(codeData.automatic);
-            if (previousAutomatic === nextAutomatic) {
-                return;
-            }
+            this.setSelectedAutomatic(
+                autoCheckbox.checked,
+                'Toggle automatic generation'
+            );
+        }
+    }
 
-            const bridge = window.patchSyncEngine;
-            const path = this.getSelectedAutomaticFlagPath();
-            if (!bridge || !path) {
-                console.warn(
-                    '[FontInfo] Missing patch bridge while toggling automatic feature generation'
-                );
-                return;
-            }
+    private setSelectedAutomatic(nextAutomatic: boolean, label: string) {
+        if (!this.selectedItem) return;
+        const codeData = this.codeDataFor(
+            this.selectedItem.type,
+            this.selectedItem.key
+        );
+        if (!codeData) return;
 
-            const historyTarget = this.getSelectedCodeHistoryTarget();
-            bridge.beginTransaction(
-                'Toggle automatic generation',
-                historyTarget,
+        const previousAutomatic = Boolean(codeData.automatic);
+        if (previousAutomatic === nextAutomatic) {
+            return;
+        }
+
+        const bridge = window.patchSyncEngine;
+        const path = this.getSelectedAutomaticFlagPath();
+        if (!bridge || !path) {
+            console.warn(
+                '[FontInfo] Missing patch bridge while toggling automatic feature generation'
+            );
+            return;
+        }
+
+        const historyTarget = this.getSelectedCodeHistoryTarget();
+        bridge.beginTransaction(label, historyTarget, {
+            compileChangeSource: 'feature-code',
+            compileEditType: 'feature'
+        });
+        try {
+            bridge.applySyntheticChangeSet(
+                label,
+                [
+                    {
+                        op: 'set',
+                        path,
+                        oldValue: previousAutomatic,
+                        newValue: nextAutomatic
+                    }
+                ],
                 {
                     compileChangeSource: 'feature-code',
                     compileEditType: 'feature'
                 }
             );
+        } finally {
+            bridge.endTransaction();
+        }
 
-            try {
-                bridge.applySyntheticChangeSet(
-                    'Toggle automatic generation',
-                    [
-                        {
-                            op: 'set',
-                            path,
-                            oldValue: previousAutomatic,
-                            newValue: nextAutomatic
-                        }
-                    ],
-                    {
-                        compileChangeSource: 'feature-code',
-                        compileEditType: 'feature'
-                    }
-                );
-            } finally {
-                bridge.endTransaction();
-            }
-
-            // Update the indicator in the list
-            this.loadAllLists();
-            this.updateFeatureSourceHeader({
-                ...codeData,
-                automatic: nextAutomatic
-            });
+        // Update the indicator in the list
+        this.loadAllLists();
+        const nextCodeData = { ...codeData, automatic: nextAutomatic };
+        this.updateFeatureSourceHeader(nextCodeData);
+        this.updateAutomaticControl(nextCodeData);
+        this.setFeatureEditorEditable(!nextAutomatic);
+        const autoCheckbox = document.getElementById(
+            'feature-automatic-checkbox'
+        ) as HTMLInputElement | null;
+        if (autoCheckbox) {
+            autoCheckbox.checked = nextAutomatic;
         }
     }
 
@@ -10236,6 +10384,621 @@ class FontInfoManager {
         const targetIndex = this.featureDropTargetIndex ?? fallbackTargetIndex;
         const placement = this.featureDropTargetPlacement ?? 'before';
         return placement === 'after' ? targetIndex + 1 : targetIndex;
+    }
+
+    private initFeatureStructureControls() {
+        this.featuresTab
+            ?.querySelectorAll<HTMLButtonElement>('[data-features-action]')
+            .forEach((button) => {
+                button.addEventListener('mousedown', (event) => {
+                    event.preventDefault();
+                });
+                button.addEventListener('click', () => {
+                    const type = button.dataset.featuresType as FeatureItemType;
+                    if (button.dataset.featuresAction === 'add') {
+                        void this.addFeatureItem(type);
+                    } else if (this.selectedItem?.type === type) {
+                        void this.deleteFeatureItem(
+                            type,
+                            this.selectedItem.key
+                        );
+                    }
+                });
+            });
+        this.featuresTab
+            ?.querySelector('#feature-keep-code-button')
+            ?.addEventListener('click', () =>
+                this.setSelectedAutomatic(false, 'Keep my code')
+            );
+        this.featuresTab
+            ?.querySelector('#feature-tag-issue-rename')
+            ?.addEventListener('click', () => {
+                if (this.selectedItem?.type === 'feature') {
+                    this.startRenameItem('feature', this.selectedItem.key);
+                }
+            });
+        this.refreshStructureButtons();
+    }
+
+    private refreshStructureButtons() {
+        this.featuresTab
+            ?.querySelectorAll<HTMLButtonElement>(
+                '[data-features-action="remove"]'
+            )
+            .forEach((button) => {
+                button.disabled =
+                    this.selectedItem?.type !== button.dataset.featuresType;
+            });
+    }
+
+    /**
+     * The code editor accepts input only for a selected item that is not
+     * marked automatic. Nothing selected (such as a new font) or automatic
+     * code makes it read-only.
+     */
+    private setFeatureEditorEditable(editable: boolean) {
+        this.featuresEditor?.setReadOnly?.(!editable);
+        document
+            .getElementById('features-editor')
+            ?.classList.toggle('is-read-only', !editable);
+    }
+
+    /**
+     * The “Automatically Generated” checkbox is shown only for code that a
+     * Counterpunch generator owns. Code that only the source file marks
+     * automatic (a Glyphs leftover) gets a notice and “Keep my code” instead.
+     */
+    private updateAutomaticControl(codeData?: Babelfont.PossiblyAutomaticCode) {
+        const hasGenerator = Boolean(codeData && generatorStamp(codeData));
+        const label = this.featuresTab?.querySelector(
+            '#feature-automatic-label'
+        ) as HTMLElement | null;
+        if (label) {
+            label.hidden = !hasGenerator;
+        }
+        const notice = this.featuresTab?.querySelector(
+            '#feature-automatic-notice'
+        ) as HTMLElement | null;
+        if (!notice) {
+            return;
+        }
+        const sourceOnly = Boolean(
+            codeData && !hasGenerator && codeData.automatic
+        );
+        const message = sourceOnly
+            ? 'Marked automatic in the source file. Glyphs rebuilds this code when it opens the file. Counterpunch doesn’t. To edit the code, click “Keep my code”.'
+            : null;
+        notice.hidden = !message;
+        const text = notice.querySelector('.feature-header-notice-text');
+        if (text) {
+            text.textContent = message || '';
+        }
+        const keepButton = notice.querySelector(
+            '#feature-keep-code-button'
+        ) as HTMLElement | null;
+        if (keepButton) {
+            keepButton.hidden = !sourceOnly;
+        }
+    }
+
+    private updateFeatureTagIssue() {
+        const issue = this.featuresTab?.querySelector(
+            '#feature-tag-issue'
+        ) as HTMLElement | null;
+        if (!issue) {
+            return;
+        }
+        const tag =
+            this.selectedItem?.type === 'feature'
+                ? this.selectedFeatureTag
+                : null;
+        const check = tag === null ? null : validateFeatureTag(tag);
+        const flagged = !!check && check.level !== 'ok';
+        issue.hidden = !flagged;
+        issue.dataset.level = flagged ? check.level : '';
+        const text = issue.querySelector('.feature-header-notice-text');
+        if (text) {
+            text.textContent = flagged ? check.message : '';
+        }
+    }
+
+    private codeDataFor(
+        type: FeatureItemType,
+        key: string | number
+    ): Babelfont.PossiblyAutomaticCode | undefined {
+        const features = window.currentFontModel?.features;
+        if (!features) return undefined;
+        if (type === 'prefix') return features.prefixes?.[String(key)];
+        if (type === 'class') return features.classes?.[String(key)];
+        return typeof key === 'number'
+            ? features.features?.[key]?.[1]
+            : undefined;
+    }
+
+    private featureItemNames(type: FeaNamedKind): string[] {
+        const features = window.currentFontModel?.features;
+        return Object.keys(
+            (type === 'prefix' ? features?.prefixes : features?.classes) || {}
+        );
+    }
+
+    /** “prefix “x””, “class “@x”” or “feature “liga”” for messages. */
+    private featureItemDisplayName(
+        type: FeatureItemType,
+        key: string | number
+    ): string {
+        if (type === 'feature') {
+            const tag =
+                window.currentFontModel?.features?.features?.[Number(key)]?.[0];
+            return `feature “${tag ?? ''}”`;
+        }
+        return type === 'class' ? `class “@${key}”` : `prefix “${key}”`;
+    }
+
+    /** True while Counterpunch would regenerate this code on its own. */
+    private isManagedGeneratedCode(
+        codeData: Babelfont.PossiblyAutomaticCode
+    ): boolean {
+        return Boolean(
+            codeData.automatic &&
+            generatorStamp(codeData) &&
+            window.currentFontModel?.counterpunchManagesFeatures
+        );
+    }
+
+    /** History target in the key format of `getHistoryScopeTarget()`. */
+    private keyedHistoryTarget(
+        type: FeaNamedKind,
+        key: string
+    ): TransactionHistoryTarget {
+        return { type, key: `${type}:${key}`, label: key };
+    }
+
+    /**
+     * Apply a structural change (add, delete, rename, duplicate) to the live
+     * features model in one undo step. The model records every mutation the
+     * callback makes, so the sync document gets granular operations.
+     * `historyTarget` is the item selected afterwards, so that undo in the
+     * panel reaches the change.
+     */
+    private commitFeatureStructureChange(options: {
+        label: string;
+        historyTarget: TransactionHistoryTarget | null;
+        mutate: (features: Babelfont.Features) => void;
+        select: { type: FeatureItemType; key: string | number } | null;
+        removed?: { type: FeatureItemType; key: string | number };
+    }): void {
+        const font = window.currentFontModel;
+        if (!font) return;
+
+        // A pending code edit belongs to the item that is selected now.
+        if (this.featureCodeDirty) {
+            this.commitFeatureCodeChanges();
+        }
+
+        const bridge = window.patchSyncEngine;
+        window.fontManager?.setEditingCompileContext?.('feature-code', null);
+        bridge?.beginTransaction(options.label, options.historyTarget, {
+            compileChangeSource: 'feature-code',
+            compileEditType: 'feature'
+        });
+        try {
+            if (!font.features) {
+                font.features = { prefixes: {}, classes: {}, features: [] };
+            }
+            options.mutate(font.features);
+        } finally {
+            bridge?.endTransaction();
+        }
+        if (!bridge) {
+            window.fontManager?.currentFont?.markDirty('feature-code');
+        }
+
+        if (
+            options.removed &&
+            this.isFeatureErrorTarget(options.removed.type, options.removed.key)
+        ) {
+            this.clearFeatureErrorMarker();
+            this.featureErrorTarget = null;
+            this.featureErrorIssue = null;
+        }
+
+        this.selectedItem = null;
+        this.selectedFeatureTag = null;
+        this.loadAllLists();
+        if (options.select) {
+            this.closePluginSettingsForm();
+            this.selectItem(options.select.type, options.select.key, true);
+        } else if (!this.selectedItem) {
+            this.clearEditor();
+        }
+    }
+
+    private async addFeatureItem(type: FeatureItemType): Promise<void> {
+        if (type === 'feature') {
+            await this.addFeature();
+            return;
+        }
+        const name = uniqueFeaName(type, this.featureItemNames(type));
+        this.commitFeatureStructureChange({
+            label: type === 'prefix' ? 'Add prefix' : 'Add class',
+            historyTarget: this.keyedHistoryTarget(type, name),
+            mutate: (features) => {
+                const entry = { code: '', automatic: false };
+                if (type === 'prefix') {
+                    if (features.prefixes) {
+                        features.prefixes[name] = entry;
+                    } else {
+                        features.prefixes = { [name]: entry };
+                    }
+                } else if (features.classes) {
+                    features.classes[name] = entry;
+                } else {
+                    features.classes = { [name]: entry };
+                }
+            },
+            select: { type, key: name }
+        });
+        this.startRenameItem(type, name);
+    }
+
+    private async addFeature(): Promise<void> {
+        const tag = await showFeatureTagDialog({
+            title: 'Add Feature',
+            confirmLabel: 'Add'
+        });
+        if (tag === null) return;
+
+        const features = window.currentFontModel?.features?.features || [];
+        const selected =
+            this.selectedItem?.type === 'feature' &&
+            typeof this.selectedItem.key === 'number'
+                ? this.selectedItem.key
+                : -1;
+        const index = selected >= 0 ? selected + 1 : features.length;
+        const entry: [string, Babelfont.PossiblyAutomaticCode] = [
+            tag,
+            { code: '', automatic: false }
+        ];
+        const nextFeatures = [
+            ...features.slice(0, index),
+            entry,
+            ...features.slice(index)
+        ];
+        this.commitFeatureStructureChange({
+            label: 'Add feature',
+            historyTarget: this.getFeatureHistoryTarget(nextFeatures, index),
+            mutate: (doc) => {
+                if (doc.features) {
+                    doc.features.splice(index, 0, entry);
+                } else {
+                    doc.features = [entry];
+                }
+            },
+            select: { type: 'feature', key: index }
+        });
+        this.featuresEditor?.focus?.();
+    }
+
+    private duplicateFeatureItem(type: FeatureItemType, key: string | number) {
+        const codeData = this.codeDataFor(type, key);
+        if (!codeData) return;
+        const copy = clonePlainData(codeData);
+        copy.automatic = false;
+        // A generator owns only its own block, never a copy of it.
+        if (copy.format_specific) {
+            delete copy.format_specific[GENERATOR_KEY];
+        }
+
+        if (type === 'feature') {
+            const features = window.currentFontModel?.features?.features || [];
+            const index = Number(key);
+            const tag = features[index]?.[0];
+            if (tag === undefined) return;
+            const entry: [string, Babelfont.PossiblyAutomaticCode] = [
+                tag,
+                copy
+            ];
+            const nextFeatures = [
+                ...features.slice(0, index + 1),
+                entry,
+                ...features.slice(index + 1)
+            ];
+            this.commitFeatureStructureChange({
+                label: 'Duplicate feature',
+                historyTarget: this.getFeatureHistoryTarget(
+                    nextFeatures,
+                    index + 1
+                ),
+                mutate: (doc) => {
+                    doc.features.splice(index + 1, 0, entry);
+                },
+                select: { type: 'feature', key: index + 1 }
+            });
+            return;
+        }
+
+        const name = uniqueFeaName(`${key}_copy`, this.featureItemNames(type));
+        this.commitFeatureStructureChange({
+            label: type === 'prefix' ? 'Duplicate prefix' : 'Duplicate class',
+            historyTarget: this.keyedHistoryTarget(type, name),
+            mutate: (doc) => {
+                if (type === 'prefix') {
+                    doc.prefixes[name] = copy;
+                } else {
+                    doc.classes[name] = copy;
+                }
+            },
+            select: { type, key: name }
+        });
+    }
+
+    private async deleteFeatureItem(
+        type: FeatureItemType,
+        key: string | number
+    ): Promise<void> {
+        const codeData = this.codeDataFor(type, key);
+        if (!codeData) return;
+        const displayName = this.featureItemDisplayName(type, key);
+
+        if (this.isManagedGeneratedCode(codeData)) {
+            const choice = await showChoiceDialog(
+                'Delete Generated Code',
+                `Counterpunch generates the ${displayName} and adds it again after the next glyph change. Turn off “Automatically Generated” to keep it as your own code, or delete it anyway.`,
+                [
+                    { id: 'cancel', label: 'Cancel' },
+                    { id: 'turn-off', label: 'Turn Off Automatic' },
+                    { id: 'delete', label: 'Delete', style: 'danger' }
+                ]
+            );
+            if (choice === 'turn-off') {
+                this.closePluginSettingsForm();
+                this.selectItem(type, key);
+                this.setSelectedAutomatic(
+                    false,
+                    'Turn off automatic generation'
+                );
+                return;
+            }
+            if (choice !== 'delete') return;
+        } else {
+            const confirmed = await new Promise<boolean>((resolve) =>
+                this.showDeleteConfirmDialog(
+                    `Delete the ${displayName}?`,
+                    resolve
+                )
+            );
+            if (!confirmed) return;
+        }
+
+        if (type === 'feature') {
+            const features = window.currentFontModel?.features?.features || [];
+            const index = Number(key);
+            if (!features[index]) return;
+            const remaining = features.filter((_, i) => i !== index);
+            const neighbor = Math.min(index, remaining.length - 1);
+            this.commitFeatureStructureChange({
+                label: 'Delete feature',
+                historyTarget:
+                    neighbor >= 0
+                        ? this.getFeatureHistoryTarget(remaining, neighbor)
+                        : null,
+                mutate: (doc) => {
+                    doc.features.splice(index, 1);
+                },
+                select: neighbor >= 0 ? { type, key: neighbor } : null,
+                removed: { type, key }
+            });
+            return;
+        }
+
+        const name = String(key);
+        const names = this.featureItemNames(type);
+        const position = names.indexOf(name);
+        const neighbor = names[position + 1] ?? names[position - 1];
+        this.commitFeatureStructureChange({
+            label: type === 'prefix' ? 'Delete prefix' : 'Delete class',
+            historyTarget:
+                neighbor === undefined
+                    ? null
+                    : this.keyedHistoryTarget(type, neighbor),
+            mutate: (doc) => {
+                if (type === 'prefix') {
+                    delete doc.prefixes[name];
+                } else {
+                    delete doc.classes[name];
+                }
+            },
+            select: neighbor === undefined ? null : { type, key: neighbor },
+            removed: { type, key: name }
+        });
+    }
+
+    private startRenameItem(type: FeatureItemType, key: string | number) {
+        if (type === 'feature') {
+            void this.renameFeature(Number(key));
+            return;
+        }
+        const item = (
+            type === 'prefix' ? this.prefixListItems : this.classListItems
+        ).get(String(key));
+        const nameSpan = item?.querySelector(
+            '.feature-name'
+        ) as HTMLElement | null;
+        if (!item || !nameSpan) return;
+
+        const oldName = String(key);
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'feature-rename-input';
+        input.value = oldName;
+        input.spellcheck = false;
+        input.setAttribute('aria-label', `Name of the ${type}`);
+        const error = document.createElement('div');
+        error.className = 'feature-rename-error';
+        error.hidden = true;
+
+        const wasDraggable = item.draggable;
+        item.draggable = false;
+        nameSpan.replaceWith(input);
+        item.insertAdjacentElement('afterend', error);
+
+        const validate = (): string | null => {
+            const message = validateFeaName(
+                input.value,
+                type,
+                this.featureItemNames(type),
+                oldName
+            );
+            error.hidden = !message;
+            error.textContent = message || '';
+            input.setAttribute('aria-invalid', message ? 'true' : 'false');
+            return message;
+        };
+
+        let finished = false;
+        const finish = (commit: boolean) => {
+            if (finished) return;
+            finished = true;
+            const nextName = input.value;
+            input.replaceWith(nameSpan);
+            error.remove();
+            item.draggable = wasDraggable;
+            if (commit && nextName !== oldName) {
+                void this.renameNamedItem(type, oldName, nextName);
+            }
+        };
+
+        for (const eventName of ['click', 'dblclick', 'mousedown']) {
+            input.addEventListener(eventName, (event) =>
+                event.stopPropagation()
+            );
+        }
+        input.addEventListener('input', () => validate());
+        input.addEventListener('keydown', (event) => {
+            event.stopPropagation();
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                if (!validate()) finish(true);
+            } else if (event.key === 'Escape') {
+                event.preventDefault();
+                finish(false);
+            }
+        });
+        input.addEventListener('blur', () => finish(!validate()));
+        input.focus();
+        input.select();
+    }
+
+    private async renameNamedItem(
+        type: FeaNamedKind,
+        oldName: string,
+        newName: string
+    ): Promise<void> {
+        const features = window.currentFontModel?.features;
+        const codeData = this.codeDataFor(type, oldName);
+        if (!features || !codeData) return;
+        if (
+            validateFeaName(newName, type, this.featureItemNames(type), oldName)
+        ) {
+            return;
+        }
+
+        let referenceEdits: ReturnType<
+            typeof planClassReferenceRename
+        >['edits'] = [];
+        if (type === 'class') {
+            const plan = planClassReferenceRename(
+                clonePlainData(features),
+                oldName,
+                newName
+            );
+            if (plan.count > 0) {
+                const references =
+                    plan.count === 1
+                        ? '1 reference'
+                        : `${plan.count} references`;
+                const items =
+                    plan.edits.length === 1
+                        ? '1 item'
+                        : `${plan.edits.length} items`;
+                const choice = await showChoiceDialog(
+                    'Rename Class',
+                    `Update ${references} to “@${oldName}” in ${items}?`,
+                    [
+                        { id: 'cancel', label: 'Cancel' },
+                        { id: 'keep', label: 'Don’t Update' },
+                        { id: 'update', label: 'Update', style: 'primary' }
+                    ]
+                );
+                if (choice !== 'keep' && choice !== 'update') return;
+                if (choice === 'update') referenceEdits = plan.edits;
+            }
+        }
+
+        const entry = clonePlainData(codeData);
+        if (this.isManagedGeneratedCode(codeData)) {
+            entry.automatic = false;
+        }
+        this.commitFeatureStructureChange({
+            label: type === 'prefix' ? 'Rename prefix' : 'Rename class',
+            historyTarget: this.keyedHistoryTarget(type, newName),
+            mutate: (doc) => {
+                const map = type === 'prefix' ? doc.prefixes : doc.classes;
+                delete map[oldName];
+                map[newName] = entry;
+                for (const edit of referenceEdits) {
+                    if (edit.type === 'feature') {
+                        doc.features[edit.key][1].code = edit.code;
+                    } else {
+                        const target =
+                            edit.type === 'prefix' ? doc.prefixes : doc.classes;
+                        target[edit.key].code = edit.code;
+                    }
+                }
+            },
+            select: { type, key: newName },
+            removed: { type, key: oldName }
+        });
+    }
+
+    private async renameFeature(index: number): Promise<void> {
+        const entry = window.currentFontModel?.features?.features?.[index];
+        if (!entry) return;
+        const [oldTag, codeData] = entry;
+        const tag = await showFeatureTagDialog({
+            title: 'Rename Feature',
+            confirmLabel: 'Rename',
+            initialTag: oldTag
+        });
+        const features = window.currentFontModel?.features?.features;
+        if (
+            tag === null ||
+            tag === oldTag ||
+            features?.[index]?.[0] !== oldTag
+        ) {
+            return;
+        }
+        const nextCode = clonePlainData(codeData);
+        if (this.isManagedGeneratedCode(codeData)) {
+            nextCode.automatic = false;
+        }
+        const nextEntry: [string, Babelfont.PossiblyAutomaticCode] = [
+            tag,
+            nextCode
+        ];
+        const nextFeatures = features.map((existing, i) =>
+            i === index ? nextEntry : existing
+        );
+        this.commitFeatureStructureChange({
+            label: 'Rename feature',
+            historyTarget: this.getFeatureHistoryTarget(nextFeatures, index),
+            mutate: (doc) => {
+                doc.features.splice(index, 1, nextEntry);
+            },
+            select: { type: 'feature', key: index },
+            removed: { type: 'feature', key: index }
+        });
     }
 
     private getFeatureHistoryTarget(

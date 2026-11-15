@@ -91,6 +91,81 @@ export function showProceedDialog(
     });
 }
 
+export type DialogChoice = {
+    id: string;
+    label: string;
+    style?: 'primary' | 'danger';
+};
+
+/**
+ * Confirm with several named choices, shown left to right. Escape, close, and
+ * the backdrop resolve with null.
+ */
+export function showChoiceDialog(
+    title: string,
+    message: string,
+    choices: DialogChoice[]
+): Promise<string | null> {
+    return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.className = 'info-popup-overlay';
+        overlay.style.display = 'flex';
+        overlay.style.zIndex = '10002';
+
+        const buttons = choices
+            .map((choice) => {
+                const style = choice.style
+                    ? ` dialog-button-${choice.style}`
+                    : '';
+                return `<button type="button" class="dialog-button${style}" data-choice="${escapeHtml(choice.id)}">${escapeHtml(choice.label)}</button>`;
+            })
+            .join('');
+        overlay.innerHTML = `
+            <div class="info-popup confirm-dialog">
+                <div class="info-popup-header">
+                    <h3>${escapeHtml(title)}</h3>
+                    <button type="button" class="info-popup-close confirm-dialog-close-btn" aria-label="Cancel">
+                        <span class="material-symbols-outlined">close</span>
+                    </button>
+                </div>
+                <div class="info-popup-content confirm-dialog-content">
+                    <p>${escapeHtml(message)}</p>
+                    <div class="confirm-dialog-actions">${buttons}</div>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(overlay);
+
+        let escapeBinding: ReturnType<typeof bindModalEscape> | null = null;
+
+        function finish(choice: string | null) {
+            escapeBinding?.release();
+            escapeBinding = null;
+            overlay.remove();
+            resolve(choice);
+        }
+
+        escapeBinding = bindModalEscape(() => finish(null), {
+            isOpen: () => overlay.isConnected
+        });
+
+        overlay.addEventListener('click', (event) => {
+            if (event.target === overlay) {
+                finish(null);
+            }
+        });
+        overlay
+            .querySelector('.confirm-dialog-close-btn')
+            ?.addEventListener('click', () => finish(null));
+        overlay.querySelectorAll('[data-choice]').forEach((button) => {
+            button.addEventListener('click', () => {
+                finish((button as HTMLElement).dataset.choice ?? null);
+            });
+        });
+    });
+}
+
 export function showNamedUnsavedChangesDialog({
     subjectType,
     subjectName

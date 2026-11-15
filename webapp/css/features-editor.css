@@ -267,3 +267,209 @@
     font-weight: 700;
     color: color-mix(in srgb, var(--accent-red) 72%, var(--text-primary));
 }
+
+/* Read-only code: nothing selected, or code marked automatic */
+.features-editor.is-read-only .ace_cursor-layer {
+    display: none;
+}
+
+.features-editor.is-read-only .ace_content {
+    opacity: 0.6;
+}
+
+/* Section titles with add and delete buttons */
+.features-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px;
+}
+
+/* In a narrow sidebar the title shortens; the buttons stay visible. */
+.features-section-header > span:first-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.features-section-header .editor-layer-add-button {
+    font-size: 13px;
+    line-height: 1;
+}
+
+/* Tag check in the feature list and the editor header */
+.feature-tag-issue-icon {
+    font-size: 14px !important;
+    flex-shrink: 0;
+}
+
+.feature-tag-issue-icon.is-error {
+    color: var(--accent-red);
+}
+
+.feature-tag-issue-icon.is-warning {
+    color: var(--accent-orange);
+}
+
+#fontinfo-features-content .feature-header-notice {
+    display: flex;
+    flex: 1 1 220px;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    font-family: var(--font-families-sans);
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--text-secondary);
+}
+
+#fontinfo-features-content .feature-header-notice[hidden],
+#fontinfo-features-content .feature-header-notice [hidden],
+#fontinfo-features-content .feature-auto-checkbox[hidden] {
+    display: none;
+}
+
+#fontinfo-features-content .feature-header-notice[data-level='error'] {
+    color: var(--accent-red);
+}
+
+#fontinfo-features-content .feature-header-notice[data-level='warning'] {
+    color: var(--accent-orange);
+}
+
+#fontinfo-features-content .feature-header-notice .dialog-button {
+    flex-shrink: 0;
+    padding: 3px 10px;
+    font-size: 11px;
+}
+
+/* Inline rename of prefixes and classes */
+.feature-rename-input {
+    flex: 1;
+    min-width: 0;
+    padding: 1px 4px;
+    border: 1px solid var(--border-focus-outline);
+    border-radius: 3px;
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font-family: var(--font-families-sans);
+    font-size: 11px;
+}
+
+.feature-rename-input[aria-invalid='true'] {
+    border-color: var(--accent-red);
+}
+
+.feature-rename-error {
+    padding: 2px 12px 4px;
+    font-family: var(--font-families-sans);
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--accent-red);
+}
+
+.feature-rename-error[hidden] {
+    display: none;
+}
+
+/* Feature tag dialog */
+.feature-tag-dialog {
+    width: min(420px, calc(100vw - 32px));
+}
+
+.feature-tag-dialog-content {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.feature-tag-label {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.feature-tag-input {
+    padding: 6px 8px;
+    border: 1px solid var(--border-primary);
+    border-radius: 4px;
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font-family: var(--font-families-mono);
+    font-size: 13px;
+}
+
+.feature-tag-input:focus {
+    outline: none;
+    border-color: var(--border-focus-outline);
+}
+
+.feature-tag-status {
+    min-height: 1.4em;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--text-secondary);
+}
+
+.feature-tag-status[data-level='error'] {
+    color: var(--accent-red);
+}
+
+.feature-tag-status[data-level='warning'] {
+    color: var(--accent-orange);
+}
+
+.feature-tag-suggestion {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent-blue);
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+.feature-tag-suggestions {
+    max-height: 240px;
+    overflow-y: auto;
+    border: 1px solid var(--border-primary);
+    border-radius: 4px;
+}
+
+.feature-tag-group {
+    position: sticky;
+    top: 0;
+    padding: 4px 8px;
+    background: var(--background-secondary);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+}
+
+.feature-tag-option {
+    display: flex;
+    gap: 10px;
+    padding: 3px 8px;
+    font-size: 12px;
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.feature-tag-option code {
+    flex: 0 0 4ch;
+    font-family: var(--font-families-mono);
+}
+
+.feature-tag-option span {
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.feature-tag-option:hover,
+.feature-tag-option.active {
+    background: var(--background-hover);
+}

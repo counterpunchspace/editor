@@ -934,3 +934,105 @@ export function getOpentypeFeatureInfo(): OpentypeFeatureInfo {
         descriptions: FEATURE_DESCRIPTIONS
     };
 }
+
+const numberedTags = (prefix: string, count: number): string[] =>
+    Array.from(
+        { length: count },
+        (_, i) => `${prefix}${String(i + 1).padStart(2, '0')}`
+    );
+
+/** Every tag in the OpenType feature tag registry, including `ss01`–`ss20` and `cv01`–`cv99`. */
+export const REGISTERED_FEATURE_TAGS: ReadonlySet<string> = new Set([
+    ...'aalt abvf abvm abvs afrc akhn blwf blwm blws c2pc c2sc calt case ccmp cfar chws cjct clig cpct cpsp cswh curs dist dlig dnom dtls expt falt fin2 fin3 fina flac frac fwid half haln halt hist hkna hlig hngl hojo hwid init isol ital jalt jp04 jp78 jp83 jp90 kern lfbd liga ljmo lnum locl ltra ltrm mark med2 medi mgrk mkmk mset nalt nlck nukt numr onum opbd ordn ornm palt pcap pkna pnum pref pres pstf psts pwid qwid rand rclt rkrf rlig rphf rtbd rtla rtlm ruby rvrn salt sinf size smcp smpl ssty stch subs sups swsh titl tjmo tnam tnum trad twid unic valt vatu vchw vert vhal vjmo vkna vkrn vpal vrt2 vrtr zero'.split(
+        ' '
+    ),
+    ...numberedTags('ss', 20),
+    ...numberedTags('cv', 99)
+]);
+
+/** Registered tags the specification marks as deprecated. */
+export const DEPRECATED_FEATURES: ReadonlySet<string> = new Set(['hngl']);
+
+const FEATURE_TAG_PATTERN = /^[A-Za-z0-9_.-]+$/;
+
+export type FeatureTagCheck = {
+    level: 'error' | 'warning' | 'ok';
+    message: string;
+    /** A registered tag one edit away, offered for a likely typo. */
+    suggestion?: string;
+};
+
+/** Short feature name, such as “Standard Ligatures”, or an empty string. */
+export function getFeatureName(featureTag: string): string {
+    return getFeatureDescription(featureTag).split(' - ')[0] || '';
+}
+
+function isOneEditApart(a: string, b: string): boolean {
+    if (a === b || Math.abs(a.length - b.length) > 1) {
+        return false;
+    }
+    if (a.length === b.length) {
+        const diffs: number[] = [];
+        for (let i = 0; i < a.length; i++) {
+            if (a[i] !== b[i]) diffs.push(i);
+        }
+        if (diffs.length === 1) return true;
+        const [i, j] = diffs;
+        return (
+            diffs.length === 2 && j === i + 1 && a[i] === b[j] && a[j] === b[i]
+        );
+    }
+    const [shorter, longer] = a.length < b.length ? [a, b] : [b, a];
+    for (let i = 0; i < longer.length; i++) {
+        if (longer.slice(0, i) + longer.slice(i + 1) === shorter) return true;
+    }
+    return false;
+}
+
+/**
+ * Check a feature tag typed by the user. A tag that the font already uses is
+ * fine: a font may have several features with the same tag.
+ */
+export function validateFeatureTag(tag: string): FeatureTagCheck {
+    if (tag.length === 0) {
+        return { level: 'error', message: 'Enter a feature tag.' };
+    }
+    if (tag.length > 4) {
+        return {
+            level: 'error',
+            message: 'Feature tags have at most 4 characters.'
+        };
+    }
+    if (!FEATURE_TAG_PATTERN.test(tag)) {
+        return {
+            level: 'error',
+            message:
+                'Feature tags can contain only letters, digits, “_”, “.” and “-”.'
+        };
+    }
+    if (DEPRECATED_FEATURES.has(tag)) {
+        return {
+            level: 'warning',
+            message: `“${tag}” is deprecated in the OpenType specification.`
+        };
+    }
+    if (REGISTERED_FEATURE_TAGS.has(tag)) {
+        return {
+            level: 'ok',
+            message: getFeatureName(tag) || 'Registered feature'
+        };
+    }
+    // The registry reserves lowercase tags. A tag with an uppercase letter is
+    // a custom (private) feature.
+    if (/[A-Z]/.test(tag)) {
+        return { level: 'ok', message: 'Custom feature' };
+    }
+    const close = [...REGISTERED_FEATURE_TAGS].filter((registered) =>
+        isOneEditApart(tag, registered)
+    );
+    return {
+        level: 'warning',
+        message: `“${tag}” isn’t a registered feature.`,
+        ...(close.length === 1 ? { suggestion: close[0] } : {})
+    };
+}

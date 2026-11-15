@@ -4059,3 +4059,656 @@ describe('FontInfo feature code compilation scheduling', () => {
         ).toHaveLength(1);
     });
 });
+
+describe('FontInfo features: add, delete and rename', () => {
+    const GENERATOR_STAMP = {
+        'com.counterpunch.generator': {
+            generator: 'space.counterpunch.test',
+            capability: 'test',
+            block: 'test'
+        }
+    };
+
+    let modules;
+
+    function loadFeaturesPanel(model) {
+        jest.resetModules();
+        const originalReadyState = document.readyState;
+        const originalAce = window.ace;
+        Object.defineProperty(document, 'readyState', {
+            configurable: true,
+            value: 'loading'
+        });
+        window.ace = {
+            require: jest.fn((moduleName) => {
+                if (moduleName === 'ace/lib/oop') {
+                    return { inherits: jest.fn() };
+                }
+                if (moduleName === 'ace/mode/text') {
+                    return { Mode: function Mode() {} };
+                }
+                return {
+                    TextHighlightRules: function TextHighlightRules() {}
+                };
+            }),
+            define: jest.fn()
+        };
+        jest.isolateModules(() => {
+            modules = {
+                fontInfoManager: require('../js/font-info').fontInfoManager,
+                PatchSyncEngine: require('../js/patch-sync-engine')
+                    .PatchSyncEngine,
+                Font: require('../js/babelfont-model').Font,
+                fromYType: require('../js/change-bridge-ydoc').fromYType
+            };
+        });
+        Object.defineProperty(document, 'readyState', {
+            configurable: true,
+            value: originalReadyState
+        });
+        window.ace = originalAce;
+
+        document.body.innerHTML = `
+            <div id="view-fontinfo" class="view view-fontinfo focused">
+                <div class="view-title-bar"><div class="view-title-right">
+                    <div id="fontinfo-search-control"><input id="fontinfo-search-input" /></div>
+                </div></div>
+                <div class="view-content"><div id="browser-compat"></div></div>
+            </div>`;
+        window.currentFontModel = model;
+        const manager = modules.fontInfoManager;
+        manager.init();
+        manager.switchTab('features');
+        let editorValue = '';
+        manager.featuresEditor = {
+            isFocused: jest.fn(() => false),
+            setValue: jest.fn((value) => {
+                editorValue = value;
+            }),
+            getValue: jest.fn(() => editorValue),
+            focus: jest.fn(),
+            session: { setUseWrapMode: jest.fn(), removeMarker: jest.fn() }
+        };
+        manager.loadAllLists();
+        return manager;
+    }
+
+    function plainModel(features, extra = {}) {
+        return {
+            features: { prefixes: {}, classes: {}, features: [], ...features },
+            analyzeFeatureTables: jest.fn(() => ({
+                hasGSUB: true,
+                hasGPOS: false
+            })),
+            analyzePrefix: jest.fn(() => ({ hasGSUB: false, hasGPOS: false })),
+            ...extra
+        };
+    }
+
+    function mockBridge() {
+        window.patchSyncEngine = {
+            beginTransaction: jest.fn(),
+            endTransaction: jest.fn(),
+            applySyntheticChangeSet: jest.fn()
+        };
+        return window.patchSyncEngine;
+    }
+
+    async function settle() {
+        for (let i = 0; i < 5; i += 1) {
+            await Promise.resolve();
+        }
+    }
+
+    function row(listId, text) {
+        return [
+            ...document.querySelectorAll(`#${listId} .feature-list-item`)
+        ].find((item) => item.textContent.includes(text));
+    }
+
+    function sectionButton(action, type) {
+        return document.querySelector(
+            `[data-features-action="${action}"][data-features-type="${type}"]`
+        );
+    }
+
+    function typeInto(input, value) {
+        input.value = value;
+        input.dispatchEvent(new Event('input'));
+    }
+
+    function pressKey(element, key) {
+        element.dispatchEvent(
+            new KeyboardEvent('keydown', { key, bubbles: true })
+        );
+    }
+
+    beforeEach(() => {
+        global.ResizeObserver =
+            global.ResizeObserver ||
+            class ResizeObserver {
+                observe() {}
+                disconnect() {}
+            };
+        Element.prototype.scrollIntoView = jest.fn();
+        // Earlier tests can leave open menus and modal Escape bindings, which
+        // take Escape first, and a font manager.
+        for (const instance of global.__fontInfoTippyInstances || []) {
+            instance.state.isVisible = false;
+        }
+        if (window.__modalEscapeRuntime) {
+            window.__modalEscapeRuntime.stack = [];
+        }
+        window.fontManager = {
+            currentFont: { markDirty: jest.fn() },
+            isReady: jest.fn(() => false),
+            setEditingCompileContext: jest.fn()
+        };
+    });
+
+    afterEach(() => {
+        document.body.innerHTML = '';
+        delete window.fontManager;
+        delete window.currentFontModel;
+        delete window.patchSyncEngine;
+        delete window.changeBridge;
+        delete window.fontInfoManager;
+    });
+
+    test.each([
+        ['prefix', 'Lookups'],
+        ['class', 'vowels']
+    ])(
+        '%s code edits record the key the panel undo scope uses',
+        (type, key) => {
+            const bridge = mockBridge();
+            const manager = loadFeaturesPanel(
+                plainModel({
+                    prefixes: { Lookups: { code: 'lookup a {} a;' } },
+                    classes: { vowels: { code: 'a e' } }
+                })
+            );
+            manager.selectItem(type, key);
+            manager.featuresEditor.getValue = jest.fn(() => 'edited');
+
+            manager.commitFeatureCodeChanges();
+
+            const scopeKey = manager.getHistoryScopeTarget().key;
+            expect(scopeKey).toBe(`${type}:${key}`);
+            expect(bridge.beginTransaction).toHaveBeenCalledWith(
+                'Edit feature code',
+                { type, key: scopeKey, label: key },
+                expect.anything()
+            );
+        }
+    );
+
+    test('the add button adds a uniquely named class in one step and opens its name for editing', () => {
+        const bridge = mockBridge();
+        const model = plainModel({ classes: { class1: { code: 'a' } } });
+        const manager = loadFeaturesPanel(model);
+
+        sectionButton('add', 'class').click();
+
+        expect(model.features.classes.class2).toEqual({
+            code: '',
+            automatic: false
+        });
+        expect(bridge.beginTransaction).toHaveBeenCalledWith(
+            'Add class',
+            { type: 'class', key: 'class:class2', label: 'class2' },
+            { compileChangeSource: 'feature-code', compileEditType: 'feature' }
+        );
+        expect(bridge.endTransaction).toHaveBeenCalledTimes(1);
+        const input = document.querySelector('.feature-rename-input');
+        expect(input.value).toBe('class2');
+
+        typeInto(input, 'caps');
+        pressKey(input, 'Enter');
+
+        expect(Object.keys(model.features.classes)).toEqual(['class1', 'caps']);
+        expect(bridge.beginTransaction).toHaveBeenLastCalledWith(
+            'Rename class',
+            { type: 'class', key: 'class:caps', label: 'caps' },
+            expect.anything()
+        );
+        expect(manager.selectedItem).toEqual({ type: 'class', key: 'caps' });
+        expect(sectionButton('remove', 'class').disabled).toBe(false);
+        expect(sectionButton('remove', 'prefix').disabled).toBe(true);
+    });
+
+    test('inline rename shows name errors and Escape keeps the old name', () => {
+        const bridge = mockBridge();
+        const model = plainModel({
+            classes: { lc: { code: 'a' }, uc: { code: 'A' } }
+        });
+        loadFeaturesPanel(model);
+
+        row('classes-list', 'lc').dispatchEvent(
+            new MouseEvent('dblclick', { bubbles: true })
+        );
+        const input = document.querySelector('.feature-rename-input');
+        typeInto(input, 'uc');
+        expect(
+            document.querySelector('.feature-rename-error').textContent
+        ).toBe('A class named “uc” already exists.');
+        pressKey(input, 'Enter');
+        expect(document.querySelector('.feature-rename-input')).toBe(input);
+
+        typeInto(input, '@lc');
+        expect(
+            document.querySelector('.feature-rename-error').textContent
+        ).toBe('Leave out the “@”. Counterpunch adds it.');
+        pressKey(input, 'Escape');
+
+        expect(document.querySelector('.feature-rename-input')).toBeNull();
+        expect(document.querySelector('.feature-rename-error')).toBeNull();
+        expect(Object.keys(model.features.classes)).toEqual(['lc', 'uc']);
+        expect(bridge.beginTransaction).not.toHaveBeenCalled();
+    });
+
+    test('renaming a class can update its references in the same step', async () => {
+        const bridge = mockBridge();
+        const model = plainModel({
+            classes: { lc: { code: 'a b' }, all: { code: '@lc @uc' } },
+            features: [['smcp', { code: 'sub @lc by @lc.sc; # @lc' }]]
+        });
+        const manager = loadFeaturesPanel(model);
+
+        manager.startRenameItem('class', 'lc');
+        const input = document.querySelector('.feature-rename-input');
+        typeInto(input, 'lower');
+        pressKey(input, 'Enter');
+        await settle();
+
+        expect(document.querySelector('.confirm-dialog p').textContent).toBe(
+            'Update 2 references to “@lc” in 2 items?'
+        );
+        document.querySelector('[data-choice="update"]').click();
+        await settle();
+
+        expect(model.features.classes.lower).toEqual({ code: 'a b' });
+        expect(model.features.classes.lc).toBeUndefined();
+        expect(model.features.classes.all.code).toBe('@lower @uc');
+        expect(model.features.features[0][1].code).toBe(
+            'sub @lower by @lc.sc; # @lc'
+        );
+        expect(bridge.beginTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    test('deleting a feature asks first and selects its neighbor', async () => {
+        const bridge = mockBridge();
+        const model = plainModel({
+            features: [
+                ['liga', { code: 'a' }],
+                ['kern', { code: 'b' }],
+                ['calt', { code: 'c' }]
+            ]
+        });
+        const manager = loadFeaturesPanel(model);
+        manager.selectItem('feature', 1);
+
+        manager.setDeleteConfirmationHandler(false);
+        sectionButton('remove', 'feature').click();
+        await settle();
+        expect(model.features.features).toHaveLength(3);
+
+        manager.setDeleteConfirmationHandler(true);
+        sectionButton('remove', 'feature').click();
+        await settle();
+
+        expect(model.features.features.map(([tag]) => tag)).toEqual([
+            'liga',
+            'calt'
+        ]);
+        expect(manager.selectedItem).toEqual({ type: 'feature', key: 1 });
+        expect(manager.selectedFeatureTag).toBe('calt');
+        // Recorded under the feature now selected, so undo here reaches it.
+        expect(bridge.beginTransaction).toHaveBeenCalledWith(
+            'Delete feature',
+            { type: 'feature', key: 'feature:calt:1', label: 'calt' },
+            expect.anything()
+        );
+    });
+
+    test('deleting a generated feature that Counterpunch manages offers to turn automatic off', async () => {
+        const bridge = mockBridge();
+        const model = plainModel(
+            {
+                features: [
+                    [
+                        'ccmp',
+                        {
+                            code: 'sub a by a;',
+                            automatic: true,
+                            format_specific: GENERATOR_STAMP
+                        }
+                    ]
+                ]
+            },
+            { counterpunchManagesFeatures: true }
+        );
+        const manager = loadFeaturesPanel(model);
+
+        const done = manager.deleteFeatureItem('feature', 0);
+        await settle();
+        expect(document.querySelector('.confirm-dialog h3').textContent).toBe(
+            'Delete Generated Code'
+        );
+        document.querySelector('[data-choice="turn-off"]').click();
+        await done;
+
+        expect(model.features.features).toHaveLength(1);
+        expect(bridge.applySyntheticChangeSet).toHaveBeenCalledWith(
+            'Turn off automatic generation',
+            [
+                {
+                    op: 'set',
+                    path: ['features', 'features', 0, 1, 'automatic'],
+                    oldValue: true,
+                    newValue: false
+                }
+            ],
+            expect.anything()
+        );
+    });
+
+    test('adding a feature checks the tag and inserts it after the selection', async () => {
+        mockBridge();
+        const model = plainModel({
+            features: [
+                ['kern', { code: 'a' }],
+                ['calt', { code: 'b' }]
+            ]
+        });
+        const manager = loadFeaturesPanel(model);
+        manager.selectItem('feature', 0);
+
+        sectionButton('add', 'feature').click();
+        const input = document.querySelector('#feature-tag-input');
+        const status = document.querySelector('.feature-tag-status');
+        const confirm = document.querySelector('[data-role="confirm"]');
+
+        expect(confirm.disabled).toBe(true);
+        typeInto(input, 'ligatures');
+        expect(status.dataset.level).toBe('error');
+        expect(confirm.disabled).toBe(true);
+
+        typeInto(input, 'ligs');
+        expect(status.dataset.level).toBe('warning');
+        expect(confirm.textContent).toBe('Add anyway');
+        document.querySelector('.feature-tag-suggestion').click();
+        expect(input.value).toBe('liga');
+        expect(status.textContent).toBe('Standard Ligatures');
+        expect(confirm.textContent).toBe('Add');
+
+        // A tag the font already uses is fine.
+        typeInto(input, 'kern');
+        expect(status.dataset.level).toBe('ok');
+        confirm.click();
+        await settle();
+
+        expect(model.features.features).toEqual([
+            ['kern', { code: 'a' }],
+            ['kern', { code: '', automatic: false }],
+            ['calt', { code: 'b' }]
+        ]);
+        expect(manager.selectedItem).toEqual({ type: 'feature', key: 1 });
+        expect(document.querySelector('.feature-tag-dialog')).toBeNull();
+    });
+
+    test('renaming a feature changes only its tag', async () => {
+        const bridge = mockBridge();
+        const model = plainModel({
+            features: [['liga', { code: 'sub f i by fi;' }]]
+        });
+        const manager = loadFeaturesPanel(model);
+
+        const done = manager.renameFeature(0);
+        const input = document.querySelector('#feature-tag-input');
+        expect(input.value).toBe('liga');
+        typeInto(input, 'dlig');
+        pressKey(input, 'Enter');
+        await done;
+
+        expect(model.features.features).toEqual([
+            ['dlig', { code: 'sub f i by fi;' }]
+        ]);
+        expect(bridge.beginTransaction).toHaveBeenCalledWith(
+            'Rename feature',
+            { type: 'feature', key: 'feature:dlig:1', label: 'dlig' },
+            expect.anything()
+        );
+        expect(manager.selectedFeatureTag).toBe('dlig');
+    });
+
+    test('flags invalid and unregistered tags but not duplicate ones', () => {
+        mockBridge();
+        const manager = loadFeaturesPanel(
+            plainModel({
+                features: [
+                    ['ligs', { code: '' }],
+                    ['kern', { code: '' }],
+                    ['kern', { code: '' }],
+                    ['ABCD', { code: '' }]
+                ]
+            })
+        );
+
+        const ligs = row('features-list', 'ligs');
+        expect(ligs.querySelector('.feature-name').textContent).toBe(
+            'Unregistered tag'
+        );
+        expect(
+            ligs.querySelector('.feature-tag-issue-icon.is-warning').title
+        ).toBe('“ligs” isn’t a registered feature.');
+        expect(
+            document.querySelectorAll(
+                '#features-list .feature-list-item .feature-tag-issue-icon'
+            )
+        ).toHaveLength(1);
+        expect(
+            row('features-list', 'ABCD').querySelector('.feature-name')
+                .textContent
+        ).toBe('Custom feature');
+
+        manager.selectItem('feature', 0);
+        const issue = document.getElementById('feature-tag-issue');
+        expect(issue.hidden).toBe(false);
+        expect(issue.textContent).toContain(
+            '“ligs” isn’t a registered feature.'
+        );
+        manager.selectItem('feature', 1);
+        expect(issue.hidden).toBe(true);
+    });
+
+    test('the automatic checkbox appears only for generated code', () => {
+        const bridge = mockBridge();
+        const manager = loadFeaturesPanel(
+            plainModel({
+                features: [
+                    ['liga', { code: 'a', automatic: true }],
+                    [
+                        'ccmp',
+                        {
+                            code: 'b',
+                            automatic: true,
+                            format_specific: GENERATOR_STAMP
+                        }
+                    ],
+                    ['kern', { code: 'c' }]
+                ]
+            })
+        );
+        const label = document.getElementById('feature-automatic-label');
+        const notice = document.getElementById('feature-automatic-notice');
+        const keep = document.getElementById('feature-keep-code-button');
+
+        manager.selectItem('feature', 0);
+        expect(label.hidden).toBe(true);
+        expect(notice.hidden).toBe(false);
+        expect(notice.textContent).toContain(
+            'Marked automatic in the source file.'
+        );
+        expect(keep.hidden).toBe(false);
+
+        manager.selectItem('feature', 1);
+        expect(label.hidden).toBe(false);
+        expect(notice.hidden).toBe(true);
+
+        manager.selectItem('feature', 2);
+        expect(label.hidden).toBe(true);
+        expect(notice.hidden).toBe(true);
+
+        manager.selectItem('feature', 0);
+        keep.click();
+        expect(bridge.applySyntheticChangeSet).toHaveBeenCalledWith(
+            'Keep my code',
+            [
+                {
+                    op: 'set',
+                    path: ['features', 'features', 0, 1, 'automatic'],
+                    oldValue: true,
+                    newValue: false
+                }
+            ],
+            expect.anything()
+        );
+    });
+
+    test('the code editor is read-only with nothing selected or for automatic code', () => {
+        mockBridge();
+        const manager = loadFeaturesPanel(
+            plainModel({
+                features: [
+                    ['liga', { code: 'a', automatic: true }],
+                    [
+                        'ccmp',
+                        {
+                            code: 'b',
+                            automatic: true,
+                            format_specific: GENERATOR_STAMP
+                        }
+                    ],
+                    ['kern', { code: 'c' }]
+                ]
+            })
+        );
+        const setReadOnly = jest.fn();
+        manager.featuresEditor.setReadOnly = setReadOnly;
+        const editorElement = document.getElementById('features-editor');
+        const readOnly = () => setReadOnly.mock.calls.at(-1)[0];
+
+        manager.clearEditor();
+        expect(readOnly()).toBe(true);
+        expect(editorElement.classList.contains('is-read-only')).toBe(true);
+
+        manager.selectItem('feature', 2);
+        expect(readOnly()).toBe(false);
+        expect(editorElement.classList.contains('is-read-only')).toBe(false);
+
+        manager.selectItem('feature', 0);
+        expect(readOnly()).toBe(true);
+        manager.selectItem('feature', 1);
+        expect(readOnly()).toBe(true);
+
+        // “Keep my code” clears the flag, which makes the code editable.
+        manager.selectItem('feature', 0);
+        document.getElementById('feature-keep-code-button').click();
+        expect(readOnly()).toBe(false);
+    });
+
+    test('the context menu offers “Mark as automatic for Glyphs” only for plain code', () => {
+        const bridge = mockBridge();
+        loadFeaturesPanel(
+            plainModel({
+                features: [
+                    ['liga', { code: 'a' }],
+                    ['kern', { code: 'b', automatic: true }]
+                ]
+            })
+        );
+        const menu = global.__fontInfoTippyInstances.at(-1);
+        const openMenu = (text) =>
+            row('features-list', text).dispatchEvent(
+                new MouseEvent('contextmenu', { bubbles: true })
+            );
+
+        openMenu('kern');
+        expect(
+            menu.popper.querySelector('[data-action="mark-automatic"]')
+        ).toBeNull();
+
+        openMenu('liga');
+        const actions = [
+            ...menu.popper.querySelectorAll('.plugin-menu-item')
+        ].map((item) => item.dataset.action);
+        expect(actions).toEqual([
+            'rename',
+            'duplicate',
+            'delete',
+            'mark-automatic'
+        ]);
+        menu.popper.querySelector('[data-action="mark-automatic"]').click();
+        expect(bridge.applySyntheticChangeSet).toHaveBeenCalledWith(
+            'Mark as automatic for Glyphs',
+            [expect.objectContaining({ newValue: true })],
+            expect.anything()
+        );
+    });
+
+    test('structural changes reach the sync document as granular operations', async () => {
+        const json = {
+            upm: 1000,
+            names: { familyName: 'StructureTest' },
+            axes: [],
+            instances: [],
+            masters: [{ id: 'm1', name: { dflt: 'Regular' }, location: {} }],
+            glyphs: [],
+            features: {
+                classes: { vowels: { code: 'a e' } },
+                prefixes: {},
+                features: [['liga', { code: 'sub f i by fi;' }]]
+            }
+        };
+        mockBridge();
+        const manager = loadFeaturesPanel(plainModel({}));
+        const bridge = new modules.PatchSyncEngine('features-structure');
+        bridge.initFromJson(json);
+        window.patchSyncEngine = bridge;
+        window.currentFontModel = modules.Font.fromData(json);
+        manager.loadAllLists();
+        manager.setDeleteConfirmationHandler(true);
+        const syncedFeatures = () =>
+            modules.fromYType(bridge.fontMap.get('features'));
+
+        await manager.renameNamedItem('class', 'vowels', 'vow');
+        manager.duplicateFeatureItem('feature', 0);
+        await manager.deleteFeatureItem('feature', 0);
+
+        expect(syncedFeatures()).toEqual(
+            expect.objectContaining({
+                classes: { vow: { code: 'a e' } },
+                features: [
+                    ['liga', { code: 'sub f i by fi;', automatic: false }]
+                ]
+            })
+        );
+        const paths = bridge
+            .getChangeLog()
+            .map(
+                (entry) =>
+                    `${entry.transactionLabel}: ${entry.op} ${entry.path}`
+            );
+        expect(paths).toEqual(
+            expect.arrayContaining([
+                'Rename class: remove features.classes.vowels',
+                'Rename class: set features.classes.vow'
+            ])
+        );
+        expect(
+            paths.filter((path) => path.startsWith('Rename class'))
+        ).toHaveLength(2);
+        bridge.destroy();
+    });
+});
