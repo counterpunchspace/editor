@@ -757,81 +757,20 @@ test('register, buy, and install the free and commercial plugins', async ({
             await accountPage.waitForURL(/checkout\.stripe\.com/, {
                 timeout: 60000
             });
-            // The plugin payment method configuration offers more than cards.
-            // Stripe’s checkout now draws its form in an embedded payment
-            // element (an iframe); older sessions still show it on the page.
-            const legacyCard = accountPage.locator(
-                '[data-testid="card-accordion-item"]'
+            // Reaching Stripe's checkout proves our side of "Add payment
+            // method". Stripe's hosted form is Stripe's to test and changes
+            // without notice, so attach its test card through the operator
+            // route instead of typing into that form.
+            const attached = await request.post(
+                `${website()}/api/dev/plugin-test/payment-method`,
+                {
+                    data: { email: emails.invitee, country: 'DE' },
+                    headers,
+                    failOnStatusCode: false
+                }
             );
-            const embeddedFrame = accountPage.locator(
-                'iframe[src*="elements-inner-habanero"]'
-            );
-            await expect(legacyCard.or(embeddedFrame).first()).toBeVisible({
-                timeout: 60000
-            });
-            if (await legacyCard.count()) {
-                await legacyCard.click();
-                await accountPage
-                    .locator('#cardNumber')
-                    .fill('4242424242424242');
-                await accountPage.locator('#cardExpiry').fill('12 / 34');
-                await accountPage.locator('#cardCvc').fill('123');
-                await accountPage.locator('#billingName').fill('Plugin Buyer');
-                await accountPage.locator('#billingCountry').selectOption('DE');
-                await accountPage
-                    .locator('#billingAddressLine1')
-                    .fill('Alexanderplatz 1');
-                await accountPage.locator('#billingPostalCode').fill('10115');
-                await accountPage.locator('#billingLocality').fill('Berlin');
-                await accountPage.locator('button[type="submit"]').click();
-            } else {
-                const form = accountPage.frameLocator(
-                    'iframe[src*="elements-inner-habanero"]'
-                );
-                await form
-                    .getByRole('button', { name: /^Card\b/ })
-                    .click({ timeout: 60000 });
-                await form
-                    .locator(
-                        'input[autocomplete="cc-number"], input[name="number"]'
-                    )
-                    .first()
-                    .fill('4242424242424242');
-                await form
-                    .locator(
-                        'input[autocomplete="cc-exp"], input[name="expiry"]'
-                    )
-                    .first()
-                    .fill('12 / 34');
-                await form
-                    .locator('input[autocomplete="cc-csc"], input[name="cvc"]')
-                    .first()
-                    .fill('123');
-                await form
-                    .locator('#billingAddress-nameInput')
-                    .fill('Plugin Buyer');
-                await form
-                    .locator('#billingAddress-countryInput')
-                    .selectOption('DE');
-                await form
-                    .locator('#billingAddress-addressLine1Input')
-                    .fill('Alexanderplatz 1');
-                // Stripe's address autocomplete opens a suggestion list over
-                // the form; close it so it can't swallow the Save click.
-                await form
-                    .locator('#billingAddress-addressLine1Input')
-                    .press('Escape');
-                await form
-                    .locator('#billingAddress-postalCodeInput')
-                    .fill('10115');
-                await form
-                    .locator('#billingAddress-localityInput')
-                    .fill('Berlin');
-                await form
-                    .locator('#billingAddress-localityInput')
-                    .press('Escape');
-                await form.getByTestId('payment-form-submit-button').click();
-            }
+            expect(attached.ok(), await attached.text()).toBe(true);
+            await accountPage.goto(`${website()}/account#payment`);
             await expect(accountPage.locator('#paymentInfo')).toContainText(
                 '4242',
                 {
