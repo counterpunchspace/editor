@@ -3914,7 +3914,7 @@ document.addEventListener('DOMContentLoaded', () => {
             ) {
                 showFontUnavailable(
                     'This font has unsaved changes in another window',
-                    'Save it there first, then use Jump to in the launcher again.'
+                    'Save it there first, then click it in the launcher again.'
                 );
                 return;
             }

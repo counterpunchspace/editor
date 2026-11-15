@@ -78,10 +78,7 @@ export function openFontWindow(
 ): boolean {
     const name = fontWindowName(font.key);
     const state = documentOpenState(font.key);
-    if (state === 'linked') {
-        focusWindow(name);
-        return true;
-    }
+    if (state && focusWindow(name)) return true;
     // Open in a window we can't reach (restored by the browser, or opened by
     // hand): open it again from here, where it is linked; the other window
     // hands over and closes.

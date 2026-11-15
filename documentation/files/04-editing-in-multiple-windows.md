@@ -2,7 +2,7 @@
 
 Every font opens in its own window, linked to the launcher and to the other font windows. Opening a font that is already open brings its window forward instead. Scripts in one window reach the fonts of the others with `OtherFonts()`; see [Writing general scripts](../python/04-writing-general-scripts.md).
 
-When the browser reopens font windows on its own after a restart, those windows aren't linked. The launcher still shows them as open; **Jump to** moves the font into a linked window.
+When the browser reopens font windows on its own after a restart, those windows aren't linked. The launcher still shows them as open; clicking one moves the font into a linked window.
 
 If Counterpunch is installed as an app and you open a font from your file manager while it is running, every Counterpunch window asks you to confirm opening it. Browsers only let a page open a window after a click.
 

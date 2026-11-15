@@ -563,4 +563,28 @@ describe('only windows of the same build link', () => {
             registry.documentOpenState('memory:///user/Reloaded.glyphs')
         ).toBe('unlinked');
     });
+
+    test('a window of another version is brought forward, not reloaded', () => {
+        const name = 'cp-font:memory:///user/Focus.glyphs';
+        const win = fakeWindow(name, window.counterpunchWindows.build);
+        win.location = { pathname: '/index.html', search: '?file=x' };
+        window.counterpunchWindows.register(win);
+        win.counterpunchWindows = {
+            ...win.counterpunchWindows,
+            build: 'v9.9.9+new'
+        };
+        expect(registry.documentOpenState('memory:///user/Focus.glyphs')).toBe(
+            'unlinked'
+        );
+        const open = jest.spyOn(window, 'open').mockReturnValue(null);
+        try {
+            expect(registry.focusWindow(name)).toBe(true);
+            expect(open).toHaveBeenCalledWith(
+                expect.stringMatching(/^\/index\.html\?file=x#cp-focus-\d+$/),
+                name
+            );
+        } finally {
+            open.mockRestore();
+        }
+    });
 });

@@ -70,6 +70,9 @@ const isCounterpunchWindowName = (name: string) =>
 
 const peers = new Map<string, Window>();
 const unlinked = new Map<string, WindowAnnouncement>();
+// Windows of another build that we still hold a reference to. No code calls
+// into them, but focusWindow can still bring them forward.
+const setAsideWindows = new Map<string, Window>();
 const listeners = new Set<() => void>();
 const channel = new BroadcastChannel(CHANNEL_NAME);
 
@@ -141,6 +144,7 @@ function sameBuild(win: Window): boolean {
 function setAside(name: string, win: Window): void {
     const theirs = apiOf(win);
     if (!theirs) return;
+    setAsideWindows.set(name, win);
     let title = '';
     try {
         title = win.document.title;
@@ -169,6 +173,9 @@ function prune(): void {
             changed = true;
         }
     }
+    for (const [name, win] of setAsideWindows) {
+        if (!isAlive(win, name)) setAsideWindows.delete(name);
+    }
     if (changed) emitChange();
 }
 
@@ -179,6 +186,7 @@ function add(name: string, win: Window): boolean {
         return false;
     }
     unlinked.delete(name);
+    setAsideWindows.delete(name);
     if (peers.get(name) === win) return false;
     peers.set(name, win);
     return true;
@@ -257,6 +265,14 @@ channel.onmessage = ({ data }) => {
     if (isSameWindow(win, data)) {
         // A linked window reloaded: hand it our references again.
         if (data.type === 'hello') apiOf(win)?.register(window);
+        emitChange();
+        return;
+    }
+    const aside = setAsideWindows.get(data.name);
+    if (data.build === api.build && isSameWindow(aside, data)) {
+        // A window of another build reloaded into ours: link it again.
+        adopt(aside ?? null);
+        if (data.type === 'hello') apiOf(aside)?.register(window);
         emitChange();
         return;
     }
@@ -352,10 +368,11 @@ let focusCounter = 0;
  * Chrome ignores `win.focus()` for other tabs and windows, but switches to a
  * window that `window.open` navigates. Changing only the fragment of its
  * current URL is a same-document navigation: no reload, no lost state.
+ * Returns false when this window holds no reference to it.
  */
 export function focusWindow(
     name: string,
-    win: Window | undefined = peers.get(name)
+    win: Window | undefined = peers.get(name) ?? setAsideWindows.get(name)
 ): boolean {
     if (!win || !isAlive(win, name)) return false;
     let url: string;

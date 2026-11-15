@@ -31,8 +31,6 @@ import { fontFormatKind, fontFormatOf } from '../font-windows/font-formats';
 import { isAbortError, supportsFileAccess } from '../font-windows/file-access';
 import {
     documentOpenState,
-    fontWindowName,
-    focusWindow,
     fontWindows,
     initWindowRegistry,
     onWindowsChange,
@@ -369,13 +367,7 @@ function whereHtml(chain: string[] | undefined): string {
 function rowHtml(row: Row): string {
     const state = documentOpenState(row.key);
     let meta = escapeHtml(timeAgo(row.lastOpened));
-    if (state) {
-        const title =
-            state === 'unlinked'
-                ? ' title="Moves the font into a window linked with this launcher"'
-                : '';
-        meta = `<span class="launcher-open-badge">Open</span><button type="button" class="dialog-button" data-jump="${escapeHtml(row.key)}"${title}>${icon('jump_to_element')}Jump to</button>`;
-    }
+    if (state) meta = `<span class="launcher-open-badge">Open</span>`;
     let action = '';
     if (row.action === 'forget' && !state) {
         action = `<button type="button" class="launcher-icon-button remove" data-remove="${escapeHtml(row.key)}" aria-label="Remove from list" title="Remove from list">${icon('close')}</button>`;
@@ -712,14 +704,8 @@ $('launcher-recents').addEventListener('click', async (event) => {
         if (row) confirmDelete(row);
         return;
     }
-    const jump = target.closest<HTMLElement>('[data-jump]');
-    const row = jump ?? target.closest<HTMLElement>('[data-open]');
-    const key = jump?.dataset.jump ?? row?.dataset.open;
+    const key = target.closest<HTMLElement>('[data-open]')?.dataset.open;
     if (!key) return;
-    if (documentOpenState(key) === 'linked') {
-        focusWindow(fontWindowName(key));
-        return;
-    }
     const font = rowsByKey.get(key);
     if (font) openFontWindow(font, { sparse: cloudLoadOutlinesLater });
 });

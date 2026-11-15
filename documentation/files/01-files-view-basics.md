@@ -8,7 +8,7 @@ Fonts live in one of three places:
 - **Cloud**: a hosted font you can edit with others, when your account includes cloud fonts. See [Cloud fonts](05-cloud-fonts.md).
 - **Browser storage**: in-browser storage for quick experiments. It stays in this browser only.
 
-The launcher lists recent fonts from each place. A font that is already open shows **Open** and a **Jump to** button that brings its window forward instead of opening it twice. **Unsaved** lists new fonts that were never saved; they are gone when you close their window without saving.
+The launcher lists recent fonts from each place. A font that is already open shows **Open**. Click it to bring its window forward instead of opening it twice. **Unsaved** lists new fonts that were never saved; they are gone when you close their window without saving.
 
 **New font** opens an empty font in a new window. **Open sample font** opens Fustat from browser storage. Drop a font file or folder anywhere on the launcher to open it straight from your disk; nothing is uploaded.
 
