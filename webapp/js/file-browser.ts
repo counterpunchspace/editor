@@ -1,6 +1,10 @@
 // File Browser for in-browser memfs
 // Shows the Pyodide file system in view 3
 
+import {
+    isPartiallyLoadedFont,
+    PARTIAL_FONT_SAVE_AS_MESSAGE
+} from './partial-font';
 import { campaignQuery } from './campaign-tags';
 import tippy, { Instance as TippyInstance } from 'tippy.js';
 import 'tippy.js/dist/tippy.css';
@@ -2030,6 +2034,9 @@ export async function saveCurrentFontAs(
     const currentFont = window.fontManager?.currentFont;
     if (!currentFont) {
         return;
+    }
+    if (isPartiallyLoadedFont()) {
+        throw new Error(PARTIAL_FONT_SAVE_AS_MESSAGE);
     }
     const previousGlyphsVersion = currentFont.glyphsSaveVersion;
     if (options.glyphsVersion) {

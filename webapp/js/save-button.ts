@@ -3,6 +3,7 @@
  * Handles the save button state and save functionality
  */
 
+import { isPartiallyLoadedFont } from './partial-font';
 import {
     beginLoadingCursor,
     endLoadingCursor,
@@ -259,7 +260,12 @@ class SaveButton {
     }
 
     canSaveAs(): boolean {
-        return this.saveEnabled && !this.isSaving && this.hasFontOpen();
+        return (
+            this.saveEnabled &&
+            !this.isSaving &&
+            this.hasFontOpen() &&
+            !isPartiallyLoadedFont()
+        );
     }
 
     /**

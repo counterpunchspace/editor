@@ -46,7 +46,17 @@ import {
     type CloudState,
     type SaveDestination
 } from './save-destination';
-import { escapeHtml, icon, openDialog, reportError } from './dialogs';
+import {
+    escapeHtml,
+    icon,
+    openDialog,
+    reportError,
+    showNotice
+} from './dialogs';
+import {
+    isPartiallyLoadedFont,
+    PARTIAL_FONT_SAVE_AS_MESSAGE
+} from '../partial-font';
 import { withLoadingCursor } from '../loading-cursor';
 import {
     glyphsFormatVersionOf,
@@ -409,6 +419,10 @@ export async function showSaveAsDialog(
 ): Promise<void> {
     const font = window.fontManager?.currentFont;
     if (!font || open) return;
+    if (isPartiallyLoadedFont()) {
+        showNotice(PARTIAL_FONT_SAVE_AS_MESSAGE);
+        return;
+    }
     open = true;
 
     const cloudPromise = cloudState();
