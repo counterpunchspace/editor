@@ -1108,15 +1108,25 @@ test.describe('cloud collaboration fuzz', () => {
                                   (item) => item.group === group && !item.undone
                               )
                             : redoableFrom(group, edit.glyph, edit.master);
+                    // A replay also recomposes automatic composites built on
+                    // the glyph it restores, even ones its edit did not
+                    // touch: keys that changed only in what alignment
+                    // derives are not the edit itself (the composite check
+                    // covers them).
+                    const ownChanged = changed.filter(
+                        (key) =>
+                            withoutDerived(before[key]) !==
+                            withoutDerived(after[key])
+                    );
                     // Which own item, if any, this change reverts or restores.
-                    const matched = changed.length
+                    const matched = ownChanged.length
                         ? ownItems.find((item) => {
                               const goal =
                                   edit.kind === 'undo'
                                       ? item.before
                                       : item.after;
                               return (
-                                  changed.every((key) =>
+                                  ownChanged.every((key) =>
                                       item.changed.includes(key)
                                   ) &&
                                   item.changed.every(
@@ -1132,24 +1142,24 @@ test.describe('cloud collaboration fuzz', () => {
                     // undo): it may touch no data its own edit did not.
                     const selective = matched
                         ? undefined
-                        : changed.length > 0
+                        : ownChanged.length > 0
                           ? [
                                 ...(target ? [target] : []),
                                 ...ownItems.slice().reverse()
                             ].find(
                                 (item) =>
                                     !isClean(item) &&
-                                    changed.every((key) =>
+                                    ownChanged.every((key) =>
                                         item.changed.includes(key)
                                     )
                             )
                           : undefined;
-                    if (changed.length && !matched && !selective) {
+                    if (ownChanged.length && !matched && !selective) {
                         throw failure(
                             `${edit.kind} changed data that is not this history’s own edit`
                         );
                     }
-                    if (crossUser && changed.length) {
+                    if (crossUser && ownChanged.length) {
                         throw new Error(
                             await failureText(
                                 `${edit.kind} on a glyph this history never edited changed the font`

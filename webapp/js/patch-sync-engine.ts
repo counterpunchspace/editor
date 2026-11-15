@@ -518,6 +518,19 @@ function stateVectorsEqual(left: Uint8Array, right: Uint8Array): boolean {
     );
 }
 
+/** Whether a history item's own entries already write this glyph layer. */
+function historyItemWritesLayer(
+    item: HistoryStackItem,
+    target: WorkerReplayTarget
+): boolean {
+    return item.entries.some(
+        (entry) =>
+            deriveGlyphNameFromPath(entry.path) === target.glyphName &&
+            (deriveLayerIdFromPath(entry.path) ?? target.layerId) ===
+                target.layerId
+    );
+}
+
 function isNoOpYjsUpdate(update: Uint8Array): boolean {
     return (
         update.length === 0 ||
@@ -845,6 +858,10 @@ export class PatchSyncEngine {
      * collaborator edit of the same path would silently revert their work.
      */
     private _collaboratorTouches: Array<{ seq: number; path: string }> = [];
+    /** Room baselines of the undo or redo being replayed, so rooms it reaches through dependent composites are sent too. */
+    private _historyReplayBaselines: Map<string, Uint8Array> | null = null;
+    /** Dependent composite layers the current replay recomposed outside the item's own entries. */
+    private _historyReplayDependentTargets: WorkerReplayTarget[] = [];
     private _changeLog: ChangeLogEntry[] = [];
     /** Unique window identifier */
     readonly windowId: string;
@@ -7588,11 +7605,26 @@ export class PatchSyncEngine {
                 workerReplayTargets,
                 semanticChangeLogEntries: metadataEntries ?? undefined
             });
+            const loggedEntryIndex = this._changeLog.length;
             this._appendChangeLogEntry(entry);
 
-            const writtenTargets = this._applyHistoryItem(
-                historyItem,
-                historyAction
+            this._historyReplayBaselines = localUpdateBaselines;
+            this._historyReplayDependentTargets = [];
+            let writtenTargets: WorkerReplayTarget[];
+            let dependentTargets: WorkerReplayTarget[];
+            try {
+                writtenTargets = this._applyHistoryItem(
+                    historyItem,
+                    historyAction
+                );
+            } finally {
+                dependentTargets = this._historyReplayDependentTargets;
+                this._historyReplayBaselines = null;
+                this._historyReplayDependentTargets = [];
+            }
+            this._noteDependentTargetsOnHistoryEntry(
+                loggedEntryIndex,
+                dependentTargets
             );
             const layerSyncTargets = writtenTargets.length
                 ? writtenTargets
@@ -11411,11 +11443,38 @@ export class PatchSyncEngine {
         this._replayHistoryEntries(replayEntries, direction);
         const settled = resettleDerivedLayers
             ? this._resettleDerivedLayersAfterOriginReplay(item)
-            : [];
+            : this._reflowDependentsAfterReplay(item);
         const recomposed = this._recomposeStaleAutomaticLayersAfterReplay(item);
         return recomposed.length
             ? normalizeWorkerReplayTargets([...settled, ...recomposed])
             : settled;
+    }
+
+    /**
+     * The item recorded no dependent composites (none followed the edit then,
+     * for example because their automatic alignment was off), but some may
+     * follow the replayed glyph now. Recompose them within the replay, so an
+     * undo leaves every automatic composite matching its bases, here and for
+     * collaborators. Returns nothing when no dependent changed.
+     */
+    private _reflowDependentsAfterReplay(
+        item: HistoryStackItem
+    ): WorkerReplayTarget[] {
+        if (!this._getResettleFontModel()) {
+            return [];
+        }
+        const originEntries = item.entries.filter(
+            (entry) =>
+                !isDerivedLayerChangePath(entry.path, item.originatingGlyphName)
+        );
+        if (deriveEditKindsFromChangeLogEntries(originEntries).size === 0) {
+            return [];
+        }
+        const before = this._historyReplayDependentTargets.length;
+        const targets = this._resettleDerivedLayersAfterOriginReplay(item);
+        return this._historyReplayDependentTargets.length > before
+            ? targets
+            : [];
     }
 
     /**
@@ -11691,10 +11750,13 @@ export class PatchSyncEngine {
             return !!this._getFontJsonLayer(target.glyphName, target.layerId);
         });
         for (const target of derivedTargets) {
-            this._applySettledLayerFromFontJson(
+            const changed = this._applySettledLayerFromFontJson(
                 target.glyphName,
                 target.layerId
             );
+            if (changed && !historyItemWritesLayer(item, target)) {
+                this._historyReplayDependentTargets.push(target);
+            }
         }
         return normalizeWorkerReplayTargets([
             ...originTargets,
@@ -11705,10 +11767,10 @@ export class PatchSyncEngine {
     private _applySettledLayerFromFontJson(
         glyphName: string,
         layerId: string
-    ): void {
+    ): boolean {
         const layerJson = this._getFontJsonLayer(glyphName, layerId);
         if (!layerJson) {
-            return;
+            return false;
         }
         const glyphMap = this._glyphMapForName(glyphName);
         const layersMap =
@@ -11716,7 +11778,7 @@ export class PatchSyncEngine {
         const yLayerMap =
             layersMap instanceof Y.Map ? layersMap.get(layerId) : null;
         if (!(yLayerMap instanceof Y.Map)) {
-            return;
+            return false;
         }
 
         const yLayerJson = fromYType(yLayerMap) as Record<string, unknown>;
@@ -11740,9 +11802,83 @@ export class PatchSyncEngine {
             hasChanges = true;
         }
         if (!hasChanges) {
+            return false;
+        }
+        // The JSON can differ from the stored layer in form only; then the
+        // write changes nothing, and the room must not be baselined (a
+        // baselined glyph gets a revision stamp, which would go unsent).
+        const documentId = this.documentIdForPath(['glyphs', glyphName]);
+        const doc = this._docForId(documentId);
+        const before = doc ? Y.encodeStateVector(doc) : null;
+        const baselined = this._noteHistoryReplayDocument(documentId);
+        this._applyLayerDelta(glyphName, layerId, delta);
+        if (
+            doc &&
+            before &&
+            stateVectorsEqual(before, Y.encodeStateVector(doc))
+        ) {
+            if (baselined) {
+                this._historyReplayBaselines?.delete(documentId);
+            }
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Baseline a room the replay is about to write for the first time, so
+     * its update is sent. True when this call added the baseline.
+     */
+    private _noteHistoryReplayDocument(documentId: string): boolean {
+        const baselines = this._historyReplayBaselines;
+        if (!baselines || baselines.has(documentId)) {
+            return false;
+        }
+        const doc = this._docForId(documentId);
+        if (!doc) {
+            return false;
+        }
+        baselines.set(documentId, Y.encodeStateVector(doc));
+        return true;
+    }
+
+    /**
+     * Name the dependent layers an undo or redo recomposed on its log entry,
+     * so their rooms carry entries (and are sent) and collaborators note the
+     * change for their own undo guards.
+     */
+    private _noteDependentTargetsOnHistoryEntry(
+        loggedEntryIndex: number,
+        dependentTargets: WorkerReplayTarget[]
+    ): void {
+        const logged = this._changeLog[loggedEntryIndex];
+        if (!logged || !dependentTargets.length) {
             return;
         }
-        this._applyLayerDelta(glyphName, layerId, delta);
+        const { semanticChangeLogEntries, ...fields } = logged;
+        const dependentEntries = normalizeWorkerReplayTargets(
+            dependentTargets
+        ).map((target) =>
+            normalizeChangeLogEntry({
+                ...fields,
+                op: 'set' as ChangeOp,
+                // Colon form: a glyph name may contain dots (`a.ss01`).
+                path: `glyphs.${target.glyphName}:layers.${target.layerId}`,
+                oldValue: undefined,
+                newValue: undefined,
+                workerReplayTargets: [target]
+            })
+        );
+        logged.semanticChangeLogEntries = [
+            ...(semanticChangeLogEntries?.length
+                ? semanticChangeLogEntries
+                : [normalizeChangeLogEntry(fields)]),
+            ...dependentEntries
+        ];
+        logged.workerReplayTargets = normalizeWorkerReplayTargets([
+            ...(logged.workerReplayTargets ?? []),
+            ...dependentTargets
+        ]);
     }
 
     private _getHistoryReplayValue(
