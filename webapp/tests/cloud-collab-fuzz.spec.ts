@@ -1392,10 +1392,9 @@ test.describe('cloud collaboration fuzz', () => {
                     (window as any).currentFontModel.addGlyph(name, 'Base');
                 }, added);
                 await expectPresence('added', [true, false]);
-                // The window that added the glyph renames it: a rename by another
-                // window leaves the old name in the adding window (a known race).
-                record(`glyph lifecycle: I renames ${added} to ${renamed}`);
-                await inviteePage.evaluate(
+                // Another browser renames it while the adding window has it.
+                record(`glyph lifecycle: O2 renames ${added} to ${renamed}`);
+                await ownerSecondPage.evaluate(
                     ({ from, to }) => {
                         (window as any).currentFontModel.renameGlyphs(
                             new Map([[from, to]])
@@ -1456,9 +1455,11 @@ test.describe('cloud collaboration fuzz', () => {
                     (window as any).currentFontModel.deleteGlyphs([name]);
                 }, renamed);
                 await expectPresence('deleted', [false, false]);
-                // Adding a glyph again under the deleted glyph's name, from
-                // another browser, does not reach the other windows yet in
-                // this setup (open finding); not part of the run until fixed.
+                record(`glyph lifecycle: O2 adds ${renamed} again`);
+                await ownerSecondPage.evaluate((name) => {
+                    (window as any).currentFontModel.addGlyph(name, 'Base');
+                }, renamed);
+                await expectPresence('added again', [false, true]);
                 snapshot = await checkAll('glyph lifecycle');
                 step++;
             }

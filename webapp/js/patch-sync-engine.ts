@@ -324,6 +324,8 @@ export type CommittedChangeListener = (
         uiBatch?: CommittedUiBatch;
         /** A collaborator’s live packet, not a catch-up or a linked window’s own edit. */
         fromCollaborator?: boolean;
+        /** This user's edit relayed from a linked window (main window only). */
+        fromLinkedWindow?: boolean;
     }
 ) => void;
 
@@ -494,6 +496,12 @@ export type ApplyRemoteUpdateOptions = {
      * relayed from this user’s own linked window. Undo must not overwrite it.
      */
     fromCollaborator?: boolean;
+    /**
+     * The update is this user's edit made in a linked window, which this
+     * main window relays to the cloud: its catalog and deps projections are
+     * this window's to write, as for its own edits.
+     */
+    fromLinkedWindow?: boolean;
 };
 
 /** Most recent collaborator-touched paths kept for the undo guard. */
@@ -8515,6 +8523,9 @@ export class PatchSyncEngine {
                     documentId: resolvedDocumentId,
                     ...(options?.fromCollaborator
                         ? { fromCollaborator: true }
+                        : undefined),
+                    ...(options?.fromLinkedWindow
+                        ? { fromLinkedWindow: true }
                         : undefined)
                 });
             }

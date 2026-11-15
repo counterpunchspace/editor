@@ -2790,7 +2790,9 @@ export class CloudPlugin extends FilesystemPlugin {
         entries,
         context
     ) => {
-        if (context.origin === 'remote') {
+        // A linked window has no cloud session: its deletes, adds and
+        // renames reach the catalog through the main window, here.
+        if (context.origin === 'remote' && !context.fromLinkedWindow) {
             return;
         }
         const fontJson = this._currentFontJson();

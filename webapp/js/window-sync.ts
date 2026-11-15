@@ -1645,7 +1645,11 @@ export class WindowSync {
                                       fromCollaborator: true,
                                       captureInUndo: false
                                   }
-                                : undefined
+                                : window.windowRole?.isMainWindow()
+                                  ? // A linked window's own edit: main
+                                    // projects the catalog for it.
+                                    { fromLinkedWindow: true }
+                                  : undefined
                         );
                         if (window.windowRole?.isMainWindow()) {
                             // The room gets the wire form, not the full
