@@ -3576,6 +3576,79 @@ describe('CloudPlugin glyph catch-up from core revision map', () => {
             ]);
         });
 
+        test('the owner’s open carries over late edits from a move’s old rooms and keeps reporting them', async () => {
+            const plugin = makeOwnerPlugin();
+            const fetchMock = jest.fn(async () => ({ ok: true, status: 200 }));
+            const originalFetch = global.fetch;
+            global.fetch = fetchMock;
+            const calls = [];
+            let retired = [];
+            const bridge = {
+                roomLayout: {
+                    version: 2,
+                    catalogBuckets: 1,
+                    kerningBuckets: 2,
+                    kerningBase: 1
+                },
+                layoutMovedFromRoomIds: () => ['kerning:0'],
+                retireMovedLayoutRooms: jest.fn(() => {
+                    calls.push('retire');
+                    retired = ['kerning:0'];
+                    return retired;
+                }),
+                retiredLayoutDocumentIds: () => retired,
+                forwardRetiredLayoutEdits: jest.fn(() => {
+                    calls.push('forward');
+                    return 1;
+                }),
+                pruneLayoutMoves: jest.fn(() => {
+                    calls.push('prune');
+                    return false;
+                }),
+                dropRetiredLayoutDocs: jest.fn(),
+                roomLayoutFill: () => null,
+                rebaseRoomLayout: jest.fn(() => false),
+                publishAdoptedRoomLayout: jest.fn(() => true)
+            };
+            const sweepSession = {
+                ...session,
+                syncLiveDocumentIds: jest.fn(async () => {
+                    calls.push('join');
+                }),
+                catchUpRetiredLayoutRooms: jest.fn(async () => {
+                    calls.push('catch-up');
+                })
+            };
+            try {
+                await plugin._upgradeRoomLayoutOnOpen(
+                    bridge,
+                    sweepSession,
+                    'asset-1'
+                );
+                await flush();
+            } finally {
+                global.fetch = originalFetch;
+                clearTimeout(plugin._retiredRoomsTimer);
+            }
+            // Old rooms are joined and loaded before anything is carried
+            // over, and the move is only forgotten after that.
+            expect(calls).toEqual([
+                'retire',
+                'join',
+                'catch-up',
+                'forward',
+                'prune'
+            ]);
+            expect(bridge.pruneLayoutMoves.mock.calls[0][0]).toBeLessThan(
+                Date.now() - 23 * 60 * 60 * 1000
+            );
+            expect(bridge.publishAdoptedRoomLayout).not.toHaveBeenCalled();
+            // The old room is still read, so it is not reported for purging.
+            expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+                live: ['catalog:0', 'kerning:1', 'kerning:2', 'kerning:0']
+            });
+        });
+
         test('a collaborator who is not the owner reports nothing', async () => {
             const plugin = makeOwnerPlugin();
             plugin.getCurrentAssetRole = () => 'editor';

@@ -91,7 +91,11 @@ import {
 } from './edit-burst';
 import { mergeEnvelopesForWire } from './cloud-envelope-budget';
 import { pushCollabIntegrityEvent } from './cloud-collab-integrity-debug';
-import { bytesToBase64, CloudWalPersistError } from './cloud-durable-wal';
+import {
+    base64ToBytes,
+    bytesToBase64,
+    CloudWalPersistError
+} from './cloud-durable-wal';
 import {
     collaborationMessageKey,
     createChangeLogEntriesFromCollaborationMessageEnvelope,
@@ -142,8 +146,11 @@ import {
     CATALOG_ROOT_KEY,
     FEATURES_ROOT_KEY,
     FONT_FEATURES_DOCUMENT_ID,
+    FORWARDED_ROOT_KEY,
     KERNING_ROOT_KEY,
     LAYOUT_MAP_KEY,
+    LAYOUT_MOVED_FROM_KEY,
+    LAYOUT_SEEDS_KEY,
     catalogRoomFor,
     catalogRoomIds,
     codepointIndexFromCatalog,
@@ -161,6 +168,16 @@ import {
     type KerningDirection,
     type RoomLayout
 } from './filesystem-plugins/cloud-room-layout';
+import {
+    forwardedValueMatches,
+    forwardedValueOf,
+    isUntouchedSeedEntry,
+    keysChangedSinceSnapshot,
+    stableJson,
+    yValueJson,
+    type MovedRoomRecord,
+    type SeededRoomRecord
+} from './filesystem-plugins/cloud-room-move';
 import { flattenKerningMap } from './delete-glyphs-preflight';
 import {
     measureShardBytesForSubmit,
@@ -461,6 +478,8 @@ function isEmptyYjsUpdate(update: Uint8Array): boolean {
 const GLYPH_EDIT_ORIGIN = 'glyph-edit';
 /** Remote cloud applies; never treated as a local edit origin. */
 export const CLOUD_REMOTE_ORIGIN = 'cloud-remote';
+/** Edits carried over from a rebase's old rooms; sent explicitly. */
+const LAYOUT_FORWARD_ORIGIN = 'layout-forward';
 
 function assertCloudAssetMutable(): void {
     if (window.cloudPlugin?.canMutateCurrentAsset?.() === false) {
@@ -1256,6 +1275,13 @@ export class PatchSyncEngine {
         };
         this._bindDocUpdates(this.yDoc, FONT_CORE_DOCUMENT_ID);
         this._bindDocUpdates(this.depsDoc, FONT_DEPS_DOCUMENT_ID);
+        // Rooms a rebase moved away from stay readable while listed.
+        this.yDoc.getMap(LAYOUT_MOVED_FROM_KEY).observe(() => {
+            const layout = this.roomLayout;
+            if (layout) {
+                this._dropLayoutDocsOutside(layout);
+            }
+        });
         this.yDoc.getMap(LAYOUT_MAP_KEY).observe(() => {
             this._roomLayoutCache = undefined;
             const after = this.roomLayout;
@@ -1379,17 +1405,323 @@ export class PatchSyncEngine {
         return layout ? layoutDocumentIds(layout) : [];
     }
 
-    /** After a rebase, rooms the layout no longer names are not read. */
+    /**
+     * After a rebase, rooms the layout no longer names are not read. A room
+     * the rebase moved away from is kept aside (retired) while font-core
+     * lists it, so edits that reach it late can be carried over.
+     */
     private _dropLayoutDocsOutside(layout: RoomLayout): void {
         const keep = new Set(layoutDocumentIds(layout));
+        const moved = new Set(this.layoutMovedFromRoomIds());
         for (const [documentId, doc] of [...this._layoutDocs]) {
             if (keep.has(documentId)) continue;
-            this._docUpdateUnsubById.get(documentId)?.();
-            this._docUpdateUnsubById.delete(documentId);
             this._lastBroadcastStateVectorByDoc.delete(documentId);
             this._layoutDocs.delete(documentId);
+            if (moved.has(documentId)) {
+                this._retiredLayoutDocs.set(documentId, doc);
+                this._retiredForwardReady = false;
+                continue;
+            }
+            this._docUpdateUnsubById.get(documentId)?.();
+            this._docUpdateUnsubById.delete(documentId);
             doc.destroy();
         }
+        for (const documentId of [...this._retiredLayoutDocs.keys()]) {
+            if (!moved.has(documentId) || keep.has(documentId)) {
+                this._dropRetiredLayoutDoc(documentId);
+            }
+        }
+    }
+
+    // ── Rebase hand-over: old rooms' late edits ──────────────────
+
+    /** Rooms a rebase moved away from, held until their late edits are in. */
+    private _retiredLayoutDocs = new Map<string, Y.Doc>();
+    /**
+     * True once the new rooms hold the copy here (and the old rooms are
+     * caught up): late edits may be carried over as they arrive.
+     */
+    private _retiredForwardReady = false;
+    private _retiredForwardScheduled = false;
+
+    private _dropRetiredLayoutDoc(documentId: string): void {
+        const doc = this._retiredLayoutDocs.get(documentId);
+        if (!doc) return;
+        this._docUpdateUnsubById.get(documentId)?.();
+        this._docUpdateUnsubById.delete(documentId);
+        this._retiredLayoutDocs.delete(documentId);
+        doc.destroy();
+    }
+
+    /** Room ids font-core lists as moved away from by a rebase. */
+    layoutMovedFromRoomIds(): string[] {
+        return [...this.yDoc.getMap(LAYOUT_MOVED_FROM_KEY).keys()];
+    }
+
+    /** Old rooms this window still holds after a rebase. */
+    retiredLayoutDocumentIds(): string[] {
+        return [...this._retiredLayoutDocs.keys()];
+    }
+
+    /**
+     * Hold every room font-core lists as moved away from (empty until
+     * caught up), so the owner can carry over edits that reached them after
+     * the windows that made them closed. Returns the held room ids.
+     */
+    retireMovedLayoutRooms(): string[] {
+        const layout = this.roomLayout;
+        if (!layout) {
+            return [];
+        }
+        const current = new Set(layoutDocumentIds(layout));
+        for (const documentId of this.layoutMovedFromRoomIds()) {
+            if (
+                current.has(documentId) ||
+                this._retiredLayoutDocs.has(documentId) ||
+                !isLayoutDocumentId(documentId)
+            ) {
+                continue;
+            }
+            const doc = new Y.Doc({ gc: false });
+            this._retiredLayoutDocs.set(documentId, doc);
+            this._bindDocUpdates(doc, documentId);
+            this._retiredForwardReady = false;
+        }
+        return this.retiredLayoutDocumentIds();
+    }
+
+    /** Stop holding the old rooms (their late edits were carried over). */
+    dropRetiredLayoutDocs(): void {
+        for (const documentId of [...this._retiredLayoutDocs.keys()]) {
+            this._dropRetiredLayoutDoc(documentId);
+        }
+        this._retiredForwardReady = false;
+    }
+
+    /** A room update for an old room: kept there, carried over later. */
+    private _applyRetiredLayoutUpdate(
+        documentId: string,
+        update: Uint8Array
+    ): boolean {
+        const doc = this._retiredLayoutDocs.get(documentId);
+        if (!doc || !update?.length) {
+            return false;
+        }
+        Y.applyUpdate(doc, update, CLOUD_REMOTE_ORIGIN);
+        this._scheduleRetiredForward();
+        return true;
+    }
+
+    /**
+     * A catalog or kerning room the layout does not name and this window
+     * does not hold: an old room. Its updates are not read (they would
+     * otherwise recreate it as a current room).
+     */
+    private _isReleasedLayoutRoom(documentId: string | undefined): boolean {
+        if (!documentId || this._retiredLayoutDocs.has(documentId)) {
+            return false;
+        }
+        const kind = layoutDocumentKind(documentId);
+        if (kind !== 'catalog' && kind !== 'kerning') {
+            return false;
+        }
+        const layout = this.roomLayout;
+        return !!layout && !layoutDocumentIds(layout).includes(documentId);
+    }
+
+    private _scheduleRetiredForward(): void {
+        if (!this._retiredForwardReady || this._retiredForwardScheduled) {
+            return;
+        }
+        this._retiredForwardScheduled = true;
+        queueMicrotask(() => {
+            this._retiredForwardScheduled = false;
+            this.forwardRetiredLayoutEdits();
+        });
+    }
+
+    /**
+     * Carry edits that reached the old rooms after a rebase copied them into
+     * the new rooms. Call once the new rooms hold the copy here; from then on
+     * edits arriving in the old rooms are carried over as they arrive.
+     *
+     * A key is written when its new room value is still the copy, or still
+     * the value last carried over. A value edited in the new room since is
+     * newer than anything left in an old room, and stays. Several windows
+     * may carry the same edit; they write the same value. Returns the number
+     * of keys written.
+     */
+    forwardRetiredLayoutEdits(): number {
+        this._retiredForwardReady = true;
+        const layout = this.roomLayout;
+        if (!layout || !this._retiredLayoutDocs.size) {
+            return 0;
+        }
+        const movedFrom = this.yDoc.getMap(LAYOUT_MOVED_FROM_KEY);
+        const seeds = this.yDoc.getMap(LAYOUT_SEEDS_KEY);
+        const current = new Set(layoutDocumentIds(layout));
+        const byTarget = new Map<string, Map<string, unknown>>();
+        for (const [documentId, doc] of this._retiredLayoutDocs) {
+            const kind = layoutDocumentKind(documentId);
+            if (kind !== 'catalog' && kind !== 'kerning') {
+                continue;
+            }
+            const record = movedFrom.get(documentId) as
+                MovedRoomRecord | undefined;
+            if (!record?.snapshot) {
+                continue;
+            }
+            let snapshot: Y.Snapshot;
+            try {
+                snapshot = Y.decodeSnapshot(base64ToBytes(record.snapshot));
+            } catch {
+                continue;
+            }
+            const root = doc.getMap(
+                kind === 'catalog' ? CATALOG_ROOT_KEY : KERNING_ROOT_KEY
+            );
+            for (const key of keysChangedSinceSnapshot(doc, root, snapshot)) {
+                let target: string | null = null;
+                if (kind === 'catalog') {
+                    target = catalogRoomFor(layout, key);
+                } else {
+                    const parsed = parseKerningKey(key);
+                    target = parsed
+                        ? kerningRoomFor(layout, parsed.pair)
+                        : null;
+                }
+                if (!target || !current.has(target)) {
+                    continue;
+                }
+                if (!byTarget.has(target)) {
+                    byTarget.set(target, new Map());
+                }
+                byTarget.get(target)!.set(key, yValueJson(root.get(key)));
+            }
+        }
+        let written = 0;
+        const touchedKeys = new Set<string>();
+        for (const [target, entries] of byTarget) {
+            const doc = this._ensureLayoutDoc(target);
+            const map = doc.getMap(
+                layoutDocumentKind(target) === 'catalog'
+                    ? CATALOG_ROOT_KEY
+                    : KERNING_ROOT_KEY
+            );
+            const forwarded = doc.getMap(FORWARDED_ROOT_KEY);
+            const seed = seeds.get(target) as SeededRoomRecord | undefined;
+            const writes: Array<[string, unknown]> = [];
+            for (const [key, value] of entries) {
+                const now = yValueJson(map.get(key));
+                if (stableJson(now) === stableJson(value)) {
+                    continue;
+                }
+                const item = (
+                    map as unknown as { _map: Map<string, Y.Item> }
+                )._map.get(key);
+                const untouched =
+                    !item || (seed ? isUntouchedSeedEntry(item, seed) : false);
+                if (
+                    untouched ||
+                    forwardedValueMatches(forwarded.get(key), now)
+                ) {
+                    writes.push([key, value]);
+                }
+            }
+            if (!writes.length) {
+                continue;
+            }
+            const before = Y.encodeStateVector(doc);
+            doc.transact(() => {
+                for (const [key, value] of writes) {
+                    if (value === undefined) {
+                        map.delete(key);
+                    } else {
+                        map.set(key, toYType(value));
+                    }
+                    forwarded.set(key, forwardedValueOf(value));
+                }
+            }, LAYOUT_FORWARD_ORIGIN);
+            written += writes.length;
+            const topKey = layoutTopLevelKey(target);
+            touchedKeys.add(topKey);
+            const entry = createLogEntry({
+                timestamp: Date.now(),
+                windowId: this.windowId,
+                windowRoleLabel: this._getWindowRoleLabel(),
+                historyItemId: this._createHistoryItemId(),
+                historyAction: 'change',
+                transactionLabel: 'Room layout',
+                transactionId: null,
+                op: 'set',
+                path: topKey,
+                oldValue: undefined,
+                newValue: undefined,
+                replayOldValue: undefined,
+                replayNewValue: undefined,
+                compileChangeSource: 'cloud-room-layout',
+                compileEditType: null
+            });
+            this._emitLocalUpdate(
+                Y.encodeStateAsUpdate(doc, before),
+                [],
+                target,
+                { skipCollaborationLog: true, envelopeEntries: [entry] }
+            );
+            if (layoutDocumentKind(target) === 'kerning') {
+                this._workerDocumentReplaceCallback?.(
+                    target,
+                    Y.encodeStateAsUpdate(doc)
+                );
+            }
+        }
+        if (written) {
+            for (const key of touchedKeys) {
+                this._syncTopLevelFontKeyFromYDoc(key);
+            }
+            this._emitAfterSync();
+            this._onDirty?.();
+        }
+        return written;
+    }
+
+    /**
+     * Forget moves older than `cutoff`: their old rooms are no longer read
+     * and get purged. The core change is sent with publishAdoptedRoomLayout.
+     */
+    pruneLayoutMoves(cutoff: number): boolean {
+        if (this._adoptedLayoutCoreBaseline) {
+            return false;
+        }
+        const maps = [
+            this.yDoc.getMap(LAYOUT_MOVED_FROM_KEY),
+            this.yDoc.getMap(LAYOUT_SEEDS_KEY)
+        ];
+        const stale = maps.map((map) =>
+            [...map.entries()]
+                .filter(([, record]) => {
+                    const at = Number((record as { at?: unknown })?.at);
+                    return !Number.isFinite(at) || at < cutoff;
+                })
+                .map(([key]) => key)
+        );
+        if (!stale.some((keys) => keys.length)) {
+            return false;
+        }
+        this._adoptedLayoutCoreBaseline =
+            this._lastBroadcastStateVectorByDoc.get(FONT_CORE_DOCUMENT_ID) ??
+            Y.encodeStateVector(this.yDoc);
+        this._pushApplyKind(ApplyKind.ManualEmit);
+        try {
+            this.yDoc.transact(() => {
+                maps.forEach((map, index) => {
+                    for (const key of stale[index]) map.delete(key);
+                });
+            }, FONT_EDIT_ORIGIN);
+        } finally {
+            this._popApplyKind();
+        }
+        return true;
     }
 
     /** How full the current layout's buckets are, for rebasedRoomLayout. */
@@ -1439,6 +1771,26 @@ export class PatchSyncEngine {
         this._adoptedLayoutCoreBaseline =
             this._lastBroadcastStateVectorByDoc.get(FONT_CORE_DOCUMENT_ID) ??
             Y.encodeStateVector(this.yDoc);
+        // What the copy holds of each old room: later edits there are
+        // carried over (forwardRetiredLayoutEdits).
+        const at = Date.now();
+        const nextIds = new Set(layoutDocumentIds(next));
+        const movedFrom = layoutDocumentIds(current)
+            .filter((documentId) => !nextIds.has(documentId))
+            .map((documentId): [string, MovedRoomRecord] => {
+                const doc = this._layoutDocs.get(documentId);
+                return [
+                    documentId,
+                    {
+                        at,
+                        snapshot: bytesToBase64(
+                            Y.encodeSnapshot(
+                                doc ? Y.snapshot(doc) : Y.emptySnapshot
+                            )
+                        )
+                    }
+                ];
+            });
         this._pushApplyKind(ApplyKind.ManualEmit);
         try {
             this.yDoc.transact(() => {
@@ -1447,6 +1799,10 @@ export class PatchSyncEngine {
                 map.set('kerningBuckets', next.kerningBuckets);
                 map.set('catalogBase', next.catalogBase ?? 0);
                 map.set('kerningBase', next.kerningBase ?? 0);
+                const moved = this.yDoc.getMap(LAYOUT_MOVED_FROM_KEY);
+                for (const [documentId, record] of movedFrom) {
+                    moved.set(documentId, record);
+                }
             }, FONT_EDIT_ORIGIN);
             this._roomLayoutCache = next;
             this._notifiedRoomLayoutKey = JSON.stringify(this.roomLayout);
@@ -1489,6 +1845,22 @@ export class PatchSyncEngine {
                     }
                 }, FONT_EDIT_ORIGIN);
             }
+            // Which items of the new rooms are the copy: a value made only
+            // of them was not edited since the move.
+            this.yDoc.transact(() => {
+                const seeds = this.yDoc.getMap(LAYOUT_SEEDS_KEY);
+                for (const documentId of nextIds) {
+                    if (layoutDocumentIds(current).includes(documentId)) {
+                        continue;
+                    }
+                    const doc = this._ensureLayoutDoc(documentId);
+                    seeds.set(documentId, {
+                        at,
+                        client: doc.clientID,
+                        clock: Y.getState(doc.store, doc.clientID)
+                    } satisfies SeededRoomRecord);
+                }
+            }, FONT_EDIT_ORIGIN);
         } finally {
             this._popApplyKind();
         }
@@ -1520,6 +1892,7 @@ export class PatchSyncEngine {
             doc.destroy();
         }
         this._layoutDocs.clear();
+        this.dropRetiredLayoutDocs();
         this._adoptedLayoutCoreBaseline = null;
     }
 
@@ -2324,7 +2697,11 @@ export class PatchSyncEngine {
             return this.depsDoc;
         }
         if (isLayoutDocumentId(documentId)) {
-            return this._layoutDocs.get(documentId) || null;
+            return (
+                this._layoutDocs.get(documentId) ||
+                this._retiredLayoutDocs.get(documentId) ||
+                null
+            );
         }
         if (documentId.startsWith('glyph:')) {
             return (
@@ -2672,6 +3049,13 @@ export class PatchSyncEngine {
         if (!state?.length) {
             return;
         }
+        if (this._retiredLayoutDocs.has(documentId)) {
+            this._applyRetiredLayoutUpdate(documentId, state);
+            return;
+        }
+        if (this._isReleasedLayoutRoom(documentId)) {
+            return;
+        }
         if (this._isTombstonedGlyphDocument(documentId)) {
             return;
         }
@@ -2760,6 +3144,12 @@ export class PatchSyncEngine {
         expectedRevision?: string
     ): boolean {
         if (!update?.length) {
+            return false;
+        }
+        if (this._retiredLayoutDocs.has(documentId)) {
+            return this._applyRetiredLayoutUpdate(documentId, update);
+        }
+        if (this._isReleasedLayoutRoom(documentId)) {
             return false;
         }
         // A catch-up started before the glyph was deleted (a rename's, say)
@@ -7760,6 +8150,12 @@ export class PatchSyncEngine {
         options?: ApplyRemoteUpdateOptions
     ): boolean {
         const captureInUndo = options?.captureInUndo !== false;
+        if (documentId && this._retiredLayoutDocs.has(documentId)) {
+            return this._applyRetiredLayoutUpdate(documentId, update);
+        }
+        if (this._isReleasedLayoutRoom(documentId)) {
+            return false;
+        }
         this._pushApplyKind(ApplyKind.Remote);
         try {
             if (!this._fontJson) this._fontJson = {};

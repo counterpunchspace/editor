@@ -882,7 +882,98 @@ test('collaborators converge on every layout 2 room, across rooms and through a 
         // kerning and three catalog rooms; the owner window that opens now
         // moves them back to fewer rooms, under fresh ids, and the windows
         // already open follow. It loads everything from the cloud first.
-        const late = await openAsOwner(browser, request, emails.owner, assetId);
+        // The move is held after the copy, and the invitee, not yet told,
+        // edits a pair in its old room: that edit must not be lost.
+        let resolveLatePage: (page: Page) => void = () => undefined;
+        const latePageOpened = new Promise<Page>((resolve) => {
+            resolveLatePage = resolve;
+        });
+        const lateOpening = openAsOwner(
+            browser,
+            request,
+            emails.owner,
+            assetId,
+            (context) => {
+                context.on('page', (page) => resolveLatePage(page));
+                return context.addInitScript(() => {
+                    const w = window as any;
+                    let engine: any;
+                    w.__moveHeld = false;
+                    w.__newRooms = [];
+                    Object.defineProperty(window, 'patchSyncEngine', {
+                        configurable: true,
+                        get: () => engine,
+                        set: (value) => {
+                            engine = value;
+                            if (
+                                !value?.rebaseRoomLayout ||
+                                value.__moveHooked
+                            ) {
+                                return;
+                            }
+                            value.__moveHooked = true;
+                            const rebase = value.rebaseRoomLayout.bind(value);
+                            value.rebaseRoomLayout = (next: unknown) => {
+                                const before = new Set(
+                                    value.layoutDocumentIds()
+                                );
+                                const moved = rebase(next);
+                                if (moved) {
+                                    w.__newRooms = value
+                                        .layoutDocumentIds()
+                                        .filter(
+                                            (id: string) => !before.has(id)
+                                        );
+                                    w.__moveHeld = true;
+                                }
+                                return moved;
+                            };
+                        }
+                    });
+                    // Hold the check that the new rooms are stored: the
+                    // move is not announced until it passes.
+                    const realFetch = window.fetch.bind(window);
+                    window.fetch = async (input: any, init?: any) => {
+                        const url = String(
+                            typeof input === 'string' ? input : input?.url
+                        );
+                        const held = (w.__newRooms as string[]).some((id) =>
+                            url.includes(
+                                `/shards/${id.replace(/:/g, '/')}/state`
+                            )
+                        );
+                        while (held && w.__moveHeld) {
+                            await new Promise((r) => setTimeout(r, 100));
+                        }
+                        return realFetch(input, init);
+                    };
+                });
+            }
+        );
+        const latePage = await latePageOpened;
+        await latePage.waitForFunction(
+            () => (window as any).__moveHeld === true,
+            undefined,
+            { timeout: 120000 }
+        );
+        expect(
+            await inviteePage.evaluate(
+                () => (window as any).patchSyncEngine.roomLayout.kerningBuckets
+            )
+        ).toBe(6);
+        await transact(
+            inviteePage,
+            'Edit kerning pair',
+            'keyboard-kerning-value',
+            'kerning-value',
+            setPair,
+            { master: masterId, pair: inviteePair, value: -555 }
+        );
+        await waitForCloudLiveIdle(inviteePage);
+        await latePage.evaluate(() => {
+            (window as any).__moveHeld = false;
+        });
+        const late = await lateOpening;
         contexts.push(late.context);
         const shrunk = (page: Page) =>
             page.waitForFunction(
@@ -905,7 +996,10 @@ test('collaborators converge on every layout 2 room, across rooms and through a 
             [ownerAgain, inviteePage, late.page],
             'after the font shrank to fewer rooms'
         );
-        expect(afterShrink.kerning).toEqual(edited.kerning);
+        // Everything from before the move, plus the edit made during it.
+        const expectedKerning = JSON.parse(JSON.stringify(edited.kerning));
+        expectedKerning[0][inviteePair] = -555;
+        expect(afterShrink.kerning).toEqual(expectedKerning);
         expect(afterShrink.glyphs).toEqual(edited.glyphs);
         await transact(
             inviteePage,

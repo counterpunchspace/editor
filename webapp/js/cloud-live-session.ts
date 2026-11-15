@@ -939,6 +939,9 @@ export class CloudLiveSession {
             // Room layout 2: features, catalog and kerning rooms stay live
             // like core and deps.
             ...(this._options.bridge.layoutDocumentIds?.() ?? []),
+            // Old rooms of a rebase stay live while held, so edits that
+            // reach them late are carried over.
+            ...(this._options.bridge.retiredLayoutDocumentIds?.() ?? []),
             ...requestedLiveGlyphDocumentIds(
                 documentIds,
                 this._keepRequestedGlyphSockets
@@ -1878,6 +1881,16 @@ export class CloudLiveSession {
     }
 
     /**
+     * Load the old rooms of a rebase over HTTP, so every edit that reached
+     * them is here to be carried over.
+     */
+    async catchUpRetiredLayoutRooms(): Promise<void> {
+        await this._catchUpDocumentsOverHttp(
+            this._options.bridge.retiredLayoutDocumentIds?.() ?? []
+        );
+    }
+
+    /**
      * Load whole rooms from their state (checkpoint folded with the live
      * tail). A room seeded over HTTP has its checkpoint at log id 0, so a
      * live catch-up from 0 would bring only the tail.
@@ -2052,9 +2065,10 @@ export class CloudLiveSession {
                 assetId: this._options.assetId,
                 documentId: FONT_DEPS_DOCUMENT_ID
             });
-            await this._catchUpDocumentsOverHttp(
-                this._options.bridge.layoutDocumentIds?.() ?? []
-            );
+            await this._catchUpDocumentsOverHttp([
+                ...(this._options.bridge.layoutDocumentIds?.() ?? []),
+                ...(this._options.bridge.retiredLayoutDocumentIds?.() ?? [])
+            ]);
         } catch (error) {
             console.warn('CloudLiveSession: reconnect catch-up failed:', error);
             throw error;

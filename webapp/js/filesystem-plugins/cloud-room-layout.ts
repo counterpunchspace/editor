@@ -29,6 +29,22 @@ export const ROOM_LAYOUT_VERSION = 2;
 export const FEATURES_ROOT_KEY = 'font';
 export const CATALOG_ROOT_KEY = 'catalog';
 export const KERNING_ROOT_KEY = 'kerning';
+/**
+ * Font-core map of the rooms a rebase moved away from: room id →
+ * `{at, snapshot}`, the base64 Yjs snapshot of the room when it was copied.
+ * Edits the copy did not include are carried over to the new rooms.
+ */
+export const LAYOUT_MOVED_FROM_KEY = 'layoutMovedFrom';
+/**
+ * Font-core map of the rooms a rebase filled: room id → `{at, client,
+ * clock}`. Items of that client below that clock are the copy; a value made
+ * only of them was not edited since the move.
+ */
+export const LAYOUT_SEEDS_KEY = 'layoutSeeds';
+/** Root map of a catalog or kerning room: the values carried over into it. */
+export const FORWARDED_ROOT_KEY = 'forwarded';
+/** How long a rebase keeps the old rooms readable for late edits. */
+export const LAYOUT_MOVE_KEEP_MS = 24 * 60 * 60 * 1000;
 
 /** Target fill when a layout is chosen: half the budget per bucket. */
 export const CATALOG_GLYPHS_PER_BUCKET = 2000;

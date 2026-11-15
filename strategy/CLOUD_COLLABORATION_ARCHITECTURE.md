@@ -254,12 +254,41 @@ half its buckets or fewer if it were new (it lost at least half its glyphs
 or pairs), the catalog or kerning moves to that smaller count; the two
 thresholds never undo each other. Every rebase takes fresh room ids past
 every id the font has used (`catalogBase` / `kerningBase` in the layout), so
-a room of an earlier layout is never read again, and the owner seeds the new
-rooms before font-core's layout points peers at them
+a room of an earlier layout never becomes current again, and the owner seeds
+the new rooms before font-core's layout points peers at them
 (`rebasedRoomLayout` in `cloud-room-layout.ts`).
 
-The owner reports the layout's catalog and kerning rooms to the website on
-every open and after a rebase (`POST /api/cloud/assets/:id/layout-rooms`).
+A rebase loses no edits. The owner copies the rooms only after loading all of
+them, and records in font-core what the copy holds: `layoutMovedFrom` maps
+each old room to `{at, snapshot}` (the base64 Yjs snapshot it copied), and
+`layoutSeeds` maps each new room to `{at, client, clock}` (the items of the
+copy). An edit that reaches an old room after the copy, while the new rooms
+are being stored or from a window that has not switched yet, is carried over
+(`forwardRetiredLayoutEdits` in `patch-sync-engine.ts`, helpers in
+`cloud-room-move.ts`):
+
+- Windows keep the old rooms live (retired) for ten minutes after the move:
+  the owner from the copy on, collaborators from the switch on, once they
+  have loaded the new rooms and the old ones.
+- A key changed in an old room after the copy (an item or a deletion the
+  snapshot does not know, found from item ids only, because compaction drops
+  overwritten values) gets its current value written to its new room, but
+  only while the new room still holds the copy for it, or the value last
+  carried over (the room's `forwarded` map). A value edited in the new room
+  since is newer, and stays. Several windows may carry the same edit; they
+  write the same value.
+- The window that made an edit carries it over itself when it switches, so
+  an edit that never reached the old room's storage is kept too.
+- For edits that reached an old room after the windows holding it closed,
+  the owner joins and loads every room in `layoutMovedFrom` on each open and
+  carries them over. A day after a move, the owner's open removes its
+  entries; until then those rooms are reported as live.
+- Old rooms never reach the font model or the compile worker; once a room
+  is let go, its updates are ignored.
+
+The owner reports the layout's catalog and kerning rooms, plus the old rooms
+still in `layoutMovedFrom`, to the website on every open and after a rebase
+(`POST /api/cloud/assets/:id/layout-rooms`).
 Every other catalog or kerning room the asset stored (R2 folders, D1 rows,
 the hub's registry) is marked `orphan-pending` like a deleted glyph's room,
 and the hourly cron purges it after the same 24 hour window; a later report

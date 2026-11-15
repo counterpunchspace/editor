@@ -10,6 +10,7 @@ import {
     roomFitRefusalMessage
 } from '../cloud-room-fit';
 import {
+    LAYOUT_MOVE_KEEP_MS,
     catalogRoomIds,
     chooseRoomLayout,
     kerningRoomIds,
@@ -252,6 +253,10 @@ export class CloudPlugin extends FilesystemPlugin {
     private _cloudAdapter: CloudAdapter | null = null;
     private _liveSession: CloudLiveSession | null = null;
     private _roomLayoutUnsubscribe: (() => void) | null = null;
+    /** Lets go of a rebase's old rooms once their late edits are in. */
+    private _retiredRoomsTimer: ReturnType<typeof setTimeout> | null = null;
+    /** How long a window keeps a rebase's old rooms live after the move. */
+    _retiredRoomsGraceMs = 10 * 60 * 1000;
     private _attachingSession: CloudLiveSession | null = null;
     private _editingSubsetListener: (() => void) | null = null;
     private _isSyncingCatalog = false;
@@ -3581,15 +3586,25 @@ export class CloudPlugin extends FilesystemPlugin {
                 };
                 // Load the rooms over HTTP right away: the socket sync may
                 // queue behind the apply that brought the new layout.
-                void session.catchUpLayoutRooms().catch(warn);
-                void session
-                    .syncLiveDocumentIds(
-                        liveGlyphDocumentIdsFromSubset(
-                            options.bridge,
-                            activeEditorGlyphNames()
-                        )
+                const newRooms = session.catchUpLayoutRooms();
+                const joined = session.syncLiveDocumentIds(
+                    liveGlyphDocumentIdsFromSubset(
+                        options.bridge,
+                        activeEditorGlyphNames()
                     )
-                    .catch(warn);
+                );
+                // A rebase: once the new rooms hold the copy here, carry
+                // over edits that reached the old rooms after it (this
+                // window's own included).
+                void (async () => {
+                    await Promise.all([newRooms, joined]);
+                    if (!options.bridge.retiredLayoutDocumentIds?.().length) {
+                        return;
+                    }
+                    await session.catchUpRetiredLayoutRooms();
+                    options.bridge.forwardRetiredLayoutEdits?.();
+                    this._scheduleRetiredRoomsRelease(options.bridge, session);
+                })().catch(warn);
             }) ?? null;
         // Do not HTTP-catch-up the core revision map on attach. After save or
         // R2 hydrate the in-memory glyph docs are already the published
@@ -3623,6 +3638,9 @@ export class CloudPlugin extends FilesystemPlugin {
             // copies the rooms' content, so it waits until this window has
             // all of it: collaborators' latest edits included.
             try {
+                // Rooms an earlier rebase moved away from: carry over edits
+                // that reached them after the windows that made them closed.
+                bridge.retireMovedLayoutRooms?.();
                 await session.syncLiveDocumentIds(
                     liveGlyphDocumentIdsFromSubset(
                         bridge,
@@ -3630,15 +3648,24 @@ export class CloudPlugin extends FilesystemPlugin {
                     )
                 );
                 await session.waitForLiveRoomsSynced(60_000);
+                if (bridge.retiredLayoutDocumentIds?.().length) {
+                    await session.catchUpRetiredLayoutRooms();
+                    bridge.forwardRetiredLayoutEdits?.();
+                    this._scheduleRetiredRoomsRelease(bridge, session);
+                }
             } catch {
                 return;
+            }
+            // A day after a move its old rooms are let go (and purged).
+            if (bridge.pruneLayoutMoves?.(Date.now() - LAYOUT_MOVE_KEEP_MS)) {
+                bridge.publishAdoptedRoomLayout();
             }
             const fill = bridge.roomLayoutFill?.();
             const next = fill
                 ? rebasedRoomLayout(bridge.roomLayout, fill)
                 : null;
             if (!next || !bridge.rebaseRoomLayout(next)) {
-                void this._reportLayoutRooms(assetId, bridge.roomLayout);
+                void this._reportLayoutRooms(assetId, bridge);
                 return;
             }
         } else {
@@ -3662,8 +3689,44 @@ export class CloudPlugin extends FilesystemPlugin {
         await session.waitForLiveRoomsSynced(60_000);
         await session.waitForLayoutRoomsStored(60_000);
         if (bridge.publishAdoptedRoomLayout() && bridge.roomLayout) {
-            void this._reportLayoutRooms(assetId, bridge.roomLayout);
+            void this._reportLayoutRooms(assetId, bridge);
+            // Edits that reached the old rooms while the copy was stored,
+            // and any that still arrive, go to the new rooms.
+            if (bridge.retiredLayoutDocumentIds?.().length) {
+                bridge.forwardRetiredLayoutEdits?.();
+                this._scheduleRetiredRoomsRelease(bridge, session);
+            }
         }
+    }
+
+    /**
+     * Keep a rebase's old rooms live for a while (late edits keep being
+     * carried over), then let go of them. The owner's next open picks up
+     * whatever reached them after that.
+     */
+    private _scheduleRetiredRoomsRelease(
+        bridge: PatchSyncEngine,
+        session: CloudLiveSession
+    ): void {
+        if (this._retiredRoomsTimer) {
+            clearTimeout(this._retiredRoomsTimer);
+        }
+        this._retiredRoomsTimer = setTimeout(() => {
+            this._retiredRoomsTimer = null;
+            if (this._liveSession !== session) {
+                return;
+            }
+            bridge.forwardRetiredLayoutEdits?.();
+            bridge.dropRetiredLayoutDocs?.();
+            void session
+                .syncLiveDocumentIds(
+                    liveGlyphDocumentIdsFromSubset(
+                        bridge,
+                        activeEditorGlyphNames()
+                    )
+                )
+                .catch(() => {});
+        }, this._retiredRoomsGraceMs);
     }
 
     /** First retry delay of a failed layout room report; doubles after. */
@@ -3671,15 +3734,27 @@ export class CloudPlugin extends FilesystemPlugin {
 
     /**
      * Tell the website which catalog and kerning rooms the font's layout
-     * uses. Rooms of earlier layouts (left behind by a rebase) are purged
-     * after the same window as deleted glyphs. Sent by the owner on every
-     * open, so a missed report after a rebase is made up the next time.
+     * uses, plus the old rooms a recent rebase still reads for late edits.
+     * Other rooms of earlier layouts are purged after the same window as
+     * deleted glyphs. Sent by the owner on every open, so a missed report
+     * after a rebase is made up the next time.
      */
     private async _reportLayoutRooms(
         assetId: string,
-        layout: RoomLayout
+        bridge: Pick<PatchSyncEngine, 'roomLayout'> &
+            Partial<Pick<PatchSyncEngine, 'layoutMovedFromRoomIds'>>
     ): Promise<void> {
-        const live = [...catalogRoomIds(layout), ...kerningRoomIds(layout)];
+        const layout = bridge.roomLayout;
+        if (!layout) {
+            return;
+        }
+        const live = [
+            ...new Set([
+                ...catalogRoomIds(layout),
+                ...kerningRoomIds(layout),
+                ...(bridge.layoutMovedFromRoomIds?.() ?? [])
+            ])
+        ];
         for (let attempt = 0; attempt < 3; attempt += 1) {
             if (attempt > 0) {
                 await new Promise((resolve) =>
