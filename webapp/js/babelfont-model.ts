@@ -11,6 +11,10 @@
  * - Direct synchronous access from Python via Pyodide's JsProxy system
  */
 
+import {
+    sparseRenameBlockedMessage,
+    sparseRenameBlockers
+} from './sparse-rename';
 import type { Babelfont } from './babelfont';
 import { setYPath } from './change-bridge-ydoc';
 import { toRestingLayerJson } from './resting-layer-json';
@@ -14518,6 +14522,12 @@ export class Font extends ModelBase {
             (glyph: Unsafe) => glyph.name as string
         );
         assertGlyphRenamePreflight(renames, existingNames);
+        // Only loaded glyphs get their references rewritten: a rename in a
+        // partially loaded font waits until every glyph using it is loaded.
+        const sparseBlockers = sparseRenameBlockers(renames.keys());
+        if (sparseBlockers.length) {
+            throw new Error(sparseRenameBlockedMessage(sparseBlockers));
+        }
 
         const replaceName = (value: string): string =>
             renames.get(value) || value;

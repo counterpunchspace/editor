@@ -1,4 +1,9 @@
 import { collectGlyphRenameReferences } from './babelfont-model';
+import { showNotice } from './font-windows/dialogs';
+import {
+    loadSparseRenameDependents,
+    sparseRenameBlockedMessage
+} from './sparse-rename';
 import { Logger } from './logger';
 import { getGlyphRenamePreflightErrors } from './rename-glyphs-preflight';
 import { planRenameRewires } from './rename-glyphs-rewire';
@@ -206,7 +211,7 @@ export class RenameGlyphsDialog {
         this.confirmButton.type = 'button';
         this.confirmButton.className = 'dialog-button dialog-button-primary';
         this.confirmButton.disabled = true;
-        this.confirmButton.addEventListener('click', () => this.rename());
+        this.confirmButton.addEventListener('click', () => void this.rename());
         actions.append(cancel, this.confirmButton);
         this.content.replaceChildren(
             fields,
@@ -417,11 +422,19 @@ export class RenameGlyphsDialog {
         }
     }
 
-    private rename(): void {
+    private async rename(): Promise<void> {
         const renames = this.getRenames();
         const errors = this.getPreflightErrors(renames);
         if (!this.canConfirm(renames, errors) || !window.currentFontModel)
             return;
+        // A partially loaded font loads every glyph that uses the renamed
+        // ones first, so all their references are rewritten.
+        const blockers = await loadSparseRenameDependents([...renames.keys()]);
+        if (blockers.length) {
+            showNotice(sparseRenameBlockedMessage(blockers));
+            return;
+        }
+        if (!window.currentFontModel) return;
         const rewires = this.getReferenceRewires(renames);
         const applyRewires =
             this.rewireRow?.hidden === false &&
