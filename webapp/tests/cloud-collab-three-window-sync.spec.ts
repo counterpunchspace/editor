@@ -1095,12 +1095,12 @@ test.describe('three-window sync scenarios', () => {
             await setAxisSliderValue(mainPage, 'wght', 600);
             await expect(
                 mainPage.locator(
-                    '.editor-drawings-header-actions .editor-drawing-add-button'
+                    '.editor-drawings-widget:not(.editor-feature-variations-widget) .editor-drawing-add-button'
                 )
             ).toBeEnabled();
             await mainPage
                 .locator(
-                    '.editor-drawings-header-actions .editor-drawing-add-button'
+                    '.editor-drawings-widget:not(.editor-feature-variations-widget) .editor-drawing-add-button'
                 )
                 .click();
 
