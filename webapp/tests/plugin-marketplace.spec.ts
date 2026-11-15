@@ -816,12 +816,20 @@ test('register, buy, and install the free and commercial plugins', async ({
                 await form
                     .locator('#billingAddress-addressLine1Input')
                     .fill('Alexanderplatz 1');
+                // Stripe's address autocomplete opens a suggestion list over
+                // the form; close it so it can't swallow the Save click.
+                await form
+                    .locator('#billingAddress-addressLine1Input')
+                    .press('Escape');
                 await form
                     .locator('#billingAddress-postalCodeInput')
                     .fill('10115');
                 await form
                     .locator('#billingAddress-localityInput')
                     .fill('Berlin');
+                await form
+                    .locator('#billingAddress-localityInput')
+                    .press('Escape');
                 await form.getByTestId('payment-form-submit-button').click();
             }
             await expect(accountPage.locator('#paymentInfo')).toContainText(
