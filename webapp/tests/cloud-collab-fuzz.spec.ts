@@ -1385,18 +1385,17 @@ test.describe('cloud collaboration fuzz', () => {
                         })
                         .toBe(JSON.stringify(windows.map(() => expected)));
                 };
-                // The owner adds: a glyph an invited editor adds never
-                // reaches the cloud yet (the room lets only the owner
-                // create a glyph room).
-                record(`glyph lifecycle: M adds ${added}`);
-                await mainPage.evaluate((name) => {
+                // The invited editor adds it: its room is created on an
+                // editor's write too.
+                record(`glyph lifecycle: I adds ${added}`);
+                await inviteePage.evaluate((name) => {
                     (window as any).currentFontModel.addGlyph(name, 'Base');
                 }, added);
                 await expectPresence('added', [true, false]);
                 // The window that added the glyph renames it: a rename by another
                 // window leaves the old name in the adding window (a known race).
-                record(`glyph lifecycle: M renames ${added} to ${renamed}`);
-                await mainPage.evaluate(
+                record(`glyph lifecycle: I renames ${added} to ${renamed}`);
+                await inviteePage.evaluate(
                     ({ from, to }) => {
                         (window as any).currentFontModel.renameGlyphs(
                             new Map([[from, to]])

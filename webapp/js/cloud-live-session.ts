@@ -221,6 +221,28 @@ const READY_BARRIER_ERROR_KEY = '\u0000ready-barrier';
 const DEGRADED_BARRIER_RETRY_BASE_MS = 10_000;
 const DEGRADED_BARRIER_RETRY_MAX_MS = 120_000;
 
+/** How long a freshly fetched room token is reused by reconnecting sockets. */
+const CREDENTIAL_REUSE_MS = 30_000;
+
+/** A room token's expiry (ms), or 0 when it cannot be read. */
+export function roomTokenExpiresAt(token: string | null | undefined): number {
+    const payload = String(token || '').split('.')[1];
+    if (!payload) {
+        return 0;
+    }
+    try {
+        const json = JSON.parse(
+            atob(payload.replace(/-/g, '+').replace(/_/g, '/'))
+        ) as { exp?: unknown };
+        const exp = Number(json.exp);
+        // Room tokens carry milliseconds; a JWT-style seconds value is
+        // read as such.
+        return Number.isFinite(exp) ? (exp < 1e12 ? exp * 1000 : exp) : 0;
+    } catch {
+        return 0;
+    }
+}
+
 export class CloudLiveSession {
     private readonly _adapters = new Map<string, CloudAdapter>();
     private readonly _options: CloudLiveSessionOptions;
@@ -1106,10 +1128,45 @@ export class CloudLiveSession {
         await this._walLoad;
     }
 
-    private async _refreshCredentialsOnce(): Promise<boolean> {
-        if (this._disconnected) {
-            return false;
+    /** The room-token request in flight, shared by every socket. */
+    private _credentialRefresh: Promise<boolean> | null = null;
+    /** When the current token was fetched (0: it came with the session). */
+    private _credentialsFetchedAt = 0;
+
+    /**
+     * A fresh room token for the session. Every socket asks when it
+     * reconnects, and all of them reconnect at once (their shared token
+     * expires, or the network drops): they share one request, and a token
+     * fetched in the last 30 seconds that has not expired is reused, so a
+     * reconnect costs one website request instead of one per room. `force`
+     * (the room refused the current token) never reuses it, but still joins
+     * a request in flight.
+     */
+    private _refreshCredentialsOnce(
+        options: { force?: boolean } = {}
+    ): Promise<boolean> {
+        if (this._disconnected || !this._options.refreshCredentials) {
+            return Promise.resolve(false);
         }
+        if (this._credentialRefresh) {
+            return this._credentialRefresh;
+        }
+        const now = Date.now();
+        if (
+            !options.force &&
+            this._credentialsFetchedAt > 0 &&
+            now - this._credentialsFetchedAt < CREDENTIAL_REUSE_MS &&
+            roomTokenExpiresAt(this._token) > now + CREDENTIAL_REUSE_MS
+        ) {
+            return Promise.resolve(true);
+        }
+        this._credentialRefresh = this._fetchFreshCredentials().finally(() => {
+            this._credentialRefresh = null;
+        });
+        return this._credentialRefresh;
+    }
+
+    private async _fetchFreshCredentials(): Promise<boolean> {
         if (!this._options.refreshCredentials) {
             return false;
         }
@@ -1120,6 +1177,7 @@ export class CloudLiveSession {
             }
             this._token = next.token;
             this._roomUrl = next.roomUrl;
+            this._credentialsFetchedAt = Date.now();
             return true;
         } catch (error) {
             console.warn('CloudLiveSession: credential refresh failed:', error);
@@ -1240,7 +1298,9 @@ export class CloudLiveSession {
                 } catch (error) {
                     const status = (error as { status?: number }).status;
                     if ((status === 401 || status === 403) && !refreshed) {
-                        refreshed = await this._refreshCredentialsOnce();
+                        refreshed = await this._refreshCredentialsOnce({
+                            force: true
+                        });
                         if (refreshed) {
                             continue;
                         }
