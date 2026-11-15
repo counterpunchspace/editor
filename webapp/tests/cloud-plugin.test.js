@@ -3969,8 +3969,13 @@ describe('CloudPlugin offline edit limit', () => {
     let plugin;
     let originalFontManager;
 
+    let levels;
+    const onLevel = (event) => levels.push(event.detail.level);
+
     beforeEach(() => {
         jest.useFakeTimers();
+        levels = [];
+        window.addEventListener('cloudOfflineLevelChanged', onLevel);
         originalFontManager = window.fontManager;
         window.fontManager = {
             currentFont: {
@@ -3991,7 +3996,46 @@ describe('CloudPlugin offline edit limit', () => {
 
     afterEach(() => {
         jest.useRealTimers();
+        window.removeEventListener('cloudOfflineLevelChanged', onLevel);
         window.fontManager = originalFontManager;
+    });
+
+    test('the browser going offline shows the strip before the socket notices', () => {
+        plugin._updateConnectionStatus('asset-1', 'connected');
+        window.dispatchEvent(new Event('offline'));
+        jest.advanceTimersByTime(5_000);
+        expect(levels).toEqual(['offline']);
+        plugin._updateConnectionStatus('asset-1', 'connected');
+        expect(levels).toEqual(['offline', 'none']);
+    });
+
+    test('a linked window shows the level its main window relays', () => {
+        const originalRole = window.windowRole;
+        window.windowRole = {
+            isLinkedWindow: () => true,
+            isMainWindow: () => false
+        };
+        try {
+            plugin.applyRelayedConnectionState({
+                assetId: 'asset-1',
+                status: 'disconnected',
+                offlineLevel: 'offline'
+            });
+            expect(plugin.getOfflineLevel()).toBe('offline');
+            plugin.applyRelayedConnectionState({
+                assetId: 'asset-1',
+                status: 'disconnected',
+                offlineLevel: 'offline'
+            });
+            plugin.applyRelayedConnectionState({
+                assetId: 'asset-1',
+                status: 'connected',
+                offlineLevel: 'none'
+            });
+            expect(levels).toEqual(['offline', 'none']);
+        } finally {
+            window.windowRole = originalRole;
+        }
     });
 
     test('pauses editing after a long disconnect and reloads on reconnect', () => {
@@ -3999,17 +4043,20 @@ describe('CloudPlugin offline edit limit', () => {
         expect(plugin.canMutateCurrentAsset()).toBe(true);
 
         plugin._updateConnectionStatus('asset-1', 'disconnected');
+        jest.advanceTimersByTime(2_000);
+        expect(levels).toEqual([]);
         // Offline edits still work for a while; the outbox keeps them.
-        jest.advanceTimersByTime(60_000);
+        jest.advanceTimersByTime(58_000);
         expect(plugin.canMutateCurrentAsset()).toBe(true);
+        expect(plugin.getOfflineLevel()).toBe('offline');
+        expect(plugin.getRelayConnectionState().offlineLevel).toBe('offline');
 
         jest.advanceTimersByTime(5 * 60_000);
         expect(plugin.canMutateCurrentAsset()).toBe(false);
         expect(plugin.getRelayConnectionState().canMutate).toBe(false);
-        expect(plugin.getAssetNotice('asset-1')).toMatchObject({
-            kind: 'offline-edit-paused',
-            tone: 'warning'
-        });
+        expect(plugin.getOfflineLevel()).toBe('paused');
+        expect(plugin.getRelayConnectionState().offlineLevel).toBe('paused');
+        expect(levels).toEqual(['offline', 'paused']);
         expect(plugin._reloadWindow).not.toHaveBeenCalled();
 
         plugin._updateConnectionStatus('asset-1', 'connected');

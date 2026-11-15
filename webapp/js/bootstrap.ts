@@ -500,6 +500,7 @@ import './python-ui-sync';
 import './python-post-execution';
 import './font-windows/other-fonts';
 import './docs-viewer';
+import { initOfflineStrip } from './offline-strip';
 import './resizer';
 import './save-button';
 import './script-editor';
@@ -527,6 +528,8 @@ if (document.readyState === 'loading') {
         initViewTitleButtons();
     }, 100);
 }
+
+initOfflineStrip();
 
 // Cloud collaboration — exposed for console testing and file-browser cloud:// routing.
 const _cloudPlugin = new CloudPlugin();

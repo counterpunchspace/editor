@@ -98,3 +98,88 @@ test('reset forgets a running disconnect', () => {
     expect(events).toEqual([]);
     expect(limit.paused).toBe(false);
 });
+
+describe('offline levels', () => {
+    function withLevels(limitMs = 60_000) {
+        const levels = [];
+        let now = 0;
+        const timers = [];
+        const limit = new OfflineEditLimit({
+            limitMs,
+            noticeDelayMs: 5000,
+            now: () => now,
+            setTimer: (run, ms) => {
+                const timer = { run, at: now + ms };
+                timers.push(timer);
+                return timer;
+            },
+            clearTimer: (timer) => {
+                timer.cleared = true;
+            },
+            onReconnectAfterPause: () => levels.push('reload'),
+            onLevelChange: (level) => levels.push(level)
+        });
+        const advance = (ms) => {
+            now += ms;
+            for (const timer of timers) {
+                if (!timer.cleared && !timer.fired && timer.at <= now) {
+                    timer.fired = true;
+                    timer.run();
+                }
+            }
+        };
+        return { limit, levels, advance };
+    }
+
+    test('a drop shorter than the delay shows nothing', () => {
+        const { limit, levels, advance } = withLevels();
+        limit.noteStatus('connected');
+        limit.noteStatus('disconnected');
+        advance(2000);
+        limit.noteStatus('connected');
+        advance(10_000);
+        expect(levels).toEqual([]);
+        expect(limit.level).toBe('none');
+    });
+
+    test('a longer drop shows offline, and reconnecting clears it', () => {
+        const { limit, levels, advance } = withLevels();
+        limit.noteStatus('connected');
+        limit.noteStatus('disconnected');
+        advance(5000);
+        expect(limit.level).toBe('offline');
+        expect(limit.paused).toBe(false);
+        limit.noteStatus('connected');
+        expect(levels).toEqual(['offline', 'none']);
+    });
+
+    test('the limit turns offline into paused, and reconnecting reloads', () => {
+        const { limit, levels, advance } = withLevels();
+        limit.noteStatus('connected');
+        limit.noteStatus('disconnected');
+        advance(60_000);
+        expect(limit.level).toBe('paused');
+        limit.noteStatus('connected');
+        expect(levels).toEqual(['offline', 'paused', 'reload']);
+    });
+
+    test('the browser’s offline event starts the clock before the socket notices', () => {
+        const { limit, levels, advance } = withLevels();
+        limit.noteStatus('connected');
+        limit.noteBrowserOffline();
+        advance(3000);
+        // The socket notices later; the clock keeps its start.
+        limit.noteStatus('disconnected');
+        advance(2000);
+        expect(levels).toEqual(['offline']);
+    });
+
+    test('reset clears the level', () => {
+        const { limit, levels, advance } = withLevels();
+        limit.noteStatus('connected');
+        limit.noteStatus('disconnected');
+        advance(5000);
+        limit.reset();
+        expect(levels).toEqual(['offline', 'none']);
+    });
+});

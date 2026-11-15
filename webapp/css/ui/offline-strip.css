@@ -1,0 +1,97 @@
+/* The strip under the bottom panels that says a cloud font is offline
+ * (js/offline-strip.ts). It takes its height from the app shell instead of
+ * covering it, because editing goes on while it shows. */
+
+:root {
+    --offline-strip-height: 34px;
+    --offline-strip-offline-bg: #3d3000;
+    --offline-strip-offline-text: #ffe08a;
+    --offline-strip-offline-border: #6b5400;
+    --offline-strip-offline-icon: #ffc533;
+    --offline-strip-paused-bg: #b71c1c;
+    --offline-strip-paused-text: #ffffff;
+    --offline-strip-paused-border: #7f1010;
+}
+
+:root[data-theme='light'] {
+    --offline-strip-offline-bg: #fff4d6;
+    --offline-strip-offline-text: #5c4300;
+    --offline-strip-offline-border: #f0d58a;
+    --offline-strip-offline-icon: #a87a00;
+    --offline-strip-paused-bg: #c62828;
+    --offline-strip-paused-border: #8e1b1b;
+}
+
+.app-shell {
+    transition: height 0.25s ease;
+}
+
+body.offline-strip-open .app-shell {
+    height: calc(100vh - 50px - var(--offline-strip-height));
+}
+
+.offline-strip {
+    position: relative;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 0;
+    padding: 0 14px;
+    overflow: hidden;
+    box-sizing: border-box;
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    white-space: nowrap;
+    transition: height 0.25s ease;
+}
+
+body.offline-strip-open .offline-strip {
+    height: var(--offline-strip-height);
+}
+
+.offline-strip[data-level='offline'] {
+    background-color: var(--offline-strip-offline-bg);
+    color: var(--offline-strip-offline-text);
+    border-top: 1px solid var(--offline-strip-offline-border);
+}
+
+.offline-strip[data-level='offline'] .offline-strip-icon {
+    color: var(--offline-strip-offline-icon);
+}
+
+.offline-strip[data-level='paused'] {
+    background-color: var(--offline-strip-paused-bg);
+    color: var(--offline-strip-paused-text);
+    border-top: 1px solid var(--offline-strip-paused-border);
+}
+
+.offline-strip-icon {
+    font-size: 18px;
+}
+
+.offline-strip-title {
+    font-weight: 600;
+}
+
+.offline-strip-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.offline-strip-link {
+    margin-left: auto;
+    padding: 0;
+    border: none;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.offline-merge-dialog .info-popup-content p {
+    margin: 0 0 12px;
+}

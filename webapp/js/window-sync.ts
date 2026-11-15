@@ -146,6 +146,8 @@ type CloudConnectionRelayState = {
     canMutate?: boolean;
     /** A lasting message about this font (role change, billing). */
     notice?: { kind: string; title: string; tone: 'warning' | 'error' };
+    /** The offline strip’s level (offline-edit-limit.ts). */
+    offlineLevel?: 'none' | 'offline' | 'paused';
 };
 
 // ── Protocol message types ──────────────────────────────────────────

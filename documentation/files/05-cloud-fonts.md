@@ -32,17 +32,41 @@ The owner invites people as **editor** or **viewer**. Editors can change the fon
 
 Extra windows in the same browser share Main’s cloud connection. See [Editing in multiple windows](04-editing-in-multiple-windows.md).
 
-## Offline, pending sync, and recovery
+## Working offline
 
-If you go offline, you can keep editing as long as this browser can store unsent edits. Those edits stay here until they sync. The title bar shows when something is still pending. **Connected** means your copy has caught up, not only that you are online.
+If your internet connection drops while a cloud font is open, you can keep working for a while.
 
-If this browser cannot store those unsent edits, the font stays **read-only**. Reloading after a crash tries again from what this browser saved. Another computer will not have those pending edits until they have synced.
+**The first 5 minutes.** A few seconds after the connection drops, a yellow bar appears at the bottom of the window: “You’re offline.” You can keep editing. Every edit is saved in this browser right away, so it is safe even if you close the tab or the browser crashes. When you’re back online, your edits are sent to the cloud and the bar disappears.
+
+**After 5 minutes.** The bar turns red: “Editing is paused.” You can still look at the font, but not change it. When the connection comes back, the window reloads by itself and sends the edits you made before the pause.
+
+Why pause at all? While you are offline, the people you work with keep editing. The longer you work apart, the more likely it is that you both change the same thing.
+
+### When you and others changed the same thing
+
+When you reconnect, your edits are combined with everything others changed while you were away.
+
+- **Changes to different things are all kept.** If you moved a point in `a` and someone else kerned `A` and `V`, both changes stay.
+- **If you both changed the same thing, only one change is kept.** That can be the same point, the same width, the same kerning pair or the same OpenType feature.
+- **The same goes for the shape of a glyph.** If you both added or deleted points or contours in the same layer, only one of your versions of that layer is kept, together with the point moves that belong to it.
+- **Which change is kept is decided at random**, not by who edited last. Everyone ends up with the same font, so nobody keeps seeing a different version.
+
+The same rule applies when two people online change the same thing at the same moment. Online, edits reach each other within about a second, so this rarely happens.
+
+To avoid surprises, agree with the people you work with on who edits which glyphs, especially when one of you is on an unreliable connection. The **What if others edit too?** link in the bar explains this in short.
+
+### Edits that haven’t reached the cloud yet
+
+The title bar shows when edits are still waiting to be sent. **Connected** means your copy has caught up, not only that you are online. Edits waiting in this browser are not on your other computers until they have been sent.
+
+If this browser cannot store unsent edits, for example because its storage is full, the font stays **read-only**. After a crash, opening the font again sends what this browser had saved.
 
 ## Read-only and updates
 
 The font stays read-only until the reason clears:
 
 - you are a viewer
+- you have been offline for more than 5 minutes (see [Working offline](#working-offline))
 - your invite was revoked or expired
 - this browser cannot store unsent edits
 - the server is still catching up after a large burst of edits

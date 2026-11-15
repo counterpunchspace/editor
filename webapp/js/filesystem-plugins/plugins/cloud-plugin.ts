@@ -116,7 +116,12 @@ import {
 import type { CollaborationMessageEnvelope } from '../../collaboration-message';
 import { getCloudRequestHeaders } from '../../cloud-website-api';
 import { deleteCloudAssetUntilComplete } from '../../cloud-delete-asset';
-import { OFFLINE_EDIT_LIMIT_MS, OfflineEditLimit } from '../offline-edit-limit';
+import {
+    OFFLINE_EDIT_LIMIT_MS,
+    OfflineEditLimit,
+    type OfflineLevel
+} from '../offline-edit-limit';
+import { OFFLINE_LEVEL_EVENT } from '../../offline-strip';
 import './cloud-plugin-open';
 import './cloud-plugin-save-as';
 import './cloud-plugin-live';
@@ -227,7 +232,6 @@ export type CloudAssetNotice = {
 
 const WRITE_ACCESS_LOST_NOTICE = 'write-access-lost';
 const SUBSCRIPTION_LAPSE_NOTICE = 'subscription-lapse';
-const OFFLINE_EDIT_PAUSED_NOTICE = 'offline-edit-paused';
 
 const console = new Logger('CloudPlugin');
 const CLOUD_PLUGIN_UI_ENABLED = true;
@@ -281,9 +285,11 @@ export class CloudPlugin extends FilesystemPlugin {
     /** Pauses editing after a long disconnect; see offline-edit-limit.ts. */
     _offlineEditLimit = new OfflineEditLimit({
         limitMs: OFFLINE_EDIT_LIMIT_MS,
-        onPause: () => this._onOfflineEditPause(),
-        onReconnectAfterPause: () => this._reloadAfterOfflinePause()
+        onReconnectAfterPause: () => this._reloadAfterOfflinePause(),
+        onLevelChange: (level) => this._onOfflineLevelChange(level)
     });
+    /** A linked window shows the level its main window relays. */
+    private _relayedOfflineLevel: OfflineLevel = 'none';
     _reloadWindow: () => void = () => window.location.reload();
     /**
      * Lasting messages per font, shown in the cloud warning badge until the
@@ -446,6 +452,16 @@ export class CloudPlugin extends FilesystemPlugin {
             assetId: options.assetId ?? '__none__'
         });
         super(stubAdapter);
+        // The browser knows the network is gone before the socket does.
+        window.addEventListener('offline', () => {
+            if (
+                this._activeAssetId &&
+                this._liveSession &&
+                !window.windowRole?.isLinkedWindow?.()
+            ) {
+                this._offlineEditLimit.noteBrowserOffline();
+            }
+        });
         setCollabIntegritySnapshotProvider((glyphName) =>
             this.captureCollabIntegritySnapshot(glyphName)
         );
@@ -956,15 +972,25 @@ export class CloudPlugin extends FilesystemPlugin {
         return true;
     }
 
-    private _onOfflineEditPause(): void {
+    /** The offline strip’s level in this window. */
+    getOfflineLevel(): OfflineLevel {
+        return window.windowRole?.isLinkedWindow?.()
+            ? this._relayedOfflineLevel
+            : this._offlineEditLimit.level;
+    }
+
+    private _onOfflineLevelChange(level: OfflineLevel): void {
         const assetId = this._activeAssetId;
+        window.dispatchEvent(
+            new CustomEvent(OFFLINE_LEVEL_EVENT, { detail: { assetId, level } })
+        );
         if (!assetId) return;
-        const minutes = Math.round(OFFLINE_EDIT_LIMIT_MS / 60000);
-        this.setAssetNotice(assetId, {
-            kind: OFFLINE_EDIT_PAUSED_NOTICE,
-            tone: 'warning',
-            title: `You’ve been offline for more than ${minutes} minutes, so editing is paused. The font reloads when you’re back online, and the edits you made are kept.`
-        });
+        if (window.windowRole?.isMainWindow()) {
+            window.windowSync?.broadcastCloudConnectionStatus?.(
+                this.getRelayConnectionState()
+            );
+        }
+        // Editing may have paused or resumed: let the UI check again.
         window.dispatchEvent(
             new CustomEvent('cloudConnectionStatusChanged', {
                 detail: {
@@ -1667,6 +1693,7 @@ export class CloudPlugin extends FilesystemPlugin {
         transferActivity?: CloudTransferActivity;
         canMutate?: boolean;
         notice?: CloudAssetNotice;
+        offlineLevel?: OfflineLevel;
     } {
         const detail = this._activeAssetId
             ? this.getAssetConnectionDetail(this._activeAssetId)
@@ -1685,7 +1712,8 @@ export class CloudPlugin extends FilesystemPlugin {
                       transferActivity: this.getAssetTransferActivity(
                           this._activeAssetId
                       ),
-                      canMutate: this._sessionAllowsMutation()
+                      canMutate: this._sessionAllowsMutation(),
+                      offlineLevel: this._offlineEditLimit.level
                   }
                 : {}),
             ...(notice ? { notice } : {}),
@@ -1701,9 +1729,22 @@ export class CloudPlugin extends FilesystemPlugin {
         transferActivity?: CloudTransferActivity;
         canMutate?: boolean;
         notice?: CloudAssetNotice;
+        offlineLevel?: OfflineLevel;
     }): void {
         if (window.windowRole?.isMainWindow()) {
             return;
+        }
+        const offlineLevel: OfflineLevel =
+            state.offlineLevel === 'offline' || state.offlineLevel === 'paused'
+                ? state.offlineLevel
+                : 'none';
+        if (offlineLevel !== this._relayedOfflineLevel) {
+            this._relayedOfflineLevel = offlineLevel;
+            window.dispatchEvent(
+                new CustomEvent(OFFLINE_LEVEL_EVENT, {
+                    detail: { assetId: state.assetId, level: offlineLevel }
+                })
+            );
         }
         if (state.assetId) {
             this.setAssetNotice(state.assetId, state.notice ?? null);
