@@ -6307,3 +6307,105 @@ describe('FontManager external source reload', () => {
         bridge.destroy();
     });
 });
+
+describe('FontManager open sessions and fontReady', () => {
+    let originalGlyphCanvas;
+    let originalRequestAnimationFrame;
+    let originalCloudPlugin;
+    let originalCompilationInitialized;
+    let sessionIds;
+    let readySessionIds;
+    const spies = [];
+
+    const onLifecycle = (event) => {
+        if (event.detail.phase === 'fontLoaded') {
+            sessionIds.push(event.detail.openSessionId);
+        }
+    };
+    const onFontReady = (event) =>
+        readySessionIds.push(event.detail.openSessionId);
+
+    // The canvas signals once per session, tagged with the newest open. Here
+    // the first open's compile lands while the second font loads.
+    const openTwiceWithCanvasSignalDuringSecondLoad = () => {
+        spies.push(
+            jest.spyOn(fontManager, 'loadFont').mockImplementation(async () => {
+                if (sessionIds.length === 2) {
+                    window.dispatchEvent(
+                        new CustomEvent('canvasInitialReady', {
+                            detail: { openSessionId: sessionIds[1] }
+                        })
+                    );
+                }
+            })
+        );
+        for (let i = 0; i < 2; i += 1) {
+            window.dispatchEvent(
+                new CustomEvent('fontLoaded', {
+                    detail: {
+                        path: '/user/Fustat.glyphs',
+                        babelfontJson: '{}',
+                        sourcePlugin: { id: 'memory' }
+                    }
+                })
+            );
+        }
+    };
+
+    beforeEach(() => {
+        jest.useFakeTimers();
+        sessionIds = [];
+        readySessionIds = [];
+        originalGlyphCanvas = window.glyphCanvas;
+        originalRequestAnimationFrame = global.requestAnimationFrame;
+        originalCloudPlugin = window.cloudPlugin;
+        originalCompilationInitialized = fontCompilation.isInitialized;
+        window.cloudPlugin = undefined;
+        fontCompilation.isInitialized = true;
+        global.requestAnimationFrame = (callback) => setTimeout(callback, 16);
+        window.glyphCanvas = {
+            hasInitializedStateSync: true,
+            applyInitialViewportFit: jest.fn().mockResolvedValue()
+        };
+        const urlState = require('../js/url-state');
+        spies.push(
+            jest.spyOn(urlState, 'readUrlState').mockReturnValue({}),
+            jest.spyOn(fontManager, 'onOpened').mockResolvedValue(),
+            jest.spyOn(fontManager, 'compileEditingFont').mockResolvedValue()
+        );
+        window.addEventListener('fontOpenLifecycle', onLifecycle);
+        window.addEventListener('fontReady', onFontReady);
+    });
+
+    afterEach(() => {
+        window.removeEventListener('fontOpenLifecycle', onLifecycle);
+        window.removeEventListener('fontReady', onFontReady);
+        spies.splice(0).forEach((spy) => spy.mockRestore());
+        window.glyphCanvas = originalGlyphCanvas;
+        global.requestAnimationFrame = originalRequestAnimationFrame;
+        window.cloudPlugin = originalCloudPlugin;
+        fontCompilation.isInitialized = originalCompilationInitialized;
+        jest.useRealTimers();
+    });
+
+    test('a second open in the same window releases on its own canvas signal', async () => {
+        openTwiceWithCanvasSignalDuringSecondLoad();
+        await jest.advanceTimersByTimeAsync(1000);
+
+        expect(sessionIds).toHaveLength(2);
+        expect(readySessionIds).toEqual([sessionIds[1]]);
+
+        await jest.advanceTimersByTimeAsync(10000);
+        expect(readySessionIds).toEqual([sessionIds[1], sessionIds[0]]);
+    });
+
+    test('opens in a page without animation frames still dispatch fontReady once each', async () => {
+        global.requestAnimationFrame = jest.fn();
+
+        openTwiceWithCanvasSignalDuringSecondLoad();
+        await jest.advanceTimersByTimeAsync(20000);
+
+        expect(sessionIds).toHaveLength(2);
+        expect([...readySessionIds].sort()).toEqual([...sessionIds].sort());
+    });
+});

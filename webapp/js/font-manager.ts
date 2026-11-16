@@ -7856,6 +7856,7 @@ window.addEventListener('fontLoaded', async (event: Event) => {
     let startupInteractivityReleased = false;
     let startupFinalizeStarted = false;
     let canvasReady = false;
+    let fontModelLoaded = false;
     let fontReadyDispatched = false;
     let activeOpenSessionDetail: {
         path: string;
@@ -7946,7 +7947,7 @@ window.addEventListener('fontLoaded', async (event: Event) => {
     };
 
     const finalizeStartupReadiness = async (openSessionId: string) => {
-        if (startupFinalizeStarted || !canvasReady) {
+        if (startupFinalizeStarted || !canvasReady || !fontModelLoaded) {
             return;
         }
 
@@ -8049,6 +8050,25 @@ window.addEventListener('fontLoaded', async (event: Event) => {
             sourcePluginId: detail.sourcePlugin?.id || null
         });
 
+        // Listen before loading: a compile still landing from an earlier open
+        // in this window can shape and signal this session while its font
+        // loads, and the canvas sends that signal once per session.
+        canvasReadyListener = (canvasEvent: Event) => {
+            const canvasDetail = (canvasEvent as CustomEvent).detail;
+            if (
+                canvasDetail?.openSessionId &&
+                canvasDetail.openSessionId !== openSessionId
+            ) {
+                return;
+            }
+
+            canvasReady = true;
+            emitOpenLifecycle(openSessionId, 'canvasInitialReady');
+            void finalizeStartupReadiness(openSessionId);
+        };
+
+        window.addEventListener('canvasInitialReady', canvasReadyListener);
+
         fontCompilation.setWorkerCacheDocumentReady(false);
         fontCompilation.lastStoredFontJson = null;
         fontCompilation.pendingStoreFontJsonPayload = null;
@@ -8097,22 +8117,8 @@ window.addEventListener('fontLoaded', async (event: Event) => {
 
         releaseStartupInteractivity(openSessionId, 'font-model-ready');
 
-        canvasReadyListener = (canvasEvent: Event) => {
-            const canvasDetail = (canvasEvent as CustomEvent).detail;
-            if (
-                canvasDetail?.openSessionId &&
-                canvasDetail.openSessionId !== openSessionId
-            ) {
-                return;
-            }
-
-            canvasReady = true;
-            emitOpenLifecycle(openSessionId, 'canvasInitialReady');
-            releaseStartupInteractivity(openSessionId, 'canvas-ready');
-            void finalizeStartupReadiness(openSessionId);
-        };
-
-        window.addEventListener('canvasInitialReady', canvasReadyListener);
+        fontModelLoaded = true;
+        void finalizeStartupReadiness(openSessionId);
 
         // Update display
         await fontManager!.onOpened();
@@ -8146,22 +8152,20 @@ window.addEventListener('fontLoaded', async (event: Event) => {
                 startupFinalizeStarted
             });
 
+            // The deadline releases without waiting for the restore: parts
+            // of it wait for animation frames, which a background tab or
+            // hidden pane never runs, so waiting here held `fontReady` back
+            // for good.
             if (window.glyphCanvas && !startupFinalizeStarted) {
-                void ensureStartupStateReady(window.glyphCanvas)
-                    .catch((error) => {
+                void ensureStartupStateReady(window.glyphCanvas).catch(
+                    (error) => {
                         console.warn(
                             '[FontManager]',
-                            'Startup state restore timed out waiting for canvas; enabling sync anyway:',
+                            'Startup state restore failed after the startup deadline:',
                             error
                         );
-                    })
-                    .finally(() => {
-                        void releaseStartupGates(
-                            openSessionId,
-                            'startup-ready-timeout'
-                        );
-                    });
-                return;
+                    }
+                );
             }
 
             void releaseStartupGates(openSessionId, 'startup-ready-timeout');

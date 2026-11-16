@@ -6311,6 +6311,47 @@ describe('GlyphCanvas property panel metrics edits', () => {
         }
     });
 
+    test('setFont sends canvasInitialReady once per open session', async () => {
+        const readyEvents = [];
+        const onCanvasInitialReady = (event) => readyEvents.push(event.detail);
+        window.addEventListener('canvasInitialReady', onCanvasInitialReady);
+
+        canvas.initialFontLoaded = false;
+        canvas.textRunEditor.setFont = jest.fn().mockResolvedValue({});
+        canvas.textRunEditor.rebuildEditingFontNameToGid = jest.fn();
+        canvas.textRunEditor.shapeText = jest.fn(() => {
+            canvas.textRunEditor.shapedGlyphs = [];
+        });
+        canvas.axesManager.updateAxesUI = jest.fn().mockResolvedValue();
+        canvas.updatePropertiesUI = jest.fn().mockResolvedValue();
+        canvas.selectStation = jest.fn().mockResolvedValue();
+        const openSession = (openSessionId) =>
+            window.dispatchEvent(
+                new CustomEvent('fontOpenLifecycle', {
+                    detail: { phase: 'fontLoaded', openSessionId }
+                })
+            );
+        const fontBytes = new Uint8Array([1, 2, 3]).buffer;
+
+        try {
+            openSession('open-session-first');
+            await canvas.setFont(fontBytes);
+            await canvas.setFont(fontBytes);
+            openSession('open-session-second');
+            await canvas.setFont(fontBytes);
+
+            expect(readyEvents.map((detail) => detail.openSessionId)).toEqual([
+                'open-session-first',
+                'open-session-second'
+            ]);
+        } finally {
+            window.removeEventListener(
+                'canvasInitialReady',
+                onCanvasInitialReady
+            );
+        }
+    });
+
     test('applyInitialViewportFit zooms to shaped text using metric bounds', async () => {
         canvas.textRunEditor.shapedGlyphs = [{ ax: 800, dx: 0, dy: 0 }];
         canvas.textRunEditor.updateCursorVisualPosition = jest.fn();

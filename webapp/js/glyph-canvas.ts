@@ -473,6 +473,9 @@ class GlyphCanvas {
 
     isFocused: boolean = false;
     initialFontLoaded: boolean = false;
+    // Open session the last `canvasInitialReady` was sent for. Each open waits
+    // for its own signal, so a later open in this window needs one too.
+    initialReadyOpenSessionId: string | null = null;
 
     blurTimeoutId: any = null; // Delay blur to prevent cursor flicker when clicking sidebar
 
@@ -4617,7 +4620,11 @@ class GlyphCanvas {
 
                 // Signal that shaping is done so URL/state restore can apply
                 // `?text=` before the initial zoom-to-fit.
-                if (!this.initialFontLoaded) {
+                if (
+                    !this.initialFontLoaded ||
+                    (latestOpenSessionId !== null &&
+                        latestOpenSessionId !== this.initialReadyOpenSessionId)
+                ) {
                     timelineMark('canvas.initialZoomComplete');
                     window.dispatchEvent(
                         new CustomEvent('canvasInitialReady', {
@@ -4627,6 +4634,7 @@ class GlyphCanvas {
                             }
                         })
                     );
+                    this.initialReadyOpenSessionId = latestOpenSessionId;
                     this.initialFontLoaded = true;
                 }
             });
