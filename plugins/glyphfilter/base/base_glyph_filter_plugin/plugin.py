@@ -48,6 +48,9 @@ class BaseGlyphFilterPlugin:
       ("Lu", "Lt"), with "" for glyphs without one. The editor then
       matches glyph.glyphData's general_category itself, without calling
       classify_glyph, which must still give the same answer
+    - unicode_scripts: Unicode Script names and ISO 15924 codes such as
+      ("Arabic", "Arab"), with "" for glyphs without one. The editor then
+      matches the glyph's Script_Extensions, or its Script, itself
     - sort_order: Number that orders filters within their sidebar folder;
       filters without one follow, sorted by name
     """

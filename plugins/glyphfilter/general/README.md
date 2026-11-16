@@ -13,6 +13,11 @@ Provides basic glyph filters for the Context font editor.
   Spaces & Controls and No Category,
   each combining Unicode general categories (`CATEGORY_GROUPS`). Filters
   with no glyphs in the open font are hidden (`hide_when_empty`).
+- **Writing Scripts** - One filter per Unicode writing script, by Unicode
+  Script_Extensions (or Script), plus Common and No Writing Script. Empty
+  ones are hidden. `writing_scripts.json` lists the writing scripts in the
+  editor's glyph data; regenerate it when the glyph data moves to a new
+  Unicode version.
 
 ## Structure
 
@@ -22,6 +27,8 @@ Each filter is defined in its own file:
 - `encoded_glyphs.py` - EncodedGlyphsFilter
 - `unencoded_glyphs.py` - UnencodedGlyphsFilter
 - `unicode_categories.py` - <Key>CategoryFilter, one per category group
+- `writing_scripts.py` - <Code>ScriptFilter, one per writing script in
+  `writing_scripts.json`, plus Common (`Zyyy`) and No Writing Script (`Zzzz`)
 
 ## Building
 

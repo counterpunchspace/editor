@@ -511,6 +511,15 @@
     );
 }
 
+/* Space between the filter sections, and before folders inside them */
+.glyph-filter-node-content > .glyph-filter-node:not(:first-child) {
+    margin-top: 6px;
+}
+
+.glyph-filter-tree > .glyph-filter-node + .glyph-filter-node {
+    margin-top: 12px;
+}
+
 .glyph-filter-node-header {
     display: flex;
     align-items: center;

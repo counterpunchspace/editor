@@ -434,6 +434,79 @@ describe('GlyphOverviewFilterManager combined filters', () => {
         delete window.fontManager;
     });
 
+    test('writing script filters use script extensions and name suffixes', () => {
+        const { glyphDataIndex } = require('../js/glyph-data');
+        jest.spyOn(glyphDataIndex, 'scriptForNameSuffix').mockImplementation(
+            (suffix) => (suffix === 'ar' ? 'Arabic' : undefined)
+        );
+        const glyph = (name, glyphData) => ({ name, glyphData });
+        const glyphs = [
+            glyph('alef-ar', { script: 'Arabic', script_extensions: [] }),
+            glyph('fatha-ar', {
+                script: 'Inherited',
+                script_extensions: ['Arab', 'Syrc']
+            }),
+            glyph('zero', { script: 'Common', script_extensions: [] }),
+            glyph('lam_alef-ar', undefined),
+            glyph('.notdef', undefined)
+        ];
+        const arabic = {
+            ...makePathFilter('scripts', 'arab', []),
+            unicodeScripts: new Set(['Arabic', 'Arab'])
+        };
+        const common = {
+            ...makePathFilter('scripts', 'zyyy', []),
+            unicodeScripts: new Set(['Common', 'Zyyy', 'Inherited', 'Zinh'])
+        };
+        const none = {
+            ...makePathFilter('scripts', 'zzzz', []),
+            unicodeScripts: new Set([''])
+        };
+        const python = jest.spyOn(manager, 'runFilterPython');
+
+        for (const plugin of [arabic, common, none]) {
+            manager.classifyGlyphs(plugin, glyphs);
+        }
+
+        expect([...arabic.classifications.keys()]).toEqual([
+            'alef-ar',
+            'fatha-ar',
+            'lam_alef-ar'
+        ]);
+        expect([...common.classifications.keys()]).toEqual(['zero']);
+        expect([...none.classifications.keys()]).toEqual(['.notdef']);
+        expect(python).not.toHaveBeenCalled();
+        expect(manager.combineMode(arabic).mode).toBe('any');
+    });
+
+    test('writing scripts that only share glyphs count as empty', () => {
+        const glyphs = [
+            {
+                name: 'one-ar',
+                glyphData: {
+                    script: 'Arabic',
+                    script_extensions: ['Arab', 'Thaa', 'Yezi']
+                }
+            }
+        ];
+        const arabic = {
+            ...makePathFilter('scripts', 'arab', []),
+            unicodeScripts: new Set(['Arabic', 'Arab'])
+        };
+        const thaana = {
+            ...makePathFilter('scripts', 'thaa', []),
+            unicodeScripts: new Set(['Thaana', 'Thaa'])
+        };
+        for (const plugin of [arabic, thaana]) {
+            manager.classifyGlyphs(plugin, glyphs);
+            plugin.glyphCount = plugin.classifications.size;
+        }
+
+        expect(thaana.glyphCount).toBe(1);
+        expect(manager.hasNoGlyphsOfItsOwn(thaana)).toBe(true);
+        expect(manager.hasNoGlyphsOfItsOwn(arabic)).toBe(false);
+    });
+
     test('a code point change rechecks the glyphs named after it', async () => {
         const filter = makePathFilter('categories', 'll', []);
         manager.plugins = [filter];

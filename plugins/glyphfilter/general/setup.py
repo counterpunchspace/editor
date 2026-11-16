@@ -17,7 +17,21 @@
 Setup script for General Glyph Filter Plugin
 """
 
+import json
+from pathlib import Path
+
 from setuptools import setup, find_packages
+
+# Writing script codes in writing_scripts.py: the table, Common and
+# No Writing Script.
+WRITING_SCRIPT_CODES = [
+    code
+    for code, _name in json.loads(
+        (
+            Path(__file__).parent / "general_filter_plugin" / "writing_scripts.json"
+        ).read_text(encoding="utf-8")
+    )
+] + ["Zyyy", "Zzzz"]
 
 # Category filters in unicode_categories.py, in sidebar order.
 CATEGORY_KEYS = (
@@ -29,11 +43,12 @@ setup(
     version="0.1.0",
     description=(
         "General glyph filters: All Glyphs, Encoded Characters, "
-        "Unencoded Glyphs, glyph categories"
+        "Unencoded Glyphs, glyph categories, writing scripts"
     ),
     author="Yanone",
     license="GPL-3.0-or-later",
     packages=find_packages(),
+    package_data={"general_filter_plugin": ["writing_scripts.json"]},
     python_requires=">=3.10",
     entry_points={
         "counterpunch_glyphfilter_plugins": [
@@ -52,6 +67,13 @@ setup(
                 f"unicode_categories:{key.capitalize()}CategoryFilter"
             )
             for key in CATEGORY_KEYS
+        ]
+        + [
+            (
+                f"script_{code} = general_filter_plugin."
+                f"writing_scripts:{code}ScriptFilter"
+            )
+            for code in WRITING_SCRIPT_CODES
         ],
     },
     classifiers=[

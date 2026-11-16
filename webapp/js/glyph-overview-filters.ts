@@ -97,7 +97,8 @@ const FILTER_PATHS: Record<string, string> = {
     'basic': 'Basic',
     'basic/glyph_categories': 'Encoding',
     'basic/debugging': 'Debugging',
-    'categories': 'Categories'
+    'categories': 'Categories',
+    'scripts': 'Writing Scripts'
 };
 
 /**
@@ -105,7 +106,8 @@ const FILTER_PATHS: Record<string, string> = {
  * Filters in every other section, user filters included, all have to match.
  */
 const FILTER_SECTION_COMBINE: Record<string, GlyphFilterCombineMode> = {
-    categories: 'any'
+    categories: 'any',
+    scripts: 'any'
 };
 
 /** Section key of user filters for combining. */
@@ -153,6 +155,12 @@ interface GlyphFilterPlugin {
      * Python; an empty string matches glyphs without one.
      */
     unicodeCategories?: ReadonlySet<string>;
+    /**
+     * Writing scripts (Unicode Script names and ISO 15924 codes) the host
+     * matches against the glyph's writing scripts in JavaScript; an empty
+     * string matches glyphs without one.
+     */
+    unicodeScripts?: ReadonlySet<string>;
     /** Position within its sidebar folder, before unordered filters. */
     sortOrder?: number;
     filePath?: string; // Path to .py file for user filters
@@ -210,6 +218,19 @@ const FILTER_CLASSIFY_BATCH = [
 
 interface GlyphClassification {
     groups: Array<{ name: string; color: string }>;
+    /**
+     * Writing script filters: the glyph's own Script is the filter's, not
+     * just one it shares through Script_Extensions.
+     */
+    own?: boolean;
+}
+
+/** A glyph's writing scripts, and the one it belongs to itself. */
+interface GlyphScripts {
+    /** Script_Extensions codes, or the Script name; [''] for none. */
+    scripts: readonly string[];
+    /** Script name, or the name suffix's writing script; '' for none. */
+    own: string;
 }
 
 interface FilterExecutionResult {
@@ -295,9 +316,10 @@ export class GlyphOverviewFilterManager {
     private sidebarContainer: HTMLElement | null = null;
     private groupLegendContainer: HTMLElement | null = null;
     private glyphOverview: any = null;
-    private unicodeCategoryCache: {
+    private glyphDataCache: {
         key: string;
         categories: Map<string, string>;
+        scripts: Map<string, GlyphScripts>;
     } | null = null;
     /** Active filters in click order; the last one owns the group legend. */
     private activeFilters: GlyphFilterPlugin[] = [];
@@ -856,7 +878,7 @@ export class GlyphOverviewFilterManager {
         if (batch.changes.length === 0 || !window.currentFontModel) {
             return;
         }
-        this.unicodeCategoryCache = null;
+        this.glyphDataCache = null;
 
         for (const plugin of this.getAllLoadedPlugins()) {
             await this.applyCommittedChanges(plugin, batch.changes);
@@ -1135,7 +1157,7 @@ export class GlyphOverviewFilterManager {
         if (!lifecycleChanges.length || !window.currentFontModel) {
             return;
         }
-        this.unicodeCategoryCache = null;
+        this.glyphDataCache = null;
 
         for (const plugin of this.getAllLoadedPlugins()) {
             const glyphsToClassify: object[] = [];
@@ -1240,6 +1262,7 @@ export class GlyphOverviewFilterManager {
                             'hide_when_empty': bool(getattr(plugin_instance, 'hide_when_empty', False)),
                             'unicode_categories': list(getattr(plugin_instance, 'unicode_categories', None) or []) or None,
                             'sort_order': getattr(plugin_instance, 'sort_order', None),
+                            'unicode_scripts': list(getattr(plugin_instance, 'unicode_scripts', None) or []) or None,
                             'instance': plugin_instance
                         })
                     except Exception as e:
@@ -1333,13 +1356,10 @@ export class GlyphOverviewFilterManager {
                 plugin.eventTypes = eventTypes;
                 plugin.classifications = new Map();
                 plugin.hideWhenEmpty = plugin.hide_when_empty === true;
-                plugin.unicodeCategories =
-                    Array.isArray(plugin.unicode_categories) &&
-                    plugin.unicode_categories.every(
-                        (code: unknown) => typeof code === 'string'
-                    )
-                        ? new Set<string>(plugin.unicode_categories)
-                        : undefined;
+                plugin.unicodeCategories = this.stringSet(
+                    plugin.unicode_categories
+                );
+                plugin.unicodeScripts = this.stringSet(plugin.unicode_scripts);
                 plugin.sortOrder =
                     typeof plugin.sort_order === 'number'
                         ? plugin.sort_order
@@ -2708,38 +2728,76 @@ export class GlyphOverviewFilterManager {
 
     /**
      * Hide filters marked `hide_when_empty` while they match no glyphs, and
-     * folders whose filters are all hidden that way. Active filters and
-     * filters still counting stay visible; folders without filters (empty
-     * user folders) are left alone.
+     * folders whose filters are all hidden that way. Active filters stay
+     * visible; folders without filters (empty user folders) are left
+     * alone. With `plugin`, only its entry and the
+     * folders around it are updated, so counting many filters stays cheap.
      */
-    private updateEmptyFilterVisibility(): void {
-        if (!this.sidebarContainer) return;
-        for (const plugin of this.getAllLoadedPlugins()) {
-            if (!plugin.hideWhenEmpty) continue;
-            const item = this.sidebarContainer.querySelector<HTMLElement>(
-                `.glyph-filter-item[data-plugin-keyword="${plugin.keyword}"]`
-            );
-            if (item) {
-                const empty =
-                    plugin.glyphCount === 0 &&
-                    !plugin.hasError &&
-                    !this.isActive(plugin);
-                // Inline style, because `.sidebar-item` sets `display`
-                // and would override the `hidden` attribute.
-                item.style.display = empty ? 'none' : '';
-            }
+    /**
+     * Not counted yet, or without glyphs to show. Hiding uncounted filters
+     * keeps long sparse lists (174 writing scripts) from flashing up while
+     * a font opens. A writing script filter also counts as empty when it
+     * only has glyphs it shares with another writing script (Arabic digits
+     * in Thaana), so a Latin and Arabic font doesn't list every writing
+     * script that borrows from them.
+     */
+    private hasNoGlyphsOfItsOwn(plugin: GlyphFilterPlugin): boolean {
+        if (plugin.glyphCount === undefined) return true;
+        if (plugin.glyphCount === 0) return true;
+        if (plugin.unicodeScripts === undefined) return false;
+        for (const classification of plugin.classifications.values()) {
+            if (classification.own) return false;
         }
-        const nodes = Array.from(
-            this.sidebarContainer.querySelectorAll<HTMLElement>(
-                '.glyph-filter-node'
-            )
-        ).reverse();
+        return true;
+    }
+
+    private updateEmptyFilterVisibility(plugin?: GlyphFilterPlugin): void {
+        if (!this.sidebarContainer) return;
+        const plugins = plugin ? [plugin] : this.getAllLoadedPlugins();
+        const items: HTMLElement[] = [];
+        for (const candidate of plugins) {
+            if (!candidate.hideWhenEmpty) continue;
+            const item = this.sidebarContainer.querySelector<HTMLElement>(
+                `.glyph-filter-item[data-plugin-keyword="${candidate.keyword}"]`
+            );
+            if (!item) continue;
+            const empty =
+                this.hasNoGlyphsOfItsOwn(candidate) &&
+                !candidate.hasError &&
+                !this.isActive(candidate);
+            // Inline style, because `.sidebar-item` sets `display`
+            // and would override the `hidden` attribute.
+            item.style.display = empty ? 'none' : '';
+            items.push(item);
+        }
+
+        let nodes: HTMLElement[];
+        if (plugin) {
+            nodes = [];
+            let node =
+                items[0]?.parentElement?.closest<HTMLElement>(
+                    '.glyph-filter-node'
+                );
+            while (node) {
+                nodes.push(node);
+                node =
+                    node.parentElement?.closest<HTMLElement>(
+                        '.glyph-filter-node'
+                    );
+            }
+        } else {
+            nodes = Array.from(
+                this.sidebarContainer.querySelectorAll<HTMLElement>(
+                    '.glyph-filter-node'
+                )
+            ).reverse();
+        }
         for (const node of nodes) {
-            const items =
+            const nodeItems =
                 node.querySelectorAll<HTMLElement>('.glyph-filter-item');
             const empty =
-                items.length > 0 &&
-                Array.from(items).every(
+                nodeItems.length > 0 &&
+                Array.from(nodeItems).every(
                     (item) =>
                         item.style.display === 'none' &&
                         !!item.dataset.hideWhenEmpty
@@ -2918,6 +2976,7 @@ export class GlyphOverviewFilterManager {
         const sourceReady =
             plugin.keyword === ALL_GLYPHS_FILTER_KEYWORD ||
             plugin.unicodeCategories !== undefined ||
+            plugin.unicodeScripts !== undefined ||
             plugin.sourceLoaded === true;
         return (
             sourceReady &&
@@ -3095,26 +3154,46 @@ export class GlyphOverviewFilterManager {
             );
     }
 
+    /** A Set of a plugin's string list attribute, or undefined. */
+    private stringSet(value: unknown): ReadonlySet<string> | undefined {
+        return Array.isArray(value) &&
+            value.every((item: unknown) => typeof item === 'string')
+            ? new Set<string>(value)
+            : undefined;
+    }
+
     /**
-     * A glyph's Unicode general category from `glyph.glyphData`, or '' when
-     * glyph data has none. Shared by all category filters and kept until
-     * the font changes, the glyph data catalog loads or another font opens.
-     * Committed changes also clear it, also when they don't mark the font
-     * dirty (collaborators' edits).
+     * Per-glyph lookups shared by all category and writing script filters,
+     * kept until the font changes, the glyph data catalog loads or another
+     * font opens. Committed changes also clear them, also when they don't
+     * mark the font dirty (collaborators' edits). Null when the font has no
+     * change version to key them on.
      */
-    private unicodeCategoryOf(glyph: { name: string }): string {
+    private glyphDataLookups(): {
+        categories: Map<string, string>;
+        scripts: Map<string, GlyphScripts>;
+    } | null {
         const version = this.getCurrentDataVersion();
-        let categories: Map<string, string> | null = null;
-        if (version !== null) {
-            const key = `${this.openGeneration}:${version}:${glyphDataIndex.isReady()}`;
-            if (this.unicodeCategoryCache?.key !== key) {
-                this.unicodeCategoryCache = { key, categories: new Map() };
-            }
-            categories = this.unicodeCategoryCache.categories;
-            const cached = categories.get(glyph.name);
-            if (cached !== undefined) {
-                return cached;
-            }
+        if (version === null) {
+            return null;
+        }
+        const key = `${this.openGeneration}:${version}:${glyphDataIndex.isReady()}`;
+        if (this.glyphDataCache?.key !== key) {
+            this.glyphDataCache = {
+                key,
+                categories: new Map(),
+                scripts: new Map()
+            };
+        }
+        return this.glyphDataCache;
+    }
+
+    /** A glyph's Unicode general category, or '' when glyph data has none. */
+    private unicodeCategoryOf(glyph: { name: string }): string {
+        const categories = this.glyphDataLookups()?.categories;
+        const cached = categories?.get(glyph.name);
+        if (cached !== undefined) {
+            return cached;
         }
         const data = (glyph as { glyphData?: { general_category?: unknown } })
             .glyphData;
@@ -3124,6 +3203,56 @@ export class GlyphOverviewFilterManager {
                 : '';
         categories?.set(glyph.name, category);
         return category;
+    }
+
+    /**
+     * A glyph's writing scripts: its Script_Extensions codes, or its Script
+     * name when it has none. Its own writing script is its Script. Glyphs
+     * without glyph data take the writing script of their name suffix
+     * (`lam_alef-ar`) when the catalog ties that suffix to one.
+     */
+    private unicodeScriptsOf(glyph: { name: string }): GlyphScripts {
+        const lookups = this.glyphDataLookups()?.scripts;
+        const cached = lookups?.get(glyph.name);
+        if (cached !== undefined) {
+            return cached;
+        }
+        const data = (
+            glyph as {
+                glyphData?: { script?: unknown; script_extensions?: unknown };
+            }
+        ).glyphData;
+        let result: GlyphScripts = { scripts: [''], own: '' };
+        if (data) {
+            const own = typeof data.script === 'string' ? data.script : '';
+            const extensions =
+                typeof data.script_extensions === 'string'
+                    ? data.script_extensions.split(/\s+/).filter(Boolean)
+                    : Array.isArray(data.script_extensions)
+                      ? data.script_extensions.filter(
+                            (code: unknown): code is string =>
+                                typeof code === 'string'
+                        )
+                      : [];
+            result = {
+                scripts: extensions.length > 0 ? extensions : [own],
+                own
+            };
+        } else {
+            const baseName = glyph.name.split('.', 1)[0] || '';
+            const dash = baseName.lastIndexOf('-');
+            const suffixScript =
+                dash > 0
+                    ? glyphDataIndex.scriptForNameSuffix(
+                          baseName.slice(dash + 1)
+                      )
+                    : undefined;
+            if (suffixScript) {
+                result = { scripts: [suffixScript], own: suffixScript };
+            }
+        }
+        lookups?.set(glyph.name, result);
+        return result;
     }
 
     private classifyGlyphs(
@@ -3141,6 +3270,22 @@ export class GlyphOverviewFilterManager {
         if (plugin.keyword === ALL_GLYPHS_FILTER_KEYWORD) {
             for (const glyph of namedGlyphs) {
                 plugin.classifications.set(glyph.name, { groups: [] });
+            }
+            return;
+        }
+
+        if (plugin.unicodeScripts !== undefined) {
+            const wanted = plugin.unicodeScripts;
+            for (const glyph of namedGlyphs) {
+                const { scripts, own } = this.unicodeScriptsOf(glyph);
+                if (scripts.some((script) => wanted.has(script))) {
+                    plugin.classifications.set(glyph.name, {
+                        groups: [],
+                        own: wanted.has(own)
+                    });
+                } else {
+                    plugin.classifications.delete(glyph.name);
+                }
             }
             return;
         }
@@ -3479,7 +3624,7 @@ export class GlyphOverviewFilterManager {
             }
         }
         if (plugin.hideWhenEmpty) {
-            this.updateEmptyFilterVisibility();
+            this.updateEmptyFilterVisibility(plugin);
         }
     }
 

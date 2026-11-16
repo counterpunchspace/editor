@@ -11612,6 +11612,8 @@ export class Glyph extends ArrayElementBase {
      * Read-only Unicode metadata from the bundled Glyph Data catalog.
      * Encoded base glyphs win over editable glyph names; dotted glyphs inherit
      * the identity of their base glyph before a name fallback is attempted.
+     * A glyph with several code points (`Delta` as U+0394 and U+2206) uses
+     * its first one.
      * Fields include `character`, `glyph_name`, `name`, `codepoint`,
      * `general_category`, `category`, `script`, `script_extensions`, `block`,
      * `age`, `joining_type`, `joining_group`, `decomposition`,
@@ -11624,7 +11626,9 @@ export class Glyph extends ArrayElementBase {
             baseName !== this.name ? font?.findGlyph(baseName) : this;
         const target = baseGlyph || this;
         const record =
-            glyphDataIndex.getGlyphDataForUnicode(target.codepoints) ||
+            glyphDataIndex.getGlyphDataForUnicode(
+                target.codepoints?.slice(0, 1)
+            ) ||
             glyphDataIndex.getGlyphDataForName(target.name) ||
             (baseGlyph
                 ? undefined

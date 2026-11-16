@@ -91,4 +91,45 @@ describe('GlyphDataIndex', () => {
         expect(index.search('').map((r) => r.glyph_name)).toEqual(['alef-ar']);
         expect(index.getGlyphDataForName('A-lat')).toBeUndefined();
     });
+
+    test('learns the writing script of glyph name suffixes', () => {
+        const index = new GlyphDataIndex();
+        const record = (glyph_name, script) => ({
+            codepoint: 0,
+            glyph_name,
+            name: glyph_name,
+            general_category: 'Lo',
+            script
+        });
+        index.loadRecordsForTests([
+            record('alef-ar', 'Arabic'),
+            record('beh-ar.fina', 'Arabic'),
+            record('comma-ar', 'Common'),
+            record('a-lin', 'Linear_A'),
+            record('b-lin', 'Linear_B')
+        ]);
+        expect(index.scriptForNameSuffix('ar')).toBe('Arabic');
+        expect(index.scriptForNameSuffix('lin')).toBeUndefined();
+        expect(index.scriptForNameSuffix('xx')).toBeUndefined();
+    });
+
+    test('Glyph.glyphData uses the first of several code points', () => {
+        const { Font } = require('../js/babelfont-model');
+        glyphDataIndex.loadRecordsForTests(sample);
+        const font = Font.fromData({
+            upm: 1000,
+            version: [1, 0],
+            axes: [],
+            instances: [],
+            masters: [],
+            glyphs: [
+                { name: 'Alef', codepoints: [0x0627, 0x0041], layers: [] },
+                { name: 'Alef.alt', layers: [] }
+            ]
+        });
+        expect(font.findGlyph('Alef').glyphData?.glyph_name).toBe('alef-ar');
+        expect(font.findGlyph('Alef.alt').glyphData?.glyph_name).toBe(
+            'alef-ar'
+        );
+    });
 });

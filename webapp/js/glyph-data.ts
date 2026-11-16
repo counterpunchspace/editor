@@ -86,6 +86,7 @@ export class GlyphDataIndex {
     private records: GlyphDataSearchResult[] = [];
     private byCodepoint = new Map<number, GlyphDataSearchResult>();
     private byName = new Map<string, GlyphDataSearchResult>();
+    private scriptBySuffix: Map<string, string> | null = null;
     private readyPromise: Promise<void> | null = null;
 
     isReady(): boolean {
@@ -116,6 +117,48 @@ export class GlyphDataIndex {
 
     getGlyphDataForName(name: string): GlyphDataSearchResult | undefined {
         return this.byName.get(name);
+    }
+
+    /**
+     * The writing script a glyph name suffix such as `ar` in `alef-ar`
+     * stands for, learned from the catalog's own glyph names: a suffix
+     * counts when at least 90% of its catalog glyphs share one writing
+     * script other than Common or Inherited.
+     */
+    scriptForNameSuffix(suffix: string): string | undefined {
+        if (!this.scriptBySuffix) {
+            const counts = new Map<string, Map<string, number>>();
+            for (const record of this.records) {
+                const script = record.script;
+                if (!script || script === 'Common' || script === 'Inherited') {
+                    continue;
+                }
+                const baseName = record.glyph_name.split('.', 1)[0] || '';
+                const dash = baseName.lastIndexOf('-');
+                if (dash <= 0) continue;
+                const key = baseName.slice(dash + 1);
+                const perScript = counts.get(key) ?? new Map<string, number>();
+                perScript.set(script, (perScript.get(script) ?? 0) + 1);
+                counts.set(key, perScript);
+            }
+            this.scriptBySuffix = new Map();
+            for (const [key, perScript] of counts) {
+                let total = 0;
+                let best = '';
+                let bestCount = 0;
+                for (const [script, count] of perScript) {
+                    total += count;
+                    if (count > bestCount) {
+                        best = script;
+                        bestCount = count;
+                    }
+                }
+                if (bestCount >= total * 0.9) {
+                    this.scriptBySuffix.set(key, best);
+                }
+            }
+        }
+        return this.scriptBySuffix.get(suffix);
     }
 
     search(query: string, limit = 150): GlyphDataSearchResult[] {
@@ -193,6 +236,7 @@ export class GlyphDataIndex {
         this.records = [];
         this.byCodepoint = new Map();
         this.byName = new Map();
+        this.scriptBySuffix = null;
         this.readyPromise = null;
     }
 
@@ -225,6 +269,7 @@ export class GlyphDataIndex {
         this.byName = new Map(
             this.records.map((record) => [record.glyph_name, record])
         );
+        this.scriptBySuffix = null;
     }
 }
 
