@@ -14,7 +14,7 @@ import type { FilesystemPlugin } from '../filesystem-plugins/filesystem-plugin';
 import {
     saveCurrentFontAs,
     syncEditorFileStateFromCurrentFont
-} from '../file-browser';
+} from '../font-files';
 import {
     FONT_FORMATS,
     baseNameOf,

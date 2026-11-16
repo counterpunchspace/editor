@@ -403,13 +403,7 @@ export async function waitForCanvasReady(page: any) {
                                         'function',
                                     hasFocusView:
                                         typeof win.focusView === 'function',
-                                    hasStateManager: !!win.stateManager,
-                                    hasInitFileBrowser:
-                                        typeof win.initFileBrowser ===
-                                        'function',
-                                    hasWaitForFileBrowserReady:
-                                        typeof win.waitForFileBrowserReady ===
-                                        'function'
+                                    hasStateManager: !!win.stateManager
                                 };
                             });
                         } else {
@@ -473,32 +467,6 @@ export async function waitForCanvasReady(page: any) {
             },
             60000
         );
-
-        await timedStep('helper:waitForCanvasReady:file browser', async () => {
-            await page.evaluate(async () => {
-                const win = window as any;
-                if (typeof win.initFileBrowser === 'function') {
-                    await win.initFileBrowser();
-                }
-                if (typeof win.waitForFileBrowserReady === 'function') {
-                    await win.waitForFileBrowserReady(10000);
-                }
-            });
-        });
-    });
-}
-
-export async function waitForFileBrowserReady(page: any) {
-    return timedStep('helper:waitForFileBrowserReady', async () => {
-        await page.evaluate(async () => {
-            const win = window as any;
-            if (typeof win.initFileBrowser === 'function') {
-                await win.initFileBrowser();
-            }
-            if (typeof win.waitForFileBrowserReady === 'function') {
-                await win.waitForFileBrowserReady(10000);
-            }
-        });
     });
 }
 
@@ -764,155 +732,52 @@ export async function collapseView(page: any, viewId: string) {
     });
 }
 
-export async function openFileFromFilesView(page: any, fileName: string) {
-    return timedStep('helper:openFileFromFilesView', async () => {
-        await page.evaluate(async () => {
-            await (window as any).showFontFileDialog?.({ mode: 'open' });
-        });
-        await page.locator('#font-file-dialog').waitFor({ state: 'visible' });
-        await waitForFileBrowserReady(page);
-
-        // Wait for the DOM-driven file tree rebuild to settle. The app uses
-        // requestAnimationFrame to swap fileTree.innerHTML, so locators can
-        // resolve to elements that get detached between check and interaction.
-        const waitForFileTreeStable = async () => {
-            await page.waitForFunction(() => {
-                const fileTree = document.getElementById('file-tree');
+/**
+ * Open a font from browser storage: `/user/<fileName>`, or `fileName` when it
+ * is a path. Waits for the window's startup font (test mode starts with a new
+ * one, which would otherwise replace this font) and for the example fonts to
+ * be written first.
+ */
+export async function openMemoryFont(page: any, fileName: string) {
+    return timedStep('helper:openMemoryFont', async () => {
+        const fullPath = fileName.startsWith('/')
+            ? fileName
+            : `/user/${fileName}`;
+        await page.waitForFunction(
+            () => !!(window as any).fontManager?.currentFont,
+            undefined,
+            { timeout: 180000 }
+        );
+        await page.waitForFunction(
+            async (path: string) => {
+                const memory = (window as any).pluginRegistry?.get('memory');
+                return !!(await memory?.getAdapter().fileExists(path));
+            },
+            fullPath,
+            { timeout: 30000 }
+        );
+        await page.evaluate(async (path: string) => {
+            const win = window as any;
+            await win.openFont(path, undefined, {
+                sourcePluginOverride: win.pluginRegistry.get('memory')
+            });
+        }, fullPath);
+        await page.waitForFunction(
+            (targetFileName: string) => {
+                const editorFile =
+                    (window as any).stateManager?.getStateSnapshot?.()?.state
+                        ?.editor_file || '';
+                const queryFile =
+                    new URLSearchParams(window.location.search).get('file') ||
+                    '';
                 return (
-                    !!fileTree &&
-                    fileTree.querySelectorAll('.file-item').length > 0
+                    editorFile.includes(targetFileName) ||
+                    decodeURIComponent(queryFile).includes(targetFileName)
                 );
-            });
-            await page.evaluate(
-                () =>
-                    new Promise<void>((resolve) =>
-                        requestAnimationFrame(() =>
-                            requestAnimationFrame(() => resolve())
-                        )
-                    )
-            );
-        };
-
-        await waitForFileTreeStable();
-
-        const fileItemSelector = `.file-item[data-name="${fileName}"]`;
-        const locateTargetFile = async () => {
-            await page.evaluate(async (targetFileName: string) => {
-                const win = window as any;
-                if (typeof win.locatePathInFileDialog !== 'function') {
-                    return;
-                }
-
-                const fullPath = targetFileName.startsWith('/')
-                    ? targetFileName
-                    : `/user/${targetFileName}`;
-                const pathSegments = fullPath.split('/').filter(Boolean);
-                const pluginId = pathSegments[0] || 'user';
-
-                await win.locatePathInFileDialog(pluginId, fullPath);
-            }, fileName);
-
-            await page
-                .locator('#font-file-dialog')
-                .waitFor({ state: 'visible' });
-            await waitForFileBrowserReady(page);
-            await waitForFileTreeStable();
-        };
-
-        const waitForTargetFile = async () => {
-            await page.waitForFunction(
-                (selector: string) => {
-                    const item = document.querySelector(
-                        selector
-                    ) as HTMLElement | null;
-                    return !!item && item.offsetParent !== null;
-                },
-                fileItemSelector,
-                { timeout: 30000 }
-            );
-        };
-
-        const waitForOpenedFile = async () => {
-            await page.waitForFunction(
-                (targetFileName: string) => {
-                    const editorFile =
-                        (window as any).stateManager?.getStateSnapshot?.()
-                            ?.state?.editor_file || '';
-                    const queryFile =
-                        new URLSearchParams(window.location.search).get(
-                            'file'
-                        ) || '';
-
-                    return (
-                        editorFile.includes(targetFileName) ||
-                        decodeURIComponent(queryFile).includes(targetFileName)
-                    );
-                },
-                fileName,
-                { timeout: 20000 }
-            );
-        };
-
-        // Open the file by dispatching a synthetic dblclick inside a single
-        // evaluate call. This eliminates the race where the file-tree DOM is
-        // rebuilt between the visibility check and the interaction.
-        const openVisibleFileItem = async () => {
-            await page.evaluate((selector: string) => {
-                const item = document.querySelector(
-                    selector
-                ) as HTMLElement | null;
-                if (!item || !item.isConnected || item.offsetParent === null) {
-                    throw new Error(`File item not ready: ${selector}`);
-                }
-
-                item.scrollIntoView({ block: 'center', behavior: 'auto' });
-                item.dispatchEvent(
-                    new MouseEvent('dblclick', {
-                        bubbles: true,
-                        cancelable: true,
-                        view: window,
-                        detail: 2
-                    })
-                );
-            }, fileItemSelector);
-        };
-
-        try {
-            await waitForTargetFile();
-        } catch {
-            await locateTargetFile();
-            await page.evaluate(async () => {
-                const win = window as any;
-                if (typeof win.refreshFileSystem === 'function') {
-                    await win.refreshFileSystem();
-                }
-            });
-            await waitForFileBrowserReady(page);
-            await waitForFileTreeStable();
-            await waitForTargetFile();
-        }
-
-        const openWithRetry = async () => {
-            for (let attempt = 0; attempt < 3; attempt++) {
-                try {
-                    await waitForTargetFile();
-                    await Promise.all([
-                        waitForOpenedFile(),
-                        openVisibleFileItem()
-                    ]);
-                    return;
-                } catch (error) {
-                    if (attempt === 2) {
-                        throw error;
-                    }
-                    await locateTargetFile();
-                    await waitForFileBrowserReady(page);
-                    await waitForFileTreeStable();
-                }
-            }
-        };
-
-        await openWithRetry();
+            },
+            fileName,
+            { timeout: 20000 }
+        );
     });
 }
 

@@ -5,7 +5,7 @@ import {
     waitForFontLoaded,
     waitForOpenSessionReady,
     focusView,
-    openFileFromFilesView
+    openMemoryFont
 } from './helpers/snapshot-helper';
 import {
     shouldIgnoreCrossWindowPageError,
@@ -148,7 +148,7 @@ test.describe('three-window sync scenarios', () => {
         try {
             await mainPage.goto(CLOUD_TEST_FONT_URL);
             await waitForCanvasReady(mainPage);
-            await openFileFromFilesView(mainPage, CLOUD_TEST_FONT);
+            await openMemoryFont(mainPage, CLOUD_TEST_FONT);
             await waitForOpenSessionReady(mainPage, CLOUD_TEST_FONT);
             await waitForBridgeReady(mainPage);
             await installJsonCanonicalizer(mainPage);
@@ -266,7 +266,7 @@ test.describe('three-window sync scenarios', () => {
                             (window as any).fontManager?.currentFont?.path ??
                             null,
                         urlOpenError:
-                            (window as any).__fileBrowserUrlOpenError ?? null,
+                            (window as any).__urlFontOpenError ?? null,
                         cloudOpenError:
                             (window as any).__cloudOpenError ?? null,
                         assetId: plugin?.activeAssetId ?? null,

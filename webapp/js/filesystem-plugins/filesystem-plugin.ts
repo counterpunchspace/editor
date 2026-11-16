@@ -3,41 +3,6 @@
 
 import type { FileSystemAdapter } from '../file-system-adapter';
 
-/**
- * Title bar menu item for plugin-specific actions
- */
-export interface TitleBarMenuItem {
-    label: string;
-    action: () => Promise<void>;
-    icon?: string; // Optional Material icon name
-}
-
-export type FileContextAction =
-    | 'open'
-    | 'open-new-tab'
-    | 'open-in-script-editor'
-    | 'download'
-    | 'rename'
-    | 'delete'
-    | 'leave';
-
-export interface FileContextTarget {
-    path: string;
-    name: string;
-    isDir: boolean;
-}
-
-export interface PluginMessageOptions {
-    icon: string;
-    title: string;
-    message: string;
-    detail?: string;
-    tone?: 'info' | 'warning' | 'error';
-    actionLabel?: string;
-    onAction?: () => void;
-    spinning?: boolean;
-}
-
 /** What one save wrote, for backends that describe it (a commit message). */
 export interface SaveSummary {
     fontName: string;
@@ -58,13 +23,6 @@ export interface StationTopologyGate {
     reason?: string;
     /** Reopening with every glyph resident would lift the block. */
     canReopenWithAllGlyphs?: boolean;
-}
-
-export interface FilesystemPluginUICallbacks {
-    showUnsupportedBrowserUI: () => void;
-    hideUnsupportedBrowserUI: () => void;
-    showPluginMessage: (options: PluginMessageOptions) => void;
-    hidePluginMessage: () => void;
 }
 
 /**
@@ -97,58 +55,6 @@ export abstract class FilesystemPlugin {
         return true;
     }
 
-    /** Whether this plugin supports uploading files and folders */
-    supportsUpload(): boolean {
-        return true;
-    }
-
-    /** Whether this plugin supports creating new folders */
-    supportsNewFolder(): boolean {
-        return true;
-    }
-
-    /** Whether this plugin supports creating new empty files */
-    supportsNewFile(): boolean {
-        return true;
-    }
-
-    /** Whether this plugin requires user permission/authentication */
-    requiresPermission(): boolean {
-        return false;
-    }
-
-    /**
-     * Called when plugin is activated (user switches to this context)
-     * @returns true if activation successful, false if failed
-     */
-    async onActivate(): Promise<boolean> {
-        return true;
-    }
-
-    /**
-     * Called when plugin is deactivated (user switches away)
-     */
-    async onDeactivate(): Promise<void> {
-        // Default: no cleanup needed
-    }
-
-    /**
-     * Show plugin-specific setup UI (e.g., folder picker, login dialog)
-     * @returns true if setup completed, false if cancelled
-     */
-    async showSetupUI(options?: {
-        startIn?: FileSystemHandle;
-    }): Promise<boolean> {
-        return true;
-    }
-
-    /**
-     * Check if plugin is ready to use (has directory selected, authenticated, etc.)
-     */
-    async isReady(): Promise<boolean> {
-        return true;
-    }
-
     /**
      * Get the current root path for this plugin's context
      */
@@ -156,107 +62,14 @@ export abstract class FilesystemPlugin {
         return '/';
     }
 
-    /**
-     * Whether this plugin can be closed (e.g., disconnect folder access)
-     */
-    canClose(): boolean {
-        return false;
-    }
-
-    /**
-     * Close/disconnect this plugin's access (e.g., clear folder handle)
-     * Only called if canClose() returns true
-     */
-    async close(): Promise<void> {
-        // Default: no-op
-    }
-
-    /**
-     * Update UI elements specific to this plugin's state
-     */
-    async updateUI(uiCallbacks: FilesystemPluginUICallbacks): Promise<void> {
-        uiCallbacks.hideUnsupportedBrowserUI();
-        uiCallbacks.hidePluginMessage();
-    }
-
-    /**
-     * Get title bar menu items for this plugin
-     */
-    getTitleBarMenuItems(): TitleBarMenuItem[] {
-        return [];
-    }
-
-    supportsFileContextAction(
-        action: FileContextAction,
-        target: FileContextTarget
-    ): boolean {
-        switch (action) {
-            case 'open':
-            case 'open-new-tab':
-                return !target.isDir;
-            case 'open-in-script-editor':
-                return !target.isDir && target.name.endsWith('.py');
-            case 'download':
-                return !target.isDir;
-            case 'rename':
-            case 'delete':
-                return true;
-            case 'leave':
-                return false;
-            default:
-                return false;
-        }
-    }
-
-    /**
-     * Trigger a redraw of the title bar buttons for this plugin
-     */
-    redrawTitleBarButtons(): void {
-        window.dispatchEvent(
-            new CustomEvent('pluginTitleBarRedraw', {
-                detail: { pluginId: this.getId() }
-            })
-        );
-    }
-
-    /** Whether the file dialog should show a manual refresh button. */
-    showsManualRefreshButton(): boolean {
-        return true;
-    }
-
-    /** Whether this plugin should be visible in editor UI surfaces. */
+    /** Whether this backend is offered at all (Cloud is feature-flagged). */
     isVisibleInUI(): boolean {
         return true;
     }
 
     /**
-     * Whether this plugin supports opening files via a file picker dialog
-     * If false, files can only be opened via the Files view context menu
-     */
-    supportsOpenFilePicker(): boolean {
-        return false;
-    }
-
-    /**
-     * Whether this plugin supports Save As via a file picker dialog
-     * If false, only Save (to existing path) is supported
-     */
-    supportsSaveAsFilePicker(): boolean {
-        return false;
-    }
-
-    /**
-     * Whether this plugin handles Save As internally (bypassing writeFile).
-     * When true, the file dialog calls handleSaveAs(name) instead of
-     * adapter.writeFile(path, content).
-     */
-    get interceptsSaveAs(): boolean {
-        return false;
-    }
-
-    /**
-     * Plugin-specific Save As handler, called instead of adapter.writeFile
-     * when interceptsSaveAs is true.
+     * Save As for a backend that stores fonts its own way instead of through
+     * adapter.writeFile (the cloud). Called by the Save As dialog.
      */
     async handleSaveAs(_name: string): Promise<boolean> {
         return false;
@@ -348,28 +161,5 @@ export abstract class FilesystemPlugin {
      */
     stripOwnedFontData<T>(fontJson: T): T {
         return fontJson;
-    }
-
-    /**
-     * Open a file picker dialog and return the selected file path
-     * Only called if supportsOpenFilePicker() returns true
-     */
-    async showOpenFilePicker(_options?: {
-        types?: { description: string; accept: Record<string, string[]> }[];
-        startIn?: string;
-    }): Promise<string | null> {
-        return null;
-    }
-
-    /**
-     * Show a save file picker dialog and return the selected file path
-     * Only called if supportsSaveAsFilePicker() returns true
-     */
-    async showSaveFilePicker(_options?: {
-        types?: { description: string; accept: Record<string, string[]> }[];
-        startIn?: string;
-        suggestedName?: string;
-    }): Promise<string | null> {
-        return null;
     }
 }

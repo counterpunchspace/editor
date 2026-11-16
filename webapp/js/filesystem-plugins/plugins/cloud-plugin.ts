@@ -24,11 +24,7 @@ import { showNotice } from '../../font-windows/dialogs';
 import {
     FilesystemPlugin,
     type CanAddGlyphsResult,
-    type FileContextAction,
-    type FileContextTarget,
-    type StationTopologyGate,
-    type PluginMessageOptions,
-    type TitleBarMenuItem
+    type StationTopologyGate
 } from '../filesystem-plugin';
 import { pluginRegistry } from '../registry';
 import {
@@ -363,7 +359,6 @@ export class CloudPlugin extends FilesystemPlugin {
     >();
     private _connectedAssetIds = new Set<string>();
     private _lastAlertedConnectionErrorByAssetId = new Map<string, string>();
-    private _availabilityErrorMessage: string | null = null;
     private _assetEstimatedBytesByAssetId = new Map<string, number>();
     private _activeAssetSizeBridge: PatchSyncEngine | null = null;
     private _activeAssetSizeListener: CommittedChangeListener | null = null;
@@ -473,17 +468,6 @@ export class CloudPlugin extends FilesystemPlugin {
             if (detail?.isAuthenticated) {
                 // A session that expired mid-edit stopped the sync; resume it.
                 this._liveSession?.resumeAfterSignIn();
-            }
-            const panel = document.getElementById('cloud-panel');
-            if (
-                detail?.isAuthenticated &&
-                panel?.classList.contains('visible')
-            ) {
-                void (
-                    window as Window & {
-                        switchContext?: (pluginId: string) => Promise<void>;
-                    }
-                ).switchContext?.(this.getId());
             }
         });
     }
@@ -2091,63 +2075,6 @@ export class CloudPlugin extends FilesystemPlugin {
         return stripOwnedFontData(fontJson);
     }
 
-    showsManualRefreshButton(): boolean {
-        return true;
-    }
-
-    supportsUpload(): boolean {
-        return false;
-    }
-
-    supportsNewFolder(): boolean {
-        return false; // Cloud uses a flat asset list — no folders
-    }
-
-    supportsNewFile(): boolean {
-        return false; // New assets are created via Save As, not New File
-    }
-
-    supportsFileContextAction(
-        action: FileContextAction,
-        target: FileContextTarget
-    ): boolean {
-        switch (action) {
-            case 'download':
-            case 'rename':
-                return false;
-            case 'delete': {
-                if (target.isDir) {
-                    return false;
-                }
-                const assetId = String(target.path || '')
-                    .replace(/^cloud:\/\//, '')
-                    .trim();
-                return this.getCachedAssetRole(assetId) === 'owner';
-            }
-            case 'leave': {
-                if (target.isDir) {
-                    return false;
-                }
-                const role = this.getCachedAssetRole(
-                    String(target.path || '')
-                        .replace(/^cloud:\/\//, '')
-                        .trim()
-                );
-                return role === 'editor' || role === 'viewer';
-            }
-            default:
-                return super.supportsFileContextAction(action, target);
-        }
-    }
-
-    /**
-     * Cloud Save As is handled entirely by this plugin:
-     * create the asset, seed the DO, connect Yjs — no writeFile needed.
-     */
-    get interceptsSaveAs(): boolean {
-        return true;
-    }
-
     async handleSaveAs(name: string): Promise<boolean> {
         try {
             await this._runExclusiveCloudIo('save', () => this.saveAs(name));
@@ -2631,133 +2558,6 @@ export class CloudPlugin extends FilesystemPlugin {
             bridge.endDeferredAfterSync?.();
             hydrator.disconnect();
         }
-    }
-
-    requiresPermission(): boolean {
-        return true;
-    }
-
-    /**
-     * Activate the cloud plugin.
-     * Returns true only when the user is authenticated and cloud hosting is
-     * enabled for their account. Returning false causes switchContext to call
-     * updateUI which shows the appropriate cloud-panel message.
-     */
-    async onActivate(): Promise<boolean> {
-        this._availabilityErrorMessage = null;
-
-        try {
-            const user = await this._ensureCloudUser({
-                allowSignInPrompt: true
-            });
-            if (!user) return false;
-
-            this._eligibility = null; // bust cache on every activation
-            void this.checkEligibility();
-            return true;
-        } catch (error) {
-            const message = this._describeAvailabilityError(error);
-            this._availabilityErrorMessage = message;
-            console.warn('[CloudPlugin]', 'Cloud activation failed:', error);
-            return false;
-        }
-    }
-
-    async onDeactivate(): Promise<void> {
-        const cloudPanel = document.getElementById('cloud-panel');
-        if (cloudPanel) cloudPanel.classList.remove('visible');
-    }
-
-    /**
-     * Update cloud-specific UI.
-     * Manages the #cloud-panel element to show login-required or
-     * eligibility-required messages, hiding it when ready to browse.
-     */
-    async updateUI(uiCallbacks: {
-        showUnsupportedBrowserUI: () => void;
-        hideUnsupportedBrowserUI: () => void;
-        showPluginMessage: (options: PluginMessageOptions) => void;
-        hidePluginMessage: () => void;
-    }): Promise<void> {
-        uiCallbacks.hideUnsupportedBrowserUI();
-        uiCallbacks.hidePluginMessage();
-
-        const cloudPanel = document.getElementById('cloud-panel');
-        const titleEl = document.getElementById('cloud-panel-title');
-        const msgEl = document.getElementById('cloud-panel-message');
-        const loginBtn = document.getElementById('cloud-panel-login-btn');
-
-        if (this._availabilityErrorMessage) {
-            if (cloudPanel) cloudPanel.classList.remove('visible');
-            uiCallbacks.showPluginMessage({
-                icon: 'cloud_off',
-                title: 'Cloud Unavailable',
-                message: this._availabilityErrorMessage,
-                tone: 'warning',
-                actionLabel: 'Retry',
-                onAction: () => {
-                    void (window as any).switchContext?.(this.getId());
-                }
-            });
-            return;
-        }
-
-        const authMgr = (window as any).authManager;
-        const user = authMgr
-            ? await authMgr.checkAuthStatus().catch(() => null)
-            : null;
-
-        if (!user) {
-            if (titleEl) titleEl.textContent = 'Cloud Storage';
-            if (msgEl)
-                msgEl.textContent =
-                    'Log in to save and open fonts from the cloud.';
-            if (loginBtn) loginBtn.style.display = '';
-            if (cloudPanel) cloudPanel.classList.add('visible');
-            return;
-        }
-
-        // Authenticated users may access shared assets even if they cannot host
-        // their own cloud fonts. Creation remains separately server-enforced.
-        if (cloudPanel) cloudPanel.classList.remove('visible');
-
-        // Refresh the asset list so it reflects the latest server state.
-        if ((window as any).refreshFileSystem) {
-            (window as any).refreshFileSystem();
-        }
-    }
-
-    getTitleBarMenuItems(): TitleBarMenuItem[] {
-        return [
-            {
-                label: 'Save to Cloud',
-                icon: 'cloud_upload',
-                action: async () => {
-                    await window.saveFontAs?.({ destination: 'cloud' });
-                }
-            },
-            {
-                label: 'Copy Cloud Debug Snapshot',
-                icon: 'content_copy',
-                action: async () => {
-                    await this.copyCloudDebugSnapshot();
-                }
-            },
-            {
-                label: 'Rebuild Font-Deps',
-                icon: 'account_tree',
-                action: async () => {
-                    this.rebuildFontDepsFromLoadedGlyphs();
-                }
-            }
-        ];
-    }
-
-    async isReady(): Promise<boolean> {
-        return (
-            this._cloudAdapter?.status === 'connected' ||
-            this._cloudAdapter?.status === 'syncing'
-        );
     }
 
     // ── Eligibility ──────────────────────────────────────────────
@@ -4065,17 +3865,6 @@ export class CloudPlugin extends FilesystemPlugin {
         }
 
         return null;
-    }
-
-    private _describeAvailabilityError(error: unknown): string {
-        const message =
-            error instanceof Error ? error.message : String(error || '');
-
-        if (/failed to fetch/i.test(message)) {
-            return 'The local cloud server is not reachable right now.';
-        }
-
-        return `Cloud storage could not be reached: ${message}`;
     }
 
     private _normalizeRoomTokenErrorMessage(

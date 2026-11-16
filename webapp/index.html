@@ -15,7 +15,7 @@
         <title>Counterpunch Editor</title>
         <script>
             // Without a font to open, go to the launcher before the editor
-            // starts loading (file-browser.ts still sends a window there if
+            // starts loading (font-files.ts still sends a window there if
             // the font it asked for can't open).
             (function () {
                 var params = new URLSearchParams(window.location.search);
@@ -196,11 +196,6 @@
             window.__startFontcWorker();
         </script>
         <link rel="stylesheet" href="css/style.css" id="local-css" />
-        <link
-            rel="stylesheet"
-            href="css/file-dialog.css"
-            id="file-dialog-css"
-        />
         <script src="pyodide/v<%= htmlWebpackPlugin.options.pyodideVersion %>/pyodide.js"></script>
         <script>
             window.__pyodideLoadPromise = new Promise(function (
@@ -294,11 +289,6 @@
                     // Update CSS
                     const css = document.getElementById('local-css');
                     if (css) css.href = 'css/style.css?v=' + version;
-                    const fileDialogCss =
-                        document.getElementById('file-dialog-css');
-                    if (fileDialogCss) {
-                        fileDialogCss.href = 'css/file-dialog.css?v=' + version;
-                    }
                 }
             })();
         </script>
@@ -1202,137 +1192,6 @@
         </div>
 
         <!-- Webpack will inject bootstrap.js script here -->
-
-        <div
-            class="info-popup-overlay file-dialog-overlay"
-            id="font-file-dialog"
-            style="display: none"
-        >
-            <div class="info-popup file-dialog-shell">
-                <div class="info-popup-header file-dialog-shell-header">
-                    <div class="file-dialog-title-block">
-                        <h3 id="font-file-dialog-title">Open Font</h3>
-                        <p id="font-file-dialog-subtitle">
-                            Choose a font source and location.
-                        </p>
-                    </div>
-                    <button
-                        class="info-popup-close"
-                        id="font-file-dialog-close-btn"
-                    >
-                        <span class="material-symbols-outlined">close</span>
-                    </button>
-                </div>
-                <div
-                    class="file-dialog-plugin-tabs"
-                    id="file-dialog-plugin-tabs"
-                >
-                    <!-- Context tabs generated dynamically by file-browser.ts -->
-                </div>
-                <div class="info-popup-content file-dialog-shell-content">
-                    <div id="file-browser">
-                        <div id="plugin-message-container">
-                            <!-- Dynamic plugin messages rendered here -->
-                        </div>
-                        <div id="cloud-panel">
-                            <div class="open-folder-content">
-                                <span
-                                    class="material-symbols-outlined open-folder-icon"
-                                    >cloud_off</span
-                                >
-                                <h2 id="cloud-panel-title">Cloud Storage</h2>
-                                <p id="cloud-panel-message">
-                                    Log in to save and open fonts from the
-                                    cloud.
-                                </p>
-                                <button
-                                    id="cloud-panel-login-btn"
-                                    class="open-folder-button"
-                                    onclick="window.authManager?.signIn()"
-                                >
-                                    <span class="material-symbols-outlined"
-                                        >login</span
-                                    >
-                                    <span>Log In</span>
-                                </button>
-                            </div>
-                        </div>
-                        <div id="file-tree"></div>
-                    </div>
-                </div>
-                <div class="file-dialog-footer" id="file-dialog-footer">
-                    <div
-                        class="file-dialog-selection"
-                        id="file-dialog-selection"
-                    >
-                        No file selected.
-                    </div>
-                    <div
-                        class="file-dialog-save-fields"
-                        id="file-dialog-save-fields"
-                        style="display: none"
-                    >
-                        <label
-                            class="file-dialog-save-label"
-                            for="file-dialog-save-name"
-                            >File name</label
-                        >
-                        <input
-                            id="file-dialog-save-name"
-                            class="file-dialog-save-input"
-                            type="text"
-                            autocomplete="off"
-                        />
-                        <div
-                            class="file-dialog-save-warning"
-                            id="file-dialog-save-warning"
-                            style="display: none"
-                            aria-live="polite"
-                        >
-                            <span
-                                class="material-symbols-outlined file-dialog-save-warning-icon"
-                                id="file-dialog-save-warning-icon"
-                                aria-hidden="true"
-                            ></span>
-                            <span id="file-dialog-save-warning-text"></span>
-                        </div>
-                    </div>
-                    <div
-                        class="file-dialog-sparse-hydration"
-                        id="file-dialog-sparse-hydration"
-                        style="display: none"
-                    >
-                        <label
-                            class="file-dialog-sparse-hydration-label"
-                            for="file-dialog-sparse-hydration-checkbox"
-                        >
-                            <input
-                                id="file-dialog-sparse-hydration-checkbox"
-                                type="checkbox"
-                            />
-                            Load outlines later
-                        </label>
-                    </div>
-                    <div class="file-dialog-actions">
-                        <button
-                            id="file-dialog-cancel-btn"
-                            class="dialog-button"
-                            type="button"
-                        >
-                            Cancel
-                        </button>
-                        <button
-                            id="file-dialog-confirm-btn"
-                            class="dialog-button dialog-button-primary"
-                            type="button"
-                            disabled
-                        >
-                            Open
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
 
         <!-- Diff Review Modal -->
         <div id="diff-review-modal" class="diff-modal">

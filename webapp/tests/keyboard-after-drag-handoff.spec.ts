@@ -6,7 +6,7 @@ import {
     waitForStableCanvasBox,
     waitForStableEditorMetrics,
     focusView,
-    openFileFromFilesView
+    openMemoryFont
 } from './helpers/snapshot-helper';
 
 /**
@@ -506,7 +506,7 @@ test.describe('Keyboard-after-drag stale editing handoff', () => {
         await page.waitForTimeout(200);
 
         console.log('[Test] Loading Fustat.glyphs');
-        await openFileFromFilesView(page, 'Fustat.glyphs');
+        await openMemoryFont(page, 'Fustat.glyphs');
         await page.waitForTimeout(200);
 
         await waitForFontLoaded(page);

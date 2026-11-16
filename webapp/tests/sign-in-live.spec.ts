@@ -219,11 +219,10 @@ test('the editor signs in from the dialog and keeps the open font', async ({
             assistantSignInBox: true,
             assistantInputEnabled: false
         });
-        // A signed-out user opening Cloud gets the dialog, not a redirect.
+        // A signed-out user signing in gets the dialog, not a redirect.
         void page.evaluate(() =>
-            (window as any).showFontFileDialog({ mode: 'open' })
+            document.getElementById('assistant-login-btn')?.click()
         );
-        await page.locator('.context-tab[data-plugin-id="cloud"]').click();
         const dialog = page.locator('.sign-in-dialog');
         await expect(dialog).toBeVisible();
         await page.fill('#sign-in-email', email);
@@ -276,7 +275,6 @@ test('the editor signs in from the dialog and keeps the open font', async ({
                 };
             })
         ).toEqual({ signedIn: true, email, sameFont: true, noReload: true });
-        await expect(page.locator('#cloud-panel')).not.toHaveClass(/visible/);
 
         await expectAccountPanelsSignedIn(page, email);
         await expectFreeAiCreditUsable(page);

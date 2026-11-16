@@ -2,7 +2,7 @@ import { test, expect } from './fixtures';
 import { type Page } from '@playwright/test';
 import {
     focusView,
-    openFileFromFilesView,
+    openMemoryFont,
     waitForCanvasReady,
     waitForFontLoaded,
     waitForOpenSessionReady
@@ -123,7 +123,7 @@ test.describe('Compilation lane benchmark (Fustat)', () => {
         }
         await page.goto(process.env.COMPILE_BENCH_URL || '/?test=true');
         await waitForCanvasReady(page);
-        await openFileFromFilesView(page, 'Fustat.glyphs');
+        await openMemoryFont(page, 'Fustat.glyphs');
         await waitForFontLoaded(page);
         await waitForOpenSessionReady(page, 'Fustat.glyphs');
         await focusView(page, 'ControlOrMeta+Shift+E', 'view-editor');

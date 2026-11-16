@@ -3,7 +3,7 @@ import {
     waitForCanvasReady,
     waitForOpenSessionReady,
     focusView,
-    openFileFromFilesView
+    openMemoryFont
 } from './helpers/snapshot-helper';
 import {
     waitForBridgeReady,
@@ -91,7 +91,7 @@ async function openSavedFixture(
     await collectPageErrors(ownerPage);
     await ownerPage.goto('/?test=true&examples=collab-fixtures');
     await waitForCanvasReady(ownerPage);
-    await openFileFromFilesView(ownerPage, fileName);
+    await openMemoryFont(ownerPage, fileName);
     await waitForOpenSessionReady(ownerPage, fileName);
     await waitForBridgeReady(ownerPage);
     await installJsonCanonicalizer(ownerPage);
@@ -147,7 +147,7 @@ test('basic limits reject a second font and a font over the glyph cap, and an un
     try {
         await ownerPage.goto('/?test=true&examples=collab-fixtures');
         await waitForCanvasReady(ownerPage);
-        await openFileFromFilesView(ownerPage, 'bbox.glyphs');
+        await openMemoryFont(ownerPage, 'bbox.glyphs');
         await waitForOpenSessionReady(ownerPage, 'bbox.glyphs');
         await waitForBridgeReady(ownerPage);
         const blocked = await ownerPage.evaluate(async (cap) => {
@@ -199,7 +199,7 @@ test('basic limits reject a second font and a font over the glyph cap, and an un
         expect(blocked.error).toMatch(/glyph/i);
         expect(blocked.error).toContain(String(basic.maxGlyphsPerFont));
 
-        await openFileFromFilesView(ownerPage, 'bbox.glyphs');
+        await openMemoryFont(ownerPage, 'bbox.glyphs');
         await waitForOpenSessionReady(ownerPage, 'bbox.glyphs');
         await installJsonCanonicalizer(ownerPage);
         await installFontModelSyncTracker(ownerPage);

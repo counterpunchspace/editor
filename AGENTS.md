@@ -47,28 +47,28 @@ Model objects and raw JSON share these shapes, so mind which one you hold. `font
 
 Paths are under `webapp/js/` unless they start at the repo root.
 
-| Area | Start here |
-| --- | --- |
-| Boot, app shell | `bootstrap.ts`, `webapp/index.html` |
-| Font model (`window.currentFontModel`) | `babelfont-model.ts`, `babelfont.d.ts` |
-| Open, save, formats (`window.fontManager`) | `font-manager.ts`, `file-browser.ts`, `file-system-adapter.ts` |
-| Filesystem backends (Memory, Disk, Cloud) | `filesystem-plugins/`, `filesystem-plugins/plugins/cloud-plugin*.ts` |
-| Glyph editing canvas (`window.glyphCanvas`) | `glyph-canvas.ts`, `glyph-canvas/` (`outline-editor.ts`, `renderer.ts`, `textrun.ts`, `viewport.ts`) |
-| Change recording, sync, undo | `patch-sync-engine.ts` (`recordChange`), `change-log.ts` (`getPathSegments`), `change-bridge-*.ts`, `undo-redo-context.ts` |
-| Recomposition (components, metrics keys) | `recomposition-closure.ts`, `APP.md` "The Editing Pipeline" |
-| Compilation | `font-compilation.ts`, `fontc-worker.ts`, `auto-compile-manager.ts`, `compiled-edit-funnel.ts` |
-| Rust/WASM | `babelfont-fontc-build/src/` → `webapp/wasm-dist/` |
-| Cloud collaboration client | `cloud-adapter*.ts`, `cloud-live-session.ts`, `cloud-durable-wal.ts`, `cloud-website-api.ts`, `filesystem-plugins/cloud-font-deps.ts` |
-| Glyph overview, filters | `glyph-overview*.ts`, `glyph-filter-*.ts` |
-| Plugins | `*-plugin-manager.ts`, root `plugin-contracts/`, root `plugins/`, built wheels in `webapp/wheels/` |
-| Python, AI assistant (`window.pyodide`, `window.aiAssistant`) | `webapp/py/fonteditor.py`, `python-*.ts`, `ai-assistant.ts` |
-| Font info, kerning | `font-info.ts`, `kerning-*.ts`, `glyph-canvas/kerning-group-widget.ts` |
-| Other features | `clipboard/`, `auto-qa/`, `cuts/`, `language-packs/` |
-| Shared UI pieces | `tippy-utils.ts`, `ui/` (`modal-escape.ts`, `confirm-dialog.ts`) |
-| Styles | `webapp/css/style.css`, `webapp/css/ui/`, `webapp/css/tokens.json` |
-| Logging | `logger.ts` |
-| Cross-origin isolation (needed for SharedArrayBuffer) | `webapp/_headers`, `webapp/coi-serviceworker.js` |
-| Tests | `webapp/tests/*.test.js` (Jest, jsdom, WASM mocked), `webapp/tests/*.spec.ts` (Playwright, `fixtures.ts`, `helpers/`), root `tests/` (docs/graph checks) |
+| Area                                                          | Start here                                                                                                                                               |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Boot, app shell                                               | `bootstrap.ts`, `webapp/index.html`                                                                                                                      |
+| Font model (`window.currentFontModel`)                        | `babelfont-model.ts`, `babelfont.d.ts`                                                                                                                   |
+| Open, save, formats (`window.fontManager`)                    | `font-manager.ts`, `font-files.ts`, `file-system-adapter.ts`                                                                                             |
+| Filesystem backends (Memory, Disk, Cloud)                     | `filesystem-plugins/`, `filesystem-plugins/plugins/cloud-plugin*.ts`                                                                                     |
+| Glyph editing canvas (`window.glyphCanvas`)                   | `glyph-canvas.ts`, `glyph-canvas/` (`outline-editor.ts`, `renderer.ts`, `textrun.ts`, `viewport.ts`)                                                     |
+| Change recording, sync, undo                                  | `patch-sync-engine.ts` (`recordChange`), `change-log.ts` (`getPathSegments`), `change-bridge-*.ts`, `undo-redo-context.ts`                               |
+| Recomposition (components, metrics keys)                      | `recomposition-closure.ts`, `APP.md` "The Editing Pipeline"                                                                                              |
+| Compilation                                                   | `font-compilation.ts`, `fontc-worker.ts`, `auto-compile-manager.ts`, `compiled-edit-funnel.ts`                                                           |
+| Rust/WASM                                                     | `babelfont-fontc-build/src/` → `webapp/wasm-dist/`                                                                                                       |
+| Cloud collaboration client                                    | `cloud-adapter*.ts`, `cloud-live-session.ts`, `cloud-durable-wal.ts`, `cloud-website-api.ts`, `filesystem-plugins/cloud-font-deps.ts`                    |
+| Glyph overview, filters                                       | `glyph-overview*.ts`, `glyph-filter-*.ts`                                                                                                                |
+| Plugins                                                       | `*-plugin-manager.ts`, root `plugin-contracts/`, root `plugins/`, built wheels in `webapp/wheels/`                                                       |
+| Python, AI assistant (`window.pyodide`, `window.aiAssistant`) | `webapp/py/fonteditor.py`, `python-*.ts`, `ai-assistant.ts`                                                                                              |
+| Font info, kerning                                            | `font-info.ts`, `kerning-*.ts`, `glyph-canvas/kerning-group-widget.ts`                                                                                   |
+| Other features                                                | `clipboard/`, `auto-qa/`, `cuts/`, `language-packs/`                                                                                                     |
+| Shared UI pieces                                              | `tippy-utils.ts`, `ui/` (`modal-escape.ts`, `confirm-dialog.ts`)                                                                                         |
+| Styles                                                        | `webapp/css/style.css`, `webapp/css/ui/`, `webapp/css/tokens.json`                                                                                       |
+| Logging                                                       | `logger.ts`                                                                                                                                              |
+| Cross-origin isolation (needed for SharedArrayBuffer)         | `webapp/_headers`, `webapp/coi-serviceworker.js`                                                                                                         |
+| Tests                                                         | `webapp/tests/*.test.js` (Jest, jsdom, WASM mocked), `webapp/tests/*.spec.ts` (Playwright, `fixtures.ts`, `helpers/`), root `tests/` (docs/graph checks) |
 
 ## Commands
 
@@ -95,18 +95,18 @@ Run the full suite before release-bound work that touches cross-window sync, the
 
 Do it in the same change. Never hand-edit generated docs.
 
-| You changed | Also do |
-| --- | --- |
-| Emitted JS events (add, remove, rename, payload) | `node scripts/generate-js-event-docs.mjs` → `developer-docs/JS_EVENTS.md` |
-| Glyph-filter event registry | `node scripts/generate-glyph-filter-event-docs.mjs` → `developer-docs/GLYPH_FILTER_EVENTS.md` |
-| A `localStorage` key | `node scripts/generate-localstorage-docs.mjs` → `developer-docs/LOCALSTORAGE_SETTINGS.md` |
-| A `sessionStorage` key | `node scripts/generate-sessionstorage-docs.mjs` → `developer-docs/SESSIONSTORAGE_SETTINGS.md` |
-| Font model class, method, property or parameter (`babelfont-model.ts`) | `node scripts/generate-api-docs.mjs` → `API.md` and `documentation/python/06-python-api.md` |
-| File open/save behaviour | Update "Source File I/O" in `README.md`, status for every affected format |
-| Compile scheduling, mode selection, worker cache, subsetting | Update `developer-docs/COMPILATION_EDIT_POLICY.md` (after the author agrees) |
-| How a host calls a plugin type | Bump the contract per `developer-docs/PLUGIN_CONTRACTS.md`: `contracts.json`, probes, fixtures, `node plugin-contracts/generate.mjs`, bundled-wheel preflight, `npm run sync-plugin-contracts` in website |
-| Rust in `babelfont-fontc-build/src/` | `./build-fontc-wasm.sh`, check the generated files changed |
-| Language-pack Python or data (e.g. `plugins/languagepacks/arabic/counterpunch_arabic/data/`) | `python3 plugins/languagepacks/build.py`; the editor loads `webapp/wheels/`, not `plugins/` |
+| You changed                                                                                  | Also do                                                                                                                                                                                                   |
+| -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Emitted JS events (add, remove, rename, payload)                                             | `node scripts/generate-js-event-docs.mjs` → `developer-docs/JS_EVENTS.md`                                                                                                                                 |
+| Glyph-filter event registry                                                                  | `node scripts/generate-glyph-filter-event-docs.mjs` → `developer-docs/GLYPH_FILTER_EVENTS.md`                                                                                                             |
+| A `localStorage` key                                                                         | `node scripts/generate-localstorage-docs.mjs` → `developer-docs/LOCALSTORAGE_SETTINGS.md`                                                                                                                 |
+| A `sessionStorage` key                                                                       | `node scripts/generate-sessionstorage-docs.mjs` → `developer-docs/SESSIONSTORAGE_SETTINGS.md`                                                                                                             |
+| Font model class, method, property or parameter (`babelfont-model.ts`)                       | `node scripts/generate-api-docs.mjs` → `API.md` and `documentation/python/06-python-api.md`                                                                                                               |
+| File open/save behaviour                                                                     | Update "Source File I/O" in `README.md`, status for every affected format                                                                                                                                 |
+| Compile scheduling, mode selection, worker cache, subsetting                                 | Update `developer-docs/COMPILATION_EDIT_POLICY.md` (after the author agrees)                                                                                                                              |
+| How a host calls a plugin type                                                               | Bump the contract per `developer-docs/PLUGIN_CONTRACTS.md`: `contracts.json`, probes, fixtures, `node plugin-contracts/generate.mjs`, bundled-wheel preflight, `npm run sync-plugin-contracts` in website |
+| Rust in `babelfont-fontc-build/src/`                                                         | `./build-fontc-wasm.sh`, check the generated files changed                                                                                                                                                |
+| Language-pack Python or data (e.g. `plugins/languagepacks/arabic/counterpunch_arabic/data/`) | `python3 plugins/languagepacks/build.py`; the editor loads `webapp/wheels/`, not `plugins/`                                                                                                               |
 
 `npm run generate-docs` (repo root) runs every doc generator at once.
 
@@ -138,9 +138,9 @@ Do it in the same change. Never hand-edit generated docs.
 ## Cloud: font-deps and entitlements
 
 - Sparse cloud open is only as correct as **font-deps**. Keeping it current beats incidental refactors in the same change. Full checklist: `.cursor/rules/font-deps-sparse-hydration.mdc`.
-  - Write the full index on cloud seed; patch the edited glyph's row on live component and metrics-key commits. Never rebuild deps on open.
-  - Committed paths are colon-separated. Parse with `getPathSegments`, never `split('.')`.
-  - Tests go through `recordChange` and the CloudPlugin listener, then assert the sparse partition, not just `depsNeedUpdate`.
+    - Write the full index on cloud seed; patch the edited glyph's row on live component and metrics-key commits. Never rebuild deps on open.
+    - Committed paths are colon-separated. Parse with `getPathSegments`, never `split('.')`.
+    - Tests go through `recordChange` and the CloudPlugin listener, then assert the sparse partition, not just `depsNeedUpdate`.
 - Undo is author-only (`APP.md`, Document Collaboration): an edit can be undone or redone only from the browser session that made it (a main window and its linked windows). Any path that applies a collaborator’s packet — socket, catch-up, or main’s relay to linked windows — must keep it out of history (`captureInUndo: false`), and a room’s stored message history goes to the collaboration log only, never into the change log.
 - Live cloud fuzz (`webapp/tests/cloud-collab-fuzz.spec.ts`): five windows (owner main and linked, owner in a second browser, invitee main and linked) make seeded random edits, undos and redos, then edit at once, go offline, reload and reopen. Every step checks that all windows agree, that each window’s compiled font matches a fresh compile of its data, that automatic composites and metrics keys hold, and that undo stays with its author. It is not in the `cloud-collab` project. `.github/workflows/nightly-fuzz.yml` runs it on staging every night at 03:00 UTC with a new seed (the job summary names it), claims staging like the push CI, and fails if any account, font, glyph, room, row or stored object is left. Its “Run workflow” button takes a seed to repeat a failure; it only tests, so it is not a hand deploy. Each single step must cost the minimum traffic: one update per changed room, one POST from the sender’s main window and one GET (or socket frame) in every other main window per changed glyph, nothing in linked windows. The three-window spec asserts the same for its edits. Run it locally after changing sync, catch-up, undo or compile paths: `CLOUD_COLLAB_FUZZ=1 CLOUD_COLLAB_E2E=1 npx playwright test --project=cloud-collab-fuzz` (`FUZZ_SEED`, `FUZZ_STEPS`, `FUZZ_STOP_AT` repeat or narrow a failing run).
 - Quotas: website D1 is the only source of truth, and the **asset owner's** subscription counts, never the collaborator's. The CloudPlugin and the collab Worker both enforce; client-only checks are not enough. Basic quotas: website `webapp/js/pricing-config.js` (`null` = unlimited). Per-shard Y.Doc ceiling 5 MiB (warn at 75%; live commits that exceed it are reverted).
@@ -173,25 +173,26 @@ Only when the user explicitly asks.
 
 ## Docs index
 
-| Doc | Open when |
-| --- | --- |
-| `APP.md` | Any behaviour change (authority) |
-| `README.md` | File format support status |
-| `developer-docs/DEVELOPMENT.md` | Local dev, Pyodide runtimes, WASM type drift, release overview |
-| `developer-docs/COMPILATION_EDIT_POLICY.md` | Anything that schedules or skips a compile |
-| `developer-docs/FILESYSTEM_PLUGINS.md` | Adding or changing a Memory/Disk/Cloud backend |
-| `developer-docs/PLUGIN_CONTRACTS.md`, `PLUGIN_SETTINGS.md`, `FONT_DESTINATION_PLUGINS.md` | Plugin hosts, settings, export destinations |
-| `developer-docs/PLUGIN_REVIEW_MAP.md` | Moving or renaming a plugin host file or symbol (the marketplace security review reads it) |
-| `developer-docs/BINARY_FONT_EXPORT.md` | File → Export binary font |
-| `developer-docs/RTL_KERNING_STRATEGY.md` | RTL kerning |
-| `developer-docs/APP_UPDATE_RECOVERY.md`, `STUCK_EDITING_RECOVERY.md` | A client stuck on an old cut or a dead editing session |
-| `developer-docs/COMPOSED_RELEASE.md` | Preview/production cutover |
-| `developer-docs/JS_EVENTS.md`, `GLYPH_FILTER_EVENTS.md`, `LOCALSTORAGE_SETTINGS.md`, `SESSIONSTORAGE_SETTINGS.md`, `API.md` | Generated references (see "When you change X") |
-| `strategy/*.md` | Design rationale: cloud collaboration, cuts, language packs, kerning rules, marketplace |
-| `instructions/GRAPHICAL_CODE_GRAPHS.md` | Drawing code-path graphs (`strategy/graphs/`) |
-| `CHANGELOG.md` | Release notes (Unreleased section feeds releases) |
+| Doc                                                                                                                         | Open when                                                                                  |
+| --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `APP.md`                                                                                                                    | Any behaviour change (authority)                                                           |
+| `README.md`                                                                                                                 | File format support status                                                                 |
+| `developer-docs/DEVELOPMENT.md`                                                                                             | Local dev, Pyodide runtimes, WASM type drift, release overview                             |
+| `developer-docs/COMPILATION_EDIT_POLICY.md`                                                                                 | Anything that schedules or skips a compile                                                 |
+| `developer-docs/FILESYSTEM_PLUGINS.md`                                                                                      | Adding or changing a Memory/Disk/Cloud backend                                             |
+| `developer-docs/PLUGIN_CONTRACTS.md`, `PLUGIN_SETTINGS.md`, `FONT_DESTINATION_PLUGINS.md`                                   | Plugin hosts, settings, export destinations                                                |
+| `developer-docs/PLUGIN_REVIEW_MAP.md`                                                                                       | Moving or renaming a plugin host file or symbol (the marketplace security review reads it) |
+| `developer-docs/BINARY_FONT_EXPORT.md`                                                                                      | File → Export binary font                                                                  |
+| `developer-docs/RTL_KERNING_STRATEGY.md`                                                                                    | RTL kerning                                                                                |
+| `developer-docs/APP_UPDATE_RECOVERY.md`, `STUCK_EDITING_RECOVERY.md`                                                        | A client stuck on an old cut or a dead editing session                                     |
+| `developer-docs/COMPOSED_RELEASE.md`                                                                                        | Preview/production cutover                                                                 |
+| `developer-docs/JS_EVENTS.md`, `GLYPH_FILTER_EVENTS.md`, `LOCALSTORAGE_SETTINGS.md`, `SESSIONSTORAGE_SETTINGS.md`, `API.md` | Generated references (see "When you change X")                                             |
+| `strategy/*.md`                                                                                                             | Design rationale: cloud collaboration, cuts, language packs, kerning rules, marketplace    |
+| `instructions/GRAPHICAL_CODE_GRAPHS.md`                                                                                     | Drawing code-path graphs (`strategy/graphs/`)                                              |
+| `CHANGELOG.md`                                                                                                              | Release notes (Unreleased section feeds releases)                                          |
 
 <!-- gitnexus:start -->
+
 # GitNexus — Code Intelligence
 
 This project is indexed by GitNexus as **editor** (33957 symbols, 66172 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
@@ -213,23 +214,23 @@ This project is indexed by GitNexus as **editor** (33957 symbols, 66172 relation
 
 ## Resources
 
-| Resource | Use for |
-|----------|---------|
-| `gitnexus://repo/editor/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/editor/clusters` | All functional areas |
-| `gitnexus://repo/editor/processes` | All execution flows |
-| `gitnexus://repo/editor/process/{name}` | Step-by-step execution trace |
+| Resource                                | Use for                                  |
+| --------------------------------------- | ---------------------------------------- |
+| `gitnexus://repo/editor/context`        | Codebase overview, check index freshness |
+| `gitnexus://repo/editor/clusters`       | All functional areas                     |
+| `gitnexus://repo/editor/processes`      | All execution flows                      |
+| `gitnexus://repo/editor/process/{name}` | Step-by-step execution trace             |
 
 ## CLI
 
-| Task | Read this skill file |
-|------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
+| Task                                         | Read this skill file                                        |
+| -------------------------------------------- | ----------------------------------------------------------- |
+| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md`       |
+| Blast radius / "What breaks if I change X?"  | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?"             | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md`       |
+| Rename / extract / split / refactor          | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md`     |
+| Tools, resources, schema reference           | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md`           |
+| Index, status, clean, wiki CLI commands      | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md`             |
 
 <!-- gitnexus:end -->
 

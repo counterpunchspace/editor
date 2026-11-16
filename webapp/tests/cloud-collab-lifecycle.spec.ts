@@ -4,7 +4,7 @@ import {
     waitForCanvasReady,
     waitForFontLoaded,
     waitForOpenSessionReady,
-    openFileFromFilesView
+    openMemoryFont
 } from './helpers/snapshot-helper';
 import {
     waitForBridgeReady,
@@ -173,7 +173,7 @@ test.describe('Cloud collab seed/load cancel and two-tab', () => {
         try {
             await page.goto(CLOUD_TEST_FONT_URL);
             await waitForCanvasReady(page);
-            await openFileFromFilesView(page, CLOUD_TEST_FONT);
+            await openMemoryFont(page, CLOUD_TEST_FONT);
             await waitForOpenSessionReady(page, CLOUD_TEST_FONT);
             await waitForBridgeReady(page);
             await installJsonCanonicalizer(page);
@@ -266,7 +266,7 @@ test.describe('Cloud collab seed/load cancel and two-tab', () => {
         try {
             await page.goto(CLOUD_TEST_FONT_URL);
             await waitForCanvasReady(page);
-            await openFileFromFilesView(page, CLOUD_TEST_FONT);
+            await openMemoryFont(page, CLOUD_TEST_FONT);
             await waitForOpenSessionReady(page, CLOUD_TEST_FONT);
             await waitForBridgeReady(page);
             const assetId = await saveCurrentFontToCloud(

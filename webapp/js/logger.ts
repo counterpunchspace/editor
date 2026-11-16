@@ -42,7 +42,7 @@ export const FACILITY_REGISTRY: Record<string, boolean> = {
     Features: false,
     FeatureGenerators: false,
     FeatureChangeAnimator: false,
-    FileBrowser: false,
+    FontFiles: false,
     ViewFocus: false,
     FileSystemAdapter: false,
     FilesystemPlugins: false,

@@ -1,5 +1,6 @@
 import { test, expect } from './fixtures';
 import {
+    openMemoryFont,
     waitForCanvasReady,
     waitForOpenSessionReady,
     waitForOverviewTilesRendered
@@ -16,14 +17,7 @@ test('adding a master to a 1,000-glyph font finishes and keeps the page responsi
     test.setTimeout(240_000);
     await page.goto('/?test=true');
     await waitForCanvasReady(page);
-    await page.evaluate(async () => {
-        await (window as any).showFontFileDialog?.({ mode: 'open' });
-    });
-    const fileDialog = page.locator('#font-file-dialog');
-    await fileDialog.waitFor({ state: 'visible' });
-    await fileDialog
-        .locator('.file-item[data-name="Fustat.glyphs"]')
-        .dblclick();
+    await openMemoryFont(page, 'Fustat.glyphs');
     await waitForOpenSessionReady(page, 'Fustat.glyphs');
     await page.waitForFunction(
         () => Number((window as any).fontManager?.editingFont?.length || 0) > 0,

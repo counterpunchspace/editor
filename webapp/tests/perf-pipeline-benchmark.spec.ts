@@ -1,7 +1,7 @@
 import { test } from './fixtures';
 import fs from 'node:fs';
 import {
-    openFileFromFilesView,
+    openMemoryFont,
     waitForCanvasReady,
     waitForFontLoaded,
     waitForOpenSessionReady
@@ -76,7 +76,7 @@ test.describe('Boot and open benchmark', () => {
 
             const tOpen0 = Date.now();
             const perfOpen0 = await page.evaluate(() => performance.now());
-            await openFileFromFilesView(page, FONT);
+            await openMemoryFont(page, FONT);
             await waitForFontLoaded(page);
             const tModel = Date.now();
             await waitForOpenSessionReady(page, FONT, 180000);

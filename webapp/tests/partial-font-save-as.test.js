@@ -39,7 +39,7 @@ describe('Save As of a partially loaded font', () => {
     });
 
     test('saving as refuses before anything is written', async () => {
-        const { saveCurrentFontAs } = require('../js/file-browser');
+        const { saveCurrentFontAs } = require('../js/font-files');
         const writeFile = jest.fn();
         window.patchSyncEngine = { hasSparseWorkingSet: () => true };
         const plugin = {

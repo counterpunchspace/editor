@@ -1,6 +1,7 @@
 import { test, expect } from './fixtures';
 import { type Page } from '@playwright/test';
 import {
+    openMemoryFont,
     focusView,
     waitForCanvasReady,
     waitForEditingFontBytes,
@@ -154,17 +155,7 @@ async function openFustatAndPrepareEditor(page: Page): Promise<void> {
     await page.goto('/?test=true');
     await waitForCanvasReady(page);
 
-    await page.evaluate(async () => {
-        await (window as any).showFontFileDialog?.({ mode: 'open' });
-    });
-
-    const fileDialog = page.locator('#font-file-dialog');
-    await fileDialog.waitFor({ state: 'visible' });
-    const fustatItem = fileDialog.locator(
-        '.file-item[data-name="Fustat.glyphs"]'
-    );
-    await fustatItem.waitFor({ state: 'visible' });
-    await fustatItem.dblclick();
+    await openMemoryFont(page, 'Fustat.glyphs');
 
     await waitForOpenSessionReady(page, 'Fustat.glyphs');
     await focusView(page, 'ControlOrMeta+Shift+E', 'view-editor');

@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import {
-    openFileFromFilesView,
+    openMemoryFont,
     waitForOpenSessionReady
 } from './helpers/snapshot-helper';
 
@@ -8,7 +8,7 @@ import {
 // text buffer, so the steps don't depend on each other's text.
 test('text mode typing and kerning', async ({ page }) => {
     await page.goto('/?test=true');
-    await openFileFromFilesView(page, 'Fustat.glyphs');
+    await openMemoryFont(page, 'Fustat.glyphs');
     await waitForOpenSessionReady(page, 'Fustat.glyphs');
     await page.waitForFunction(
         () => !!(window as any).fontManager?.editingFont

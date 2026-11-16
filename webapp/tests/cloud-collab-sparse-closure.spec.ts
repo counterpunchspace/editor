@@ -1,7 +1,7 @@
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';
 import {
     focusView,
-    openFileFromFilesView,
+    openMemoryFont,
     waitForCanvasReady,
     waitForFontLoaded,
     waitForOpenSessionReady
@@ -182,7 +182,7 @@ test('sparse peers hydrate a new composite, a new base, and a new GSUB alternate
     try {
         await ownerPage.goto('/?test=true&examples=collab-fixtures');
         await waitForCanvasReady(ownerPage);
-        await openFileFromFilesView(ownerPage, 'NestedComponents.glyphs');
+        await openMemoryFont(ownerPage, 'NestedComponents.glyphs');
         await waitForOpenSessionReady(ownerPage, 'NestedComponents.glyphs');
         await waitForBridgeReady(ownerPage);
         await installJsonCanonicalizer(ownerPage);

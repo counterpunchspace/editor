@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures';
 import { type Page } from '@playwright/test';
 import {
-    openFileFromFilesView,
+    openMemoryFont,
     waitForOpenSessionReady,
     waitForPredicate
 } from './helpers/snapshot-helper';
@@ -31,7 +31,7 @@ test('adding a composed glyph stays responsive', async ({ page }) => {
         }
     });
     await page.goto('/?test=true');
-    await openFileFromFilesView(page, 'Fustat.glyphs');
+    await openMemoryFont(page, 'Fustat.glyphs');
     await waitForOpenSessionReady(page, 'Fustat.glyphs');
     await waitForLivePython(page);
     const before = warnings.length;
@@ -167,7 +167,7 @@ test('arabic add glyphs can stay empty or copy composition outlines', async ({
         }
     });
     await page.goto('/?test=true');
-    await openFileFromFilesView(page, 'Fustat.glyphs');
+    await openMemoryFont(page, 'Fustat.glyphs');
     await waitForOpenSessionReady(page, 'Fustat.glyphs');
     await waitForLivePython(page);
     await openAddGlyphs(page);
@@ -556,7 +556,7 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
         }
     });
     await page.goto('/?test=true');
-    await openFileFromFilesView(page, 'YanoneKaffeesatz.designspace');
+    await openMemoryFont(page, 'YanoneKaffeesatz.designspace');
     await waitForOpenSessionReady(page, 'YanoneKaffeesatz.designspace');
     await waitForLivePython(page);
     await page.evaluate(() => {
@@ -804,7 +804,7 @@ test('placeholder sample outlines punch counters with the nonzero rule', async (
 }) => {
     test.setTimeout(180000);
     await page.goto('/?test=true');
-    await openFileFromFilesView(page, 'Fustat.glyphs');
+    await openMemoryFont(page, 'Fustat.glyphs');
     await waitForOpenSessionReady(page, 'Fustat.glyphs');
     await waitForLivePython(page);
     const prepared = await page.evaluate(() => {

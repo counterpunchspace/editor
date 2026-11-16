@@ -2261,7 +2261,7 @@ export class GlyphOverviewFilterManager {
     ): void {
         const filePath = plugin.filePath!;
 
-        // Build menu HTML (using same structure as file-browser context menus)
+        // Build menu HTML (the shared .plugin-menu structure)
         const menuHtml = `
             <div class="plugin-menu">
                 <div class="plugin-menu-item" data-action="edit-filter">

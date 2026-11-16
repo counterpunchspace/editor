@@ -4,7 +4,7 @@ import {
     enterEditModeOnFirstShapedGlyph,
     expectJsonSnapshot,
     focusView,
-    openFileFromFilesView,
+    openMemoryFont,
     takeSnapshot,
     waitForCanvasReady,
     waitForFeatureCompilationError,
@@ -197,18 +197,8 @@ test.describe('Font Editor Basic Workflow', () => {
         }
     };
 
-    test('file dialog replaces the current font on open', async ({ page }) => {
-        await page.evaluate(async () => {
-            await (window as any).showFontFileDialog?.({ mode: 'open' });
-        });
-        const fileDialog = page.locator('#font-file-dialog');
-        await fileDialog.waitFor({ state: 'visible' });
-
-        const firstFontItem = fileDialog.locator(
-            '.file-item[data-name="Fustat.glyphs"]'
-        );
-
-        await firstFontItem.dblclick();
+    test('opening a font replaces the current font', async ({ page }) => {
+        await openMemoryFont(page, 'Fustat.glyphs');
         await waitForFontLoaded(page);
         await waitForOpenSessionReady(page, 'Fustat.glyphs');
         await page.waitForTimeout(300);
@@ -241,44 +231,7 @@ test.describe('Font Editor Basic Workflow', () => {
             return hash;
         });
 
-        await page.evaluate(async () => {
-            await (window as any).showFontFileDialog?.({ mode: 'open' });
-        });
-        await fileDialog.waitFor({ state: 'visible' });
-
-        const secondFontItem = fileDialog.locator(
-            '.file-item[data-name="YanoneKaffeesatz.designspace"]'
-        );
-
-        await expect(secondFontItem).toBeVisible();
-        await secondFontItem.click({ button: 'right' });
-
-        await expect(
-            page.locator(
-                '.tippy-box:visible .plugin-menu-item[data-action="open"]'
-            )
-        ).toBeVisible();
-        await expect(
-            page.locator(
-                '.tippy-box:visible .plugin-menu-item[data-action="open-new-tab"]'
-            )
-        ).toBeVisible();
-        await expect(
-            page.locator(
-                '.tippy-box:visible .plugin-menu-item[data-action="open-new-tab"] span:last-child'
-            )
-        ).toHaveText('Open in New Window');
-
-        await page.mouse.click(10, 10);
-        await page.waitForTimeout(100);
-
-        await page.evaluate(async () => {
-            await (window as any).openFont?.(
-                '/user/YanoneKaffeesatz.designspace',
-                undefined,
-                { closeDialogOnSuccess: true }
-            );
-        });
+        await openMemoryFont(page, 'YanoneKaffeesatz.designspace');
         await waitForOpenSessionReady(page, 'YanoneKaffeesatz.designspace');
         await page.waitForTimeout(1500);
 
@@ -367,7 +320,7 @@ test.describe('Font Editor Basic Workflow', () => {
         );
 
         console.log('[Test] Double-clicking on first .glyphs file');
-        await openFileFromFilesView(page, 'Fustat.glyphs');
+        await openMemoryFont(page, 'Fustat.glyphs');
         await page.waitForTimeout(200);
 
         console.log('[Test] Waiting for font to load');

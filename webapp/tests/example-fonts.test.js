@@ -1,8 +1,6 @@
 const fs = require('fs');
 const path = require('path');
 
-jest.mock('../js/file-system-adapter', () => ({ OPFSAdapter: class {} }));
-
 const manifest = JSON.parse(
     fs.readFileSync(
         path.join(__dirname, '../examples/examples-manifest.json'),
@@ -17,18 +15,8 @@ function load(testMode) {
         ok: true,
         json: async () => manifest
     }));
-    const fonts = require('../js/example-fonts');
-    const {
-        MemoryPlugin
-    } = require('../js/filesystem-plugins/plugins/memory-plugin');
-    return { ...fonts, plugin: new MemoryPlugin() };
+    return require('../js/example-fonts');
 }
-
-const target = (p, isDir = false) => ({
-    path: p,
-    name: p.split('/').pop(),
-    isDir
-});
 
 describe('example fonts', () => {
     afterEach(() => {
@@ -36,8 +24,8 @@ describe('example fonts', () => {
         delete global.fetch;
     });
 
-    test('the sample font, and folders holding it, cannot be deleted or renamed', async () => {
-        const { loadExampleManifest, isExampleFontPath, plugin } = load(false);
+    test('the sample font, and folders holding it, are example fonts', async () => {
+        const { loadExampleManifest, isExampleFontPath } = load(false);
         const entries = await loadExampleManifest();
         expect(entries.map((entry) => entry.destination)).toEqual([
             '/user/Fustat.glyphs'
@@ -48,30 +36,6 @@ describe('example fonts', () => {
         expect(isExampleFontPath('/user/Mine.glyphs')).toBe(false);
         // Fixtures are only examples in test mode.
         expect(isExampleFontPath('/user/bbox.glyphs')).toBe(false);
-
-        for (const action of ['delete', 'rename']) {
-            expect(
-                plugin.supportsFileContextAction(
-                    action,
-                    target('/user/Fustat.glyphs')
-                )
-            ).toBe(false);
-            expect(
-                plugin.supportsFileContextAction(action, target('/user', true))
-            ).toBe(false);
-            expect(
-                plugin.supportsFileContextAction(
-                    action,
-                    target('/user/Mine.glyphs')
-                )
-            ).toBe(true);
-        }
-        expect(
-            plugin.supportsFileContextAction(
-                'open',
-                target('/user/Fustat.glyphs')
-            )
-        ).toBe(true);
     });
 
     test('in test mode, files inside example packages are protected too', async () => {

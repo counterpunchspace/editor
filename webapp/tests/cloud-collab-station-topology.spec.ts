@@ -1,6 +1,6 @@
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';
 import {
-    openFileFromFilesView,
+    openMemoryFont,
     waitForCanvasReady,
     waitForFontLoaded,
     waitForOpenSessionReady
@@ -167,7 +167,7 @@ async function openOwnerOnCloudFont(
     await collectPageErrors(ownerPage);
     await ownerPage.goto('/?test=true&examples=collab-fixtures');
     await waitForCanvasReady(ownerPage);
-    await openFileFromFilesView(ownerPage, 'NestedComponents.glyphs');
+    await openMemoryFont(ownerPage, 'NestedComponents.glyphs');
     await waitForOpenSessionReady(ownerPage, 'NestedComponents.glyphs');
     await waitForBridgeReady(ownerPage);
     await installJsonCanonicalizer(ownerPage);
@@ -322,7 +322,7 @@ test('adding a station to a three-station cloud font reaches every glyph for a p
         await collectPageErrors(ownerPage);
         await ownerPage.goto(CLOUD_TEST_FONT_URL);
         await waitForCanvasReady(ownerPage);
-        await openFileFromFilesView(ownerPage, CLOUD_TEST_FONT);
+        await openMemoryFont(ownerPage, CLOUD_TEST_FONT);
         await waitForOpenSessionReady(ownerPage, CLOUD_TEST_FONT);
         await waitForBridgeReady(ownerPage);
         const assetId = await saveCurrentFontToCloud(

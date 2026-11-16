@@ -2,7 +2,7 @@ import { test, expect } from './fixtures';
 import { type Page } from '@playwright/test';
 import {
     focusView,
-    openFileFromFilesView,
+    openMemoryFont,
     waitForCanvasReady,
     waitForEditingFontBytes,
     waitForOpenSessionReady,
@@ -219,7 +219,7 @@ test('Python in the live runtime: node history and model mapping access', async 
 }) => {
     await page.goto('/?test=true');
     await waitForCanvasReady(page);
-    await openFileFromFilesView(page, 'Fustat.glyphs');
+    await openMemoryFont(page, 'Fustat.glyphs');
     await waitForOpenSessionReady(page, 'Fustat.glyphs');
     await focusView(page, 'ControlOrMeta+Shift+E', 'view-editor');
     await waitForEditingFontBytes(page);

@@ -374,25 +374,13 @@ describe('CloudPlugin.openAsset', () => {
         mockHydrateCache = null;
     });
 
-    test('a collaborator can leave a shared font, the owner cannot', async () => {
+    test('a collaborator can leave a shared font', async () => {
         const roles = new Map([
             ['asset-shared', 'editor'],
             ['asset-own', 'owner']
         ]);
         plugin.getCachedAssetRole = (id) => roles.get(id) ?? null;
         plugin._cacheAssetRole = (id, role) => roles.set(id, role ?? null);
-        const target = (id) => ({
-            path: `cloud://${id}`,
-            name: 'Font',
-            isDir: false
-        });
-        expect(
-            plugin.supportsFileContextAction('leave', target('asset-shared'))
-        ).toBe(true);
-        expect(
-            plugin.supportsFileContextAction('leave', target('asset-own'))
-        ).toBe(false);
-
         plugin._ensureCloudUser = jest.fn(async () => ({ id: 'user-7' }));
         plugin.removeMember = jest.fn(async () => {});
         await plugin.leaveAsset('asset-shared');
@@ -2764,70 +2752,6 @@ describe('CloudPlugin sharing APIs', () => {
         });
 
         await expect(plugin.removeMember('user-2')).resolves.toBeUndefined();
-    });
-});
-
-describe('CloudPlugin eligibility gating', () => {
-    let plugin;
-    let originalAuthManager;
-    let originalFetch;
-    let originalRefreshFileSystem;
-
-    beforeEach(() => {
-        originalAuthManager = window.authManager;
-        originalFetch = global.fetch;
-        originalRefreshFileSystem = window.refreshFileSystem;
-
-        document.body.innerHTML = `
-            <div id="cloud-panel"></div>
-            <div id="cloud-panel-title"></div>
-            <div id="cloud-panel-message"></div>
-            <button id="cloud-panel-login-btn"></button>
-        `;
-
-        window.authManager = {
-            websiteURL: 'http://localhost:8788',
-            ensureCloudSession: jest.fn().mockResolvedValue({ id: 'user-1' }),
-            checkAuthStatus: jest.fn().mockResolvedValue({ id: 'user-1' }),
-            getSessionToken: jest.fn().mockReturnValue('token')
-        };
-        window.refreshFileSystem = jest.fn();
-        global.fetch = jest.fn().mockResolvedValue({
-            ok: true,
-            json: jest.fn().mockResolvedValue({
-                cloudHostingEnabled: false,
-                maxFontsOwned: null,
-                snapshotRetentionDays: null,
-                fontsOwnedCount: 0
-            })
-        });
-
-        plugin = new CloudPlugin();
-    });
-
-    afterEach(() => {
-        window.authManager = originalAuthManager;
-        window.refreshFileSystem = originalRefreshFileSystem;
-        global.fetch = originalFetch;
-        document.body.innerHTML = '';
-    });
-
-    test('activates for authenticated invited users even without hosting eligibility', async () => {
-        await expect(plugin.onActivate()).resolves.toBe(true);
-    });
-
-    test('does not show the hosting-disabled panel to authenticated users without hosting eligibility', async () => {
-        await plugin.updateUI({
-            showUnsupportedBrowserUI: jest.fn(),
-            hideUnsupportedBrowserUI: jest.fn(),
-            showPluginMessage: jest.fn(),
-            hidePluginMessage: jest.fn()
-        });
-
-        expect(
-            document.getElementById('cloud-panel').classList.contains('visible')
-        ).toBe(false);
-        expect(window.refreshFileSystem).toHaveBeenCalled();
     });
 });
 

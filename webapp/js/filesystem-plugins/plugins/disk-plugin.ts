@@ -69,38 +69,6 @@ export class DiskPlugin extends FilesystemPlugin {
         this.documentAdapter.detach();
     }
 
-    isVisibleInUI(): boolean {
-        return false;
-    }
-
-    supportsUpload(): boolean {
-        return false;
-    }
-
-    supportsNewFolder(): boolean {
-        return false;
-    }
-
-    supportsNewFile(): boolean {
-        return false;
-    }
-
-    requiresPermission(): boolean {
-        return true;
-    }
-
-    showsManualRefreshButton(): boolean {
-        return false;
-    }
-
-    async isReady(): Promise<boolean> {
-        return this.document !== null;
-    }
-
-    async onDeactivate(): Promise<void> {
-        // The window's font stays watched whichever plugin the dialog shows.
-    }
-
     /** Report outside changes to the font's files, as paths below `/`. */
     private async watch(): Promise<void> {
         this.disconnectObserver();

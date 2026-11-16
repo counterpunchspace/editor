@@ -3,7 +3,7 @@ import { type Page } from '@playwright/test';
 import {
     waitForCanvasReady,
     waitForOpenSessionReady,
-    openFileFromFilesView
+    openMemoryFont
 } from './snapshot-helper';
 import { waitForBridgeReady } from './change-bridge-cross-window';
 import {
@@ -140,7 +140,7 @@ export async function openAndSaveCloudTestFont(
 ): Promise<string> {
     await page.goto(CLOUD_TEST_FONT_URL);
     await waitForCanvasReady(page);
-    await openFileFromFilesView(page, CLOUD_TEST_FONT);
+    await openMemoryFont(page, CLOUD_TEST_FONT);
     await waitForOpenSessionReady(page, CLOUD_TEST_FONT);
     await waitForBridgeReady(page);
     const assetId = await saveCurrentFontToCloud(page, name);

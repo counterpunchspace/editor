@@ -1,6 +1,7 @@
 import { test, expect } from './fixtures';
 import { type Page, type TestInfo } from '@playwright/test';
 import {
+    openMemoryFont,
     waitForCanvasReady,
     waitForFontLoaded,
     waitForOpenSessionReady,
@@ -8,11 +9,7 @@ import {
 } from './helpers/snapshot-helper';
 
 async function openFustatFont(page: Page): Promise<void> {
-    await page.evaluate(async () => {
-        await (window as any).showFontFileDialog?.({ mode: 'open' });
-    });
-    await page.locator('#font-file-dialog').waitFor({ state: 'visible' });
-    await page.getByText('Fustat.glyphs').first().dblclick();
+    await openMemoryFont(page, 'Fustat.glyphs');
 
     await waitForFontLoaded(page);
     await waitForOpenSessionReady(page, 'Fustat.glyphs');

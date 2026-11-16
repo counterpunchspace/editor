@@ -180,26 +180,12 @@ declare global {
         // From ai-assistant.ts
         aiAssistant: AIAssistant;
 
-        // From file-browser.ts
-        showFontFileDialog:
-            | ((options?: {
-                  mode?: 'open' | 'save-as';
-                  pluginId?: string;
-                  path?: string;
-                  highlightPath?: string;
-                  suggestedName?: string;
-              }) => Promise<void>)
-            | undefined;
-        closeFontFileDialog: (() => void) | undefined;
-
         // From font-windows/save-as-dialog.ts
         saveFontAs:
             | ((options?: {
                   destination?: 'disk' | 'cloud' | 'browser' | 'github';
               }) => Promise<void>)
             | undefined;
-        locatePathInFileDialog:
-            ((pluginId: string, fullPath: string) => Promise<void>) | undefined;
 
         // From auth-manager.ts
         authManager: {
@@ -418,40 +404,16 @@ declare global {
         deleteGlyphsDialog: DeleteGlyphsDialog;
         kerningEditorDialog: KerningEditorDialog;
 
-        // From file-browser.js
-        navigateToPath: (
-            path: string,
-            highlightFolder?: string
-        ) => Promise<void>;
-        navigateToParent: () => Promise<void>;
-        selectFile: (filePath: string) => void;
-        initFileBrowser: () => Promise<void>;
-        waitForFileBrowserReady: (timeoutMs?: number) => Promise<void>;
+        // From font-files.ts
         uploadFiles: (
             files: File[] | FileList,
-            targetPathOrOptions?:
-                | string
-                | null
-                | {
-                      directory?: string | null;
-                      pluginId?: string;
-                      skipRefresh?: boolean;
-                  }
+            options: { directory?: string | null; pluginId: string }
         ) => Promise<void>;
-        createFolder: () => Promise<void>;
-        createFile: () => Promise<void>;
-        deleteItem: (
-            itemPath: string,
-            itemName: string,
-            isDir: boolean
-        ) => Promise<void>;
-        handleFileUpload: (e: Event) => void;
         openFont: (
             path: string,
             fileHandle?: FileSystemFileHandle,
             options?: { sourcePluginOverride?: any }
         ) => Promise<void>;
-        downloadFile: (filePath: string, fileName: string) => Promise<void>;
         parseFileUri: (
             uri: string
         ) => { pluginId: string; path: string } | null;
@@ -488,9 +450,6 @@ declare global {
             offsetsY: number[];
             clusters: number[];
         }>;
-
-        // From file-browser.js
-        refreshFileSystem: () => Promise<void>;
 
         // From font-manager.js
         fontManager: FontManager;
@@ -680,16 +639,12 @@ declare global {
             getLastRun: () => { path: string; title: string } | null;
         };
 
-        // From file-browser.ts
+        // From font-files.ts
         pluginRegistry: {
             get: (id: string) => any;
             getDefault: () => any;
             getAll: () => any[];
             getIds: () => string[];
-        };
-        fileBrowser: {
-            getCurrentPlugin: () => any;
-            getCurrentPath: () => string;
         };
 
         // From index.html (inline script)

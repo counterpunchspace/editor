@@ -1,5 +1,5 @@
 const { isMissingFileError } = require('../js/script-editor.ts');
-const { missingFontUrlAction } = require('../js/file-browser.ts');
+const { missingFontUrlAction } = require('../js/font-files.ts');
 
 describe('startup console noise', () => {
     test('a missing settings script is not a watcher error', () => {

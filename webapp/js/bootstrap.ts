@@ -346,7 +346,7 @@ const handleURLFontOpen = () => {
                 ? fileParam.slice('cloud://'.length)
                 : null;
 
-        // parseFileUri will be available after file-browser.ts loads.
+        // parseFileUri will be available after font-files.ts loads.
         // For bootstrap, parse inline to avoid dependency.
         const match = fileParam.match(/^([^:]+):\/\/\/(.*)$/);
         if (legacyCloudPath) {
@@ -473,7 +473,7 @@ import './editor-stack-preview-menu';
 import './editor-edit-tools-ui';
 import './ui/title-bar-text-fields';
 import './example-loader';
-import './file-browser';
+import './font-files';
 import './font-windows/save-as-dialog';
 import './font-info'; // Font info view manager (Names/Features tabs)
 import './font-interpolation';
@@ -531,7 +531,7 @@ if (document.readyState === 'loading') {
 
 initOfflineStrip();
 
-// Cloud collaboration — exposed for console testing and file-browser cloud:// routing.
+// Cloud collaboration — exposed for console testing and cloud:// routing.
 const _cloudPlugin = new CloudPlugin();
 window.cloudPlugin = _cloudPlugin;
 pluginRegistry.register(_cloudPlugin);

@@ -5,7 +5,7 @@ import {
     waitForFontLoaded,
     waitForOpenSessionReady,
     focusView,
-    openFileFromFilesView
+    openMemoryFont
 } from './helpers/snapshot-helper';
 import {
     shouldIgnoreCrossWindowPageError,
@@ -54,7 +54,7 @@ test.describe('Cross-window ChangeBridge sync', () => {
 
         await mainPage.goto('/?test=true');
         await waitForCanvasReady(mainPage);
-        await openFileFromFilesView(mainPage, 'Fustat.glyphs');
+        await openMemoryFont(mainPage, 'Fustat.glyphs');
         await waitForOpenSessionReady(mainPage, 'Fustat.glyphs');
         await waitForBridgeReady(mainPage);
         await installJsonCanonicalizer(mainPage);
@@ -320,7 +320,7 @@ test.describe('Cross-window ChangeBridge sync', () => {
 
         await mainPage.goto('/?test=true');
         await waitForCanvasReady(mainPage);
-        await openFileFromFilesView(mainPage, 'Fustat.glyphs');
+        await openMemoryFont(mainPage, 'Fustat.glyphs');
         await waitForOpenSessionReady(mainPage, 'Fustat.glyphs');
         await waitForBridgeReady(mainPage);
         await installJsonCanonicalizer(mainPage);

@@ -10,7 +10,7 @@ IndexedDB keys such as directory handles and export destinations are not include
 
 | Keys | Literal | Pattern |
 | ---: | ---: | ---: |
-| 38 | 35 | 3 |
+| 36 | 34 | 2 |
 
 | Key | Purpose | Operations | Files |
 | --- | --- | --- | --- |
@@ -33,7 +33,6 @@ IndexedDB keys such as directory handles and export destinations are not include
 | [`githubRepositorySearch`](#key-githubrepositorysearch) | The last search in the repository picker, offered again next time. | getItem, setItem, removeItem | `webapp/js/github/github-dialogs.ts` |
 | [`glyphCanvasTextBuffer`](#key-glyphcanvastextbuffer) | Persists glyph canvas text buffer. | getItem, setItem, removeItem | `webapp/js/font-manager.ts`, `webapp/js/glyph-canvas/textrun.ts` |
 | [`glyphFilterEditorMode`](#key-glyphfiltereditormode) | Persists glyph filter editor mode. | getItem, setItem | `webapp/js/glyph-filter-editor-modal.ts` |
-| [`lastFilesystemContext`](#key-lastfilesystemcontext) | Persists last filesystem context. | getItem, setItem | `webapp/js/file-browser.ts` |
 | [`launcherCloudFonts`](#key-launchercloudfonts) | The cloud fonts listed on the last visit, shown until the fresh list arrives. | getItem, setItem, removeItem | `webapp/js/launcher/launcher-page.ts` |
 | [`preferredTheme`](#key-preferredtheme) | Shared with the editor's theme switcher. | getItem, setItem | `webapp/js/font-info.ts`, `webapp/js/launcher/launcher-page.ts`, `webapp/js/script-editor.ts`, `webapp/js/theme-switcher.ts` |
 | [`pythonScript`](#key-pythonscript) | Persists python script. | getItem, setItem | `webapp/js/script-editor.ts` |
@@ -49,7 +48,6 @@ IndexedDB keys such as directory handles and export destinations are not include
 | [`tourSkipped`](#key-tourskipped) | Set when the user skips the tour intro. | getItem, setItem | `webapp/js/tour.ts` |
 | [`tourStarted`](#key-tourstarted) | Set when the user starts the tour from the intro. | getItem, setItem | `webapp/js/tour.ts` |
 | [`welcomeDismissedVersion`](#key-welcomedismissedversion) | Version of the welcome screen last dismissed by the user. | getItem, setItem | `webapp/js/welcome-screen.ts` |
-| [`lastPath.${pluginId}`](#key-lastpath-pluginid-) | Persists last path. | getItem, setItem | `webapp/js/file-browser.ts` |
 | [`linkedWindowOccupancy.${sessionId}`](#key-linkedwindowoccupancy-sessionid-) | Persists linked window occupancy. | getItem, setItem, removeItem | `webapp/js/window-role.ts` |
 | [`windowUi.${slot}`](#key-windowui-slot-) | Persists window ui. | getItem, setItem | `webapp/js/window-ui-state.ts` |
 
@@ -185,8 +183,8 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Operations: `getItem`, `setItem`
 - Default when unset: `{}`
 - Sites:
-  - webapp/js/installed-plugin-manager.ts:308 `getItem` via function `dismissedUpdates`
-  - webapp/js/installed-plugin-manager.ts:318 `setItem` via function `dismissUpdate`
+  - webapp/js/installed-plugin-manager.ts:310 `getItem` via function `dismissedUpdates`
+  - webapp/js/installed-plugin-manager.ts:320 `setItem` via function `dismissUpdate`
 
 <a id="key-editornodesnapping"></a>
 
@@ -274,17 +272,6 @@ IndexedDB keys such as directory handles and export destinations are not include
   - webapp/js/glyph-filter-editor-modal.ts:176 `getItem` via function `readStoredMode`
   - webapp/js/glyph-filter-editor-modal.ts:186 `setItem` via function `storeMode`
 
-<a id="key-lastfilesystemcontext"></a>
-
-## `lastFilesystemContext`
-
-- Purpose: Persists last filesystem context.
-- Kind: literal
-- Operations: `getItem`, `setItem`
-- Sites:
-  - webapp/js/file-browser.ts:2354 `setItem` via function `switchContext`
-  - webapp/js/file-browser.ts:3672 `getItem` via function `initFileBrowser`
-
 <a id="key-launchercloudfonts"></a>
 
 ## `launcherCloudFonts`
@@ -326,10 +313,10 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Default when unset: `# Write your Python script here...`
 - Sites:
   - webapp/js/script-editor.ts:314 `getItem` via function `init`
-  - webapp/js/script-editor.ts:437 `setItem` via function `init`
-  - webapp/js/script-editor.ts:1164 `setItem` via function `handleNew`
-  - webapp/js/script-editor.ts:1404 `setItem` via function `openFile`
-  - webapp/js/script-editor.ts:1796 `setItem` via function `reloadFileFromDisk`
+  - webapp/js/script-editor.ts:438 `setItem` via function `init`
+  - webapp/js/script-editor.ts:1165 `setItem` via function `handleNew`
+  - webapp/js/script-editor.ts:1405 `setItem` via function `openFile`
+  - webapp/js/script-editor.ts:1797 `setItem` via function `reloadFileFromDisk`
 
 <a id="key-pythonscriptsavedcontent"></a>
 
@@ -350,10 +337,10 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Kind: literal
 - Operations: `getItem`, `setItem`
 - Sites:
-  - webapp/js/script-editor.ts:675 `getItem` via function `tryStartWatcher`
-  - webapp/js/script-editor.ts:1280 `setItem` via function `handleSave`
-  - webapp/js/script-editor.ts:1413 `setItem` via function `openFile`
-  - webapp/js/script-editor.ts:1802 `setItem` via function `reloadFileFromDisk`
+  - webapp/js/script-editor.ts:676 `getItem` via function `tryStartWatcher`
+  - webapp/js/script-editor.ts:1281 `setItem` via function `handleSave`
+  - webapp/js/script-editor.ts:1414 `setItem` via function `openFile`
+  - webapp/js/script-editor.ts:1803 `setItem` via function `reloadFileFromDisk`
 
 <a id="key-pythonscripturi"></a>
 
@@ -366,9 +353,9 @@ IndexedDB keys such as directory handles and export destinations are not include
   - webapp/js/script-editor.ts:244 `setItem` via function `updateFilePath`
   - webapp/js/script-editor.ts:321 `getItem` via function `init`
   - webapp/js/script-editor.ts:332 `setItem` via function `init`
-  - webapp/js/script-editor.ts:1163 `removeItem` via function `handleNew`
-  - webapp/js/script-editor.ts:1405 `setItem` via function `openFile`
-  - webapp/js/script-editor.ts:1853 `removeItem` via module `top-level module code`
+  - webapp/js/script-editor.ts:1164 `removeItem` via function `handleNew`
+  - webapp/js/script-editor.ts:1406 `setItem` via function `openFile`
+  - webapp/js/script-editor.ts:1854 `removeItem` via module `top-level module code`
 
 <a id="key-runpythonscriptlastrun"></a>
 
@@ -473,19 +460,6 @@ IndexedDB keys such as directory handles and export destinations are not include
 - Sites:
   - webapp/js/welcome-screen.ts:32 `getItem` via function `hasDismissedCurrentWelcome`
   - webapp/js/welcome-screen.ts:40 `setItem` via function `dismissCurrentWelcome`
-
-<a id="key-lastpath-pluginid-"></a>
-
-## `lastPath.${pluginId}`
-
-- Purpose: Persists last path.
-- Kind: pattern
-- Operations: `getItem`, `setItem`
-- Sites:
-  - webapp/js/file-browser.ts:2405 `getItem` via function `switchContext`
-  - webapp/js/file-browser.ts:3256 `setItem` via function `navigateToPath`
-  - webapp/js/file-browser.ts:3741 `getItem` via function `initFileBrowser`
-  - webapp/js/file-browser.ts:4215 `setItem` via module `top-level module code`
 
 <a id="key-linkedwindowoccupancy-sessionid-"></a>
 

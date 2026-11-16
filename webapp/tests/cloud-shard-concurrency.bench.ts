@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test, expect } from './fixtures';
 import {
-    openFileFromFilesView,
+    openMemoryFont,
     waitForCanvasReady,
     waitForOpenSessionReady
 } from './helpers/snapshot-helper';
@@ -147,7 +147,7 @@ test.describe('Cloud shard GET/POST concurrency bench (Fustat)', () => {
         try {
             await page.goto('/?test=true');
             await waitForCanvasReady(page);
-            await openFileFromFilesView(page, 'Fustat.glyphs');
+            await openMemoryFont(page, 'Fustat.glyphs');
             await waitForOpenSessionReady(page, 'Fustat.glyphs');
             await waitForBridgeReady(page);
 
@@ -342,7 +342,7 @@ test.describe('Cloud shard GET/POST concurrency bench (Fustat)', () => {
         try {
             await page.goto('/?test=true');
             await waitForCanvasReady(page);
-            await openFileFromFilesView(page, 'Fustat.glyphs');
+            await openMemoryFont(page, 'Fustat.glyphs');
             await waitForOpenSessionReady(page, 'Fustat.glyphs');
             await waitForBridgeReady(page);
 

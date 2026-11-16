@@ -4,7 +4,7 @@ import { test, expect, type Page } from '@playwright/test';
 import {
     waitForCanvasReady,
     waitForOpenSessionReady,
-    openFileFromFilesView
+    openMemoryFont
 } from './helpers/snapshot-helper';
 import {
     alignEditorCanvas,
@@ -89,7 +89,7 @@ test('a new account saves a font, invites a second account, and a nudge syncs be
         const ownerErrors = uncaughtErrors(ownerPage);
         await ownerPage.goto('/?test=true&examples=collab-fixtures');
         await waitForCanvasReady(ownerPage);
-        await openFileFromFilesView(ownerPage, 'bbox.glyphs');
+        await openMemoryFont(ownerPage, 'bbox.glyphs');
         await waitForOpenSessionReady(ownerPage, 'bbox.glyphs');
         await waitForBridgeReady(ownerPage);
         const assetId = await saveCurrentFontToCloud(

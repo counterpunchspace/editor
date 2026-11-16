@@ -23,12 +23,7 @@ import {
     type GitHubRepository,
     type GitHubRepositorySpec
 } from '../../github/github-session';
-import {
-    FilesystemPlugin,
-    type FileContextAction,
-    type FileContextTarget,
-    type SaveSummary
-} from '../filesystem-plugin';
+import { FilesystemPlugin, type SaveSummary } from '../filesystem-plugin';
 import { GitHubAdapter, type GitHubAdapterState } from './github-adapter';
 import { escapeHtml, openDialog } from '../../font-windows/dialogs';
 
@@ -67,43 +62,6 @@ export class GitHubPlugin extends FilesystemPlugin {
 
     getIcon(): string {
         return '<span class="material-symbols-outlined">code</span>';
-    }
-
-    /** No file dialog tab: the launcher opens GitHub fonts, Save As saves them. */
-    isVisibleInUI(): boolean {
-        return false;
-    }
-
-    requiresPermission(): boolean {
-        return true;
-    }
-
-    supportsUpload(): boolean {
-        return false;
-    }
-
-    supportsNewFolder(): boolean {
-        return false;
-    }
-
-    supportsNewFile(): boolean {
-        return false;
-    }
-
-    /** Git only holds files, so rename and delete wait for a save. */
-    supportsFileContextAction(
-        action: FileContextAction,
-        target: FileContextTarget
-    ): boolean {
-        if (
-            action === 'rename' ||
-            action === 'delete' ||
-            action === 'leave' ||
-            action === 'open-in-script-editor'
-        ) {
-            return false;
-        }
-        return super.supportsFileContextAction(action, target);
     }
 
     private find(spec: GitHubRepositorySpec): GitHubRepository | null {
@@ -145,17 +103,6 @@ export class GitHubPlugin extends FilesystemPlugin {
     private load(): Promise<void> {
         this.loading ??= this.refresh();
         return this.loading;
-    }
-
-    async isReady(): Promise<boolean> {
-        await this.load();
-        return this.state.credential !== null;
-    }
-
-    async onActivate(): Promise<boolean> {
-        this.loading = this.refresh();
-        await this.loading;
-        return this.state.credential !== null;
     }
 
     /** The repositories Save As can write to, read fresh. */

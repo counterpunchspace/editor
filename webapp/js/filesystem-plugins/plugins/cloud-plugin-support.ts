@@ -4,11 +4,7 @@
  */
 import {
     FilesystemPlugin,
-    type CanAddGlyphsResult,
-    type FileContextAction,
-    type FileContextTarget,
-    type PluginMessageOptions,
-    type TitleBarMenuItem
+    type CanAddGlyphsResult
 } from '../filesystem-plugin';
 import { pluginRegistry } from '../registry';
 import {

@@ -34,7 +34,7 @@ async function loadExampleFonts() {
             Array.from({ length: WRITE_LANES }, (_, lane) =>
                 window.uploadFiles(
                     files.filter((_, index) => index % WRITE_LANES === lane),
-                    { directory: '/', pluginId: 'memory', skipRefresh: true }
+                    { directory: '/', pluginId: 'memory' }
                 )
             )
         );
@@ -43,11 +43,6 @@ async function loadExampleFonts() {
             '[ExampleLoader]',
             `✅ Loaded ${files.length} file(s) from ${examplesToLoad.length} example entry/entries`
         );
-
-        // Refresh file browser if available
-        if (window.refreshFileSystem) {
-            window.refreshFileSystem();
-        }
     } catch (error) {
         console.error('[ExampleLoader]', 'Error loading example fonts:', error);
     }

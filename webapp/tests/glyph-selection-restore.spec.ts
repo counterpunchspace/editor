@@ -2,7 +2,7 @@ import { type Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import {
     focusView,
-    openFileFromFilesView,
+    openMemoryFont,
     waitForCanvasReady,
     waitForFontLoaded,
     waitForOpenSessionReady
@@ -13,7 +13,7 @@ import {
 async function openNestedComponentsFont(page: Page) {
     await page.goto('/?test=true');
     await waitForCanvasReady(page);
-    await openFileFromFilesView(page, 'NestedComponents.glyphs');
+    await openMemoryFont(page, 'NestedComponents.glyphs');
     await waitForFontLoaded(page);
     await waitForOpenSessionReady(page, 'NestedComponents.glyphs');
     await focusView(page, 'ControlOrMeta+Shift+E', 'view-editor');

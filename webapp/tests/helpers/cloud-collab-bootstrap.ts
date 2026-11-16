@@ -6,7 +6,7 @@ import {
 } from '@playwright/test';
 import {
     focusView,
-    openFileFromFilesView,
+    openMemoryFont,
     waitForCanvasReady,
     waitForFontLoaded,
     waitForOpenSessionReady
@@ -102,7 +102,7 @@ export async function prepareOwnerCloudFont(
     await collectPageErrors(ownerPage);
     await ownerPage.goto(CLOUD_TEST_FONT_URL);
     await waitForCanvasReady(ownerPage);
-    await openFileFromFilesView(ownerPage, CLOUD_TEST_FONT);
+    await openMemoryFont(ownerPage, CLOUD_TEST_FONT);
     await waitForOpenSessionReady(ownerPage, CLOUD_TEST_FONT);
     await waitForBridgeReady(ownerPage);
     await installJsonCanonicalizer(ownerPage);
@@ -172,13 +172,10 @@ export async function openInviteeOnAsset(
                 loadingStatus:
                     document.getElementById('loading-status')?.textContent ||
                     null,
-                pluginMessage:
-                    document.querySelector('#plugin-message-container')
-                        ?.textContent || null,
                 hasEditorSessionCookie:
                     document.cookie.includes('editor_session='),
                 pendingOpenAssetId: plugin?._pendingOpenAsset?.assetId ?? null,
-                urlOpenError: (window as any).__fileBrowserUrlOpenError ?? null,
+                urlOpenError: (window as any).__urlFontOpenError ?? null,
                 cloudOpenError: (window as any).__cloudOpenError ?? null,
                 assetId: plugin?.activeAssetId ?? null,
                 status: plugin?.connectionStatus ?? null,
