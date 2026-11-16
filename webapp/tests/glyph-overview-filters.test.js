@@ -528,4 +528,48 @@ describe('GlyphOverviewFilterManager combined filters', () => {
             { name: 'a.sc' }
         ]);
     });
+
+    describe('GlyphOverviewFilterManager open recount fallback', () => {
+        beforeEach(() => {
+            jest.useFakeTimers();
+            window.currentFontModel = {
+                glyphs: [],
+                findGlyph: () => undefined
+            };
+        });
+
+        afterEach(() => {
+            jest.useRealTimers();
+            jest.restoreAllMocks();
+        });
+
+        test('counts the filters when nothing else did after an open', () => {
+            const manager = new GlyphOverviewFilterManager();
+            manager.loaded = true;
+            const refresh = jest
+                .spyOn(manager, 'refreshPlugins')
+                .mockResolvedValue(undefined);
+
+            window.dispatchEvent(new CustomEvent('fontLoaded'));
+            window.dispatchEvent(new CustomEvent('fontModelReady'));
+            jest.advanceTimersByTime(2999);
+            expect(refresh).not.toHaveBeenCalled();
+            jest.advanceTimersByTime(1);
+            expect(refresh).toHaveBeenCalledWith({ deferCounts: true });
+        });
+
+        test('leaves the count to the overview when it already ran', () => {
+            const manager = new GlyphOverviewFilterManager();
+            manager.loaded = true;
+            const refresh = jest
+                .spyOn(manager, 'refreshPlugins')
+                .mockResolvedValue(undefined);
+
+            window.dispatchEvent(new CustomEvent('fontLoaded'));
+            window.dispatchEvent(new CustomEvent('fontModelReady'));
+            manager.finishOpenRecount();
+            jest.advanceTimersByTime(3000);
+            expect(refresh).not.toHaveBeenCalled();
+        });
+    });
 });

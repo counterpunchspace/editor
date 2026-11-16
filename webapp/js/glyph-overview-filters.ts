@@ -258,6 +258,9 @@ interface RefreshPluginsOptions {
 
 const ALL_GLYPHS_FILTER_KEYWORD = 'com.context.allglyphs';
 
+/** Wait after a new font model before counting filters without the overview. */
+const OPEN_RECOUNT_FALLBACK_MS = 3000;
+
 /** A problem in unsaved filter code. `line` is 1-based when known. */
 export interface GlyphFilterSourceError {
     kind: 'syntax' | 'contract' | 'runtime' | 'timeout';
@@ -339,6 +342,7 @@ export class GlyphOverviewFilterManager {
     private pluginRefreshInFlight: boolean = false;
     private openRecountPending: boolean = false;
     private openGeneration: number = 0;
+    private openRecountFallbackTimer: number | null = null;
     private filterWorkChain: Promise<void> = Promise.resolve();
     private inFlightCountRequests: number = 0;
     private sharedPluginContext: Record<string, any> = {};
@@ -395,6 +399,9 @@ export class GlyphOverviewFilterManager {
             this.openGeneration += 1;
             this.openRecountPending = true;
         });
+        window.addEventListener('fontModelReady', () => {
+            this.scheduleOpenRecountFallback();
+        });
         window.addEventListener(
             'filteredBooleanCompatibilityUpdated',
             (event: Event) => {
@@ -449,6 +456,31 @@ export class GlyphOverviewFilterManager {
             ? USER_FILTER_SECTION
             : plugin.path.split('/', 1)[0] || '';
         return { section, mode: FILTER_SECTION_COMBINE[section] ?? 'all' };
+    }
+
+    /**
+     * The overview counts the filters after its first render of a new font
+     * (`fontReady`). When an open never gets there, count anyway once the
+     * new font model has been installed for a while, so the sidebar doesn't
+     * keep empty counts. A later open restarts the wait.
+     */
+    private scheduleOpenRecountFallback(): void {
+        if (this.openRecountFallbackTimer !== null) {
+            window.clearTimeout(this.openRecountFallbackTimer);
+        }
+        const generation = this.openGeneration;
+        this.openRecountFallbackTimer = window.setTimeout(() => {
+            this.openRecountFallbackTimer = null;
+            if (
+                generation === this.openGeneration &&
+                this.loaded &&
+                this.openRecountPending &&
+                !this.pluginRefreshInFlight &&
+                window.currentFontModel
+            ) {
+                void this.refreshPlugins({ deferCounts: true });
+            }
+        }, OPEN_RECOUNT_FALLBACK_MS);
     }
 
     private enqueueFilterWork(work: () => Promise<void>): Promise<void> {
