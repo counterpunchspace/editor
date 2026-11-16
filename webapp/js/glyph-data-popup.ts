@@ -5,40 +5,11 @@
 
 import tippy, { type Instance as TippyInstance } from 'tippy.js';
 import { getTheme } from './tippy-utils';
-import { glyphDataIndex, type GlyphDataSearchResult } from './glyph-data';
-
-const GENERAL_CATEGORIES: Record<string, string> = {
-    Lu: 'Letter, uppercase',
-    Ll: 'Letter, lowercase',
-    Lt: 'Letter, titlecase',
-    Lm: 'Letter, modifier',
-    Lo: 'Letter, other',
-    Mn: 'Mark, nonspacing',
-    Mc: 'Mark, spacing combining',
-    Me: 'Mark, enclosing',
-    Nd: 'Number, decimal digit',
-    Nl: 'Number, letter',
-    No: 'Number, other',
-    Pc: 'Punctuation, connector',
-    Pd: 'Punctuation, dash',
-    Ps: 'Punctuation, open',
-    Pe: 'Punctuation, close',
-    Pi: 'Punctuation, initial quote',
-    Pf: 'Punctuation, final quote',
-    Po: 'Punctuation, other',
-    Sm: 'Symbol, math',
-    Sc: 'Symbol, currency',
-    Sk: 'Symbol, modifier',
-    So: 'Symbol, other',
-    Zs: 'Separator, space',
-    Zl: 'Separator, line',
-    Zp: 'Separator, paragraph',
-    Cc: 'Other, control',
-    Cf: 'Other, format',
-    Cs: 'Other, surrogate',
-    Co: 'Other, private use',
-    Cn: 'Other, not assigned'
-};
+import {
+    GENERAL_CATEGORY_LABELS,
+    glyphDataIndex,
+    type GlyphDataSearchResult
+} from './glyph-data';
 
 const BIDI_CLASSES: Record<string, string> = {
     L: 'Left-to-right',
@@ -172,7 +143,7 @@ function rowsFor(
         [
             'General category',
             record.general_category
-                ? describeCode(record.general_category, GENERAL_CATEGORIES)
+                ? describeCode(record.general_category, GENERAL_CATEGORY_LABELS)
                 : undefined
         ],
         ['Script', record.script],

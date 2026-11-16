@@ -19,6 +19,7 @@ Core functionality for font editing operations
 """
 
 from collections.abc import MutableMapping, MutableSequence
+from copy import deepcopy
 from keyword import iskeyword
 import json
 
@@ -356,6 +357,24 @@ def _is_mapping_assignment_value(value):
     return False
 
 
+# Glyph Data catalog records never change while the editor runs, so each
+# one is converted to a dict once. Callers get a copy they may change.
+_GLYPH_DATA_DICTS = {}
+
+
+def _glyph_data_dict(value):
+    key = (_js_get(value, 'codepoint'), _js_get(value, 'glyph_name'))
+    if not all(isinstance(part, (int, float, str)) for part in key):
+        return _js_proxy_to_py_dict(value)
+    converted = _GLYPH_DATA_DICTS.get(key)
+    if converted is None:
+        converted = _js_proxy_to_py_dict(value)
+        if converted is None:
+            return None
+        _GLYPH_DATA_DICTS[key] = converted
+    return deepcopy(converted)
+
+
 def _wrap_js_value(value, owner_class_name=None, attr_name=None):
     if _is_js_null_or_undefined(value):
         return None
@@ -376,7 +395,11 @@ def _wrap_js_value(value, owner_class_name=None, attr_name=None):
     )
 
     if snapshot_object and not _is_python_scalar_or_container(value):
-        converted = _js_proxy_to_py_dict(value)
+        converted = (
+            _glyph_data_dict(value)
+            if attr_name == 'glyphData'
+            else _js_proxy_to_py_dict(value)
+        )
         if converted is not None:
             return converted
 

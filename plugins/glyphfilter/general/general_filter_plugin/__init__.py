@@ -15,7 +15,8 @@
 
 """
 General Glyph Filter Plugin
-Provides basic glyph filters: All Glyphs, Encoded Characters, Unencoded Glyphs.
+Provides basic glyph filters: All Glyphs, Encoded Characters, Unencoded Glyphs,
+and one filter per Unicode general category.
 """
 
 from .all_glyphs import AllGlyphsFilter

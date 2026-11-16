@@ -297,6 +297,31 @@ Here, undo, redo, and remote Yjs packets converge with forward GUI edits to be p
 
 ## Glyphs
 
+### Combining glyph filters
+
+The glyph overview’s filter sidebar can have several filters active at once. A plain click selects only the clicked filter. Shift-click, Cmd-click and Ctrl-click add the filter to the selection, or remove it when it is already selected; there is no range selection. **All Glyphs** never combines: clicking it selects only it, adding another filter replaces it, and removing the last filter selects it again. The selection is saved per window as a list of filter ids in click order.
+
+Filters combine by top-level sidebar section. Filters in the **Categories** section show glyphs that match any of them (Lu and Ll show all upper- and lowercase letters). Every other filter, user filters included, has to match too (Lu and **Auto QA Issues** show uppercase letters with Auto QA warnings). The filter clicked last owns the group legend and the tile colors. Selecting legend groups narrows that filter’s glyphs (any selected group matches) before the filters combine. Sidebar counts are counts in the whole font, not in the current selection.
+
+**Categories** is one flat list of built-in filters that combine the 30 Unicode general categories into the groups type designers work with, in this order:
+
+| Category | Unicode general categories |
+| --- | --- |
+| Uppercase | Lu, Lt |
+| Lowercase | Ll |
+| Caseless Letters | Lo |
+| Modifiers | Lm, Sk |
+| Marks | Mn, Mc, Me |
+| Figures | Nd, Nl, No |
+| Punctuation | Pc, Pd, Ps, Pe, Pi, Pf, Po |
+| Currency | Sc |
+| Symbols | Sm, So |
+| Spaces | Zs, Zl, Zp |
+| Other | Cc, Cf, Cs, Co, Cn |
+| No Category | none in glyph data |
+
+Every general category is in exactly one group. Filter plugins can set `sort_order` to come first in their folder in that order; the others follow by name. A glyph’s category is `glyph.glyphData.general_category`, so `a.sc` is in Lowercase with `a`. Glyphs that glyph data doesn’t know, such as many Arabic dot marks and ligatures, `.notdef` and unencoded glyphs with unknown names, have no `glyphData` and are in **No Category**. Category filters set `unicode_categories`, so the editor matches them in JavaScript against the same bundled glyph data catalog instead of calling Python for every glyph; one lookup per glyph is shared by all category filters until the font changes. Python reads of `glyph.glyphData` convert each catalog record to a dict once and return copies. A full filter run waits for the glyph data catalog to load, so no glyph lands in No Category only because the catalog was still loading; All Glyphs doesn’t wait. When a glyph’s code point changes, the glyphs named after it (`a.sc`, `a.ss01`) are checked again too. Category filters set `hide_when_empty`: a filter plugin with that attribute is left out of the sidebar while it matches no glyphs, unless it is active or has an error. A folder whose filters are all hidden that way is hidden too; folders without filters, such as empty user folders, stay. The Encoded Characters and Unencoded Glyphs filters are under **Basic → Encoding**.
+
 ### User glyph filters
 
 User filters are Python files in the Settings Folder's `Filters/` folder. A filter's description is its module docstring; new filters start with an empty one. `EVENT_TYPES` may be empty (`[]`, `()` or `set()`) for a filter that only reads glyph names; such a filter is re-checked only when glyphs are added, renamed or removed, and the filter editor says so in its footer. Filters can be sorted into folders and subfolders (two levels, `Filters/Folder/Subfolder`): the folder button in the User Filters title creates a top-level folder, and a folder's context menu offers **New Subfolder…** and **Delete Folder…**. Empty folders are shown. Deleting a folder that holds filters, subfolders or other files first says what it contains and asks. Filters move between folders, and back to the top level, by drag and drop within User Filters; when the destination already has a filter with the same name (ignoring case), it asks before replacing it. A moved filter keeps its chat and, when active, stays active. Renaming rejects a name that another `.py` file in the same folder already has, ignoring case (macOS and Windows file systems do), and the characters `/ \ : * ? " < > |`. A dry run of unsaved filter code uses the same Python path and timeout as a saved filter and never changes the active filter, the cached results or the sidebar.

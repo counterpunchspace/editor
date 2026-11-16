@@ -19,11 +19,18 @@ Setup script for General Glyph Filter Plugin
 
 from setuptools import setup, find_packages
 
+# Category filters in unicode_categories.py, in sidebar order.
+CATEGORY_KEYS = (
+    "uppercase lowercase caseless modifiers marks figures punctuation "
+    "currency symbols spaces other none"
+).split()
+
 setup(
     name="general-filter-plugin",
     version="0.1.0",
     description=(
-        "General glyph filters: All Glyphs, Encoded Characters, " "Unencoded Glyphs"
+        "General glyph filters: All Glyphs, Encoded Characters, "
+        "Unencoded Glyphs, glyph categories"
     ),
     author="Yanone",
     license="GPL-3.0-or-later",
@@ -39,6 +46,13 @@ setup(
                 "general_filter_plugin:IncompatibleOutlinesFilter"
             ),
             "unencoded_glyphs = general_filter_plugin:UnencodedGlyphsFilter",
+        ]
+        + [
+            (
+                f"category_{key} = general_filter_plugin."
+                f"unicode_categories:{key.capitalize()}CategoryFilter"
+            )
+            for key in CATEGORY_KEYS
         ],
     },
     classifiers=[

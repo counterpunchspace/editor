@@ -250,3 +250,209 @@ describe('GlyphOverviewFilterManager simple filters', () => {
         expect(manager.canUseCachedFilterResults(filter)).toBe(false);
     });
 });
+
+describe('GlyphOverviewFilterManager combined filters', () => {
+    let manager;
+
+    function makePathFilter(path, keyword, names) {
+        return {
+            ...makeFilter(keyword, ['glyph.unicode.changed']),
+            path,
+            lastResults: names.map((glyph_name) => ({ glyph_name })),
+            glyphCount: names.length
+        };
+    }
+
+    function shownNames() {
+        const calls = manager.glyphOverview.setActiveFilter.mock.calls;
+        return calls[calls.length - 1][0].map((r) => r.glyph_name).sort();
+    }
+
+    beforeEach(() => {
+        manager = new GlyphOverviewFilterManager();
+        manager.glyphOverview = {
+            setActiveFilter: jest.fn(),
+            updateSelectedGlyphGroups: jest.fn(),
+            showFilterNotice: jest.fn(),
+            showFilterError: jest.fn()
+        };
+        window.currentFontModel = {
+            glyphs: [
+                { name: 'A' },
+                { name: 'a' },
+                { name: 'a.sc' },
+                { name: 'b' }
+            ],
+            findGlyph(name) {
+                return this.glyphs.find((glyph) => glyph.name === name);
+            }
+        };
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    test('Shift, Cmd and Ctrl clicks combine filters by section', async () => {
+        const all = makePathFilter('basic', 'com.context.allglyphs', [
+            'A',
+            'a',
+            'a.sc',
+            'b'
+        ]);
+        const upper = makePathFilter('categories', 'lu', ['A']);
+        const lower = makePathFilter('categories', 'll', ['a', 'a.sc', 'b']);
+        const qa = makePathFilter('basic/debugging', 'qa', ['A', 'a.sc']);
+        manager.plugins = [all, upper, lower, qa];
+        manager.activeFilter = all;
+
+        await manager.activateFilter(upper, new MouseEvent('click'));
+        await manager.activateFilter(
+            lower,
+            new MouseEvent('click', { shiftKey: true })
+        );
+        expect(shownNames()).toEqual(['A', 'a', 'a.sc', 'b']);
+
+        await manager.activateFilter(
+            qa,
+            new MouseEvent('click', { metaKey: true })
+        );
+        expect(shownNames()).toEqual(['A', 'a.sc']);
+        expect(manager.getActiveFilter()).toBe(qa);
+
+        await manager.activateFilter(
+            upper,
+            new MouseEvent('click', { ctrlKey: true })
+        );
+        expect(shownNames()).toEqual(['a.sc']);
+
+        await manager.activateFilter(lower, new MouseEvent('click'));
+        expect(shownNames()).toEqual(['a', 'a.sc', 'b']);
+    });
+
+    test('empty hide_when_empty filters and their folders are hidden', () => {
+        const container = document.createElement('div');
+        const used = makePathFilter('categories', 'uppercase', ['A']);
+        const empty = makePathFilter('categories', 'currency', []);
+        const emptyActive = makePathFilter('categories', 'marks', []);
+        const plainEmpty = makePathFilter('basic/debugging', 'qa', []);
+        for (const plugin of [used, empty, emptyActive]) {
+            plugin.hideWhenEmpty = true;
+        }
+        manager.plugins = [used, empty, emptyActive, plainEmpty];
+        for (const plugin of manager.plugins) {
+            manager.findNode(plugin.path).plugins.push(plugin);
+        }
+        manager.sidebarContainer = container;
+        manager.activeFilter = emptyActive;
+        manager.renderSidebar();
+
+        const item = (keyword) =>
+            container.querySelector(`[data-plugin-keyword="${keyword}"]`);
+        const folder = (keyword) =>
+            item(keyword).closest('.glyph-filter-node').style.display;
+        expect(item('uppercase').style.display).toBe('');
+        expect(item('currency').style.display).toBe('none');
+        expect(item('marks').style.display).toBe('');
+        expect(item('qa').style.display).toBe('');
+
+        manager.activeFilter = plainEmpty;
+        used.glyphCount = 0;
+        manager.updateEmptyFilterVisibility();
+        expect(item('marks').style.display).toBe('none');
+        expect(folder('uppercase')).toBe('none');
+        expect(folder('qa')).toBe('');
+    });
+
+    test('filters with a sort order come first, in that order', () => {
+        const container = document.createElement('div');
+        const lower = makePathFilter('categories', 'lowercase', ['a']);
+        const upper = makePathFilter('categories', 'uppercase', ['A']);
+        const unordered = makePathFilter('categories', 'aaa', ['A']);
+        lower.sortOrder = 1;
+        upper.sortOrder = 0;
+        manager.plugins = [lower, unordered, upper];
+        for (const plugin of manager.plugins) {
+            manager.findNode(plugin.path).plugins.push(plugin);
+        }
+        manager.sidebarContainer = container;
+        manager.renderSidebar();
+
+        const order = [...container.querySelectorAll('.glyph-filter-item')].map(
+            (item) => item.dataset.pluginKeyword
+        );
+        expect(order).toEqual(['uppercase', 'lowercase', 'aaa']);
+    });
+
+    test('category filters classify in JavaScript with one lookup per glyph', async () => {
+        let lookups = 0;
+        const glyph = (name, category) => ({
+            name,
+            get glyphData() {
+                lookups += 1;
+                return category ? { general_category: category } : undefined;
+            }
+        });
+        window.currentFontModel.glyphs = [
+            glyph('A', 'Lu'),
+            glyph('a', 'Ll'),
+            glyph('dotabove-ar', null)
+        ];
+        window.fontManager = { currentFont: { changeVersion: 1 } };
+        const upper = {
+            ...makePathFilter('categories', 'lu', []),
+            unicodeCategories: new Set(['Lu', 'Lt'])
+        };
+        const lower = {
+            ...makePathFilter('categories', 'll', []),
+            unicodeCategories: new Set(['Ll'])
+        };
+        const none = {
+            ...makePathFilter('categories', 'none', []),
+            unicodeCategories: new Set([''])
+        };
+        manager.plugins = [upper, lower, none];
+        const python = jest.spyOn(manager, 'runFilterPython');
+
+        for (const plugin of manager.plugins) {
+            manager.classifyGlyphs(plugin, window.currentFontModel.glyphs);
+        }
+
+        expect([...upper.classifications.keys()]).toEqual(['A']);
+        expect([...lower.classifications.keys()]).toEqual(['a']);
+        expect([...none.classifications.keys()]).toEqual(['dotabove-ar']);
+        expect(python).not.toHaveBeenCalled();
+        expect(lookups).toBe(3);
+        expect(manager.canUseCachedFilterResults(upper)).toBe(true);
+
+        await manager.handleCommittedGlyphFilterBatch({
+            changes: [
+                { type: 'glyph.unicode.changed', metadata: { glyphName: 'A' } }
+            ]
+        });
+        expect(lookups).toBe(4);
+        delete window.fontManager;
+    });
+
+    test('a code point change rechecks the glyphs named after it', async () => {
+        const filter = makePathFilter('categories', 'll', []);
+        manager.plugins = [filter];
+        const classify = jest
+            .spyOn(manager, 'classifyGlyphs')
+            .mockReturnValue(undefined);
+
+        await manager.handleCommittedGlyphFilterBatch({
+            changes: [
+                {
+                    type: 'glyph.unicode.changed',
+                    metadata: { glyphName: 'a' }
+                }
+            ]
+        });
+
+        expect(classify).toHaveBeenCalledWith(filter, [
+            { name: 'a' },
+            { name: 'a.sc' }
+        ]);
+    });
+});

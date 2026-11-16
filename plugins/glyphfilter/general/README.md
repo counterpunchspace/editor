@@ -9,6 +9,10 @@ Provides basic glyph filters for the Context font editor.
 - **All Glyphs** - Shows all glyphs in the font
 - **Encoded Characters** - Shows glyphs that have a Unicode codepoint
 - **Unencoded Glyphs** - Shows glyphs without a Unicode codepoint
+- **Categories** - Uppercase, Lowercase, Caseless Letters, Modifiers, Marks,
+  Figures, Punctuation, Currency, Symbols, Spaces, Other and No Category,
+  each combining Unicode general categories (`CATEGORY_GROUPS`). Filters
+  with no glyphs in the open font are hidden (`hide_when_empty`).
 
 ## Structure
 
@@ -17,6 +21,7 @@ Each filter is defined in its own file:
 - `all_glyphs.py` - AllGlyphsFilter
 - `encoded_glyphs.py` - EncodedGlyphsFilter
 - `unencoded_glyphs.py` - UnencodedGlyphsFilter
+- `unicode_categories.py` - <Key>CategoryFilter, one per category group
 
 ## Building
 

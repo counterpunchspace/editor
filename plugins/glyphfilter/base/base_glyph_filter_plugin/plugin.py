@@ -40,6 +40,16 @@ class BaseGlyphFilterPlugin:
 
     Optional methods:
     - is_candidate(glyph): Cheap early rejection predicate
+
+    Optional attributes:
+    - hide_when_empty: Leave the filter out of the sidebar while it
+      matches no glyphs in the open font
+    - unicode_categories: Unicode general category codes such as
+      ("Lu", "Lt"), with "" for glyphs without one. The editor then
+      matches glyph.glyphData's general_category itself, without calling
+      classify_glyph, which must still give the same answer
+    - sort_order: Number that orders filters within their sidebar folder;
+      filters without one follow, sorted by name
     """
     
     # Plugin path - must match a registered path in FILTER_PATHS
@@ -53,6 +63,9 @@ class BaseGlyphFilterPlugin:
     display_name = "Base Filter"
 
     event_types = set()
+
+    # Leave the filter out of the sidebar while it matches no glyphs
+    hide_when_empty = False
     
     def __init__(self):
         """

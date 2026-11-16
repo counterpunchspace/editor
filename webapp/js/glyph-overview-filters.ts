@@ -56,6 +56,12 @@ import {
 import { getGlyphFilterIds, setGlyphFilterIds } from './window-ui-state';
 import { filterChatRegistry } from './glyph-filter-chat';
 import { showProceedDialog } from './ui/confirm-dialog';
+import { glyphDataIndex } from './glyph-data';
+import {
+    combineGlyphFilterResults,
+    nextGlyphFilterSelection,
+    type GlyphFilterCombineMode
+} from './glyph-filter-selection';
 import { QA_CORPUS_READY_EVENT } from './auto-qa/auto-qa-corpus';
 
 /** Drag data type of a user filter being moved between folders. */
@@ -88,9 +94,21 @@ const QA_FULL_RECHECK_DELAY_MS = 1500;
  */
 const FILTER_PATHS: Record<string, string> = {
     'basic': 'Basic',
-    'basic/glyph_categories': 'Categories',
-    'basic/debugging': 'Debugging'
+    'basic/glyph_categories': 'Encoding',
+    'basic/debugging': 'Debugging',
+    'categories': 'Categories'
 };
+
+/**
+ * Top-level sections whose filters show glyphs that match any of them.
+ * Filters in every other section, user filters included, all have to match.
+ */
+const FILTER_SECTION_COMBINE: Record<string, GlyphFilterCombineMode> = {
+    categories: 'any'
+};
+
+/** Section key of user filters for combining. */
+const USER_FILTER_SECTION = 'user';
 
 /**
  * Filter result from a plugin
@@ -126,6 +144,16 @@ interface GlyphFilterPlugin {
     hasError?: boolean; // True if last run resulted in an error
     hasNoFilterFunction?: boolean; // True if plugin lacks classify_glyph
     isUserFilter?: boolean; // True if this is a user-defined filter from disk
+    /** Leave the sidebar entry out while the filter matches no glyphs. */
+    hideWhenEmpty?: boolean;
+    /**
+     * Unicode general categories the host matches against
+     * `glyph.glyphData.general_category` in JavaScript instead of calling
+     * Python; an empty string matches glyphs without one.
+     */
+    unicodeCategories?: ReadonlySet<string>;
+    /** Position within its sidebar folder, before unordered filters. */
+    sortOrder?: number;
     filePath?: string; // Path to .py file for user filters
     pythonCode?: string; // Source code for user filters
     validationDiagnostic?: string;
@@ -266,7 +294,12 @@ export class GlyphOverviewFilterManager {
     private sidebarContainer: HTMLElement | null = null;
     private groupLegendContainer: HTMLElement | null = null;
     private glyphOverview: any = null;
-    private activeFilter: GlyphFilterPlugin | null = null;
+    private unicodeCategoryCache: {
+        key: string;
+        categories: Map<string, string>;
+    } | null = null;
+    /** Active filters in click order; the last one owns the group legend. */
+    private activeFilters: GlyphFilterPlugin[] = [];
     private activeGroupFilters: Set<string> = new Set(); // Selected group keywords for filtering (not colors)
     private selectedGlyphGroups: Set<string> = new Set(); // Groups that selected glyphs belong to
     private groupElements: Map<string, HTMLElement> = new Map(); // Map group keyword to legend element
@@ -365,6 +398,34 @@ export class GlyphOverviewFilterManager {
         window.addEventListener(QA_CORPUS_READY_EVENT, () => {
             this.scheduleQaFullRecheck();
         });
+    }
+
+    /** The filter that owns the group legend and the tile colors. */
+    private get activeFilter(): GlyphFilterPlugin | null {
+        return this.activeFilters[this.activeFilters.length - 1] ?? null;
+    }
+
+    /** Select only `plugin`, or nothing. */
+    private set activeFilter(plugin: GlyphFilterPlugin | null) {
+        this.activeFilters = plugin ? [plugin] : [];
+    }
+
+    private isActive(plugin: GlyphFilterPlugin): boolean {
+        return this.activeFilters.includes(plugin);
+    }
+
+    private filterId(plugin: GlyphFilterPlugin): string {
+        return `${plugin.path}/${plugin.keyword}`;
+    }
+
+    private combineMode(plugin: GlyphFilterPlugin): {
+        section: string;
+        mode: GlyphFilterCombineMode;
+    } {
+        const section = plugin.isUserFilter
+            ? USER_FILTER_SECTION
+            : plugin.path.split('/', 1)[0] || '';
+        return { section, mode: FILTER_SECTION_COMBINE[section] ?? 'all' };
     }
 
     private enqueueFilterWork(work: () => Promise<void>): Promise<void> {
@@ -718,18 +779,11 @@ export class GlyphOverviewFilterManager {
         this.pendingActiveFilters = getGlyphFilterIds();
     }
 
-    /**
-     * Save active filter ids on this window slot. Storage is a list so
-     * multi-select can land later; the UI still writes one id today.
-     */
+    /** Save active filter ids, in click order, on this window slot. */
     private saveActiveState(): void {
-        if (this.activeFilter) {
-            setGlyphFilterIds([
-                `${this.activeFilter.path}/${this.activeFilter.keyword}`
-            ]);
-            return;
-        }
-        setGlyphFilterIds([]);
+        setGlyphFilterIds(
+            this.activeFilters.map((plugin) => this.filterId(plugin))
+        );
     }
 
     /**
@@ -791,10 +845,11 @@ export class GlyphOverviewFilterManager {
         if (batch.changes.length === 0 || !window.currentFontModel) {
             return;
         }
+        this.unicodeCategoryCache = null;
 
         for (const plugin of this.getAllLoadedPlugins()) {
             await this.applyCommittedChanges(plugin, batch.changes);
-            if (plugin === this.activeFilter) {
+            if (this.isActive(plugin)) {
                 this.applyCachedFilterResults(plugin);
             } else {
                 this.updatePluginCount(plugin);
@@ -1069,6 +1124,7 @@ export class GlyphOverviewFilterManager {
         if (!lifecycleChanges.length || !window.currentFontModel) {
             return;
         }
+        this.unicodeCategoryCache = null;
 
         for (const plugin of this.getAllLoadedPlugins()) {
             const glyphsToClassify: object[] = [];
@@ -1091,7 +1147,7 @@ export class GlyphOverviewFilterManager {
                 this.classifyGlyphs(plugin, glyphsToClassify);
             }
             this.derivePluginResults(plugin);
-            if (plugin === this.activeFilter) {
+            if (this.isActive(plugin)) {
                 this.applyCachedFilterResults(plugin);
             } else {
                 this.updatePluginCount(plugin);
@@ -1170,6 +1226,9 @@ export class GlyphOverviewFilterManager {
                             'keyword': getattr(plugin_instance, 'keyword', ep.name),
                             'display_name': getattr(plugin_instance, 'display_name', ep.name),
                             'event_types': list(getattr(plugin_instance, 'event_types', [])),
+                            'hide_when_empty': bool(getattr(plugin_instance, 'hide_when_empty', False)),
+                            'unicode_categories': list(getattr(plugin_instance, 'unicode_categories', None) or []) or None,
+                            'sort_order': getattr(plugin_instance, 'sort_order', None),
                             'instance': plugin_instance
                         })
                     except Exception as e:
@@ -1262,6 +1321,18 @@ export class GlyphOverviewFilterManager {
                 }
                 plugin.eventTypes = eventTypes;
                 plugin.classifications = new Map();
+                plugin.hideWhenEmpty = plugin.hide_when_empty === true;
+                plugin.unicodeCategories =
+                    Array.isArray(plugin.unicode_categories) &&
+                    plugin.unicode_categories.every(
+                        (code: unknown) => typeof code === 'string'
+                    )
+                        ? new Set<string>(plugin.unicode_categories)
+                        : undefined;
+                plugin.sortOrder =
+                    typeof plugin.sort_order === 'number'
+                        ? plugin.sort_order
+                        : undefined;
 
                 this.plugins.push(plugin as GlyphFilterPlugin);
             }
@@ -1282,16 +1353,11 @@ export class GlyphOverviewFilterManager {
 
             // Apply pending active filter if any
             if (this.pendingActiveFilters.length > 0) {
-                const plugin = this.pendingActiveFilters
+                this.activeFilters = this.pendingActiveFilters
                     .map((fullId) =>
-                        this.plugins.find(
-                            (p) => `${p.path}/${p.keyword}` === fullId
-                        )
+                        this.plugins.find((p) => this.filterId(p) === fullId)
                     )
-                    .find((entry) => entry);
-                if (plugin) {
-                    this.activeFilter = plugin;
-                }
+                    .filter((entry): entry is GlyphFilterPlugin => !!entry);
                 this.pendingActiveFilters = [];
             }
 
@@ -1347,10 +1413,6 @@ export class GlyphOverviewFilterManager {
             scanGeneration === this.userFilterScanGeneration;
 
         const previousUserFilters = this.userFilters;
-        // Remember active user filter keyword to restore after reload
-        const activeUserFilterKeyword = this.activeFilter?.isUserFilter
-            ? this.activeFilter.keyword
-            : null;
 
         // Reset user filters tree
         this.userFiltersNode = this.buildUserFiltersTree();
@@ -1503,21 +1565,43 @@ export class GlyphOverviewFilterManager {
                 return;
             }
 
-            // Restore active user filter reference if it still exists
-            if (activeUserFilterKeyword) {
-                let restoredFilter = this.userFilters.find(
-                    (f) => f.keyword === activeUserFilterKeyword
-                );
+            // Point active user filters at the reloaded ones. A renamed
+            // legend owner is found by its new name.
+            if (this.activeFilters.some((f) => f.isUserFilter)) {
+                const owner = this.activeFilter;
+                const restored = this.activeFilters
+                    .map((active) => {
+                        if (!active.isUserFilter) return active;
+                        return (
+                            this.userFilters.find(
+                                (f) => f.keyword === active.keyword
+                            ) ??
+                            (active === owner && renamedToDisplayName
+                                ? this.userFilters.find(
+                                      (f) =>
+                                          f.display_name ===
+                                          renamedToDisplayName
+                                  )
+                                : undefined)
+                        );
+                    })
+                    .filter((f): f is GlyphFilterPlugin => !!f);
 
-                // If not found by keyword but we have a rename target, find by display_name
-                if (!restoredFilter && renamedToDisplayName) {
-                    restoredFilter = this.userFilters.find(
-                        (f) => f.display_name === renamedToDisplayName
-                    );
-                }
-
-                if (restoredFilter) {
-                    this.activeFilter = restoredFilter;
+                if (restored.length > 0) {
+                    const dropped = restored.length < this.activeFilters.length;
+                    this.activeFilters = restored;
+                    if (dropped) {
+                        this.saveActiveState();
+                        if (window.currentFontModel && isCurrentScan()) {
+                            for (const active of [...this.activeFilters]) {
+                                if (this.canUseCachedFilterResults(active)) {
+                                    this.applyCachedFilterResults(active);
+                                } else {
+                                    await this.runFilter(active);
+                                }
+                            }
+                        }
+                    }
                 } else {
                     // Filter was renamed/deleted, fall back to "All Glyphs"
                     const allGlyphsFilter = this.plugins.find(
@@ -2113,6 +2197,7 @@ export class GlyphOverviewFilterManager {
 
         // Render User Filters section
         this.renderUserFiltersSection();
+        this.updateEmptyFilterVisibility();
     }
 
     /**
@@ -2278,11 +2363,13 @@ export class GlyphOverviewFilterManager {
                 });
             }
 
-            // Render plugins in this node - sorted alphabetically
-            const sortedPlugins = [...childNode.plugins].sort((a, b) =>
-                a.display_name.localeCompare(b.display_name, undefined, {
-                    sensitivity: 'base'
-                })
+            // Plugins with a sort order first, then alphabetically
+            const sortedPlugins = [...childNode.plugins].sort(
+                (a, b) =>
+                    (a.sortOrder ?? Infinity) - (b.sortOrder ?? Infinity) ||
+                    a.display_name.localeCompare(b.display_name, undefined, {
+                        sensitivity: 'base'
+                    })
             );
             for (const plugin of sortedPlugins) {
                 const pluginElement = this.renderPluginItem(plugin, depth + 1);
@@ -2331,8 +2418,11 @@ export class GlyphOverviewFilterManager {
         const item = document.createElement('div');
         item.className = 'glyph-filter-item sidebar-item';
         item.dataset.pluginKeyword = plugin.keyword; // For reliable lookup
-        if (this.activeFilter === plugin) {
+        if (this.isActive(plugin)) {
             item.classList.add('active');
+        }
+        if (plugin.hideWhenEmpty) {
+            item.dataset.hideWhenEmpty = 'true';
         }
         item.style.setProperty('--glyph-filter-item-depth', String(depth));
 
@@ -2359,8 +2449,8 @@ export class GlyphOverviewFilterManager {
         item.appendChild(count);
 
         // Click to activate filter
-        item.addEventListener('click', async () => {
-            await this.activateFilter(plugin, item);
+        item.addEventListener('click', async (event) => {
+            await this.activateFilter(plugin, event);
         });
 
         // Add context menu for user filters
@@ -2549,39 +2639,102 @@ export class GlyphOverviewFilterManager {
     }
 
     /**
-     * Activate a filter plugin.
-     * If the filter already has results for the current font data version,
-     * reuse them instead of re-executing.
+     * Activate a filter plugin. A plain click selects only this filter;
+     * Shift, Cmd or Ctrl adds or removes it. Filters that already have
+     * results for the open font reuse them instead of re-executing.
      */
     private async activateFilter(
         plugin: GlyphFilterPlugin,
-        itemElement: HTMLElement
+        event?: MouseEvent
     ): Promise<void> {
-        // If clicking same filter, do nothing (can't deselect)
-        if (this.activeFilter === plugin) {
+        const loaded = this.getAllLoadedPlugins();
+        const allGlyphs = loaded.find(
+            (p) => p.keyword === ALL_GLYPHS_FILTER_KEYWORD
+        );
+        const nextIds = nextGlyphFilterSelection(
+            this.activeFilters.map((p) => this.filterId(p)),
+            this.filterId(plugin),
+            !!(event?.shiftKey || event?.metaKey || event?.ctrlKey),
+            allGlyphs ? this.filterId(allGlyphs) : ''
+        );
+        const next = nextIds
+            .map((id) => loaded.find((p) => this.filterId(p) === id))
+            .filter((p): p is GlyphFilterPlugin => !!p);
+        if (
+            next.length === 0 ||
+            (next.length === this.activeFilters.length &&
+                next.every((p, index) => p === this.activeFilters[index]))
+        ) {
             return;
         }
 
-        // Deactivate previous
-        if (this.activeFilter) {
-            const prevItem = this.sidebarContainer?.querySelector(
-                '.glyph-filter-item.active'
-            );
-            prevItem?.classList.remove('active');
-        }
-
-        // Activate new filter
-        this.activeFilter = plugin;
-        itemElement.classList.add('active');
+        this.activeFilters = next;
+        this.updateActiveItemClasses();
+        this.updateEmptyFilterVisibility();
         this.saveActiveState();
 
         const dataVersion = this.getCurrentDataVersion();
-        if (this.canUseCachedFilterResults(plugin, dataVersion)) {
-            this.applyCachedFilterResults(plugin);
-            return;
+        for (const active of next) {
+            if (this.canUseCachedFilterResults(active, dataVersion)) {
+                this.applyCachedFilterResults(active);
+            } else {
+                await this.runFilter(active);
+            }
         }
+    }
 
-        await this.runFilter(plugin);
+    private updateActiveItemClasses(): void {
+        this.sidebarContainer
+            ?.querySelectorAll<HTMLElement>('.glyph-filter-item')
+            .forEach((item) => {
+                const keyword = item.dataset.pluginKeyword;
+                item.classList.toggle(
+                    'active',
+                    this.activeFilters.some((p) => p.keyword === keyword)
+                );
+            });
+    }
+
+    /**
+     * Hide filters marked `hide_when_empty` while they match no glyphs, and
+     * folders whose filters are all hidden that way. Active filters and
+     * filters still counting stay visible; folders without filters (empty
+     * user folders) are left alone.
+     */
+    private updateEmptyFilterVisibility(): void {
+        if (!this.sidebarContainer) return;
+        for (const plugin of this.getAllLoadedPlugins()) {
+            if (!plugin.hideWhenEmpty) continue;
+            const item = this.sidebarContainer.querySelector<HTMLElement>(
+                `.glyph-filter-item[data-plugin-keyword="${plugin.keyword}"]`
+            );
+            if (item) {
+                const empty =
+                    plugin.glyphCount === 0 &&
+                    !plugin.hasError &&
+                    !this.isActive(plugin);
+                // Inline style, because `.sidebar-item` sets `display`
+                // and would override the `hidden` attribute.
+                item.style.display = empty ? 'none' : '';
+            }
+        }
+        const nodes = Array.from(
+            this.sidebarContainer.querySelectorAll<HTMLElement>(
+                '.glyph-filter-node'
+            )
+        ).reverse();
+        for (const node of nodes) {
+            const items =
+                node.querySelectorAll<HTMLElement>('.glyph-filter-item');
+            const empty =
+                items.length > 0 &&
+                Array.from(items).every(
+                    (item) =>
+                        item.style.display === 'none' &&
+                        !!item.dataset.hideWhenEmpty
+                );
+            node.style.display = empty ? 'none' : '';
+        }
     }
 
     /**
@@ -2753,6 +2906,7 @@ export class GlyphOverviewFilterManager {
         const cachedGeneration = plugin.cachedOpenGeneration ?? 0;
         const sourceReady =
             plugin.keyword === ALL_GLYPHS_FILTER_KEYWORD ||
+            plugin.unicodeCategories !== undefined ||
             plugin.sourceLoaded === true;
         return (
             sourceReady &&
@@ -2805,19 +2959,11 @@ export class GlyphOverviewFilterManager {
         plugin.glyphCount = results.length;
         plugin.hasError = false;
         this.updatePluginCount(plugin);
-        this.updateGroupLegend(plugin, usedGroupKeywords);
-
-        if (this.glyphOverview) {
-            if (results.length === 0) {
-                this.glyphOverview.showFilterNotice(
-                    plugin.display_name,
-                    'Filter executed successfully but returned no results.',
-                    'info'
-                );
-            } else {
-                this.glyphOverview.setActiveFilter(results);
-                this.glyphOverview.updateSelectedGlyphGroups();
-            }
+        if (plugin === this.activeFilter) {
+            this.updateGroupLegend(plugin, usedGroupKeywords);
+        }
+        if (this.isActive(plugin)) {
+            this.applyActiveFilterResults();
         }
     }
 
@@ -2868,6 +3014,17 @@ export class GlyphOverviewFilterManager {
     }
 
     private async rebuildFilterCache(plugin: GlyphFilterPlugin): Promise<void> {
+        // Filters read `glyph.glyphData`; before the catalog loads it is
+        // empty and every glyph would land in No Category. A failed load
+        // still classifies, without glyph data.
+        if (
+            plugin.keyword !== ALL_GLYPHS_FILTER_KEYWORD &&
+            !glyphDataIndex.isReady()
+        ) {
+            await glyphDataIndex.ensureReady().catch((error) => {
+                console.warn('Glyph Data unavailable for filters:', error);
+            });
+        }
         plugin.classifications.clear();
         const glyphs =
             plugin.keyword === ALL_GLYPHS_FILTER_KEYWORD
@@ -2891,6 +3048,11 @@ export class GlyphOverviewFilterManager {
             if (plugin.eventTypes.includes(change.type)) {
                 if (typeof glyphName === 'string') {
                     names.add(glyphName);
+                    if (change.type === 'glyph.unicode.changed') {
+                        for (const name of this.dottedGlyphNames(glyphName)) {
+                            names.add(name);
+                        }
+                    }
                 }
             }
         }
@@ -2909,6 +3071,50 @@ export class GlyphOverviewFilterManager {
         this.derivePluginResults(plugin);
     }
 
+    /**
+     * Glyphs named `<baseName>.<suffix>`. `Glyph.glyphData` reads their
+     * Unicode data from the base glyph, so they change with its code point.
+     */
+    private dottedGlyphNames(baseName: string): string[] {
+        return (window.currentFontModel?.glyphs ?? [])
+            .map((glyph) => glyph.name)
+            .filter(
+                (name) =>
+                    name !== baseName && name.split('.', 1)[0] === baseName
+            );
+    }
+
+    /**
+     * A glyph's Unicode general category from `glyph.glyphData`, or '' when
+     * glyph data has none. Shared by all category filters and kept until
+     * the font changes, the glyph data catalog loads or another font opens.
+     * Committed changes also clear it, also when they don't mark the font
+     * dirty (collaborators' edits).
+     */
+    private unicodeCategoryOf(glyph: { name: string }): string {
+        const version = this.getCurrentDataVersion();
+        let categories: Map<string, string> | null = null;
+        if (version !== null) {
+            const key = `${this.openGeneration}:${version}:${glyphDataIndex.isReady()}`;
+            if (this.unicodeCategoryCache?.key !== key) {
+                this.unicodeCategoryCache = { key, categories: new Map() };
+            }
+            categories = this.unicodeCategoryCache.categories;
+            const cached = categories.get(glyph.name);
+            if (cached !== undefined) {
+                return cached;
+            }
+        }
+        const data = (glyph as { glyphData?: { general_category?: unknown } })
+            .glyphData;
+        const category =
+            typeof data?.general_category === 'string'
+                ? data.general_category
+                : '';
+        categories?.set(glyph.name, category);
+        return category;
+    }
+
     private classifyGlyphs(
         plugin: GlyphFilterPlugin,
         glyphs: ReadonlyArray<{ name?: string }>
@@ -2924,6 +3130,19 @@ export class GlyphOverviewFilterManager {
         if (plugin.keyword === ALL_GLYPHS_FILTER_KEYWORD) {
             for (const glyph of namedGlyphs) {
                 plugin.classifications.set(glyph.name, { groups: [] });
+            }
+            return;
+        }
+
+        if (plugin.unicodeCategories !== undefined) {
+            for (const glyph of namedGlyphs) {
+                if (
+                    plugin.unicodeCategories.has(this.unicodeCategoryOf(glyph))
+                ) {
+                    plugin.classifications.set(glyph.name, { groups: [] });
+                } else {
+                    plugin.classifications.delete(glyph.name);
+                }
             }
             return;
         }
@@ -3248,6 +3467,9 @@ export class GlyphOverviewFilterManager {
                 count.classList.remove('has-error');
             }
         }
+        if (plugin.hideWhenEmpty) {
+            this.updateEmptyFilterVisibility();
+        }
     }
 
     /**
@@ -3331,7 +3553,7 @@ export class GlyphOverviewFilterManager {
         }
 
         // Apply group filter to glyph overview
-        this.applyGroupFilter();
+        this.applyActiveFilterResults();
     }
 
     /**
@@ -3348,34 +3570,48 @@ export class GlyphOverviewFilterManager {
         }
 
         // Re-apply filter to show all results
-        this.applyGroupFilter();
+        this.applyActiveFilterResults();
     }
 
     /**
-     * Apply group filter to show only glyphs matching selected groups
+     * Show the glyphs that pass every active filter. Selected legend groups
+     * first narrow the legend owner's glyphs (any selected group matches).
+     * Tiles keep only the legend owner's colors.
      */
-    private applyGroupFilter(): void {
-        if (!this.glyphOverview || !this.activeFilter) return;
+    private applyActiveFilterResults(): void {
+        const owner = this.activeFilter;
+        if (!this.glyphOverview || !owner) return;
 
-        const results = this.activeFilter.lastResults;
-        if (!results) return;
+        const ownerResults = (owner.lastResults ?? []).filter(
+            (result) =>
+                this.activeGroupFilters.size === 0 ||
+                (result.groups ?? []).some((groupKeyword) =>
+                    this.activeGroupFilters.has(groupKeyword)
+                )
+        );
+        const others = this.activeFilters.filter((p) => p !== owner);
+        const results = combineGlyphFilterResults<FilterResult>([
+            { ...this.combineMode(owner), results: ownerResults },
+            ...others.map((plugin) => ({
+                ...this.combineMode(plugin),
+                results: (plugin.lastResults ?? []).map((result) => ({
+                    glyph_name: result.glyph_name
+                }))
+            }))
+        ]);
 
-        // If no groups selected, show all filter results
-        if (this.activeGroupFilters.size === 0) {
-            this.glyphOverview.setActiveFilter(results);
+        if (results.length === 0 && this.activeGroupFilters.size === 0) {
+            this.glyphOverview.showFilterNotice(
+                this.activeFilters.map((p) => p.display_name).join(', '),
+                others.length > 0
+                    ? 'No glyphs match the selected filters.'
+                    : 'Filter executed successfully but returned no results.',
+                'info'
+            );
             return;
         }
-
-        // Filter to only glyphs matching selected groups by keyword (OR logic)
-        // A glyph passes if any of its groups match any of the selected group keywords
-        const filteredResults = results.filter((result) => {
-            if (!result.groups || result.groups.length === 0) return false;
-            return result.groups.some((groupKeyword) =>
-                this.activeGroupFilters.has(groupKeyword)
-            );
-        });
-
-        this.glyphOverview.setActiveFilter(filteredResults);
+        this.glyphOverview.setActiveFilter(results);
+        this.glyphOverview.updateSelectedGlyphGroups();
     }
 
     /**
@@ -3427,11 +3663,11 @@ export class GlyphOverviewFilterManager {
                 }
             }
 
-            if (this.activeFilter) {
-                if (this.canUseCachedFilterResults(this.activeFilter)) {
-                    this.applyCachedFilterResults(this.activeFilter);
+            for (const active of [...this.activeFilters]) {
+                if (this.canUseCachedFilterResults(active)) {
+                    this.applyCachedFilterResults(active);
                 } else {
-                    await this.runFilter(this.activeFilter);
+                    await this.runFilter(active);
                 }
             }
 
@@ -3466,7 +3702,7 @@ export class GlyphOverviewFilterManager {
 
         // Run all built-in plugins to update counts
         for (const plugin of this.plugins) {
-            if (plugin === this.activeFilter) {
+            if (this.isActive(plugin)) {
                 continue;
             }
             await this.runPluginForCount(plugin, snapshotJson);
@@ -3474,7 +3710,7 @@ export class GlyphOverviewFilterManager {
 
         // Run all user filters to update counts
         for (const filter of this.userFilters) {
-            if (filter === this.activeFilter) {
+            if (this.isActive(filter)) {
                 continue;
             }
             await this.runPluginForCount(filter, snapshotJson);
@@ -4223,7 +4459,7 @@ export class GlyphOverviewFilterManager {
             `.glyph-filter-item[data-plugin-keyword="${filter.keyword}"]`
         );
         if (element) {
-            void this.activateFilter(filter, element);
+            void this.activateFilter(filter);
         }
     }
 
@@ -4370,9 +4606,19 @@ export class GlyphOverviewFilterManager {
             console.log('[GlyphOverviewFilters] Deleted:', filePath);
             filterChatRegistry.remove(filePath);
 
-            // If this filter is currently active, clear it
-            if (this.activeFilter === plugin) {
-                this.clearActiveFilter();
+            // Drop a deleted filter from the selection
+            if (this.isActive(plugin)) {
+                const remaining = this.activeFilters.filter(
+                    (p) => p !== plugin
+                );
+                if (remaining.length === 0) {
+                    this.clearActiveFilter();
+                } else {
+                    this.activeFilters = remaining;
+                    this.updateActiveItemClasses();
+                    this.saveActiveState();
+                    this.applyCachedFilterResults(this.activeFilter!);
+                }
             }
 
             // File system observer will automatically detect the deletion and refresh
@@ -4412,11 +4658,8 @@ export class GlyphOverviewFilterManager {
      */
     clearActiveFilter(): void {
         if (this.activeFilter) {
-            const prevItem = this.sidebarContainer?.querySelector(
-                '.glyph-filter-item.active'
-            );
-            prevItem?.classList.remove('active');
             this.activeFilter = null;
+            this.updateActiveItemClasses();
             this.saveActiveState();
 
             if (this.glyphOverview) {

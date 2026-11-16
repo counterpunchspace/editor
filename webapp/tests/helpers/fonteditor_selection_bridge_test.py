@@ -304,7 +304,8 @@ def _fake_reflect_get(target, key):
     if isinstance(target, (list, FakeJsArray)):
         return target[key]
     if isinstance(target, FakeRecordStore):
-        return target._data[str(key)]
+        # Like JavaScript, a missing key reads as undefined.
+        return target._data.get(str(key), JsUndefined())
     if isinstance(target, dict):
         return target[str(key)]
     return getattr(target, str(key))
@@ -599,6 +600,28 @@ class FontEditorSelectionBridgeTest(unittest.TestCase):
         )
         self.assertEqual(wrapped['script'], 'Latn')
         self.assertNotIn('[object Object]', repr(wrapped))
+
+    def test_glyph_data_record_is_converted_once_and_copied(self):
+        self.fonteditor._GLYPH_DATA_DICTS.clear()
+        glyph_data = FakeJsOpaqueObject(
+            {
+                'codepoint': 0x61,
+                'glyph_name': 'a',
+                'general_category': 'Ll',
+                'script_extensions': FakeJsArray(['Latn']),
+            }
+        )
+        glyph = FakeGlyph('a', [], glyph_data=glyph_data)
+        proxy = self.fonteditor.ModelObjectProxy(glyph)
+
+        first = proxy.glyphData
+        first['general_category'] = 'Lu'
+        first['script_extensions'].append('Grek')
+        second = proxy.glyphData
+
+        self.assertEqual(second['general_category'], 'Ll')
+        self.assertEqual(second['script_extensions'], ['Latn'])
+        self.assertEqual(list(self.fonteditor._GLYPH_DATA_DICTS), [(0x61, 'a')])
 
     def test_glyph_data_prefers_to_py_when_json_stringify_is_empty(self):
         glyph_data = FakeJsOpaqueObject(

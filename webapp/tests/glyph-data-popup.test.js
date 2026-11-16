@@ -46,7 +46,7 @@ describe('buildGlyphDataPopupHtml', () => {
         const html = buildGlyphDataPopupHtml('alef-ar');
         expect(html).toContain('ARABIC LETTER ALEF');
         expect(html).toContain('U+0627');
-        expect(html).toContain('Letter, other (Lo)');
+        expect(html).toContain('Other Letter (Lo)');
         expect(html).toContain('Right-joining (R)');
         expect(html).toContain('Arabic letter (AL)');
         expect(html).toContain('Unicode 1.1');
