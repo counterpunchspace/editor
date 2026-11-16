@@ -57,6 +57,7 @@ import { getGlyphFilterIds, setGlyphFilterIds } from './window-ui-state';
 import { filterChatRegistry } from './glyph-filter-chat';
 import { showProceedDialog } from './ui/confirm-dialog';
 import { glyphDataIndex } from './glyph-data';
+import { syncTruncatedTitle } from './ui/truncated-title';
 import {
     combineGlyphFilterResults,
     nextGlyphFilterSelection,
@@ -797,6 +798,16 @@ export class GlyphOverviewFilterManager {
         this.sidebarContainer = sidebarContainer;
         this.glyphOverview = glyphOverview;
         this.groupLegendContainer = groupLegendContainer || null;
+
+        // Full name as tooltip on filter names cut off by the sidebar width
+        sidebarContainer.addEventListener('mouseover', (event) => {
+            const label = (event.target as Element | null)?.closest?.(
+                '.glyph-filter-item-label'
+            );
+            if (label instanceof HTMLElement) {
+                syncTruncatedTitle(label);
+            }
+        });
 
         // Render initial sidebar structure
         this.renderSidebar();

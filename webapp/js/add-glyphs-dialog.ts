@@ -6,6 +6,7 @@ import {
     glyphDataIndex,
     type GlyphDataSearchResult
 } from './glyph-data';
+import { syncTruncatedTitle } from './ui/truncated-title';
 import {
     characterSetPluginManager,
     type CharacterSetCoverageLevel,
@@ -1033,12 +1034,7 @@ export class AddGlyphsDialog {
         for (const label of this.list.querySelectorAll<HTMLElement>(
             '.add-glyph-details strong, .add-glyph-unicode-name'
         )) {
-            const text = label.textContent || '';
-            if (text && label.scrollWidth > label.clientWidth + 1) {
-                label.title = text;
-            } else {
-                label.removeAttribute('title');
-            }
+            syncTruncatedTitle(label);
         }
     }
 
