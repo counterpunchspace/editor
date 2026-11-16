@@ -496,6 +496,51 @@ if (isProduction()) {
     console.log('[Settings] Running in development mode');
 }
 
+// Advertising mode: `?advertising` (or `?advertising=<scale>`) makes the canvas read
+// well in videos, where it is shown at phone size and re-compressed. Strokes, nodes,
+// handles, anchors, metric lines and labels are drawn <scale> times thicker (default
+// 2.25), outlines are brighter, and the canvas is darker so glyphs stand out.
+const ADVERTISING_DEFAULT_CHROME_SCALE = 2.25;
+const ADVERTISING_CANVAS_BACKGROUND = '#252525';
+
+function readAdvertisingChromeScale(): number | null {
+    const search = globalThis.location?.search;
+    if (!search) return null;
+    const params = new URLSearchParams(search);
+    if (!params.has('advertising')) return null;
+    const requested = Number(params.get('advertising'));
+    return Number.isFinite(requested) && requested > 0
+        ? requested
+        : ADVERTISING_DEFAULT_CHROME_SCALE;
+}
+
+const advertisingChromeScale = readAdvertisingChromeScale();
+
+if (advertisingChromeScale !== null) {
+    console.log(
+        `[Settings] Advertising mode: canvas chrome ×${advertisingChromeScale}`
+    );
+    Object.assign(APP_SETTINGS.OUTLINE_EDITOR, { OUTLINE_OPACITY: 0.85 });
+    Object.assign(APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK, {
+        GRID: 'rgba(255, 255, 255, 0.1)',
+        GLYPH_INACTIVE_IN_EDITOR: 'rgba(255, 255, 255, 0.35)',
+        GLYPH_HOVERED_IN_EDITOR: 'rgba(255, 255, 255, 0.5)',
+        NODE_UNSELECTED_FILL: 'rgba(37, 37, 37, 0.85)'
+    });
+}
+
+/** Multiplier for the screen size of canvas chrome; 1 outside advertising mode. */
+export function canvasChromeScale(): number {
+    return advertisingChromeScale ?? 1;
+}
+
+/** Canvas background colour in advertising mode, or null to use the theme's. */
+export function advertisingCanvasBackground(): string | null {
+    return advertisingChromeScale === null
+        ? null
+        : ADVERTISING_CANVAS_BACKGROUND;
+}
+
 // Expose globally for runtime access
 settingsGlobalScope.APP_SETTINGS = APP_SETTINGS;
 settingsGlobalScope.isProduction = isProduction;

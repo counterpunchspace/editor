@@ -126,4 +126,27 @@ describe('settings bootstrap', () => {
                 .ENABLE_WORKER_DRIFT_CHECKS
         ).toBe(true);
     });
+    test('advertising mode scales canvas chrome only when asked for', () => {
+        const load = (search) => {
+            window.history.replaceState({}, '', `/${search}`);
+            let settingsModule;
+            jest.isolateModules(() => {
+                settingsModule = require('../js/settings');
+            });
+            return settingsModule;
+        };
+
+        const normal = load('');
+        expect(normal.canvasChromeScale()).toBe(1);
+        expect(normal.advertisingCanvasBackground()).toBeNull();
+
+        const advertising = load('?test=true&advertising');
+        expect(advertising.canvasChromeScale()).toBe(2.25);
+        expect(advertising.advertisingCanvasBackground()).toBe('#252525');
+
+        expect(load('?advertising=3').canvasChromeScale()).toBe(3);
+        expect(load('?advertising=nonsense').canvasChromeScale()).toBe(2.25);
+
+        window.history.replaceState({}, '', '/');
+    });
 });

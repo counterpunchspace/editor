@@ -1,5 +1,7 @@
 import { desaturateColor, mixColors, toRgba } from '../design';
 import APP_SETTINGS, {
+    advertisingCanvasBackground,
+    canvasChromeScale,
     interpolateOutlineChromeScreenSize,
     outlineChromeStateScale
 } from '../settings';
@@ -340,6 +342,11 @@ export class GlyphCanvasRenderer {
         this.viewportManager = viewportManager;
         this.textRunEditor = textRunEditor;
     }
+
+    /** Font units per screen pixel of canvas chrome (strokes, nodes, labels). */
+    private chromeInvScale(): number {
+        return canvasChromeScale() / this.viewportManager.scale;
+    }
     render() {
         if (!this.ctx || !this.canvas) return;
 
@@ -376,7 +383,10 @@ export class GlyphCanvasRenderer {
         const isViewFocused =
             editorView && editorView.classList.contains('focused');
 
-        if (isViewFocused) {
+        const advertisingBackground = advertisingCanvasBackground();
+        if (advertisingBackground) {
+            this.ctx.fillStyle = advertisingBackground;
+        } else if (isViewFocused) {
             // Active/focused background (same as .view.focused)
             this.ctx.fillStyle = computedStyle
                 .getPropertyValue('--background-primary')
@@ -636,7 +646,7 @@ export class GlyphCanvasRenderer {
         const easedProgress = this.getStackPreviewEasedProgress();
         const diagonalAngleRad =
             (animator.config.diagonalOffsetAngle * Math.PI) / 180;
-        const invScale = 1 / this.viewportManager.scale;
+        const invScale = this.chromeInvScale();
         const viewportTransform = this.viewportManager.getTransformMatrix();
 
         let bestDrawingTreeIndex: number | null = null;
@@ -751,7 +761,7 @@ export class GlyphCanvasRenderer {
             return;
         }
 
-        const invScale = 1 / this.viewportManager.scale;
+        const invScale = this.chromeInvScale();
 
         // Clear glyph bounds for hit testing
         this.glyphCanvas.glyphBounds = [];
@@ -1011,7 +1021,7 @@ export class GlyphCanvasRenderer {
         glyphY: number
     ): void {
         const band = this.glyphCanvas.getTextModeVerticalMetricsBand();
-        const invScale = 1 / this.viewportManager.scale;
+        const invScale = this.chromeInvScale();
         const centerX = glyphX + Math.max(advance, 1) / 2;
         const centerY = glyphY + (band.lowest + band.highest) / 2;
         const color =
@@ -1367,7 +1377,7 @@ export class GlyphCanvasRenderer {
             : underlayColor;
 
         this.ctx.save();
-        this.ctx.lineWidth = 1 / this.viewportManager.scale;
+        this.ctx.lineWidth = this.chromeInvScale();
 
         const overshootBands = getMetricOvershootBands(
             verticalMetrics,
@@ -1481,7 +1491,7 @@ export class GlyphCanvasRenderer {
             return;
         }
 
-        const invScale = 1 / this.viewportManager.scale;
+        const invScale = this.chromeInvScale();
         const fontSize = 11 * invScale;
         const labelGapFont = fontSize * 1.15;
         const edgeMarginPx = 8;
@@ -2388,7 +2398,7 @@ export class GlyphCanvasRenderer {
                 (glyphBounds?.x ?? 0) + (visualMinX + visualMaxX) / 2;
             const tooltipY = glyphOriginY + visualMinY - 100; // 100 units below bottom of visual bounding box / baseline
 
-            const invScale = 1 / this.viewportManager.scale;
+            const invScale = this.chromeInvScale();
             this.drawHoverLabel(glyphName, tooltipX, tooltipY, invScale);
         }
     }
@@ -3144,7 +3154,7 @@ export class GlyphCanvasRenderer {
         }
         const x = xPosition + xOffset;
         const y = layout.yOffset;
-        const invScale = 1 / this.viewportManager.scale;
+        const invScale = this.chromeInvScale();
         const isDarkTheme =
             document.documentElement.getAttribute('data-theme') !== 'light';
 
@@ -3802,7 +3812,7 @@ export class GlyphCanvasRenderer {
         duplicateNodePositionKeys: Set<string> | null = null,
         drawnDuplicateNodeWarningKeys: Set<string> | null = null
     ) {
-        const invScale = 1 / this.viewportManager.scale;
+        const invScale = this.chromeInvScale();
         const isDarkTheme =
             document.documentElement.getAttribute('data-theme') !== 'light';
         console.log(
@@ -4643,7 +4653,7 @@ export class GlyphCanvasRenderer {
             return;
         }
 
-        const invScale = 1 / this.viewportManager.scale;
+        const invScale = this.chromeInvScale();
         const isDarkTheme =
             document.documentElement.getAttribute('data-theme') !== 'light';
 
@@ -5217,7 +5227,7 @@ export class GlyphCanvasRenderer {
         const x = layout.xPosition + (glyph.dx || 0);
         const y = layout.yOffset;
 
-        const invScale = 1 / this.viewportManager.scale;
+        const invScale = this.chromeInvScale();
 
         this.ctx.save();
         this.ctx.translate(x, y);
@@ -5546,7 +5556,7 @@ export class GlyphCanvasRenderer {
         this.ctx.fillStyle = colors.MEASUREMENT_TOOL_DOT;
 
         // Calculate dot radius in font units (inverse of scale to keep constant screen size)
-        const dotRadius = 5 / this.viewportManager.scale;
+        const dotRadius = 5 * this.chromeInvScale();
 
         const layout = this.textRunEditor._getGlyphPosition(
             this.textRunEditor.selectedGlyphIndex
@@ -5566,7 +5576,7 @@ export class GlyphCanvasRenderer {
 
         // Draw measurement lines and dots first, then labels on top
         this.ctx.strokeStyle = colors.MEASUREMENT_TOOL_LINE;
-        this.ctx.lineWidth = 2 / this.viewportManager.scale;
+        this.ctx.lineWidth = 2 * this.chromeInvScale();
 
         // Collect label data to draw later (on top)
         const labelsToRender: Array<{
@@ -5717,7 +5727,7 @@ export class GlyphCanvasRenderer {
         const distanceText = distance.toFixed(1);
 
         // Font size in world units (to maintain constant screen size)
-        const invScale = 1 / this.viewportManager.scale;
+        const invScale = this.chromeInvScale();
         const fontSize = 12 * invScale;
 
         this.ctx.save();
@@ -5998,7 +6008,7 @@ export class GlyphCanvasRenderer {
             return;
         }
 
-        const invScale = 1 / this.viewportManager.scale;
+        const invScale = this.chromeInvScale();
         const isDragging = this.glyphCanvas.textModeKerningHandleDrag !== null;
         const isHovered =
             isDragging || this.glyphCanvas.textModeKerningHandleHovered;
@@ -6048,7 +6058,7 @@ export class GlyphCanvasRenderer {
             return;
         }
 
-        const invScale = 1 / this.viewportManager.scale;
+        const invScale = this.chromeInvScale();
 
         // Draw cursor line - dimmed when not focused, bright when focused
         const opacity = this.glyphCanvas.isFocused ? 0.8 : 0.3;
@@ -6087,7 +6097,7 @@ export class GlyphCanvasRenderer {
             return;
         }
 
-        const invScale = 1 / this.viewportManager.scale;
+        const invScale = this.chromeInvScale();
 
         // Clear glyph bounds for hit testing
         this.glyphCanvas.glyphBounds = [];
@@ -6192,7 +6202,7 @@ export class GlyphCanvasRenderer {
         }
 
         const range = this.textRunEditor.getSelectionRange();
-        const invScale = 1 / this.viewportManager.scale;
+        const invScale = this.chromeInvScale();
         const selectionFill = 'rgba(100, 150, 255, 0.3)';
         const editorView = document.querySelector('#view-editor');
         const isEditorViewFocused =
@@ -6441,7 +6451,7 @@ export class GlyphCanvasRenderer {
         }
 
         // Process each glyph in the text line
-        const invScale = 1 / this.viewportManager.scale;
+        const invScale = this.chromeInvScale();
 
         // Track previous right label position for overlap detection
         let previousRightLabelEnd: number | null = null;
@@ -6575,7 +6585,7 @@ export class GlyphCanvasRenderer {
 
                     // Draw dots at intersections
                     this.ctx.fillStyle = colors.MEASUREMENT_TOOL_LINE;
-                    const dotRadius = 3 / this.viewportManager.scale;
+                    const dotRadius = 3 * this.chromeInvScale();
 
                     this.ctx.beginPath();
                     this.ctx.arc(
@@ -6599,7 +6609,7 @@ export class GlyphCanvasRenderer {
 
                     // Draw measurement lines from glyph edges to intersections
                     this.ctx.strokeStyle = colors.MEASUREMENT_TOOL_LINE;
-                    this.ctx.lineWidth = 1 / this.viewportManager.scale;
+                    this.ctx.lineWidth = this.chromeInvScale();
 
                     // Left measurement line
                     this.ctx.beginPath();
@@ -6704,7 +6714,7 @@ export class GlyphCanvasRenderer {
             this.glyphCanvas.stackPreviewAnimator.debugBounds
         ) {
             const bounds = this.glyphCanvas.stackPreviewAnimator.debugBounds;
-            const invScale = 1 / this.viewportManager.scale;
+            const invScale = this.chromeInvScale();
 
             this.ctx.save();
             this.ctx.strokeStyle = 'rgba(255, 0, 0, 0.8)';
@@ -6808,7 +6818,7 @@ export class GlyphCanvasRenderer {
         });
 
         if (guideLines.length > 0) {
-            const invScale = 1 / this.viewportManager.scale;
+            const invScale = this.chromeInvScale();
             const isDarkTheme =
                 document.documentElement.getAttribute('data-theme') !== 'light';
 
@@ -6999,7 +7009,7 @@ export class GlyphCanvasRenderer {
         this.ctx.strokeStyle = isDarkTheme
             ? 'rgba(255, 255, 255, 0.14)'
             : 'rgba(0, 0, 0, 0.12)';
-        this.ctx.lineWidth = 10 / this.viewportManager.scale;
+        this.ctx.lineWidth = 10 * this.chromeInvScale();
         this.ctx.lineJoin = 'round';
         this.ctx.lineCap = 'round';
 
@@ -7089,12 +7099,7 @@ export class GlyphCanvasRenderer {
 
         const labelText =
             node.glyphName || this.glyphCanvas.getCurrentGlyphName();
-        this.drawHoverLabel(
-            labelText,
-            labelX,
-            labelY,
-            1 / this.viewportManager.scale
-        );
+        this.drawHoverLabel(labelText, labelX, labelY, this.chromeInvScale());
     }
 
     /**
@@ -7105,7 +7110,7 @@ export class GlyphCanvasRenderer {
         const drawingData = node.componentDrawingData;
         if (!drawingData || !drawingData.shapes) return;
 
-        const invScale = 1 / this.viewportManager.scale;
+        const invScale = this.chromeInvScale();
         const isDarkTheme =
             document.documentElement.getAttribute('data-theme') !== 'light';
         const colors = isDarkTheme
