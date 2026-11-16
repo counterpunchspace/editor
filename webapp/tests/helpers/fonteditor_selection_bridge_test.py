@@ -274,6 +274,9 @@ def _fake_has_own_property(obj, key):
 
 
 def _fake_to_string(value):
+    if isinstance(value, FakeJsBase):
+        # Model classes define Symbol.toStringTag; `constructor` may be mangled.
+        return f'[object {value.constructor_name}]'
     if isinstance(value, FakeJsArray):
         return '[object Array]'
     if isinstance(value, FakeJsMap):
@@ -720,6 +723,99 @@ class FontEditorSelectionBridgeTest(unittest.TestCase):
         self.assertNotIn('[object Object]', repr(family_name))
         family_name.dflt = 'Renamed'
         self.assertEqual(font.names._data['family_name']._data['dflt'], 'Renamed')
+
+
+class FakeMinifiedModelObject(FakeJsBase):
+    """A model object from the minified bundle: mangled constructor name."""
+
+    def __init__(self, class_name, **fields):
+        self.constructor_name = class_name
+        self.constructor = FakeConstructor('tn')
+        for key, value in fields.items():
+            setattr(self, key, value)
+
+    def toString(self):
+        return f'<{self.constructor_name}>'
+
+
+class MinifiedModelObjectTest(unittest.TestCase):
+    MODEL_CLASSES = (
+        'Anchor',
+        'Axis',
+        'Component',
+        'Drawing',
+        'FeatureVariationGlyph',
+        'Font',
+        'Glyph',
+        'Guide',
+        'Instance',
+        'Node',
+        'Path',
+        'Shape',
+        'Station',
+    )
+
+    def setUp(self):
+        self.fonteditor = _load_fonteditor_module()
+
+    def test_every_model_class_wraps_as_model_object(self):
+        for class_name in self.MODEL_CLASSES:
+            with self.subTest(class_name=class_name):
+                obj = FakeMinifiedModelObject(class_name, id='x')
+                wrapped = self.fonteditor._wrap_js_value(obj)
+                self.assertIsInstance(wrapped, self.fonteditor.ModelObjectProxy)
+                self.assertEqual(repr(wrapped), f'<{class_name}>')
+
+    def test_drawing_selection_yields_model_objects(self):
+        anchor = FakeMinifiedModelObject('Anchor', name='bottom', x=283, y=0)
+        component = FakeMinifiedModelObject('Component', reference='n')
+        node = FakeMinifiedModelObject('Node', x=10, y=20)
+        drawing = FakeDrawing([anchor, component, node], [anchor, component, node])
+        drawing.constructor = FakeConstructor('on')
+
+        selection = self.fonteditor._wrap_js_value(drawing).selection
+
+        self.assertEqual(
+            [type(item) for item in selection],
+            [self.fonteditor.ModelObjectProxy] * 3,
+        )
+        self.assertEqual(repr(selection), '[<Anchor>, <Component>, <Node>]')
+        self.assertEqual(selection[0].name, 'bottom')
+        self.assertEqual(selection[1].reference, 'n')
+
+    def test_model_lists_attributes_and_method_results_are_model_objects(self):
+        node = FakeMinifiedModelObject('Node', x=1, y=2)
+        path = FakeMinifiedModelObject('Path', nodes=FakeJsArray([node]))
+        guide = FakeMinifiedModelObject('Guide', name='g')
+        variation = FakeMinifiedModelObject('FeatureVariationGlyph', name='a')
+        drawing = FakeMinifiedModelObject(
+            'Drawing',
+            paths=FakeJsArray([path]),
+            guides=FakeJsArray([guide]),
+            findGuide=lambda name: guide,
+        )
+        glyph = FakeMinifiedModelObject(
+            'Glyph', drawings=FakeJsArray([drawing]), variations=FakeJsArray([variation])
+        )
+
+        proxy = self.fonteditor._wrap_js_value(glyph)
+        wrapped_path = proxy.drawings[0].paths[0]
+
+        self.assertIsInstance(wrapped_path, self.fonteditor.ModelObjectProxy)
+        self.assertEqual(repr(wrapped_path.nodes), '[<Node>]')
+        self.assertEqual(repr(proxy.drawings[0].guides), '[<Guide>]')
+        self.assertEqual(repr(proxy.drawings[0].findGuide('g')), '<Guide>')
+        self.assertEqual(repr(proxy.variations), '[<FeatureVariationGlyph>]')
+        self.assertNotIn('_parentObject', repr(proxy.drawings))
+
+    def test_to_py_lists_round_trip_back_to_js(self):
+        node = FakeMinifiedModelObject('Node', x=1, y=2)
+        path = FakeMinifiedModelObject('Path', nodes=FakeJsArray([node]))
+
+        items = self.fonteditor._wrap_js_value(path).nodes.to_py()
+
+        self.assertIsInstance(items[0], self.fonteditor.ModelObjectProxy)
+        self.assertEqual(list(self.fonteditor._unwrap_py_value(items)), [node])
 
 
 if __name__ == '__main__':

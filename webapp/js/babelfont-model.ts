@@ -4628,6 +4628,29 @@ function assertTaggedDrawingStation(station: Unsafe, context: string): void {
     }
 }
 
+/** A number as the property panel shows it: at most four decimals. */
+function formatReprNumber(value: number): string {
+    return String(Number(value.toFixed(4)));
+}
+
+function formatReprDegrees(radians: number): string {
+    return `${formatReprNumber((radians * 180) / Math.PI)}°`;
+}
+
+/** `wght=400 wdth=100`, the way locations read in printed objects. */
+function formatReprLocation(location: DesignspaceLocation | undefined): string {
+    return Object.entries(location || {})
+        .map(([axis, value]) => `${axis}=${formatReprNumber(Number(value))}`)
+        .join(' ');
+}
+
+function formatReprName(
+    name: string | Babelfont.I18NDictionary | undefined
+): string {
+    if (typeof name === 'string') return name;
+    return name?.dflt || name?.en || Object.values(name || {})[0] || 'unnamed';
+}
+
 /**
  * Base class for model objects that wrap JSON data
  */
@@ -4877,9 +4900,16 @@ export class Node extends ArrayElementBase<Babelfont.Node, Path> {
         }
     }
 
+    // Every model class names itself here: the bundle is minified, so
+    // `constructor.name` is mangled, and Python’s fonteditor.py reads this
+    // tag to wrap the object as its model class.
+    get [Symbol.toStringTag](): string {
+        return 'Node';
+    }
+
     toString(): string {
         const smooth = this.smooth ? ' smooth' : '';
-        return `<Node (${this.x}, ${this.y}) ${this.nodetype}${smooth}>`;
+        return `<Node (${formatReprNumber(this.x)}, ${formatReprNumber(this.y)}) ${this.nodetype}${smooth}>`;
     }
 }
 
@@ -5767,6 +5797,10 @@ export class Path extends ArrayElementBase<PathData, Drawing | Shape> {
         });
     }
 
+    get [Symbol.toStringTag](): string {
+        return 'Path';
+    }
+
     toString(): string {
         const closedStr = this.closed ? 'closed' : 'open';
         const nodeCount = this.getMutableNodeArray().length;
@@ -6020,11 +6054,30 @@ export class Component extends ArrayElementBase<ComponentData, Shape> {
         );
     }
 
+    get [Symbol.toStringTag](): string {
+        return 'Component';
+    }
+
     toString(): string {
-        const transform = this.transform
-            ? ` transform=${JSON.stringify(this.transform)}`
-            : '';
-        return `<Component ref="${this.reference}"${transform}>`;
+        // Like the property panel: angles in degrees, defaults left out.
+        const transform = this.transform;
+        const parts = [`"${this.reference}"`];
+        const pair = (
+            values: [number, number],
+            format: (n: number) => string
+        ) => `(${format(values[0])}, ${format(values[1])})`;
+        const translate = pair(
+            transform?.translation ?? [0, 0],
+            formatReprNumber
+        );
+        if (translate !== '(0, 0)') parts.push(`translate=${translate}`);
+        const rotate = formatReprDegrees(transform?.rotation ?? 0);
+        if (rotate !== '0°') parts.push(`rotate=${rotate}`);
+        const scale = pair(transform?.scale ?? [1, 1], formatReprNumber);
+        if (scale !== '(1, 1)') parts.push(`scale=${scale}`);
+        const skew = pair(transform?.skew ?? [0, 0], formatReprDegrees);
+        if (skew !== '(0°, 0°)') parts.push(`skew=${skew}`);
+        return `<Component ${parts.join(' ')}>`;
     }
 
     /**
@@ -6209,9 +6262,13 @@ export class Anchor extends ArrayElementBase<AnchorData, Drawing> {
         recordAndMarkDirty(this, 'format_specific', old, value);
     }
 
+    get [Symbol.toStringTag](): string {
+        return 'Anchor';
+    }
+
     toString(): string {
         const name = this.name ? ` "${this.name}"` : '';
-        return `<Anchor${name} (${this.x}, ${this.y})>`;
+        return `<Anchor${name} (${formatReprNumber(this.x)}, ${formatReprNumber(this.y)})>`;
     }
 }
 
@@ -6390,9 +6447,18 @@ export class Guide extends ArrayElementBase<GuideData, Drawing | Station> {
         recordAndMarkDirty(this, 'format_specific', old, value);
     }
 
+    get [Symbol.toStringTag](): string {
+        return 'Guide';
+    }
+
     toString(): string {
         const name = this.name ? ` "${this.name}"` : '';
-        return `<Guide${name} pos=${JSON.stringify(this.pos)}>`;
+        const { x = 0, y = 0, angle = 0 } = this.pos;
+        const angleText =
+            formatReprNumber(angle) !== '0'
+                ? ` angle=${formatReprNumber(angle)}°`
+                : '';
+        return `<Guide${name} (${formatReprNumber(x)}, ${formatReprNumber(y)})${angleText}>`;
     }
 }
 
@@ -6474,13 +6540,17 @@ export class Shape extends ArrayElementBase {
         return new Path(fakeArray as Unsafe, 0, this);
     }
 
+    get [Symbol.toStringTag](): string {
+        return 'Shape';
+    }
+
     toString(): string {
         if (this.isComponent()) {
             return `<Shape:${this.asComponent().toString()}>`;
         } else if (this.isPath()) {
             return `<Shape:${this.asPath().toString()}>`;
         }
-        return '<Shape Unsafe>';
+        return '<Shape>';
     }
 }
 
@@ -10987,8 +11057,12 @@ export class Drawing extends ArrayElementBase {
         );
     }
 
+    get [Symbol.toStringTag](): string {
+        return 'Drawing';
+    }
+
     toString(): string {
-        const stationId = this.getStationId() || 'Unsafe';
+        const stationId = this.getStationId() || 'none';
         const shapesCount = this.shapes?.length || 0;
         return `<Drawing width=${this.width} station="${stationId}" shapes=${shapesCount}>`;
     }
@@ -12286,6 +12360,10 @@ export class Glyph extends ArrayElementBase {
             });
     }
 
+    get [Symbol.toStringTag](): string {
+        return 'Glyph';
+    }
+
     toString(): string {
         const codepoints =
             this.codepoints
@@ -12450,6 +12528,10 @@ export class FeatureVariationGlyph {
         }
     }
 
+    get [Symbol.toStringTag](): string {
+        return 'FeatureVariationGlyph';
+    }
+
     toString(): string {
         return `<FeatureVariationGlyph "${this.name}" ${this.drawings.length} drawings>`;
     }
@@ -12600,15 +12682,13 @@ export class Axis extends ArrayElementBase {
         recordAndMarkDirty(this, 'format_specific', old, value);
     }
 
+    get [Symbol.toStringTag](): string {
+        return 'Axis';
+    }
+
     toString(): string {
-        const displayName =
-            typeof this.name === 'string'
-                ? this.name
-                : this.name?.en ||
-                  Object.values(this.name || {})[0] ||
-                  'Unsafe';
-        const range = `${this.min || '?'}-${this.default || '?'}-${this.max || '?'}`;
-        return `<Axis "${displayName}" tag="${this.tag}" ${range}>`;
+        const range = `${this.min ?? '?'}-${this.default ?? '?'}-${this.max ?? '?'}`;
+        return `<Axis "${formatReprName(this.name)}" tag="${this.tag}" ${range}>`;
     }
 }
 
@@ -12918,15 +12998,13 @@ export class Station extends ArrayElementBase {
         return font.removeStationsByIds([this.id]);
     }
 
+    get [Symbol.toStringTag](): string {
+        return 'Station';
+    }
+
     toString(): string {
-        const displayName =
-            typeof this.name === 'string'
-                ? this.name
-                : this.name?.en ||
-                  Object.values(this.name || {})[0] ||
-                  'Unsafe';
-        const location = this.location ? JSON.stringify(this.location) : '{}';
-        return `<Station "${displayName}" id="${this.id}" location=${location}>`;
+        const location = formatReprLocation(this.location);
+        return `<Station "${formatReprName(this.name)}" id="${this.id}"${location ? ` ${location}` : ''}>`;
     }
 }
 
@@ -13048,15 +13126,13 @@ export class Instance extends ArrayElementBase {
         recordAndMarkDirty(this, 'format_specific', old, value);
     }
 
+    get [Symbol.toStringTag](): string {
+        return 'Instance';
+    }
+
     toString(): string {
-        const displayName =
-            typeof this.name === 'string'
-                ? this.name
-                : this.name?.en ||
-                  Object.values(this.name || {})[0] ||
-                  'Unsafe';
-        const location = this.location ? JSON.stringify(this.location) : '{}';
-        return `<Instance "${displayName}" location=${location}>`;
+        const location = formatReprLocation(this.location);
+        return `<Instance "${formatReprName(this.name)}"${location ? ` ${location}` : ''}>`;
     }
 }
 
@@ -16683,11 +16759,12 @@ export class Font extends ModelBase {
         return new Font(data);
     }
 
+    get [Symbol.toStringTag](): string {
+        return 'Font';
+    }
+
     toString(): string {
-        const familyName =
-            this.names?.family_name?.en ||
-            Object.values(this.names?.family_name || {})[0] ||
-            'Unnamed';
+        const familyName = formatReprName(this.names?.family_name);
         const glyphCount = this.glyphs?.length || 0;
         const stationCount = this.stations?.length || 0;
         const axisCount = this.axes?.length || 0;

@@ -47,6 +47,7 @@ _DICT_LIKE_FIELDS_BY_CLASS = {
     'Glyph': set(),
     'Guide': {'color', 'format_specific', 'pos'},
     'Instance': {'custom_names', 'format_specific', 'location', 'name'},
+    'FeatureVariationGlyph': set(),
     'Drawing': {
         'color',
         'format_specific',
@@ -94,38 +95,15 @@ def _get_constructor_name(value):
         return ''
 
 
-def _has_js_callable(value, name):
-    try:
-        attr = getattr(value, name, None)
-    except Exception:
-        return False
-    if attr is None or _is_js_null_or_undefined(attr):
-        return False
-    return _is_js_function(attr) or callable(attr)
-
-
 def _infer_model_class_name(value):
-    name = _get_constructor_name(value)
-    if name in _DICT_LIKE_FIELDS_BY_CLASS:
-        return name
-    try:
-        if _has_js_callable(value, 'findGlyph'):
-            return 'Font'
-        if _has_js_callable(value, 'addDrawing'):
-            return 'Glyph'
-        if _has_js_callable(value, 'getStation') or _has_js_callable(
-            value, 'addAnchor'
-        ):
-            return 'Drawing'
-        if _has_js_callable(value, 'addGuide'):
-            return 'Station'
-        if _has_js_callable(value, 'addPath') and _has_js_callable(
-            value, 'addComponent'
-        ):
-            return 'Drawing'
-    except Exception:
-        pass
-    return name
+    # Model classes name themselves through Symbol.toStringTag because the
+    # bundle is minified and constructor names are mangled.
+    tag = _get_object_tag(value)
+    if tag.startswith('[object ') and tag.endswith(']'):
+        tag_name = tag[len('[object ') : -1]
+        if tag_name in _DICT_LIKE_FIELDS_BY_CLASS:
+            return tag_name
+    return _get_constructor_name(value)
 
 
 def _as_model_proxy(value):
@@ -310,9 +288,23 @@ def _unwrap_py_value(value):
         return value._js_array
     if isinstance(value, (dict, list, tuple)):
         return pyodide.ffi.to_js(
-            value,
+            _unwrap_nested_proxies(value),
             dict_converter=js.Object.fromEntries,
         )
+    return value
+
+
+def _unwrap_nested_proxies(value):
+    # to_js cannot convert our proxy classes, so swap in their JS objects
+    # (for example a to_py() list that holds model objects).
+    if isinstance(value, dict):
+        return {key: _unwrap_nested_proxies(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_unwrap_nested_proxies(item) for item in value]
+    if isinstance(
+        value, (ModelObjectProxy, LiveDictProxy, LiveMapProxy, LiveListProxy)
+    ):
+        return _unwrap_py_value(value)
     return value
 
 
@@ -324,7 +316,7 @@ def _materialize_py_value(value):
     if isinstance(value, LiveListProxy):
         return value.to_py()
     if isinstance(value, ModelObjectProxy):
-        return value._js_obj
+        return value
     if _is_js_map(value) or _is_plain_js_object(value):
         wrapped = _wrap_js_value(value)
         if wrapped is not value and hasattr(wrapped, 'to_py'):
@@ -796,7 +788,7 @@ class ModelObjectProxy:
                 return text
         except Exception:
             pass
-        class_name = _get_constructor_name(self._js_obj)
+        class_name = _infer_model_class_name(self._js_obj)
         return f'<{class_name}>'
 
 

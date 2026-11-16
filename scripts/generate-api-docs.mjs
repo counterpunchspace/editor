@@ -123,6 +123,8 @@ function extractJsDoc(node) {
  * Extract property information
  */
 function extractProperty(node, sourceFile) {
+    // Computed names such as [Symbol.toStringTag] are not Python attributes.
+    if (node.name && ts.isComputedPropertyName(node.name)) return null;
     const name = node.name?.getText(sourceFile);
     if (!name || name.startsWith("_")) return null; // Skip private properties
 
