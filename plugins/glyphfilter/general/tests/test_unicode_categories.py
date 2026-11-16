@@ -29,10 +29,12 @@ def test_every_general_category_is_in_exactly_one_group():
 
 
 def test_filters_match_their_categories():
-    uppercase = CATEGORY_FILTERS["uppercase"]()
-    assert uppercase.classify_glyph(Glyph("A", "Lu"))
-    assert uppercase.classify_glyph(Glyph("Dz", "Lt"))
-    assert not uppercase.classify_glyph(Glyph("a.sc", "Ll"))
+    letters = CATEGORY_FILTERS["letters"]()
+    for code in ("Lu", "Lt", "Ll", "Lo"):
+        assert letters.classify_glyph(Glyph("x", code))
+    assert not letters.classify_glyph(Glyph("modifier", "Lm"))
+    assert CATEGORY_FILTERS["symbols"]().classify_glyph(Glyph("euro", "Sc"))
+    assert CATEGORY_FILTERS["spaces"]().classify_glyph(Glyph("zwj", "Cf"))
     assert CATEGORY_FILTERS["modifiers"]().classify_glyph(Glyph("circumflex", "Sk"))
     assert CATEGORY_FILTERS["marks"]().classify_glyph(Glyph("acutecomb", "Mn"))
 

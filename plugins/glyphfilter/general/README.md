@@ -9,8 +9,8 @@ Provides basic glyph filters for the Context font editor.
 - **All Glyphs** - Shows all glyphs in the font
 - **Encoded Characters** - Shows glyphs that have a Unicode codepoint
 - **Unencoded Glyphs** - Shows glyphs without a Unicode codepoint
-- **Categories** - Uppercase, Lowercase, Caseless Letters, Modifiers, Marks,
-  Figures, Punctuation, Currency, Symbols, Spaces, Other and No Category,
+- **Categories** - Letters, Modifiers, Marks, Figures, Punctuation, Symbols,
+  Spaces & Controls and No Category,
   each combining Unicode general categories (`CATEGORY_GROUPS`). Filters
   with no glyphs in the open font are hidden (`hide_when_empty`).
 

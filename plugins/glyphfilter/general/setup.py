@@ -21,8 +21,7 @@ from setuptools import setup, find_packages
 
 # Category filters in unicode_categories.py, in sidebar order.
 CATEGORY_KEYS = (
-    "uppercase lowercase caseless modifiers marks figures punctuation "
-    "currency symbols spaces other none"
+    "letters modifiers marks figures punctuation symbols spaces none"
 ).split()
 
 setup(

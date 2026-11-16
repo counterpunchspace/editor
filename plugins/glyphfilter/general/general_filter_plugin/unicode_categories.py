@@ -17,7 +17,7 @@
 Category Filters - glyph categories built from Unicode general categories.
 
 The 30 Unicode general categories are combined into the groups type
-designers work with, such as Uppercase, Marks or Figures. A glyph's
+designers work with, such as Letters, Marks or Figures. A glyph's
 category comes from `glyph.glyphData`, which dotted glyphs such as `a.sc`
 take from their base glyph. Glyphs that glyph data doesn't know (many
 Arabic dot marks and ligatures, `.notdef`) are in No Category. Filters with
@@ -33,17 +33,17 @@ from base_glyph_filter_plugin import BaseGlyphFilterPlugin
 # (key, display name, Unicode general categories), in sidebar order.
 # "" stands for glyphs without a category in glyph data.
 CATEGORY_GROUPS = [
-    ("uppercase", "Uppercase", ("Lu", "Lt")),
-    ("lowercase", "Lowercase", ("Ll",)),
-    ("caseless", "Caseless Letters", ("Lo",)),
+    ("letters", "Letters", ("Lu", "Lt", "Ll", "Lo")),
     ("modifiers", "Modifiers", ("Lm", "Sk")),
     ("marks", "Marks", ("Mn", "Mc", "Me")),
     ("figures", "Figures", ("Nd", "Nl", "No")),
     ("punctuation", "Punctuation", ("Pc", "Pd", "Ps", "Pe", "Pi", "Pf", "Po")),
-    ("currency", "Currency", ("Sc",)),
-    ("symbols", "Symbols", ("Sm", "So")),
-    ("spaces", "Spaces", ("Zs", "Zl", "Zp")),
-    ("other", "Other", ("Cc", "Cf", "Cs", "Co", "Cn")),
+    ("symbols", "Symbols", ("Sm", "Sc", "So", "Co")),
+    (
+        "spaces",
+        "Spaces & Controls",
+        ("Zs", "Zl", "Zp", "Cc", "Cf", "Cs", "Cn"),
+    ),
     ("none", "No Category", ("",)),
 ]
 
