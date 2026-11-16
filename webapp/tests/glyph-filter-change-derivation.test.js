@@ -581,3 +581,99 @@ describe('GlyphOverviewFilterManager compatibility toggles', () => {
         });
     });
 });
+
+describe('GlyphOverviewFilterManager Auto QA toggles', () => {
+    let manager;
+    let glyphs;
+
+    function pathEdit(glyphName) {
+        return {
+            path: `glyphs.${glyphName}.layers.layer-1.shapes.0.nodes.0.x`,
+            op: 'set',
+            oldValue: 0,
+            newValue: 10
+        };
+    }
+
+    beforeEach(() => {
+        jest.useFakeTimers();
+        localStorage.clear();
+        manager = new GlyphOverviewFilterManager();
+        glyphs = {
+            A: { name: 'A', hasQaIssues: false, drawings: [] },
+            B: { name: 'B', hasQaIssues: false, drawings: [] }
+        };
+        window.currentFontModel = {
+            stations: [{ id: 'm1' }],
+            glyphs: Object.values(glyphs),
+            findGlyph: (name) => glyphs[name]
+        };
+        jest.spyOn(manager, 'getAllLoadedPlugins').mockReturnValue([
+            { eventTypes: ['glyph.qa.changed'] }
+        ]);
+        manager.seedGlyphQaState();
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+        jest.restoreAllMocks();
+        delete window.currentFontModel;
+    });
+
+    test('emits glyph.qa.changed only when hasQaIssues toggles', async () => {
+        const batchSpy = jest
+            .spyOn(manager, 'handleCommittedGlyphFilterBatch')
+            .mockResolvedValue(undefined);
+
+        await manager.handleCommittedChangeEntries([pathEdit('A')]);
+        expect(typesOf(batchSpy.mock.calls[0][0])).toEqual([
+            'glyph.paths.changed'
+        ]);
+
+        glyphs.A.hasQaIssues = true;
+        await manager.handleCommittedChangeEntries([pathEdit('A')]);
+        expect(batchSpy.mock.calls[1][0].changes).toContainEqual({
+            type: 'glyph.qa.changed',
+            metadata: { glyphName: 'A', hasQaIssues: true }
+        });
+        // a path edit cannot change another glyph's corpus labels
+        expect(jest.getTimerCount()).toBe(0);
+    });
+
+    test('edits that change peers recheck the whole font once, after a pause', async () => {
+        const batchSpy = jest
+            .spyOn(manager, 'handleCommittedGlyphFilterBatch')
+            .mockResolvedValue(undefined);
+        const anchorEdit = {
+            path: 'glyphs.A:layers.layer-1:anchors.0',
+            op: 'add',
+            oldValue: undefined,
+            newValue: { id: 'a1', name: 'top', x: 100, y: 700 }
+        };
+
+        await manager.handleCommittedChangeEntries([anchorEdit]);
+        await manager.handleCommittedChangeEntries([anchorEdit]);
+        glyphs.B.hasQaIssues = true;
+        expect(jest.getTimerCount()).toBe(1);
+        batchSpy.mockClear();
+
+        jest.runAllTimers();
+        await manager.filterWorkChain;
+
+        expect(batchSpy).toHaveBeenCalledTimes(1);
+        expect(batchSpy).toHaveBeenCalledWith({
+            changes: [
+                {
+                    type: 'glyph.qa.changed',
+                    metadata: { glyphName: 'B', hasQaIssues: true }
+                }
+            ]
+        });
+    });
+
+    test('tracks nothing while no loaded filter subscribes', () => {
+        manager.getAllLoadedPlugins.mockReturnValue([]);
+        glyphs.A.hasQaIssues = true;
+        expect(manager.collectQaToggleChanges('all')).toEqual([]);
+    });
+});

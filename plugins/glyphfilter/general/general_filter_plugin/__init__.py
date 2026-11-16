@@ -19,6 +19,7 @@ Provides basic glyph filters: All Glyphs, Encoded Characters, Unencoded Glyphs.
 """
 
 from .all_glyphs import AllGlyphsFilter
+from .auto_qa_issues import AutoQaIssuesFilter
 from .encoded_glyphs import EncodedGlyphsFilter
 from .incompatible_outlines import IncompatibleOutlinesFilter
 from .unencoded_glyphs import UnencodedGlyphsFilter
@@ -26,6 +27,7 @@ from .unencoded_glyphs import UnencodedGlyphsFilter
 __all__ = [
     "EncodedGlyphsFilter",
     "AllGlyphsFilter",
+    "AutoQaIssuesFilter",
     "IncompatibleOutlinesFilter",
     "UnencodedGlyphsFilter",
 ]

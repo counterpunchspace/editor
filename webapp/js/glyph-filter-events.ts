@@ -26,7 +26,8 @@ export const GLYPH_FILTER_EVENT_TYPES = [
     'glyph.drawing.location.changed',
     'glyph.metrics.changed',
     'glyph.metrics-key.changed',
-    'glyph.compatibility.changed'
+    'glyph.compatibility.changed',
+    'glyph.qa.changed'
 ] as const;
 
 export type GlyphFilterEventType = (typeof GLYPH_FILTER_EVENT_TYPES)[number];
@@ -180,6 +181,26 @@ export const GLYPH_FILTER_EVENT_REGISTRY = {
                 type: 'string[]',
                 description:
                     'The drawing IDs considered by the compatibility check.',
+                required: true
+            }
+        ]
+    },
+    'glyph.qa.changed': {
+        name: 'Glyph Auto QA Changed',
+        description:
+            'Whether Auto QA reports anything for a glyph (`Glyph.hasQaIssues`) toggled.',
+        metadataFields: [
+            {
+                name: 'glyphName',
+                type: 'string',
+                description: 'The glyph whose Auto QA status changed.',
+                required: true
+            },
+            {
+                name: 'hasQaIssues',
+                type: 'boolean',
+                description:
+                    'Whether Auto QA reports anything for the glyph after the change.',
                 required: true
             }
         ]

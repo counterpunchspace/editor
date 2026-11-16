@@ -20,7 +20,8 @@ import { setYPath } from './change-bridge-ydoc';
 import { toRestingDrawingJson } from './resting-drawing-json';
 import { glyphDataIndex, type GlyphDataSearchResult } from './glyph-data';
 import {
-    labelsForGlyph,
+    glyphHasQaIssues,
+    glyphQaLabels,
     toGlyphQaMessages,
     type GlyphQaMessage
 } from './auto-qa/auto-qa-matcher';
@@ -11632,10 +11633,28 @@ export class Glyph extends ArrayElementBase {
     }
 
     /**
+     * Whether built-in Auto QA reports anything for this glyph, the same
+     * checks as `qa` without building the messages. Read-only.
+     * @example
+     * if glyph.hasQaIssues:
+     *     print(glyph.name)
+     */
+    get hasQaIssues(): boolean {
+        const font = this.parent() as Font | null;
+        const name = this.name;
+        return (
+            !!font &&
+            typeof name === 'string' &&
+            !!name &&
+            glyphHasQaIssues(font, name)
+        );
+    }
+
+    /**
      * Read-only quality-assurance messages for this glyph. Built-in Auto QA
      * plus future plugin checks. Each item is a dict with `sourceId`,
-     * `severity`, `checkId`, `message`, and `messageId`. Empty when the
-     * glyph cannot be identified or no checks fire. Does not write the font.
+     * `severity`, `checkId`, `message`, and `messageId`. Empty when no
+     * checks fire. Does not write the font.
      * @example
      * for message in glyph.qa:
      *     print(message.checkId, message.message)
@@ -11646,7 +11665,7 @@ export class Glyph extends ArrayElementBase {
         const messages =
             !font || typeof name !== 'string' || !name
                 ? []
-                : toGlyphQaMessages(labelsForGlyph(font, name));
+                : toGlyphQaMessages(glyphQaLabels(font, name));
         return getReadOnlyCollectionValue(
             messages,
             'Glyph.qa is a read-only snapshot. It does not write the font.'

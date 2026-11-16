@@ -1,6 +1,6 @@
 import tippy, { type Instance } from 'tippy.js';
 import type { QaLabel } from './auto-qa-matcher';
-import { formatQaLabel } from './auto-qa-matcher';
+import { formatQaLabel, isCorpusQaLabel } from './auto-qa-matcher';
 import { getTheme } from '../tippy-utils';
 
 let autoQaTippy: Instance | null = null;
@@ -71,6 +71,9 @@ export function buildAutoQaPopup(labels: QaLabel[]): HTMLElement {
     }
     root.appendChild(list);
 
+    if (!labels.some(isCorpusQaLabel)) {
+        return root;
+    }
     const explainer = document.createElement('div');
     explainer.className = 'glyph-auto-qa-explainer';
     explainer.innerHTML = renderQaMarkdown(AUTO_QA_EXPLAINER);

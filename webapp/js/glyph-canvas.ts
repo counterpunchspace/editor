@@ -129,7 +129,7 @@ import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
 import { getCommittedChangeRefreshPromise } from './change-bridge-init';
 import { recordLiveTextDiagnostic } from './live-text-diagnostics';
 import { QA_CORPUS_READY_EVENT } from './auto-qa/auto-qa-corpus';
-import { labelsForGlyph } from './auto-qa/auto-qa-matcher';
+import { glyphQaLabels } from './auto-qa/auto-qa-matcher';
 import {
     destroyAutoQaTippy,
     renderAutoQaWidget
@@ -9786,7 +9786,7 @@ class GlyphCanvas {
         if (!fontModel.findGlyph?.(glyphName)) {
             return null;
         }
-        const labels = labelsForGlyph(fontModel, glyphName);
+        const labels = glyphQaLabels(fontModel, glyphName);
         return renderAutoQaWidget(labels);
     }
 

@@ -32,6 +32,7 @@ setup(
     entry_points={
         "counterpunch_glyphfilter_plugins": [
             "all_glyphs = general_filter_plugin:AllGlyphsFilter",
+            "auto_qa_issues = general_filter_plugin:AutoQaIssuesFilter",
             "encoded_glyphs = general_filter_plugin:EncodedGlyphsFilter",
             (
                 "incompatible_outlines = "

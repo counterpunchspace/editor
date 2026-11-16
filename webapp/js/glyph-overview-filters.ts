@@ -56,6 +56,7 @@ import {
 import { getGlyphFilterIds, setGlyphFilterIds } from './window-ui-state';
 import { filterChatRegistry } from './glyph-filter-chat';
 import { showProceedDialog } from './ui/confirm-dialog';
+import { QA_CORPUS_READY_EVENT } from './auto-qa/auto-qa-corpus';
 
 /** Drag data type of a user filter being moved between folders. */
 const USER_FILTER_DRAG_TYPE = 'application/x-counterpunch-user-filter';
@@ -66,6 +67,19 @@ const USER_FILTER_DRAG_TYPE = 'application/x-counterpunch-user-filter';
 const USER_FILTER_MAX_FOLDER_DEPTH = 2;
 
 const console = new Logger('GlyphOverviewFilters');
+
+/** Glyph edits that can change that glyph's own Auto QA status. */
+const QA_GLYPH_EVENT_TYPES: ReadonlySet<GlyphFilterEventType> = new Set([
+    'glyph.unicode.changed',
+    'glyph.paths.changed',
+    'glyph.components.changed',
+    'glyph.component.reference.changed',
+    'glyph.anchors.changed',
+    'glyph.drawings.changed'
+]);
+
+/** Quiet time after the last edit before Auto QA rechecks the whole font. */
+const QA_FULL_RECHECK_DELAY_MS = 1500;
 
 /**
  * Path registry for filter categories.
@@ -286,6 +300,12 @@ export class GlyphOverviewFilterManager {
      * not on every drawing edit that might affect outlines.
      */
     private glyphCompatibilityByName: Map<string, boolean> = new Map();
+    /**
+     * Last observed `Glyph.hasQaIssues` per glyph name, filled only while a
+     * loaded filter subscribes to `glyph.qa.changed`.
+     */
+    private glyphQaIssuesByName: Map<string, boolean> = new Map();
+    private qaFullRecheckTimer: ReturnType<typeof setTimeout> | null = null;
 
     constructor() {
         this.rootNode = this.buildEmptyTree();
@@ -342,6 +362,9 @@ export class GlyphOverviewFilterManager {
                 });
             }
         );
+        window.addEventListener(QA_CORPUS_READY_EVENT, () => {
+            this.scheduleQaFullRecheck();
+        });
     }
 
     private enqueueFilterWork(work: () => Promise<void>): Promise<void> {
@@ -876,6 +899,89 @@ export class GlyphOverviewFilterManager {
         return changes;
     }
 
+    private hasQaSubscriber(): boolean {
+        return this.getAllLoadedPlugins().some((plugin) =>
+            plugin.eventTypes.includes('glyph.qa.changed')
+        );
+    }
+
+    /** Snapshot every glyph's `hasQaIssues` without emitting events. */
+    seedGlyphQaState(): void {
+        this.glyphQaIssuesByName.clear();
+        for (const glyph of window.currentFontModel?.glyphs || []) {
+            if (typeof glyph?.name === 'string' && glyph.name) {
+                this.glyphQaIssuesByName.set(
+                    glyph.name,
+                    Boolean(glyph.hasQaIssues)
+                );
+            }
+        }
+    }
+
+    /**
+     * Recheck `hasQaIssues` for the given glyphs, or for every glyph, and
+     * emit `glyph.qa.changed` only when it toggles.
+     */
+    collectQaToggleChanges(
+        glyphNames: Iterable<string> | 'all'
+    ): GlyphFilterChange[] {
+        const changes: GlyphFilterChange[] = [];
+        const font = window.currentFontModel;
+        if (!font || !this.hasQaSubscriber()) {
+            return changes;
+        }
+        const names =
+            glyphNames === 'all'
+                ? (font.glyphs || [])
+                      .map((glyph: { name?: string }) => glyph?.name)
+                      .filter(
+                          (name: unknown): name is string =>
+                              typeof name === 'string' && name.length > 0
+                      )
+                : [...new Set(glyphNames)];
+        for (const glyphName of names) {
+            const glyph = font.findGlyph(glyphName);
+            if (!glyph) {
+                this.glyphQaIssuesByName.delete(glyphName);
+                continue;
+            }
+            const hasQaIssues = Boolean(glyph.hasQaIssues);
+            const previous = this.glyphQaIssuesByName.get(glyphName);
+            this.glyphQaIssuesByName.set(glyphName, hasQaIssues);
+            if (previous === undefined || previous === hasQaIssues) {
+                continue;
+            }
+            changes.push({
+                type: 'glyph.qa.changed',
+                metadata: { glyphName, hasQaIssues }
+            });
+        }
+        return changes;
+    }
+
+    /**
+     * Corpus labels compare each glyph with its peers in the font, so an
+     * edit to one glyph can change another glyph's status. Those rechecks
+     * cover the whole font, so they wait until edits pause and run once.
+     */
+    private scheduleQaFullRecheck(): void {
+        if (!this.hasQaSubscriber()) {
+            return;
+        }
+        if (this.qaFullRecheckTimer) {
+            clearTimeout(this.qaFullRecheckTimer);
+        }
+        this.qaFullRecheckTimer = setTimeout(() => {
+            this.qaFullRecheckTimer = null;
+            void this.enqueueFilterWork(async () => {
+                const changes = this.collectQaToggleChanges('all');
+                if (changes.length) {
+                    await this.handleCommittedGlyphFilterBatch({ changes });
+                }
+            });
+        }, QA_FULL_RECHECK_DELAY_MS);
+    }
+
     /**
      * Derive the filter-facing semantic contract from committed change paths.
      * Path classification is delegated to glyph-filter-change-derivation.ts;
@@ -892,11 +998,26 @@ export class GlyphOverviewFilterManager {
         const changes: GlyphFilterChange[] = [];
         const lifecycleChanges: GlyphFilterLifecycleChange[] = [];
         const compatibilityCheckGlyphNames = new Set<string>();
+        const qaCheckGlyphNames = new Set<string>();
+        let qaPeersMayChange = false;
         let stationsChanged = false;
         for (const entry of entries) {
             const derived = deriveGlyphFilterChangesFromCommittedEntry(entry);
             changes.push(...derived.changes);
             lifecycleChanges.push(...derived.lifecycleChanges);
+            for (const change of derived.changes) {
+                const glyphName = change.metadata.glyphName;
+                if (
+                    typeof glyphName === 'string' &&
+                    QA_GLYPH_EVENT_TYPES.has(change.type)
+                ) {
+                    qaCheckGlyphNames.add(glyphName);
+                    qaPeersMayChange ||= change.type !== 'glyph.paths.changed';
+                }
+            }
+            if (derived.lifecycleChanges.length || derived.stationsChanged) {
+                qaPeersMayChange = true;
+            }
             for (const glyphName of derived.compatibilityCheckGlyphNames) {
                 compatibilityCheckGlyphNames.add(glyphName);
             }
@@ -907,13 +1028,19 @@ export class GlyphOverviewFilterManager {
             for (const lifecycle of derived.lifecycleChanges) {
                 if (lifecycle.kind === 'deleted') {
                     this.glyphCompatibilityByName.delete(lifecycle.glyphName);
+                    this.glyphQaIssuesByName.delete(lifecycle.glyphName);
                 } else if (lifecycle.kind === 'created') {
                     compatibilityCheckGlyphNames.add(lifecycle.glyphName);
+                    qaCheckGlyphNames.add(lifecycle.glyphName);
                 } else {
                     this.glyphCompatibilityByName.delete(
                         lifecycle.previousGlyphName
                     );
+                    this.glyphQaIssuesByName.delete(
+                        lifecycle.previousGlyphName
+                    );
                     compatibilityCheckGlyphNames.add(lifecycle.glyphName);
+                    qaCheckGlyphNames.add(lifecycle.glyphName);
                 }
             }
         }
@@ -922,8 +1049,12 @@ export class GlyphOverviewFilterManager {
             ...this.collectCompatibilityToggleChanges(
                 compatibilityCheckGlyphNames,
                 stationsChanged
-            )
+            ),
+            ...this.collectQaToggleChanges(qaCheckGlyphNames)
         );
+        if (qaPeersMayChange) {
+            this.scheduleQaFullRecheck();
+        }
 
         await this.applyLifecycleChanges(lifecycleChanges);
         await this.handleCommittedGlyphFilterBatch({
@@ -2478,6 +2609,9 @@ export class GlyphOverviewFilterManager {
 
         if (changeBatch.changes.length === 0) {
             this.seedGlyphCompatibilityState();
+            if (plugin.eventTypes.includes('glyph.qa.changed')) {
+                this.seedGlyphQaState();
+            }
         }
 
         try {

@@ -462,10 +462,18 @@ Fields include `character`, `glyph_name`, `name`, `codepoint`,
 `general_category`, `category`, `script`, `script_extensions`, `block`,
 `age`, `joining_type`, `joining_group`, `decomposition`,
 `combining_class`, `bidi_class`, `uppercase`, `lowercase`, `titlecase`.
+- **`hasQaIssues`** (bool): Whether built-in Auto QA reports anything for this glyph, the same
+checks as `qa` without building the messages. Read-only.
+
+**Example:**
+```python
+if glyph.hasQaIssues:
+    print(glyph.name)
+```
 - **`qa`** (list[GlyphQaMessage]): Read-only quality-assurance messages for this glyph. Built-in Auto QA
 plus future plugin checks. Each item is a dict with `sourceId`,
-`severity`, `checkId`, `message`, and `messageId`. Empty when the
-glyph cannot be identified or no checks fire. Does not write the font.
+`severity`, `checkId`, `message`, and `messageId`. Empty when no
+checks fire. Does not write the font.
 
 **Example:**
 ```python

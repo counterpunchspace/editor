@@ -867,3 +867,164 @@ describe('incremental observation refresh', () => {
         invalidateQaMatchCache();
     });
 });
+
+describe('Auto QA contour direction', () => {
+    const {
+        countWrongDirectionContours,
+        contourDirectionLabels
+    } = require('../../js/auto-qa/auto-qa-contour-direction.ts');
+    const { glyphQaLabels } = require('../../js/auto-qa/auto-qa-matcher.ts');
+
+    // Counter-clockwise in y-up coordinates
+    function square(x0, y0, x1, y1) {
+        return [
+            { x: x0, y: y0, nodetype: 'Line' },
+            { x: x1, y: y0, nodetype: 'Line' },
+            { x: x1, y: y1, nodetype: 'Line' },
+            { x: x0, y: y1, nodetype: 'Line' }
+        ];
+    }
+    const clockwise = (nodes) => [...nodes].reverse();
+    const closed = (nodes) => ({ nodes, closed: true });
+
+    function glyphWithPaths(name, paths, background) {
+        const layers = [makeDrawing({ id: `${name}-0`, shapes: paths })];
+        if (background) {
+            layers.push({
+                ...makeDrawing({ id: `${name}-bg`, shapes: background }),
+                is_background: true,
+                background_layer_id: `${name}-0`
+            });
+        }
+        return {
+            name,
+            category: 'Base',
+            exported: true,
+            layers,
+            format_specific: {}
+        };
+    }
+
+    test('outer contours run counter-clockwise and counters clockwise', () => {
+        const outer = square(0, 0, 500, 700);
+        const counter = clockwise(square(100, 100, 400, 600));
+        expect(
+            countWrongDirectionContours([closed(outer), closed(counter)])
+        ).toBe(0);
+        expect(
+            countWrongDirectionContours([
+                closed(clockwise(outer)),
+                closed(clockwise(counter))
+            ])
+        ).toBe(2);
+        // a counter running the same way as its outer contour
+        expect(
+            countWrongDirectionContours([
+                closed(outer),
+                closed(square(100, 100, 400, 600))
+            ])
+        ).toBe(1);
+        // an island inside a counter is an outer contour again
+        expect(
+            countWrongDirectionContours([
+                closed(outer),
+                closed(counter),
+                closed(square(200, 200, 300, 300))
+            ])
+        ).toBe(0);
+    });
+
+    test('applies to quadratic curves the same as to cubic ones', () => {
+        const quadratic = [
+            { x: 250, y: 0, nodetype: 'QCurve' },
+            { x: 500, y: 0, nodetype: 'OffCurve' },
+            { x: 500, y: 350, nodetype: 'QCurve' },
+            { x: 500, y: 700, nodetype: 'OffCurve' },
+            { x: 250, y: 700, nodetype: 'QCurve' },
+            { x: 0, y: 700, nodetype: 'OffCurve' },
+            { x: 0, y: 350, nodetype: 'QCurve' },
+            { x: 0, y: 0, nodetype: 'OffCurve' }
+        ];
+        expect(countWrongDirectionContours([closed(quadratic)])).toBe(0);
+        expect(
+            countWrongDirectionContours([closed(clockwise(quadratic))])
+        ).toBe(1);
+    });
+
+    test('overlapping strokes, open paths and background drawings are not flagged', () => {
+        expect(
+            countWrongDirectionContours([
+                closed(square(0, 0, 300, 100)),
+                closed(square(100, -50, 200, 400))
+            ])
+        ).toBe(0);
+        expect(
+            countWrongDirectionContours([
+                { nodes: clockwise(square(0, 0, 100, 100)), closed: false }
+            ])
+        ).toBe(0);
+        const font = makeFont([
+            glyphWithPaths(
+                'o',
+                [closed(square(0, 0, 500, 500))],
+                [closed(clockwise(square(0, 0, 500, 500)))]
+            )
+        ]);
+        expect(contourDirectionLabels(font.findGlyph('o'))).toEqual([]);
+        expect(font.findGlyph('o').hasQaIssues).toBe(false);
+    });
+
+    test('one label per glyph explains the convention, also on unidentifiable glyphs', () => {
+        invalidateQaMatchCache();
+        qaCorpusIndex.loadTableForTests(workSansPriors());
+        const font = makeFont([
+            glyphWithPaths('ornament.ss01', [
+                closed(clockwise(square(0, 0, 500, 700))),
+                closed(square(100, 100, 400, 600))
+            ])
+        ]);
+        const labels = glyphQaLabels(font, 'ornament.ss01');
+        expect(labels).toHaveLength(1);
+        expect(font.findGlyph('ornament.ss01').hasQaIssues).toBe(true);
+        expect(labels[0]).toEqual(
+            expect.objectContaining({
+                kind: 'wrong_contour_direction',
+                n: 2,
+                k: 1
+            })
+        );
+        const [message] = font.findGlyph('ornament.ss01').qa;
+        expect(message).toEqual(
+            expect.objectContaining({
+                sourceId: 'auto-qa',
+                checkId: 'wrong_contour_direction',
+                messageId: 'wrong_contour_direction:contour_direction'
+            })
+        );
+        expect(message.message).toBe(
+            '2 contours in 1 drawing run the wrong way. In Counterpunch, ' +
+                'outer contours run counter-clockwise and counters run ' +
+                'clockwise, for TrueType and PostScript curves alike. Export ' +
+                'reverses them for TrueType fonts, so they come out right. To ' +
+                'fix a contour, right-click it and choose “Reverse path direction”.'
+        );
+        invalidateQaMatchCache();
+    });
+
+    test('the popup leaves out the corpus note for a contour-direction label alone', () => {
+        const popup = buildAutoQaPopup([
+            {
+                glyph_name: 'o',
+                identity: 'o',
+                kind: 'wrong_contour_direction',
+                missing: 'contour_direction',
+                displayName: '',
+                n: 1,
+                k: 1,
+                confidence: 1
+            }
+        ]);
+        expect(popup.textContent).toMatch(/counter-clockwise/);
+        expect(popup.querySelector('.glyph-auto-qa-explainer')).toBeNull();
+    });
+});

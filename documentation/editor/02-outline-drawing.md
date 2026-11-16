@@ -35,6 +35,12 @@ Double-click an on-curve point in a curve to toggle smooth and corner. Hold Shif
 
 Open contour ends are always corners.
 
+## Contour direction
+
+In Counterpunch, outer contours run counter-clockwise and counters run clockwise. This is the same for every glyph, whether its curves are TrueType (quadratic) or PostScript (cubic). TrueType fonts store contours the other way round, so Counterpunch reverses them when it opens a `.ttf` and reverses them back when it exports a TrueType font. Draw every contour in the Counterpunch direction and the exported font comes out right.
+
+When a glyph has a contour that runs the wrong way, the **QA** warning appears in the property panel. Hover it to see how many contours and drawings are affected. To fix a contour, right-click it and choose **Reverse path direction**. To find every glyph with this or another Auto QA warning, choose the **Auto QA Issues** filter in the glyph overview, under **Debugging**.
+
 ## Snapping
 
 Node snapping is off by default. Turn it on from Editing View → View → Node Snapping. Drawing and dragging then snap to on-curve points in the glyph and neighbours, including open-contour start and end points, the dragged point’s original position, glyph edges, and vertical metric lines. Off-curve handles can snap to those targets while dragged, and are never targets themselves. Orange snap markers and guides draw fainter than the rest of the outline chrome. Open contour ends keep a red close/join bullseye even when Node Snapping is off: both ends of other open contours, and the start of the contour you are drawing when you hover it. The point you just placed is not a target. Two nodes on the same spot get a red circle; inspect whether that overlap is intentional.

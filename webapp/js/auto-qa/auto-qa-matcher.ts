@@ -24,6 +24,10 @@ import {
     isMarkLikeIdentity,
     wilsonLowerBound
 } from './auto-qa-stats';
+import {
+    contourDirectionLabels,
+    hasWrongContourDirection
+} from './auto-qa-contour-direction';
 
 export const AUTO_QA_SOURCE_ID = 'auto-qa';
 
@@ -38,7 +42,10 @@ export type GlyphQaMessage = {
 };
 
 export type QaLabelKind =
-    'missing_component' | 'missing_anchor' | 'wrong_component_order';
+    | 'missing_component'
+    | 'missing_anchor'
+    | 'wrong_component_order'
+    | 'wrong_contour_direction';
 
 export type QaLabel = {
     glyph_name: string;
@@ -184,6 +191,46 @@ export function labelsForGlyph(
         return sortLabels(labelsForObservation(observation, cachedContext));
     }
     return sortLabels(labelsForObservation(observation, context));
+}
+
+/**
+ * Every Auto QA label for one glyph: contour direction, which needs no
+ * corpus and applies to any glyph, then the corpus labels.
+ */
+export function glyphQaLabels(
+    font: Font,
+    glyphName: string,
+    table: QaCorpusTable | null = qaCorpusIndex.getTable(),
+    options: QaMatchOptions = {}
+): QaLabel[] {
+    const glyph = font.findGlyph(glyphName);
+    if (!glyph) {
+        return [];
+    }
+    return [
+        ...contourDirectionLabels(glyph),
+        ...labelsForGlyph(font, glyphName, table, options)
+    ];
+}
+
+/**
+ * Whether the glyph has any Auto QA label. Cheaper than `glyphQaLabels`:
+ * it stops at the first wrong contour and formats no messages.
+ */
+export function glyphHasQaIssues(font: Font, glyphName: string): boolean {
+    const glyph = font.findGlyph(glyphName);
+    if (!glyph) {
+        return false;
+    }
+    return (
+        hasWrongContourDirection(glyph) ||
+        labelsForGlyph(font, glyphName).length > 0
+    );
+}
+
+/** Whether a label comes from comparing with the corpus. */
+export function isCorpusQaLabel(label: QaLabel): boolean {
+    return label.kind !== 'wrong_contour_direction';
 }
 
 export function invalidateQaMatchCache(): void {
@@ -669,6 +716,9 @@ export function toGlyphQaMessages(labels: QaLabel[]): GlyphQaMessage[] {
 
 function formatQaMessageText(label: QaLabel, markdownNames: boolean): string {
     const wrap = (value: string) => (markdownNames ? `\`${value}\`` : value);
+    if (label.kind === 'wrong_contour_direction') {
+        return formatContourDirectionText(label, markdownNames);
+    }
     const name = wrap(label.displayName || label.missing);
     if (label.kind === 'wrong_component_order') {
         const base = wrap(label.relatedDisplayName || 'the base');
@@ -678,6 +728,22 @@ function formatQaMessageText(label: QaLabel, markdownNames: boolean): string {
         return `Similar fonts usually include the component ${name}. This glyph does not.`;
     }
     return `Similar fonts usually have an anchor named ${name}. This glyph does not.`;
+}
+
+function formatContourDirectionText(label: QaLabel, markdown: boolean): string {
+    const contours = label.n === 1 ? '1 contour' : `${label.n} contours`;
+    const drawings = label.k === 1 ? '1 drawing' : `${label.k} drawings`;
+    const verb = label.n === 1 ? 'runs' : 'run';
+    const action = markdown
+        ? '**Reverse path direction**'
+        : '“Reverse path direction”';
+    return (
+        `${contours} in ${drawings} ${verb} the wrong way. ` +
+        'In Counterpunch, outer contours run counter-clockwise and counters ' +
+        'run clockwise, for TrueType and PostScript curves alike. ' +
+        'Export reverses them for TrueType fonts, so they come out right. ' +
+        `To fix a contour, right-click it and choose ${action}.`
+    );
 }
 
 function displayNameForIdentity(

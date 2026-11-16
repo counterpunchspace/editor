@@ -198,3 +198,15 @@ Return `False` to hide a glyph or `True` to show it without groups. Return a map
 | `compatible` | `boolean` | Yes | Whether the glyph’s relevant drawings are compatible after the change. |
 | `drawingIds` | `string[]` | Yes | The drawing IDs considered by the compatibility check. |
 
+## `glyph.qa.changed`
+
+- Name: Glyph Auto QA Changed
+- Description: Whether Auto QA reports anything for a glyph (`Glyph.hasQaIssues`) toggled.
+
+### Metadata
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `glyphName` | `string` | Yes | The glyph whose Auto QA status changed. |
+| `hasQaIssues` | `boolean` | Yes | Whether Auto QA reports anything for the glyph after the change. |
+
