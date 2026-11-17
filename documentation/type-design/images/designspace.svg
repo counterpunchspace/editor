@@ -1,51 +1,66 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 740" width="840" height="740" role="img" aria-label="Designspace box with weight, width and optical size axes. Four stations with drawings, Light as the default station, and a free drawing for Regular">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 820" width="840" height="820" role="img" aria-label="Designspace box with weight, width and optical size axes. Light, the default station, at one corner, with Bold, Wide and Display one step along each axis, faint optional stations at the other corners, and a free drawing for Regular">
   <defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#1f2328"/></marker></defs>
-  <line x1="375.0" y1="292.7" x2="631.8" y2="389.0" stroke="#8c959f" stroke-width="2" stroke-linecap="round" stroke-dasharray="5 6"/>
-  <line x1="375.0" y1="292.7" x2="208.2" y2="441.0" stroke="#8c959f" stroke-width="2" stroke-linecap="round" stroke-dasharray="5 6"/>
-  <line x1="375.0" y1="292.7" x2="375.0" y2="42.7" stroke="#8c959f" stroke-width="2" stroke-linecap="round" stroke-dasharray="5 6"/>
-  <line x1="375.0" y1="42.7" x2="631.8" y2="139.0" stroke="#8c959f" stroke-width="2" stroke-linecap="round"/>
-  <line x1="375.0" y1="42.7" x2="208.2" y2="191.0" stroke="#8c959f" stroke-width="2" stroke-linecap="round"/>
-  <line x1="208.2" y1="441.0" x2="465.0" y2="537.3" stroke="#8c959f" stroke-width="2" stroke-linecap="round"/>
-  <line x1="208.2" y1="441.0" x2="208.2" y2="191.0" stroke="#8c959f" stroke-width="2" stroke-linecap="round"/>
-  <line x1="208.2" y1="191.0" x2="465.0" y2="287.3" stroke="#8c959f" stroke-width="2" stroke-linecap="round"/>
-  <line x1="631.8" y1="389.0" x2="465.0" y2="537.3" stroke="#8c959f" stroke-width="2" stroke-linecap="round"/>
-  <line x1="631.8" y1="389.0" x2="631.8" y2="139.0" stroke="#8c959f" stroke-width="2" stroke-linecap="round"/>
-  <line x1="631.8" y1="139.0" x2="465.0" y2="287.3" stroke="#8c959f" stroke-width="2" stroke-linecap="round"/>
-  <line x1="465.0" y1="537.3" x2="465.0" y2="287.3" stroke="#8c959f" stroke-width="2" stroke-linecap="round"/>
-  <line x1="174.4" y1="471.0" x2="431.2" y2="567.3" stroke="#1f2328" stroke-width="2.5" stroke-linecap="round" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
-  <text x="290.8" y="541.2" fill="#1f2328" font-size="16" font-weight="600" text-anchor="middle" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif" transform="rotate(20.6 290.8 541.2)">Weight</text>
-  <text x="177.8" y="498.8" fill="#57606a" font-size="15" font-weight="500" text-anchor="middle" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif" transform="rotate(20.6 177.8 498.8)">100</text>
-  <text x="403.8" y="583.5" fill="#57606a" font-size="15" font-weight="500" text-anchor="middle" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif" transform="rotate(20.6 403.8 583.5)">900</text>
-  <line x1="507.4" y1="553.2" x2="674.1" y2="404.9" stroke="#1f2328" stroke-width="2.5" stroke-linecap="round" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
-  <text x="602.8" y="501.0" fill="#1f2328" font-size="16" font-weight="600" text-anchor="middle" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif" transform="rotate(-41.6 602.8 501.0)">Width</text>
-  <text x="529.4" y="566.3" fill="#57606a" font-size="15" font-weight="500" text-anchor="middle" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif" transform="rotate(-41.6 529.4 566.3)">100</text>
-  <text x="676.1" y="435.8" fill="#57606a" font-size="15" font-weight="500" text-anchor="middle" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif" transform="rotate(-41.6 676.1 435.8)">125</text>
-  <line x1="168.2" y1="445.9" x2="168.2" y2="195.9" stroke="#1f2328" stroke-width="2.5" stroke-linecap="round" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
-  <text x="152.2" y="320.9" fill="#1f2328" font-size="16" font-weight="600" text-anchor="middle" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif" transform="rotate(-90.0 152.2 320.9)">Optical size</text>
-  <text x="152.2" y="430.9" fill="#57606a" font-size="15" font-weight="500" text-anchor="middle" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif" transform="rotate(-90.0 152.2 430.9)">12</text>
-  <text x="152.2" y="210.9" fill="#57606a" font-size="15" font-weight="500" text-anchor="middle" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif" transform="rotate(-90.0 152.2 210.9)">72</text>
-  <circle cx="208.2" cy="441.0" r="15" fill="none" stroke="#0969da" stroke-width="2.5"/>
-  <circle cx="208.2" cy="441.0" r="24" fill="none" stroke="#0969da" stroke-width="2.5"/>
-  <circle cx="208.2" cy="441.0" r="8" fill="#cf222e"/>
-  <text x="240.2" y="421.0" fill="#0969da" font-size="16" font-weight="600" text-anchor="start" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif">Light</text>
-  <circle cx="465.0" cy="537.3" r="15" fill="none" stroke="#0969da" stroke-width="2.5"/>
-  <circle cx="465.0" cy="537.3" r="8" fill="#cf222e"/>
-  <text x="465.0" y="577.3" fill="#0969da" font-size="16" font-weight="600" text-anchor="middle" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif">Bold</text>
-  <circle cx="503.4" cy="340.9" r="15" fill="none" stroke="#0969da" stroke-width="2.5"/>
-  <circle cx="503.4" cy="340.9" r="8" fill="#cf222e"/>
-  <text x="527.4" y="346.9" fill="#0969da" font-size="16" font-weight="600" text-anchor="start" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif">Wide</text>
-  <circle cx="336.6" cy="239.1" r="15" fill="none" stroke="#0969da" stroke-width="2.5"/>
-  <circle cx="336.6" cy="239.1" r="8" fill="#cf222e"/>
-  <text x="336.6" y="213.1" fill="#0969da" font-size="16" font-weight="600" text-anchor="middle" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif">Display</text>
-  <circle cx="304.5" cy="477.1" r="8" fill="#8250df"/>
-  <text x="318.5" y="463.1" fill="#8250df" font-size="16" font-weight="600" text-anchor="start" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif">Regular</text>
-  <circle cx="190" cy="660" r="24" fill="none" stroke="#0969da" stroke-width="2.5"/>
-  <circle cx="190" cy="660" r="15" fill="none" stroke="#0969da" stroke-width="2.5"/>
-  <text x="224.0" y="665.0" fill="#57606a" font-size="15" font-weight="400" text-anchor="start" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif">Default station</text>
-  <circle cx="470" cy="660" r="15" fill="none" stroke="#0969da" stroke-width="2.5"/>
-  <text x="504.0" y="665.0" fill="#57606a" font-size="15" font-weight="400" text-anchor="start" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif">Station</text>
-  <circle cx="190" cy="708" r="8" fill="#cf222e"/>
-  <text x="224.0" y="713.0" fill="#57606a" font-size="15" font-weight="400" text-anchor="start" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif">Drawing at a station</text>
-  <circle cx="470" cy="708" r="8" fill="#8250df"/>
-  <text x="504.0" y="713.0" fill="#57606a" font-size="15" font-weight="400" text-anchor="start" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif">Free drawing</text>
+  <line x1="375.0" y1="322.7" x2="631.8" y2="419.0" stroke="#8c959f" stroke-width="2" stroke-linecap="round" stroke-dasharray="5 6"/>
+  <line x1="375.0" y1="322.7" x2="208.2" y2="471.0" stroke="#8c959f" stroke-width="2" stroke-linecap="round" stroke-dasharray="5 6"/>
+  <line x1="375.0" y1="322.7" x2="375.0" y2="72.7" stroke="#8c959f" stroke-width="2" stroke-linecap="round" stroke-dasharray="5 6"/>
+  <line x1="375.0" y1="72.7" x2="631.8" y2="169.0" stroke="#8c959f" stroke-width="2" stroke-linecap="round"/>
+  <line x1="375.0" y1="72.7" x2="208.2" y2="221.0" stroke="#8c959f" stroke-width="2" stroke-linecap="round"/>
+  <line x1="208.2" y1="471.0" x2="465.0" y2="567.3" stroke="#8c959f" stroke-width="2" stroke-linecap="round"/>
+  <line x1="208.2" y1="471.0" x2="208.2" y2="221.0" stroke="#8c959f" stroke-width="2" stroke-linecap="round"/>
+  <line x1="208.2" y1="221.0" x2="465.0" y2="317.3" stroke="#8c959f" stroke-width="2" stroke-linecap="round"/>
+  <line x1="631.8" y1="419.0" x2="465.0" y2="567.3" stroke="#8c959f" stroke-width="2" stroke-linecap="round"/>
+  <line x1="631.8" y1="419.0" x2="631.8" y2="169.0" stroke="#8c959f" stroke-width="2" stroke-linecap="round"/>
+  <line x1="631.8" y1="169.0" x2="465.0" y2="317.3" stroke="#8c959f" stroke-width="2" stroke-linecap="round"/>
+  <line x1="465.0" y1="567.3" x2="465.0" y2="317.3" stroke="#8c959f" stroke-width="2" stroke-linecap="round"/>
+  <line x1="174.4" y1="501.0" x2="431.2" y2="597.3" stroke="#1f2328" stroke-width="2.5" stroke-linecap="round" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="290.8" y="571.2" fill="#1f2328" font-size="16" font-weight="600" text-anchor="middle" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif" transform="rotate(20.6 290.8 571.2)">Weight</text>
+  <text x="177.8" y="528.8" fill="#57606a" font-size="15" font-weight="500" text-anchor="middle" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif" transform="rotate(20.6 177.8 528.8)">100</text>
+  <text x="403.8" y="613.5" fill="#57606a" font-size="15" font-weight="500" text-anchor="middle" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif" transform="rotate(20.6 403.8 613.5)">900</text>
+  <line x1="507.4" y1="583.2" x2="674.1" y2="434.9" stroke="#1f2328" stroke-width="2.5" stroke-linecap="round" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="602.8" y="531.0" fill="#1f2328" font-size="16" font-weight="600" text-anchor="middle" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif" transform="rotate(-41.6 602.8 531.0)">Width</text>
+  <text x="529.4" y="596.3" fill="#57606a" font-size="15" font-weight="500" text-anchor="middle" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif" transform="rotate(-41.6 529.4 596.3)">100</text>
+  <text x="676.1" y="465.8" fill="#57606a" font-size="15" font-weight="500" text-anchor="middle" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif" transform="rotate(-41.6 676.1 465.8)">125</text>
+  <line x1="168.2" y1="475.9" x2="168.2" y2="225.9" stroke="#1f2328" stroke-width="2.5" stroke-linecap="round" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="152.2" y="350.9" fill="#1f2328" font-size="16" font-weight="600" text-anchor="middle" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif" transform="rotate(-90.0 152.2 350.9)">Optical size</text>
+  <text x="152.2" y="460.9" fill="#57606a" font-size="15" font-weight="500" text-anchor="middle" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif" transform="rotate(-90.0 152.2 460.9)">12</text>
+  <text x="152.2" y="240.9" fill="#57606a" font-size="15" font-weight="500" text-anchor="middle" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif" transform="rotate(-90.0 152.2 240.9)">72</text>
+  <circle cx="631.8" cy="419.0" r="15" fill="none" stroke="#c4cbd2" stroke-width="2.5"/>
+  <circle cx="631.8" cy="419.0" r="8" fill="#c4cbd2"/>
+  <text x="655.8" y="425.0" fill="#c4cbd2" font-size="16" font-weight="600" text-anchor="start" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif">Bold Wide</text>
+  <circle cx="465.0" cy="317.3" r="15" fill="none" stroke="#c4cbd2" stroke-width="2.5"/>
+  <circle cx="465.0" cy="317.3" r="8" fill="#c4cbd2"/>
+  <text x="489.0" y="323.3" fill="#c4cbd2" font-size="16" font-weight="600" text-anchor="start" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif">Bold Display</text>
+  <circle cx="375.0" cy="72.7" r="15" fill="none" stroke="#c4cbd2" stroke-width="2.5"/>
+  <circle cx="375.0" cy="72.7" r="8" fill="#c4cbd2"/>
+  <text x="375.0" y="46.7" fill="#c4cbd2" font-size="16" font-weight="600" text-anchor="middle" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif">Wide Display</text>
+  <circle cx="631.8" cy="169.0" r="15" fill="none" stroke="#c4cbd2" stroke-width="2.5"/>
+  <circle cx="631.8" cy="169.0" r="8" fill="#c4cbd2"/>
+  <text x="655.8" y="175.0" fill="#c4cbd2" font-size="16" font-weight="600" text-anchor="start" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif">Bold Wide Display</text>
+  <circle cx="208.2" cy="471.0" r="15" fill="none" stroke="#0969da" stroke-width="2.5"/>
+  <circle cx="208.2" cy="471.0" r="24" fill="none" stroke="#0969da" stroke-width="2.5"/>
+  <circle cx="208.2" cy="471.0" r="8" fill="#cf222e"/>
+  <text x="240.2" y="451.0" fill="#0969da" font-size="16" font-weight="600" text-anchor="start" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif">Light</text>
+  <circle cx="465.0" cy="567.3" r="15" fill="none" stroke="#0969da" stroke-width="2.5"/>
+  <circle cx="465.0" cy="567.3" r="8" fill="#cf222e"/>
+  <text x="465.0" y="607.3" fill="#0969da" font-size="16" font-weight="600" text-anchor="middle" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif">Bold</text>
+  <circle cx="375.0" cy="322.7" r="15" fill="none" stroke="#0969da" stroke-width="2.5"/>
+  <circle cx="375.0" cy="322.7" r="8" fill="#cf222e"/>
+  <text x="399.0" y="328.7" fill="#0969da" font-size="16" font-weight="600" text-anchor="start" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif">Wide</text>
+  <circle cx="208.2" cy="221.0" r="15" fill="none" stroke="#0969da" stroke-width="2.5"/>
+  <circle cx="208.2" cy="221.0" r="8" fill="#cf222e"/>
+  <text x="232.2" y="207.0" fill="#0969da" font-size="16" font-weight="600" text-anchor="start" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif">Display</text>
+  <circle cx="304.5" cy="507.1" r="8" fill="#8250df"/>
+  <text x="318.5" y="493.1" fill="#8250df" font-size="16" font-weight="600" text-anchor="start" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif">Regular</text>
+  <circle cx="190" cy="690" r="24" fill="none" stroke="#0969da" stroke-width="2.5"/>
+  <circle cx="190" cy="690" r="15" fill="none" stroke="#0969da" stroke-width="2.5"/>
+  <text x="224.0" y="695.0" fill="#57606a" font-size="15" font-weight="400" text-anchor="start" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif">Default station</text>
+  <circle cx="470" cy="690" r="15" fill="none" stroke="#0969da" stroke-width="2.5"/>
+  <text x="504.0" y="695.0" fill="#57606a" font-size="15" font-weight="400" text-anchor="start" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif">Station</text>
+  <circle cx="190" cy="738" r="8" fill="#cf222e"/>
+  <text x="224.0" y="743.0" fill="#57606a" font-size="15" font-weight="400" text-anchor="start" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif">Drawing at a station</text>
+  <circle cx="470" cy="738" r="8" fill="#8250df"/>
+  <text x="504.0" y="743.0" fill="#57606a" font-size="15" font-weight="400" text-anchor="start" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif">Free drawing</text>
+  <circle cx="190" cy="786" r="15" fill="none" stroke="#c4cbd2" stroke-width="2.5"/>
+  <circle cx="190" cy="786" r="8" fill="#c4cbd2"/>
+  <text x="224.0" y="791.0" fill="#57606a" font-size="15" font-weight="400" text-anchor="start" font-family="Inter, 'Helvetica Neue', Arial, system-ui, sans-serif">Corner usually drawn too</text>
 </svg>

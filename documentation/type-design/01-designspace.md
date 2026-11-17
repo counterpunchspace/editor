@@ -2,7 +2,7 @@
 
 A variable font is not one design but a continuous range of designs. You draw a few of them by hand, and the font computes (interpolates) everything in between. This page explains the words Counterpunch uses for the parts of that system and how they differ. The same words appear in the interface, in the handbook and in the Python API.
 
-![A designspace box with three axes: weight, width and optical size. Light and Bold sit at both ends of the weight axis, Display at the largest optical size, halfway along weight, and Wide at the far end of the width axis, halfway along weight. Light is the default station. Each station has a drawing at the same location, and a free drawing for Regular sits on the weight axis between Light and Bold.](images/designspace.svg)
+![A designspace box with three axes: weight, width and optical size. Light, the default station, sits at one corner. Bold, Wide and Display sit one step away from it along each axis. Each station has a drawing at the same location. The four remaining corners, such as Bold Wide, are shown in gray as stations a designer would usually draw too. A free drawing for Regular sits on the weight axis between Light and Bold.](images/designspace.svg)
 
 ## Designspace and axes
 
@@ -18,7 +18,13 @@ Its name, vertical metrics, and alignment zones are purely design-time aids to h
 
 One station is the **default station**. Apps that ignore variations show it, and the compiled font is built from it. In the figure it is Light, marked with a second ring, at the default location of all axes.
 
-You do not need a station on every corner of the designspace. Older multiple-master workflows put a master on each corner, which doubles the work with every new axis. Variable fonts only need stations where the design actually changes character. The figure has four stations for three axes: Light and Bold at both ends of the weight axis, which is common practice, and one more station halfway along weight for each other axis: Wide at the far end of the width axis and Display at the largest optical size. Everything between them is interpolated.
+You don’t need a station on every corner of the designspace. The figure has four: the default station Light, and one station at the far end of each axis, Bold for weight, Wide for width and Display for optical size. Each of them sits at the default of the other two axes, so the change it describes applies across the whole designspace. The font computes the remaining corners by adding up those changes: Bold Wide is Light, plus what Bold changes, plus what Wide changes. This is still interpolation, not extrapolation, because the corners lie inside the designspace.
+
+A station away from the default on another axis works differently. If Wide sat halfway along the weight axis, its change would fade out towards Light and Bold, and the font would only get wider around the middle weights.
+
+Adding up changes works, but nobody has looked at the result. The bold change was drawn on normal-width letters, and applied unchanged to wide or condensed letters it gives stems of the wrong thickness, counters that fill in and joins that don’t fit. That’s why professional designers prefer to draw every corner. The figure shows them in gray.
+
+Leaving a corner out makes sense where the combination is rarely used and the computed result is good enough. Nunito Sans, for example, draws its smallest optical size, 6 pt, only at normal width: condensed or expanded text at caption sizes is rare, so the font computes those corners. Axes designed to add up cleanly, such as the x-height and stem-thickness axes of Roboto Flex, get only one station at each end and none at the corners.
 
 Stations are listed in **Font Info → Stations**. Glyphs calls them _masters_; designspace files call them _sources_.
 
