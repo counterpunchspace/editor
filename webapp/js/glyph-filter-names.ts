@@ -65,3 +65,18 @@ export function nextFreeFilterName(
     }
     return `${baseName} ${suffix}`;
 }
+
+/**
+ * The name for a filter the Assistant suggests: the suggestion itself, or
+ * with the next free number when another filter has it. An error when the
+ * suggestion can never be a file name.
+ */
+export function claimSuggestedFilterName(
+    suggested: string,
+    takenNames: Iterable<string>
+): { name: string } | { error: string } {
+    const name = normalizeFilterName(suggested);
+    const error = validateFilterName(name, []);
+    if (error) return { error };
+    return { name: nextFreeFilterName(takenNames, name) };
+}

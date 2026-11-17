@@ -318,6 +318,18 @@ describe('tour intro', () => {
         ).toBe('Continue');
     });
 
+    test('starting the tour folds the Categories filters', async () => {
+        const {
+            glyphOverviewFilterManager
+        } = require('../js/glyph-overview-filters');
+        const collapse = jest.spyOn(
+            glyphOverviewFilterManager,
+            'collapseSection'
+        );
+        await tour.startTour();
+        expect(collapse).toHaveBeenCalledWith('categories');
+    });
+
     test('tour start waits for real glyphs before fitting the sample text', async () => {
         const textRun = window.glyphCanvas.textRunEditor;
         textRun.shapedGlyphs = [
@@ -497,6 +509,17 @@ describe('tour intro', () => {
             document.querySelector('[data-tour-station="ExtraBold"]')
         ).not.toBeNull();
     }, 25000);
+
+    test('applying ss04 spotlights only the two l’s', () => {
+        const { getTourSlide } = require('../js/tour-slides');
+        window.glyphCanvas.textRunEditor.shapedGlyphs = [0, 1, 2, 3, 4].map(
+            (cl) => ({ ax: 100, dx: 0, dy: 0, cl, g: cl + 1 })
+        );
+        const [cutout] = getTourSlide('ss04-features').previewCutouts;
+        const rect = cutout.resolve();
+        expect(rect.left).toBe(200);
+        expect(rect.width).toBe(200);
+    });
 
     test('clicking ExtraBold opens the axis sliders slide', async () => {
         tour.openTourIntro();
@@ -1335,20 +1358,23 @@ describe('tour intro', () => {
         expect(markKeys).toEqual(['198,186', '67,157']);
     });
 
-    test('place-handles marks one handle at rest then target-only while dragging', async () => {
+    test('place-handles starts with the longest drag, rings its target and points an arrow at it', async () => {
         const { getTourSlide } = require('../js/tour-slides');
         const { showTourSlide } = require('../js/tour-spotlight');
-        const { captureTourDrawArea } = require('../js/tour-drawing');
+        const {
+            captureTourDrawArea,
+            isTourDrawingGoalMet
+        } = require('../js/tour-drawing');
         const nodes = [
             { x: 252, y: 2, nodetype: 'Line', smooth: false },
             { x: 252, y: 121, nodetype: 'Line', smooth: false },
-            { x: 180, y: 119, nodetype: 'OffCurve' },
+            { x: 200, y: 119, nodetype: 'OffCurve' },
             { x: 190, y: 145, nodetype: 'OffCurve' },
             { x: 198, y: 186, nodetype: 'Line', smooth: true },
             { x: 198, y: 734, nodetype: 'Line' },
             { x: 67, y: 718, nodetype: 'Line' },
             { x: 67, y: 157, nodetype: 'Line', smooth: true },
-            { x: 65, y: 90, nodetype: 'OffCurve' },
+            { x: 65, y: 130, nodetype: 'OffCurve' },
             { x: 125, y: 0, nodetype: 'OffCurve' }
         ];
         window.glyphCanvas.outlineEditor = {
@@ -1384,24 +1410,30 @@ describe('tour intro', () => {
             }
             return [...keys].sort();
         };
-        expect(document.querySelectorAll('.tour-guide-ring').length).toBe(8);
-        expect(markKeys()).toEqual(['180,119', '217,119']);
+        const arrows = () =>
+            document.querySelectorAll('.tour-guide-arrow').length;
+        const settle = async () => {
+            window.dispatchEvent(new CustomEvent('glyphCanvasRendered'));
+            await new Promise((resolve) => requestAnimationFrame(resolve));
+            await new Promise((resolve) => requestAnimationFrame(resolve));
+        };
+        // 71 units to go here; the other handle is only 17 off, within
+        // the drop distance, and must still get its own drag.
+        expect(document.querySelectorAll('.tour-guide-ring').length).toBe(4);
+        expect(markKeys()).toEqual(['65,59']);
+        expect(arrows()).toBe(1);
         window.glyphCanvas.outlineEditor.isDraggingPoint = true;
-        nodes[2] = { x: 210, y: 119, nodetype: 'OffCurve' };
-        window.dispatchEvent(new CustomEvent('glyphCanvasRendered'));
-        await new Promise((resolve) => requestAnimationFrame(resolve));
-        await new Promise((resolve) => requestAnimationFrame(resolve));
-        expect(markKeys()).toEqual(['217,119']);
-        nodes[2] = { x: 217, y: 119, nodetype: 'OffCurve' };
-        window.dispatchEvent(new CustomEvent('glyphCanvasRendered'));
-        await new Promise((resolve) => requestAnimationFrame(resolve));
-        await new Promise((resolve) => requestAnimationFrame(resolve));
-        expect(markKeys()).toEqual(['217,119']);
+        nodes[8] = { x: 65, y: 100, nodetype: 'OffCurve' };
+        await settle();
+        expect(markKeys()).toEqual(['65,59']);
+        expect(arrows()).toBe(0);
+        nodes[8] = { x: 65, y: 59, nodetype: 'OffCurve' };
+        await settle();
         window.glyphCanvas.outlineEditor.isDraggingPoint = false;
-        window.dispatchEvent(new CustomEvent('glyphCanvasRendered'));
-        await new Promise((resolve) => requestAnimationFrame(resolve));
-        await new Promise((resolve) => requestAnimationFrame(resolve));
-        expect(markKeys()).toEqual(['65,59', '65,90']);
+        await settle();
+        expect(markKeys()).toEqual(['217,119']);
+        expect(arrows()).toBe(1);
+        expect(isTourDrawingGoalMet('handles-placed')).toBe(false);
     });
 
     test('Draw presses off the mark are dropped; near presses land on it', async () => {
@@ -1769,6 +1801,157 @@ describe('tour intro', () => {
         expect(cutout.width).toBe(80);
         expect(cutout.height).toBe(120);
     });
+
+    test('?tour=1 starts the tour without the intro and saves no flags', async () => {
+        window.history.replaceState(
+            null,
+            '',
+            '/?file=memory:///user/Fustat.glyphs&tour=1&utm_term=font'
+        );
+        jest.resetModules();
+        delete window.__tourHost;
+        tour = require('../js/tour');
+        window.dispatchEvent(
+            new CustomEvent('folderPermissionsAutoPromptSettled')
+        );
+        await waitForSlideFade();
+
+        expect(document.getElementById('tour-intro-title')).toBeNull();
+        expect(document.querySelector('.tour-tooltip h3').textContent).toBe(
+            'Text Mode'
+        );
+        expect(window.location.search).toBe(
+            '?file=memory:///user/Fustat.glyphs&utm_term=font'
+        );
+        tour.cancelTour();
+        expect(localStorage.getItem('tourStarted')).toBeNull();
+        expect(localStorage.getItem('tourSkipped')).toBeNull();
+        expect(document.getElementById('tour-launch-chip').hidden).toBe(true);
+        window.history.replaceState(null, '', '/');
+    }, 15000);
+
+    test('AI steps show Skip and Try It at the bottom', async () => {
+        document.body.insertAdjacentHTML(
+            'beforeend',
+            '<div id="overview-filters"><div class="editor-section-title glyph-filter-user-header">User Filters</div><div class="glyph-filter-tree glyph-filter-user-tree"></div></div>'
+        );
+        const { getTourSlide } = require('../js/tour-slides');
+        const { showTourSlide } = require('../js/tour-spotlight');
+        await showTourSlide(getTourSlide('user-filters'), () => {});
+        const buttons = [
+            ...document.querySelectorAll('.tour-tooltip-actions button')
+        ].map((button) => button.textContent);
+        expect(buttons).toEqual(['Skip', 'Try It']);
+        expect(
+            document.querySelector(
+                '.tour-tooltip-tools [data-tour-action="skip"]'
+            )
+        ).toBeNull();
+    });
+
+    test('signed-in users get no Skip on AI steps', async () => {
+        document.body.insertAdjacentHTML(
+            'beforeend',
+            '<div id="overview-filters"><div class="editor-section-title glyph-filter-user-header">User Filters</div><div class="glyph-filter-tree glyph-filter-user-tree"></div></div>'
+        );
+        window.authManager = { isAuthenticated: () => true };
+        const { getTourSlide } = require('../js/tour-slides');
+        const { showTourSlide } = require('../js/tour-spotlight');
+        await showTourSlide(getTourSlide('user-filters'), () => {});
+        const buttons = [
+            ...document.querySelectorAll('.tour-tooltip-actions button')
+        ].map((button) => button.textContent);
+        expect(buttons).toEqual(['Try It']);
+        expect(getTourSlide('ai-filter-describe').tooltip.buttons()).toEqual(
+            []
+        );
+        delete window.authManager;
+    });
+
+    test('End Tour during the filter exercise ends the tour', async () => {
+        jest.resetModules();
+        jest.doMock('../js/glyph-filter-editor-modal', () => ({
+            // Closing the open editor reports it as cancelled, as the real one does.
+            closeGlyphFilterEditor: () =>
+                window.dispatchEvent(
+                    new CustomEvent('glyphFilterEditorClosed', {
+                        detail: { saved: false }
+                    })
+                ),
+            openGlyphFilterEditor: jest.fn(),
+            revealGlyphFilterEditorGlyphs: jest.fn()
+        }));
+        const tourModule = require('../js/tour');
+        const { getTourSlide } = require('../js/tour-slides');
+        const { showTourSlide } = require('../js/tour-spotlight');
+        const { bindTourFilterTurn } = require('../js/tour-ai');
+        const onSkip = jest.fn();
+        await showTourSlide(
+            {
+                ...getTourSlide('user-filters'),
+                prepare: undefined,
+                advanceOn: bindTourFilterTurn
+            },
+            { onContinue: jest.fn(), onSkip }
+        );
+        tourModule.cancelTour();
+        expect(onSkip).not.toHaveBeenCalled();
+        jest.dontMock('../js/glyph-filter-editor-modal');
+    });
+
+    test('Cmd/Ctrl+C copies text selected in the tour tooltip', async () => {
+        const { getTourSlide } = require('../js/tour-slides');
+        const {
+            showTourSlide,
+            isTourKeyEventAllowed
+        } = require('../js/tour-spotlight');
+        await showTourSlide(getTourSlide('konsole'), () => {});
+        const copy = () =>
+            new KeyboardEvent('keydown', {
+                key: 'c',
+                code: 'KeyC',
+                metaKey: true,
+                ctrlKey: true
+            });
+        expect(isTourKeyEventAllowed(copy())).toBe(false);
+        const paragraph = document.querySelector('.tour-tooltip p');
+        const range = document.createRange();
+        range.selectNodeContents(paragraph);
+        document.getSelection().removeAllRanges();
+        document.getSelection().addRange(range);
+        expect(isTourKeyEventAllowed(copy())).toBe(true);
+        document.getSelection().removeAllRanges();
+    });
+
+    test('Skip on an AI step moves on through the skip explanation', async () => {
+        const { getTourSlide, TOUR_SLIDE_ORDER } = require('../js/tour-slides');
+        const { showTourSlide } = require('../js/tour-spotlight');
+        const { tourAiOutcome } = require('../js/tour-ai');
+        document.body.insertAdjacentHTML(
+            'beforeend',
+            '<div id="overview-filters"><div class="editor-section-title glyph-filter-user-header">User Filters</div><div class="glyph-filter-tree glyph-filter-user-tree"></div></div>'
+        );
+        const onContinue = jest.fn();
+        const onSkip = jest.fn(() => {
+            getTourSlide('user-filters').onSkip();
+        });
+        await showTourSlide(getTourSlide('user-filters'), {
+            onContinue,
+            onSkip
+        });
+        document
+            .querySelector('[data-tour-action="skip"]')
+            .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(onSkip).toHaveBeenCalled();
+        expect(tourAiOutcome('filter')).toBe('skipped');
+        const index = TOUR_SLIDE_ORDER.indexOf('user-filters');
+        expect(TOUR_SLIDE_ORDER[tour.nextShownIndex(index)]).toBe(
+            'ai-filter-skipped'
+        );
+        expect(getTourSlide('ai-filter-skipped').tooltip.body()).toContain(
+            'Had you tried it'
+        );
+    });
 });
 
 describe('tour slide order', () => {
@@ -1799,11 +1982,21 @@ describe('tour slide order', () => {
             'enlarge-panel-keyboard',
             'glyph-filters',
             'user-filters',
+            'ai-filter-sign-up',
+            'ai-filter-new',
+            'ai-filter-describe',
+            'ai-filter-result',
+            'ai-filter-in-sidebar',
+            'ai-filter-skipped',
             'font-info-panel',
             'font-info-sections',
             'close-panels-keyboard',
             'auxiliary-panels',
             'assistant',
+            'ai-assistant-sign-up',
+            'ai-assistant-ask',
+            'ai-assistant-result',
+            'ai-assistant-skipped',
             'allow-font-edits',
             'script-editor',
             'konsole',
@@ -1931,5 +2124,159 @@ describe('tour slide order', () => {
             'assistant-help',
             'scripts-help'
         ]);
+    });
+});
+
+describe('tour AI steps', () => {
+    let ai;
+    let slides;
+    let tour;
+
+    beforeEach(() => {
+        jest.resetModules();
+        delete window.__tourHost;
+        localStorage.clear();
+        document.body.innerHTML = '';
+        window.authManager = { isAuthenticated: () => false };
+        ai = require('../js/tour-ai');
+        slides = require('../js/tour-slides');
+        tour = require('../js/tour');
+    });
+
+    afterEach(() => {
+        delete window.authManager;
+        delete window.aiAssistant;
+    });
+
+    function shownAfter(id) {
+        const index = slides.TOUR_SLIDE_ORDER.indexOf(id);
+        return slides.TOUR_SLIDE_ORDER[tour.nextShownIndex(index)];
+    }
+
+    test('skipping the filter step still offers the Assistant step', () => {
+        ai.tryTourAiStep('filter');
+        expect(shownAfter('user-filters')).toBe('ai-filter-sign-up');
+        ai.skipTourAiStep('filter');
+        expect(shownAfter('user-filters')).toBe('ai-filter-skipped');
+
+        ai.resetTourAiStep('assistant');
+        expect(shownAfter('auxiliary-panels')).toBe('assistant');
+        ai.tryTourAiStep('assistant');
+        expect(shownAfter('assistant')).toBe('ai-assistant-sign-up');
+    });
+
+    test('a signed-in user goes straight to the exercise', () => {
+        window.authManager = { isAuthenticated: () => true };
+        ai.tryTourAiStep('filter');
+        expect(shownAfter('user-filters')).toBe('ai-filter-new');
+    });
+
+    test('the + step comes first, and its click opens the tour’s editor instead', () => {
+        window.authManager = { isAuthenticated: () => true };
+        ai.tryTourAiStep('filter');
+        expect(shownAfter('user-filters')).toBe('ai-filter-new');
+        expect(shownAfter('ai-filter-new')).toBe('ai-filter-describe');
+        document.body.innerHTML =
+            '<div id="overview-filters"><button class="glyph-filter-new-btn"><span>add</span></button></div>';
+        const button = document.querySelector('.glyph-filter-new-btn');
+        const appHandler = jest.fn();
+        button.addEventListener('click', appHandler);
+        const advance = jest.fn();
+        const unbind = ai.bindTourFilterNewButton({ advance, skip: jest.fn() });
+        button
+            .querySelector('span')
+            .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        unbind();
+        expect(advance).toHaveBeenCalledTimes(1);
+        expect(appHandler).not.toHaveBeenCalled();
+    });
+
+    test('a finished filter turn shows the result, then the sidebar', () => {
+        ai.tryTourAiStep('filter');
+        const advance = jest.fn();
+        const skip = jest.fn();
+        const unbind = ai.bindTourFilterTurn({ advance, skip });
+        window.dispatchEvent(
+            new CustomEvent('glyphFilterTurnFinished', {
+                detail: { reason: 'done' }
+            })
+        );
+        unbind();
+        expect(advance).toHaveBeenCalledTimes(1);
+        expect(shownAfter('ai-filter-describe')).toBe('ai-filter-result');
+
+        const unbindSave = ai.bindTourFilterSave({ advance, skip });
+        window.dispatchEvent(
+            new CustomEvent('glyphFilterSaved', {
+                detail: { path: '/Filters/Stylistic Sets.py', isNew: true }
+            })
+        );
+        unbindSave();
+        expect(ai.tourAiOutcome('filter')).toBe('done');
+        expect(shownAfter('ai-filter-result')).toBe('ai-filter-in-sidebar');
+        expect(skip).not.toHaveBeenCalled();
+    });
+
+    test('a failed filter turn explains what would have happened', () => {
+        ai.tryTourAiStep('filter');
+        const advance = jest.fn();
+        const unbind = ai.bindTourFilterTurn({ advance, skip: jest.fn() });
+        window.dispatchEvent(
+            new CustomEvent('glyphFilterTurnFinished', {
+                detail: { reason: 'connection-lost' }
+            })
+        );
+        unbind();
+        const result = slides.getTourSlide('ai-filter-result');
+        expect(result.tooltip.body()).toContain('connection');
+        expect(result.tooltip.buttons()).toEqual([
+            { label: 'Continue', action: 'skip', primary: true }
+        ]);
+        ai.skipTourAiStep('filter');
+        expect(shownAfter('ai-filter-result')).toBe('ai-filter-skipped');
+        expect(
+            slides.getTourSlide('ai-filter-skipped').tooltip.body()
+        ).toContain('Had it worked');
+    });
+
+    test('cancelling the filter editor skips the step', () => {
+        const skip = jest.fn();
+        const unbind = ai.bindTourFilterSave({ advance: jest.fn(), skip });
+        window.dispatchEvent(
+            new CustomEvent('glyphFilterEditorClosed', {
+                detail: { saved: false }
+            })
+        );
+        unbind();
+        expect(skip).toHaveBeenCalled();
+    });
+
+    test('the Assistant answer moves the tour on to the chat', () => {
+        let finish;
+        window.aiAssistant = {
+            session: {
+                on: (type, listener) => {
+                    if (type === 'turn-finished') finish = listener;
+                    return () => {};
+                }
+            }
+        };
+        ai.tryTourAiStep('assistant');
+        const advance = jest.fn();
+        ai.bindTourAssistantTurn({ advance, skip: jest.fn() });
+        finish({ reason: 'done', toolCalls: [] });
+        expect(advance).toHaveBeenCalled();
+        expect(shownAfter('ai-assistant-ask')).toBe('ai-assistant-result');
+    });
+
+    test('Back passes over the exercise to its first slide', () => {
+        ai.tryTourAiStep('filter');
+        window.authManager = { isAuthenticated: () => true };
+        const order = slides.TOUR_SLIDE_ORDER;
+        const back = tour.backIndexFor(order.indexOf('font-info-panel'));
+        expect(order[back]).toBe('user-filters');
+        expect(
+            order[tour.backIndexFor(order.indexOf('ai-filter-result'))]
+        ).toBe('user-filters');
     });
 });

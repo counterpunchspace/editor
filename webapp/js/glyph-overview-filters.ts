@@ -5,6 +5,7 @@ import tippy, { Instance as TippyInstance } from 'tippy.js';
 import 'tippy.js/dist/tippy.css';
 import { Logger } from './logger';
 import { NativeAdapter } from './file-system-adapter';
+import { BrowserFilterStore, browserFilterStore } from './browser-filter-store';
 import {
     createFolderSetupCallout,
     isSettingsFolderReadySync
@@ -755,6 +756,17 @@ export class GlyphOverviewFilterManager {
         }
     }
 
+    /**
+     * Where user filters live: the Settings Folder, or the browser while
+     * none is set up (filters made in the tour).
+     */
+    private filterStore(): NativeAdapter | BrowserFilterStore {
+        const adapter = settingsFolder.getAdapter();
+        return this.isDiskAdapterLike(adapter) && adapter.hasDirectory()
+            ? adapter
+            : browserFilterStore;
+    }
+
     private isDiskAdapterLike(adapter: unknown): adapter is NativeAdapter {
         if (!adapter || typeof adapter !== 'object') {
             return false;
@@ -1481,29 +1493,12 @@ export class GlyphOverviewFilterManager {
         this.userFiltersNode = this.buildUserFiltersTree();
         this.userFilters = [];
 
-        const adapter = settingsFolder.getAdapter();
-        if (!this.isDiskAdapterLike(adapter)) {
-            console.log('Settings adapter is not NativeAdapter');
-            if (isCurrentScan()) {
-                this.renderSidebar();
-            }
-            return;
-        }
-
         // Ensure adapter is initialized (restores directory handle from IndexedDB)
         await settingsFolder.initialize();
         if (!isCurrentScan()) {
             return;
         }
-
-        // Check if Settings Folder is selected
-        if (!settingsFolder.hasFolder()) {
-            console.log('No Settings Folder selected');
-            if (isCurrentScan()) {
-                this.renderSidebar();
-            }
-            return;
-        }
+        const adapter = this.filterStore();
 
         try {
             // Check if /Filters exists
@@ -1693,7 +1688,11 @@ export class GlyphOverviewFilterManager {
             }
 
             // Set up file system observer for auto-refresh (skip if called from observer)
-            if (!skipObserverSetup && isCurrentScan()) {
+            if (
+                !skipObserverSetup &&
+                isCurrentScan() &&
+                !(adapter instanceof BrowserFilterStore)
+            ) {
                 await this.setupFileSystemObserver(adapter);
             }
         } catch (error) {
@@ -2162,10 +2161,7 @@ export class GlyphOverviewFilterManager {
 
     /** Folders under Filters/, relative to it, down to the nesting limit. */
     async listUserFilterFolders(): Promise<string[]> {
-        const adapter = settingsFolder.getAdapter();
-        if (!this.isDiskAdapterLike(adapter) || !adapter.hasDirectory()) {
-            return [];
-        }
+        const adapter = this.filterStore();
         const folders: string[] = [];
         const scan = async (relative: string, depth: number) => {
             if (depth > USER_FILTER_MAX_FOLDER_DEPTH) return;
@@ -2213,6 +2209,14 @@ export class GlyphOverviewFilterManager {
      */
     private isValidPath(path: string): boolean {
         return path in FILTER_PATHS;
+    }
+
+    /** Fold a sidebar section (e.g. `categories`) for this page load. */
+    collapseSection(path: string): void {
+        const node = this.findNode(path);
+        if (!node || !node.expanded) return;
+        node.expanded = false;
+        this.renderSidebar();
     }
 
     /**
@@ -2284,21 +2288,21 @@ export class GlyphOverviewFilterManager {
         titleSpan.textContent = 'User Filters';
         header.appendChild(titleSpan);
 
+        const buttonContainer = document.createElement('div');
+        buttonContainer.className = 'glyph-filter-header-buttons';
+
+        // Without a Settings Folder, new filters are kept in the browser.
+        const newBtn = document.createElement('button');
+        newBtn.className = 'glyph-filter-new-btn';
+        newBtn.title = 'Create new filter';
+        newBtn.innerHTML = '<span class="material-symbols-outlined">add</span>';
+        newBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            await this.openFilterEditor(null);
+        });
+        buttonContainer.appendChild(newBtn);
+
         if (hasSettingsFolder) {
-            const buttonContainer = document.createElement('div');
-            buttonContainer.className = 'glyph-filter-header-buttons';
-
-            const newBtn = document.createElement('button');
-            newBtn.className = 'glyph-filter-new-btn';
-            newBtn.title = 'Create new filter';
-            newBtn.innerHTML =
-                '<span class="material-symbols-outlined">add</span>';
-            newBtn.addEventListener('click', async (e) => {
-                e.stopPropagation();
-                await this.openFilterEditor(null);
-            });
-            buttonContainer.appendChild(newBtn);
-
             const newFolderBtn = document.createElement('button');
             newFolderBtn.className = 'glyph-filter-new-folder-btn';
             newFolderBtn.title = 'Create new folder';
@@ -2322,9 +2326,8 @@ export class GlyphOverviewFilterManager {
                 refreshBtn.classList.remove('spinning');
             });
             buttonContainer.appendChild(refreshBtn);
-
-            header.appendChild(buttonContainer);
         }
+        header.appendChild(buttonContainer);
 
         this.sidebarContainer.appendChild(header);
 
@@ -2334,6 +2337,8 @@ export class GlyphOverviewFilterManager {
             'glyph-filter-tree glyph-filter-user-tree';
 
         if (!hasSettingsFolder) {
+            // Filters kept in the browser stay usable above the setup hint.
+            this.renderUserFiltersTree(this.userFiltersNode, userTreeContainer);
             userTreeContainer.appendChild(createFolderSetupCallout());
         } else if (
             this.userFilters.length === 0 &&
@@ -4104,10 +4109,7 @@ export class GlyphOverviewFilterManager {
     async listFilterNamesInFolder(
         folder: string = this.USER_FILTERS_PATH
     ): Promise<string[]> {
-        const adapter = settingsFolder.getAdapter();
-        if (!this.isDiskAdapterLike(adapter) || !adapter.hasDirectory()) {
-            return [];
-        }
+        const adapter = this.filterStore();
         if (!(await adapter.fileExists(folder))) {
             return [];
         }
@@ -4138,10 +4140,7 @@ export class GlyphOverviewFilterManager {
         code: string,
         folder: string = this.USER_FILTERS_PATH
     ): Promise<string> {
-        const adapter = settingsFolder.getAdapter();
-        if (!this.isDiskAdapterLike(adapter) || !adapter.hasDirectory()) {
-            throw new Error('Settings Folder not available');
-        }
+        const adapter = this.filterStore();
         const nameError = validateFilterName(
             name,
             await this.listFilterNamesInFolder(folder)
@@ -4166,10 +4165,7 @@ export class GlyphOverviewFilterManager {
 
     /** Current text of a filter file in the Settings Folder. */
     async readFilterFile(filePath: string): Promise<string> {
-        const adapter = settingsFolder.getAdapter();
-        if (!this.isDiskAdapterLike(adapter) || !adapter.hasDirectory()) {
-            throw new Error('Settings Folder not available');
-        }
+        const adapter = this.filterStore();
         const content = await adapter.readFile(filePath);
         return typeof content === 'string'
             ? content
@@ -4187,10 +4183,7 @@ export class GlyphOverviewFilterManager {
         code: string,
         newName?: string
     ): Promise<string> {
-        const adapter = settingsFolder.getAdapter();
-        if (!this.isDiskAdapterLike(adapter) || !adapter.hasDirectory()) {
-            throw new Error('Settings Folder not available');
-        }
+        const adapter = this.filterStore();
         const slash = filePath.lastIndexOf('/');
         const folder = filePath.slice(0, slash);
         const oldFileName = filePath.slice(slash + 1);
@@ -4248,10 +4241,7 @@ export class GlyphOverviewFilterManager {
 
     /** Names of the folders directly in `folder`. */
     private async listFolderNamesIn(folder: string): Promise<string[]> {
-        const adapter = settingsFolder.getAdapter();
-        if (!this.isDiskAdapterLike(adapter) || !adapter.hasDirectory()) {
-            return [];
-        }
+        const adapter = this.filterStore();
         if (!(await adapter.fileExists(folder))) {
             return [];
         }
@@ -4333,10 +4323,7 @@ export class GlyphOverviewFilterManager {
         parentFolder: string,
         name: string
     ): Promise<string> {
-        const adapter = settingsFolder.getAdapter();
-        if (!this.isDiskAdapterLike(adapter) || !adapter.hasDirectory()) {
-            throw new Error('Settings Folder not available');
-        }
+        const adapter = this.filterStore();
         const trimmed = name.trim();
         const nameError = validateFilterName(
             trimmed,
@@ -4359,10 +4346,7 @@ export class GlyphOverviewFilterManager {
      * asks first and says what goes with it.
      */
     async deleteUserFilterFolder(node: TreeNode): Promise<void> {
-        const adapter = settingsFolder.getAdapter();
-        if (!this.isDiskAdapterLike(adapter) || !adapter.hasDirectory()) {
-            return;
-        }
+        const adapter = this.filterStore();
         const folderPath = this.userFolderFsPath(node);
         if (folderPath === this.USER_FILTERS_PATH) return;
         const files = await adapter.listFilesRecursive(folderPath, 3);
@@ -4440,10 +4424,7 @@ export class GlyphOverviewFilterManager {
         filePath: string,
         targetFolder: string
     ): Promise<string | null> {
-        const adapter = settingsFolder.getAdapter();
-        if (!this.isDiskAdapterLike(adapter) || !adapter.hasDirectory()) {
-            return null;
-        }
+        const adapter = this.filterStore();
         const slash = filePath.lastIndexOf('/');
         const sourceFolder = filePath.slice(0, slash);
         const fileName = filePath.slice(slash + 1);
@@ -4661,8 +4642,7 @@ export class GlyphOverviewFilterManager {
         const filePath = plugin.filePath;
         if (!filePath) return;
 
-        const adapter = settingsFolder.getAdapter();
-        if (!this.isDiskAdapterLike(adapter)) return;
+        const adapter = this.filterStore();
 
         // Find the label element
         const labelElement = element.querySelector(
@@ -4786,8 +4766,7 @@ export class GlyphOverviewFilterManager {
             return;
         }
 
-        const adapter = settingsFolder.getAdapter();
-        if (!this.isDiskAdapterLike(adapter)) return;
+        const adapter = this.filterStore();
 
         try {
             await adapter.deleteItem(filePath, false);

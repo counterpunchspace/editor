@@ -19,6 +19,7 @@ import {
     TOUR_SAMPLE_TEXT_CUTOUT,
     type TourCutout,
     type TourCutoutRect,
+    type TourButton,
     type TourSlide,
     type TourTooltip
 } from './tour-slides';
@@ -60,6 +61,7 @@ export type TourNavigation = {
     onBack?: () => void;
     onRestart?: () => void;
     onCancel?: () => void;
+    onSkip?: () => void;
 };
 
 let requiredToolFlashToken = 0;
@@ -93,6 +95,8 @@ type SpotlightHost = {
     resizeObserver: ResizeObserver | null;
     listenersBound: boolean;
     slideUnbind: (() => void) | null;
+    /** Watches the current slide’s `watchSelector`. */
+    watchObserver: ResizeObserver | null;
 };
 
 function getHost(): SpotlightHost {
@@ -118,7 +122,8 @@ function getHost(): SpotlightHost {
             pendingAdvance: false,
             resizeObserver: null,
             listenersBound: false,
-            slideUnbind: null
+            slideUnbind: null,
+            watchObserver: null
         };
     }
     return holder.__tourSpotlightHost;
@@ -528,7 +533,7 @@ function paintSampleTextPreview(): void {
     }
     paintSpotlight(host.slide, {
         punchHits: false,
-        cutouts: [TOUR_SAMPLE_TEXT_CUTOUT],
+        cutouts: host.slide.previewCutouts ?? [TOUR_SAMPLE_TEXT_CUTOUT],
         showTooltip: false
     });
 }
@@ -1213,6 +1218,29 @@ function bindSlideInteraction(slide: TourSlide): void {
     bindViewAdvance('viewResized', slide.advanceOnViewResized);
     bindViewAdvance('viewResized', slide.advanceOnViewCollapsed, true);
 
+    if (slide.advanceOn) {
+        let settled = false;
+        const isCurrent = () =>
+            !settled && host.visible && host.slide === slide && !host.advancing;
+        cleanups.push(
+            slide.advanceOn({
+                advance: () => {
+                    if (!isCurrent()) return;
+                    settled = true;
+                    void finishWithReaction(undefined, {
+                        afterApplyMs:
+                            slide.advanceDelayMs ?? TOUR_AFTER_SLIDER_MS
+                    });
+                },
+                skip: () => {
+                    if (!isCurrent()) return;
+                    settled = true;
+                    host.navigation?.onSkip?.();
+                }
+            })
+        );
+    }
+
     host.slideUnbind = () => {
         for (const cleanup of cleanups) {
             cleanup();
@@ -1448,7 +1476,20 @@ export function isTourKeyEventAllowed(event: KeyboardEvent): boolean {
     ) {
         return true;
     }
+    if (
+        cmdOrCtrl &&
+        !event.shiftKey &&
+        !event.altKey &&
+        key === 'c' &&
+        isSelectionInTourTooltip()
+    ) {
+        return true;
+    }
     const target = event.target as HTMLElement | null;
+    const typingIn = host.slide?.allowTypingIn;
+    if (typingIn && target?.closest?.(typingIn)) {
+        return true;
+    }
     if (
         target?.closest?.('[data-tour-action]') &&
         (event.key === 'Enter' || event.key === ' ')
@@ -1456,6 +1497,21 @@ export function isTourKeyEventAllowed(event: KeyboardEvent): boolean {
         return true;
     }
     return false;
+}
+
+/** Copying text selected in the tooltip reaches the browser. */
+function isSelectionInTourTooltip(): boolean {
+    const selection = document.getSelection();
+    const tooltip = getHost().tooltip;
+    if (!selection || selection.isCollapsed || !tooltip) {
+        return false;
+    }
+    return (
+        !!selection.anchorNode &&
+        tooltip.contains(selection.anchorNode) &&
+        !!selection.focusNode &&
+        tooltip.contains(selection.focusNode)
+    );
 }
 
 function onTourKeyDown(event: KeyboardEvent): void {
@@ -1666,10 +1722,29 @@ function fillTooltip(slide: TourSlide): void {
         header.append(tools);
     }
     host.tooltip.append(header);
-    appendTooltipBody(host.tooltip, slide.tooltip.body);
+    const body = slide.tooltip.body;
+    appendTooltipBody(host.tooltip, typeof body === 'function' ? body() : body);
 
     const buttons: HTMLButtonElement[] = [];
-    if (slide.tooltip.continueLabel) {
+    const custom = slide.tooltip.buttons;
+    const customButtons: TourButton[] =
+        typeof custom === 'function' ? custom() : (custom ?? []);
+    for (const button of customButtons) {
+        const run = () => {
+            button.onClick?.();
+            if (button.action === 'skip') navigation?.onSkip?.();
+            else host.onContinue?.();
+        };
+        buttons.push(
+            tooltipButton(
+                button.action,
+                button.label,
+                guardSlideAction(slide, run),
+                button.primary === true
+            )
+        );
+    }
+    if (customButtons.length === 0 && slide.tooltip.continueLabel) {
         buttons.push(
             tooltipButton(
                 'continue',
@@ -1724,6 +1799,7 @@ export async function showTourSlide(
     }
     fillTooltip(slide);
     await slide.prepare?.();
+    watchSlideElement(slide);
     const keepCutouts = options?.keepCutouts === true;
     paintSpotlight(slide, { punchHits: keepCutouts });
 
@@ -1760,6 +1836,20 @@ export async function showTourSlide(
 }
 
 let geometryFrame = 0;
+
+function watchSlideElement(slide: TourSlide): void {
+    const host = getHost();
+    host.watchObserver?.disconnect();
+    host.watchObserver = null;
+    const element = slide.watchSelector
+        ? document.querySelector(slide.watchSelector)
+        : null;
+    if (!element || typeof ResizeObserver === 'undefined') {
+        return;
+    }
+    host.watchObserver = new ResizeObserver(onTourGeometryChange);
+    host.watchObserver.observe(element);
+}
 
 function onTourGeometryChange(): void {
     if (geometryFrame) {
@@ -1859,6 +1949,8 @@ export function hideTourSpotlight(): void {
     host.listenersBound = false;
     host.resizeObserver?.disconnect();
     host.resizeObserver = null;
+    host.watchObserver?.disconnect();
+    host.watchObserver = null;
     host.root?.classList.remove('is-cutouts-visible');
     host.root?.classList.remove('is-tooltip-visible');
     host.root?.classList.remove('is-visible');

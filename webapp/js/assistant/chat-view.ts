@@ -130,13 +130,39 @@ function createInfoButton(title: string, extraClass = ''): HTMLButtonElement {
     return button;
 }
 
+type PythonEditTexts = { old_text: string; new_text: string };
+
+/** The text before and after a Python edit tool call, when it is one. */
+export function pythonEditTexts(
+    toolName: string,
+    args: Record<string, unknown>,
+    previousContent?: string
+): PythonEditTexts | null {
+    if (
+        toolName === 'replace_python_text_in_editor' &&
+        typeof args.old_text === 'string' &&
+        typeof args.new_text === 'string'
+    ) {
+        return { old_text: args.old_text, new_text: args.new_text };
+    }
+    if (
+        toolName === 'replace_python_document_in_editor' &&
+        typeof previousContent === 'string' &&
+        typeof args.content === 'string'
+    ) {
+        return { old_text: previousContent, new_text: args.content };
+    }
+    return null;
+}
+
 /** The ⓘ details of one tool call: arguments, result and edit actions. */
 export function createToolCallDetailsElement(
     session: AssistantChatSession,
     toolName: string,
     args: Record<string, unknown>,
     toolResult: string,
-    timeLabel: string
+    timeLabel: string,
+    previousContent?: string
 ): HTMLElement {
     const metaEl = document.createElement('div');
     metaEl.style.cssText =
@@ -156,17 +182,9 @@ export function createToolCallDetailsElement(
         <pre style="margin:0;white-space:pre-wrap;word-break:break-word;font-size:10px">${escapeHtml(toolResult)}</pre>
     `;
 
-    if (
-        toolName === 'replace_python_text_in_editor' &&
-        typeof args.old_text === 'string' &&
-        typeof args.new_text === 'string'
-    ) {
-        addPythonDocumentToolActions(
-            session,
-            metaEl,
-            { old_text: args.old_text, new_text: args.new_text },
-            toolResult
-        );
+    const edit = pythonEditTexts(toolName, args, previousContent);
+    if (edit && !toolResult.startsWith('Error:')) {
+        addPythonDocumentToolActions(session, metaEl, edit, toolResult);
     }
     return metaEl;
 }
@@ -174,7 +192,7 @@ export function createToolCallDetailsElement(
 function addPythonDocumentToolActions(
     session: AssistantChatSession,
     metaEl: HTMLElement,
-    args: { old_text: string; new_text: string },
+    args: PythonEditTexts,
     toolResult: string
 ): void {
     const revision = toolResult.match(/^Revision: (.+)$/m)?.[1];
@@ -459,7 +477,7 @@ function renderPythonLineDiffRows(rows: PythonDiffRow[]): HTMLElement {
 
 function createInlinePythonEditDiffElement(
     toolResult: string,
-    args: Record<string, unknown>
+    edit: PythonEditTexts | null
 ): HTMLElement {
     const outputEl = document.createElement('div');
     outputEl.className = 'assistant-python-edit-diff';
@@ -479,13 +497,10 @@ function createInlinePythonEditDiffElement(
         outputEl.appendChild(summaryEl);
     }
 
-    if (
-        typeof args.old_text === 'string' &&
-        typeof args.new_text === 'string'
-    ) {
+    if (edit) {
         outputEl.appendChild(
             renderPythonLineDiffRows(
-                createPythonLineDiffRows(args.old_text, args.new_text)
+                createPythonLineDiffRows(edit.old_text, edit.new_text)
             )
         );
     } else {
@@ -699,7 +714,8 @@ export class AssistantChatView {
                     call.name,
                     call.args,
                     call.result ?? '(running)',
-                    call.timeLabel ?? ''
+                    call.timeLabel ?? '',
+                    call.previousContent
                 )
             );
             turn.body.appendChild(line);
@@ -732,15 +748,13 @@ export class AssistantChatView {
             turn.toolCalls.push(call);
             this.updateToolCallsButton(turn);
         }
-        if (
-            !elements.extra &&
-            call.name === 'replace_python_text_in_editor' &&
-            !result.startsWith('Error:')
-        ) {
-            elements.extra = createInlinePythonEditDiffElement(
-                result,
-                call.args
-            );
+        const edit = pythonEditTexts(
+            call.name,
+            call.args,
+            call.previousContent
+        );
+        if (!elements.extra && edit && !result.startsWith('Error:')) {
+            elements.extra = createInlinePythonEditDiffElement(result, edit);
             elements.main.insertAdjacentElement('afterend', elements.extra);
         }
     }

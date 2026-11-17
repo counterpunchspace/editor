@@ -9,12 +9,16 @@ import { waitForCanvasReady } from './helpers/snapshot-helper';
  * website repo.
  * The editor signs in from the dialog without a reload, keeps the open font,
  * shows the account in Preferences, opens the Assistant with the free AI
- * credit, and a second editor tab follows. Not part of any other project.
+ * credit, and a second editor tab follows. The editor was opened with
+ * campaign tags and no consent cookie, and the new account keeps them,
+ * keyword included. Not part of any other project.
  *
  *   SIGN_IN_LIVE_E2E=1
  *   SIGN_IN_LIVE_WEBSITE_URL=https://staging.counterpunch.space
  *   SIGN_IN_LIVE_EDITOR_URL=https://staging.editor.counterpunch.space
  *   SIGN_IN_LIVE_MAILBOX_MODULE=<website>/scripts/mailbox-imap.mjs
+ *   SIGN_IN_LIVE_SIGNUP_MODULE=<website>/scripts/e2e-login-code-signup.mjs
+ *   SIGNUP_E2E_D1_NAME, CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID
  *   SIGNUP_E2E_IMAP_USER, SIGNUP_E2E_IMAP_PASS, GITHUB_RUN_ID
  *   npx playwright test --project=sign-in-live
  *
@@ -64,6 +68,29 @@ async function mailbox(): Promise<WaitForLoginCode> {
     }
     return loaded.waitForLoginCode;
 }
+
+type Attribution = Record<string, string | null>;
+type ReadUserAttribution = (email: string) => Attribution | null;
+
+/** Reads the account's stored campaign from the staging D1 (wrangler). */
+async function attributionReader(): Promise<ReadUserAttribution> {
+    const modulePath = process.env.SIGN_IN_LIVE_SIGNUP_MODULE || '';
+    const loaded: { readUserAttribution?: ReadUserAttribution } = await import(
+        pathToFileURL(modulePath).href
+    );
+    if (typeof loaded.readUserAttribution !== 'function') {
+        throw new Error(`${modulePath} has no readUserAttribution`);
+    }
+    return loaded.readUserAttribution;
+}
+
+/** Campaign tags the first tab opens with, as from an ad. */
+const CAMPAIGN_TAGS = {
+    utm_source: 'e2e',
+    utm_medium: 'cpc',
+    utm_campaign: 'sign-in-live',
+    utm_term: 'font editor'
+};
 
 function wrongCodeFor(code: string): string {
     return code === '000000' ? '111111' : '000000';
@@ -193,14 +220,18 @@ test('the editor signs in from the dialog and keeps the open font', async ({
 }) => {
     test.setTimeout(480_000);
     const waitForLoginCode = await mailbox();
+    const readUserAttribution = await attributionReader();
     const email = roleEmail('editor');
     const context = await browser.newContext({ baseURL: editorOrigin });
     try {
         const page = await context.newPage();
         const otherTab = await context.newPage();
         // The editor's root is the launcher; `?new=` opens a new font.
+        const campaign = new URLSearchParams(CAMPAIGN_TAGS).toString();
         for (const [index, tab] of [page, otherTab].entries()) {
-            await tab.goto(`/?new=sign-in-${index}`);
+            await tab.goto(
+                `/?new=sign-in-${index}${index === 0 ? `&${campaign}` : ''}`
+            );
             await waitForCanvasReady(tab);
         }
         await page.evaluate(() => {
@@ -278,6 +309,15 @@ test('the editor signs in from the dialog and keeps the open font', async ({
 
         await expectAccountPanelsSignedIn(page, email);
         await expectFreeAiCreditUsable(page);
+
+        // Without consent the click ID is not kept, the campaign is.
+        await expect
+            .poll(() => readUserAttribution(email), { timeout: 30_000 })
+            .toEqual({
+                ...CAMPAIGN_TAGS,
+                utm_content: null,
+                click_id: null
+            });
 
         await otherTab.waitForFunction(
             () => (window as any).authManager?.isAuthenticated?.() === true,

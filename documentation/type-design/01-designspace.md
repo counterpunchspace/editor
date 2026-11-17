@@ -2,7 +2,7 @@
 
 A variable font is not one design but a continuous range of designs. You draw a few of them by hand, and the font computes (interpolates) everything in between. This page explains the words Counterpunch uses for the parts of that system and how they differ. The same words appear in the interface, in the handbook and in the Python API.
 
-![An isometric designspace with three axes: weight, width and optical size. Five stations sit inside it, each with a drawing of the letter a. Two free drawings and two instances sit at locations of their own.](images/designspace.svg)
+![A designspace box with three axes: weight, width and optical size. Light and Bold sit at both ends of the weight axis, Display at the largest optical size, halfway along weight, and Wide at the far end of the width axis, halfway along weight. Light is the default station. Each station has a drawing at the same location, and a free drawing for Regular sits on the weight axis between Light and Bold.](images/designspace.svg)
 
 ## Designspace and axes
 
@@ -12,19 +12,19 @@ A **location** is any point in the designspace, written as one value per axis, f
 
 ## Stations
 
-A **station** is a named location that the whole font shares. It carries the font-wide information that belongs to that location: its name, its axis values, its vertical metrics and alignment zones, and its kerning. In the figure, Regular, Thin, Black, Condensed and Display are stations.
+A **station** is a named location that the whole font shares. It carries the font-wide information that belongs to that location: its name, its axis values, its vertical metrics and alignment zones, and its kerning. In the figure, Light, Bold, Wide and Display are stations.
 
 Its name, vertical metrics, and alignment zones are purely design-time aids to help a designer navigate and comprehend; they bear no meaning for the compiled font. But kerning needs to be defined at a certain location, and stations are the place for it.
 
-One station is the **default station**. Apps that ignore variations show it, and the compiled font is built from it. In the figure it is Regular, and it’s also the default location of all axes.
+One station is the **default station**. Apps that ignore variations show it, and the compiled font is built from it. In the figure it is Light, marked with a second ring, at the default location of all axes.
 
-You do not need a station on every corner of the designspace. Older multiple-master workflows put a master on each corner, which doubles the work with every new axis. Variable fonts only need stations where the design actually changes character. The figure has five stations for three axes: one default, and one more for each direction the design goes. Everything else is interpolated.
+You do not need a station on every corner of the designspace. Older multiple-master workflows put a master on each corner, which doubles the work with every new axis. Variable fonts only need stations where the design actually changes character. The figure has four stations for three axes: Light and Bold at both ends of the weight axis, which is common practice, and one more station halfway along weight for each other axis: Wide at the far end of the width axis and Display at the largest optical size. Everything between them is interpolated.
 
 Stations are listed in **Font Info → Stations**. Glyphs calls them _masters_; designspace files call them _sources_.
 
 ## Drawings
 
-A **drawing** is one glyph’s outline at one station: its contours, components, anchors and advance width. Each glyph normally has one drawing per station. In the figure, every station has a drawing of the letter **a** next to it.
+A **drawing** is one glyph’s outline at one station: its contours, components, anchors and advance width. Each glyph normally has one drawing per station. In the figure, the filled dot inside each station ring is a drawing of one glyph. They sit at the same location but are not the same thing: the station belongs to the whole font, the drawing to one glyph.
 
 To interpolate, all drawings of a glyph must be **compatible**: the same contours with the same points in the same order. Then the font can blend any two drawings into the shapes between them.
 
@@ -36,7 +36,7 @@ Glyphs calls these _layers_; designspace files call them _glyph in a source_.
 
 A **free drawing** is a drawing of one glyph at a location of its own, not at a station. It only exists in that one glyph, so it carries no font-wide metrics or kerning.
 
-Free drawings fix problems in a single glyph without adding a station to the whole font. In the figure, the **a** has a free drawing at `wght 650` because its bowl fills in too early between Regular and Black. A second free drawing at `wght 250, opsz 40` keeps a thin joint open at middle sizes. All other glyphs interpolate straight from the stations.
+Free drawings fix problems in a single glyph without adding a station to the whole font. In the figure, a glyph has a free drawing at the Regular weight, between Light and Bold, for example because its bowl fills in too early there. All other glyphs interpolate straight from the stations.
 
 Glyphs calls these _brace layers_; designspace files call them _sparse sources_.
 
@@ -52,7 +52,7 @@ Glyphs calls them _bracket layers_; designspace files call them _rules_.
 
 ## Instances
 
-An **instance** is a named location that you export, either as a separate static font or as a named style inside the variable font, such as Bold or Light Display. Instances are output: they hold no drawings of their own. They can sit anywhere, on a station or between stations. In the figure, Bold sits between Regular and Black, and Light Display sits between Thin, Regular and Display.
+An **instance** is a named location that you export, either as a separate static font or as a named style inside the variable font, such as Bold or Light Display. Instances are output: they hold no drawings of their own. They can sit anywhere, on a station or between stations. For example, a Regular instance could sit halfway between the Light and Bold stations.
 
 ## Layers
 

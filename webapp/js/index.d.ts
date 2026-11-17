@@ -620,6 +620,16 @@ declare global {
                 revision: string;
                 isModified: boolean;
             };
+            replaceContent: (
+                content: string,
+                expectedRevision: string
+            ) => {
+                content: string;
+                kind: 'general-script' | 'glyph-filter';
+                path: string | null;
+                revision: string;
+                isModified: boolean;
+            };
             runScript: () => void;
             openFile: (path: string, pluginId: string) => Promise<boolean>;
             openFileFromUri: (uri: string) => Promise<boolean>;

@@ -5,6 +5,7 @@
 
 import { Logger } from './logger';
 import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
+import { isTourLinkLaunch } from './tour-link';
 
 const console = new Logger('WelcomeScreen');
 
@@ -46,6 +47,7 @@ export function dismissCurrentWelcome(): void {
 function shouldOfferWelcome(): boolean {
     return (
         !isAutomatedSession() &&
+        !isTourLinkLaunch() &&
         !welcomeShownThisLoad &&
         !hasDismissedCurrentWelcome()
     );

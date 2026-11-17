@@ -14,12 +14,14 @@ import {
     AcePythonDocumentTarget,
     type AceEditorLike
 } from './assistant/python-target';
-import type {
-    AssistantChatSession,
-    AssistantTurnEndReason
+import {
+    ASSISTANT_INITIAL_STATUS,
+    type AssistantChatSession,
+    type AssistantTurnEndReason
 } from './assistant/chat-session';
 import {
     createFilterChatHost,
+    describeFilterToolCall,
     filterChatMessages,
     filterChatRegistry
 } from './glyph-filter-chat';
@@ -27,7 +29,11 @@ import {
     readFilterDescription,
     writeFilterDescription
 } from './glyph-filter-description';
-import { normalizeFilterName, validateFilterName } from './glyph-filter-names';
+import {
+    claimSuggestedFilterName,
+    normalizeFilterName,
+    validateFilterName
+} from './glyph-filter-names';
 import { createGlyphFilterTemplate } from './glyph-filter-template';
 import { GlyphOverviewView } from './glyph-overview-view';
 import {
@@ -94,6 +100,23 @@ let openEditor: GlyphFilterEditor | null = null;
 export type OpenGlyphFilterEditorOptions = {
     /** An existing filter file; omit for a new filter. */
     filePath?: string | null;
+    /** A new filter's description, typed in Simple mode but not sent. */
+    description?: string;
+    /** False: Cancel drops a new filter without asking (the tour). */
+    confirmDiscard?: boolean;
+};
+
+export type GlyphFilterTurnFinishedDetail = {
+    reason: AssistantTurnEndReason;
+};
+
+export type GlyphFilterSavedDetail = {
+    path: string;
+    isNew: boolean;
+};
+
+export type GlyphFilterEditorClosedDetail = {
+    saved: boolean;
 };
 
 /** Open the editor for a filter, or for a new one. One at a time. */
@@ -125,9 +148,21 @@ export async function openGlyphFilterEditor(
         filePath,
         name,
         code,
-        existingNames
+        existingNames,
+        description: filePath ? undefined : options.description,
+        confirmDiscard: options.confirmDiscard ?? true
     });
     openEditor.mount();
+}
+
+/** Unfold the open editor's list of found glyphs. */
+export function revealGlyphFilterEditorGlyphs(): void {
+    openEditor?.revealGlyphs();
+}
+
+/** Close the open editor without saving or asking. */
+export function closeGlyphFilterEditor(): void {
+    openEditor?.discard();
 }
 
 function assistantAvailable(): boolean {
@@ -165,7 +200,10 @@ function accessGateHtml(
             <span class="material-symbols-outlined folder-setup-callout-icon" aria-hidden="true">${gateIcon}</span>
             <h2>${escapeHtml(heading)}</h2>
         </div>
-        <p>${escapeHtml(message)}</p>
+        ${message
+            .split('\n\n')
+            .map((paragraph) => `<p>${escapeHtml(paragraph)}</p>`)
+            .join('')}
         <button type="button" class="settings-action-btn" data-gate-action="${action}">${icon(buttonIcon)}${escapeHtml(buttonLabel)}</button>
         ${note ? `<p class="folder-setup-callout-note">${escapeHtml(note)}</p>` : ''}
     </div>`;
@@ -199,6 +237,7 @@ class GlyphFilterEditor {
     private readonly appliedName: string;
     private readonly appliedCode: string;
     private readonly existingNames: string[];
+    private readonly confirmDiscard: boolean;
 
     private name: string;
     /** The Simple text box; differs from the docstring until sent. */
@@ -217,6 +256,7 @@ class GlyphFilterEditor {
     /** The user typed a name in this dialog; the Assistant keeps it. */
     private nameChosenByUser = false;
     private saving = false;
+    private saved = false;
     private saveError: string | null = null;
     private sourceErrors: GlyphFilterSourceError[] = [];
     /** EVENT_TYPES of the last valid check; null until checked. */
@@ -248,6 +288,8 @@ class GlyphFilterEditor {
         name: string;
         code: string;
         existingNames: string[];
+        description?: string;
+        confirmDiscard: boolean;
     }) {
         this.isNew = init.filePath === null;
         this.filePath = init.filePath;
@@ -258,8 +300,13 @@ class GlyphFilterEditor {
         this.draft = readFilterDescription(init.code);
         this.shownDescription = this.draft;
         this.syncedCode = init.code;
+        this.confirmDiscard = init.confirmDiscard;
         this.ai = assistantAvailable();
         this.mode = this.ai ? readStoredMode() : 'expert';
+        if (init.description) {
+            this.draft = init.description;
+            if (this.ai) this.mode = 'simple';
+        }
     }
 
     // ── Derived state ──────────────────────────────────────────────────
@@ -528,6 +575,7 @@ class GlyphFilterEditor {
         const host = createFilterChatHost({
             preview: (code) => glyphOverviewFilterManager.previewFilter(code),
             nameFilter: (name) => this.applySuggestedName(name),
+            takenNames: () => this.takenNames(),
             executeSharedTool: (call, session) =>
                 window.aiAssistant.executeToolCall(call, session)
         });
@@ -713,23 +761,30 @@ class GlyphFilterEditor {
     }
 
     /** name_filter from the Assistant. */
+    /** Names of the other filters in the folder. */
+    private takenNames(): string[] {
+        const own = this.isNew ? null : this.appliedName.toLowerCase();
+        return this.existingNames.filter((name) => name.toLowerCase() !== own);
+    }
+
     private applySuggestedName(suggested: string): string {
         const name = normalizeFilterName(suggested);
         if (this.nameChosenByUser) {
             return `Not renamed: the user chose the name “${normalizeFilterName(this.name)}”.`;
         }
-        const error = validateFilterName(
-            name,
-            this.existingNames,
-            this.isNew ? undefined : this.appliedName
-        );
-        if (error) {
-            return `Not renamed: ${error} Pick another name.`;
+        // A taken name gets the next free number, so naming never needs a
+        // second call.
+        const claimed = claimSuggestedFilterName(name, this.takenNames());
+        if ('error' in claimed) {
+            return `Not renamed: ${claimed.error} Pick another name.`;
         }
-        this.name = name;
-        this.$<HTMLInputElement>('[data-ref="name"]').value = name;
+        const free = claimed.name;
+        this.name = free;
+        this.$<HTMLInputElement>('[data-ref="name"]').value = free;
         this.render();
-        return `Renamed to “${name}”. It is saved with the filter on OK.`;
+        return free === name
+            ? `Renamed to “${free}”. It is saved with the filter on OK.`
+            : `“${name}” is taken, so the filter is named “${free}”. It is saved with the filter on OK.`;
     }
 
     // ── Changes ────────────────────────────────────────────────────────
@@ -868,6 +923,15 @@ class GlyphFilterEditor {
         }
         this.schedulePreview(0);
         this.render();
+        if (kind !== 'follow-up' && reason) {
+            /** A filter editor Assistant turn ended (not its follow-ups). */
+            window.dispatchEvent(
+                new CustomEvent<GlyphFilterTurnFinishedDetail>(
+                    'glyphFilterTurnFinished',
+                    { detail: { reason } }
+                )
+            );
+        }
         return reason;
     }
 
@@ -971,7 +1035,14 @@ class GlyphFilterEditor {
                 glyphOverviewFilterManager.activateUserFilterByPath(savedPath);
             }
             this.filePath = savedPath;
+            this.saved = true;
             console.log('Saved filter', savedPath);
+            /** OK in the filter editor wrote the filter file. */
+            window.dispatchEvent(
+                new CustomEvent<GlyphFilterSavedDetail>('glyphFilterSaved', {
+                    detail: { path: savedPath, isNew: this.isNew }
+                })
+            );
             this.close();
         } catch (error) {
             this.saveError =
@@ -984,7 +1055,10 @@ class GlyphFilterEditor {
 
     private async cancel(): Promise<void> {
         if (this.saving || this.asking) return;
-        if (this.isDirty() && (!this.isNew || this.hasNewWork())) {
+        if (
+            this.isDirty() &&
+            (!this.isNew || (this.confirmDiscard && this.hasNewWork()))
+        ) {
             const discard = await this.ask(
                 'Discard your changes?',
                 'Your changes to this filter and this part of the chat will be lost.',
@@ -996,6 +1070,10 @@ class GlyphFilterEditor {
             );
             if (!discard || this.closed) return;
         }
+        this.discard();
+    }
+
+    discard(): void {
         this.session.stop();
         this.close();
     }
@@ -1039,6 +1117,19 @@ class GlyphFilterEditor {
         this.ace.destroy();
         this.overlay.remove();
         openEditor = null;
+        /** The filter editor closed, by OK (`saved`) or Cancel. */
+        window.dispatchEvent(
+            new CustomEvent<GlyphFilterEditorClosedDetail>(
+                'glyphFilterEditorClosed',
+                { detail: { saved: this.saved } }
+            )
+        );
+    }
+
+    revealGlyphs(): void {
+        if (this.closed || this.glyphsOpen) return;
+        this.glyphsOpen = true;
+        void this.renderGlyphs();
     }
 
     // ── Rendering ──────────────────────────────────────────────────────
@@ -1069,7 +1160,12 @@ class GlyphFilterEditor {
     }
 
     /** The Assistant panel's sign-in or subscription callout, same markup. */
-    private renderAccessGate(ref: string, message: string): void {
+    /** `signInMessage`: paragraphs split by a blank line. */
+    private renderAccessGate(
+        ref: string,
+        signInMessage: string,
+        subscriptionMessage: string
+    ): void {
         const gate = this.$(`[data-ref="${ref}"]`);
         gate.hidden = this.ai;
         if (this.ai) return;
@@ -1078,7 +1174,7 @@ class GlyphFilterEditor {
             ? accessGateHtml(
                   'workspace_premium',
                   'Advanced Subscription Required',
-                  message,
+                  subscriptionMessage,
                   'account',
                   'manage_accounts',
                   'Manage Account',
@@ -1086,8 +1182,8 @@ class GlyphFilterEditor {
               )
             : accessGateHtml(
                   'lock',
-                  'Sign In Required',
-                  message,
+                  'Assistant Usage Needs an Account',
+                  signInMessage,
                   'sign-in',
                   'login',
                   'Sign In'
@@ -1106,6 +1202,7 @@ class GlyphFilterEditor {
         desc.readOnly = this.streaming || this.saving || !this.ai;
         this.renderAccessGate(
             'gate-simple',
+            'The Assistant turns your description into the filter’s code. It runs on AI models in the cloud, and every answer costs real money. A free account gives you AI credit every month at no cost to you.\n\nWithout an account, switch to Expert mode and write the code yourself.',
             'Turning a description into code needs the Assistant. You can still switch to Expert mode and edit the code yourself.'
         );
         this.$('[data-ref="simple-actions"]').hidden = !this.ai;
@@ -1141,6 +1238,7 @@ class GlyphFilterEditor {
         this.$('[data-ref="chat-transcript"]').hidden = !this.ai;
         this.renderAccessGate(
             'gate-expert',
+            'The filter chat runs on AI models in the cloud, and every answer costs real money. A free account gives you AI credit every month at no cost to you.\n\nYou can still edit the code without one. The description is then marked as possibly out of date.',
             'The filter chat needs the Assistant. You can still edit the code. The description will be marked as possibly out of date.'
         );
         const prompt = this.$<HTMLTextAreaElement>('[data-ref="prompt"]');
@@ -1168,6 +1266,30 @@ class GlyphFilterEditor {
         return null;
     }
 
+    /**
+     * While the Assistant works: its latest step in this turn (a tool call
+     * or the start of its reply), or the session status before the first
+     * step and while it reconnects.
+     */
+    private streamingActivity(): string {
+        const status = this.session.status;
+        const transcript = this.session.transcript;
+        const turn = transcript[transcript.length - 1];
+        const last =
+            turn?.kind === 'assistant'
+                ? turn.items[turn.items.length - 1]
+                : null;
+        if (!last || (status && status !== ASSISTANT_INITIAL_STATUS)) {
+            return status || 'The Assistant is working…';
+        }
+        if (last.kind === 'tool') return describeFilterToolCall(last.call);
+        if (last.kind === 'text') {
+            const lines = last.text.trim().split('\n').filter(Boolean);
+            if (lines.length) return lines[lines.length - 1];
+        }
+        return 'The Assistant is working…';
+    }
+
     private renderActivity(): void {
         if (this.closed) return;
         const strip = this.$('[data-ref="conversation"]');
@@ -1177,7 +1299,7 @@ class GlyphFilterEditor {
         const lastEntry = transcript[transcript.length - 1];
         let status: string;
         if (this.streaming) {
-            status = this.session.status || 'The Assistant is working…';
+            status = this.streamingActivity();
         } else if (lastEntry?.kind === 'error') {
             status = 'Something went wrong. Open the conversation for details.';
         } else if (lastEntry?.kind === 'user') {

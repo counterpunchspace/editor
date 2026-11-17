@@ -45,6 +45,7 @@ import { createGlyphFilterTemplate } from './glyph-filter-template';
 import { showNamedUnsavedChangesDialog } from './ui/confirm-dialog';
 import {
     assertExpectedRevision,
+    replaceAllTextInAce,
     replaceExactTextInAce
 } from './assistant/python-target';
 
@@ -1861,6 +1862,11 @@ import {
         ) => {
             assertExpectedRevision(expectedRevision, getRevision());
             replaceExactTextInAce(editor, oldText, newText);
+            return getDocumentState();
+        },
+        replaceContent: (content: string, expectedRevision: string) => {
+            assertExpectedRevision(expectedRevision, getRevision());
+            replaceAllTextInAce(editor, content);
             return getDocumentState();
         },
         get isModified() {

@@ -26,6 +26,11 @@ export interface PythonDocumentTarget {
         newText: string,
         expectedRevision: string
     ): PythonDocumentState;
+    /** Replace the whole document. Throws when the revision is stale. */
+    replaceContent(
+        content: string,
+        expectedRevision: string
+    ): PythonDocumentState;
     /** Subscribe to buffer changes; returns the unsubscribe function. */
     onDidChange(listener: (state: PythonDocumentState) => void): () => void;
     /** Extra problems `validate_python_document` reports for this document. */
@@ -65,9 +70,21 @@ export function assertExpectedRevision(
 ): void {
     if (expectedRevision !== currentRevision) {
         throw new Error(
-            'The script changed since it was last read. Read it again before editing.'
+            `The script changed since it was last read (current revision: ${currentRevision}). Read it again before editing.`
         );
     }
+}
+
+/** Replace everything in an Ace buffer. */
+export function replaceAllTextInAce(editor: AceEditorLike, text: string): void {
+    const document = editor.session.getDocument();
+    document.replace(
+        {
+            start: { row: 0, column: 0 },
+            end: document.indexToPosition(editor.getValue().length, 0)
+        },
+        text
+    );
 }
 
 /** Replace the single exact occurrence of `oldText` in an Ace buffer. */
@@ -111,6 +128,8 @@ export function createScriptEditorTarget(): PythonDocumentTarget {
         getDocumentState: () => scriptEditor().getDocumentState(),
         replaceExactText: (oldText, newText, expectedRevision) =>
             scriptEditor().replaceExactText(oldText, newText, expectedRevision),
+        replaceContent: (content, expectedRevision) =>
+            scriptEditor().replaceContent(content, expectedRevision),
         onDidChange(listener) {
             const handler = (event: Event) =>
                 listener((event as CustomEvent<PythonDocumentState>).detail);
@@ -188,6 +207,18 @@ export class AcePythonDocumentTarget implements PythonDocumentTarget {
             this.getDocumentState().revision
         );
         replaceExactTextInAce(this.editor, oldText, newText);
+        return this.getDocumentState();
+    }
+
+    replaceContent(
+        content: string,
+        expectedRevision: string
+    ): PythonDocumentState {
+        assertExpectedRevision(
+            expectedRevision,
+            this.getDocumentState().revision
+        );
+        replaceAllTextInAce(this.editor, content);
         return this.getDocumentState();
     }
 

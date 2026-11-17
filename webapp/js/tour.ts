@@ -33,6 +33,10 @@ import {
     type TourViewport
 } from './tour-stage';
 import { resetTourDrawingSession } from './tour-drawing';
+import { clearTourLinkParam, isTourLinkLaunch } from './tour-link';
+import { resetTourAiSteps } from './tour-ai';
+import { trackEditorEvent } from './editor-analytics';
+import { glyphOverviewFilterManager } from './glyph-overview-filters';
 
 const console = new Logger('Tour');
 
@@ -70,6 +74,8 @@ type TourHost = {
     launchChip: HTMLElement | null;
     escapeBinding: ModalEscapeBinding | null;
     starting: boolean;
+    /** Started from `?tour=1`: leaves no saved tour flags behind. */
+    fromLink: boolean;
     slideIndex: number;
     /** Bumped by every navigation and by ending the tour. */
     navToken: number;
@@ -92,6 +98,7 @@ function getHost(): TourHost {
             launchChip: null,
             escapeBinding: null,
             starting: false,
+            fromLink: false,
             slideIndex: 0,
             navToken: 0,
             snapshots: [],
@@ -282,32 +289,77 @@ function endTourSession(): void {
     window.clearTimeout(host.watchdogTimer);
     resetTourDrawingSession();
     hideTourSpotlight();
+    // After the spotlight, so closing the filter editor or sign-in dialog
+    // no longer counts as Skip on the slide that opened it.
+    resetTourAiSteps();
 }
 
 export function completeTour(): void {
-    try {
-        localStorage.setItem(COMPLETED_STORAGE_KEY, 'true');
-        localStorage.setItem(LAUNCH_BUTTON_DISMISSED_STORAGE_KEY, 'true');
-    } catch {
-        // Ignore localStorage access failures.
+    if (!getHost().fromLink) {
+        try {
+            localStorage.setItem(COMPLETED_STORAGE_KEY, 'true');
+            localStorage.setItem(LAUNCH_BUTTON_DISMISSED_STORAGE_KEY, 'true');
+        } catch {
+            // Ignore localStorage access failures.
+        }
     }
+    trackEditorEvent('Tour completed');
     endTourSession();
     updateTourLaunchButton();
 }
 
 /** Ends the tour where it is. Title bar and Help menu can start it again. */
 export function cancelTour(): void {
+    const host = getHost();
     endTourSession();
-    skipTour();
-    console.log('Cancelled tour at', TOUR_SLIDE_ORDER[getHost().slideIndex]);
+    if (!host.fromLink) {
+        skipTour();
+    }
+    trackEditorEvent('Tour ended', {
+        slide: TOUR_SLIDE_ORDER[host.slideIndex] ?? ''
+    });
+    console.log('Cancelled tour at', TOUR_SLIDE_ORDER[host.slideIndex]);
+}
+
+function isSlideShown(index: number): boolean {
+    const slide = getTourSlideByIndex(index);
+    return !!slide && (slide.showIf?.() ?? true);
+}
+
+/** The next slide whose `showIf` passes; past the end when none is left. */
+export function nextShownIndex(index: number): number {
+    let next = index + 1;
+    while (getTourSlideByIndex(next) && !isSlideShown(next)) {
+        next += 1;
+    }
+    return next;
+}
+
+/** Where Back goes: the closest earlier shown slide not marked `skipOnBack`. */
+export function backIndexFor(index: number): number {
+    for (let previous = index - 1; previous >= 0; previous--) {
+        if (
+            isSlideShown(previous) &&
+            !getTourSlideByIndex(previous)?.skipOnBack
+        ) {
+            return previous;
+        }
+    }
+    return -1;
 }
 
 function navigationFor(index: number): TourNavigation {
+    const backIndex = backIndexFor(index);
     return {
         onContinue: onTourContinue,
-        onBack: index > 0 ? () => void goToTourSlide(index - 1) : undefined,
+        onBack:
+            backIndex >= 0 ? () => void goToTourSlide(backIndex) : undefined,
         onRestart: () => void goToTourSlide(index),
-        onCancel: cancelTour
+        onCancel: cancelTour,
+        onSkip: () => {
+            getTourSlideByIndex(index)?.onSkip?.();
+            onTourContinue();
+        }
     };
 }
 
@@ -344,7 +396,7 @@ function savedViewportFor(index: number): TourViewport | null {
 
 function onTourContinue(): void {
     const host = getHost();
-    const nextIndex = host.slideIndex + 1;
+    const nextIndex = nextShownIndex(host.slideIndex);
     const nextSlide = getTourSlideByIndex(nextIndex);
     if (!nextSlide) {
         completeTour();
@@ -453,9 +505,12 @@ function resetTourSnapshots(): void {
 }
 
 /**
- * Begins the spotlight tour after opening the sample font.
+ * Begins the spotlight tour after opening the sample font. `fromLink`:
+ * started by `?tour=1`, which saves no tour flags.
  */
-export async function startTour(): Promise<void> {
+export async function startTour(
+    options: { fromLink?: boolean } = {}
+): Promise<void> {
     const host = getHost();
     if (host.starting) {
         return;
@@ -466,13 +521,21 @@ export async function startTour(): Promise<void> {
         if (!opened) {
             return;
         }
-        markTourStarted();
+        host.fromLink = options.fromLink === true;
+        if (!host.fromLink) {
+            markTourStarted();
+        }
+        trackEditorEvent('Tour started', {
+            source: host.fromLink ? 'link' : 'app'
+        });
         closeTourIntro();
         endTourSession();
         // An open menu would float above the spotlight, unreachable.
         hideAllTippies({ duration: 0 });
         host.slideIndex = 0;
         resetTourSnapshots();
+        // Small screens: keep User Filters within reach in the sidebar.
+        glyphOverviewFilterManager.collapseSection('categories');
         const slide = getTourSlideByIndex(0);
         if (!slide) {
             console.error('Tour has no slides');
@@ -633,6 +696,11 @@ function bindTourListeners(): void {
         __tourFolderPromptListenerBound?: boolean;
     };
     holder.__onFolderPermissionsAutoPromptSettled = () => {
+        if (isTourLinkLaunch()) {
+            clearTourLinkParam();
+            void startTour({ fromLink: true });
+            return;
+        }
         maybeShowTourIntro();
     };
     if (holder.__tourFolderPromptListenerBound) {

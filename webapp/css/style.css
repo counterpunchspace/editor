@@ -4991,6 +4991,44 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     overflow-y: auto;
 }
 
+/* Assistant panel: the explanation, then the sign-up line with Sign In
+   beside it. The button drops under that line only in a very narrow panel. */
+.assistant-account-callout {
+    align-items: stretch;
+    gap: 6px;
+    margin: 0;
+    text-align: left;
+}
+
+.assistant-access-gate .assistant-account-callout {
+    max-width: 600px;
+}
+
+.assistant-account-callout .folder-setup-callout-heading {
+    justify-content: flex-start;
+}
+
+.assistant-account-callout p {
+    line-height: 1.3;
+}
+
+.assistant-account-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 16px;
+}
+
+.assistant-account-row p {
+    flex: 1 1 180px;
+    min-width: 0;
+}
+
+.assistant-account-row .settings-action-btn {
+    flex: 0 0 auto;
+    margin-left: auto;
+}
+
 /* The panel shows these from script. */
 #assistant-login-container,
 #assistant-subscription-container {

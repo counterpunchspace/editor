@@ -11,6 +11,11 @@ const console = new Logger('Tour');
 const GUIDE_RING_STEP_PX = 5;
 const GUIDE_RING_COUNT = 4;
 const GUIDE_RING_OPACITY = [1, 0.55, 0.3, 0.14];
+/** The arrow starts this far from the handle, so the handle stays visible. */
+const GUIDE_ARROW_START_GAP_PX = 4;
+/** The arrow ends just outside the innermost ring. */
+const GUIDE_ARROW_END_GAP_PX = GUIDE_RING_STEP_PX + 2;
+const GUIDE_ARROW_HEAD_PX = 7;
 /** Drop a handle within this many CSS pixels of the frozen mark. */
 const HANDLE_DROP_CLIENT_PX = 28;
 /** A canvas press counts for a gated mark within this many CSS pixels. */
@@ -747,6 +752,10 @@ function pickCurveHandleMoves(): HandleMove[] {
         );
         moves.push(pair[0]);
     }
+    // The longest drag first: it shows best what the step is about.
+    moves.sort(
+        (left, right) => handleMoveDistance(right) - handleMoveDistance(left)
+    );
     return moves;
 }
 
@@ -782,6 +791,9 @@ function completeActiveHandleIfDropped(): void {
         return;
     }
     session.completedHandleKeys.add(handleTargetKey(active.target));
+    // The next handle may already sit within the drop distance; it still
+    // needs a drag of its own.
+    session.handleDragStarted = false;
 }
 
 function isDraggingHandle(): boolean {
@@ -814,14 +826,20 @@ function activeHandleMove(): HandleMove | null {
     return moves.find((move) => !isHandleCompleted(move)) || null;
 }
 
-function handleGuidePoints(): FontPoint[] {
+type HandleGuide = {
+    target: FontPoint;
+    /** Where the handle sits, until the user starts dragging it. */
+    origin: FontPoint | null;
+};
+
+function handleGuide(): HandleGuide | null {
     completeActiveHandleIfDropped();
     const active = activeHandleMove();
     if (!active) {
         session.handleRest = null;
         session.handleTarget = null;
         session.handleDragStarted = false;
-        return [];
+        return null;
     }
     activateHandleMove(active);
     const rest = session.handleRest;
@@ -836,10 +854,11 @@ function handleGuidePoints(): FontPoint[] {
     if (isDraggingHandle()) {
         session.handleDragStarted = true;
     }
-    if (session.handleDragStarted || !rest) {
-        return [session.handleTarget ?? active.target];
-    }
-    return [rest, session.handleTarget ?? active.target];
+    const target = session.handleTarget ?? active.target;
+    return {
+        target,
+        origin: session.handleDragStarted ? null : rest
+    };
 }
 
 function handleIsPlaced(move: HandleMove): boolean {
@@ -977,7 +996,8 @@ function getGuidePoints(kind: TourDrawingGuides): FontPoint[] {
             return [{ x: nearest.x, y: nearest.y }];
         });
     }
-    return handleGuidePoints();
+    const guide = handleGuide();
+    return guide ? [guide.target] : [];
 }
 
 /**
@@ -1083,7 +1103,12 @@ export function syncTourDrawingGuides(
     svg.setAttribute('preserveAspectRatio', 'none');
     svg.replaceChildren();
     const ns = 'http://www.w3.org/2000/svg';
-    for (const point of getGuidePoints(kind)) {
+    const guide = kind === 'lss04-handles' ? handleGuide() : null;
+    const points = guide ? [guide.target] : getGuidePoints(kind);
+    if (guide?.origin) {
+        appendGuideArrow(svg, guide.origin, guide.target);
+    }
+    for (const point of points) {
         const client = fontPointToClient(point);
         if (!client) {
             continue;
@@ -1104,6 +1129,45 @@ export function syncTourDrawingGuides(
         }
         svg.append(group);
     }
+}
+
+/** Arrow from where a handle sits to the rings it should go to. */
+function appendGuideArrow(
+    svg: SVGSVGElement,
+    from: FontPoint,
+    to: FontPoint
+): void {
+    const fromClient = fontPointToClient(from);
+    const toClient = fontPointToClient(to);
+    if (!fromClient || !toClient) {
+        return;
+    }
+    const start = clientToSvg(svg, fromClient);
+    const end = clientToSvg(svg, toClient);
+    const length = Math.hypot(end.x - start.x, end.y - start.y);
+    if (length <= GUIDE_ARROW_END_GAP_PX + GUIDE_ARROW_START_GAP_PX) {
+        return;
+    }
+    const ux = (end.x - start.x) / length;
+    const uy = (end.y - start.y) / length;
+    const tail = {
+        x: start.x + ux * GUIDE_ARROW_START_GAP_PX,
+        y: start.y + uy * GUIDE_ARROW_START_GAP_PX
+    };
+    const tip = {
+        x: end.x - ux * GUIDE_ARROW_END_GAP_PX,
+        y: end.y - uy * GUIDE_ARROW_END_GAP_PX
+    };
+    const head = GUIDE_ARROW_HEAD_PX;
+    const wing = (side: 1 | -1) =>
+        `${tip.x - ux * head - side * uy * head * 0.6},${tip.y - uy * head + side * ux * head * 0.6}`;
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.classList.add('tour-guide-arrow');
+    path.setAttribute(
+        'd',
+        `M${tail.x},${tail.y} L${tip.x},${tip.y} M${wing(1)} L${tip.x},${tip.y} L${wing(-1)}`
+    );
+    svg.append(path);
 }
 
 function isContourSelected(): boolean {

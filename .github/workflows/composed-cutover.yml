@@ -401,8 +401,12 @@ jobs:
                   SIGN_IN_LIVE_WEBSITE_URL: https://staging.counterpunch.space
                   SIGN_IN_LIVE_EDITOR_URL: https://staging.editor.counterpunch.space
                   SIGN_IN_LIVE_MAILBOX_MODULE: ${{ github.workspace }}/_cutover/website/scripts/mailbox-imap.mjs
+                  SIGN_IN_LIVE_SIGNUP_MODULE: ${{ github.workspace }}/_cutover/website/scripts/e2e-login-code-signup.mjs
+                  SIGNUP_E2E_D1_NAME: context_users_staging
                   SIGNUP_E2E_IMAP_USER: ${{ secrets.SIGNUP_E2E_IMAP_USER }}
                   SIGNUP_E2E_IMAP_PASS: ${{ secrets.SIGNUP_E2E_IMAP_PASS }}
+                  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
               run: npx playwright test --project=sign-in-live --reporter=list
 
             - name: Remove the sign-in check accounts and their mail

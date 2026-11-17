@@ -11,6 +11,7 @@ import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
 import { getTheme } from './tippy-utils';
 import { isFileSystemAccessSupported } from './file-system-adapter';
 import { settingsFolder } from './settings-folder';
+import { isTourLinkLaunch } from './tour-link';
 
 const console = new Logger('FolderPermissions');
 
@@ -544,7 +545,9 @@ export function getFolderSetupCalloutHtml(
 
 export async function maybeShowFolderPermissionsDialog(): Promise<void> {
     const host = getHost();
-    if (isAutomatedSession() || host.autoPrompted) {
+    // The tour link goes straight to the tour; the prompt waits for the
+    // next start.
+    if (isAutomatedSession() || host.autoPrompted || isTourLinkLaunch()) {
         await refreshFolderSetupStatus();
         if (!host.autoPrompted) {
             host.autoPrompted = true;

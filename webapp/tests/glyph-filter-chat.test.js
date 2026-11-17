@@ -5,8 +5,10 @@ const {
     FILTER_CHAT_TOOLS,
     FilterChatRegistry,
     createFilterChatHost,
+    describeFilterToolCall,
     filterChatMessages
 } = require('../js/glyph-filter-chat.ts');
+const { claimSuggestedFilterName } = require('../js/glyph-filter-names.ts');
 
 function memoryTarget(content, path = 'Filters/Small Caps.py') {
     return {
@@ -38,7 +40,11 @@ describe('glyph filter chat', () => {
     test('offers filter tools only, never font-editing or file tools', () => {
         const names = FILTER_CHAT_TOOLS.map((tool) => tool.function.name);
         expect(names).toContain('replace_python_text_in_editor');
+        expect(names).toContain('replace_python_document_in_editor');
         expect(names).toContain('test_filter_on_font');
+        // The system prompt carries the authoring guide and its event list.
+        expect(names).not.toContain('python_authoring_guide');
+        expect(names).not.toContain('glyph_filter_event_types');
         expect(names).not.toContain('create_python_draft_in_editor');
         expect(names).not.toContain('open_python_document_in_editor');
         expect(names).not.toContain('set_editor_text_buffer');
@@ -48,10 +54,15 @@ describe('glyph filter chat', () => {
         });
     });
 
-    test('the system prompt carries the current description', async () => {
+    test('the system prompt carries the description, code and guide', async () => {
+        const fetchMock = jest.fn().mockResolvedValue({
+            ok: true,
+            text: () => Promise.resolve('# Writing glyph overview filters')
+        });
+        global.fetch = fetchMock;
         const session = {
             target: memoryTarget('"""Show small caps."""\n'),
-            isDocumentStale: () => false
+            markDocumentRead: jest.fn()
         };
         const prompt = await FILTER_CHAT_PROFILE.buildSystemPrompt({
             session,
@@ -59,6 +70,22 @@ describe('glyph filter chat', () => {
         });
         expect(prompt).toContain('CURRENT DESCRIPTION:\nShow small caps.');
         expect(prompt).toContain('FILTER FILE: Filters/Small Caps.py');
+        expect(prompt).toContain(
+            'CURRENT CODE (revision r1):\n```python\n"""Show small caps."""\n'
+        );
+        expect(prompt).toContain(
+            'FILTER AUTHORING GUIDE:\n# Writing glyph overview filters'
+        );
+        // The model has seen this revision, so edits may rely on it.
+        expect(session.markDocumentRead).toHaveBeenCalledWith('r1');
+
+        // The guide is loaded once.
+        await FILTER_CHAT_PROFILE.buildSystemPrompt({
+            session,
+            runTool: jest.fn()
+        });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        delete global.fetch;
     });
 
     test('the host runs the dry run itself and passes other tools on', async () => {
@@ -70,6 +97,7 @@ describe('glyph filter chat', () => {
         const host = createFilterChatHost({
             preview: previewFn,
             nameFilter,
+            takenNames: () => [],
             executeSharedTool
         });
         const session = { target: memoryTarget('code') };
@@ -167,5 +195,79 @@ describe('glyph filter chat', () => {
         expect(filterChatMessages.descriptionWritten('Show small caps.')).toBe(
             'The user described a new filter: “Show small caps.” Write the Python code for it.'
         );
+    });
+
+    test('tool calls read as one status line', () => {
+        const call = (name, overrides = {}) => ({
+            id: null,
+            name,
+            args: {},
+            result: null,
+            failed: false,
+            timeLabel: null,
+            ...overrides
+        });
+        expect(
+            describeFilterToolCall(call('replace_python_document_in_editor'))
+        ).toBe('Writing the filter code…');
+        expect(describeFilterToolCall(call('test_filter_on_font'))).toBe(
+            'Testing the filter on the font…'
+        );
+        expect(
+            describeFilterToolCall(
+                call('name_filter', { args: { name: 'Small Caps' } })
+            )
+        ).toBe('Naming the filter “Small Caps”…');
+        expect(
+            describeFilterToolCall(
+                call('validate_python_document', { result: 'OK' })
+            )
+        ).toBe('Checking the filter code: done. Thinking about the next step…');
+        expect(
+            describeFilterToolCall(
+                call('execute_python_code', { result: 'Error', failed: true })
+            )
+        ).toBe('Inspecting the font: failed. Thinking about the next step…');
+        expect(describeFilterToolCall(call('some_new_tool'))).toBe(
+            'Calling some_new_tool…'
+        );
+    });
+
+    test('name_filter lists the names other filters have', () => {
+        const nameTool = (tools) =>
+            tools.find((tool) => tool.function.name === 'name_filter');
+        const tools = FILTER_CHAT_PROFILE.toolsFor({
+            host: { takenFilterNames: () => ['Small Caps', 'Anchors'] }
+        });
+        expect(nameTool(tools).function.description).toContain(
+            'Other filters already use these names, so do not pick them: “Small Caps”, “Anchors”.'
+        );
+        expect(tools.map((tool) => tool.function.name)).toEqual(
+            FILTER_CHAT_TOOLS.map((tool) => tool.function.name)
+        );
+        // The shared definition stays unchanged.
+        expect(nameTool(FILTER_CHAT_TOOLS).function.description).not.toContain(
+            'Other filters already use'
+        );
+        expect(
+            FILTER_CHAT_PROFILE.toolsFor({
+                host: { takenFilterNames: () => [] }
+            })
+        ).toBe(FILTER_CHAT_TOOLS);
+    });
+
+    test('a suggested name another filter has gets the next free number', () => {
+        expect(claimSuggestedFilterName('Small Caps', ['Anchors'])).toEqual({
+            name: 'Small Caps'
+        });
+        expect(
+            claimSuggestedFilterName('small caps.py', [
+                'Small Caps',
+                'small caps 2'
+            ])
+        ).toEqual({ name: 'small caps 3' });
+        expect(claimSuggestedFilterName('A/B', [])).toEqual({
+            error: 'A name cannot contain / \\ : * ? " < > |'
+        });
     });
 });

@@ -26,6 +26,8 @@ export interface AssistantProfile {
     readonly id: string;
     /** Sent to the model, and the only tools the session will run. */
     readonly tools: AssistantTool[];
+    /** The tools as sent for one round, e.g. with session details in a description. Same names as `tools`. */
+    toolsFor?(session: AssistantChatSession): AssistantTool[];
     /**
      * The edit rule. `editToggle` is the session's own edit switch
      * (`AssistantChatSession.allowEdits`); profiles without a switch ignore it.

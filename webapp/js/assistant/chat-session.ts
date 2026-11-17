@@ -61,6 +61,9 @@ export interface AssistantChatHost {
     streamRound?: AssistantRoundStreamer;
 }
 
+/** Status while the first reply of a turn is on its way. */
+export const ASSISTANT_INITIAL_STATUS = 'Understanding your question...';
+
 export type ChatToolCallRecord = {
     id: string | null;
     name: string;
@@ -69,6 +72,8 @@ export type ChatToolCallRecord = {
     result: string | null;
     failed: boolean;
     timeLabel: string | null;
+    /** The document before replace_python_document_in_editor, for its diff and undo. */
+    previousContent?: string;
 };
 
 export type ChatTurnItem =
@@ -353,7 +358,7 @@ export class AssistantChatSession {
             ...this.conversationMessages,
             { role: 'user', content: prompt }
         ];
-        this.setStatus('Understanding your question...');
+        this.setStatus(ASSISTANT_INITIAL_STATUS);
 
         const controller = new AbortController();
         this.controller = controller;
@@ -490,6 +495,16 @@ export class AssistantChatSession {
                             kind: 'tool',
                             call: record
                         };
+                        if (
+                            record.name === 'replace_python_document_in_editor'
+                        ) {
+                            try {
+                                record.previousContent =
+                                    this.target?.getDocumentState().content;
+                            } catch {
+                                // No document: the tool reports it.
+                            }
+                        }
                         this.addItem(turn, item);
                         let toolResult: string;
                         try {
@@ -696,7 +711,7 @@ export class AssistantChatSession {
         });
         const body: Record<string, unknown> = {
             messages,
-            tools: this.profile.tools,
+            tools: this.profile.toolsFor?.(this) ?? this.profile.tools,
             systemPrompt,
             stream: true,
             billingRunId

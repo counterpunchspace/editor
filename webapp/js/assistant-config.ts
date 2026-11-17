@@ -66,6 +66,7 @@ export const ASSISTANT_TOOL_CATEGORIES: Readonly<
     open_python_document_in_editor: 'Python',
     create_python_draft_in_editor: 'Python',
     replace_python_text_in_editor: 'Python',
+    replace_python_document_in_editor: 'Python',
     validate_python_document: 'Python',
     set_prompt_history_summary: 'Conversation'
 };
@@ -691,15 +692,42 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
         function: {
             name: 'replace_python_text_in_editor',
             description:
-                'Replace one exact unique text span in the current Script Editor buffer. First call get_active_python_document to obtain the current content, revision, and kindConfidence; before a substantial edit, call python_authoring_guide only after the kind is clear from saved path, editor mark, content, or user intent. Requires Assistant editing to be enabled and the fresh revision from that read. After replacement, call validate_python_document. This changes only the unsaved buffer and returns a concise diff; it never saves or runs Python.',
+                'Replace one exact unique text span in the current Python document. Use it for small changes; to write new code or rewrite most of a short document, use replace_python_document_in_editor instead. First call get_active_python_document to obtain the current content, revision, and kindConfidence; before a substantial edit, call python_authoring_guide only after the kind is clear from saved path, editor mark, content, or user intent. Requires Assistant editing to be enabled. expected_revision defaults to the revision you last read or wrote. After replacement, call validate_python_document. This changes only the unsaved buffer and returns a concise diff; it never saves or runs Python.',
             parameters: {
                 type: 'object',
                 properties: {
                     old_text: { type: 'string' },
                     new_text: { type: 'string' },
-                    expected_revision: { type: 'string' }
+                    expected_revision: {
+                        type: 'string',
+                        description:
+                            'Revision from get_active_python_document. Optional: defaults to the revision you last read or wrote.'
+                    }
                 },
-                required: ['old_text', 'new_text', 'expected_revision']
+                required: ['old_text', 'new_text']
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'replace_python_document_in_editor',
+            description:
+                'Replace the whole current Python document with new content. Use it to write new code into a template or draft, or to rewrite most of a short document; for small changes in a long document, use replace_python_text_in_editor. Pass the complete file, including the module docstring. First call get_active_python_document, or create_python_draft_in_editor for a new document. Requires Assistant editing to be enabled. expected_revision defaults to the revision you last read or wrote. After replacement, call validate_python_document. This changes only the unsaved buffer and returns a concise diff; it never saves or runs Python.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    content: {
+                        type: 'string',
+                        description: 'The complete new Python document.'
+                    },
+                    expected_revision: {
+                        type: 'string',
+                        description:
+                            'Revision from get_active_python_document. Optional: defaults to the revision you last read or wrote.'
+                    }
+                },
+                required: ['content']
             }
         }
     },
@@ -708,7 +736,7 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
         function: {
             name: 'validate_python_document',
             description:
-                'After create_python_draft_in_editor or replace_python_text_in_editor, perform non-executing validation of the current Script Editor buffer. This parses Python syntax with the Python compiler but does not execute the code object. The result includes kind, editorKind, kindConfidence, and kindMessage because unsaved pathless buffers can be unclassified even when the editor fallback is general-script. Glyph filters must define literal EVENT_TYPES and classify_glyph(glyph); is_candidate(glyph) is optional. Report validation failures or unclear kind classification before proposing more edits. This never runs user code, imports the user document, or saves Python.',
+                'After create_python_draft_in_editor, replace_python_text_in_editor or replace_python_document_in_editor, perform non-executing validation of the current Script Editor buffer. This parses Python syntax with the Python compiler but does not execute the code object. The result includes kind, editorKind, kindConfidence, and kindMessage because unsaved pathless buffers can be unclassified even when the editor fallback is general-script. Glyph filters must define literal EVENT_TYPES and classify_glyph(glyph); is_candidate(glyph) is optional. Report validation failures or unclear kind classification before proposing more edits. This never runs user code, imports the user document, or saves Python.',
             parameters: {
                 type: 'object',
                 properties: {},
@@ -757,7 +785,7 @@ When linking users to handbook topics in markdown, use the docs:// tokens from h
 
 IMPORTANT TERMINOLOGY: When the user says "create a Python script" or "write a Python script", they are most likely asking you to create a script file in the Script Editor (as a reusable file), not to run code inline. Follow the Python authoring workflow below. You may still use execute_python_code to answer exploration or inspection questions about the font, but the phrase "Python script" signals the Script Editor.
 
-For reusable scripts and glyph filters, follow this exact workflow for Python authoring: (1) for an existing document, call get_active_python_document; for a new document, choose general-script for a reusable general-purpose Python script or glyph-filter for a Glyph Overview filter; (2) before creating or substantially editing code, call python_authoring_guide only after the kind is clear from a saved path, explicit editor mark, content structure, or user intent. If the kind is glyph-filter, call glyph_filter_event_types before authoring. Use the simple filter shape only: literal EVENT_TYPES, optional is_candidate(glyph), and required classify_glyph(glyph). classify_glyph returns False to hide, True to show without groups, or {'groups': [{'name': 'Visible group name', 'color': 'CSS color'}]} to show with groups. Do not write filter_glyphs, apply_changes, GROUPS, glyph_name, cache code, lifecycle event subscriptions, or font.stations.changed. The app handles glyph creation, deletion, renaming, caching, and group cleanup. Subscribe only to glyph-content events that can change the current classification. If get_active_python_document or validate_python_document returns kind null or kindConfidence unclassified-unsaved, do not treat editorKind general-script as authoritative; ask the user or infer from the request before choosing a guide; (3) if changing a buffer, confirm Assistant editing is enabled, then create_python_draft_in_editor or replace_python_text_in_editor using the fresh revision; (4) call validate_python_document after every create or replace. Use list_python_files, search_python_files, and read_python_file only for saved managed files; use get_active_python_document only for the active unsaved buffer.
+For reusable scripts and glyph filters, follow this exact workflow for Python authoring: (1) for an existing document, call get_active_python_document; for a new document, choose general-script for a reusable general-purpose Python script or glyph-filter for a Glyph Overview filter; (2) before creating or substantially editing code, call python_authoring_guide only after the kind is clear from a saved path, explicit editor mark, content structure, or user intent. If the kind is glyph-filter, call glyph_filter_event_types before authoring. Use the simple filter shape only: literal EVENT_TYPES, optional is_candidate(glyph), and required classify_glyph(glyph). classify_glyph returns False to hide, True to show without groups, or {'groups': [{'name': 'Visible group name', 'color': 'CSS color'}]} to show with groups. Do not write filter_glyphs, apply_changes, GROUPS, glyph_name, cache code, lifecycle event subscriptions, or font.stations.changed. The app handles glyph creation, deletion, renaming, caching, and group cleanup. Subscribe only to glyph-content events that can change the current classification. If get_active_python_document or validate_python_document returns kind null or kindConfidence unclassified-unsaved, do not treat editorKind general-script as authoritative; ask the user or infer from the request before choosing a guide; (3) if changing a buffer, confirm Assistant editing is enabled, then create_python_draft_in_editor, replace_python_document_in_editor (whole document: new code or a rewrite of most of it) or replace_python_text_in_editor (a small change); (4) call validate_python_document after every create or replace. Use list_python_files, search_python_files, and read_python_file only for saved managed files; use get_active_python_document only for the active unsaved buffer.
 
 CRITICAL RULE: If the user prompt is not about the broad topic of fonts and font engineering, or about how to use the Counterpunch app, or type design in general, then politely REFUSE to answer the question and let the user know what topics you can help with. Do not answer questions about topics outside of font design and Counterpunch usage. Always steer the user back to font design and using the app."
 `;

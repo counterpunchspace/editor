@@ -70,6 +70,14 @@
     stroke-width: 1.25;
 }
 
+.tour-guide-arrow {
+    fill: none;
+    stroke: var(--tour-guide);
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
 .tour-drawing-guides g {
     transform-box: fill-box;
     transform-origin: center;
@@ -250,4 +258,12 @@
     display: flex;
     justify-content: flex-end;
     gap: 8px;
+}
+
+/* The tour’s filter exercise: the tooltip sits left of the editor, and the
+   two are centered together. The left padding is the tooltip’s width
+   (340px) plus its offset (16px). */
+body.tour-dialog-aside .info-popup-overlay:has(> .info-popup.gfe) {
+    padding-left: 356px;
+    box-sizing: border-box;
 }

@@ -19,6 +19,7 @@ import tippy from 'tippy.js';
 import 'tippy.js/dist/tippy.css';
 import { getTheme } from './tippy-utils';
 import {
+    ASSISTANT_INITIAL_STATUS,
     AssistantChatSession,
     type AssistantChatMessage,
     type AssistantRoundResult,
@@ -34,6 +35,7 @@ import {
 import { MAIN_ASSISTANT_PROFILE } from './assistant/profile';
 import {
     createScriptEditorTarget,
+    type PythonDocumentState,
     type PythonDocumentTarget
 } from './assistant/python-target';
 import {
@@ -2174,6 +2176,42 @@ class AIAssistant {
         return session.target;
     }
 
+    /**
+     * The revision an edit expects: the model's `expected_revision`, or
+     * else the revision it last read or wrote. Either way, an edit fails
+     * when the document changed since.
+     */
+    private expectedDocumentRevision(
+        session: AssistantChatSession,
+        args: Record<string, unknown>
+    ): string {
+        const revision =
+            (typeof args.expected_revision === 'string' &&
+                args.expected_revision) ||
+            session.lastKnownDocumentRevision;
+        if (!revision) {
+            throw new Error(
+                'Read the document with get_active_python_document before editing it.'
+            );
+        }
+        return revision;
+    }
+
+    private describePythonEdit(
+        state: PythonDocumentState,
+        oldText: string,
+        newText: string,
+        target: PythonDocumentTarget
+    ): string {
+        return [
+            `Edited ${state.path || 'untitled Python draft'} (${state.kind})`,
+            `Revision: ${state.revision}`,
+            'Modified, not saved',
+            '',
+            this.createPythonDiff(oldText, newText, target.label)
+        ].join('\n');
+    }
+
     private isManagedPythonPath(path: string): boolean {
         return (
             path.endsWith('.py') &&
@@ -2810,16 +2848,33 @@ if '_assistant_original_stdout' in dir():
                 const state = target.replaceExactText(
                     oldText,
                     newText,
-                    String(args.expected_revision || '')
+                    this.expectedDocumentRevision(session, args)
                 );
                 session.markDocumentRead(state.revision);
-                return [
-                    `Edited ${state.path || 'untitled Python draft'} (${state.kind})`,
-                    `Revision: ${state.revision}`,
-                    'Modified, not saved',
-                    '',
-                    this.createPythonDiff(oldText, newText, target.label)
-                ].join('\n');
+                return this.describePythonEdit(state, oldText, newText, target);
+            }
+            case 'replace_python_document_in_editor': {
+                this.requireDocumentEditPermission(session);
+                const target = this.requirePythonTarget(session);
+                if (typeof args.content !== 'string') {
+                    throw new Error('content is required.');
+                }
+                const expectedRevision = this.expectedDocumentRevision(
+                    session,
+                    args
+                );
+                const oldContent = target.getDocumentState().content;
+                const state = target.replaceContent(
+                    args.content,
+                    expectedRevision
+                );
+                session.markDocumentRead(state.revision);
+                return this.describePythonEdit(
+                    state,
+                    oldContent,
+                    args.content,
+                    target
+                );
             }
             case 'validate_python_document': {
                 const target = this.requirePythonTarget(session);
@@ -3665,7 +3720,7 @@ if '_assistant_original_stdout' in dir():
     }
 
     showInitialStatus() {
-        this.session.setStatus('Understanding your question...');
+        this.session.setStatus(ASSISTANT_INITIAL_STATUS);
     }
 
     clearInitialStatus() {
