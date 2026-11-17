@@ -23,6 +23,7 @@ import {
 } from './tippy-utils';
 import {
     buildGlyphFilterLegendGroups,
+    sortGlyphFilterGroupNames,
     countGlyphsPerGroup,
     renderGlyphFilterLegend
 } from './glyph-filter-legend';
@@ -164,6 +165,8 @@ interface GlyphFilterPlugin {
     unicodeScripts?: ReadonlySet<string>;
     /** Position within its sidebar folder, before unordered filters. */
     sortOrder?: number;
+    /** Group names shown first in the legend, in this order. */
+    groupOrder?: readonly string[];
     filePath?: string; // Path to .py file for user filters
     pythonCode?: string; // Source code for user filters
     validationDiagnostic?: string;
@@ -271,6 +274,8 @@ export interface GlyphFilterSourceError {
 
 export interface GlyphFilterSourceValidation {
     eventTypes: GlyphFilterEventType[];
+    /** GROUP_ORDER names; empty when the filter has none. */
+    groupOrder: string[];
     errors: GlyphFilterSourceError[];
 }
 
@@ -291,7 +296,7 @@ export interface GlyphFilterPreviewResult {
      * colors; pass to `GlyphOverviewView.setGroups`.
      */
     results: FilterResult[];
-    /** Groups in first-seen order with their glyph counts. */
+    /** Groups in legend order (GROUP_ORDER, then by name) with glyph counts. */
     groups: GlyphFilterPreviewGroup[];
     eventTypes: GlyphFilterEventType[];
     errors: GlyphFilterSourceError[];
@@ -1307,6 +1312,7 @@ export class GlyphOverviewFilterManager {
                             'unicode_categories': list(getattr(plugin_instance, 'unicode_categories', None) or []) or None,
                             'sort_order': getattr(plugin_instance, 'sort_order', None),
                             'unicode_scripts': list(getattr(plugin_instance, 'unicode_scripts', None) or []) or None,
+                            'group_order': list(getattr(plugin_instance, 'group_order', None) or []),
                             'instance': plugin_instance
                         })
                     except Exception as e:
@@ -1356,28 +1362,7 @@ export class GlyphOverviewFilterManager {
                     continue;
                 }
 
-                // Load group definitions
-                try {
-                    const instance = plugin.instance;
-                    if (instance && instance.get_groups) {
-                        const groupsResult = instance.get_groups();
-                        if (groupsResult && groupsResult.toJs) {
-                            plugin.groups = groupsResult.toJs({
-                                dict_converter: Object.fromEntries
-                            });
-                        } else {
-                            plugin.groups = {};
-                        }
-                    } else {
-                        plugin.groups = {};
-                    }
-                } catch (error) {
-                    console.error(
-                        `Error getting groups for ${plugin.display_name}:`,
-                        error
-                    );
-                    plugin.groups = {};
-                }
+                plugin.groups = {};
 
                 const eventTypes = Array.isArray(plugin.event_types)
                     ? plugin.event_types.filter(
@@ -1408,6 +1393,12 @@ export class GlyphOverviewFilterManager {
                     typeof plugin.sort_order === 'number'
                         ? plugin.sort_order
                         : undefined;
+                plugin.groupOrder = Array.isArray(plugin.group_order)
+                    ? plugin.group_order.filter(
+                          (name: unknown): name is string =>
+                              typeof name === 'string'
+                      )
+                    : [];
 
                 this.plugins.push(plugin as GlyphFilterPlugin);
             }
@@ -1545,27 +1536,15 @@ export class GlyphOverviewFilterManager {
 
                     const inspection = this.inspectUserFilterSource(code);
 
-                    // Parse GROUPS from code (simple regex extraction)
-                    let groups: Record<string, GroupDefinition> = {};
-                    try {
-                        const groupsMatch = code.match(
-                            /GROUPS\s*=\s*(\{[\s\S]*?\n\})/
-                        );
-                        if (groupsMatch) {
-                            // We'll parse groups at runtime in Python
-                        }
-                    } catch (e) {
-                        // Ignore group parsing errors
-                    }
-
                     // Create user filter plugin
                     const userFilter: GlyphFilterPlugin = {
                         path: folderPath ? `user/${folderPath}` : 'user',
                         keyword: `user.${relativePath.replace(/\//g, '.')}`,
                         display_name: fileName,
                         instance: null, // Will be created at runtime
-                        groups: groups,
+                        groups: {},
                         eventTypes: inspection.eventTypes,
+                        groupOrder: inspection.groupOrder,
                         validationDiagnostic: inspection.diagnostic,
                         isUserFilter: true,
                         filePath: file.path,
@@ -1762,6 +1741,7 @@ export class GlyphOverviewFilterManager {
 
     private inspectUserFilterSource(code: string): {
         eventTypes: GlyphFilterEventType[];
+        groupOrder?: string[];
         diagnostic?: string;
     } {
         // An empty list is valid: a filter that only reads glyph names has no
@@ -1806,8 +1786,30 @@ export class GlyphOverviewFilterManager {
                 diagnostic: 'is_candidate(), when present, must accept glyph.'
             };
         }
+        // Only quoted names, commas, whitespace and comments between the
+        // brackets, so names may contain brackets themselves.
+        const groupOrderMatch = code.match(
+            /^\s*GROUP_ORDER\s*=\s*[\[\(]((?:[\s,]|#[^\n]*|'[^'\n]*'|"[^"\n]*")*)[\]\)]/m
+        );
+        const groupOrder = groupOrderMatch
+            ? [
+                  ...groupOrderMatch[1].matchAll(
+                      /'([^'\n]*)'|"([^"\n]*)"|#[^\n]*/g
+                  )
+              ]
+                  .filter((match) => !match[0].startsWith('#'))
+                  .map((match) => match[1] ?? match[2])
+            : [];
+        if (!groupOrderMatch && /^\s*GROUP_ORDER\s*=/m.test(code)) {
+            return {
+                eventTypes: [],
+                diagnostic:
+                    'GROUP_ORDER, when present, must be a literal list of group names.'
+            };
+        }
         return {
-            eventTypes: [...new Set(quotedEvents)] as GlyphFilterEventType[]
+            eventTypes: [...new Set(quotedEvents)] as GlyphFilterEventType[],
+            groupOrder
         };
     }
 
@@ -1835,7 +1837,11 @@ export class GlyphOverviewFilterManager {
         if (inspection.diagnostic) {
             errors.push({ kind: 'contract', message: inspection.diagnostic });
         }
-        return { eventTypes: inspection.eventTypes, errors };
+        return {
+            eventTypes: inspection.eventTypes,
+            groupOrder: inspection.groupOrder ?? [],
+            errors
+        };
     }
 
     /**
@@ -1949,13 +1955,14 @@ export class GlyphOverviewFilterManager {
                 plugin.groups || {}
             );
         const counts = countGlyphsPerGroup(results);
-        const groups: GlyphFilterPreviewGroup[] = [...usedGroupKeywords].map(
-            (name) => ({
-                name,
-                color: augmentedGroups[name]?.color || '',
-                count: counts.get(name) || 0
-            })
-        );
+        const groups: GlyphFilterPreviewGroup[] = sortGlyphFilterGroupNames(
+            usedGroupKeywords,
+            validation.groupOrder
+        ).map((name) => ({
+            name,
+            color: augmentedGroups[name]?.color || '',
+            count: counts.get(name) || 0
+        }));
         const byName = new Map(
             results.map((result) => [result.glyph_name, result])
         );
@@ -3682,7 +3689,8 @@ export class GlyphOverviewFilterManager {
                 : buildGlyphFilterLegendGroups(
                       plugin.groups,
                       usedGroupKeywords,
-                      plugin.lastResults
+                      plugin.lastResults,
+                      plugin.groupOrder
                   );
         // Click to toggle group filter by keyword
         this.groupElements = renderGlyphFilterLegend(

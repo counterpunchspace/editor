@@ -28,15 +28,43 @@ export function countGlyphsPerGroup(
     return counts;
 }
 
-/** Legend entries for the used groups that have a definition, in order. */
+/**
+ * Group names in display order: the names in the filter's `groupOrder`
+ * (`GROUP_ORDER` in user filters) first, in that order, then all others
+ * alphabetically, with numbers compared by value.
+ */
+export function sortGlyphFilterGroupNames(
+    names: Iterable<string>,
+    groupOrder: readonly string[] = []
+): string[] {
+    const rank = new Map<string, number>();
+    groupOrder.forEach((name, index) => {
+        if (!rank.has(name)) rank.set(name, index);
+    });
+    return [...new Set(names)].sort((a, b) => {
+        const rankA = rank.get(a) ?? Infinity;
+        const rankB = rank.get(b) ?? Infinity;
+        if (rankA !== rankB) return rankA < rankB ? -1 : 1;
+        return a.localeCompare(b, undefined, {
+            numeric: true,
+            sensitivity: 'base'
+        });
+    });
+}
+
+/** Legend entries for the used groups that have a definition, sorted. */
 export function buildGlyphFilterLegendGroups(
     definitions: Record<string, { description: string; color: string }>,
     usedGroupKeywords: Iterable<string>,
-    results: readonly GlyphFilterLegendResult[] | undefined
+    results: readonly GlyphFilterLegendResult[] | undefined,
+    groupOrder?: readonly string[]
 ): GlyphFilterLegendGroup[] {
     const counts = countGlyphsPerGroup(results);
     const groups: GlyphFilterLegendGroup[] = [];
-    for (const keyword of usedGroupKeywords) {
+    for (const keyword of sortGlyphFilterGroupNames(
+        usedGroupKeywords,
+        groupOrder
+    )) {
         const definition = definitions[keyword];
         if (!definition) continue;
         groups.push({

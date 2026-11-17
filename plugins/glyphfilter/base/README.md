@@ -29,6 +29,14 @@ class MyFilter(BaseGlyphFilterPlugin):
 return {"groups": [{"name": "Latin", "color": "blue"}]}
 ```
 
+The group legend lists groups alphabetically. Set `group_order` to a list of
+group names to show those first, in that order; the rest follow
+alphabetically:
+
+```python
+group_order = ["Error", "Warning", "Note"]
+```
+
 `is_candidate(glyph)` is optional. Add it only when a cheap check can avoid
 calling `classify_glyph()` for glyphs that cannot match.
 

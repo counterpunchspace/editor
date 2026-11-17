@@ -2455,6 +2455,8 @@ __counterpunch_assistant_validate_syntax(${sourceKey})`
 
 Write only the simple filter contract. Subscribe EVENT_TYPES only to glyph-content events that can change the classification. Do not subscribe to glyph.created, glyph.deleted, glyph.renamed, or font.stations.changed: the app handles those itself. A filter that only reads glyph names uses EVENT_TYPES = [].
 
+The group legend lists groups alphabetically. When the groups have a natural order (severity, size, sequence), add an optional literal GROUP_ORDER list of group names; listed groups come first in that order, the rest follow alphabetically. Keep the names identical to those classify_glyph returns.
+
 Example single-file filter:
 
 \`\`\`python

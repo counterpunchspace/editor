@@ -20,7 +20,8 @@ const {
 const { createGlyphFilterTemplate } = require('../js/glyph-filter-template');
 const {
     renderGlyphFilterLegend,
-    buildGlyphFilterLegendGroups
+    buildGlyphFilterLegendGroups,
+    sortGlyphFilterGroupNames
 } = require('../js/glyph-filter-legend');
 const { GlyphOverviewFilterManager } = require('../js/glyph-overview-filters');
 const { settingsFolder } = require('../js/settings-folder');
@@ -146,6 +147,31 @@ describe('filter group legend', () => {
         renderGlyphFilterLegend(container, [], onClick);
         expect(container.style.display).toBe('none');
     });
+
+    test('sorts groups by name, numbers by value', () => {
+        expect(
+            sortGlyphFilterGroupNames(['b', '10 points', 'A', '2 points'])
+        ).toEqual(['2 points', '10 points', 'A', 'b']);
+    });
+
+    test('lists GROUP_ORDER names first, in that order', () => {
+        expect(
+            sortGlyphFilterGroupNames(
+                ['Alpha', 'Note', 'Error', 'Warning'],
+                ['Error', 'Unused', 'Warning', 'Note']
+            )
+        ).toEqual(['Error', 'Warning', 'Note', 'Alpha']);
+        const groups = buildGlyphFilterLegendGroups(
+            {
+                Error: { description: 'Error', color: 'red' },
+                Note: { description: 'Note', color: 'blue' }
+            },
+            ['Note', 'Error'],
+            [],
+            ['Error']
+        );
+        expect(groups.map((group) => group.keyword)).toEqual(['Error', 'Note']);
+    });
 });
 
 function makeFakePyodide(classifications, syntaxError = '') {
@@ -210,7 +236,11 @@ describe('EVENT_TYPES check', () => {
             'set()',
             '[\n    # names only\n]'
         ]) {
-            expect(check(empty)).toEqual({ eventTypes: [], errors: [] });
+            expect(check(empty)).toEqual({
+                eventTypes: [],
+                groupOrder: [],
+                errors: []
+            });
         }
     });
 
@@ -223,6 +253,35 @@ describe('EVENT_TYPES check', () => {
     test('unknown, lifecycle or non-literal entries are still rejected', () => {
         for (const bad of ['[FOO]', '["glyph.renamed"]', '["nope"]']) {
             expect(check(bad).errors[0]).toMatchObject({ kind: 'contract' });
+        }
+    });
+
+    const checkGroupOrder = (groupOrder) =>
+        new GlyphOverviewFilterManager().validateFilterSource(
+            `EVENT_TYPES = []\nGROUP_ORDER = ${groupOrder}\n\ndef classify_glyph(glyph):\n    return True\n`
+        );
+
+    test('GROUP_ORDER takes a literal list of names', () => {
+        expect(
+            checkGroupOrder(
+                `[\n    "Error (critical)",  # "not a name"\n    'Warning',\n]`
+            )
+        ).toEqual({
+            eventTypes: [],
+            groupOrder: ['Error (critical)', 'Warning'],
+            errors: []
+        });
+    });
+
+    test('a non-literal GROUP_ORDER is rejected', () => {
+        for (const bad of ['NAMES', '[NAME]', 'sorted(["b", "a"])']) {
+            expect(checkGroupOrder(bad).errors).toEqual([
+                {
+                    kind: 'contract',
+                    message:
+                        'GROUP_ORDER, when present, must be a literal list of group names.'
+                }
+            ]);
         }
     });
 });
@@ -274,8 +333,8 @@ describe('GlyphOverviewFilterManager.previewFilter', () => {
             colors: ['red', 'blue']
         });
         expect(preview.groups).toEqual([
-            { name: 'Round', color: 'red', count: 2 },
-            { name: 'Low', color: 'blue', count: 1 }
+            { name: 'Low', color: 'blue', count: 1 },
+            { name: 'Round', color: 'red', count: 2 }
         ]);
         expect(preview.eventTypes).toEqual(['glyph.unicode.changed']);
         expect(manager.activeFilter).toBe(active);

@@ -53,6 +53,8 @@ class BaseGlyphFilterPlugin:
       matches the glyph's Script_Extensions, or its Script, itself
     - sort_order: Number that orders filters within their sidebar folder;
       filters without one follow, sorted by name
+    - group_order: Group names the legend shows first, in this order;
+      other groups follow, sorted by name
     """
     
     # Plugin path - must match a registered path in FILTER_PATHS

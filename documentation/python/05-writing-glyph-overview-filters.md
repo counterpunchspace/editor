@@ -13,6 +13,15 @@ def classify_glyph(glyph):
 
 Return `False` to hide a glyph and `True` to show it without groups. Return a mapping with a non-empty `groups` list only when the filter needs categories. Each group always includes both fields: `{"name": "Readable group name", "color": "CSS color"}`. The group name is its visible label and identity. The app combines equal names across glyphs. If matching groups use different colors, the most recently classified glyph supplies the displayed color.
 
+The group legend lists groups alphabetically, with numbers in their natural order (“2 points” before “10 points”). When another order makes more sense, such as from most to least severe, add a literal `GROUP_ORDER` list with the group names in that order. Groups in the list come first, in its order. Groups that are not in the list follow alphabetically, and names in the list that no glyph uses are ignored.
+
+```python
+EVENT_TYPES = ["glyph.paths.changed"]
+GROUP_ORDER = ["Error", "Warning", "Note"]
+```
+
+`GROUP_ORDER` only sets the order. Each group still gets its name and color from what `classify_glyph(glyph)` returns.
+
 Use `is_candidate(glyph)` only for a cheap early rejection. The app calls it before `classify_glyph(glyph)`.
 
 ```python
