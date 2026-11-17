@@ -13,7 +13,8 @@ name: Nightly fuzz
 
 on:
     schedule:
-        - cron: "0 3 * * *"
+        # Off the top of the hour, where GitHub delays scheduled runs most.
+        - cron: "37 2 * * *"
     workflow_dispatch:
         inputs:
             seed:
