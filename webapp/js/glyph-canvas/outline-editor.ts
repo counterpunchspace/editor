@@ -60,7 +60,9 @@ import {
     getHighestVisibleVerticalMetricValue,
     getLowestVisibleVerticalMetricValue,
     getSnappableVerticalMetricValues,
-    getVisibleVerticalMetricValues
+    getVisibleVerticalMetricValues,
+    glyphsScriptForGlyph,
+    resolveVerticalMetricsForScript
 } from './vertical-metrics';
 import { isShowAllMetricsEnabled } from '../show-all-metrics-pref';
 import {
@@ -8233,11 +8235,14 @@ export class OutlineEditor {
             return null;
         }
 
-        const verticalMetrics = Object.fromEntries(
-            Object.entries(metrics).filter(([, value]) =>
-                Number.isFinite(value)
-            )
-        ) as Record<string, number>;
+        const verticalMetrics = resolveVerticalMetricsForScript(
+            Object.fromEntries(
+                Object.entries(metrics).filter(([, value]) =>
+                    Number.isFinite(value)
+                )
+            ) as Record<string, number>,
+            glyphsScriptForGlyph(drawing?.parent?.())
+        );
 
         if (!Object.keys(verticalMetrics).length) {
             return null;

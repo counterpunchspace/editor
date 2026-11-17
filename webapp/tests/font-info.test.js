@@ -1490,6 +1490,342 @@ describe('FontInfo feature code compilation scheduling', () => {
         );
     });
 
+    function setUpFontInfoView() {
+        document.body.innerHTML = `
+                <div id="view-fontinfo" class="view view-fontinfo focused">
+                    <div class="view-title-bar">
+                        <div class="view-title-right">
+                            <div id="fontinfo-search-control" style="display: none;">
+                                <input id="fontinfo-search-input" />
+                            </div>
+                        </div>
+                    </div>
+                    <div class="view-content">
+                        <div id="browser-compat"></div>
+                    </div>
+                </div>
+            `;
+        const bridge = {
+            beginTransaction: jest.fn(),
+            endTransaction: jest.fn(),
+            applySyntheticChangeSet: jest.fn(),
+            runWithoutRecording: jest.fn((fn) => fn())
+        };
+        window.patchSyncEngine = bridge;
+        return bridge;
+    }
+
+    function commitInput(input, value) {
+        input.focus();
+        input.value = value;
+        input.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+        );
+    }
+
+    const WEIGHT_AXIS = {
+        name: { dflt: 'Weight' },
+        tag: 'wght',
+        min: 100,
+        default: 400,
+        max: 900,
+        map: [
+            [100, 20],
+            [400, 80],
+            [900, 200]
+        ]
+    };
+
+    test('stations panel pairs metrics with zones, shows script metrics and line-spacing defaults', () => {
+        const bridge = setUpFontInfoView();
+        window.currentFontModel = {
+            upm: 1000,
+            axes: [WEIGHT_AXIS],
+            names: {},
+            features: { features: [] },
+            stations: [
+                {
+                    id: 'M1',
+                    name: { dflt: 'Regular' },
+                    location: { wght: 80 },
+                    metrics: {
+                        'Ascender': 750,
+                        'ascender overshoot': 12,
+                        'XHeight': 500,
+                        'xHeight overshoot': 10,
+                        'Descender': -250,
+                        'ItalicAngle': 8,
+                        'xHeight (filter script == "cyrillic")': 520
+                    }
+                }
+            ],
+            instances: []
+        };
+
+        const fontInfoManager = loadFontInfoManager();
+        fontInfoManager.init();
+        jest.runOnlyPendingTimers();
+        fontInfoManager.switchTab('masters');
+
+        const field = (key) =>
+            document.querySelector(
+                `[data-font-field='masters.0.metrics.${key}'] input`
+            );
+        expect(field('xHeight overshoot').value).toBe('10');
+        expect(field('CapHeight').value).toBe('');
+        expect(
+            document.querySelector('.fontinfo-metrics-preview-slant')
+        ).not.toBeNull();
+        expect(
+            document.querySelector(
+                '[data-font-field="masters.0.location.wght"] .localized-string-helper'
+            ).textContent
+        ).toContain('People see it as 400 on the Weight axis');
+
+        const cyrillicXHeight = field('xHeight (filter script == "cyrillic")');
+        expect(cyrillicXHeight.value).toBe('520');
+        expect(cyrillicXHeight.placeholder).toBe('500');
+
+        // fontc: typo line gap fills 1.2 em, hhea/Win ascent add it.
+        expect(field('TypoLineGap').placeholder).toBe('200');
+        expect(field('HheaAscender').placeholder).toBe('950');
+        expect(field('WinDescent').placeholder).toBe('250');
+
+        commitInput(
+            field('xHeight (filter script == "cyrillic") overshoot'),
+            '14'
+        );
+        expect(bridge.applySyntheticChangeSet).toHaveBeenLastCalledWith(
+            'Edit station metric',
+            [
+                {
+                    op: 'set',
+                    path: [
+                        'masters',
+                        0,
+                        'metrics',
+                        'xHeight (filter script == "cyrillic") overshoot'
+                    ],
+                    oldValue: undefined,
+                    newValue: 14
+                }
+            ],
+            expect.anything()
+        );
+
+        const addSelect = document.querySelector('.fontinfo-script-add');
+        addSelect.value = 'greek';
+        addSelect.dispatchEvent(new Event('change'));
+        expect(bridge.applySyntheticChangeSet).toHaveBeenLastCalledWith(
+            'Add writing-script metrics',
+            [
+                expect.objectContaining({
+                    op: 'set',
+                    path: [
+                        'masters',
+                        0,
+                        'metrics',
+                        'xHeight (filter script == "greek")'
+                    ],
+                    newValue: 500
+                }),
+                expect.objectContaining({
+                    op: 'set',
+                    newValue: 0
+                })
+            ],
+            expect.anything()
+        );
+
+        const removeCyrillic = document.querySelector(
+            '[aria-label="Remove Cyrillic metrics"]'
+        );
+        removeCyrillic.click();
+        const removal = bridge.applySyntheticChangeSet.mock.calls.at(-1);
+        expect(removal[0]).toBe('Remove writing-script metrics');
+        expect(removal[1].every((change) => change.op === 'remove')).toBe(true);
+        expect(removal[1].map((change) => change.path[3]).sort()).toEqual([
+            'xHeight (filter script == "cyrillic")',
+            'xHeight (filter script == "cyrillic") overshoot'
+        ]);
+        expect(
+            document.querySelector('[aria-label="Remove Cyrillic metrics"]')
+        ).toBeNull();
+    });
+
+    test('names panel shows name IDs and the names fontc writes for empty fields', () => {
+        setUpFontInfoView();
+        window.currentFontModel = {
+            upm: 1000,
+            version: [2, 5],
+            names: { family_name: { dflt: 'Foo' } },
+            custom_ot_values: { os2_vendor_id: 'ABCD' },
+            features: { features: [] },
+            axes: [],
+            stations: [
+                {
+                    id: 'M1',
+                    name: { dflt: 'Light Italic' },
+                    location: {},
+                    metrics: {}
+                }
+            ],
+            instances: []
+        };
+
+        const fontInfoManager = loadFontInfoManager();
+        fontInfoManager.init();
+        jest.runOnlyPendingTimers();
+        fontInfoManager.switchTab('names');
+
+        const input = (key) =>
+            document.querySelector(
+                `[data-name-field="${key}"] .localized-string-input`
+            );
+        const familyField = document.querySelector(
+            '[data-name-field="family_name"]'
+        );
+        expect(familyField.textContent).toContain('name ID 1');
+        expect(
+            familyField.querySelector('.localized-string-note').textContent
+        ).toContain('“Foo Light”');
+        expect(
+            document.querySelector(
+                '[data-name-field="preferred_subfamily_name"]'
+            ).textContent
+        ).toContain('name ID 2');
+        expect(input('typographic_subfamily').placeholder).toBe('Light Italic');
+        expect(input('full_name').placeholder).toBe('Foo Light Italic');
+        expect(input('postscript_name').placeholder).toBe('Foo-LightItalic');
+        expect(input('version').placeholder).toBe('Version 2.005');
+        expect(input('unique_id').placeholder).toBe(
+            '2.005;ABCD;Foo-LightItalic'
+        );
+        expect(
+            document.querySelector('[data-name-field="license_url"]')
+                .textContent
+        ).toContain('name ID 14');
+    });
+
+    test('instances panel has no variable toggle and explains design values', () => {
+        setUpFontInfoView();
+        window.currentFontModel = {
+            upm: 1000,
+            axes: [WEIGHT_AXIS],
+            names: {},
+            features: { features: [] },
+            stations: [
+                {
+                    id: 'M1',
+                    name: { dflt: 'Regular' },
+                    location: { wght: 80 },
+                    metrics: {}
+                }
+            ],
+            instances: [
+                {
+                    id: 'I1',
+                    name: { dflt: 'Bold' },
+                    location: { wght: 200 },
+                    variable: true
+                }
+            ]
+        };
+
+        const fontInfoManager = loadFontInfoManager();
+        fontInfoManager.init();
+        jest.runOnlyPendingTimers();
+        fontInfoManager.switchTab('instances');
+
+        expect(
+            document.querySelector('[data-font-field="instances.0.variable"]')
+        ).toBeNull();
+        expect(
+            document.querySelector(
+                '[data-font-field="instances.0.location.wght"] .localized-string-helper'
+            ).textContent
+        ).toContain('People see it as 900 on the Weight axis');
+        expect(document.body.textContent).toContain(
+            'The compiler does not use it'
+        );
+    });
+
+    test('axes panel edits user and design values in one range table', () => {
+        const bridge = setUpFontInfoView();
+        window.currentFontModel = {
+            upm: 1000,
+            axes: [WEIGHT_AXIS],
+            names: {},
+            features: { features: [] },
+            stations: [],
+            instances: []
+        };
+
+        const fontInfoManager = loadFontInfoManager();
+        fontInfoManager.init();
+        jest.runOnlyPendingTimers();
+        fontInfoManager.switchTab('axes');
+
+        const userMin = document.querySelector(
+            '[data-font-field="axes.0.min"] input'
+        );
+        const designMin = document.querySelector(
+            '[data-font-field="axes.0.map.min"] input'
+        );
+        expect(userMin.value).toBe('100');
+        expect(designMin.value).toBe('20');
+        expect(designMin.closest('table')).toBe(userMin.closest('table'));
+
+        commitInput(designMin, '30');
+        expect(bridge.applySyntheticChangeSet).toHaveBeenLastCalledWith(
+            'Edit axis min designspace',
+            expect.anything(),
+            expect.anything()
+        );
+    });
+
+    test('custom OT bit checkboxes commit the combined number', () => {
+        const bridge = setUpFontInfoView();
+        window.currentFontModel = {
+            upm: 1000,
+            version: [1, 0],
+            names: {},
+            custom_ot_values: { os2_fs_selection: 64 },
+            features: { features: [] }
+        };
+
+        const fontInfoManager = loadFontInfoManager();
+        fontInfoManager.init();
+        jest.runOnlyPendingTimers();
+        fontInfoManager.switchTab('custom_ot_values');
+
+        const editor = document.querySelector(
+            '[data-font-field="custom_ot_values.os2_fs_selection"]'
+        );
+        const options = [...editor.querySelectorAll('.fontinfo-bit-option')];
+        const regular = options.find((option) =>
+            option.textContent.includes('Regular')
+        );
+        const typoMetrics = options.find((option) =>
+            option.textContent.includes('Use typo metrics')
+        );
+        expect(regular.querySelector('input').checked).toBe(true);
+        expect(typoMetrics.querySelector('input').checked).toBe(false);
+
+        const checkbox = typoMetrics.querySelector('input');
+        checkbox.checked = true;
+        checkbox.dispatchEvent(new Event('change'));
+
+        expect(editor.querySelector('.localized-string-input').value).toBe(
+            '192'
+        );
+        expect(bridge.applySyntheticChangeSet).toHaveBeenLastCalledWith(
+            'Edit custom OpenType value',
+            [expect.objectContaining({ newValue: 192 })],
+            expect.anything()
+        );
+    });
+
     test('fontModelSync rebuilds masters and instances panels when active', () => {
         document.body.innerHTML = `
                 <div id="view-fontinfo" class="view view-fontinfo focused">

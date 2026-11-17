@@ -6,6 +6,7 @@ export const CORE_VERTICAL_METRIC_KEYS = new Set([
     'descender',
     'xHeight',
     'XHeight',
+    'capHeight',
     'CapHeight'
 ]);
 
@@ -151,6 +152,7 @@ const CORE_METRIC_KEY_TO_FAMILY: Record<string, CoreMetricFamily> = {
     Ascender: 'ascender',
     ascender: 'ascender',
     CapHeight: 'capheight',
+    capHeight: 'capheight',
     XHeight: 'xheight',
     xHeight: 'xheight',
     Descender: 'descender',
@@ -502,4 +504,147 @@ export function getMetricOvershootBands(
         });
     }
     return bands;
+}
+
+/**
+ * Glyphs writing-script names that are not the lowercased Unicode script name
+ * with underscores removed. Glyphs files scope metrics with these names.
+ */
+const UNICODE_TO_GLYPHS_SCRIPT: Record<string, string> = {
+    Tibetan: 'tibet',
+    Hiragana: 'kana',
+    Katakana: 'kana',
+    New_Tai_Lue: 'lue',
+    Tai_Tham: 'tham',
+    Canadian_Aboriginal: 'canadian',
+    Old_Hungarian: 'rovas',
+    Pahawh_Hmong: 'pahawh hmong',
+    Nyiakeng_Puachue_Hmong: 'nyiakeng puachue hmong'
+};
+
+/**
+ * Map a Unicode script name from Glyph Data (`Latin`, `Tai_Tham`) to the
+ * script name Glyphs uses (`latin`, `tham`). `Common`, `Inherited` and
+ * unknown values have no script, so they return null.
+ */
+export function glyphsScriptForUnicodeScript(
+    unicodeScript: string | null | undefined
+): string | null {
+    if (!unicodeScript) {
+        return null;
+    }
+    if (
+        unicodeScript === 'Common' ||
+        unicodeScript === 'Inherited' ||
+        unicodeScript === 'Unknown'
+    ) {
+        return null;
+    }
+    return (
+        UNICODE_TO_GLYPHS_SCRIPT[unicodeScript] ??
+        unicodeScript.replace(/_/g, '').toLowerCase()
+    );
+}
+
+/**
+ * Writing script of a glyph in Glyphs terms: the glyph's own Glyphs `script`
+ * property wins, otherwise its Glyph Data script.
+ */
+export function glyphsScriptForGlyph(
+    glyph:
+        | {
+              format_specific?: Record<string, unknown> | null;
+              glyphData?: { script?: string } | null;
+          }
+        | null
+        | undefined
+): string | null {
+    const ownScript = glyph?.format_specific?.script;
+    if (typeof ownScript === 'string' && ownScript.trim()) {
+        return ownScript.trim();
+    }
+    return glyphsScriptForUnicodeScript(glyph?.glyphData?.script);
+}
+
+const FILTERED_METRIC_KEY = /^(.*?)\s*\(filter\s+(.*)\)$/;
+const SCRIPT_PREDICATE = /^script\s*==\s*"([^"]*)"$/;
+
+export interface ScopedMetricKey {
+    /** Metric type as Babelfont writes it, e.g. `xHeight`. */
+    baseKey: string;
+    /** Glyphs script name, or null when the filter is not a plain script test. */
+    script: string | null;
+    overshoot: boolean;
+}
+
+/**
+ * Parse a Babelfont key for a Glyphs metric with a filter, such as
+ * `xHeight (filter script == "cyrillic")` or the same key plus ` overshoot`.
+ * Returns null for keys without a filter.
+ */
+export function parseScopedMetricKey(
+    metricKey: string
+): ScopedMetricKey | null {
+    let key = metricKey.trim();
+    const overshoot = normalizeMetricKey(key).endsWith(OVERSHOOT_KEY_SUFFIX);
+    if (overshoot) {
+        key = key.slice(0, -OVERSHOOT_KEY_SUFFIX.length).trim();
+    }
+    const match = key.match(FILTERED_METRIC_KEY);
+    if (!match) {
+        return null;
+    }
+    const scriptMatch = match[2].trim().match(SCRIPT_PREDICATE);
+    return {
+        baseKey: match[1].trim(),
+        script: scriptMatch ? scriptMatch[1] : null,
+        overshoot
+    };
+}
+
+/** Babelfont key for a metric that applies only to one Glyphs script. */
+export function scriptMetricKey(
+    baseKey: string,
+    script: string,
+    overshoot = false
+): string {
+    const key = `${baseKey} (filter script == "${script}")`;
+    return overshoot ? `${key}${OVERSHOOT_KEY_SUFFIX}` : key;
+}
+
+/**
+ * The metrics that apply to a glyph of `script`. A metric scoped to that
+ * script replaces the unscoped metric of the same type and its zone. Every
+ * other scoped metric (other scripts, or filters that are not a plain script
+ * test) is left out, so it is never drawn for the wrong glyphs.
+ */
+export function resolveVerticalMetricsForScript(
+    verticalMetrics: Record<string, number>,
+    script: string | null
+): Record<string, number> {
+    const resolved: Record<string, number> = {};
+    const replacements: Array<{ key: string; value: number }> = [];
+    for (const [metricKey, value] of Object.entries(verticalMetrics)) {
+        const scoped = parseScopedMetricKey(metricKey);
+        if (!scoped) {
+            resolved[metricKey] = value;
+            continue;
+        }
+        if (script && scoped.script === script) {
+            replacements.push({
+                key: scoped.overshoot
+                    ? `${scoped.baseKey}${OVERSHOOT_KEY_SUFFIX}`
+                    : scoped.baseKey,
+                value
+            });
+        }
+    }
+    for (const { key, value } of replacements) {
+        const normalized = normalizeMetricKey(key);
+        const existingKey = Object.keys(resolved).find(
+            (candidate) => normalizeMetricKey(candidate) === normalized
+        );
+        resolved[existingKey ?? key] = value;
+    }
+    return resolved;
 }

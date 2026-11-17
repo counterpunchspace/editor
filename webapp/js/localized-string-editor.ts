@@ -9,8 +9,14 @@ import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
 
 export interface LocalizedStringEditorOptions {
     label: string;
+    /** Small technical key under the label, such as `name ID 1`. */
+    labelDetail?: string;
     value?: Babelfont.I18NDictionary;
     multiline?: boolean;
+    /** Shown in the empty field, e.g. the value written in its place. */
+    placeholder?: string;
+    /** A lasting note under the field. */
+    note?: string;
     onCommit: (nextValue: Babelfont.I18NDictionary) => void;
 }
 
@@ -115,6 +121,12 @@ export function createLocalizedStringEditor(
     const label = document.createElement('label');
     label.className = 'localized-string-label';
     label.textContent = options.label;
+    if (options.labelDetail) {
+        const detail = document.createElement('small');
+        detail.className = 'fontinfo-field-key';
+        detail.textContent = options.labelDetail;
+        label.appendChild(detail);
+    }
 
     const toolbar = document.createElement('div');
     toolbar.className = 'localized-string-toolbar';
@@ -135,6 +147,9 @@ export function createLocalizedStringEditor(
     if (!(input instanceof HTMLTextAreaElement)) {
         input.type = 'text';
     }
+    if (options.placeholder) {
+        input.placeholder = options.placeholder;
+    }
 
     header.appendChild(label);
     toolbar.appendChild(localesButton);
@@ -142,6 +157,12 @@ export function createLocalizedStringEditor(
     root.appendChild(header);
     root.appendChild(input);
     root.appendChild(helper);
+    if (options.note) {
+        const note = document.createElement('div');
+        note.className = 'localized-string-helper localized-string-note';
+        note.textContent = options.note;
+        root.appendChild(note);
+    }
 
     let currentValue = cloneLocalizedStringValue(options.value);
     let modalEl: HTMLElement | null = null;

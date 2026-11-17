@@ -59,7 +59,7 @@ import {
     type LocalizedStringEditorHandle
 } from './localized-string-editor';
 import { designspaceToUserspace, userspaceToDesignspace } from './locations';
-import type { UserspaceLocation } from './locations';
+import type { DesignspaceLocation, UserspaceLocation } from './locations';
 import { openAddAxisDialog } from './add-axis-dialog';
 import type { AxisDialogFont } from './add-axis-plan';
 import { AxisMapEditor } from './axis-map-editor';
@@ -73,10 +73,24 @@ import {
     type FeaNamedKind
 } from './features-structure';
 import {
-    ADDITIONAL_METRICS_PANEL_KEYS,
-    isAdditionalMetricsPanelKey,
-    isHiddenStationMetricsPanelKey
+    isHiddenStationMetricsPanelKey,
+    parseScopedMetricKey,
+    scriptMetricKey
 } from './glyph-canvas/vertical-metrics';
+import {
+    CORE_STATION_METRICS,
+    GLYPHS_METRIC_SCRIPTS,
+    SCRIPT_METRIC_TYPES,
+    coreMetricKey,
+    coreZoneKey,
+    createMetricsPreview,
+    findMetricKey,
+    glyphsScriptLabel,
+    isStructuredStationMetricKey,
+    italicAngleKey,
+    lineSpacingDefaults,
+    scriptsWithMetrics
+} from './font-info-station-metrics';
 // Import FEA mode for Ace Editor (registers the mode automatically)
 import './mode-fea';
 const console = new Logger('FontInfo');
@@ -171,11 +185,15 @@ interface FontInfoSectionConfig {
 interface FontNameFieldConfig {
     key: FontNameFieldKey;
     label: string;
+    nameId: number;
     multiline?: boolean;
+    placeholder?: (context: NameFallbackContext) => string;
+    note?: (context: NameFallbackContext) => string;
 }
 
 interface FontNameGroupConfig {
     title: string;
+    description?: string;
     fields: FontNameFieldConfig[];
 }
 
@@ -186,10 +204,13 @@ interface CustomOTFieldConfig {
     helperText?: string;
     exactLength?: number;
     placeholder?: string;
+    /** Bits shown as checkboxes for an integer bit field: [bit, label]. */
+    bits?: Array<[number, string]>;
 }
 
 interface CustomOTGroupConfig {
     title: string;
+    description?: string;
     fields: CustomOTFieldConfig[];
 }
 
@@ -236,161 +257,244 @@ const FONTINFO_SECTIONS: FontInfoSectionConfig[] = [
     }
 ];
 
+/** What fontc writes when a name field is empty, worked out from the font. */
+interface NameFallbackContext {
+    typographicFamily: string;
+    typographicSubfamily: string;
+    computedFamilyName: string;
+    version: string;
+    vendor: string;
+    postscriptName: string;
+}
+
+// Name IDs and fallbacks follow babelfont's fontir bridge
+// (convertors/fontir/static_metadata.rs) and fontir's NameBuilder.
 const FONT_NAME_GROUPS: FontNameGroupConfig[] = [
     {
-        title: 'Identity',
+        title: 'Family and style',
+        description:
+            'How apps list the font and group it with its styles. The compiler builds name IDs 1 and 2 itself, so they can differ from what you type here.',
         fields: [
-            { key: 'family_name', label: 'Family Name' },
+            {
+                key: 'family_name',
+                label: 'Family Name',
+                nameId: 1,
+                placeholder: () => 'Required',
+                note: (context) =>
+                    `Name ID 1 is this name plus the default station’s name, without a trailing Regular, Bold or Italic: “${context.computedFamilyName}”.`
+            },
             {
                 key: 'preferred_subfamily_name',
-                label: 'Preferred Subfamily Name'
+                label: 'Subfamily Name',
+                nameId: 2,
+                note: () =>
+                    'The compiler always writes Regular, Italic, Bold or Bold Italic here, from the style flags. This field only adds translations of that value.'
             },
-            { key: 'typographic_family', label: 'Typographic Family' },
+            {
+                key: 'typographic_family',
+                label: 'Typographic Family',
+                nameId: 16,
+                placeholder: (context) => context.typographicFamily,
+                note: () =>
+                    'Left out of the font when it repeats name IDs 1 and 2, unless you type it.'
+            },
             {
                 key: 'typographic_subfamily',
-                label: 'Typographic Subfamily'
-            },
-            { key: 'full_name', label: 'Full Name' },
-            { key: 'version', label: 'Version' }
-        ]
-    },
-    {
-        title: 'Technical/OpenType',
-        fields: [
-            { key: 'postscript_name', label: 'PostScript Name' },
-            {
-                key: 'variations_postscript_name_prefix',
-                label: 'Variations PostScript Name Prefix'
-            },
-            { key: 'unique_id', label: 'Unique ID' },
-            {
-                key: 'compatible_full_name',
-                label: 'Compatible Full Name'
-            },
-            { key: 'postscript_cid_name', label: 'PostScript CID Name' },
-            { key: 'wws_family_name', label: 'WWS Family Name' },
-            { key: 'wws_subfamily_name', label: 'WWS Subfamily Name' }
-        ]
-    },
-    {
-        title: 'Credits/URLs',
-        fields: [
-            { key: 'designer', label: 'Designer' },
-            { key: 'designer_url', label: 'Designer URL' },
-            { key: 'manufacturer', label: 'Manufacturer' },
-            { key: 'manufacturer_url', label: 'Manufacturer URL' }
-        ]
-    },
-    {
-        title: 'Legal/Descriptive',
-        fields: [
-            { key: 'copyright', label: 'Copyright', multiline: true },
-            { key: 'trademark', label: 'Trademark' },
-            { key: 'description', label: 'Description', multiline: true },
-            { key: 'license', label: 'License', multiline: true },
-            { key: 'license_url', label: 'License URL' },
-            { key: 'sample_text', label: 'Sample Text', multiline: true }
-        ]
-    }
-];
-
-const CUSTOM_OT_GROUPS: CustomOTGroupConfig[] = [
-    {
-        title: 'Head',
-        fields: [
-            {
-                key: 'head_flags',
-                label: 'Head Flags',
-                kind: 'integer',
-                placeholder: 'Bit field, e.g. 3 or 2048',
-                helperText:
-                    'Bit field for head.flags. Common low bits are 0 = baseline at y=0, 1 = LSB at x=0, 3 = integer PPEM math, 11 = lossless, 13 = ClearType optimized.'
+                label: 'Typographic Subfamily',
+                nameId: 17,
+                placeholder: (context) => context.typographicSubfamily,
+                note: () =>
+                    'Empty: the default station’s name. Left out of the font when it repeats name IDs 1 and 2, unless you type it.'
             },
             {
-                key: 'head_lowest_rec_ppem',
-                label: 'Lowest Recommended PPEM',
-                kind: 'integer',
-                placeholder: 'Usually a small integer such as 8 or 9',
-                helperText:
-                    'Sets head.lowestRecPPEM, the smallest recommended rendering size in pixels per em.'
+                key: 'full_name',
+                label: 'Full Name',
+                nameId: 4,
+                placeholder: (context) =>
+                    `${context.typographicFamily} ${context.typographicSubfamily}`
             }
         ]
     },
     {
-        title: 'OS/2',
+        title: 'Identifiers',
+        description:
+            'Machine-readable names. Leave them empty to have the compiler build them from the names above.',
+        fields: [
+            {
+                key: 'version',
+                label: 'Version String',
+                nameId: 5,
+                placeholder: (context) => context.version,
+                note: () =>
+                    'The compiler adds “;fontc” and its own version to this name, typed or not.'
+            },
+            {
+                key: 'postscript_name',
+                label: 'PostScript Name',
+                nameId: 6,
+                placeholder: (context) => context.postscriptName,
+                note: () =>
+                    'A typed value is written as is. Use letters, digits and hyphens only, with no spaces.'
+            },
+            {
+                key: 'variations_postscript_name_prefix',
+                label: 'Variations PostScript Name Prefix',
+                nameId: 25,
+                note: () => 'Not written when empty.'
+            },
+            {
+                key: 'unique_id',
+                label: 'Unique ID',
+                nameId: 3,
+                placeholder: (context) =>
+                    `${context.version.replace(/^Version /, '')};${context.vendor};${context.postscriptName}`
+            }
+        ]
+    },
+    {
+        title: 'Credits',
+        description: 'Who made the font. Each field is written only when set.',
+        fields: [
+            { key: 'designer', label: 'Designer', nameId: 9 },
+            { key: 'designer_url', label: 'Designer URL', nameId: 12 },
+            { key: 'manufacturer', label: 'Manufacturer', nameId: 8 },
+            { key: 'manufacturer_url', label: 'Manufacturer URL', nameId: 11 }
+        ]
+    },
+    {
+        title: 'Legal',
+        description:
+            'Shown in licensing dialogs. Each field is written only when set.',
+        fields: [
+            {
+                key: 'copyright',
+                label: 'Copyright',
+                nameId: 0,
+                multiline: true
+            },
+            { key: 'trademark', label: 'Trademark', nameId: 7 },
+            { key: 'license', label: 'License', nameId: 13, multiline: true },
+            { key: 'license_url', label: 'License URL', nameId: 14 }
+        ]
+    },
+    {
+        title: 'Description and sample',
+        description:
+            'Used by font managers. Each field is written only when set.',
+        fields: [
+            {
+                key: 'description',
+                label: 'Description',
+                nameId: 10,
+                multiline: true
+            },
+            {
+                key: 'sample_text',
+                label: 'Sample Text',
+                nameId: 19,
+                multiline: true
+            }
+        ]
+    },
+    {
+        title: 'Legacy and platform-specific',
+        description:
+            'Only needed for older apps or specific platforms. Each field is written only when set.',
+        fields: [
+            {
+                key: 'compatible_full_name',
+                label: 'Compatible Full Name',
+                nameId: 18
+            },
+            {
+                key: 'postscript_cid_name',
+                label: 'PostScript CID Name',
+                nameId: 20
+            },
+            {
+                key: 'wws_family_name',
+                label: 'WWS Family Name',
+                nameId: 21,
+                note: () =>
+                    'When set, the compiler also turns on the WWS style flag (fsSelection bit 8).'
+            },
+            {
+                key: 'wws_subfamily_name',
+                label: 'WWS Subfamily Name',
+                nameId: 22
+            }
+        ]
+    }
+];
+
+// Defaults and effects follow babelfont's fontir bridge
+// (convertors/fontir/static_metadata.rs) and fontc's fontbe (os2.rs, head.rs).
+const CUSTOM_OT_GROUPS: CustomOTGroupConfig[] = [
+    {
+        title: 'Font header (head)',
+        description:
+            'Global rendering values. Empty fields use the compiler’s defaults.',
+        fields: [
+            {
+                key: 'head_flags',
+                label: 'Flags',
+                kind: 'integer',
+                placeholder: 'Default 3',
+                helperText:
+                    'head.flags. Empty: 3. The compiler always sets bit 1.',
+                bits: [
+                    [0, 'Baseline at y = 0'],
+                    [1, 'Left sidebearing at x = 0'],
+                    [3, 'Scale with whole-pixel sizes'],
+                    [11, 'Font data is lossless'],
+                    [13, 'Optimized for ClearType']
+                ]
+            },
+            {
+                key: 'head_lowest_rec_ppem',
+                label: 'Smallest readable size',
+                kind: 'integer',
+                placeholder: 'Default 6',
+                helperText: 'head.lowestRecPPEM, in pixels per em. Empty: 6.'
+            }
+        ]
+    },
+    {
+        title: 'Classification (OS/2)',
+        description: 'How apps sort the font and match it to other styles.',
         fields: [
             {
                 key: 'os2_us_weight_class',
-                label: 'Weight Class',
+                label: 'Weight class',
                 kind: 'integer',
-                placeholder: '1-1000, e.g. 400 or 700',
+                placeholder: 'Default 400',
                 helperText:
-                    'OS/2 usWeightClass. Standard values are usually 100 Thin, 400 Regular, 700 Bold, 900 Black.'
+                    'usWeightClass, such as 400 Regular or 700 Bold. A font with a wght axis always gets the axis default instead.'
             },
             {
                 key: 'os2_us_width_class',
-                label: 'Width Class',
+                label: 'Width class',
                 kind: 'integer',
-                placeholder: '1-9, where 5 is normal width',
+                placeholder: 'Default 5',
                 helperText:
-                    'OS/2 usWidthClass. Typical values are 3 Condensed, 5 Normal, 7 Expanded.'
-            },
-            {
-                key: 'os2_fs_type',
-                label: 'fsType',
-                kind: 'integer',
-                placeholder: 'Embedding rights bit field',
-                helperText:
-                    'OS/2 fsType bit field. 0 means installable embedding; 2 restricted license; 4 preview/print; 8 no embedding; 256 no subsetting; 512 bitmap only.'
+                    'usWidthClass from 1 to 9, where 5 is normal. A font with a wdth axis always gets the class nearest the axis default instead.'
             },
             {
                 key: 'os2_family_class',
-                label: 'Family Class',
+                label: 'Family class',
                 kind: 'integer',
-                placeholder: 'Packed class/subclass integer',
+                placeholder: 'Default 0',
                 helperText:
-                    'OS/2 family class and subclass packed into one integer. Leave blank unless you intentionally classify the design.'
+                    'sFamilyClass: class in the high byte, subclass in the low byte. Empty: 0, no classification.'
             },
             {
                 key: 'os2_panose',
-                label: 'Panose',
+                label: 'PANOSE',
                 kind: 'number-list',
                 exactLength: 10,
-                placeholder: '2, 11, 6, 4, 2, 2, 2, 2, 2, 4',
+                placeholder: '0, 0, 0, 0, 0, 0, 0, 0, 0, 0',
                 helperText:
-                    'Panose classification as 10 comma-separated integers in order. Must contain exactly 10 values.'
-            },
-            {
-                key: 'os2_unicode_range1',
-                label: 'Unicode Range 1',
-                kind: 'integer',
-                placeholder: 'Bits 0-31',
-                helperText:
-                    'OS/2 ulUnicodeRange1. Bit field for Unicode blocks 0-31 as defined by the OpenType spec.'
-            },
-            {
-                key: 'os2_unicode_range2',
-                label: 'Unicode Range 2',
-                kind: 'integer',
-                placeholder: 'Bits 32-63',
-                helperText:
-                    'OS/2 ulUnicodeRange2. Bit field for Unicode blocks 32-63.'
-            },
-            {
-                key: 'os2_unicode_range3',
-                label: 'Unicode Range 3',
-                kind: 'integer',
-                placeholder: 'Bits 64-95',
-                helperText:
-                    'OS/2 ulUnicodeRange3. Bit field for Unicode blocks 64-95.'
-            },
-            {
-                key: 'os2_unicode_range4',
-                label: 'Unicode Range 4',
-                kind: 'integer',
-                placeholder: 'Bits 96-127',
-                helperText:
-                    'OS/2 ulUnicodeRange4. Bit field for Unicode blocks 96-127.'
+                    'Ten numbers in order, separated by commas. Empty: all 0, which means “any”.'
             },
             {
                 key: 'os2_vendor_id',
@@ -398,36 +502,101 @@ const CUSTOM_OT_GROUPS: CustomOTGroupConfig[] = [
                 kind: 'string',
                 placeholder: 'Four-character vendor code, e.g. ABCD',
                 helperText:
-                    'OS/2 achVendID. Usually a four-character vendor identifier. Leave blank to remove the override.'
+                    'achVendID, your four-character vendor code. Empty: NONE. The unique ID (name ID 3) uses it too.'
+            }
+        ]
+    },
+    {
+        title: 'Embedding and style flags (OS/2)',
+        description:
+            'Tick the bits you want, or type the number. Empty fields use the compiler’s defaults.',
+        fields: [
+            {
+                key: 'os2_fs_type',
+                label: 'Embedding (fsType)',
+                kind: 'integer',
+                placeholder: 'Default 0',
+                helperText:
+                    'Embedding permissions. Empty: 0, installable embedding with no restrictions.',
+                bits: [
+                    [1, 'Restricted license embedding'],
+                    [2, 'Preview and print embedding'],
+                    [3, 'Editable embedding'],
+                    [8, 'No subsetting'],
+                    [9, 'Bitmap embedding only']
+                ]
             },
             {
                 key: 'os2_fs_selection',
-                label: 'fsSelection',
+                label: 'Style flags (fsSelection)',
                 kind: 'integer',
-                placeholder: 'Style bit field',
+                placeholder: 'Automatic',
                 helperText:
-                    'OS/2 fsSelection bit field. Common bits include 0 Italic, 5 Bold, 6 Regular, 7 Use Typo Metrics, 8 WWS, 9 Oblique.'
+                    'Italic, Bold or Regular set here replace the style the compiler works out from the italic angle and the default station’s name; that style also gives name ID 2. Other bits are written as set. The WWS bit is added when WWS Family Name is set.',
+                bits: [
+                    [0, 'Italic'],
+                    [5, 'Bold'],
+                    [6, 'Regular'],
+                    [7, 'Use typo metrics for line spacing'],
+                    [8, 'Names follow the WWS model'],
+                    [9, 'Oblique']
+                ]
+            }
+        ]
+    },
+    {
+        title: 'Coverage (OS/2)',
+        description:
+            'Leave all six empty to have the compiler compute them from the encoded characters. If you set any Unicode range, all four are used and empty ones count as 0; the same applies to the two code page ranges.',
+        fields: [
+            {
+                key: 'os2_unicode_range1',
+                label: 'Unicode Range 1',
+                kind: 'integer',
+                placeholder: 'Computed',
+                helperText: 'ulUnicodeRange1, bits 0–31.'
+            },
+            {
+                key: 'os2_unicode_range2',
+                label: 'Unicode Range 2',
+                kind: 'integer',
+                placeholder: 'Computed',
+                helperText: 'ulUnicodeRange2, bits 32–63.'
+            },
+            {
+                key: 'os2_unicode_range3',
+                label: 'Unicode Range 3',
+                kind: 'integer',
+                placeholder: 'Computed',
+                helperText: 'ulUnicodeRange3, bits 64–95.'
+            },
+            {
+                key: 'os2_unicode_range4',
+                label: 'Unicode Range 4',
+                kind: 'integer',
+                placeholder: 'Computed',
+                helperText: 'ulUnicodeRange4, bits 96–127.'
             },
             {
                 key: 'os2_code_page_range1',
                 label: 'Code Page Range 1',
                 kind: 'integer',
-                placeholder: 'Bits 0-31',
-                helperText:
-                    'OS/2 ulCodePageRange1 bit field for code pages 0-31.'
+                placeholder: 'Computed',
+                helperText: 'ulCodePageRange1, bits 0–31.'
             },
             {
                 key: 'os2_code_page_range2',
                 label: 'Code Page Range 2',
                 kind: 'integer',
-                placeholder: 'Bits 32-63',
-                helperText:
-                    'OS/2 ulCodePageRange2 bit field for code pages 32-63.'
+                placeholder: 'Computed',
+                helperText: 'ulCodePageRange2, bits 32–63.'
             }
         ]
     },
     {
-        title: 'CFF',
+        title: 'PostScript hinting (CFF)',
+        description:
+            'The compiler writes TrueType outlines only, with no CFF table, so these values have no effect on the compiled font. They stay in the source and in UFO files.',
         fields: [
             {
                 key: 'cff_blue_values',
@@ -435,23 +604,21 @@ const CUSTOM_OT_GROUPS: CustomOTGroupConfig[] = [
                 kind: 'number-list',
                 placeholder: '-15, 0, 500, 515, 700, 715',
                 helperText:
-                    'CFF BlueValues. Comma-separated overshoot alignment zones, usually in bottom/top pairs.'
+                    'Alignment zones as bottom and top pairs, separated by commas.'
             },
             {
                 key: 'cff_other_blues',
                 label: 'OtherBlues',
                 kind: 'number-list',
                 placeholder: '-250, -235',
-                helperText:
-                    'CFF OtherBlues. Additional bottom alignment zones as comma-separated numbers.'
+                helperText: 'More zones below the baseline, in pairs.'
             },
             {
                 key: 'cff_family_blues',
                 label: 'FamilyBlues',
                 kind: 'number-list',
                 placeholder: '0, 15, 500, 515',
-                helperText:
-                    'CFF FamilyBlues. Family-wide blue zones used to keep related fonts aligned.'
+                helperText: 'Zones shared by the family, in pairs.'
             },
             {
                 key: 'cff_family_other_blues',
@@ -459,23 +626,21 @@ const CUSTOM_OT_GROUPS: CustomOTGroupConfig[] = [
                 kind: 'number-list',
                 placeholder: '-250, -235',
                 helperText:
-                    'CFF FamilyOtherBlues. Family-wide bottom zones as comma-separated numbers.'
+                    'Zones below the baseline shared by the family, in pairs.'
             },
             {
                 key: 'cff_stem_snap_h',
                 label: 'StemSnapH',
                 kind: 'number-list',
                 placeholder: '80, 120',
-                helperText:
-                    'CFF StemSnapH. Preferred horizontal stem widths as comma-separated numbers.'
+                helperText: 'Common horizontal stem thicknesses.'
             },
             {
                 key: 'cff_stem_snap_v',
                 label: 'StemSnapV',
                 kind: 'number-list',
                 placeholder: '80, 120',
-                helperText:
-                    'CFF StemSnapV. Preferred vertical stem widths as comma-separated numbers.'
+                helperText: 'Common vertical stem thicknesses.'
             }
         ]
     }
@@ -513,6 +678,36 @@ function parseIntegerInput(rawValue: string): number | undefined | null {
     }
 
     return nextValue;
+}
+
+/**
+ * The default station sits at every axis default (see babelfont's
+ * Font::default_master); a single station is always the default.
+ */
+function findDefaultStation<T extends { location: Record<string, number> }>(
+    axes: Babelfont.Axis[],
+    stations: T[]
+): T | undefined {
+    const defaults = userspaceToDesignspace(
+        Object.fromEntries(
+            axes.map((axis) => [axis.tag, axis.default ?? 0])
+        ) as UserspaceLocation,
+        axes
+    ) as Record<string, number>;
+    return (
+        stations.find((station) =>
+            axes.every(
+                (axis) =>
+                    (station.location[axis.tag] ?? 0) ===
+                    (defaults[axis.tag] ?? 0)
+            )
+        ) ?? stations[0]
+    );
+}
+
+/** An axis coordinate for display: at most two decimals, no trailing zeros. */
+function formatAxisValue(value: number): string {
+    return Number.isFinite(value) ? String(Math.round(value * 100) / 100) : '';
 }
 
 function parseNumericInput(rawValue: string): number | undefined | null {
@@ -3980,7 +4175,7 @@ class FontInfoManager {
         const helper = document.createElement('div');
         helper.className = 'localized-string-helper';
         helper.textContent =
-            'Stored as an ISO date when serialized. Use Now to stamp the current local date and time.';
+            'Written to head.created. Shown in your local time and stored as UTC. Now stamps the current date and time.';
         wrapper.appendChild(helper);
 
         const commit = (): void => {
@@ -4097,7 +4292,8 @@ class FontInfoManager {
 
         const helper = document.createElement('div');
         helper.className = 'localized-string-helper';
-        helper.textContent = 'Stored as a [major, minor] tuple.';
+        helper.textContent =
+            'Written to head.fontRevision, so 1 and 3 become 1.003. Name ID 5 defaults to “Version 1.003”; the compiler adds “;fontc” and its own version to it.';
         wrapper.appendChild(helper);
 
         return wrapper;
@@ -4134,6 +4330,8 @@ class FontInfoManager {
                 step: '1',
                 min: '1',
                 dataField: 'upm',
+                helperText:
+                    'Units per em, written to head.unitsPerEm. Most fonts use 1000.',
                 onCommit: (rawValue) => {
                     const nextValue = parseIntegerInput(rawValue);
                     if (typeof nextValue !== 'number') {
@@ -4155,7 +4353,8 @@ class FontInfoManager {
                 value: font.note ?? '',
                 multiline: true,
                 dataField: 'note',
-                helperText: 'Leave blank to remove the note.',
+                helperText:
+                    'Kept in the source file only, never written to the compiled font. Leave blank to remove the note.',
                 onCommit: (rawValue) => {
                     const nextValue =
                         rawValue.trim().length > 0 ? rawValue : undefined;
@@ -4180,23 +4379,19 @@ class FontInfoManager {
         this.namesFieldsContainer.innerHTML = '';
         this.namesFieldEditors.clear();
 
+        const context = this.buildNameFallbackContext();
         FONT_NAME_GROUPS.forEach((group) => {
-            const groupEl = document.createElement('section');
-            groupEl.className = 'fontinfo-name-group';
-
-            const titleEl = document.createElement('h3');
-            titleEl.className = 'sidebar-section-title';
-            titleEl.textContent = group.title;
-            groupEl.appendChild(titleEl);
-
-            const fieldsEl = document.createElement('div');
-            fieldsEl.className = 'fontinfo-name-group-fields';
+            const { section: groupEl, fields: fieldsEl } =
+                this.createFontInfoSection(group.title, group.description);
 
             group.fields.forEach((field) => {
                 const editor = createLocalizedStringEditor({
                     label: field.label,
+                    labelDetail: `name ID ${field.nameId}`,
                     value: names[field.key],
                     multiline: field.multiline,
+                    placeholder: field.placeholder?.(context),
+                    note: field.note?.(context),
                     onCommit: (nextValue) =>
                         this.commitNameFieldValue(field.key, nextValue)
                 });
@@ -4206,9 +4401,78 @@ class FontInfoManager {
                 this.namesFieldEditors.set(field.key, editor);
             });
 
-            groupEl.appendChild(fieldsEl);
             this.namesFieldsContainer?.appendChild(groupEl);
         });
+    }
+
+    /** The values fontc writes for empty name fields of the open font. */
+    private buildNameFallbackContext(): NameFallbackContext {
+        const font = window.currentFontModel ?? undefined;
+        const names = (font?.names ?? {}) as Partial<
+            Record<FontNameFieldKey, Babelfont.I18NDictionary>
+        >;
+        const read = (key: FontNameFieldKey): string => {
+            const value = names[key];
+            if (!value) {
+                return '';
+            }
+            const values = Object.values(value);
+            return value.dflt ?? (values.length === 1 ? values[0] : '') ?? '';
+        };
+        const axes = plainRecords<Babelfont.Axis>(font?.axes);
+        const stations = plainRecords<Babelfont.Master>(font?.stations).map(
+            (station) => ({
+                name:
+                    typeof station.name === 'string'
+                        ? station.name
+                        : (station.name?.dflt ?? ''),
+                location: Object.fromEntries(
+                    Object.entries(station.location ?? {}).map(
+                        ([tag, value]) => [tag, Number(value)]
+                    )
+                )
+            })
+        );
+        const defaultStyle =
+            findDefaultStation(axes, stations)?.name || 'Regular';
+        const family = read('family_name');
+        const typographicFamily = read('typographic_family') || family;
+        const typographicSubfamily =
+            read('typographic_subfamily') || defaultStyle;
+        const familyWords = [family, ...defaultStyle.split(/\s+/)];
+        while (
+            ['Regular', 'Bold', 'Italic'].includes(
+                familyWords[familyWords.length - 1]
+            )
+        ) {
+            familyWords.pop();
+        }
+        const [major, minor] = (font?.version ?? [1, 0]) as [number, number];
+        const vendor =
+            String(
+                (font?.custom_ot_values as Babelfont.CustomOTValues | undefined)
+                    ?.os2_vendor_id ?? ''
+            ) || 'NONE';
+        const postscriptName =
+            `${typographicFamily.replace(/\s/g, '')}-${typographicSubfamily}`
+                .split('')
+                .filter((character) => {
+                    const code = character.charCodeAt(0);
+                    return (
+                        code >= 33 &&
+                        code < 127 &&
+                        !'[](){}<>/%'.includes(character)
+                    );
+                })
+                .join('');
+        return {
+            typographicFamily,
+            typographicSubfamily,
+            computedFamilyName: familyWords.filter(Boolean).join(' '),
+            version: `Version ${major}.${String(minor).padStart(3, '0')}`,
+            vendor,
+            postscriptName
+        };
     }
 
     private createCheckboxFieldEditor(options: {
@@ -4477,16 +4741,8 @@ class FontInfoManager {
         }
 
         CUSTOM_OT_GROUPS.forEach((group) => {
-            const groupEl = document.createElement('section');
-            groupEl.className = 'fontinfo-name-group';
-
-            const titleEl = document.createElement('h3');
-            titleEl.className = 'sidebar-section-title';
-            titleEl.textContent = group.title;
-            groupEl.appendChild(titleEl);
-
-            const fieldsEl = document.createElement('div');
-            fieldsEl.className = 'fontinfo-name-group-fields';
+            const { section: groupEl, fields: fieldsEl } =
+                this.createFontInfoSection(group.title, group.description);
 
             group.fields.forEach((field) => {
                 const currentValue = options.customOTValues[field.key];
@@ -4499,62 +4755,118 @@ class FontInfoManager {
                           ? ''
                           : String(currentValue);
 
-                fieldsEl.appendChild(
-                    this.createSimpleFieldEditor({
-                        label: field.label,
-                        value: formattedValue,
-                        placeholder: field.placeholder,
-                        dataField: `${options.dataFieldPrefix}.${field.key}`,
-                        helperText: field.helperText,
-                        onCommit: (rawValue) => {
-                            let nextValue: unknown;
+                const editor = this.createSimpleFieldEditor({
+                    label: field.label,
+                    value: formattedValue,
+                    inputType: field.kind === 'integer' ? 'number' : undefined,
+                    step: field.kind === 'integer' ? '1' : undefined,
+                    placeholder: field.placeholder,
+                    dataField: `${options.dataFieldPrefix}.${field.key}`,
+                    helperText: field.helperText,
+                    onCommit: (rawValue) => {
+                        let nextValue: unknown;
 
-                            if (field.kind === 'integer') {
-                                const parsedValue = parseIntegerInput(rawValue);
-                                if (parsedValue === null) {
-                                    return currentValue === undefined ||
-                                        currentValue === null
-                                        ? ''
-                                        : String(currentValue);
-                                }
-                                nextValue = parsedValue;
-                            } else if (field.kind === 'number-list') {
-                                const parsedValue = parseNumberListInput(
-                                    rawValue,
-                                    field.exactLength
-                                );
-                                if (parsedValue === null) {
-                                    return formatNumberListValue(
-                                        currentValue as number[] | undefined
-                                    );
-                                }
-                                nextValue = parsedValue;
-                            } else {
-                                nextValue =
-                                    rawValue.trim().length > 0
-                                        ? rawValue
-                                        : undefined;
+                        if (field.kind === 'integer') {
+                            const parsedValue = parseIntegerInput(rawValue);
+                            if (parsedValue === null) {
+                                return currentValue === undefined ||
+                                    currentValue === null
+                                    ? ''
+                                    : String(currentValue);
                             }
-
-                            options.onCommit(field.key, nextValue);
-
-                            if (field.kind === 'number-list') {
+                            nextValue = parsedValue;
+                        } else if (field.kind === 'number-list') {
+                            const parsedValue = parseNumberListInput(
+                                rawValue,
+                                field.exactLength
+                            );
+                            if (parsedValue === null) {
                                 return formatNumberListValue(
-                                    nextValue as number[] | undefined
+                                    currentValue as number[] | undefined
                                 );
                             }
-
-                            return nextValue === undefined || nextValue === null
-                                ? ''
-                                : String(nextValue);
+                            nextValue = parsedValue;
+                        } else {
+                            nextValue =
+                                rawValue.trim().length > 0
+                                    ? rawValue
+                                    : undefined;
                         }
-                    })
-                );
+
+                        options.onCommit(field.key, nextValue);
+
+                        if (field.kind === 'number-list') {
+                            return formatNumberListValue(
+                                nextValue as number[] | undefined
+                            );
+                        }
+
+                        return nextValue === undefined || nextValue === null
+                            ? ''
+                            : String(nextValue);
+                    }
+                });
+                if (field.bits) {
+                    this.appendBitFieldOptions(editor, field.bits);
+                }
+                fieldsEl.appendChild(editor);
             });
 
-            groupEl.appendChild(fieldsEl);
             options.container.appendChild(groupEl);
         });
+    }
+
+    /**
+     * Checkboxes for the bits of an integer field. Ticking one writes the
+     * new number into the field and commits it the same way as typing.
+     */
+    private appendBitFieldOptions(
+        editor: HTMLElement,
+        bits: Array<[number, string]>
+    ): void {
+        const input = editor.querySelector('.localized-string-input');
+        if (!(input instanceof HTMLInputElement)) {
+            return;
+        }
+        const list = document.createElement('div');
+        list.className = 'fontinfo-bit-list';
+        const checkboxes: Array<[number, HTMLInputElement]> = [];
+        const currentValue = (): number => {
+            const parsed = parseIntegerInput(input.value);
+            return typeof parsed === 'number' ? parsed : 0;
+        };
+        const sync = (): void => {
+            const value = currentValue();
+            for (const [bit, checkbox] of checkboxes) {
+                checkbox.checked = (value & (1 << bit)) !== 0;
+            }
+        };
+        for (const [bit, label] of bits) {
+            const option = document.createElement('label');
+            option.className = 'fontinfo-bit-option';
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.addEventListener('change', () => {
+                const value = currentValue();
+                input.value = String(
+                    checkbox.checked ? value | (1 << bit) : value & ~(1 << bit)
+                );
+                input.dispatchEvent(new Event('blur'));
+            });
+            const text = document.createElement('span');
+            text.textContent = label;
+            const number = document.createElement('span');
+            number.className = 'fontinfo-bit-number';
+            number.textContent = `bit ${bit}`;
+            option.append(checkbox, text, number);
+            list.appendChild(option);
+            checkboxes.push([bit, checkbox]);
+        }
+        input.addEventListener('input', sync);
+        input.addEventListener('blur', sync);
+        sync();
+        const helper = editor.querySelector('.localized-string-helper');
+        editor.insertBefore(list, helper);
     }
 
     private appendLocationSection(options: {
@@ -4577,42 +4889,69 @@ class FontInfoManager {
         fieldsEl.className = 'fontinfo-name-group-fields';
 
         const locationKeys = getLocationKeys(font?.axes, options.location);
+        const axes = (font?.axes ?? []) as Babelfont.Axis[];
         locationKeys.forEach((axisTag) => {
-            const axis = font?.axes?.find((item) => item.tag === axisTag);
+            const axis = axes.find((item) => item.tag === axisTag);
             const currentValue = options.location?.[axisTag];
-            const label = axis
-                ? `${getLocalizedDictionarySummary(axis.name, axis.tag)} (${axis.tag})`
+            const axisName = axis
+                ? getLocalizedDictionarySummary(axis.name, axis.tag)
                 : axisTag;
+            const label = axis ? `${axisName} (${axis.tag})` : axisTag;
+            const defaultDesignValue =
+                axis?.default !== undefined
+                    ? (
+                          userspaceToDesignspace(
+                              { [axisTag]: axis.default } as UserspaceLocation,
+                              axes
+                          ) as Record<string, number>
+                      )[axisTag]
+                    : undefined;
+            const describe = (designValue: number | undefined): string => {
+                if (!axis) {
+                    return 'Location on an axis the font no longer lists.';
+                }
+                const value = designValue ?? defaultDesignValue;
+                if (value === undefined) {
+                    return 'Design value: the coordinate you draw at.';
+                }
+                const userValue = (
+                    designspaceToUserspace(
+                        { [axisTag]: value } as DesignspaceLocation,
+                        axes
+                    ) as Record<string, number>
+                )[axisTag];
+                return `Design value. People see it as ${formatAxisValue(Number(userValue))} on the ${axisName} axis.`;
+            };
 
-            fieldsEl.appendChild(
-                this.createSimpleFieldEditor({
-                    label,
-                    value:
-                        currentValue === undefined ? '' : String(currentValue),
-                    inputType: 'number',
-                    placeholder:
-                        axis?.default !== undefined
-                            ? `Default ${String(axis.default)}`
-                            : 'Leave blank for default',
-                    dataField: `${options.dataFieldPrefix}.${axisTag}`,
-                    helperText: axis
-                        ? 'Designspace location value for this axis.'
-                        : 'Location value for an axis not currently listed in font.axes.',
-                    onCommit: (rawValue) => {
-                        const parsedValue = parseNumericInput(rawValue);
-                        if (parsedValue === null) {
-                            return currentValue === undefined
-                                ? ''
-                                : String(currentValue);
-                        }
-
-                        options.onCommit(axisTag, parsedValue);
-                        return parsedValue === undefined
+            const editor = this.createSimpleFieldEditor({
+                label,
+                value: currentValue === undefined ? '' : String(currentValue),
+                inputType: 'number',
+                placeholder:
+                    defaultDesignValue !== undefined
+                        ? `Default ${formatAxisValue(Number(defaultDesignValue))}`
+                        : 'Leave blank for default',
+                dataField: `${options.dataFieldPrefix}.${axisTag}`,
+                helperText: describe(currentValue),
+                onCommit: (rawValue) => {
+                    const parsedValue = parseNumericInput(rawValue);
+                    if (parsedValue === null) {
+                        return currentValue === undefined
                             ? ''
-                            : String(parsedValue);
+                            : String(currentValue);
                     }
-                })
-            );
+
+                    options.onCommit(axisTag, parsedValue);
+                    const helper = editor.querySelector(
+                        '.localized-string-helper'
+                    );
+                    if (helper) {
+                        helper.textContent = describe(parsedValue);
+                    }
+                    return parsedValue === undefined ? '' : String(parsedValue);
+                }
+            });
+            fieldsEl.appendChild(editor);
         });
 
         if (locationKeys.length === 0) {
@@ -4626,6 +4965,533 @@ class FontInfoManager {
         }
 
         options.container.appendChild(section);
+    }
+
+    /** A Font info section: title, optional description, and a fields list. */
+    private createFontInfoSection(
+        title: string,
+        description?: string
+    ): { section: HTMLElement; fields: HTMLElement } {
+        const section = document.createElement('section');
+        section.className = 'fontinfo-name-group';
+        const titleEl = document.createElement('h3');
+        titleEl.className = 'sidebar-section-title';
+        titleEl.textContent = title;
+        section.appendChild(titleEl);
+        if (description) {
+            const descriptionEl = document.createElement('p');
+            descriptionEl.className = 'fontinfo-section-description';
+            descriptionEl.textContent = description;
+            section.appendChild(descriptionEl);
+        }
+        const fields = document.createElement('div');
+        fields.className = 'fontinfo-name-group-fields';
+        section.appendChild(fields);
+        return { section, fields };
+    }
+
+    /** A labelled number input that commits on blur or Enter. */
+    private createMetricNumberInput(options: {
+        value: number | undefined;
+        caption?: string;
+        placeholder?: string;
+        ariaLabel: string;
+        dataField: string;
+        disabled?: boolean;
+        onCommit: (nextValue: number | undefined) => void;
+    }): HTMLElement {
+        const wrapper = document.createElement('label');
+        wrapper.className = 'fontinfo-metric-input';
+        wrapper.setAttribute('data-font-field', options.dataField);
+        if (options.caption) {
+            const caption = document.createElement('span');
+            caption.className = 'fontinfo-metric-caption';
+            caption.textContent = options.caption;
+            wrapper.appendChild(caption);
+        }
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.className = 'localized-string-input';
+        input.setAttribute('aria-label', options.ariaLabel);
+        input.value = options.value === undefined ? '' : String(options.value);
+        if (options.placeholder) {
+            input.placeholder = options.placeholder;
+        }
+        input.disabled = Boolean(options.disabled);
+        let lastCommittedValue = input.value;
+        const commit = (): void => {
+            if (input.value === lastCommittedValue) {
+                return;
+            }
+            const parsedValue = parseNumericInput(input.value);
+            if (parsedValue === null) {
+                input.value = lastCommittedValue;
+                return;
+            }
+            lastCommittedValue =
+                parsedValue === undefined ? '' : String(parsedValue);
+            input.value = lastCommittedValue;
+            options.onCommit(parsedValue);
+        };
+        input.addEventListener('blur', commit);
+        input.addEventListener('keydown', (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                input.value = lastCommittedValue;
+                input.blur();
+                return;
+            }
+            if (event.key !== 'Enter' || event.isComposing) {
+                return;
+            }
+            event.preventDefault();
+            commit();
+            input.blur();
+        });
+        wrapper.appendChild(input);
+        return wrapper;
+    }
+
+    /** One row: label (with an optional technical key) and its inputs. */
+    private createMetricRow(options: {
+        label: string;
+        detail?: string;
+        helper?: string;
+        inputs: HTMLElement[];
+    }): HTMLElement {
+        const row = document.createElement('div');
+        row.className = 'localized-string-editor fontinfo-metric-row';
+        const label = document.createElement('div');
+        label.className = 'localized-string-label';
+        label.textContent = options.label;
+        if (options.detail) {
+            const detail = document.createElement('small');
+            detail.className = 'fontinfo-field-key';
+            detail.textContent = options.detail;
+            label.appendChild(detail);
+        }
+        row.appendChild(label);
+        const inputs = document.createElement('div');
+        inputs.className = 'fontinfo-metric-inputs';
+        options.inputs.forEach((input) => inputs.appendChild(input));
+        row.appendChild(inputs);
+        if (options.helper) {
+            const helper = document.createElement('div');
+            helper.className = 'localized-string-helper';
+            helper.textContent = options.helper;
+            row.appendChild(helper);
+        }
+        return row;
+    }
+
+    /**
+     * Set or remove (`value: undefined`) station metrics as one undo step.
+     * A single edit of an existing value keeps the plain station-metric path.
+     */
+    private commitStationMetricChanges(
+        stationIndex: number,
+        label: string,
+        changes: Array<{ key: string; value: number | undefined }>
+    ): void {
+        const station = window.currentFontModel?.stations?.[stationIndex];
+        if (!station) {
+            return;
+        }
+        const currentMetrics = (station.metrics ?? {}) as Record<
+            string,
+            number
+        >;
+        const effective = changes.filter(
+            (change) => currentMetrics[change.key] !== change.value
+        );
+        if (effective.length === 0) {
+            return;
+        }
+        if (effective.length === 1 && effective[0].value !== undefined) {
+            this.commitStationMetricValue(
+                stationIndex,
+                effective[0].key,
+                effective[0].value
+            );
+            return;
+        }
+        this.commitMultipleFontPathChanges({
+            label,
+            changes: effective.map((change) => ({
+                op: change.value === undefined ? 'remove' : 'set',
+                path: ['masters', stationIndex, 'metrics', change.key],
+                oldValue: currentMetrics[change.key],
+                newValue: change.value
+            })),
+            applyLocal: () => {
+                const metrics = {
+                    ...((station.metrics ?? {}) as Record<string, number>)
+                };
+                for (const change of effective) {
+                    if (change.value === undefined) {
+                        delete metrics[change.key];
+                    } else {
+                        metrics[change.key] = change.value;
+                    }
+                }
+                station.metrics = metrics;
+            },
+            markDirtyKey: 'font-info-station-metric'
+        });
+    }
+
+    private appendStationMetricsSections(
+        detail: HTMLElement,
+        stationIndex: number,
+        initialMetrics: Record<string, number>
+    ): void {
+        const font = window.currentFontModel ?? undefined;
+        const upm = Number(font?.upm) || 1000;
+        const metrics: Record<string, number> = { ...initialMetrics };
+        const prefix = `masters.${stationIndex}.metrics`;
+        const afterCommitHooks: Array<() => void> = [];
+        const setMetrics = (
+            label: string,
+            changes: Array<{ key: string; value: number | undefined }>
+        ): void => {
+            this.commitStationMetricChanges(stationIndex, label, changes);
+            for (const change of changes) {
+                if (change.value === undefined) {
+                    delete metrics[change.key];
+                } else {
+                    metrics[change.key] = change.value;
+                }
+            }
+            afterCommitHooks.forEach((hook) => hook());
+        };
+        const setMetric = (key: string, value: number | undefined): void =>
+            setMetrics('Edit metric', [{ key, value }]);
+        const numberOrUndefined = (key: string): number | undefined =>
+            Number.isFinite(metrics[key]) ? metrics[key] : undefined;
+
+        // Vertical metrics with zones and a preview.
+        const vertical = this.createFontInfoSection(
+            'Vertical metrics',
+            'Guides in the glyph editor. A zone is the overshoot area beside its line: the editor draws it and Glyphs files keep it, but the compiler does not use zones.'
+        );
+        for (const spec of CORE_STATION_METRICS) {
+            const valueKey = coreMetricKey(metrics, spec);
+            const zoneKey = coreZoneKey(metrics, spec);
+            const isBaseline = spec.type === 'baseline';
+            vertical.fields.appendChild(
+                this.createMetricRow({
+                    label: spec.label,
+                    helper: spec.helper,
+                    inputs: [
+                        this.createMetricNumberInput({
+                            value: isBaseline ? 0 : numberOrUndefined(valueKey),
+                            caption: 'Position',
+                            ariaLabel: `${spec.label} position`,
+                            dataField: `${prefix}.${valueKey}`,
+                            disabled: isBaseline,
+                            onCommit: (nextValue) =>
+                                setMetric(valueKey, nextValue)
+                        }),
+                        this.createMetricNumberInput({
+                            value: numberOrUndefined(zoneKey),
+                            caption: 'Zone',
+                            placeholder: '0',
+                            ariaLabel: `${spec.label} zone`,
+                            dataField: `${prefix}.${zoneKey}`,
+                            onCommit: (nextValue) =>
+                                setMetric(zoneKey, nextValue)
+                        })
+                    ]
+                })
+            );
+        }
+        const angleKey = italicAngleKey(metrics);
+        vertical.fields.appendChild(
+            this.createMetricRow({
+                label: 'Italic angle',
+                helper: 'Degrees, positive leans right. Written to post.italicAngle and the hhea caret slope. A non-zero angle also marks the font as italic, unless Custom OT Values sets the style flags.',
+                inputs: [
+                    this.createMetricNumberInput({
+                        value: numberOrUndefined(angleKey),
+                        caption: 'Degrees',
+                        placeholder: '0',
+                        ariaLabel: 'Italic angle in degrees',
+                        dataField: `${prefix}.${angleKey}`,
+                        onCommit: (nextValue) => setMetric(angleKey, nextValue)
+                    })
+                ]
+            })
+        );
+        const body = document.createElement('div');
+        body.className = 'fontinfo-metrics-body';
+        vertical.section.replaceChild(body, vertical.fields);
+        body.appendChild(vertical.fields);
+        const previewHolder = document.createElement('div');
+        previewHolder.className = 'fontinfo-metrics-preview-holder';
+        body.appendChild(previewHolder);
+        const renderPreview = (): void => {
+            previewHolder.replaceChildren(
+                createMetricsPreview({
+                    lines: CORE_STATION_METRICS.flatMap((spec) => {
+                        const y =
+                            spec.type === 'baseline'
+                                ? 0
+                                : numberOrUndefined(
+                                      coreMetricKey(metrics, spec)
+                                  );
+                        if (y === undefined) {
+                            return [];
+                        }
+                        return [
+                            {
+                                label: spec.label,
+                                y,
+                                zone:
+                                    numberOrUndefined(
+                                        coreZoneKey(metrics, spec)
+                                    ) ?? 0
+                            }
+                        ];
+                    }),
+                    italicAngle: numberOrUndefined(italicAngleKey(metrics)) ?? 0
+                })
+            );
+        };
+        renderPreview();
+        afterCommitHooks.push(renderPreview);
+        detail.appendChild(vertical.section);
+
+        // Metrics for one writing script, as Glyphs metric filters.
+        const scriptSection = this.createFontInfoSection(
+            'Writing-script metrics',
+            'Metrics for the glyphs of one writing script, like metrics with a script filter in Glyphs. The editor shows them for glyphs of that script, from the glyph’s own script or from Glyph Data. Glyphs files keep them; the compiler does not use them.'
+        );
+        const scripts = scriptsWithMetrics(metrics);
+        for (const script of scripts) {
+            const header = document.createElement('div');
+            header.className = 'fontinfo-script-metrics-header';
+            const name = document.createElement('span');
+            name.className = 'fontinfo-script-metrics-name';
+            name.textContent = glyphsScriptLabel(script);
+            header.appendChild(name);
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'localized-string-locales-button';
+            remove.textContent = 'Remove';
+            remove.setAttribute(
+                'aria-label',
+                `Remove ${glyphsScriptLabel(script)} metrics`
+            );
+            remove.addEventListener('click', () => {
+                setMetrics(
+                    'Remove writing-script metrics',
+                    Object.keys(metrics)
+                        .filter(
+                            (key) =>
+                                parseScopedMetricKey(key)?.script === script
+                        )
+                        .map((key) => ({ key, value: undefined }))
+                );
+                this.renderStationsContent();
+            });
+            header.appendChild(remove);
+            scriptSection.fields.appendChild(header);
+            for (const spec of SCRIPT_METRIC_TYPES) {
+                const valueKey = scriptMetricKey(spec.type, script);
+                const zoneKey = scriptMetricKey(spec.type, script, true);
+                const fallback = numberOrUndefined(
+                    coreMetricKey(metrics, spec)
+                );
+                scriptSection.fields.appendChild(
+                    this.createMetricRow({
+                        label: spec.label,
+                        inputs: [
+                            this.createMetricNumberInput({
+                                value: numberOrUndefined(valueKey),
+                                caption: 'Position',
+                                placeholder:
+                                    fallback === undefined
+                                        ? ''
+                                        : String(fallback),
+                                ariaLabel: `${glyphsScriptLabel(script)} ${spec.label} position`,
+                                dataField: `${prefix}.${valueKey}`,
+                                onCommit: (nextValue) =>
+                                    setMetric(valueKey, nextValue)
+                            }),
+                            this.createMetricNumberInput({
+                                value: numberOrUndefined(zoneKey),
+                                caption: 'Zone',
+                                placeholder: '0',
+                                ariaLabel: `${glyphsScriptLabel(script)} ${spec.label} zone`,
+                                dataField: `${prefix}.${zoneKey}`,
+                                onCommit: (nextValue) =>
+                                    setMetric(zoneKey, nextValue)
+                            })
+                        ]
+                    })
+                );
+            }
+        }
+        if (scripts.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'localized-string-helper';
+            empty.textContent = 'No writing script has its own metrics.';
+            scriptSection.fields.appendChild(empty);
+        }
+        const addSelect = document.createElement('select');
+        addSelect.className = 'localized-string-input fontinfo-script-add';
+        addSelect.setAttribute(
+            'aria-label',
+            'Add metrics for a writing script'
+        );
+        const placeholderOption = document.createElement('option');
+        placeholderOption.value = '';
+        placeholderOption.textContent = 'Add a writing script…';
+        addSelect.appendChild(placeholderOption);
+        for (const [script, label] of GLYPHS_METRIC_SCRIPTS) {
+            if (scripts.includes(script)) {
+                continue;
+            }
+            const option = document.createElement('option');
+            option.value = script;
+            option.textContent = label;
+            addSelect.appendChild(option);
+        }
+        addSelect.addEventListener('change', () => {
+            const script = addSelect.value;
+            if (!script) {
+                return;
+            }
+            const xHeightSpec = SCRIPT_METRIC_TYPES.find(
+                (spec) => spec.type === 'xHeight'
+            );
+            const startValue = xHeightSpec
+                ? numberOrUndefined(coreMetricKey(metrics, xHeightSpec))
+                : undefined;
+            setMetrics('Add writing-script metrics', [
+                {
+                    key: scriptMetricKey('xHeight', script),
+                    value: startValue ?? 0
+                },
+                {
+                    key: scriptMetricKey('xHeight', script, true),
+                    value: 0
+                }
+            ]);
+            this.renderStationsContent();
+        });
+        scriptSection.section.appendChild(addSelect);
+        detail.appendChild(scriptSection.section);
+
+        // Line spacing, with the values fontc derives for empty fields.
+        const spacing = this.createFontInfoSection(
+            'Line spacing',
+            'How far apart lines of text sit. Written to the OS/2 and hhea tables. Empty fields show the value the compiler writes in their place.'
+        );
+        const table = document.createElement('table');
+        table.className = 'fontinfo-line-spacing';
+        const head = document.createElement('tr');
+        for (const title of ['', 'Typo', 'hhea', 'Win']) {
+            const cell = document.createElement('th');
+            cell.scope = 'col';
+            cell.textContent = title;
+            head.appendChild(cell);
+        }
+        const thead = document.createElement('thead');
+        thead.appendChild(head);
+        table.appendChild(thead);
+        const tbody = document.createElement('tbody');
+        const spacingInputs: Array<{
+            key: keyof ReturnType<typeof lineSpacingDefaults>;
+            input: HTMLInputElement | null;
+        }> = [];
+        const spacingRows: Array<
+            [string, Array<keyof ReturnType<typeof lineSpacingDefaults> | null>]
+        > = [
+            ['Ascender', ['TypoAscender', 'HheaAscender', 'WinAscent']],
+            ['Descender', ['TypoDescender', 'HheaDescender', 'WinDescent']],
+            ['Line gap', ['TypoLineGap', 'HheaLineGap', null]]
+        ];
+        const defaults = lineSpacingDefaults(metrics, upm);
+        for (const [rowLabel, keys] of spacingRows) {
+            const row = document.createElement('tr');
+            const header = document.createElement('th');
+            header.scope = 'row';
+            header.textContent = rowLabel;
+            row.appendChild(header);
+            for (const key of keys) {
+                const cell = document.createElement('td');
+                if (key === null) {
+                    cell.className = 'fontinfo-line-spacing-empty';
+                    cell.textContent = 'n/a';
+                } else {
+                    const existingKey = findMetricKey(metrics, [key]) ?? key;
+                    const field = this.createMetricNumberInput({
+                        value: numberOrUndefined(existingKey),
+                        placeholder: String(defaults[key]),
+                        ariaLabel: `${key} line spacing value`,
+                        dataField: `${prefix}.${existingKey}`,
+                        onCommit: (nextValue) =>
+                            setMetric(existingKey, nextValue)
+                    });
+                    spacingInputs.push({
+                        key,
+                        input: field.querySelector('input')
+                    });
+                    cell.appendChild(field);
+                }
+                row.appendChild(cell);
+            }
+            tbody.appendChild(row);
+        }
+        table.appendChild(tbody);
+        spacing.fields.appendChild(table);
+        const spacingHelp = document.createElement('div');
+        spacingHelp.className = 'localized-string-helper';
+        spacingHelp.textContent =
+            'Typo: OS/2 sTypo values, used when “Use typo metrics” (fsSelection bit 7) is set in Custom OT Values. hhea: used by macOS and iOS. Win: OS/2 usWin values; Windows clips glyphs outside them. Win descent is a positive number.';
+        spacing.fields.appendChild(spacingHelp);
+        afterCommitHooks.push(() => {
+            const nextDefaults = lineSpacingDefaults(metrics, upm);
+            for (const { key, input } of spacingInputs) {
+                if (input) {
+                    input.placeholder = String(nextDefaults[key]);
+                }
+            }
+        });
+        detail.appendChild(spacing.section);
+
+        // Any other station values, such as Glyphs metrics without a type.
+        const otherKeys = Object.keys(metrics)
+            .filter(
+                (key) =>
+                    !isStructuredStationMetricKey(key) &&
+                    !isHiddenStationMetricsPanelKey(key)
+            )
+            .sort((left, right) => left.localeCompare(right));
+        if (otherKeys.length > 0) {
+            const other = this.createFontInfoSection(
+                'Other metrics',
+                'More values from the source file. Known OpenType values such as underline, strikeout and subscript positions reach the compiled font; other names stay in the source only.'
+            );
+            for (const key of otherKeys) {
+                other.fields.appendChild(
+                    this.createMetricRow({
+                        label: key,
+                        inputs: [
+                            this.createMetricNumberInput({
+                                value: numberOrUndefined(key),
+                                ariaLabel: key,
+                                dataField: `${prefix}.${key}`,
+                                onCommit: (nextValue) =>
+                                    setMetric(key, nextValue)
+                            })
+                        ]
+                    })
+                );
+            }
+            detail.appendChild(other.section);
+        }
     }
 
     private renderStationsContent() {
@@ -4901,111 +5767,13 @@ class FontInfoManager {
                 )
         });
 
-        const metricsSection = document.createElement('section');
-        metricsSection.className = 'fontinfo-name-group';
-        const metricsTitle = document.createElement('h3');
-        metricsTitle.className = 'sidebar-section-title';
-        metricsTitle.textContent = 'Metrics';
-        metricsSection.appendChild(metricsTitle);
-        const metricsFields = document.createElement('div');
-        metricsFields.className = 'fontinfo-name-group-fields';
-
-        const additionalMetricsSection = document.createElement('section');
-        additionalMetricsSection.className = 'fontinfo-name-group';
-        const additionalMetricsTitle = document.createElement('h3');
-        additionalMetricsTitle.className = 'sidebar-section-title';
-        additionalMetricsTitle.textContent = 'Additional metrics';
-        additionalMetricsSection.appendChild(additionalMetricsTitle);
-        const additionalMetricsFields = document.createElement('div');
-        additionalMetricsFields.className = 'fontinfo-name-group-fields';
-
-        const stationMetrics = selectedStation.metrics ?? {};
-        const metricEntries = Object.entries(stationMetrics).filter(
-            ([metricKey]) => !isHiddenStationMetricsPanelKey(metricKey)
+        this.appendStationMetricsSections(
+            detail,
+            this.selectedStationIndex,
+            cloneNumericRecord(
+                selectedStation.metrics as Record<string, number> | undefined
+            ) ?? {}
         );
-        const coreMetricEntries = metricEntries
-            .filter(([metricKey]) => !isAdditionalMetricsPanelKey(metricKey))
-            .sort(([left], [right]) => left.localeCompare(right));
-        const additionalMetricEntries = [
-            ...ADDITIONAL_METRICS_PANEL_KEYS.filter(
-                (metricKey) =>
-                    stationMetrics[metricKey] !== undefined &&
-                    !isHiddenStationMetricsPanelKey(metricKey)
-            ).map(
-                (metricKey) =>
-                    [metricKey, stationMetrics[metricKey]] as [string, number]
-            ),
-            ...metricEntries
-                .filter(
-                    ([metricKey]) =>
-                        isAdditionalMetricsPanelKey(metricKey) &&
-                        !(
-                            ADDITIONAL_METRICS_PANEL_KEYS as readonly string[]
-                        ).includes(metricKey)
-                )
-                .sort(([left], [right]) => left.localeCompare(right))
-        ];
-
-        const appendMetricField = (
-            container: HTMLElement,
-            metricKey: string,
-            currentValue: number
-        ) => {
-            container.appendChild(
-                this.createSimpleFieldEditor({
-                    label: metricKey,
-                    value: String(currentValue),
-                    inputType: 'number',
-                    dataField: `masters.${this.selectedStationIndex}.metrics.${metricKey}`,
-                    helperText: 'Station-specific numeric metric value.',
-                    onCommit: (rawValue) => {
-                        const parsedValue = parseNumericInput(rawValue);
-                        if (parsedValue === null || parsedValue === undefined) {
-                            return String(currentValue);
-                        }
-
-                        this.commitStationMetricValue(
-                            this.selectedStationIndex,
-                            metricKey,
-                            parsedValue
-                        );
-                        return String(parsedValue);
-                    }
-                })
-            );
-        };
-
-        for (const [metricKey, currentValue] of coreMetricEntries) {
-            appendMetricField(metricsFields, metricKey, currentValue as number);
-        }
-
-        for (const [metricKey, currentValue] of additionalMetricEntries) {
-            appendMetricField(
-                additionalMetricsFields,
-                metricKey,
-                currentValue as number
-            );
-        }
-
-        if (metricsFields.childElementCount === 0) {
-            const helper = document.createElement('div');
-            helper.className = 'localized-string-helper';
-            helper.textContent = 'No station metrics are defined.';
-            metricsSection.appendChild(helper);
-        } else {
-            metricsSection.appendChild(metricsFields);
-        }
-        detail.appendChild(metricsSection);
-
-        if (additionalMetricsFields.childElementCount === 0) {
-            const helper = document.createElement('div');
-            helper.className = 'localized-string-helper';
-            helper.textContent = 'No additional metrics are defined.';
-            additionalMetricsSection.appendChild(helper);
-        } else {
-            additionalMetricsSection.appendChild(additionalMetricsFields);
-        }
-        detail.appendChild(additionalMetricsSection);
 
         layout.appendChild(sidebar);
         layout.appendChild(detail);
@@ -5145,6 +5913,11 @@ class FontInfoManager {
         identityTitle.className = 'sidebar-section-title';
         identityTitle.textContent = 'Identity';
         identitySection.appendChild(identityTitle);
+        const identityDescription = document.createElement('p');
+        identityDescription.className = 'fontinfo-section-description';
+        identityDescription.textContent =
+            'The variable font lists each instance as a named instance under this name, in one language.';
+        identitySection.appendChild(identityDescription);
         const identityFields = document.createElement('div');
         identityFields.className = 'fontinfo-name-group-fields';
 
@@ -5165,38 +5938,35 @@ class FontInfoManager {
         identitySection.appendChild(identityFields);
         detail.appendChild(identitySection);
 
-        const exportSection = document.createElement('section');
-        exportSection.className = 'fontinfo-name-group';
-        const exportTitle = document.createElement('h3');
-        exportTitle.className = 'sidebar-section-title';
-        exportTitle.textContent = 'Export';
-        exportSection.appendChild(exportTitle);
-        const exportFields = document.createElement('div');
-        exportFields.className = 'fontinfo-name-group-fields';
+        this.appendLocationSection({
+            container: detail,
+            title: 'Location',
+            dataFieldPrefix: `instances.${this.selectedInstanceIndex}.location`,
+            location: cloneNumericRecord(
+                selectedInstance.location as Record<string, number> | undefined
+            ),
+            onCommit: (axisTag, nextValue) =>
+                this.commitInstanceLocationValue(
+                    this.selectedInstanceIndex,
+                    axisTag,
+                    nextValue
+                )
+        });
 
-        exportFields.appendChild(
-            this.createCheckboxFieldEditor({
-                label: 'Variable Instance',
-                checked: Boolean(selectedInstance.variable),
-                dataField: `instances.${this.selectedInstanceIndex}.variable`,
-                helperText:
-                    'If enabled, this instance represents a variable-font export rather than a static instance.',
-                onCommit: (checked) =>
-                    this.commitInstanceFieldValue(
-                        this.selectedInstanceIndex,
-                        'variable',
-                        checked
-                    )
-            })
+        const linking = this.createFontInfoSection(
+            'Style linking',
+            'Kept in the source and in Glyphs files. The compiler does not use it: compiled names and style flags come from the default station.'
         );
+        const exportSection = linking.section;
+        const exportFields = linking.fields;
 
         exportFields.appendChild(
             this.createSimpleFieldEditor({
-                label: 'Linked Style',
+                label: 'Linked style',
                 value: selectedInstance.linked_style ?? '',
                 dataField: `instances.${this.selectedInstanceIndex}.linked_style`,
                 helperText:
-                    'Optional style-linking target, e.g. Bold or Italic.',
+                    'The instance this one is the bold or italic of, such as Regular.',
                 onCommit: (rawValue) => {
                     const nextValue =
                         rawValue.trim().length > 0
@@ -5212,23 +5982,7 @@ class FontInfoManager {
             })
         );
 
-        exportSection.appendChild(exportFields);
         detail.appendChild(exportSection);
-
-        this.appendLocationSection({
-            container: detail,
-            title: 'Location',
-            dataFieldPrefix: `instances.${this.selectedInstanceIndex}.location`,
-            location: cloneNumericRecord(
-                selectedInstance.location as Record<string, number> | undefined
-            ),
-            onCommit: (axisTag, nextValue) =>
-                this.commitInstanceLocationValue(
-                    this.selectedInstanceIndex,
-                    axisTag,
-                    nextValue
-                )
-        });
 
         layout.appendChild(sidebar);
         layout.appendChild(detail);
@@ -5388,135 +6142,89 @@ class FontInfoManager {
         identitySection.appendChild(identityFields);
         detail.appendChild(identitySection);
 
-        // Designspace section
-        const dsSection = document.createElement('section');
-        dsSection.className = 'fontinfo-name-group';
-        const dsTitle = document.createElement('h3');
-        dsTitle.className = 'sidebar-section-title';
-        dsTitle.textContent = 'Designspace';
-        dsSection.appendChild(dsTitle);
-        const dsDescription = document.createElement('div');
-        dsDescription.className = 'localized-string-helper';
-        dsDescription.textContent = 'Designspace coordinates are required.';
-        dsSection.appendChild(dsDescription);
-        const dsFields = document.createElement('div');
-        dsFields.className = 'fontinfo-name-group-fields';
-
-        for (const [dsFieldKey, dsLabel, dsHelperText] of [
-            [
-                'min',
-                'Minimum',
-                'Designspace coordinate at the userspace minimum.'
-            ],
-            [
-                'max',
-                'Maximum',
-                'Designspace coordinate at the userspace maximum.'
-            ],
-            [
-                'default',
-                'Default',
-                'Designspace coordinate at the userspace default.'
-            ]
-        ] as ['min' | 'max' | 'default', string, string][]) {
-            const userspaceValue = selectedAxis[dsFieldKey] as
-                number | undefined;
-            const currentDsValue = this.getAxisDesignspaceValue(
-                selectedAxis,
-                userspaceValue
-            );
-            dsFields.appendChild(
-                this.createSimpleFieldEditor({
-                    label: dsLabel,
-                    value:
-                        currentDsValue === undefined
-                            ? ''
-                            : String(currentDsValue),
-                    inputType: 'number',
-                    dataField: `axes.${this.selectedAxisIndex}.map.${dsFieldKey}`,
-                    helperText: dsHelperText,
-                    onCommit: (rawValue) => {
-                        const trimmed = rawValue.trim();
-                        if (trimmed === '') {
-                            this.commitAxisDesignspaceMapValue(
-                                this.selectedAxisIndex,
-                                dsFieldKey,
-                                undefined
-                            );
-                            return '';
-                        }
-
-                        const parsedValue = parseNumericInput(rawValue);
-                        if (parsedValue === null || parsedValue === undefined) {
-                            return currentDsValue === undefined
-                                ? ''
-                                : String(currentDsValue);
-                        }
-
-                        this.commitAxisDesignspaceMapValue(
-                            this.selectedAxisIndex,
-                            dsFieldKey,
-                            parsedValue
-                        );
-                        return String(parsedValue);
-                    }
-                })
-            );
+        // Range: user values (fvar) and the design values they map to.
+        const range = this.createFontInfoSection(
+            'Range',
+            'User values are what people pick in apps, such as 400 for Regular; they go into the fvar table. Design values are the coordinates your stations and instances sit at. Each design value is stored as a point of the axis mapping below.'
+        );
+        const rangeTable = document.createElement('table');
+        rangeTable.className = 'fontinfo-range-table';
+        const rangeHead = document.createElement('tr');
+        for (const title of ['', 'Minimum', 'Default', 'Maximum']) {
+            const cell = document.createElement('th');
+            cell.scope = 'col';
+            cell.textContent = title;
+            rangeHead.appendChild(cell);
         }
-
-        dsSection.appendChild(dsFields);
-        detail.appendChild(dsSection);
-
-        // Userspace section
-        const rangeSection = document.createElement('section');
-        rangeSection.className = 'fontinfo-name-group';
-        const rangeTitle = document.createElement('h3');
-        rangeTitle.className = 'sidebar-section-title';
-        rangeTitle.textContent = 'Userspace';
-        rangeSection.appendChild(rangeTitle);
-        const rangeDescription = document.createElement('div');
-        rangeDescription.className = 'localized-string-helper';
-        rangeDescription.textContent =
-            'Userspace coordinates are not required. If left empty, designspace coordinates will be used instead.';
-        rangeSection.appendChild(rangeDescription);
-        const rangeFields = document.createElement('div');
-        rangeFields.className = 'fontinfo-name-group-fields';
-
-        for (const [fieldKey, label, helperText] of [
-            ['min', 'Minimum', 'Minimum user-space value for this axis.'],
-            ['max', 'Maximum', 'Maximum user-space value for this axis.'],
-            ['default', 'Default', 'Default user-space value for this axis.']
-        ] as ['min' | 'max' | 'default', string, string][]) {
-            const currentValue = selectedAxis[fieldKey] as number | undefined;
-            rangeFields.appendChild(
-                this.createSimpleFieldEditor({
-                    label,
-                    value:
-                        currentValue === undefined ? '' : String(currentValue),
-                    inputType: 'number',
-                    dataField: `axes.${this.selectedAxisIndex}.${fieldKey}`,
-                    helperText,
-                    onCommit: (rawValue) => {
-                        const parsedValue = parseNumericInput(rawValue);
-                        if (parsedValue === null || parsedValue === undefined) {
-                            return currentValue === undefined
-                                ? ''
-                                : String(currentValue);
+        const rangeHeadGroup = document.createElement('thead');
+        rangeHeadGroup.appendChild(rangeHead);
+        rangeTable.appendChild(rangeHeadGroup);
+        const rangeBody = document.createElement('tbody');
+        const rangeFields = ['min', 'default', 'max'] as const;
+        const axisIndex = this.selectedAxisIndex;
+        for (const space of ['user', 'design'] as const) {
+            const row = document.createElement('tr');
+            const header = document.createElement('th');
+            header.scope = 'row';
+            header.textContent =
+                space === 'user' ? 'User value' : 'Design value';
+            row.appendChild(header);
+            for (const field of rangeFields) {
+                const cell = document.createElement('td');
+                const userValue = selectedAxis[field] as number | undefined;
+                const value =
+                    space === 'user'
+                        ? userValue
+                        : this.getAxisDesignspaceValue(selectedAxis, userValue);
+                const fieldLabel =
+                    field === 'min'
+                        ? 'minimum'
+                        : field === 'max'
+                          ? 'maximum'
+                          : 'default';
+                cell.appendChild(
+                    this.createMetricNumberInput({
+                        value,
+                        placeholder:
+                            space === 'design' &&
+                            userValue !== undefined &&
+                            !selectedAxis.map?.length
+                                ? `Same as ${formatAxisValue(userValue)}`
+                                : undefined,
+                        ariaLabel: `${space === 'user' ? 'User' : 'Design'} ${fieldLabel}`,
+                        dataField:
+                            space === 'user'
+                                ? `axes.${axisIndex}.${field}`
+                                : `axes.${axisIndex}.map.${field}`,
+                        onCommit: (nextValue) => {
+                            if (space === 'design') {
+                                this.commitAxisDesignspaceMapValue(
+                                    axisIndex,
+                                    field,
+                                    nextValue
+                                );
+                            } else if (nextValue !== undefined) {
+                                this.commitAxisRangeValue(
+                                    axisIndex,
+                                    field,
+                                    nextValue
+                                );
+                            }
                         }
-
-                        this.commitAxisRangeValue(
-                            this.selectedAxisIndex,
-                            fieldKey,
-                            parsedValue
-                        );
-                        return String(parsedValue);
-                    }
-                })
-            );
+                    })
+                );
+                row.appendChild(cell);
+            }
+            rangeBody.appendChild(row);
         }
-
-        rangeSection.appendChild(rangeFields);
-        detail.appendChild(rangeSection);
+        rangeTable.appendChild(rangeBody);
+        range.fields.appendChild(rangeTable);
+        const rangeHelp = document.createElement('div');
+        rangeHelp.className = 'localized-string-helper';
+        rangeHelp.textContent =
+            'Without a mapping, design values equal user values. With a mapping, the default user value must be one of its points, or the font does not compile. An axis whose minimum equals its maximum is left out of the variable font.';
+        range.fields.appendChild(rangeHelp);
+        detail.appendChild(range.section);
 
         // Options section
         const optionsSection = document.createElement('section');
@@ -5534,7 +6242,7 @@ class FontInfoManager {
                 checked: Boolean(selectedAxis.hidden),
                 dataField: `axes.${this.selectedAxisIndex}.hidden`,
                 helperText:
-                    "If enabled, this axis is hidden in the font's user interface.",
+                    'Sets the hidden flag in the fvar table, so apps don’t show a slider for this axis.',
                 onCommit: (checked) =>
                     this.commitAxisHiddenValue(this.selectedAxisIndex, checked)
             })
@@ -7360,22 +8068,7 @@ class FontInfoManager {
                 )
             })
         );
-        // The default station sits at every axis default (see babelfont's
-        // Font::default_master); a single station is always the default.
-        const defaults = userspaceToDesignspace(
-            Object.fromEntries(
-                axes.map((axis) => [axis.tag, axis.default ?? 0])
-            ) as UserspaceLocation,
-            axes
-        ) as Record<string, number>;
-        const defaultStation =
-            stations.find((station) =>
-                axes.every(
-                    (axis) =>
-                        (station.location[axis.tag] ?? 0) ===
-                        (defaults[axis.tag] ?? 0)
-                )
-            ) ?? stations[0];
+        const defaultStation = findDefaultStation(axes, stations);
 
         let braceGlyphCount = 0;
         let freeDrawingCount = 0;

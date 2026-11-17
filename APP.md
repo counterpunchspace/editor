@@ -295,6 +295,14 @@ Here, undo, redo, and remote Yjs packets converge with forward GUI edits to be p
 - The worker writes the core document once (axes, stations, instances) and each glyph’s new and adjusted drawings in a single transaction per glyph, through the same multi-document commit as Add station. Copying is exact; drawings are not interpolated.
 - Copying stations is subject to the station topology gate, like Add station. When it is closed (for example a partly downloaded cloud font), only **Add axis without stations** is available, which writes the axis and the existing stations' coordinate without touching glyphs.
 
+### Writing-script metrics
+
+A station metric can apply to one writing script only, like a metric with a script filter in Glyphs. Babelfont stores it under a key such as `xHeight (filter script == "cyrillic")`, and its zone under the same key plus ` overshoot`. Glyphs files round-trip both; the compiler ignores them.
+
+- The glyph editor draws, for each glyph, the metrics of its writing script: a scoped metric replaces the unscoped metric of the same type and its zone. The script is the glyph’s own Glyphs `script` if set, else its Glyph Data script mapped to the Glyphs name (`Tibetan` → `tibet`, `Hiragana` and `Katakana` → `kana`, and so on).
+- Metrics scoped to another script, and metrics with any filter other than a plain script test (such as `case == 3`), are never drawn.
+- Font info lists them per writing script under the station’s **Writing-script metrics**. Adding a script starts it with the station’s x-height; removing it removes all of its keys in one undo step.
+
 ## Glyphs
 
 ### Combining glyph filters

@@ -4341,14 +4341,260 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
 .fontinfo-name-group {
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    margin-bottom: 12px;
+    gap: 8px;
+    max-width: 760px;
+    margin-bottom: 14px;
+    padding: 12px 14px;
+    border: 1px solid var(--border-inner);
+    border-radius: 6px;
+    background-color: var(--background-tertiary);
 }
 
+.fontinfo-section-description {
+    margin: -2px 0 2px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.45;
+    max-width: 62ch;
+}
+
+/* One field per row: label on the left, control and help on the right.
+   Narrow panels stack the label above the control. */
 .fontinfo-name-group-fields {
+    display: flex;
+    flex-direction: column;
+    container-type: inline-size;
+}
+
+.fontinfo-name-group-fields > .localized-string-editor {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 12px;
+    grid-template-columns: minmax(110px, 170px) minmax(0, 1fr);
+    column-gap: 16px;
+    row-gap: 4px;
+    align-items: start;
+    padding: 9px 0;
+}
+
+.fontinfo-name-group-fields > .localized-string-editor + * {
+    border-top: 1px solid var(--border-inner);
+}
+
+.fontinfo-name-group-fields > .localized-string-editor > * {
+    grid-column: 2;
+}
+
+.fontinfo-name-group-fields
+    > .localized-string-editor
+    > :is(.localized-string-label, .localized-string-editor-header) {
+    grid-column: 1;
+    grid-row: 1 / span 3;
+    padding-top: 6px;
+}
+
+.fontinfo-name-group-fields
+    > .localized-string-editor
+    > .localized-string-editor-header {
+    flex-direction: column;
+    align-items: flex-start;
+    padding-top: 0;
+}
+
+.fontinfo-name-group-fields .localized-string-label {
+    font-size: 11px;
+    letter-spacing: 0.02em;
+    text-transform: none;
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.fontinfo-name-group-fields .localized-string-helper {
+    color: var(--text-secondary);
+    font-size: 10.5px;
+    max-width: 62ch;
+}
+
+.fontinfo-name-group-fields .localized-string-input {
+    max-width: 460px;
+}
+
+.fontinfo-name-group-fields .localized-string-input[type='number'] {
+    max-width: 110px;
+    font-variant-numeric: tabular-nums;
+}
+
+.fontinfo-field-key {
+    display: block;
+    margin-top: 1px;
+    color: var(--text-secondary);
+    font-family: var(--font-families-mono);
+    font-size: 10px;
+    font-weight: 400;
+}
+
+@container (max-width: 420px) {
+    .fontinfo-name-group-fields > .localized-string-editor {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .fontinfo-name-group-fields
+        > .localized-string-editor
+        > :is(.localized-string-label, .localized-string-editor-header) {
+        grid-row: auto;
+        padding-top: 0;
+    }
+
+    .fontinfo-name-group-fields > .localized-string-editor > * {
+        grid-column: 1;
+    }
+}
+
+.fontinfo-metric-inputs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+}
+
+.fontinfo-metric-input {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.fontinfo-metric-caption {
+    color: var(--text-secondary);
+    font-size: 10.5px;
+}
+
+.fontinfo-metric-input .localized-string-input {
+    width: 90px;
+}
+
+.fontinfo-metrics-body {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: flex-start;
+}
+
+.fontinfo-metrics-body > .fontinfo-name-group-fields {
+    flex: 1 1 320px;
+    min-width: 0;
+}
+
+.fontinfo-metrics-preview {
+    display: block;
+    border-radius: 6px;
+    background-color: var(--background-secondary);
+}
+
+.fontinfo-metrics-preview-line {
+    stroke: var(--text-secondary);
+    stroke-width: 1;
+}
+
+.fontinfo-metrics-preview-zone {
+    fill: var(--accent-blue);
+    opacity: 0.5;
+}
+
+.fontinfo-name-group-fields .fontinfo-version-fields {
+    grid-template-columns: repeat(2, 90px);
+}
+
+.fontinfo-metrics-preview-slant {
+    stroke: var(--accent-blue);
+    stroke-width: 1.5;
+}
+
+.fontinfo-metrics-preview-label {
+    fill: var(--text-secondary);
+    font-family: var(--font-families-sans);
+    font-size: 10px;
+}
+
+.fontinfo-script-metrics-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 0 2px;
+}
+
+.fontinfo-script-metrics-name {
+    font-weight: 600;
+    font-size: 12px;
+}
+
+.fontinfo-script-add {
+    max-width: 240px;
+}
+
+.fontinfo-line-spacing,
+.fontinfo-range-table {
+    align-self: flex-start;
+    width: auto;
+}
+
+.fontinfo-line-spacing {
+    border-collapse: collapse;
+}
+
+.fontinfo-line-spacing th {
+    padding: 4px 8px 4px 0;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    text-align: left;
+}
+
+.fontinfo-line-spacing td {
+    padding: 3px 8px 3px 0;
+}
+
+.fontinfo-line-spacing-empty {
+    color: var(--text-secondary);
+    font-size: 11px;
+}
+
+.fontinfo-range-table {
+    border-collapse: collapse;
+}
+
+.fontinfo-range-table th {
+    padding: 4px 10px 4px 0;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    text-align: left;
+}
+
+.fontinfo-range-table td {
+    padding: 3px 10px 3px 0;
+}
+
+.fontinfo-range-table .localized-string-input {
+    width: 90px;
+}
+
+.fontinfo-bit-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 2px 14px;
+}
+
+.fontinfo-bit-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 3px 0;
+    font-size: 11px;
+    cursor: pointer;
+}
+
+.fontinfo-bit-number {
+    color: var(--text-secondary);
+    font-family: var(--font-families-mono);
+    font-size: 10px;
 }
 
 .fontinfo-axis-map-group {

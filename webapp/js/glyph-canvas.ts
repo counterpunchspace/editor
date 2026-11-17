@@ -4,7 +4,8 @@
 import { showNotice } from './font-windows/dialogs';
 import {
     getHighestVisibleVerticalMetricValue,
-    getLowestVisibleVerticalMetricValue
+    getLowestVisibleVerticalMetricValue,
+    resolveVerticalMetricsForScript
 } from './glyph-canvas/vertical-metrics';
 import { AxesManager } from './glyph-canvas/variations';
 import { FeaturesManager } from './glyph-canvas/features';
@@ -4239,11 +4240,14 @@ class GlyphCanvas {
         const rawMetrics = station?.metrics;
         let verticalMetrics: Record<string, number> | null = null;
         if (rawMetrics && typeof rawMetrics === 'object') {
-            verticalMetrics = Object.fromEntries(
-                Object.entries(rawMetrics).filter(([, value]) =>
-                    Number.isFinite(value)
-                )
-            ) as Record<string, number>;
+            verticalMetrics = resolveVerticalMetricsForScript(
+                Object.fromEntries(
+                    Object.entries(rawMetrics).filter(([, value]) =>
+                        Number.isFinite(value)
+                    )
+                ) as Record<string, number>,
+                null
+            );
             if (Number.isFinite(verticalMetrics.WinDescent)) {
                 verticalMetrics.WinDescent = -Math.abs(
                     verticalMetrics.WinDescent
