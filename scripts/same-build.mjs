@@ -31,11 +31,12 @@ const MAX_ANCESTORS = 20;
 /**
  * Masks the version strings release.sh writes. Builds overwrite the service
  * worker versions from the build tag, and the API docs only carry a
- * "**Version:**" header line. CHANGELOG.md is not shipped or tested.
+ * "**Version:**" header line. CHANGELOG.md and RELEASES.txt are not shipped or
+ * tested.
  */
 export function maskVersion(path, text) {
+  if (path === "CHANGELOG.md" || path === "RELEASES.txt") return "";
   if (text === null) return null;
-  if (path === "CHANGELOG.md") return "";
   if (path === "webapp/coi-serviceworker.js") {
     return text.replace(/^(const (?:DISPLAY_)?VERSION = )'[^']*';$/gm, "$1'';");
   }

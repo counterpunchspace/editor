@@ -10,6 +10,10 @@
 # no version: the tag is <production editor version>+s.N, and the release is
 # published on the website repo. It commits nothing in the editor.
 #
+# Refuses unless RELEASES.txt has the release text under "# <version-tag>";
+# that text becomes the GitHub release description. Write it at the top of
+# RELEASES.txt and commit it; release.sh pushes it with the version commits.
+#
 # Sets the version in the service worker and API docs, turns "# Unreleased" in
 # CHANGELOG.md into the version section, pushes main, then starts release.yml
 # and watches it with ci-watch.sh. The workflow creates the tags in all three
@@ -126,6 +130,12 @@ if [ -n "$existing" ]; then
     exit 1
 fi
 
+echo "Checking RELEASES.txt for the text of $VERSION_TAG..."
+if ! RELEASE_TEXT=$(scripts/release-text.sh "$VERSION_TAG"); then
+    echo "Write the release text under '# $VERSION_TAG' at the top of RELEASES.txt, commit it and run again."
+    exit 1
+fi
+
 echo "Checking that the newest preview shipped this editor..."
 node scripts/check-preview-first.mjs HEAD
 
@@ -168,9 +178,9 @@ else
     exit 1
 fi
 
-echo "Release notes:"
+echo "Release description from RELEASES.txt:"
 echo "----------------------------------------"
-awk "/^# $VERSION_TAG/ {flag=1; next} /^# / {flag=0} flag {print}" "$CHANGELOG_FILE"
+printf '%s\n' "$RELEASE_TEXT"
 echo "----------------------------------------"
 
 if [ -n "$(git status --porcelain)" ]; then

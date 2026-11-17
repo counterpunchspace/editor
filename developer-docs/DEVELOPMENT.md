@@ -171,9 +171,9 @@ Create and deploy a new release from the repository root:
 
 The script:
 
-- Refuses unless editor, website and collab are on a clean, pushed `main` and the newest preview shipped this editor (only version files changed since)
+- Refuses unless editor, website and collab are on a clean, pushed `main`, `RELEASES.txt` has the release text under `# vX.Y.Z`, and the newest preview shipped this editor (only version files and `RELEASES.txt` changed since)
 - Updates the version in `webapp/coi-serviceworker.js` and the API docs, and turns the Unreleased section of `CHANGELOG.md` into the version section
-- Commits, pushes `main` and starts GitHub Actions **Release** with that version. The composed cutover deploys production Cloudflare (workers + website + editor), smoke-tests it, rolls back on failure, and only then tags all three repos. See `developer-docs/COMPOSED_RELEASE.md`.
+- Commits, pushes `main` and starts GitHub Actions **Release** with that version. The GitHub release description is the `RELEASES.txt` section of that version. The composed cutover deploys production Cloudflare (workers + website + editor), smoke-tests it, rolls back on failure, and only then tags all three repos. See `developer-docs/COMPOSED_RELEASE.md`.
 - Stays in the terminal with the same live CI view as `push.sh` until that CI run and the Release workflow finish. A failure prints the failed job, step, and error lines.
 
 `--dry-run` commits nothing and stops the workflow after its preflight checks.

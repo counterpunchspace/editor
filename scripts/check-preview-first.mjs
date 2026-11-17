@@ -27,12 +27,16 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-/** Files release.sh rewrites when it turns a preview into a release. */
+/**
+ * Files release.sh rewrites when it turns a preview into a release, plus
+ * RELEASES.txt, whose release text may be written after the preview.
+ */
 export const VERSION_ONLY_PATHS = [
   "webapp/coi-serviceworker.js",
   "API.md",
   "documentation/python/06-python-api.md",
   "CHANGELOG.md",
+  "RELEASES.txt",
 ];
 
 export function nonVersionChanges(changedPaths) {

@@ -7,6 +7,7 @@ test("only version files may change between preview and release", () => {
   assert.deepEqual(
     nonVersionChanges([
       "CHANGELOG.md",
+      "RELEASES.txt",
       "webapp/coi-serviceworker.js",
       "API.md",
       "documentation/python/06-python-api.md",

@@ -89,6 +89,10 @@ jobs:
                     echo "CHANGELOG.md has no '# ${VERSION}' section. Run release.sh."
                     exit 1
                   fi
+                  if [ "${{ inputs.dry_run }}" != "true" ] && ! bash scripts/release-text.sh "$VERSION" > /dev/null; then
+                    echo "Write the release text under '# ${VERSION}' in RELEASES.txt. Run release.sh."
+                    exit 1
+                  fi
                   echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
                   echo "COMMIT_SHA=$COMMIT_SHA" >> "$GITHUB_OUTPUT"
 
@@ -105,11 +109,17 @@ jobs:
                     node scripts/check-preview-first.mjs "${{ steps.version.outputs.COMMIT_SHA }}"
                   fi
 
-            - name: Extract release notes from CHANGELOG
+            - name: Take release notes from RELEASES.txt
               if: ${{ !inputs.services }}
+              env:
+                  VERSION: ${{ inputs.version }}
               run: |
-                  # Extract content between second and third # headlines (skipping "# Unreleased")
-                  awk '/^# / {if (++count == 3) exit} count == 2 && !/^# / {print}' CHANGELOG.md > release-notes.md
+                  if ! bash scripts/release-text.sh "$VERSION" > release-notes.md; then
+                    if [ "${{ inputs.dry_run }}" != "true" ]; then
+                      exit 1
+                    fi
+                    printf 'Dry run: RELEASES.txt has no text for %s yet.\n' "$VERSION" > release-notes.md
+                  fi
                   echo "Release notes:"
                   cat release-notes.md
 

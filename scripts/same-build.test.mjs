@@ -56,7 +56,12 @@ test("any other changed file is a different build", () => {
 test("a version file that appears or disappears is a different build", () => {
   const read = reader({ b: { [SW]: "const VERSION = 'v1';\n" } });
   assert.equal(buildDifferences([SW], "a", "b", read).length, 1);
-  assert.equal(maskVersion("CHANGELOG.md", null), null);
+  assert.equal(maskVersion("API.md", null), null);
+});
+
+test("release notes may be written after the preview", () => {
+  const read = reader({ b: { "RELEASES.txt": "# v0.4\n\nText\n" } });
+  assert.deepEqual(buildDifferences(["RELEASES.txt", "CHANGELOG.md"], "a", "b", read), []);
 });
 
 test("only successful main push or dispatch runs count, newest first", () => {

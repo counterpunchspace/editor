@@ -72,7 +72,7 @@ Production may only ship what a preview already shipped:
 ./release.sh vX.Y.Z            # or --dry-run
 ```
 
-`release.sh` refuses unless editor, website and collab are on a clean `main` that is not behind `origin/main`, website and collab have nothing unpushed, the tag does not exist yet, and `scripts/check-preview-first.mjs` passes. That check loads `trio.json` from the newest GitHub prerelease, and requires its editor commit to be an ancestor of `HEAD` with only version files changed since (`webapp/coi-serviceworker.js`, `API.md`, `documentation/python/06-python-api.md`, `CHANGELOG.md`).
+`release.sh` refuses unless editor, website and collab are on a clean `main` that is not behind `origin/main`, website and collab have nothing unpushed, the tag does not exist yet, `RELEASES.txt` has text under `# vX.Y.Z` (`scripts/release-text.sh` reads it, and the GitHub release uses it as its description), and `scripts/check-preview-first.mjs` passes. That check loads `trio.json` from the newest GitHub prerelease, and requires its editor commit to be an ancestor of `HEAD` with only version files changed since (`webapp/coi-serviceworker.js`, `API.md`, `documentation/python/06-python-api.md`, `CHANGELOG.md`), plus `RELEASES.txt`, so the release text can be written after the preview.
 
 It then sets the version, turns `# Unreleased` into `# vX.Y.Z`, commits, pushes `main` and starts **Release** with `gh workflow run release.yml -f version=vX.Y.Z`. A rerun with the same version reuses those commits. `--dry-run` commits nothing and starts Release with `dry_run=true`.
 

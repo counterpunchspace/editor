@@ -171,6 +171,12 @@ Only when the user explicitly asks.
 - For website or collab changes without an editor change, use `./previewrelease.sh --services` and `./release.sh --services` (no version). They keep the live editor, tag `<editor version>+s.N` and publish on the website repo, so users get no update notice. Details: "Services releases" in `developer-docs/COMPOSED_RELEASE.md`.
 - A rollback restores code, not data: D1 changes only add tables and columns, and room/R2 storage stays readable by the previous release.
 
+## Changelog and release texts
+
+- Add a `CHANGELOG.md` entry only for a significant change to the user experience or a significant technical change. Don’t add one for details that change no functionality, for users or technically, such as refactors, renames, wording, styling tweaks, tests or docs.
+- Write every new `CHANGELOG.md` entry at the top of the `# Unreleased` section, as its first bullet. Never insert one in the middle or at the end of the section. Previews take their notes from the bullets added since the previous preview, and production releases still turn `# Unreleased` into the version section.
+- `RELEASES.txt` holds the description of each production release, under a `# vX.Y.Z` heading, newest at the top. The user writes it by summarizing the changelog. `./release.sh vX.Y.Z` refuses until that section exists, and the GitHub release takes its description from it. Don’t write or change release texts unless the user asks.
+
 ## Docs index
 
 | Doc                                                                                                                         | Open when                                                                                  |
@@ -189,7 +195,8 @@ Only when the user explicitly asks.
 | `developer-docs/JS_EVENTS.md`, `GLYPH_FILTER_EVENTS.md`, `LOCALSTORAGE_SETTINGS.md`, `SESSIONSTORAGE_SETTINGS.md`, `API.md` | Generated references (see "When you change X")                                             |
 | `strategy/*.md`                                                                                                             | Design rationale: cloud collaboration, cuts, language packs, kerning rules, marketplace    |
 | `instructions/GRAPHICAL_CODE_GRAPHS.md`                                                                                     | Drawing code-path graphs (`strategy/graphs/`)                                              |
-| `CHANGELOG.md`                                                                                                              | Release notes (Unreleased section feeds releases)                                          |
+| `CHANGELOG.md`                                                                                                              | Changelog (Unreleased section feeds preview notes)                                         |
+| `RELEASES.txt`                                                                                                              | Production release descriptions, one `# vX.Y.Z` section each                               |
 
 <!-- gitnexus:start -->
 
