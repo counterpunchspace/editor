@@ -11609,7 +11609,20 @@ export class PatchSyncEngine {
                 continue;
             }
             const glyphName = String(applyPath[1]);
-            if (this._glyphMapForName(glyphName)) {
+            const addedId =
+                applyPath.length === 2 &&
+                operation.newValue &&
+                typeof operation.newValue === 'object'
+                    ? (operation.newValue as { id?: unknown }).id
+                    : undefined;
+            // A glyph added again under a deleted glyph's name brings its own
+            // id. Until the deletion's catalog change arrives the name still
+            // points at the deleted glyph, whose room peers ignore.
+            if (
+                this._glyphMapForName(glyphName) &&
+                (typeof addedId !== 'string' ||
+                    this._glyphIdByName.get(glyphName) === addedId)
+            ) {
                 continue;
             }
             const snapshot =

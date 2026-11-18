@@ -719,6 +719,73 @@ describe('glyph rename rewire font-deps', () => {
     });
 });
 
+describe('glyph added again after a collaborator deleted it', () => {
+    function relay(from, to) {
+        const sent = [];
+        from.onLocalUpdate((update, message, _entries, documentId) => {
+            sent.push({ update, message, documentId });
+        });
+        return (accept = () => true) => {
+            const held = [];
+            for (const packet of sent.splice(0)) {
+                if (!accept(packet.documentId)) {
+                    held.push(packet.documentId);
+                    continue;
+                }
+                to.applyRemoteUpdate(
+                    packet.update,
+                    undefined,
+                    packet.message ? [packet.message] : [],
+                    packet.documentId,
+                    { captureInUndo: false }
+                );
+            }
+            return held;
+        };
+    }
+
+    test('goes to its own room while the name still points at the deleted glyph', () => {
+        const previousBridge = window.patchSyncEngine;
+        const adder = new PatchSyncEngine('readd-adder');
+        adder.initFromJson(createRenameFontData('x'));
+        const deleter = new PatchSyncEngine('readd-deleter');
+        deleter.initFromJson({});
+        deleter.applyDocumentSetState(adder.encodeDocumentSet());
+        const toDeleter = relay(adder, deleter);
+        const toAdder = relay(deleter, adder);
+        try {
+            const deletedId = adder._glyphIdByName.get('x');
+            window.patchSyncEngine = deleter;
+            Font.fromData(deleter.getFontJsonSnapshot()).deleteGlyphs(['x']);
+            // The glyph room's change arrives; font-core's is still on its
+            // way, so the adder's name index still points at the old glyph.
+            expect(toAdder((id) => id.startsWith('glyph:'))).toEqual([
+                'font-core'
+            ]);
+            expect(adder._glyphIdByName.get('x')).toBe(deletedId);
+
+            window.patchSyncEngine = adder;
+            const font = Font.fromData(adder.getFontJsonSnapshot());
+            font.addGlyph('x', 'Base');
+            const addedId = font.findGlyph('x').id;
+            toDeleter();
+
+            expect(addedId).not.toBe(deletedId);
+            expect(adder._glyphIdByName.get('x')).toBe(addedId);
+            const peerGlyph = deleter._glyphDocs.get(addedId)?.getMap('glyph');
+            expect(peerGlyph?.get('name')).toBe('x');
+            expect(peerGlyph?.get('category')).toBe('Base');
+            expect(
+                deleter._glyphDocs.get(deletedId)?.getMap('glyph').size ?? 0
+            ).toBe(0);
+        } finally {
+            window.patchSyncEngine = previousBridge;
+            adder.destroy();
+            deleter.destroy();
+        }
+    });
+});
+
 describe('fontc-worker applyYjsUpdate metadata', () => {
     test('forwards glyphRenames into apply_yjs_update metadata JSON', () => {
         const metadata = JSON.parse(
