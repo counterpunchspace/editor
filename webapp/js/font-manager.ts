@@ -3264,14 +3264,17 @@ class FontManager {
             }
 
             console.log('[FontManager] handleNewFont: clearing caches');
-            try {
-                await fontCompilation.sendMessage({ type: 'clearCache' });
-                console.log('[FontManager] handleNewFont: clearCache done');
-            } catch (e) {
-                console.warn(
-                    '[FontManager] handleNewFont: clearCache failed',
-                    e
-                );
+            // A compile worker that has not started yet holds no cache.
+            if (fontCompilation.worker) {
+                try {
+                    await fontCompilation.sendMessage({ type: 'clearCache' });
+                    console.log('[FontManager] handleNewFont: clearCache done');
+                } catch (e) {
+                    console.warn(
+                        '[FontManager] handleNewFont: clearCache failed',
+                        e
+                    );
+                }
             }
 
             // Reset all JS-side caches. Linked windows show this document

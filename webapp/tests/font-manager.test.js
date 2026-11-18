@@ -5720,6 +5720,8 @@ describe('FontManager handleNewFont', () => {
         const events = [];
         const onFontLoaded = (event) => events.push(event.detail);
         window.addEventListener('fontLoaded', onFontLoaded);
+        const previousWorker = fontCompilation.worker;
+        fontCompilation.worker = {};
 
         try {
             await fontManager.handleNewFont();
@@ -5735,7 +5737,29 @@ describe('FontManager handleNewFont', () => {
                 })
             );
         } finally {
+            fontCompilation.worker = previousWorker;
             window.removeEventListener('fontLoaded', onFontLoaded);
+        }
+    });
+
+    test('handleNewFont skips the worker cache before the compile worker has started', async () => {
+        const previousWorker = fontCompilation.worker;
+        fontCompilation.worker = null;
+        const warn = jest.spyOn(console, 'warn');
+        try {
+            await fontManager.handleNewFont();
+
+            expect(sendMessageSpy).not.toHaveBeenCalledWith({
+                type: 'clearCache'
+            });
+            expect(
+                warn.mock.calls.some((args) =>
+                    String(args[0]).includes('clearCache failed')
+                )
+            ).toBe(false);
+        } finally {
+            warn.mockRestore();
+            fontCompilation.worker = previousWorker;
         }
     });
 
