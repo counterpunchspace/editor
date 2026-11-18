@@ -131,7 +131,7 @@ A rollback restores code, not data. So:
 | --- | --- | --- | --- |
 | Editor Pages | `editorstaging` → https://staging.editor.counterpunch.space | `editorpreview` → https://preview.editor.counterpunch.space | `editor` → https://editor.counterpunch.space |
 | Website Pages | `websitestaging` → https://staging.counterpunch.space | `websitepreview` → https://preview.counterpunch.space | `website` → https://counterpunch.space |
-| Room | `room-staging` → https://staging.rooms.counterpunch.space | `room-preview` → https://preview.rooms.counterpunch.space | `room` |
+| Room | `room-staging` → https://staging.rooms.counterpunch.space | `room-preview` → https://preview.rooms.counterpunch.space | `room` → https://rooms.counterpunch.space |
 | Validator / compactor | `validator-staging` / `compactor-staging` | `validator-preview` / `compactor-preview` | `validator` / `compactor` |
 | Room R2 | `fonts-room-state-staging` | `fonts-room-state-preview` | `fonts-room-state` |
 | D1 | `context_users_staging` | shared `context_users` | shared `context_users` |
@@ -143,6 +143,7 @@ Proxied DNS on `counterpunch.space` (the deploy token cannot edit DNS):
 - `staging` CNAME `websitestaging-58q.pages.dev`
 - `staging.editor` CNAME `editorstaging.pages.dev`
 - `staging.rooms` proxied the same way as `preview.rooms`, so the worker route `staging.rooms.counterpunch.space/*` receives traffic
+- `rooms` proxied the same way as `preview.rooms`, so the production worker route `rooms.counterpunch.space/*` receives traffic. Without it the production room health check fails and the release rolls back.
 
 Website preview must point `ROOM_WORKER_URL` at the preview room origin. JWT `AUTH_TOKEN_SECRET`, `CLOUD_*` website↔room tokens, and validator/compactor shared HMAC tokens live in the **Cloudflare dashboard**. Cutover does not re-upload them from GitHub.
 
