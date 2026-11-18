@@ -75,6 +75,56 @@ describe('CharacterSetPluginManager', () => {
         ]);
     });
 
+    it('keeps the facets a provider declares and the values on its sets', async () => {
+        window.pyodide.runPythonAsync.mockImplementation(async (code) => {
+            if (code.includes('entry_points(group=')) {
+                return JSON.stringify([
+                    {
+                        id: 'org.rosettatype.hyperglot',
+                        name: 'Hyperglot',
+                        version: '0.8.1',
+                        facets: [
+                            { id: 'writing_script', label: 'Writing script' },
+                            { id: '', label: 'Broken' }
+                        ],
+                        tree: [
+                            {
+                                id: 'urd',
+                                label: 'Urdu',
+                                selectable: false,
+                                children: [
+                                    {
+                                        id: 'urd/0',
+                                        label: 'Arabic',
+                                        selectable: true,
+                                        facets: {
+                                            writing_script: ['Arabic', 7],
+                                            empty: [],
+                                            junk: 'Arabic'
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]);
+            }
+            return '';
+        });
+        const manager = new CharacterSetPluginManager();
+
+        await manager.ensureReady();
+
+        const [provider] = manager.getProviders();
+        expect(provider.facets).toEqual([
+            { id: 'writing_script', label: 'Writing script' }
+        ]);
+        expect(provider.tree[0].facets).toBeUndefined();
+        expect(provider.tree[0].children[0].facets).toEqual({
+            writing_script: ['Arabic']
+        });
+    });
+
     it('loads defined members for each character set', async () => {
         window.pyodide.runPythonAsync.mockImplementation(async (code) => {
             if (code.includes('provider.members_by_set')) {

@@ -12,8 +12,15 @@ import {
     type CharacterSetCoverageLevel,
     type CharacterSetEntry,
     type CharacterSetMembers,
-    type CharacterSetNode
+    type CharacterSetNode,
+    type CharacterSetProvider
 } from './character-set-plugin-manager';
+import {
+    facetValueCounts,
+    flattenSets,
+    matchesFacets,
+    matchesQuery
+} from './character-set-facets';
 import { ccmpDecomposition } from './skills/ccmp-shells';
 import { arabicFormRules } from './skills/arabic-forms';
 import { glyphComponentNames } from './skills/composition-conversion';
@@ -229,6 +236,10 @@ export class AddGlyphsDialog {
     private escapeBinding: ModalEscapeBinding | null = null;
     private skills: SkillSummary[] = [];
     private loadingSpinner: HTMLElement | null = null;
+    private facetBar: HTMLElement | null = null;
+    private setCount: HTMLElement | null = null;
+    /** Chosen facet values per provider, for as long as the editor is open. */
+    private facetChoices = new Map<string, Record<string, string>>();
     private loadingCount = 0;
 
     constructor() {
@@ -393,6 +404,9 @@ export class AddGlyphsDialog {
         this.setPanel.className = 'add-glyph-set-panel';
         const setHeading = document.createElement('h3');
         setHeading.textContent = 'Glyph Sets';
+        this.setCount = document.createElement('span');
+        this.setCount.className = 'add-glyph-set-count';
+        setHeading.appendChild(this.setCount);
         const setSearch = document.createElement('div');
         setSearch.className = 'find-glyph-search overview-search-control';
         const setSearchIcon = document.createElement('span');
@@ -410,7 +424,15 @@ export class AddGlyphsDialog {
         this.setTree.className = 'add-glyph-set-tree';
         this.setTree.setAttribute('role', 'listbox');
         this.setTree.setAttribute('aria-multiselectable', 'true');
-        this.setPanel.append(setHeading, setSearch, this.setTree);
+        this.facetBar = document.createElement('div');
+        this.facetBar.className = 'add-glyph-facets';
+        this.facetBar.hidden = true;
+        this.setPanel.append(
+            setHeading,
+            setSearch,
+            this.facetBar,
+            this.setTree
+        );
 
         this.list = document.createElement('div');
         this.list.className = 'add-glyph-list';
@@ -789,7 +811,18 @@ export class AddGlyphsDialog {
             return;
         }
         const query = this.setSearchInput?.value.trim().toLowerCase() || '';
+        this.renderFacetBar(provider, query);
         const sets = this.getVisibleSets(provider.tree, query);
+        if (this.setCount) {
+            const filtered =
+                Boolean(query) ||
+                Object.keys(this.facetChoices.get(provider.id) || {}).length >
+                    0;
+            const total = flattenSets(provider.tree).length;
+            this.setCount.textContent = filtered
+                ? `${sets.length} of ${total}`
+                : String(total);
+        }
         this.activeSetIndex = sets.length
             ? Math.min(this.activeSetIndex, sets.length - 1)
             : -1;
@@ -873,21 +906,84 @@ export class AddGlyphsDialog {
 
     private getVisibleSets(
         nodes: CharacterSetNode[],
-        query: string,
-        ancestors: string[] = []
+        query: string
     ): CharacterSetNode[] {
-        return nodes.flatMap((node) => {
-            const label = [...ancestors, node.label].join(' - ');
-            if (node.selectable) {
-                return !query || label.toLowerCase().includes(query)
-                    ? [{ ...node, label }]
-                    : [];
+        const chosen = this.facetChoices.get(this.activeProviderId) || {};
+        return flattenSets(nodes).filter(
+            (set) => matchesQuery(set, query) && matchesFacets(set, chosen)
+        );
+    }
+
+    /** One dropdown per facet the provider declares, counted against the search. */
+    private renderFacetBar(
+        provider: CharacterSetProvider,
+        query: string
+    ): void {
+        if (!this.facetBar) {
+            return;
+        }
+        const allSets = flattenSets(provider.tree);
+        const searched = allSets.filter((set) => matchesQuery(set, query));
+        const chosen = this.facetChoices.get(provider.id) || {};
+        const fragment = document.createDocumentFragment();
+        for (const facet of provider.facets) {
+            const values = facetValueCounts(allSets, searched, facet.id);
+            if (!values.length) {
+                continue;
             }
-            return this.getVisibleSets(node.children || [], query, [
-                ...ancestors,
-                node.label
-            ]);
-        });
+            const row = document.createElement('label');
+            row.className = 'add-glyph-facet';
+            row.append(facet.label);
+            const select = document.createElement('select');
+            select.className = 'add-glyph-facet-select';
+            select.classList.toggle('is-active', Boolean(chosen[facet.id]));
+            const any = document.createElement('option');
+            any.value = '';
+            any.textContent = `Any ${facet.label.toLowerCase()} (${searched.length})`;
+            select.appendChild(any);
+            for (const { value, count } of values) {
+                const option = document.createElement('option');
+                option.value = value;
+                option.textContent = `${value} (${count})`;
+                option.disabled = count === 0 && chosen[facet.id] !== value;
+                select.appendChild(option);
+            }
+            select.value = chosen[facet.id] || '';
+            select.addEventListener('change', () =>
+                this.chooseFacet(provider.id, facet.id, select.value)
+            );
+            row.appendChild(select);
+            if (chosen[facet.id]) {
+                const clear = document.createElement('button');
+                clear.type = 'button';
+                clear.className = 'add-glyph-facet-clear';
+                clear.textContent = 'Clear';
+                clear.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    this.chooseFacet(provider.id, facet.id, '');
+                });
+                row.appendChild(clear);
+            }
+            fragment.appendChild(row);
+        }
+        this.facetBar.replaceChildren(fragment);
+        this.facetBar.hidden = !this.facetBar.childElementCount;
+    }
+
+    private chooseFacet(
+        providerId: string,
+        facetId: string,
+        value: string
+    ): void {
+        const chosen = { ...(this.facetChoices.get(providerId) || {}) };
+        if (value) {
+            chosen[facetId] = value;
+        } else {
+            delete chosen[facetId];
+        }
+        this.facetChoices.set(providerId, chosen);
+        this.activeSetIndex = -1;
+        this.renderSetTree();
     }
 
     private selectSet(

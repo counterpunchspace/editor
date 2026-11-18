@@ -10,13 +10,22 @@ export interface CharacterSetNode {
     label: string;
     selectable: boolean;
     children?: CharacterSetNode[];
+    /** Values per declared facet id, such as `{writing_script: ['Arabic']}`. */
+    facets?: Record<string, string[]>;
 }
+
+/** A filter a provider offers over its sets, such as Hyperglot's writing script. */
+export type CharacterSetFacet = {
+    id: string;
+    label: string;
+};
 
 export interface CharacterSetProvider {
     id: string;
     name: string;
     version: string;
     tree: CharacterSetNode[];
+    facets: CharacterSetFacet[];
     glyphCategories: GlyphCategoryDefinition[];
     setDetails: Record<
         string,
@@ -97,14 +106,50 @@ function parseNode(value: unknown): CharacterSetNode | null {
     if (children?.some((child) => child === null)) {
         return null;
     }
+    const facets = parseNodeFacets(value.facets);
     return {
         id: value.id,
         label: value.label,
         selectable: value.selectable,
         children: children?.filter(
             (child): child is CharacterSetNode => child !== null
-        )
+        ),
+        ...(facets ? { facets } : {})
     };
+}
+
+function parseNodeFacets(value: unknown): Record<string, string[]> | null {
+    if (!isRecord(value)) {
+        return null;
+    }
+    const facets: Record<string, string[]> = {};
+    for (const [id, values] of Object.entries(value)) {
+        if (!Array.isArray(values)) {
+            continue;
+        }
+        const strings = values.filter(
+            (item): item is string => typeof item === 'string' && item !== ''
+        );
+        if (strings.length) {
+            facets[id] = strings;
+        }
+    }
+    return Object.keys(facets).length ? facets : null;
+}
+
+function parseFacets(value: unknown): CharacterSetFacet[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    return value.flatMap((facet) =>
+        isRecord(facet) &&
+        typeof facet.id === 'string' &&
+        typeof facet.label === 'string' &&
+        facet.id &&
+        facet.label
+            ? [{ id: facet.id, label: facet.label }]
+            : []
+    );
 }
 
 function parseProvider(value: unknown): CharacterSetProvider | null {
@@ -158,6 +203,7 @@ function parseProvider(value: unknown): CharacterSetProvider | null {
         name: value.name,
         version: value.version,
         tree: tree.filter((node): node is CharacterSetNode => node !== null),
+        facets: parseFacets(value.facets),
         glyphCategories,
         setDetails
     };

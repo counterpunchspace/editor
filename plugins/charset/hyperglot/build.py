@@ -158,7 +158,14 @@ def build_catalogue(database: dict[str, dict]) -> dict:
                         }
                     elif attribute not in existing["categories"]:
                         existing["categories"].append(attribute)
-            children.append({"id": leaf_id, "label": label, "selectable": True})
+            children.append(
+                {
+                    "id": leaf_id,
+                    "label": label,
+                    "selectable": True,
+                    "facets": {"writing_script": [script]},
+                }
+            )
             leaves.append(
                 {
                     "id": leaf_id,

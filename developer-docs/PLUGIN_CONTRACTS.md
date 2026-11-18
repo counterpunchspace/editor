@@ -32,6 +32,10 @@ Preflight refuses a missing or empty `claims`, a malformed name and any key the 
 
 The editor routes each code point to the skill that claims its writing script, and each glyph name by the writing script of its code point, its Glyph Data record or its name suffix (`-ar`). Until a font can choose its skills, one skill is active per writing script: the bundled one, else the lowest plugin id. A skill that loses every writing script it claims is inactive, and so are the feature generators in its package.
 
+## Character set facets
+
+A `character_set` provider may declare filters over its sets. These keys are optional, so they need no contract bump. `metadata()` lists them as `"facets": [{"id": "writing_script", "label": "Writing script"}]`, and each selectable tree node gives its values as `"facets": {"writing_script": ["Arabic"]}`. Add Glyphs shows one dropdown per declared facet and keeps the sets that carry the chosen value. Values are the provider’s own words; facets of different providers are never merged.
+
 ## Dependencies and the sandbox
 
 A wheel may depend only on packages listed in `allowedDependencies`. Anything else is vendored into the wheel. Preflight has no network. Each probe has 5 seconds, the run has 60 seconds, and the container is destroyed after 120 seconds. Output is capped. Preflight checks the contract surface. It does not prove a plugin is safe to run in the editor.

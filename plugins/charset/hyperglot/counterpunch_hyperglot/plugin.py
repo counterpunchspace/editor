@@ -31,6 +31,7 @@ class HyperglotCharacterSetProvider:
             "name": self.display_name,
             "version": self._data["version"],
             "tree": self._data["tree"],
+            "facets": [{"id": "writing_script", "label": "Writing script"}],
             "glyph_categories": [
                 {"id": "base", "label": "Base"},
                 {"id": "auxiliary", "label": "Auxiliary"},

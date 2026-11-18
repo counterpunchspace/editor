@@ -511,6 +511,73 @@
     width: auto;
 }
 
+.add-glyph-set-panel h3 {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.add-glyph-set-count {
+    color: var(--text-tertiary);
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Filters a Character Set provider declares, such as Hyperglot's writing script. */
+.add-glyph-facets {
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    gap: 6px;
+    padding: 0 10px 8px;
+}
+
+.add-glyph-facets[hidden] {
+    display: none;
+}
+
+.add-glyph-facet {
+    align-items: center;
+    color: var(--text-secondary);
+    display: flex;
+    font-size: 12px;
+    gap: 8px;
+    white-space: nowrap;
+}
+
+.add-glyph-facet-select {
+    background: var(--background-secondary);
+    border: 1px solid var(--border-primary);
+    border-radius: 4px;
+    color: var(--text-primary);
+    flex: 1 1 auto;
+    font: inherit;
+    min-width: 0;
+    padding: 5px 8px;
+}
+
+.add-glyph-facet-select.is-active {
+    background: color-mix(
+        in srgb,
+        var(--accent-blue) 18%,
+        var(--background-primary)
+    );
+    border-color: var(--accent-blue);
+}
+
+.add-glyph-facet-clear {
+    background: none;
+    border: 0;
+    color: var(--accent-blue);
+    cursor: pointer;
+    font: inherit;
+    padding: 0;
+}
+
+.add-glyph-facet-clear:hover {
+    text-decoration: underline;
+}
+
 .add-glyph-results-toolbar {
     align-items: center;
     display: flex;
