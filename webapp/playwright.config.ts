@@ -184,7 +184,8 @@ export default defineConfig({
             testIgnore: [
                 '**/cloud-collab*.spec.ts',
                 '**/plugin-marketplace.spec.ts',
-                '**/sign-in-live.spec.ts'
+                '**/sign-in-live.spec.ts',
+                '**/ai-filter-cost.spec.ts'
             ],
             use: {
                 ...devices['Desktop Chrome'],
@@ -293,6 +294,12 @@ export default defineConfig({
                 enabled: process.env.SIGN_IN_LIVE_E2E === '1',
                 name: 'sign-in-live',
                 spec: '**/sign-in-live.spec.ts'
+            },
+            // Real OpenRouter spend: a retry would pay twice.
+            {
+                enabled: process.env.AI_COST_E2E === '1',
+                name: 'ai-cost',
+                spec: '**/ai-filter-cost.spec.ts'
             }
         ]
             .filter((smoke) => smoke.enabled)
