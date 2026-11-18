@@ -51,6 +51,9 @@ const WEBSITE_SECRETS = [
   "ROOM_STATUS_SERVICE_TOKEN",
   "ADMIN_USER_IDS",
   "OPENROUTER_API_KEY",
+  // Free-credit Assistant usage goes through its own key on preview and
+  // production; staging, which this script never checks, has none.
+  "OPENROUTER_FREE_API_KEY",
   "STRIPE_SECRET_KEY",
   "STRIPE_PUBLISHABLE_KEY",
   "STRIPE_WEBHOOK_SECRET",
