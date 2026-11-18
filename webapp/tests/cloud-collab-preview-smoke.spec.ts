@@ -56,6 +56,87 @@ function sessionEmail(role: string): string {
     return email!;
 }
 
+type AssistantEvent = {
+    type: string;
+    error?: string;
+    tool_calls?: Array<{ function: { name: string } }>;
+    served?: { model: string; provider: string; fallback: boolean };
+};
+
+/**
+ * One Assistant step through the deployed proxy: DeepSeek Flash on the stored
+ * route, or Luna when Flash has no route or failed. Either must make the one
+ * tool call asked for. Landing on Luna is reported, not failed: OpenRouter's
+ * endpoints are not this release's doing.
+ */
+test('the Assistant makes a tool call on the deployed stack', async ({
+    browser
+}) => {
+    test.setTimeout(180000);
+    expect(websiteOrigin, 'CLOUD_SMOKE_WEBSITE_URL').toContain('https://');
+    const context = await browser.newContext({
+        baseURL: editorOrigin,
+        storageState: path.join(sessionsDir, 'owner.json')
+    });
+    try {
+        const response = await context.request.post(
+            `${websiteOrigin}/api/ai/assistant`,
+            {
+                headers: { Origin: editorOrigin },
+                timeout: 150000,
+                data: {
+                    stream: true,
+                    systemPrompt:
+                        'You check fonts. Use the tools you are given.',
+                    messages: [
+                        {
+                            role: 'user',
+                            content:
+                                'How many glyphs does the open font have? Call count_glyphs once.'
+                        }
+                    ],
+                    tools: [
+                        {
+                            type: 'function',
+                            function: {
+                                name: 'count_glyphs',
+                                description:
+                                    'Count the glyphs in the open font.',
+                                parameters: {
+                                    type: 'object',
+                                    properties: {},
+                                    required: []
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        );
+        expect(response.status(), await response.text()).toBe(200);
+        const events = (await response.text())
+            .split('\n\n')
+            .filter((line) => line.startsWith('data: '))
+            .map((line) => JSON.parse(line.slice(6)) as AssistantEvent);
+        expect(events.filter((event) => event.type === 'error')).toEqual([]);
+        const calls = events.flatMap((event) => event.tool_calls ?? []);
+        expect(calls.map((call) => call.function.name)).toEqual([
+            'count_glyphs'
+        ]);
+        const served = events.find((event) => event.type === 'done')?.served;
+        expect(served?.model).toBeTruthy();
+        test.info().annotations.push({
+            type: served?.fallback ? 'warning' : 'info',
+            description: `Assistant served by ${served?.model} on ${served?.provider}${served?.fallback ? ' (Luna fallback)' : ''}`
+        });
+        console.log(
+            `[preview-smoke] Assistant served by ${served?.model} on ${served?.provider}${served?.fallback ? ' (Luna fallback)' : ''}`
+        );
+    } finally {
+        await context.close();
+    }
+});
+
 test('a new account saves a font, invites a second account, and a nudge syncs between them', async ({
     browser
 }) => {

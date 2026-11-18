@@ -5,10 +5,10 @@
  *
  * The page's /api/ai/assistant requests go straight to OpenRouter with the
  * development key and the model under test, shaped like the website proxy's
- * requests. DeepSeek models get their providers from the same routing the
- * plugin security review uses (website/plugins-worker/review/route.mjs):
- * full or 8-bit weights, tool support, good uptime, and a live tool-call
- * probe.
+ * requests. DeepSeek models get their endpoints from the Assistant's own
+ * routing (website/plugins-worker/review/ai-route.mjs, profile "assistant"):
+ * a gate on the endpoint list, then a live probe that ranks the endpoints by
+ * measured correctness, cost and speed.
  *
  * Spends real money, so it runs only on request:
  *   AI_COST_E2E=1 npx playwright test --project=ai-cost
@@ -45,7 +45,7 @@ type ModelSpec = {
     model: string;
     /** As in website/utils/ai-settings.js, where the model is configured. */
     reasoningEffort?: string;
-    /** Pick providers with the plugin review's routing. */
+    /** Pick endpoints with the Assistant's routing. */
     reviewRouting?: boolean;
 };
 
@@ -170,15 +170,16 @@ async function reviewRoute(
 ): Promise<ReviewRoute> {
     const module = (await import(
         pathToFileURL(
-            path.join(WORKSPACE, 'website/plugins-worker/review/route.mjs')
+            path.join(WORKSPACE, 'website/plugins-worker/review/ai-route.mjs')
         ).href
     )) as {
         chooseRoute(options: {
+            profile: string;
             alias: string;
             apiKey: string;
         }): Promise<ReviewRoute>;
     };
-    return module.chooseRoute({ alias, apiKey });
+    return module.chooseRoute({ profile: 'assistant', alias, apiKey });
 }
 
 const CORS_HEADERS = {

@@ -8,7 +8,9 @@
  *
  * Reads the editor's /build-info.json and the website's
  * /api/health?ai=1&config=1, which also reports the D1 schema, whether the
- * Assistant's OpenRouter key works, whether every secret and binding the site
+ * Assistant's OpenRouter key works and its DeepSeek Flash route (the first
+ * poll after a deploy refreshes a stale route, so the release starts with a
+ * fresh one), whether every secret and binding the site
  * and the plugins Worker need works (see website/utils/deploy-checks.js), and
  * the deep health of the room it is wired to (room, validator and compactor
  * commits).
@@ -23,6 +25,23 @@ import { pathToFileURL } from "node:url";
 
 const POLL_INTERVAL_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 20_000;
+
+/**
+ * Notes that never block a release: the Assistant's DeepSeek Flash route
+ * when it has no endpoints or few of them. OpenRouter's endpoints come and
+ * go on their own, and the Assistant falls back to Luna meanwhile.
+ */
+export function stackWarnings(observed) {
+  const route = observed.website?.ai?.route;
+  if (!route) return [];
+  const warnings = (route.warnings || []).map((text) => `AI route: ${text}`);
+  if (route.model) {
+    warnings.unshift(
+      `AI route: ${route.model} on ${route.providers?.join(", ") || "no endpoints"}`,
+    );
+  }
+  return warnings;
+}
 
 /**
  * Every reason the observed stack differs from the expected one. Empty when
@@ -157,11 +176,15 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
   const deadline = Date.now() + options.waitSeconds * 1000;
   for (;;) {
-    const problems = stackMismatches(await observe(options), options);
+    const observed = await observe(options);
+    const problems = stackMismatches(observed, options);
     if (!problems.length) {
       console.log(
         `${options.editorOrigin} and ${options.websiteOrigin} serve the expected commits.`,
       );
+      for (const warning of stackWarnings(observed)) {
+        console.log(`  ${warning}`);
+      }
       report(true);
       return;
     }

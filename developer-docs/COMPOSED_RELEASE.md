@@ -44,7 +44,7 @@ Preview Release and Release both call `.github/workflows/composed-cutover.yml`:
 5. Otherwise **staging-deploy** puts the trio on staging and waits until staging reports it, **staging-e2e** runs the full cloud-collab suite, and **staging-check** removes the suite's data and fails if staging changed during the run.
 6. **preflight:** builds the website and the editor (version already injected), bundles the website functions, runs `wrangler deploy --dry-run` for validator, compactor, room, plugins and cron, and checks the target's secret names. Its builds are what the deploy job ships. A dry run stops here.
 7. **deploy:** records the live Worker versions and Pages deployments (`scripts/cutover-snapshot.mjs`, artifact `cutover-snapshot-<target>`), then deploys validator, compactor, the room (followed by a pairing check on its `workers.dev` URL), the D1 schema, website, plugins, cron (production only) and editor.
-8. **smoke:** waits up to 3 minutes until the real domains report the new commits and version, then signs in real accounts and runs the smoke test (see below).
+8. **smoke:** waits up to 3 minutes until the real domains report the new commits and version, then signs in real accounts and runs the smoke test (see below). The first health poll also refreshes the Assistant’s DeepSeek Flash route when it is older than an hour, so the release starts with a fresh one. The wait prints the route and its warnings (no endpoints, or only one); they never fail the release, since the Assistant then answers with Luna.
 9. **rollback:** runs only if deploy or smoke failed, and restores everything in the snapshot. D1 stays as it is.
 10. **tag:** tags all three repos after the smoke test passed. A tag that already points at the deployed commit is kept; one that points elsewhere fails the job.
 
@@ -110,7 +110,7 @@ After the first successful production cutover, set the editor repository variabl
 
 `website/scripts/e2e-product-sessions.mjs` signs in `<local>+cp-e2e-<run>-<role>@gmail.com` with the sign-in code from the real mail (IMAP secrets below) and writes a Playwright storage state per role. Its `cleanup` mode always runs afterwards: it deletes the fonts those users own through the website (the same purge the app runs), then their D1 rows and the sign-in mail, and fails if any asset row or R2 object is left. Every delete is guarded by the plus-address check.
 
-- **Preview** (`cloud-collab-preview` project, `tests/cloud-collab-preview-smoke.spec.ts`): an owner on the free trial saves a font, invites the invitee, the invitee accepts, and a nudge syncs between both browsers. Then the owner deletes the font.
+- **Preview** (`cloud-collab-preview` project, `tests/cloud-collab-preview-smoke.spec.ts`): the owner asks the deployed Assistant for one tool call, which must arrive without errors (a Luna fallback is noted, not failed). Then the owner on the free trial saves a font, invites the invitee, the invitee accepts, and a nudge syncs between both browsers. Then the owner deletes the font.
 - **Production** (`cloud-collab-product-smoke` project): one account loads the editor signed in without page errors. `wait-for-stack.mjs` already checked every commit, the schema and the room wiring.
 
 Neither project is part of `npm run test:cloud-collab`, and neither retries: a second attempt would find the first one's font.

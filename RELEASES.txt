@@ -19,6 +19,7 @@ Counterpunch moves from alpha to early beta. The main features are in place; som
 - **Much faster**: A font window opens about three times faster (Fustat in under 3 seconds). Finishing an edit takes a third to half the time, undo is five times faster, kerning changes are about twenty times faster, and a typed letter appears in about 15 ms instead of 250 ms.
 - **Cloud collaboration you can rely on**: Large cloud fonts keep saving, collaborators’ edits arrive at once and compile in every window, and undo only takes back your own edits. A bar shows when you’re offline: you can keep editing for 5 minutes, and your edits are sent when you reconnect. Signing in happens in a dialog with an emailed code, without leaving the editor.
 - **Tour with AI**: The tour now lets you try the Assistant writing a glyph filter and answering a question about the font, and you can go back, restart or end it at any step.
+- **A faster, cheaper Assistant**: The Assistant runs on the latest DeepSeek Flash, on the hosts that pass an hourly test for correct tool calls, cost and speed and that don’t keep your prompts. A step that fails there is redone on GPT Luna in the same reply.
 
 ### Smaller improvements and fixes
 

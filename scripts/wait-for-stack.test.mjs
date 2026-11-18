@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { parseArgs, stackMismatches } from "./wait-for-stack.mjs";
+import { parseArgs, stackMismatches, stackWarnings } from "./wait-for-stack.mjs";
 
 const expected = {
   editor: "editor-sha",
@@ -68,6 +68,25 @@ test("a website that does not report AI health is not ready", () => {
   assert.deepEqual(stackMismatches(stack, expected), [
     "website AI: not reported",
   ]);
+});
+
+test("a thin AI route warns without blocking the release", () => {
+  const stack = healthyStack();
+  stack.website.ai = {
+    ok: true,
+    route: {
+      ok: true,
+      model: "deepseek/deepseek-v4.1-flash-1017",
+      providers: ["morph/fp8"],
+      warnings: ["only 1 endpoint(s) passed; the Assistant falls back to Luna more often"],
+    },
+  };
+  assert.deepEqual(stackMismatches(stack, expected), []);
+  assert.deepEqual(stackWarnings(stack), [
+    "AI route: deepseek/deepseek-v4.1-flash-1017 on morph/fp8",
+    "AI route: only 1 endpoint(s) passed; the Assistant falls back to Luna more often",
+  ]);
+  assert.deepEqual(stackWarnings(healthyStack()), []);
 });
 
 test("each failed secret or binding check is named", () => {
