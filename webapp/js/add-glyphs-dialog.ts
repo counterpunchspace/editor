@@ -163,6 +163,31 @@ function characterRecord(
     };
 }
 
+const SLOW_STEP_MS = 10_000;
+
+/** Waits for every step; if that takes long, warns once and names the steps still pending. */
+async function waitForSteps(
+    steps: Record<string, Promise<unknown>>
+): Promise<void> {
+    const pending = new Set(Object.keys(steps));
+    const timer = window.setTimeout(() => {
+        console.warn(
+            `Add Glyphs is still waiting for: ${[...pending].join(', ')}`
+        );
+    }, SLOW_STEP_MS);
+    try {
+        await Promise.all(
+            Object.entries(steps).map(([name, step]) =>
+                step.then(() => {
+                    pending.delete(name);
+                })
+            )
+        );
+    } finally {
+        window.clearTimeout(timer);
+    }
+}
+
 /**
  * Searches the active Character Set provider and adds selected records to the font.
  * This intentionally has independent state from Find Glyph, whose list is
@@ -203,6 +228,8 @@ export class AddGlyphsDialog {
     private samplePreviewVersion = 0;
     private escapeBinding: ModalEscapeBinding | null = null;
     private skills: SkillSummary[] = [];
+    private loadingSpinner: HTMLElement | null = null;
+    private loadingCount = 0;
 
     constructor() {
         this.buildContent();
@@ -220,13 +247,20 @@ export class AddGlyphsDialog {
         });
         this.searchInput.disabled = true;
         this.searchInput.placeholder = 'Loading Glyph Data…';
+        this.setLoading(true);
         try {
-            await Promise.all([
-                glyphDataIndex.ensureReady(),
-                characterSetPluginManager.ensureReady(),
-                this.refreshCompositionSettings(),
-                this.loadSkills()
-            ]);
+            // The skill names only label the source list, so they never hold
+            // the dialog back; the list is redrawn when they arrive.
+            void this.loadSkills().then(() => {
+                if (this.isOpen() && this.providerSelect?.options.length) {
+                    this.renderProviderOptions();
+                }
+            });
+            await waitForSteps({
+                'Glyph Data': glyphDataIndex.ensureReady(),
+                'character sets': characterSetPluginManager.ensureReady(),
+                'composition settings': this.refreshCompositionSettings()
+            });
             this.restoreSavedProvider();
             this.renderProviderOptions();
             this.updateProviderLayout();
@@ -241,6 +275,16 @@ export class AddGlyphsDialog {
             console.error('Could not load Character Set providers', error);
             this.searchInput.placeholder =
                 'Character Sets could not be loaded.';
+        } finally {
+            this.setLoading(false);
+        }
+    }
+
+    /** Shows the spinner beside the source list while anything is loading. */
+    private setLoading(loading: boolean): void {
+        this.loadingCount = Math.max(0, this.loadingCount + (loading ? 1 : -1));
+        if (this.loadingSpinner) {
+            this.loadingSpinner.hidden = this.loadingCount === 0;
         }
     }
 
@@ -321,6 +365,12 @@ export class AddGlyphsDialog {
             'Character Set Provider'
         );
         providerBar.appendChild(this.providerSelect);
+        this.loadingSpinner = document.createElement('span');
+        this.loadingSpinner.className = 'add-glyph-loading-spinner';
+        this.loadingSpinner.setAttribute('role', 'status');
+        this.loadingSpinner.setAttribute('aria-label', 'Loading');
+        this.loadingSpinner.hidden = true;
+        providerBar.appendChild(this.loadingSpinner);
 
         this.compositionSettings = document.createElement('div');
         this.compositionSettings.className = 'add-glyphs-composition';
@@ -694,9 +744,14 @@ export class AddGlyphsDialog {
         this.activeSetIndex = -1;
         this.setSelectionAnchor = -1;
         this.updateProviderLayout();
-        await this.ensureSetMembers();
-        this.renderSetTree();
-        await this.updateResults();
+        this.setLoading(true);
+        try {
+            await this.ensureSetMembers();
+            this.renderSetTree();
+            await this.updateResults();
+        } finally {
+            this.setLoading(false);
+        }
     }
 
     private updateProviderLayout(): void {

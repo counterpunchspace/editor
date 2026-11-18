@@ -6238,7 +6238,8 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     font-size: 13px;
 }
 
-.plugin-manager-spinner {
+.plugin-manager-spinner,
+.add-glyph-loading-spinner {
     flex-shrink: 0;
     width: 14px;
     height: 14px;
