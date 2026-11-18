@@ -1,3 +1,55 @@
+# v0.4.0
+
+Counterpunch moves from alpha to early beta. The main features are in place; some still need finishing, and the interface still needs polish.
+
+## User-facing changes
+
+### Highlights
+
+- **Launcher and fonts anywhere on disk**: Counterpunch starts with a launcher to create, open and reopen fonts from your computer, the cloud and browser storage. Every font opens in its own window. Fonts open from anywhere on your disk and save back in place, like a desktop app, with no project folder to set up. **Save As** saves to this computer, the cloud or browser storage.
+- **Fonts from GitHub**: Sign in to GitHub, pick your repositories, and open `.glyphs`, `.glyphspackage`, `.ufo`, `.designspace` or `.babelfont` sources from them. Saving never writes to the base branch: it commits to a `counterpunch-N` branch and opens a pull request.
+- **More formats open and save**: `.ufo`, `.glyphspackage` and `.designspace` projects now save, file by file, keeping what was read. Glyphs 4 files open, and Save As can write Glyphs 3 or Glyphs 4. `.ttf` files open as editable fonts. Fonts with tens of thousands of glyphs, such as Chinese fonts, open and save. Glyphs and Designspace conversions keep far more of the font.
+- **Stations and drawings**: Counterpunch has new names for the parts of a variable font. Masters are **stations**, a glyph’s layers are **drawings**, and intermediate or brace layers are **free drawings**. The handbook explains each term. Your files keep their own names and don’t change.
+- **Skills**: The Latin and Arabic skills (formerly Language Packs) build new glyphs as components or through `ccmp`. The Arabic skill covers all of Hyperglot’s Standard Arabic, and shows faint placeholder outlines for glyphs you haven’t drawn yet. **Add Glyphs** lists skills and glyph sets, which you can filter by writing script.
+- **Glyph overview filters**: Combine filters with Shift/Cmd/Ctrl-click. New **Categories** and **Writing Scripts** sections sort glyphs by Unicode category and writing script. A new filter editor lets the Assistant write a filter from your description, and user filters can be sorted into folders.
+- **Add an axis with stations**: **+ Axis** in Font Info adds a registered axis together with copies of your stations, ready to interpolate, in one undo step.
+- **Font Info, redesigned**: Panels are split into titled sections, and every field says what the compiler does with it. Stations can have metrics for one writing script. In Features, you can add, rename, duplicate and delete prefixes, classes and features, with tag checks as you type.
+- **Outline editing**: Path booleans (union, difference, intersection, exclusion), non-destructive subtracting paths, deleting a node while keeping the curve’s shape, Alt-dragging corner points, **Arrange**, and Cut, Copy and Paste.
+- **Text and spacing**: Multiline text with line height and alignment, the text size in printer points with screen calibration, and a kerning handle on the caret. Kerning changes show at every place the pair appears right away.
+- **Much faster**: A font window opens about three times faster (Fustat in under 3 seconds). Finishing an edit takes a third to half the time, undo is five times faster, kerning changes are about twenty times faster, and a typed letter appears in about 15 ms instead of 250 ms.
+- **Cloud collaboration you can rely on**: Large cloud fonts keep saving, collaborators’ edits arrive at once and compile in every window, and undo only takes back your own edits. A bar shows when you’re offline: you can keep editing for 5 minutes, and your edits are sent when you reconnect. Signing in happens in a dialog with an emailed code, without leaving the editor.
+- **Tour with AI**: The tour now lets you try the Assistant writing a glyph filter and answering a question about the font, and you can go back, restart or end it at any step.
+
+### Smaller improvements and fixes
+
+- Auto QA checks contour direction and hints at likely missing components and anchors; a new **Auto QA Issues** filter lists every glyph with a warning.
+- Updates reach every open window. Windows without unsaved changes reload by themselves.
+- The editor no longer loads anything from third-party servers, so it keeps working when they don’t, and its offline copy covers every file it needs.
+- **Convert to Counterpunch** offers to rename glyphs, use automatic components and let Counterpunch manage automatic OpenType features.
+- Adding small caps writes `smcp` and `c2sc`; `languagesystem` statements and `aalt` are generated automatically.
+- Linked windows: reload rejoins the main window, Save works there, and undo and redo agree across windows.
+- Save shows a busy cursor and says why it failed. Save As shows the extension, picks the format from a pasted name, and is unavailable for fonts opened with **Load outlines later**.
+- A changed glyph file on disk updates only that glyph.
+- File access is requested in a dialog that stays until the font opens.
+- Rename Glyphs can rewire component bases and metrics keys, and loads every glyph it affects first.
+- Metrics keys that name no glyph are refused.
+- Glyph data info popup in the glyph overview, full filter names on hover, filter groups in a fixed order, a path fill slider.
+- Many fixes to undo order, composites recomposing after undo, deleting anchors on variable glyphs, UFO layers and Glyphs saving.
+
+## Technical changes
+
+- **Plugins need a new release**: Plugin contract 2 moves compile filter, glyph filter, composition and feature plugins to the new terms (`filter_drawing_json`, `ctx["station"]`, `station_id`, `glyph.drawings.changed`). Composition plugins now name their writing scripts in `claims` (composition contract 3). Contract 1 plugins no longer load, and the marketplace lists only current versions.
+- **Python API renames, no aliases**: `Station()`, `Drawing()`, `font.stations`, `glyph.drawings`, `drawing.station`, `findStation()`, `getStation()`, `addDrawing()`, `findDrawingById()` and `findDrawingByStationId()` replace the master and layer names. Scripts must be updated.
+- **New Python API**: `OtherFonts()` reads and changes fonts in other windows. Font model records are live Python mappings with attribute access. `glyph.hasQaIssues` and the `glyph.qa.changed` event. Filters can set `GROUP_ORDER`, `hide_when_empty` and `sort_order`.
+- **Cloud storage format**: Feature code, the glyph list and kerning are stored in their own pieces, split into parts that grow and shrink with the font. Older cloud fonts move over when their owner opens them. Opening a moved font needs this version of the editor.
+- **Cloud sync**: Connections resume instead of downloading again, the room announces stored glyphs instead of writing to the shared document, edit metadata is shrunk under the room’s 64 KiB limit, and invited editors can create glyph storage. Deleted glyphs and parts are cleaned up safely.
+- **Undo**: History replay is the only undo engine; the per-glyph and per-layer Yjs undo managers are gone. Collaborators’ edits stay out of your history.
+- **Right-to-left kerning** is stored per station, like left-to-right kerning, and is moved to and from font-wide kerning in Glyphs files.
+- **fontc** updated to `e62f581` (1.0.0). Compiled fonts are reproducible: `head` checksums now match the contents.
+- **Self-hosted dependencies**: HarfBuzz, Pyodide and its packages (micropip, numpy, pandas, matplotlib), the code editor and other libraries ship with Counterpunch instead of loading from CDNs.
+- **Glyph data names**: Dotless letters and Arabic letter qualifiers now come after the base (`behDotless-ar`, `yehFarsi-ar`). Existing fonts keep their names.
+- **Large fonts**: Opening, editing and saving work glyph by glyph instead of serializing the whole font into one string.
+
 # v0.3
 
 - **New tour**: Adjusted text buffer and editing flow in the tour.
