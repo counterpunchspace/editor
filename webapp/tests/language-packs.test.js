@@ -31,6 +31,7 @@ const {
     operationsToBatch
 } = require('../js/language-packs/feature-generator-engine.ts');
 const {
+    createPluginSettingControl,
     isPluginSetting
 } = require('../js/plugin-settings/plugin-settings-controls.ts');
 const {
@@ -612,6 +613,36 @@ describe('language packs', () => {
             'font-info.language-packs'
         );
         expect(resolvePluginSettingTarget('add-glyphs')).toBe('add-glyphs');
+    });
+
+    test('composition output is ccmp unless the font chose otherwise', () => {
+        expect(compositionOutputSetting(undefined)).toBe('ccmp');
+        expect(compositionOutputSetting('unknown')).toBe('ccmp');
+        expect(compositionOutputSetting('materialized')).toBe('materialized');
+        expect(compositionOutputSetting('none')).toBe('none');
+    });
+
+    test('radio options show their own explanation', () => {
+        const control = createPluginSettingControl(
+            {
+                id: 'composition_output',
+                type: 'radio',
+                label: 'Composition output for new glyphs',
+                default: 'ccmp',
+                options: [
+                    { value: 'ccmp', label: 'ccmp', help: 'Stays empty.' },
+                    { value: 'none', label: 'Empty' }
+                ]
+            },
+            { get: () => undefined, set: () => {} }
+        );
+        const labels = control.querySelectorAll('.plugin-ui-radio-label');
+        expect(labels[0].classList.contains('has-help')).toBe(true);
+        expect(
+            labels[0].querySelector('.plugin-ui-radio-help').textContent
+        ).toBe('Stays empty.');
+        expect(labels[0].querySelector('input').checked).toBe(true);
+        expect(labels[1].querySelector('.plugin-ui-radio-help')).toBeNull();
     });
 
     test('the current font’s ccmp shells follow edits to the managed block', () => {

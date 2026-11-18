@@ -375,7 +375,7 @@ export class AddGlyphsDialog {
         cancel.type = 'button';
         cancel.textContent = 'Cancel';
         cancel.addEventListener('click', () => this.close());
-        actions.append(this.quotaError, cancel);
+        actions.append(this.compositionSettings, this.quotaError, cancel);
 
         this.confirmButton = document.createElement('button');
         this.confirmButton.className = 'dialog-button dialog-button-primary';
@@ -429,12 +429,7 @@ export class AddGlyphsDialog {
         this.setDetail.hidden = true;
         resultsPanel.appendChild(this.setDetail);
         body.append(this.setPanel, resultsPanel);
-        this.content.replaceChildren(
-            providerBar,
-            this.compositionSettings,
-            body,
-            actions
-        );
+        this.content.replaceChildren(providerBar, body, actions);
         this.updateProviderLayout();
         this.syncConfirmButton();
     }
@@ -693,12 +688,6 @@ export class AddGlyphsDialog {
         this.content
             ?.closest('.add-glyphs-popup')
             ?.classList.toggle('has-character-set-tree', hasSetTree);
-        this.content
-            ?.closest('.add-glyphs-popup')
-            ?.classList.toggle(
-                'has-coverage-columns',
-                Boolean(provider) && !hasSetTree
-            );
     }
 
     private getActiveProvider() {

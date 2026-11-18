@@ -20,13 +20,14 @@
     font-display: swap;
 }
 
-/* Glyph Data search uses the shared info-popup language with a denser result row. */
+/* Glyph Data search uses the shared info-popup language with a denser result row.
+   One fixed size for every provider, so switching providers doesn't resize it. */
 .add-glyphs-popup {
     box-sizing: border-box;
     height: 92vh;
     max-height: 92vh;
-    width: min(860px, calc(100vw - 32px));
-    max-width: 860px;
+    width: min(1720px, calc(100vw - 128px));
+    max-width: 1720px;
 }
 
 .info-popup-content.kerning-editor-content {
@@ -190,16 +191,6 @@
     color: var(--text-secondary);
     padding: 24px 12px;
     text-align: center;
-}
-
-.add-glyphs-popup.has-character-set-tree {
-    width: min(1720px, calc(100vw - 128px));
-    max-width: 1720px;
-}
-
-.add-glyphs-popup.has-coverage-columns {
-    width: min(1280px, calc(100vw - 32px));
-    max-width: 1280px;
 }
 
 .rename-glyphs-popup {
@@ -375,11 +366,23 @@
     padding: 5px 8px;
 }
 
+/* The composition choice sits in the footer, left of Cancel and Add. */
+.add-glyphs-content .find-glyph-actions {
+    align-items: flex-end;
+}
+
+.add-glyphs-content .find-glyph-actions > .dialog-button {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
 .add-glyphs-composition {
     display: flex;
+    flex: 1 1 auto;
     flex-direction: column;
     gap: 6px;
-    margin-top: 12px;
+    min-width: 0;
+    margin-right: 16px;
 }
 
 .add-glyphs-composition[hidden] {
@@ -390,7 +393,7 @@
     display: flex;
     flex-direction: column;
     align-items: stretch;
-    gap: 6px;
+    gap: 4px;
     margin: 0;
 }
 
@@ -412,15 +415,48 @@
 }
 
 .add-glyphs-composition .plugin-ui-radio-options {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px 16px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
 }
 
 .add-glyphs-composition .plugin-ui-radio-label {
     color: var(--text-primary);
     font-family: var(--font-families-sans);
     font-size: 13px;
+}
+
+.add-glyphs-composition .plugin-ui-radio-label.has-help {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    align-content: start;
+    gap: 2px 6px;
+    padding: 6px 10px 8px;
+    border: 1px solid var(--border-primary);
+    border-radius: 6px;
+    font-weight: 600;
+}
+
+.add-glyphs-composition .plugin-ui-radio-label.has-help:hover {
+    background: var(--background-hover);
+}
+
+.add-glyphs-composition .plugin-ui-radio-label.has-help:has(input:checked) {
+    border-color: var(--accent-blue);
+    background: color-mix(
+        in srgb,
+        var(--accent-blue) 12%,
+        var(--background-primary)
+    );
+}
+
+.add-glyphs-composition .plugin-ui-radio-help {
+    grid-column: 1 / -1;
+    color: var(--text-secondary);
+    font-size: 11.5px;
+    font-weight: 400;
+    line-height: 1.35;
 }
 
 .add-glyph-body {
@@ -777,7 +813,7 @@
 }
 
 @media (max-width: 700px) {
-    .add-glyphs-popup.has-character-set-tree {
+    .add-glyphs-popup {
         width: calc(100vw - 32px);
     }
 
@@ -3387,6 +3423,16 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     display: flex;
     flex-wrap: wrap;
     gap: 8px 12px;
+}
+
+.plugin-ui-radio-label.has-help {
+    flex-wrap: wrap;
+}
+
+.plugin-ui-radio-help {
+    flex-basis: 100%;
+    color: var(--text-tertiary);
+    font-family: var(--font-families-sans);
 }
 
 .plugin-ui-radio-label {

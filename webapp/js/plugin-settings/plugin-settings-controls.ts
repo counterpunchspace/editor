@@ -3,6 +3,7 @@
 export interface SettingOption {
     value: string;
     label?: string;
+    help?: string;
 }
 
 export interface PluginSetting {
@@ -236,6 +237,13 @@ function radioControl(
         const text = document.createElement('span');
         text.textContent = option.label || option.value;
         label.append(input, text);
+        if (option.help) {
+            label.classList.add('has-help');
+            const help = document.createElement('span');
+            help.className = 'plugin-ui-radio-help';
+            help.textContent = option.help;
+            label.appendChild(help);
+        }
         group.appendChild(label);
     }
     return group;

@@ -120,10 +120,10 @@ export interface PlanFont {
 const CCMP_GENERATOR = 'space.counterpunch.ccmp';
 
 export function compositionOutputSetting(value: unknown): CompositionOutput {
-    if (value === 'ccmp' || value === 'none') {
+    if (value === 'materialized' || value === 'none') {
         return value;
     }
-    return 'materialized';
+    return 'ccmp';
 }
 
 /** Replace each component with `{name}.{position}` when that glyph exists. */

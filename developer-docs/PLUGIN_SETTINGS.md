@@ -12,14 +12,14 @@ SETTINGS = [
         "id": "composition_output",
         "type": "radio",
         "label": "Composition output for new glyphs",
-        "help": "Empty adds the character with no components. Components builds it from components. ccmp leaves it empty and composes it when text is shaped.",
+        "help": "For letters that Counterpunch can build from other glyphs, such as Ä from A and ¨.",
         "target": "add-glyphs",
         "options": [
-            {"value": "none", "label": "Empty"},
-            {"value": "materialized", "label": "Components"},
-            {"value": "ccmp", "label": "ccmp"},
+            {"value": "ccmp", "label": "On-the-fly Composition (ccmp)", "help": "You draw and maintain only the base shapes. …"},
+            {"value": "materialized", "label": "Components", "help": "Each letter, and each of its joining forms, is its own glyph in the font. …"},
+            {"value": "none", "label": "Empty", "help": "The new glyph has nothing in it, and no parts are added. …"},
         ],
-        "default": "materialized",
+        "default": "ccmp",
         "regenerates": False,
     }
 ]
@@ -27,7 +27,7 @@ SETTINGS = [
 
 Required fields are `id`, `type`, and `default`. `target` selects where the control appears. Unknown targets fall back to `font-info.language-packs`.
 
-Allowed types: `checkbox`, `radio`, `select`, `number`, `slider`, `textfield`, `color`. `radio` and `select` need `options`. `number` and `slider` should set `min`, `max`, and `step`.
+Allowed types: `checkbox`, `radio`, `select`, `number`, `slider`, `textfield`, `color`. `radio` and `select` need `options`. A `radio` option may add `help`, a sentence shown with that choice. `number` and `slider` should set `min`, `max`, and `step`.
 
 `regenerates` defaults to true for feature generators. When it is true, changing the setting re-runs that generator in the same commit. `host:` actions are buttons resolved by the editor. `plugin:` actions are reserved.
 

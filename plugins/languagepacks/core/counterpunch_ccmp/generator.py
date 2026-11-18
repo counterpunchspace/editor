@@ -20,14 +20,26 @@ class CcmpFeatureGenerator:
             "id": "composition_output",
             "type": "radio",
             "label": "Composition output for new glyphs",
-            "help": "Empty adds the character with no components. Components builds it from components. ccmp leaves it empty and composes it when text is shaped.",
+            "help": "For letters that Counterpunch can build from other glyphs, such as Ä from A and ¨. Glyphs already in the font don’t change. To change one later, right-click it in the glyph overview.",
             "target": "add-glyphs",
             "options": [
-                {"value": "none", "label": "Empty"},
-                {"value": "materialized", "label": "Components"},
-                {"value": "ccmp", "label": "ccmp"},
+                {
+                    "value": "ccmp",
+                    "label": "On-the-fly Composition (ccmp)",
+                    "help": "You draw and maintain only the base shapes. Counterpunch and most apps put the complete letters together from them on-the-fly, so you have fewer glyphs to look after. Coming soon: optionally export a font from this with every letter built as components, for apps that can’t put them together.",
+                },
+                {
+                    "value": "materialized",
+                    "label": "Components",
+                    "help": "Each letter, and each of its joining forms, is its own glyph in the font. They are built from components that point to the base shapes. The result is the same, but you have more glyphs to look after.",
+                },
+                {
+                    "value": "none",
+                    "label": "Empty",
+                    "help": "The new glyph has nothing in it, and no parts are added. You draw it yourself.",
+                },
             ],
-            "default": "materialized",
+            "default": "ccmp",
             "regenerates": False,
         }
     ]

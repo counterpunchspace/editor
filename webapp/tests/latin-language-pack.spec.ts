@@ -183,12 +183,12 @@ test('arabic add glyphs can stay empty or copy composition outlines', async ({
         page.locator(
             '#add-glyphs-modal input[type="radio"][name="composition_output"][value="materialized"]'
         )
-    ).toBeChecked();
+    ).toBeVisible();
     await expect(
         page.locator(
             '#add-glyphs-modal input[type="radio"][name="composition_output"][value="ccmp"]'
         )
-    ).toBeVisible();
+    ).toBeChecked();
     await page
         .locator('#add-glyphs-modal')
         .getByRole('button', { name: 'Cancel' })
