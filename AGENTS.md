@@ -63,7 +63,7 @@ Paths are under `webapp/js/` unless they start at the repo root.
 | Plugins                                                       | `*-plugin-manager.ts`, root `plugin-contracts/`, root `plugins/`, built wheels in `webapp/wheels/`                                                       |
 | Python, AI assistant (`window.pyodide`, `window.aiAssistant`) | `webapp/py/fonteditor.py`, `python-*.ts`, `ai-assistant.ts`                                                                                              |
 | Font info, kerning                                            | `font-info.ts`, `kerning-*.ts`, `glyph-canvas/kerning-group-widget.ts`                                                                                   |
-| Other features                                                | `clipboard/`, `auto-qa/`, `cuts/`, `language-packs/`                                                                                                     |
+| Other features                                                | `clipboard/`, `auto-qa/`, `cuts/`, `skills/`                                                                                                     |
 | Shared UI pieces                                              | `tippy-utils.ts`, `ui/` (`modal-escape.ts`, `confirm-dialog.ts`)                                                                                         |
 | Styles                                                        | `webapp/css/style.css`, `webapp/css/ui/`, `webapp/css/tokens.json`                                                                                       |
 | Logging                                                       | `logger.ts`                                                                                                                                              |
@@ -87,7 +87,7 @@ npx prettier --write <files>                 # format (pre-commit hook also form
 npm run tokens                               # regenerate css/tokens.css from tokens.json
 ```
 
-From the repo root: `./build-fontc-wasm.sh` (Rust → WASM), `./update-rust-deps.sh`, `python3 plugins/languagepacks/build.py` (language-pack wheels).
+From the repo root: `./build-fontc-wasm.sh` (Rust → WASM), `./update-rust-deps.sh`, `python3 plugins/skills/build.py` (skill wheels).
 
 Run the full suite before release-bound work that touches cross-window sync, the compile pipeline, or broadly shared UI.
 
@@ -106,7 +106,7 @@ Do it in the same change. Never hand-edit generated docs.
 | Compile scheduling, mode selection, worker cache, subsetting                                 | Update `developer-docs/COMPILATION_EDIT_POLICY.md` (after the author agrees)                                                                                                                              |
 | How a host calls a plugin type                                                               | Bump the contract per `developer-docs/PLUGIN_CONTRACTS.md`: `contracts.json`, probes, fixtures, `node plugin-contracts/generate.mjs`, bundled-wheel preflight, `npm run sync-plugin-contracts` in website |
 | Rust in `babelfont-fontc-build/src/`                                                         | `./build-fontc-wasm.sh`, check the generated files changed                                                                                                                                                |
-| Language-pack Python or data (e.g. `plugins/languagepacks/arabic/counterpunch_arabic/data/`) | `python3 plugins/languagepacks/build.py`; the editor loads `webapp/wheels/`, not `plugins/`                                                                                                               |
+| Skill Python or data (e.g. `plugins/skills/arabic/counterpunch_arabic/data/`) | `python3 plugins/skills/build.py`; the editor loads `webapp/wheels/`, not `plugins/`                                                                                                               |
 
 `npm run generate-docs` (repo root) runs every doc generator at once.
 
@@ -193,7 +193,7 @@ Only when the user explicitly asks.
 | `developer-docs/APP_UPDATE_RECOVERY.md`, `STUCK_EDITING_RECOVERY.md`                                                        | A client stuck on an old cut or a dead editing session                                     |
 | `developer-docs/COMPOSED_RELEASE.md`                                                                                        | Preview/production cutover                                                                 |
 | `developer-docs/JS_EVENTS.md`, `GLYPH_FILTER_EVENTS.md`, `LOCALSTORAGE_SETTINGS.md`, `SESSIONSTORAGE_SETTINGS.md`, `API.md` | Generated references (see "When you change X")                                             |
-| `strategy/*.md`                                                                                                             | Design rationale: cloud collaboration, cuts, language packs, kerning rules, marketplace    |
+| `strategy/*.md`                                                                                                             | Design rationale: cloud collaboration, cuts, skills, kerning rules, marketplace    |
 | `instructions/GRAPHICAL_CODE_GRAPHS.md`                                                                                     | Drawing code-path graphs (`strategy/graphs/`)                                              |
 | `CHANGELOG.md`                                                                                                              | Changelog (Unreleased section feeds preview notes)                                         |
 | `RELEASES.txt`                                                                                                              | Production release descriptions, one `# vX.Y.Z` section each                               |

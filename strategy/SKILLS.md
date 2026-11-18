@@ -1,4 +1,4 @@
-# Language Packs
+# Skills
 
 ## Implementation status
 
@@ -8,7 +8,7 @@ The first slice ships inside the editor, not as an external download.
 | --- | --- | --- |
 | Composition provider | `counterpunch_composition_plugins` | `space.counterpunch.latin`, `space.counterpunch.arabic` |
 | Feature generator | `counterpunch_feature_plugins` | `space.counterpunch.ccmp` (`feature:ccmp`), `space.counterpunch.arabic` (`feature:arabic`), `space.counterpunch.latin` (`feature:latin:smallcaps`), `space.counterpunch.languagesystems` (`feature:languagesystems`), `space.counterpunch.aalt` (`feature:aalt`) |
-| Character Set provider | `counterpunch_character_set_plugins` | `space.counterpunch.arabic` ("Arabic Language Pack") |
+| Character Set provider | `counterpunch_character_set_plugins` | `space.counterpunch.arabic` ("Arabic Skill") |
 
 `LatinCompositionProvider.recipe(codepoint, lookup)` returns a Unicode component recipe, or an `overrides.json` recipe when one exists. `anchors(codepoint)` and `anchor_positions(requests)` supply creation anchors. `CcmpFeatureGenerator` declares `EVENT_TYPES = ["glyph.unicode.changed"]` plus the `ccmp` intent, and `SETTINGS` for `composition_output` (`target: add-glyphs`). Glyph creation, deletion, and renaming re-run generators while the font's **Counterpunch manages automatic features** switch is on; with it off only explicit intents (and manual Regenerate) run them. See `developer-docs/PLUGIN_SETTINGS.md`.
 
@@ -16,17 +16,17 @@ The first slice ships inside the editor, not as an external download.
 
 `LanguageSystemGenerator` (`feature:languagesystems`) runs after the other feature generators. It reads every feature block, collects `languagesystem`, `script`, and `language` statements, and the OpenType script of each glyph named in that code. It writes the missing `languagesystem` lines, including `DFLT dflt` once any system is used, and leaves designer prefixes alone. `AccessAllAlternatesGenerator` (`feature:aalt`) references every other feature tag and rewrites that list when a feature block is added or removed.
 
-`ArabicCompositionProvider.recipe` returns positional sequences (`isol`, `init`, `medi`, `fina`) and, when one shaping pass of the form rules reproduces every position, a `decompose` sequence for `ccmp`. The host routes an Arabic-script lookup to that provider. `ArabicFormsGenerator` writes the `forms` block in `isol` / `init` / `medi` / `fina` and the `required` block in `rlig`. A character-set entry may omit `codepoint` when `glyph_name` is set; those rows are unencoded glyphs (category and optional components included). `ArabicCompositionProvider.rename_suggestions(glyphs, renames)` is an optional hook (no contract bump) that Convert to Counterpunch calls on every composition provider; it returns `{old: new}` renames for legacy mark names such as `fathatan-ar` and `shadda_kasratan-ar`. Encoded Arabic letters and Hyperglot Arabic codepoints share glyph-data names (`behDotless-ar`, `yehFarsi-ar`) because recipes are keyed by codepoint.
+`ArabicCompositionProvider.recipe` returns positional sequences (`isol`, `init`, `medi`, `fina`) and, when one shaping pass of the form rules reproduces every position, a `decompose` sequence for `ccmp`. The host routes a lookup to the skill whose `claims` name the character’s writing script. `ArabicFormsGenerator` writes the `forms` block in `isol` / `init` / `medi` / `fina` and the `required` block in `rlig`. A character-set entry may omit `codepoint` when `glyph_name` is set; those rows are unencoded glyphs (category and optional components included). `ArabicCompositionProvider.rename_suggestions(glyphs, renames)` is an optional hook (no contract bump) that Convert to Counterpunch calls on every composition provider; it returns `{old: new}` renames for legacy mark names such as `fathatan-ar` and `shadda_kasratan-ar`. Encoded Arabic letters and Hyperglot Arabic codepoints share glyph-data names (`behDotless-ar`, `yehFarsi-ar`) because recipes are keyed by codepoint.
 
 ## Purpose
 
-Language Packs make language- and style-specific font engineering extensible.
+Skills make language- and style-specific font engineering extensible.
 They let Counterpunch, foundries, and teams such as Google Fonts provide their
 own character data, glyph construction knowledge, OpenType generation, and
 glyph filters as Python plugins.
 
 This proposal deliberately avoids a single monolithic replacement for
-Glyphs.app's `GlyphData.xml`. Unicode provides the universal baseline; packs
+Glyphs.app's `GlyphData.xml`. Unicode provides the universal baseline; skills
 add focused knowledge, alternatives, and explicit overrides.
 
 For a plain-language summary of the whole system, see [TLDR](#tldr) at the
@@ -35,17 +35,17 @@ bottom of this document.
 ## How This Replaces GlyphData.xml
 
 `GlyphData.xml` centralizes many repeated per-glyph facts in one database. A
-Language Pack replaces that repetition with a small number of general rules,
+skill replaces that repetition with a small number of general rules,
 versioned lookup artifacts, and explicit exceptions. For example, Unicode can
 derive the name and decomposition of `U+00E1` as `aacute` built from `a` and
 `acute`; a generic mark rule can propose `top` and `_top` anchors; and a
 fractions generator can derive its OpenType feature code from the glyphs that
-actually exist in the font. A pack writes an override only when a script,
+actually exist in the font. A skill writes an override only when a script,
 style, or foundry policy differs from that baseline, such as the preferred
 shape of `Ŋ` or a connected-script joining rule.
 
 The potential authoring reduction is substantial, though the exact result must
-be measured with real packs. As an illustrative Latin example, 250 encoded
+be measured with real skills. As an illustrative Latin example, 250 encoded
 accented glyphs that follow Unicode decomposition could be covered by generic
 naming and composition rules plus perhaps 10 to 25 explicit exceptions,
 instead of 250 hand-maintained glyph records: roughly 90% fewer
@@ -53,11 +53,11 @@ glyph-specific definitions. The same principle lets one fractions generator
 produce a handful of ordered feature-code entries from the font's glyph set,
 instead of maintaining many separate feature snippets. The goal is not to hide
 knowledge in automation, but to make the common cases inspectable and inferred
-while keeping exceptions local, visible, and owned by the relevant pack.
+while keeping exceptions local, visible, and owned by the relevant skill.
 
 ## The Simple Model
 
-A Python distribution can expose one or more plugins. A **Language Pack** is a
+A Python distribution can expose one or more plugins. A **skill** is a
 named, versioned collection of those plugins.
 
 The application owns:
@@ -67,7 +67,7 @@ The application owns:
 - change batching, scheduling, and compilation
 - durable font data, history, and user ownership
 
-Language Pack authors own linguistic and stylistic knowledge:
+Skill authors own linguistic and stylistic knowledge:
 
 - character sets and language coverage
 - glyph identity and naming rules
@@ -75,10 +75,10 @@ Language Pack authors own linguistic and stylistic knowledge:
 - generated OpenType feature code
 - glyph filters
 
-This division keeps plugins expressive without making each pack a fork of the
+This division keeps plugins expressive without making each skill a fork of the
 editor's core behavior.
 
-## What A Pack Can Provide
+## What A Skill Can Provide
 
 One package may provide any combination of the following plugin roles:
 
@@ -272,7 +272,7 @@ the font follows the package activation and provenance model described below.
 ## Plugin Manager And Catalogue
 
 Counterpunch includes a Plugin Manager for finding, installing, and activating
-Language Packs. Users search by the same two terms used throughout this
+skills. Users search by the same two terms used throughout this
 document:
 
 - **Plugin role:** for example, `Feature generator`, `Composition provider`,
@@ -280,36 +280,36 @@ document:
 - **Capability key:** for example, `feature:fractions`,
   `composition:latin:default`, or `anchors:arabic:defaults`.
 
-A search for “fractions feature” therefore finds packs containing a **Feature
+A search for “fractions feature” therefore finds skills containing a **Feature
 generator** that provides `feature:fractions`. Results can also be narrowed by
 script, language coverage, provider, version, and whether the capability is
 additive or replaces a baseline capability.
 
 The catalogue is built from public GitHub repositories that declare the same
-Python plugin hooks Counterpunch uses after installation in Pyodide. Each pack
+Python plugin hooks Counterpunch uses after installation in Pyodide. Each skill
 publishes machine-readable metadata describing its package identity, version,
 plugin roles, provided and replaced capability keys, dependencies, and
 supported scripts or languages.
 
 GitHub discovery creates a searchable **catalogue entry**; it does not execute
-code. A pack release contains a normal Python wheel, its manifest, and a
+code. A skill release contains a normal Python wheel, its manifest, and a
 resolved lock file naming every required pure-Python or Pyodide-compatible
 wheel. Authors publish these release assets on GitHub, with no PyPI account or
 separate package-registry workflow required.
 
 On the first installation of a GitHub release, Counterpunch downloads,
-validates, hash-checks, and mirrors the pack wheel and its complete locked
+validates, hash-checks, and mirrors the skill wheel and its complete locked
 dependency closure to Counterpunch storage. Only after this capture succeeds
 does Counterpunch install the exact mirrored wheels into Pyodide and load their
 declared hooks. A font records the mirrored artifact IDs and hashes, together
 with the GitHub repository and release as provenance. It does not rely on a
 future GitHub or dependency-index lookup to reopen or regenerate the font.
 
-The mirror is a reproducibility guarantee, not an endorsement of the pack.
+The mirror is a reproducibility guarantee, not an endorsement of the skill.
 Before a release has been mirrored it may be discoverable from GitHub; after
 mirroring it is eligible to become a durable font dependency. Counterpunch
 installs the locked wheel list with dependency resolution disabled, so the
-recorded environment is deterministic. Changing the active pack set recreates
+recorded environment is deterministic. Changing the active skill set recreates
 the Pyodide worker rather than replacing imported packages in a running Python
 environment.
 
@@ -324,7 +324,7 @@ Any plugin type may declare user-choosable settings. This includes character
 databases, composition providers, anchor providers, feature generators, and
 glyph filters. A plugin declares the setting's label, type, allowed values,
 default, and help text; Counterpunch presents an appropriate control and
-persists the selected value in the font's active Language Pack configuration.
+persists the selected value in the font's active skill configuration.
 
 Settings express intentional design policy that cannot reliably be inferred
 from glyph names, Unicode values, or the outlines already present in a font.
@@ -352,21 +352,21 @@ whose declared setting changed and then applies the normal batched rebuild and
 compilation rules. The font records the setting value together with the
 plugin's identity and version so the result remains reproducible.
 
-### Idea: Shared Pack Settings
+### Idea: Shared Skill Settings
 
-This is an open design idea, not yet a rule. A pack may need one setting that
-several of its roles read consistently. Counterpunch could add a pack-level
+This is an open design idea, not yet a rule. A skill may need one setting that
+several of its roles read consistently. Counterpunch could add a skill-level
 settings schema and pass the resulting immutable settings snapshot to every
-plugin instance in that pack. Individual plugins would still declare which
+plugin instance in that skill. Individual plugins would still declare which
 shared values they use, so changing a value reruns only the affected roles.
 
 This idea does not apply to the materialized-versus-`ccmp` choice described
 below. That is a Counterpunch-wide rebuild operation over declarative recipes,
-not a setting that Language Pack roles negotiate among themselves.
+not a setting that skill roles negotiate among themselves.
 
 ## Packages, Profiles, And Capabilities
 
-Installing a pack only makes it available. A font records which packs are
+Installing a skill only makes it available. A font records which skills are
 active, their exact versions, and their configuration so its behavior is
 reproducible.
 
@@ -395,15 +395,15 @@ Rules:
 
 - Additive capabilities coexist.
 - An exclusive capability requires the user to select one provider.
-- A pack may explicitly replace a named capability, but never silently replace
-  another pack merely because both cover the same script or use the same
+- A skill may explicitly replace a named capability, but never silently replace
+  another skill merely because both cover the same script or use the same
   OpenType tag.
 - The application reports unresolved conflicts rather than guessing.
 
 This lets a foundry replace the baseline Latin fraction generator while
 retaining baseline character data, composition rules, anchor recipes, and
 other generators. It also lets a connected-script, blackletter, Antiqua,
-Naskh, Ruqaa, or Nastaleeq pack replace only the construction and feature
+Naskh, Ruqaa, or Nastaleeq skill replace only the construction and feature
 policies that differ, while sharing useful additions such as fractions.
 
 ### Example: Replacing Fractions Only
@@ -424,7 +424,7 @@ After selection
 ```
 
 Fractions Fever 2 replaces only the generated blocks belonging to
-`feature:fractions`. It does not remove the baseline Latin pack, touch manual
+`feature:fractions`. It does not remove the baseline Latin skill, touch manual
 OpenType feature code, or replace unrelated baseline feature generators. Its
 own blocks are the ones it may rebuild after relevant glyph operations.
 
@@ -476,7 +476,7 @@ unencoded glyph concepts are related but distinct. The font does not maintain
 glyph-name aliases: search terms and imported naming conventions are catalogue
 or import metadata, not additional names for a glyph.
 
-Unicode decomposition is the default source of component recipes. Packs can
+Unicode decomposition is the default source of component recipes. Skills can
 add, replace, or rank recipes when Unicode is insufficient, including
 script-specific forms, alternative component order, or unencoded glyphs.
 
@@ -491,7 +491,7 @@ glyph name      -> glyph identity and properties
 Unicode sequence -> preferred glyph identity and glyph name
 ```
 
-When a font's active packs or profiles change, Counterpunch builds one resolved
+When a font's active skills or profiles change, Counterpunch builds one resolved
 glyph-identity index by layering the core artifact and the active plugin
 artifacts in the font's persisted priority order. The first matching entry is
 authoritative in both maps. There is no runtime candidate resolution.
@@ -518,7 +518,7 @@ to that base glyph's current name when no Unicode sequence is present.
 ## Composition And Anchors
 
 The editor remains responsible for generic automatic component alignment.
-Packs contribute recipes, not a competing composition engine.
+Skills contribute recipes, not a competing composition engine.
 
 A composition recipe can request components and the anchors they need:
 
@@ -557,7 +557,7 @@ Anchors are permanent ordinary font data once created:
 
 This is an exploratory direction, but an important one. A composition recipe
 describes what a glyph is made of; Counterpunch can apply that recipe in either
-of two ways. This is a font-editor operation, not a Language Pack setting.
+of two ways. This is a font-editor operation, not a skill setting.
 
 ```text
 Recipe
@@ -579,7 +579,7 @@ components before normal `init`/`medi`/`fina`/`isol` shaping. This can remove
 repeated dotted variants, but it does not remove positional skeleton forms when
 the design still needs them.
 
-Language Packs supply the declarative recipes, including component roles and
+Skills supply the declarative recipes, including component roles and
 attachment information. Counterpunch owns the representation choice and the
 generic lowering of a recipe into a materialized composite or a `ccmp` shell.
 It writes one generic, managed `ccmp` block from the selected recipes. Existing
@@ -608,14 +608,14 @@ it cannot leave a partly converted font:
 ```text
 Cannot rebuild Arabic as ccmp
 
-Arabic Joining Pack supports: materialized
+Arabic Joining Skill supports: materialized
 Requested output: ccmp
 
 Choose materialized output or select a ccmp-capable joining provider.
 ```
 
-This check is capability- and scope-specific, not merely a pack-wide badge. A
-pack may support `ccmp` for Latin composition while its Arabic joining feature
+This check is capability- and scope-specific, not merely a skill-wide badge. A
+skill may support `ccmp` for Latin composition while its Arabic joining feature
 supports only materialized glyphs; unrelated capabilities such as fractions do
 not affect the choice.
 
@@ -832,7 +832,7 @@ it replaces, and what a regeneration will change.
 
 ## Core Principles
 
-- Unicode is the baseline; packs provide focused knowledge and overrides.
+- Unicode is the baseline; skills provide focused knowledge and overrides.
 - Feature tags do not define ownership; stable capability and block IDs do.
 - Generated OpenType feature code is disposable by its owner; manual OpenType
   feature code is never touched automatically.
@@ -844,9 +844,9 @@ it replaces, and what a regeneration will change.
 
 ## TLDR
 
-A **Language Pack** is an installable Python package that teaches
+A **skill** is an installable Python package that teaches
 Counterpunch about a language, script, writing style, or font-engineering
-task. A font can activate several packs and select one provider where a policy
+task. A font can activate several skills and select one provider where a policy
 must be exclusive, while unrelated additions continue to work together.
 
 The plugin types work together as follows:
@@ -863,7 +863,7 @@ The plugin types work together as follows:
 - An **Anchor provider** supplies initial anchor-placement rules for those
   glyphs and components. It can use real or virtual bounds, but created
   anchors immediately become ordinary, permanent font data.
-- A **Feature generator** turns the relevant glyphs, the selected pack
+- A **Feature generator** turns the relevant glyphs, the selected skill
   settings, and the font's state into ordered OpenType feature-code entries.
   Its user-selectable capability, such as `feature:fractions`, says what can
   be replaced; each generated block is one entry that its generator can update
@@ -873,7 +873,7 @@ The plugin types work together as follows:
   on every edit.
 
 Counterpunch can rebuild selected recipe-backed glyphs either as materialized
-components or as shaper-composed `ccmp` shells. Packs supply the recipes;
+components or as shaper-composed `ccmp` shells. Skills supply the recipes;
 Counterpunch writes and reads its own managed `ccmp` block, so membership in
 that block is the complete current-state definition of shaper composition. A
 conversion is offered only when every relevant active feature provider supports
@@ -881,7 +881,7 @@ the requested representation; manual `ccmp` code remains untouched.
 
 Plugin settings provide deliberate choices that cannot be inferred from
 Unicode or outlines alone, such as whether `Ŋ` follows a Sami or African
-design target. Counterpunch saves those settings with the active pack versions
+design target. Counterpunch saves those settings with the active skill versions
 and reruns only the affected plugins after an edit. The result is a modular,
 inspectable alternative to one global `GlyphData.xml`: common knowledge is
 inferred from reusable rules, while script-, style-, and foundry-specific

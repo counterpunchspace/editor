@@ -18,6 +18,20 @@ Plugin versions are `MAJOR.MINOR.PATCH` only. Any change to how a host calls a p
 
 Contract 2 of `compilefilter`, `glyphfilter`, `composition` and `feature` moved to the station and drawing terms (see `../AGENTS.md`), as a hard break without an adapter: compile filters implement `filter_drawing_json` and `filter_drawing_json_propagated_anchors` and read `ctx["station"]` and `ctx["stationId"]`, guide and transient-anchor payloads carry `stationId`, `drawingId` and the guide scope `station` or `drawing`, composition requests carry `station_id`, glyph filters subscribe to `glyph.drawings.changed` and `glyph.drawing.location.changed`, and every hook that receives a live model object sees `font.stations`, `glyph.drawings` and `drawing.station`. JSON hooks still receive Babelfont data with its own `masters` and `layers` keys.
 
+## Skills (composition contract 3)
+
+A composition plugin is a **skill**. Contract 3 requires a `claims` attribute: a dict of what the skill builds. The only key defined so far is `writing_scripts`, a non-empty list of Unicode writing script names as Glyph Data reports them, such as `"Latin"`, `"Arabic"` or `"Tai_Tham"`:
+
+```python
+class LatinCompositionProvider:
+    provider_id = "space.counterpunch.latin"
+    claims = {"writing_scripts": ["Latin"]}
+```
+
+Preflight refuses a missing or empty `claims`, a malformed name and any key the contract doesn’t define, so the editor never meets a claim it can’t route. New keys, such as glyph name suffixes for small caps, are added to `contracts.json` when a skill needs one. The skill’s name and description are the `name` and `description` of its composition plugin in `counterpunch-plugin.json`, which the wheel carries in its `.dist-info`. The website refuses a skill whose name, ignoring case, is already used by a bundled skill (`plugin-contracts/bundled-skills.json`, written by `plugins/skills/build.py`) or by another package’s published skill.
+
+The editor routes each code point to the skill that claims its writing script, and each glyph name by the writing script of its code point, its Glyph Data record or its name suffix (`-ar`). Until a font can choose its skills, one skill is active per writing script: the bundled one, else the lowest plugin id. A skill that loses every writing script it claims is inactive, and so are the feature generators in its package.
+
 ## Dependencies and the sandbox
 
 A wheel may depend only on packages listed in `allowedDependencies`. Anything else is vendored into the wheel. Preflight has no network. Each probe has 5 seconds, the run has 60 seconds, and the container is destroyed after 120 seconds. Output is capped. Preflight checks the contract surface. It does not prove a plugin is safe to run in the editor.

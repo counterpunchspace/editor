@@ -56,6 +56,31 @@ def _check_surface(instance, spec, report):
     return not missing
 
 
+def _check_claims(claims, known, report):
+    """A skill's claims: a dict whose keys are defined in the contract.
+
+    Every claim is a non-empty list of names matching the claim's pattern.
+    Undefined keys are refused so the editor never meets a claim it cannot route.
+    """
+    if not isinstance(claims, dict) or not claims:
+        report["failures"].append("claims must be a non-empty dict")
+        return
+    for key, values in claims.items():
+        rule = known.get(key)
+        if rule is None:
+            report["failures"].append(
+                f"claims key {key} is not defined; known keys: {', '.join(sorted(known))}"
+            )
+            continue
+        if not isinstance(values, (list, tuple)) or not values:
+            report["failures"].append(f"claims {key} must be a non-empty list")
+            continue
+        pattern = re.compile(rule.get("pattern") or r"^.+$")
+        for value in values:
+            if not isinstance(value, str) or not pattern.fullmatch(value):
+                report["failures"].append(f"claims {key} has an invalid name {value!r}")
+
+
 def _probe(instance, spec, fixtures, report):
     kind = spec["type"]
     try:
@@ -108,6 +133,7 @@ def _probe(instance, spec, fixtures, report):
             _emit("done", "compilefilter.filter")
         elif kind == "composition":
             _emit("start", "composition.recipe")
+            _check_claims(getattr(instance, "claims", None), spec.get("claims") or {}, report)
             instance.recipe(65, fixtures["lookups"])
             instance.anchors(65)
             _emit("done", "composition.recipe")

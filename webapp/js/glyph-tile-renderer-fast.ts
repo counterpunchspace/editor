@@ -22,7 +22,7 @@ import {
     placeholderComponentRefs,
     placeholderContoursForReference,
     placeholderOutlineDash
-} from './language-packs/placeholder-outlines';
+} from './skills/placeholder-outlines';
 import APP_SETTINGS from './settings';
 
 const console = new Logger('GlyphTileRendererFast');

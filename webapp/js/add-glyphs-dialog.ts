@@ -14,9 +14,13 @@ import {
     type CharacterSetMembers,
     type CharacterSetNode
 } from './character-set-plugin-manager';
-import { ccmpDecomposition } from './language-packs/ccmp-shells';
-import { arabicFormRules } from './language-packs/arabic-forms';
-import { glyphComponentNames } from './language-packs/composition-conversion';
+import { ccmpDecomposition } from './skills/ccmp-shells';
+import { arabicFormRules } from './skills/arabic-forms';
+import { glyphComponentNames } from './skills/composition-conversion';
+import {
+    addGlyphsSourceGroups,
+    type SkillSummary
+} from './skills/skill-registry';
 import { Logger } from './logger';
 import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
 import type { FilesystemPlugin } from './filesystem-plugins/filesystem-plugin';
@@ -198,6 +202,7 @@ export class AddGlyphsDialog {
     private searchVersion = 0;
     private samplePreviewVersion = 0;
     private escapeBinding: ModalEscapeBinding | null = null;
+    private skills: SkillSummary[] = [];
 
     constructor() {
         this.buildContent();
@@ -219,7 +224,8 @@ export class AddGlyphsDialog {
             await Promise.all([
                 glyphDataIndex.ensureReady(),
                 characterSetPluginManager.ensureReady(),
-                this.refreshCompositionSettings()
+                this.refreshCompositionSettings(),
+                this.loadSkills()
             ]);
             this.restoreSavedProvider();
             this.renderProviderOptions();
@@ -261,7 +267,7 @@ export class AddGlyphsDialog {
         }
         try {
             const { featureGeneratorEngine } =
-                await import('./language-packs/feature-generator-engine');
+                await import('./skills/feature-generator-engine');
             await featureGeneratorEngine.ensureReady();
             const { pluginSettingsRegistry } =
                 await import('./plugin-settings/plugin-settings-registry');
@@ -627,6 +633,16 @@ export class AddGlyphsDialog {
         );
     }
 
+    private async loadSkills(): Promise<void> {
+        try {
+            const { skillManager } = await import('./skills/skill-manager');
+            this.skills = await skillManager.skills();
+        } catch (error) {
+            console.error('Could not list skills', error);
+            this.skills = [];
+        }
+    }
+
     private renderProviderOptions(): void {
         if (!this.providerSelect) {
             return;
@@ -636,11 +652,20 @@ export class AddGlyphsDialog {
         unicode.value = 'unicode';
         unicode.textContent = 'Unicode';
         fragment.appendChild(unicode);
-        for (const provider of characterSetPluginManager.getProviders()) {
-            const option = document.createElement('option');
-            option.value = provider.id;
-            option.textContent = provider.name;
-            fragment.appendChild(option);
+        for (const group of addGlyphsSourceGroups(
+            this.skills,
+            characterSetPluginManager.getProviders()
+        )) {
+            const optgroup = document.createElement('optgroup');
+            optgroup.label = group.label;
+            for (const source of group.options) {
+                const option = document.createElement('option');
+                option.value = source.value;
+                option.textContent = source.label;
+                option.disabled = Boolean(source.disabled);
+                optgroup.appendChild(option);
+            }
+            fragment.appendChild(optgroup);
         }
         this.providerSelect.replaceChildren(fragment);
         this.providerSelect.value = this.activeProviderId;
@@ -1044,9 +1069,8 @@ export class AddGlyphsDialog {
         if (!names.length) {
             return;
         }
-        const { languagePackManager } =
-            await import('./language-packs/language-pack-manager');
-        const drawings = await languagePackManager.drawings(names);
+        const { skillManager } = await import('./skills/skill-manager');
+        const drawings = await skillManager.drawings(names);
         if (version !== this.samplePreviewVersion || !this.list) {
             return;
         }
@@ -1462,14 +1486,12 @@ export class AddGlyphsDialog {
             }
         }
         try {
-            const { languagePackManager } =
-                await import('./language-packs/language-pack-manager');
+            const { skillManager } = await import('./skills/skill-manager');
             const { compositionOutputSetting, planGlyphAdditions } =
-                await import('./language-packs/composition-planner');
+                await import('./skills/composition-planner');
             const { applyCompositionPlan } =
-                await import('./language-packs/composition-applicator');
-            const { managedInputs } =
-                await import('./language-packs/managed-features');
+                await import('./skills/composition-applicator');
+            const { managedInputs } = await import('./skills/managed-features');
             const output = compositionOutputSetting(
                 font.getPluginSetting(
                     'space.counterpunch.ccmp',
@@ -1509,7 +1531,7 @@ export class AddGlyphsDialog {
                         (font.glyphs || []).map((glyph) => glyph.name),
                     composition: (name: string) => glyphComposition(font, name)
                 },
-                languagePackManager,
+                skillManager,
                 managedInputs(
                     font.features,
                     'space.counterpunch.ccmp',

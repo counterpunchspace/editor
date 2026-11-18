@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Draw the Add Glyphs preview images for the Arabic connection sets.
 
-Each image is a sample word set in the pack font (``data/arabic.babelfont``,
+Each image is a sample word set in the skill font (``data/arabic.babelfont``,
 built from Fustat). The two glyphs a connection substitutes are blue, the
 rest black. Rerun after editing the connection outlines:
 
-    python3 plugins/languagepacks/arabic/tools/build_connection_images.py
+    python3 plugins/skills/arabic/tools/build_connection_images.py
 """
 import json
 from pathlib import Path

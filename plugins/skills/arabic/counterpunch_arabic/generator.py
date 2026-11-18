@@ -1,6 +1,6 @@
 """Write isol/init/medi/fina form rules and required Arabic ligatures.
 
-Tokens in the pack data are Unicode identities or pack glyph names. A production
+Tokens in the skill data are Unicode identities or skill glyph names. A production
 name is substituted only while emitting a rule for this font.
 """
 

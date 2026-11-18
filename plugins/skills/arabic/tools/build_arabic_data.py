@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Build Arabic pack data from Fustat, then drop Fustat's glyph names.
+"""Build Arabic skill data from Fustat, then drop Fustat's glyph names.
 
 The output is identities (``uniXXXX`` plus an optional positional suffix) and
-pack names for unencoded i'jam. Improvements over Fustat, applied here:
+skill names for unencoded i'jam. Improvements over Fustat, applied here:
 
 - Nested composites are flattened. A letter does not stay as a component of
   another letter; dad-with-dot-below expands through dad.
@@ -17,7 +17,7 @@ pack names for unencoded i'jam. Improvements over Fustat, applied here:
 - ``.high``, ``.short`` and ``.alt`` are not used. A kept rule that references
   ``.alt`` is an error.
 
-Run from the editor repo: ``python3 plugins/languagepacks/arabic/tools/build_arabic_data.py``.
+Run from the editor repo: ``python3 plugins/skills/arabic/tools/build_arabic_data.py``.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ import unicodedata
 from pathlib import Path
 
 EDITOR = Path(__file__).resolve().parents[4]
-ARABIC_PKG = EDITOR / "plugins" / "languagepacks" / "arabic"
+ARABIC_PKG = EDITOR / "plugins" / "skills" / "arabic"
 if str(ARABIC_PKG) not in sys.path:
     sys.path.insert(0, str(ARABIC_PKG))
 from counterpunch_arabic.connections import CONNECTIONS, set_id  # noqa: E402
@@ -54,8 +54,8 @@ OUTPUT = (
     / "arabic.json"
 )
 
-# Fustat glyph -> pack name. Encoded marks are identities, not pack names.
-PACK_NAMES = {
+# Fustat glyph -> skill name. Encoded marks are identities, not skill names.
+SKILL_NAMES = {
     "dotabove-ar": "dotAbove-ar",
     "twodotshorizontalabove-ar": "twoDotsHorizontalAbove-ar",
     "twodotsverticalabove-ar": "twoDotsVerticalAbove-ar",
@@ -209,8 +209,8 @@ def build(center_marks: bool = True) -> dict:
     def expand_name(name: str, seen: set[str]) -> list[str]:
         if name in seen:
             raise UnmappedMark(f"cycle in {name}")
-        if name in PACK_NAMES:
-            return [PACK_NAMES[name]]
+        if name in SKILL_NAMES:
+            return [SKILL_NAMES[name]]
         if ".alt" in name or ".high" in name or ".short" in name:
             raise UnmappedMark(f"variant glyph {name} is not mapped")
         glyph = glyphs.get(name)
@@ -221,12 +221,12 @@ def build(center_marks: bool = True) -> dict:
             return [uni_label(codepoints[0])]
         if name in FORM_OWNER:
             return [FORM_OWNER[name]]
-        if name in PACK_NAMES and not components_of(glyph):
-            return [PACK_NAMES[name]]
-        if name in PACK_NAMES and name in {"kafDotless-ar", "lam_alef-ar"}:
-            return [PACK_NAMES[name]]
+        if name in SKILL_NAMES and not components_of(glyph):
+            return [SKILL_NAMES[name]]
+        if name in SKILL_NAMES and name in {"kafDotless-ar", "lam_alef-ar"}:
+            return [SKILL_NAMES[name]]
         parts = components_of(glyph)
-        if parts and name not in PACK_NAMES and "." not in name.split("-ar")[0]:
+        if parts and name not in SKILL_NAMES and "." not in name.split("-ar")[0]:
             # Combined mark, or an unencoded composite mark.
             if not (glyph.get("codepoints") or []) and _is_mark(glyph):
                 seen.add(name)
@@ -237,10 +237,10 @@ def build(center_marks: bool = True) -> dict:
         root, dot, suffix = name.partition(".")
         if dot and root in glyphs and (glyphs[root].get("codepoints") or []):
             return [uni_label(glyphs[root]["codepoints"][0]) + "." + suffix]
-        if dot and root in PACK_NAMES:
-            return [PACK_NAMES[root] + "." + suffix]
-        if name in PACK_NAMES:
-            return [PACK_NAMES[name]]
+        if dot and root in SKILL_NAMES:
+            return [SKILL_NAMES[root] + "." + suffix]
+        if name in SKILL_NAMES:
+            return [SKILL_NAMES[name]]
         raise UnmappedMark(f"unmapped mark or form {name}")
 
     def _is_mark(glyph: dict) -> bool:
@@ -342,12 +342,12 @@ def build(center_marks: bool = True) -> dict:
                     root = token[: token.rfind(".")]
                 used_pack.add(root)
 
-    for pack_name in sorted(used_pack):
+    for skill_name in sorted(used_pack):
         fustat_name = next(
-            (name for name, pack in PACK_NAMES.items() if pack == pack_name),
+            (name for name, skill in SKILL_NAMES.items() if skill == skill_name),
             None,
         )
-        category = "Letter" if pack_name in {"kafDotless-ar", "lam_alef-ar"} else "Mark"
+        category = "Letter" if skill_name in {"kafDotless-ar", "lam_alef-ar"} else "Mark"
         entry: dict = {"category": category}
         if fustat_name and fustat_name in glyphs:
             found = anchors_of(glyphs[fustat_name])
@@ -355,7 +355,7 @@ def build(center_marks: bool = True) -> dict:
                 entry["anchors"] = found
         positions = {}
         for suffix, position in (("init", "init"), ("medi", "medi"), ("fina", "fina")):
-            form = f"{pack_name}.{suffix}"
+            form = f"{skill_name}.{suffix}"
             if any(
                 form in sequence
                 for record in characters.values()
@@ -365,7 +365,7 @@ def build(center_marks: bool = True) -> dict:
                     positions[position] = [form]
         if positions:
             entry["positions"] = positions
-        unencoded[pack_name] = entry
+        unencoded[skill_name] = entry
 
     # Lam-alef is drawn, not produced by letter decomposition.
     unencoded["lam_alef-ar"] = {

@@ -36,11 +36,8 @@ import {
 } from './opentype-features';
 import { extractPrimaryFeatureIssue } from './feature-error-parser';
 import { pluginSettingsRegistry } from './plugin-settings/plugin-settings-registry';
-import { featureGeneratorEngine } from './language-packs/feature-generator-engine';
-import {
-    GENERATOR_KEY,
-    generatorStamp
-} from './language-packs/managed-features';
+import { featureGeneratorEngine } from './skills/feature-generator-engine';
+import { GENERATOR_KEY, generatorStamp } from './skills/managed-features';
 import {
     confirmAutomaticFeaturesTakeover,
     enableAutomaticFeatures
@@ -1189,9 +1186,7 @@ class FontInfoManager {
                 ...pluginSettingsRegistry.pluginsForTarget(
                     'font-info.features'
                 ),
-                ...pluginSettingsRegistry.pluginsForTarget(
-                    'font-info.language-packs'
-                )
+                ...pluginSettingsRegistry.pluginsForTarget('font-info.skills')
             ].some((plugin) => plugin.pluginId === openId);
             if (stillShown) {
                 this.showPluginSettings(openId);
@@ -9408,9 +9403,7 @@ class FontInfoManager {
         list.replaceChildren();
         const plugins = [
             ...pluginSettingsRegistry.pluginsForTarget('font-info.features'),
-            ...pluginSettingsRegistry.pluginsForTarget(
-                'font-info.language-packs'
-            )
+            ...pluginSettingsRegistry.pluginsForTarget('font-info.skills')
         ];
         const heading = document.getElementById('plugin-settings-heading');
         const visible = plugins.length > 0;

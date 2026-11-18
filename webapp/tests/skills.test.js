@@ -1,11 +1,11 @@
 const {
     applyGeneratorBlocks,
     managedInputs
-} = require('../js/language-packs/managed-features.ts');
+} = require('../js/skills/managed-features.ts');
 const {
     ccmpShellNames,
     isCcmpShellGlyph
-} = require('../js/language-packs/ccmp-shells.ts');
+} = require('../js/skills/ccmp-shells.ts');
 const {
     planGlyphAdditions,
     planRebuild,
@@ -13,23 +13,20 @@ const {
     planArabicConversion,
     compositionOutputSetting,
     expandFormSequence
-} = require('../js/language-packs/composition-planner.ts');
-const {
-    applyForms,
-    familyRoot
-} = require('../js/language-packs/arabic-forms.ts');
+} = require('../js/skills/composition-planner.ts');
+const { applyForms, familyRoot } = require('../js/skills/arabic-forms.ts');
 const {
     classifyComposition,
     conversionMenuLabel,
     glyphComponentNames
-} = require('../js/language-packs/composition-conversion.ts');
+} = require('../js/skills/composition-conversion.ts');
 const {
     remapSelectionAcrossComposition
 } = require('../js/glyph-canvas/composition-selection.ts');
 const {
     generatorMatches,
     operationsToBatch
-} = require('../js/language-packs/feature-generator-engine.ts');
+} = require('../js/skills/feature-generator-engine.ts');
 const {
     createPluginSettingControl,
     isPluginSetting
@@ -192,7 +189,7 @@ const font = {
     stations: [{ id: 'm', metrics: { xheight: 500, capheight: 700 } }]
 };
 
-describe('language packs', () => {
+describe('skills', () => {
     test('materialized plan creates the base, the mark, and the composite', async () => {
         const plan = await planGlyphAdditions(
             [
@@ -610,7 +607,7 @@ describe('language packs', () => {
     test('unknown settings fall back and invalid settings are rejected', () => {
         expect(isPluginSetting({ id: 'x', type: 'nope' })).toBe(false);
         expect(resolvePluginSettingTarget('not-a-target')).toBe(
-            'font-info.language-packs'
+            'font-info.skills'
         );
         expect(resolvePluginSettingTarget('add-glyphs')).toBe('add-glyphs');
     });

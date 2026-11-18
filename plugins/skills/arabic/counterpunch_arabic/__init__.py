@@ -1,4 +1,4 @@
-"""Arabic language pack: composition, character set, and feature generation."""
+"""Arabic skill: composition, character set, and feature generation."""
 
 from counterpunch_arabic.charset import ArabicCharacterSetProvider
 from counterpunch_arabic.composition import ArabicCompositionProvider

@@ -11,7 +11,7 @@ import type { AxesManager } from './variations';
 import type { UserspaceLocation } from '../locations';
 import APP_SETTINGS from '../settings';
 import { recordLiveTextDiagnostic } from '../live-text-diagnostics';
-import { isCcmpShellGlyph } from '../language-packs/ccmp-shells';
+import { isCcmpShellGlyph } from '../skills/ccmp-shells';
 import {
     remapSelectionAcrossComposition,
     type CompositionShapedGlyph

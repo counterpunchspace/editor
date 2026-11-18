@@ -53,7 +53,7 @@ describe('planCounterpunchGlyphRenames', () => {
         });
     });
 
-    test('applies Language Pack suggestions', () => {
+    test('applies skill suggestions', () => {
         const plan = planCounterpunchGlyphRenames(
             [
                 glyph('fathatan-ar', undefined),

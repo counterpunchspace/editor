@@ -20,7 +20,7 @@ import {
 import {
     featureGeneratorEngine,
     type TakeoverPreview
-} from './language-packs/feature-generator-engine';
+} from './skills/feature-generator-engine';
 
 const console = new Logger('ConvertToCounterpunch');
 

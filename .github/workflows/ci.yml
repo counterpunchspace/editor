@@ -115,9 +115,9 @@ jobs:
                   path: _collab
                   token: ${{ secrets.CLOUD_E2E_PAT || github.token }}
 
-            # Language-pack checks run pytest via python3 -m pytest. ubuntu-latest
+            # Skill checks run pytest via python3 -m pytest. ubuntu-latest
             # does not ship pytest, and its Python is externally managed.
-            - name: Install language-pack pytest
+            - name: Install skill pytest
               run: sudo apt-get update && sudo apt-get install -y python3-pytest
 
             - name: Preflight bundled plugin wheels
@@ -209,7 +209,7 @@ jobs:
             fail-fast: false
             matrix:
                 group:
-                    - language-packs
+                    - skills
                     - linked-windows
                     - startup-and-files
                     - path-editing

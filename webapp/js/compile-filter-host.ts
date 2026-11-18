@@ -7,7 +7,7 @@ import {
     DecomposedAffineTransform,
     writePluginSettingValue
 } from './babelfont-model';
-import { runHostPythonAsync } from './language-packs/host-python';
+import { runHostPythonAsync } from './skills/host-python';
 
 const { waitForFontEditorReady } = require('./editor-startup-ready.js');
 

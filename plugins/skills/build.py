@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the bundled Latin composition and ccmp feature wheels."""
+"""Build the bundled skill wheels (Latin, Arabic) and the core ccmp and feature wheels."""
 
 from __future__ import annotations
 
@@ -16,7 +16,13 @@ PACKAGES = (
         "name": "counterpunch_latin",
         "distribution": "counterpunch-latin",
         "version": "1.0.0",
-        "root": EDITOR / "plugins" / "languagepacks" / "latin" / "counterpunch_latin",
+        "root": EDITOR / "plugins" / "skills" / "latin" / "counterpunch_latin",
+        "skill": {
+            "entryPoint": "latin",
+            "pluginId": "space.counterpunch.latin",
+            "name": "Latin Skill",
+            "description": "Builds accented Latin letters from a base letter and its marks, such as Ä from A and ¨, and adds the marks the font doesn’t have yet.",
+        },
         "files": [
             "__init__.py",
             "composition.py",
@@ -37,7 +43,7 @@ PACKAGES = (
         "name": "counterpunch_ccmp",
         "distribution": "counterpunch-ccmp",
         "version": "1.0.0",
-        "root": EDITOR / "plugins" / "languagepacks" / "core" / "counterpunch_ccmp",
+        "root": EDITOR / "plugins" / "skills" / "core" / "counterpunch_ccmp",
         "files": ["__init__.py", "generator.py"],
         "entry_points": (
             "[counterpunch_feature_plugins]\n"
@@ -48,7 +54,7 @@ PACKAGES = (
         "name": "counterpunch_features",
         "distribution": "counterpunch-features",
         "version": "1.0.0",
-        "root": EDITOR / "plugins" / "languagepacks" / "core" / "counterpunch_features",
+        "root": EDITOR / "plugins" / "skills" / "core" / "counterpunch_features",
         "files": ["__init__.py", "generator.py"],
         "entry_points": (
             "[counterpunch_feature_plugins]\n"
@@ -60,7 +66,13 @@ PACKAGES = (
         "name": "counterpunch_arabic",
         "distribution": "counterpunch-arabic",
         "version": "1.5.1",
-        "root": EDITOR / "plugins" / "languagepacks" / "arabic" / "counterpunch_arabic",
+        "root": EDITOR / "plugins" / "skills" / "arabic" / "counterpunch_arabic",
+        "skill": {
+            "entryPoint": "arabic",
+            "pluginId": "space.counterpunch.arabic",
+            "name": "Arabic Skill",
+            "description": "Builds Arabic letters from their dotless shapes and dots, makes their joining forms, and writes the features that pick the right form as you type.",
+        },
         "files": [
             "__init__.py",
             "composition.py",
@@ -89,6 +101,40 @@ PACKAGES = (
 )
 
 
+MANIFEST = "counterpunch-plugin.json"
+# The website refuses a published skill whose name matches one of these.
+BUNDLED_SKILLS = EDITOR / "plugin-contracts" / "bundled-skills.json"
+
+
+def skill_manifest(package: dict) -> dict:
+    """The manifest a skill wheel carries, so the editor can show its name and description."""
+    skill = package["skill"]
+    return {
+        "schema": "counterpunch-plugin-manifest:v2",
+        "license": "GPL-3.0-or-later",
+        "package": package["distribution"],
+        "plugins": [
+            {
+                "type": "composition",
+                "contract": "composition:v3",
+                "entryPoint": skill["entryPoint"],
+                "pluginId": skill["pluginId"],
+                "name": skill["name"],
+                "description": skill["description"],
+            }
+        ],
+    }
+
+
+def write_bundled_skills() -> None:
+    skills = [
+        {"pluginId": package["skill"]["pluginId"], "name": package["skill"]["name"]}
+        for package in PACKAGES
+        if package.get("skill")
+    ]
+    BUNDLED_SKILLS.write_text(json.dumps(skills, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
 def record_line(name: str, content: bytes) -> str:
     digest = base64.urlsafe_b64encode(hashlib.sha256(content).digest()).rstrip(b"=")
     return f"{name},sha256={digest.decode()},{len(content)}"
@@ -105,13 +151,17 @@ def write_wheel(package: dict) -> str:
         "Metadata-Version: 2.1\n"
         f"Name: {package['distribution']}\n"
         f"Version: {package['version']}\n"
-        "Summary: Bundled Counterpunch language-pack plugin\n"
+        "Summary: Bundled Counterpunch skill plugin\n"
     ).encode()
     files[f"{dist_info}/WHEEL"] = (
-        "Wheel-Version: 1.0\nGenerator: Counterpunch language pack build\n"
+        "Wheel-Version: 1.0\nGenerator: Counterpunch skill build\n"
         "Root-Is-Purelib: true\nTag: py3-none-any\n"
     ).encode()
     files[f"{dist_info}/entry_points.txt"] = package["entry_points"].encode()
+    if package.get("skill"):
+        files[f"{dist_info}/{MANIFEST}"] = (
+            json.dumps(skill_manifest(package), indent=2, ensure_ascii=False) + "\n"
+        ).encode()
     records = [record_line(name, content) for name, content in files.items()]
     files[f"{dist_info}/RECORD"] = (
         "\n".join(records + [f"{dist_info}/RECORD,,"]) + "\n"
@@ -141,6 +191,7 @@ def update_manifest(wheel_names: list[str]) -> None:
 def main() -> None:
     wheel_names = [write_wheel(package) for package in PACKAGES]
     update_manifest(wheel_names)
+    write_bundled_skills()
     for wheel_name in wheel_names:
         print(f"Built webapp/wheels/{wheel_name}")
 

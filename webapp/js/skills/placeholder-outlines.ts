@@ -335,8 +335,8 @@ async function flushPlaceholderLookups(): Promise<void> {
     }
     let found: Record<string, GlyphDrawing> = {};
     try {
-        const { languagePackManager } = await import('./language-pack-manager');
-        found = await languagePackManager.drawings(names);
+        const { skillManager } = await import('./skill-manager');
+        found = await skillManager.drawings(names);
     } catch {
         found = {};
     }

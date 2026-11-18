@@ -1,12 +1,12 @@
 const {
     generatorMatches
-} = require('../js/language-packs/feature-generator-engine.ts');
+} = require('../js/skills/feature-generator-engine.ts');
 const {
     blockDefinesAny,
     stripAutomaticBlocks,
     listGeneratedBlocks,
     undefinedFeaReferences
-} = require('../js/language-packs/managed-features.ts');
+} = require('../js/skills/managed-features.ts');
 
 const stamp = (generator) => ({
     'com.counterpunch.generator': {

@@ -10,10 +10,10 @@ draws, including ``noonGhunna-ar.fina``, keeps that outline. Encoded glyphs
 use glyph-data names so a new font can find those outlines. No axis or GPOS.
 
 Run from the editor repo:
-``python3 plugins/languagepacks/arabic/tools/build_arabic_font.py``.
+``python3 plugins/skills/arabic/tools/build_arabic_font.py``.
 
 The editor does not read this font from source. After it changes, recompile the
-language-pack bundle with ``python3 plugins/languagepacks/build.py``.
+skill bundle with ``python3 plugins/skills/build.py``.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from build_arabic_data import (  # noqa: E402
     FUSTAT,
     GLYPH_DATA,
     OUTPUT,
-    PACK_NAMES,
+    SKILL_NAMES,
     build,
 )
 
@@ -52,7 +52,7 @@ NODE_TYPES = {
     "q": ("QCurve", False),
     "qs": ("QCurve", True),
 }
-INVERSE_PACK = {pack: fustat for fustat, pack in PACK_NAMES.items()}
+INVERSE_SKILL = {skill: fustat for fustat, skill in SKILL_NAMES.items()}
 INVERSE_FORM = {token: fustat for fustat, token in FORM_OWNER.items()}
 
 
@@ -187,7 +187,7 @@ class FontBuilder:
                 }
                 break
 
-    def pack_name(self, token: str) -> str:
+    def skill_name(self, token: str) -> str:
         root, suffix = split_token(token)
         if root.startswith("uni"):
             codepoint = int(root[3:], 16)
@@ -215,7 +215,7 @@ class FontBuilder:
                 return None
             candidate = base + (f".{suffix}" if suffix else "")
         else:
-            base = INVERSE_PACK.get(root, root)
+            base = INVERSE_SKILL.get(root, root)
             candidate = base + (f".{suffix}" if suffix else "")
         if candidate in self.fustat:
             return candidate
@@ -260,11 +260,11 @@ class FontBuilder:
 
     def add_explicit_forms(self, name: str, record: dict) -> None:
         """A positional sequence that is not the parts' own forms becomes a glyph."""
-        decompose = [self.pack_name(token) for token in record.get("decompose") or []]
+        decompose = [self.skill_name(token) for token in record.get("decompose") or []]
         for position, sequence in record["positions"].items():
             if position == "isol" or not sequence:
                 continue
-            component_names = [self.pack_name(token) for token in sequence]
+            component_names = [self.skill_name(token) for token in sequence]
             expanded = []
             for part in decompose:
                 form = f"{part}.{position}"
@@ -334,7 +334,7 @@ class FontBuilder:
             if not paths and not anchors and codepoints and unicodedata_mark(codepoints[0]):
                 category = "Mark"
             self.add(
-                self.pack_name(token),
+                self.skill_name(token),
                 codepoints=codepoints,
                 category=category,
                 width=width,
@@ -343,13 +343,13 @@ class FontBuilder:
             )
 
         for identity, record in characters.items():
-            name = self.pack_name(identity)
+            name = self.skill_name(identity)
             codepoints = codepoints_of(identity)
             if record.get("decompose"):
                 width, _paths, _anchors = self.drawing(identity)
                 self.add(name, codepoints=codepoints, width=width or 600)
                 self.ccmp.append(
-                    (name, [self.pack_name(token) for token in record["decompose"]])
+                    (name, [self.skill_name(token) for token in record["decompose"]])
                 )
                 self.stamp_positions(name, record)
                 self.add_explicit_forms(name, record)
@@ -361,7 +361,7 @@ class FontBuilder:
                     name,
                     codepoints=codepoints,
                     width=width or 600,
-                    components=[self.pack_name(token) for token in isol],
+                    components=[self.skill_name(token) for token in isol],
                 )
             elif name not in self.glyphs:
                 width, paths, anchors = self.drawing(identity)
@@ -379,7 +379,7 @@ class FontBuilder:
                 form = f"{name}.{position}"
                 if form in self.glyphs:
                     continue
-                component_names = [self.pack_name(token) for token in sequence]
+                component_names = [self.skill_name(token) for token in sequence]
                 if component_names == [form]:
                     width, paths, anchors = self.drawing(sequence[0])
                     self.add(form, width=width, paths=paths, anchors=anchors)
@@ -400,7 +400,7 @@ class FontBuilder:
             category = "Mark" if entry.get("category") == "Mark" else "Base"
             if name not in self.glyphs:
                 width, paths, anchors = self.drawing(name)
-                components = [self.pack_name(token) for token in entry.get("components") or []]
+                components = [self.skill_name(token) for token in entry.get("components") or []]
                 self.add(
                     name,
                     category=category,

@@ -9,8 +9,8 @@ import { bindModalEscape } from './ui/modal-escape';
 import {
     featureGeneratorEngine,
     type TakeoverPreview
-} from './language-packs/feature-generator-engine';
-import type { FeatureBlockSummary } from './language-packs/managed-features';
+} from './skills/feature-generator-engine';
+import type { FeatureBlockSummary } from './skills/managed-features';
 
 export function escapeHtml(value: string): string {
     return value

@@ -25,7 +25,7 @@ SETTINGS = [
 ]
 ```
 
-Required fields are `id`, `type`, and `default`. `target` selects where the control appears. Unknown targets fall back to `font-info.language-packs`.
+Required fields are `id`, `type`, and `default`. `target` selects where the control appears. Unknown targets fall back to `font-info.skills`.
 
 Allowed types: `checkbox`, `radio`, `select`, `number`, `slider`, `textfield`, `color`. `radio` and `select` need `options`. A `radio` option may add `help`, a sentence shown with that choice. `number` and `slider` should set `min`, `max`, and `step`.
 
@@ -40,6 +40,6 @@ Targets shipped now:
 | `font-info.features` | font | Features sidebar, Settings section |
 | `add-glyphs` | font | Add Glyphs dialog |
 | `canvas.plugins` | window | Canvas plugin dropdown |
-| `font-info.language-packs` | font | Fallback section in that same sidebar |
+| `font-info.skills` | font | Fallback section in that same sidebar |
 
 Reserved: `font-info.general`, `glyph-overview.filters`.

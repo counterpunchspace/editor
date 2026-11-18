@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { inspectWheel } from "./static-wheel.mjs";
 
 const editorRoot = join(fileURLToPath(new URL(".", import.meta.url)), "..");
-const roots = [join(editorRoot, "plugins"), join(editorRoot, "webapp/language-packs")];
+const roots = [join(editorRoot, "plugins"), join(editorRoot, "webapp/wheels")];
 
 function wheels(dir) {
   const found = [];

@@ -101,7 +101,7 @@ import {
     normalizeAffineTransform,
     transformPointWithAffine
 } from '../glyph-path-geometry';
-import { placeholderContoursForReference } from '../language-packs/placeholder-outlines';
+import { placeholderContoursForReference } from '../skills/placeholder-outlines';
 import {
     applyLiveSidebearingVisualSync,
     formatSidebearingHistoryValue,

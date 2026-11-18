@@ -11,6 +11,7 @@ from counterpunch_arabic.renames import ArabicRenames
 class ArabicCompositionProvider:
     provider_id = "space.counterpunch.arabic"
     capability = "composition:arabic:default"
+    claims = {"writing_scripts": ["Arabic"]}
     version = "1.0.0"
 
     def __init__(self) -> None:

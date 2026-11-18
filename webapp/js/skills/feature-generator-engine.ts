@@ -26,6 +26,7 @@ import {
 } from './managed-features';
 import { designerLanguageSystems } from './arabic-forms';
 import { runHostPython, runHostPythonAsync } from './host-python';
+import { ENSURE_SKILLS } from './skill-registry';
 
 const console = new Logger('FeatureGenerators');
 
@@ -81,12 +82,18 @@ interface DiagnosticEntry {
     durationMs: number;
 }
 
+// A skill that lost every writing script it claims to another skill keeps
+// its feature generators out too.
 const ENSURE_FEATURE_GENERATORS = `
 import builtins
+${ENSURE_SKILLS}
 if not hasattr(builtins, "_cp_feature_generators"):
     from importlib.metadata import entry_points
     builtins._cp_feature_generators = {}
     for entry in entry_points(group="counterpunch_feature_plugins"):
+        dist = getattr(entry, "dist", None)
+        if dist and str(dist.metadata["Name"]) in builtins._cp_inactive_skill_distributions:
+            continue
         plugin = entry.load()()
         builtins._cp_feature_generators[plugin.generator_id] = plugin
 `;

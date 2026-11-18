@@ -22,6 +22,7 @@ Lookup = Callable[[int], dict[str, Any] | None]
 class LatinCompositionProvider:
     provider_id = "space.counterpunch.latin"
     capability = "composition:latin:default"
+    claims = {"writing_scripts": ["Latin"]}
     version = "1.0.0"
 
     def __init__(self) -> None:

@@ -28,6 +28,8 @@ export interface CompositionRecipe {
     positions?: Record<string, string[]>;
     decompose?: string[];
     category?: string;
+    /** Id of the skill that wrote the recipe. */
+    skill?: string;
 }
 
 export interface AnchorPositionRequest {
@@ -43,7 +45,7 @@ export interface AnchorPositionRequest {
 
 export interface CompositionProvider {
     recipe(codepoint: number): Promise<CompositionRecipe | null>;
-    anchors(codepoint: number): Promise<string[]>;
+    anchors(codepoint: number, skillId?: string): Promise<string[]>;
     anchorPositions(requests: AnchorPositionRequest[]): Promise<
         Array<{
             glyph_name: string;
@@ -503,7 +505,8 @@ async function planRecords(
             };
             ensureGlyph(componentRecord, false);
             if (!font.hasGlyph(name)) {
-                const names = await provider.anchors(codepoint);
+                // A mark is Inherited, so it asks the skill that built the letter.
+                const names = await provider.anchors(codepoint, recipe.skill);
                 queueAnchors(
                     anchorRequests,
                     font,

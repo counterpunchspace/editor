@@ -8,7 +8,7 @@ import {
     placeholderCcmpParts,
     placeholderContoursForReference,
     rememberPlaceholderDrawing
-} from '../js/language-packs/placeholder-outlines';
+} from '../js/skills/placeholder-outlines';
 
 const IDENTITY = [1, 0, 0, 1, 0, 0];
 

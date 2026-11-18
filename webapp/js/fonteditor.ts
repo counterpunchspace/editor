@@ -270,16 +270,15 @@ async function initFontEditor() {
             }
         }
         try {
-            const { languagePackManager } =
-                await import('./language-packs/language-pack-manager');
+            const { skillManager } = await import('./skills/skill-manager');
             const { featureGeneratorEngine } =
-                await import('./language-packs/feature-generator-engine');
-            await languagePackManager.ensureReady();
+                await import('./skills/feature-generator-engine');
+            await skillManager.ensureReady();
             await featureGeneratorEngine.ensureReady();
         } catch (error) {
             console.error(
                 '[FontEditor]',
-                'Failed to load language pack plugins:',
+                'Failed to load skill plugins:',
                 error
             );
         }

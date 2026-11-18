@@ -19,8 +19,8 @@ export const PLUGIN_SETTING_TARGETS: Record<string, PluginSettingTarget> = {
         scope: 'window',
         implemented: true
     },
-    'font-info.language-packs': {
-        id: 'font-info.language-packs',
+    'font-info.skills': {
+        id: 'font-info.skills',
         scope: 'font',
         implemented: true
     },
@@ -31,7 +31,7 @@ export const PLUGIN_SETTING_TARGETS: Record<string, PluginSettingTarget> = {
     }
 };
 
-export const PLUGIN_SETTING_FALLBACK = 'font-info.language-packs';
+export const PLUGIN_SETTING_FALLBACK = 'font-info.skills';
 
 export const RESERVED_PLUGIN_SETTING_TARGETS = [
     'font-info.general',

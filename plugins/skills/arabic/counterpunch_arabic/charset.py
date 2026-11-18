@@ -1,4 +1,4 @@
-"""Character set for the glyphs the Arabic pack composes and substitutes."""
+"""Character set for the glyphs the Arabic skill composes and substitutes."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ def _union_categories(left: Any, right: Any) -> list[str]:
 
 class ArabicCharacterSetProvider:
     provider_id = "space.counterpunch.arabic"
-    display_name = "Arabic Language Pack"
+    display_name = "Arabic Skill"
     glyph_categories = [
         {"id": "bases", "label": "Bases"},
         {"id": "dots", "label": "Dots"},

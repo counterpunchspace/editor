@@ -37,9 +37,10 @@ Each row is a place where the editor discovers or calls a plugin of that type. F
 | `character_set` | `counterpunch_character_set_plugins` | `webapp/js/character-set-plugin-manager.ts` | `CharacterSetPluginManager`, `getCharacters`, `getMembersBySet` |
 | `compilefilter` | `counterpunch_compilefilter_plugins` | `webapp/py/fonteditor.py` | `_cp_compile_filters_discover`, `_cp_compile_filters_run`, `_cp_compile_filter_ctx` |
 | `compilefilter` | `counterpunch_compilefilter_plugins` | `webapp/js/compile-filter-host.ts` | `prepareCompileFilters` |
-| `composition` | `counterpunch_composition_plugins` | `webapp/js/language-packs/language-pack-manager.ts` | `LanguagePackManager`, `recipePython` |
-| `composition` | `counterpunch_composition_plugins` | `webapp/js/language-packs/composition-planner.ts` | `ensureToken`, `planRecords` |
-| `feature` | `counterpunch_feature_plugins` | `webapp/js/language-packs/feature-generator-engine.ts` | `FeatureGeneratorEngine`, `callGenerator` |
+| `composition` | `counterpunch_composition_plugins` | `webapp/js/skills/skill-registry.ts` | `ENSURE_SKILLS`, `writingScriptForName` |
+| `composition` | `counterpunch_composition_plugins` | `webapp/js/skills/skill-manager.ts` | `SkillManager`, `recipePython` |
+| `composition` | `counterpunch_composition_plugins` | `webapp/js/skills/composition-planner.ts` | `ensureToken`, `planRecords` |
+| `feature` | `counterpunch_feature_plugins` | `webapp/js/skills/feature-generator-engine.ts` | `FeatureGeneratorEngine`, `callGenerator` |
 | `font_destination` | `counterpunch_font_destination_plugins` | `webapp/js/font-destination-plugin-manager.ts` | `discoverInstalledDestinations`, `deliverExportedFont` |
 | `font_destination` | `counterpunch_font_destination_plugins` | `webapp/font-destination-bridge.html` | `forwardToDestination` |
 

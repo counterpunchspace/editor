@@ -2,7 +2,7 @@ import {
     collectOverviewPunchFillContours,
     fastGlyphTileRenderer
 } from '../js/glyph-tile-renderer-fast';
-import { rememberPlaceholderDrawing } from '../js/language-packs/placeholder-outlines';
+import { rememberPlaceholderDrawing } from '../js/skills/placeholder-outlines';
 
 function rect(x0, y0, x1, y1, extra = {}) {
     return {

@@ -2,19 +2,17 @@ import { Logger } from '../logger';
 import { glyphDataIndex } from '../glyph-data';
 import type { CompositionRecipe } from './composition-planner';
 import { runHostPython, runHostPythonAsync } from './host-python';
+import {
+    ENSURE_SKILLS,
+    SKILLS_JSON,
+    skillSummaries,
+    writingScriptForName,
+    type SkillSummary
+} from './skill-registry';
 
-const console = new Logger('LanguagePacks');
+const console = new Logger('Skills');
 
 export const COMPOSITION_PLUGIN_ID = 'space.counterpunch.latin';
-
-const ENSURE_COMPOSITION_PROVIDERS = `
-import builtins
-if not hasattr(builtins, "_cp_composition_providers"):
-    from importlib.metadata import entry_points
-    builtins._cp_composition_providers = {}
-    for entry in list(entry_points(group="counterpunch_composition_plugins")):
-        builtins._cp_composition_providers[entry.name] = entry.load()()
-`;
 
 function lookupRecord(codepoint: number): Record<string, unknown> | null {
     const record = glyphDataIndex.getGlyphDataForUnicode([codepoint]);
@@ -34,8 +32,11 @@ function lookupRecord(codepoint: number): Record<string, unknown> | null {
     };
 }
 
-/** Calls the bundled Latin composition provider through Pyodide. */
-export class LanguagePackManager {
+/**
+ * Calls the installed skills through Pyodide. Each request goes to the
+ * skill that claims the writing script of the character or glyph name.
+ */
+export class SkillManager {
     private ready: Promise<void> | null = null;
 
     ensureReady(): Promise<void> {
@@ -48,12 +49,27 @@ export class LanguagePackManager {
         return this.ready;
     }
 
+    /** The active skills, one per writing script they claim. */
+    async skills(): Promise<SkillSummary[]> {
+        await this.ensureReady();
+        const result = await runHostPythonAsync(`
+import json, builtins
+${ENSURE_SKILLS}
+${SKILLS_JSON}
+`);
+        return skillSummaries(JSON.parse(String(result)));
+    }
+
     async recipe(codepoint: number): Promise<CompositionRecipe | null> {
         await Promise.all([this.ensureReady(), glyphDataIndex.ensureReady()]);
         return this.recipeSync(codepoint);
     }
 
-    /** Synchronous recipe lookup for the commit finalizer. */
+    /**
+     * Synchronous recipe lookup for the commit finalizer. The recipe carries
+     * the id of the skill that wrote it, so its components ask that skill
+     * for anchors even when their own writing script is Inherited.
+     */
     recipeSync(codepoint: number): CompositionRecipe | null {
         if (!window.pyodide) {
             return null;
@@ -65,24 +81,31 @@ export class LanguagePackManager {
     private recipePython(codepoint: number): string {
         return `
 import json, builtins
-${ENSURE_COMPOSITION_PROVIDERS}
+${ENSURE_SKILLS}
 lookup_data = json.loads(${JSON.stringify(JSON.stringify(this.closure(codepoint)))})
 def lookup(codepoint):
     return lookup_data.get(str(int(codepoint)))
 record = lookup(${codepoint}) or {}
-provider_name = "arabic" if record.get("script") == "Arabic" else "latin"
-provider = builtins._cp_composition_providers.get(provider_name)
-json.dumps(provider.recipe(${codepoint}, lookup) if provider else None)
+skill = builtins._cp_skill_for(record.get("script"))
+recipe = skill["provider"].recipe(${codepoint}, lookup) if skill else None
+if isinstance(recipe, dict):
+    recipe = {**recipe, "skill": skill["id"]}
+json.dumps(recipe)
 `;
     }
 
-    async anchors(codepoint: number): Promise<string[]> {
-        await this.ensureReady();
+    /**
+     * Anchor names for a new glyph. `skillId` names the skill whose recipe
+     * asked for the glyph; without it, the code point's writing script picks.
+     */
+    async anchors(codepoint: number, skillId?: string): Promise<string[]> {
+        await Promise.all([this.ensureReady(), glyphDataIndex.ensureReady()]);
+        const script = lookupRecord(codepoint)?.script;
         const result = await runHostPythonAsync(`
 import json, builtins
-${ENSURE_COMPOSITION_PROVIDERS}
-provider = builtins._cp_composition_providers.get("latin")
-json.dumps(provider.anchors(${codepoint}) if provider else [])
+${ENSURE_SKILLS}
+skill = builtins._cp_skill_for(${JSON.stringify(script ?? null)}, ${JSON.stringify(skillId ?? null)})
+json.dumps(skill["provider"].anchors(${codepoint}) if skill else [])
 `);
         return JSON.parse(String(result)) as string[];
     }
@@ -93,23 +116,27 @@ json.dumps(provider.anchors(${codepoint}) if provider else [])
         components?: string[];
         category?: string;
     } | null> {
-        await this.ensureReady();
+        await Promise.all([this.ensureReady(), glyphDataIndex.ensureReady()]);
         const result = await runHostPythonAsync(`
 import json, builtins
-${ENSURE_COMPOSITION_PROVIDERS}
-provider = builtins._cp_composition_providers.get("arabic")
-json.dumps(provider.recipe_for_name(${JSON.stringify(name)}) if provider else None)
+${ENSURE_SKILLS}
+skill = builtins._cp_skill_for(${JSON.stringify(writingScriptForName(name) ?? null)})
+by_name = getattr(skill["provider"], "recipe_for_name", None) if skill else None
+json.dumps(by_name(${JSON.stringify(name)}) if callable(by_name) else None)
 `);
         return JSON.parse(String(result));
     }
 
+    /** Anchor names for a glyph token, from a skill that knows glyphs by name. */
     async anchorsFor(token: string): Promise<string[]> {
-        await this.ensureReady();
+        await Promise.all([this.ensureReady(), glyphDataIndex.ensureReady()]);
         const result = await runHostPythonAsync(`
 import json, builtins
-${ENSURE_COMPOSITION_PROVIDERS}
-provider = builtins._cp_composition_providers.get("arabic")
-json.dumps(provider.anchors(${JSON.stringify(token)}) if provider else [])
+${ENSURE_SKILLS}
+skill = builtins._cp_skill_for(${JSON.stringify(writingScriptForName(token) ?? null)})
+provider = skill["provider"] if skill else None
+known = provider is not None and callable(getattr(provider, "recipe_for_name", None))
+json.dumps(provider.anchors(${JSON.stringify(token)}) if known else [])
 `);
         return JSON.parse(String(result)) as string[];
     }
@@ -139,11 +166,11 @@ json.dumps(provider.anchors(${JSON.stringify(token)}) if provider else [])
         await this.ensureReady();
         const result = await runHostPythonAsync(`
 import json, builtins
-${ENSURE_COMPOSITION_PROVIDERS}
+${ENSURE_SKILLS}
 names = json.loads(${JSON.stringify(JSON.stringify(names))})
 found = {}
-for provider in builtins._cp_composition_providers.values():
-    draw = getattr(provider, "drawings", None)
+for skill in builtins._cp_skills:
+    draw = getattr(skill["provider"], "drawings", None)
     if not callable(draw):
         continue
     payload = draw(names) or {}
@@ -157,6 +184,10 @@ json.dumps(found)
         return JSON.parse(String(result));
     }
 
+    /**
+     * Positions anchors. Each active skill with `anchor_positions` places
+     * the requests it knows (`known`); the rest go to the next skill.
+     */
     async anchorPositions(requests: unknown[]): Promise<
         Array<{
             glyph_name: string;
@@ -167,23 +198,22 @@ json.dumps(found)
         await this.ensureReady();
         const result = await runHostPythonAsync(`
 import json, builtins
-${ENSURE_COMPOSITION_PROVIDERS}
+${ENSURE_SKILLS}
 requests = json.loads(${JSON.stringify(JSON.stringify(requests))})
-arabic = builtins._cp_composition_providers.get("arabic")
-latin = builtins._cp_composition_providers.get("latin")
-rows = arabic.anchor_positions(requests) if arabic else []
-missing = []
-missing_at = []
-if not rows:
-    rows = [{} for _ in requests]
-for index, row in enumerate(rows):
-    if not row.get("known"):
-        missing.append(requests[index])
-        missing_at.append(index)
-if missing and latin:
-    latin_rows = latin.anchor_positions(missing)
-    for index, row in zip(missing_at, latin_rows):
-        rows[index] = row
+rows = [{} for _ in requests]
+pending = list(range(len(requests)))
+for skill in builtins._cp_skills:
+    position = getattr(skill["provider"], "anchor_positions", None)
+    if not pending or not callable(position):
+        continue
+    answered = position([requests[index] for index in pending]) or []
+    still = []
+    for index, row in zip(pending, answered):
+        if row.get("known", True) or not rows[index]:
+            rows[index] = row
+        if not row.get("known", True):
+            still.append(index)
+    pending = still
 json.dumps([
     {
         "glyph_name": row.get("glyph_name"),
@@ -197,7 +227,7 @@ json.dumps([
     }
 
     /**
-     * Optional `rename_suggestions(glyphs, renames)` hook: each loaded provider
+     * Optional `rename_suggestions(glyphs, renames)` hook: each active skill
      * proposes `{old: new}` renames for glyphs it recognises by legacy name.
      */
     async renameSuggestions(
@@ -211,12 +241,12 @@ json.dumps([
         await this.ensureReady();
         const result = await runHostPythonAsync(`
 import json, builtins
-${ENSURE_COMPOSITION_PROVIDERS}
+${ENSURE_SKILLS}
 glyphs = json.loads(${JSON.stringify(JSON.stringify(glyphs))})
 renames = json.loads(${JSON.stringify(JSON.stringify(renames))})
 found = {}
-for provider in builtins._cp_composition_providers.values():
-    suggest = getattr(provider, "rename_suggestions", None)
+for skill in builtins._cp_skills:
+    suggest = getattr(skill["provider"], "rename_suggestions", None)
     if not callable(suggest):
         continue
     payload = suggest(glyphs, {**renames, **found}) or {}
@@ -275,8 +305,8 @@ json.dumps(found)
             }
             await new Promise((resolve) => window.setTimeout(resolve, 50));
         }
-        console.log('Latin composition provider ready');
+        console.log('Skills ready');
     }
 }
 
-export const languagePackManager = new LanguagePackManager();
+export const skillManager = new SkillManager();

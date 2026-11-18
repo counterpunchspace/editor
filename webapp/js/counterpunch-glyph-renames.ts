@@ -1,12 +1,12 @@
 /**
  * Plan glyph renames that bring a font onto Counterpunch naming:
  * encoded glyphs take their Glyph Data name, suffixed variants and ligatures
- * follow their parts, and Language Packs add heuristics for legacy names.
+ * follow their parts, and skills add heuristics for legacy names.
  */
 
 import { glyphDataIndex } from './glyph-data';
 import { getGlyphRenamePreflightErrors } from './rename-glyphs-preflight';
-import { languagePackManager } from './language-packs/language-pack-manager';
+import { skillManager } from './skills/skill-manager';
 
 export interface RenameGlyphInput {
     name: string;
@@ -118,7 +118,7 @@ export function planCounterpunchGlyphRenames(
     return { renames, skipped };
 }
 
-/** Plan for the open font, including Language Pack suggestions. */
+/** Plan for the open font, including skill suggestions. */
 export async function planGlyphRenamesForFont(
     font: NonNullable<typeof window.currentFontModel>
 ): Promise<GlyphRenamePlan> {
@@ -138,18 +138,18 @@ export async function planGlyphRenamesForFont(
     const nameForCodepoint = (codepoint: number) =>
         glyphDataIndex.getGlyphDataForUnicode([codepoint])?.glyph_name;
     const base = planCounterpunchGlyphRenames(glyphs, nameForCodepoint);
-    let packRenames: Record<string, string> = {};
+    let skillRenames: Record<string, string> = {};
     try {
-        packRenames = await languagePackManager.renameSuggestions(
+        skillRenames = await skillManager.renameSuggestions(
             glyphs,
             Object.fromEntries(base.renames)
         );
     } catch {
-        // A pack without the optional hook, or Python not ready: editor names only.
+        // A skill without the optional hook, or Python not ready: editor names only.
     }
     return planCounterpunchGlyphRenames(
         glyphs,
         nameForCodepoint,
-        new Map(Object.entries(packRenames))
+        new Map(Object.entries(skillRenames))
     );
 }

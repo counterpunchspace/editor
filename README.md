@@ -94,7 +94,7 @@ Coverage: 🟢 Should work · 🟡 Partial · 🔴 Missing
 | Language database                        | 🟢       | Ships with Hyperglot temporarily as a demo, later as user-installable plugins |
 | Glyph composition                        | 🟢       |                                                                               |
 | Commercial plugin marketplace            | 🟢       |                                                                               |
-| Language Packs                           | 🟡       | Infrastructure and basic Arabic demo exists                                   |
+| Skills                                   | 🟡       | Infrastructure and basic Arabic demo exists                                   |
 | Documentation                            | 🟡       | Incomplete, bad screenshots                                                   |
 | Glyph overview and filters               | 🟡       | Glyph categorization missing                                                  |
 | Source file I/O                          | 🟢       |                                                                               |

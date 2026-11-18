@@ -11,7 +11,7 @@ import { fillPunchFillContoursOnContext } from '../punch-fill-contours';
 import { Logger } from '../logger';
 import { getPathFillOpacity } from '../path-fill-opacity-pref';
 import { get_glyph_name } from '../../wasm-dist/babelfont_fontc_web';
-import { isCcmpShellGlyph } from '../language-packs/ccmp-shells';
+import { isCcmpShellGlyph } from '../skills/ccmp-shells';
 import {
     buildPlaceholderPath,
     paintPlaceholderGlyph,
@@ -21,7 +21,7 @@ import {
     placeholderHasVectorOutline,
     type PlaceholderContour,
     type PlaceholderEmphasis
-} from '../language-packs/placeholder-outlines';
+} from '../skills/placeholder-outlines';
 import {
     normalizeAffineTransform,
     transformPointWithAffine as applyAffineToPoint,

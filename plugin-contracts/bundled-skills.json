@@ -1,0 +1,10 @@
+[
+  {
+    "pluginId": "space.counterpunch.latin",
+    "name": "Latin Skill"
+  },
+  {
+    "pluginId": "space.counterpunch.arabic",
+    "name": "Arabic Skill"
+  }
+]

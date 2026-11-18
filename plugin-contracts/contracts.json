@@ -173,9 +173,9 @@
     {
       "type": "composition",
       "group": "counterpunch_composition_plugins",
-      "contract": 2,
+      "contract": 3,
       "editorSupports": [
-        2
+        3
       ],
       "required": [
         {
@@ -187,9 +187,18 @@
           "name": "anchors",
           "kind": "method",
           "arity": 1
+        },
+        {
+          "name": "claims",
+          "kind": "attribute"
         }
       ],
-      "optional": []
+      "optional": [],
+      "claims": {
+        "writing_scripts": {
+          "pattern": "^[A-Z][A-Za-z]*(?:_[A-Z][A-Za-z]*)*$"
+        }
+      }
     },
     {
       "type": "feature",

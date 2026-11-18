@@ -13,7 +13,7 @@ import {
 import { catalogCodepointsByGlyphName } from './filesystem-plugins/cloud-glyph-catalog';
 import { Logger } from './logger';
 import { timelineSpanStart, timelineSpanEnd } from './perf-timeline';
-import { isCcmpShellGlyph } from './language-packs/ccmp-shells';
+import { isCcmpShellGlyph } from './skills/ccmp-shells';
 import {
     getOverviewDisplayMode,
     getOverviewSize,

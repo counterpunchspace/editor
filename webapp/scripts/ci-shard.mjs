@@ -130,7 +130,7 @@ function pack(tests, shardCount) {
 // staging transport errors, cap the cloud matrix with max-parallel: 6.
 const GROUPS = {
     'chromium': {
-        'language-packs': ['tests/latin-language-pack.spec.ts'],
+        'skills': ['tests/latin-skill.spec.ts'],
         'linked-windows': ['tests/linked-window-editing-compile.spec.ts'],
         'startup-and-files': [
             'tests/basic-interaction.spec.ts',

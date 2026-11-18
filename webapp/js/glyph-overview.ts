@@ -33,7 +33,7 @@ import { PATH_FILL_OPACITY_CHANGED_EVENT } from './path-fill-opacity-pref';
 import {
     conversionMenuLabel,
     type CompositionOffer
-} from './language-packs/composition-conversion';
+} from './skills/composition-conversion';
 import {
     appendGlyphOverviewTypeaheadBuffer,
     GLYPH_OVERVIEW_TYPEAHEAD_TIMEOUT_MS,
@@ -1089,7 +1089,7 @@ class GlyphOverview extends GlyphOverviewView {
         let offer: CompositionOffer | null = null;
         if (canMutate) {
             const { loadCompositionOffer } =
-                await import('./language-packs/composition-conversion');
+                await import('./skills/composition-conversion');
             offer = await loadCompositionOffer(selectedNames);
         }
         if (request !== this.contextMenuRequest || !this.tileContextMenu) {
@@ -1126,7 +1126,7 @@ class GlyphOverview extends GlyphOverviewView {
     ): Promise<void> {
         const names = this.getSelectedGlyphNames();
         const { loadCompositionOffer, convertSelectedGlyphs } =
-            await import('./language-packs/composition-conversion');
+            await import('./skills/composition-conversion');
         const offer = await loadCompositionOffer(names);
         const targets = output === 'ccmp' ? offer.toCcmp : offer.toComponents;
         const drawn =

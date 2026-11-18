@@ -52,7 +52,7 @@ import {
 import { fontCompilation, fullFontCompilation } from './font-compilation';
 import { timelineSpanEnd, timelineSpanStart } from './perf-timeline';
 import { Logger } from './logger';
-import { featureGeneratorEngine } from './language-packs/feature-generator-engine';
+import { featureGeneratorEngine } from './skills/feature-generator-engine';
 import { processCommittedEdit } from './compiled-edit-funnel';
 import {
     readCommittedCompileStamp,

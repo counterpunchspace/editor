@@ -503,7 +503,7 @@ def test_mark_order_swaps_only_the_opposite_typing_order():
 
 def test_character_set_and_recipe_round_trip():
     provider = ArabicCharacterSetProvider()
-    assert provider.metadata()["name"] == "Arabic Language Pack"
+    assert provider.metadata()["name"] == "Arabic Skill"
     assert provider.metadata()["tree"] == [
         {"id": "arabic", "label": "Arabic", "selectable": True},
         {"id": "conn-high1", "label": "High connection", "selectable": True},

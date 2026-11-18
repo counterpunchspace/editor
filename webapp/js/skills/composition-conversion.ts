@@ -1,7 +1,7 @@
 /**
  * Classify a glyph selection and convert it to components or ccmp.
  * Conversion follows the composition already in the font. It does not
- * consult a language-pack recipe, so a sequence the user changed is kept.
+ * consult a skill recipe, so a sequence the user changed is kept.
  * Recipes are only for adding glyphs.
  */
 
