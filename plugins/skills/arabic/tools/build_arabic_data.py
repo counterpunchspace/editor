@@ -17,6 +17,10 @@ skill names for unencoded i'jam. Improvements over Fustat, applied here:
 - ``.high``, ``.short`` and ``.alt`` are not used. A kept rule that references
   ``.alt`` is an error.
 
+The Basic Arabic set adds Hyperglot's Standard Arabic (``arb``) on top of the
+skill's own entries, read from the bundled Hyperglot plugin's ``data.json``,
+with Hyperglot's levels.
+
 Run from the editor repo: ``python3 plugins/skills/arabic/tools/build_arabic_data.py``.
 """
 
@@ -44,10 +48,22 @@ FUSTAT = (
     / "Fustat.babelfont"
 )
 GLYPH_DATA = EDITOR / "webapp" / "data" / "glyph-data.json.gz"
+HYPERGLOT = (
+    EDITOR / "plugins" / "charset" / "hyperglot" / "counterpunch_hyperglot" / "data.json"
+)
+STANDARD_ARABIC = "arb/0"
+# Hyperglot's character groups -> the skill's glyph categories.
+HYPERGLOT_CATEGORIES = {
+    "base": "letters",
+    "auxiliary": "letters",
+    "marks": "marks",
+    "punctuation": "punctuation",
+    "numerals": "numerals",
+}
 OUTPUT = (
     EDITOR
     / "plugins"
-    / "languagepacks"
+    / "skills"
     / "arabic"
     / "counterpunch_arabic"
     / "data"
@@ -457,6 +473,26 @@ def _order_marks(sequence: list[str]) -> list[str]:
     return [token for _, token in sorted(enumerate(sequence), key=lambda item: (band(item[1]), item[0]))]
 
 
+def standard_arabic(skip: set[int]) -> list[dict]:
+    """Hyperglot's Standard Arabic characters not in ``skip``, with Hyperglot's levels.
+
+    Basic Arabic lists the skill's own skeletons, dots and marks first; this
+    adds the letters, numerals and punctuation Standard Arabic needs on top.
+    """
+    data = json.loads(HYPERGLOT.read_text(encoding="utf-8"))
+    leaf = next(item for item in data["leaves"] if item["id"] == STANDARD_ARABIC)
+    return [
+        {
+            "codepoint": character["codepoint"],
+            "level": character["level"],
+            "level_rank": character["level_rank"],
+            "categories": [HYPERGLOT_CATEGORIES[character["categories"][0]]],
+        }
+        for character in leaf["characters"]
+        if character["codepoint"] not in skip
+    ]
+
+
 def _leaves(characters: dict, bases: list[str], unencoded: dict) -> list[dict]:
     def encoded(identity: str, level: str, categories: list[str]) -> dict:
         return {
@@ -484,21 +520,23 @@ def _leaves(characters: dict, bases: list[str], unencoded: dict) -> list[dict]:
         for name, entry in unencoded.items()
         if entry["category"] == "Mark" and "components" not in entry
     ]
+    own = [
+        *[encoded(identity, "essential", ["bases"]) for identity in bases],
+        named("kafDotless-ar", "essential", ["bases"]),
+        *[named(name, "essential", ["dots"]) for name in sorted(dot_names)],
+        *[
+            encoded(uni_label(codepoint), "essential", ["marks"])
+            for codepoint in MARK_CODEPOINTS
+        ],
+        named("lam_alef-ar", "essential", ["ligatures"]),
+    ]
+    own_codepoints = {entry["codepoint"] for entry in own if "codepoint" in entry}
     return [
         {
             "id": "arabic",
-            "label": "Arabic",
+            "label": "Basic Arabic",
             "level": "essential",
-            "entries": [
-                *[encoded(identity, "essential", ["bases"]) for identity in bases],
-                named("kafDotless-ar", "essential", ["bases"]),
-                *[named(name, "essential", ["dots"]) for name in sorted(dot_names)],
-                *[
-                    encoded(uni_label(codepoint), "essential", ["marks"])
-                    for codepoint in MARK_CODEPOINTS
-                ],
-                named("lam_alef-ar", "essential", ["ligatures"]),
-            ],
+            "entries": [*own, *standard_arabic(own_codepoints)],
         },
         *[
             {

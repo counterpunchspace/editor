@@ -2,7 +2,7 @@
   "leaves": [
     {
       "id": "arabic",
-      "label": "Arabic",
+      "label": "Basic Arabic",
       "level": "essential",
       "entries": [
         {
@@ -325,7 +325,7 @@
           ]
         },
         {
-          "glyph_name": "tahCenter-ar",
+          "glyph_name": "tahBelow-ar",
           "category": "Mark",
           "level": "essential",
           "level_rank": 0,
@@ -334,7 +334,7 @@
           ]
         },
         {
-          "glyph_name": "tahBelow-ar",
+          "glyph_name": "tahCenter-ar",
           "category": "Mark",
           "level": "essential",
           "level_rank": 0,
@@ -614,6 +614,910 @@
           "level_rank": 0,
           "categories": [
             "ligatures"
+          ]
+        },
+        {
+          "codepoint": 33,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 34,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 35,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 37,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 38,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 39,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 40,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 41,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 42,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 43,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 44,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 45,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 46,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 47,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 48,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 49,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 50,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 51,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 52,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 53,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 54,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 55,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 56,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 57,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 58,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 59,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 61,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 63,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 64,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 91,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 92,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 93,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 94,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 95,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 123,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 124,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 125,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 126,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 166,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 167,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 169,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 171,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 174,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 176,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 177,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 182,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 183,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 187,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 215,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 247,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 1548,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 1563,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 1567,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 1576,
+          "level": "essential",
+          "level_rank": 0,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1577,
+          "level": "essential",
+          "level_rank": 0,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1578,
+          "level": "essential",
+          "level_rank": 0,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1579,
+          "level": "essential",
+          "level_rank": 0,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1580,
+          "level": "essential",
+          "level_rank": 0,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1582,
+          "level": "essential",
+          "level_rank": 0,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1584,
+          "level": "essential",
+          "level_rank": 0,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1586,
+          "level": "essential",
+          "level_rank": 0,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1588,
+          "level": "essential",
+          "level_rank": 0,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1590,
+          "level": "essential",
+          "level_rank": 0,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1592,
+          "level": "essential",
+          "level_rank": 0,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1594,
+          "level": "essential",
+          "level_rank": 0,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1600,
+          "level": "recommended",
+          "level_rank": 1,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1601,
+          "level": "essential",
+          "level_rank": 0,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1602,
+          "level": "essential",
+          "level_rank": 0,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1603,
+          "level": "essential",
+          "level_rank": 0,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1606,
+          "level": "essential",
+          "level_rank": 0,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1610,
+          "level": "essential",
+          "level_rank": 0,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1632,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 1633,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 1634,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 1635,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 1636,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 1637,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 1638,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 1639,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 1640,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 1641,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 1642,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 1643,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 1644,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 1645,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 1662,
+          "level": "recommended",
+          "level_rank": 1,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1670,
+          "level": "recommended",
+          "level_rank": 1,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1691,
+          "level": "recommended",
+          "level_rank": 1,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1696,
+          "level": "recommended",
+          "level_rank": 1,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1698,
+          "level": "recommended",
+          "level_rank": 1,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1700,
+          "level": "recommended",
+          "level_rank": 1,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1701,
+          "level": "recommended",
+          "level_rank": 1,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1703,
+          "level": "recommended",
+          "level_rank": 1,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1704,
+          "level": "recommended",
+          "level_rank": 1,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1709,
+          "level": "recommended",
+          "level_rank": 1,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1711,
+          "level": "recommended",
+          "level_rank": 1,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 1740,
+          "level": "recommended",
+          "level_rank": 1,
+          "categories": [
+            "letters"
+          ]
+        },
+        {
+          "codepoint": 8208,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 8211,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 8212,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 8220,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 8221,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 8226,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 8230,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 8240,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 8242,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 8243,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 8482,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 8722,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 8776,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 8800,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "numerals"
+          ]
+        },
+        {
+          "codepoint": 64830,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
+          ]
+        },
+        {
+          "codepoint": 64831,
+          "level": "optional",
+          "level_rank": 2,
+          "categories": [
+            "punctuation"
           ]
         }
       ]

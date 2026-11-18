@@ -25,9 +25,12 @@ class ArabicCharacterSetProvider:
     display_name = "Arabic Skill"
     glyph_categories = [
         {"id": "bases", "label": "Bases"},
+        {"id": "letters", "label": "Letters"},
         {"id": "dots", "label": "Dots"},
         {"id": "marks", "label": "Marks"},
         {"id": "ligatures", "label": "Ligatures"},
+        {"id": "numerals", "label": "Numerals"},
+        {"id": "punctuation", "label": "Punctuation"},
     ]
 
     def __init__(self) -> None:
@@ -35,7 +38,7 @@ class ArabicCharacterSetProvider:
         self._data = json.loads(path.read_text(encoding="utf-8"))
 
     def metadata(self) -> dict[str, Any]:
-        tree = [{"id": "arabic", "label": "Arabic", "selectable": True}]
+        tree = [{"id": "arabic", "label": "Basic Arabic", "selectable": True}]
         details: dict[str, dict[str, str]] = {}
         for item in CONNECTIONS:
             identifier = set_id(str(item["id"]))

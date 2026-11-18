@@ -505,7 +505,7 @@ def test_character_set_and_recipe_round_trip():
     provider = ArabicCharacterSetProvider()
     assert provider.metadata()["name"] == "Arabic Skill"
     assert provider.metadata()["tree"] == [
-        {"id": "arabic", "label": "Arabic", "selectable": True},
+        {"id": "arabic", "label": "Basic Arabic", "selectable": True},
         {"id": "conn-high1", "label": "High connection", "selectable": True},
         {"id": "conn-hah", "label": "Hah connection", "selectable": True},
     ]
@@ -518,7 +518,6 @@ def test_character_set_and_recipe_round_trip():
         "label": "Bases",
     }
     glyphs = provider.characters([], ["essential", "recommended"])
-    assert all(entry.get("codepoint") != 0x062A for entry in glyphs)
     by_name = {
         entry["glyph_name"]: entry for entry in glyphs if entry.get("glyph_name")
     }
@@ -526,6 +525,8 @@ def test_character_set_and_recipe_round_trip():
         entry["codepoint"]: entry for entry in glyphs if "codepoint" in entry
     }
     assert by_name["twoDotsHorizontalAbove-ar"]["categories"] == ["dots"]
+    # Basic Arabic also lists Standard Arabic's finished letters, such as teh.
+    assert by_codepoint[0x062A]["categories"] == ["letters"]
     assert by_name["lam_alef-ar"]["categories"] == ["ligatures"]
     assert "shaddaFatha-ar" not in by_name
     assert by_name["kafDotless-ar"]["categories"] == ["bases"]
@@ -543,7 +544,7 @@ def test_character_set_and_recipe_round_trip():
     members = provider.members_by_set([], [])
     assert "twoDotsHorizontalAbove-ar" in members["arabic"]["glyph_names"]
     assert "lam_alef-ar" in members["arabic"]["glyph_names"]
-    assert 0x062A not in members["arabic"]["codepoints"]
+    assert 0x062A in members["arabic"]["codepoints"]
     dots = provider.characters(["arabic"], ["essential"])
     assert any(entry.get("glyph_name") == "twoDotsHorizontalAbove-ar" for entry in dots)
     composition = ArabicCompositionProvider()
@@ -633,3 +634,25 @@ def test_rename_suggestions_never_collide_with_existing_names():
         {"name": "fathaTanween-ar", "codepoints": [0x064B], "components": []},
     ]
     assert ArabicCompositionProvider().rename_suggestions(glyphs, {}) == {}
+
+
+def test_basic_arabic_covers_standard_arabic():
+    hyperglot = json.loads(
+        (Path(__file__).resolve().parents[2] / "charset" / "hyperglot" / "counterpunch_hyperglot" / "data.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    standard = next(leaf for leaf in hyperglot["leaves"] if leaf["id"] == "arb/0")
+    basic = next(leaf for leaf in DATA["leaves"] if leaf["id"] == "arabic")
+    entries = {entry["codepoint"]: entry for entry in basic["entries"] if "codepoint" in entry}
+    for character in standard["characters"]:
+        assert character["codepoint"] in entries
+    beh = entries[0x0628]
+    assert (beh["level"], beh["categories"]) == ("essential", ["letters"])
+    peh = entries[0x067E]
+    assert (peh["level"], peh["categories"]) == ("recommended", ["letters"])
+    comma = entries[0x060C]
+    assert (comma["level"], comma["categories"]) == ("optional", ["punctuation"])
+    assert entries[0x0661]["categories"] == ["numerals"]
+    # The skill's own entries keep their place and level.
+    assert entries[0x066E] == {"codepoint": 0x066E, "level": "essential", "level_rank": 0, "categories": ["bases"]}
