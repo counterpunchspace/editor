@@ -93,6 +93,8 @@ const {
     stickyLiveGlyphDocumentIds
 } = require('../js/cloud-live-session.ts');
 const { CloudAdapter } = require('../js/cloud-adapter.ts');
+const { walUpdateBytes } = require('../js/cloud-durable-wal.ts');
+const { walRecordsReadyToRestore } = require('../js/cloud-adapter-outbox.ts');
 
 function durableLiveAck(init) {
     const body = JSON.parse(init.body);
@@ -837,6 +839,97 @@ describe('CloudLiveSession', () => {
             expect(session.pendingSyncCount).toBe(0);
         } finally {
             session.disconnect();
+            global.indexedDB = originalIndexedDb;
+        }
+    });
+
+    test('a row an edit hold staged is not resent before the hold sends it merged', async () => {
+        const originalIndexedDb = global.indexedDB;
+        global.indexedDB = createIndexedDbMock();
+        const options = {
+            assetId: 'asset-held',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-held',
+            bridge: {},
+            bootstrapMode: 'skip'
+        };
+        const envelope = {
+            schemaVersion: 1,
+            transactionId: 'held-edit',
+            localSequence: 1,
+            roomSequence: null,
+            baseRevision: null,
+            changes: [],
+            metadata: {
+                editType: 'glyph',
+                changedGlyphNames: ['A'],
+                changedLayerIds: [],
+                workerReplayTargets: [],
+                historyItemId: 'held-edit',
+                historyAction: 'change',
+                undoScope: 'glyph'
+            },
+            source: 'test',
+            label: null,
+            summary: '',
+            windowId: 'linked',
+            timestamp: 1
+        };
+        const session = new CloudLiveSession(options);
+        let reloaded = null;
+        const sendable = (target) =>
+            target._wal
+                .replayableRecords()
+                .map((row) => [
+                    row.clientTransactionId.split(':')[1],
+                    [...walUpdateBytes(row)]
+                ]);
+        try {
+            await session.syncLiveDocumentIds(['glyph:aaa']);
+            await session.stageHeldUpdate(
+                new Uint8Array([1]),
+                envelope,
+                'glyph:aaa'
+            );
+            // A reconnect resends unacked rows; the held one is not among
+            // them, or the room would commit the first edit alone.
+            expect(sendable(session)).toEqual([]);
+            expect(
+                walRecordsReadyToRestore(
+                    session._wal,
+                    'asset-held',
+                    'glyph:aaa'
+                )
+            ).toEqual([]);
+            expect(
+                session._wal.replayableRecords({ includeHeld: true })
+            ).toHaveLength(1);
+
+            // The hold sends the merged edits under the same id.
+            await session.relayForwardedUpdate(
+                new Uint8Array([1, 2]),
+                envelope,
+                'glyph:aaa'
+            );
+            expect(sendable(session)).toEqual([['held-edit', [1, 2]]]);
+
+            // A page that closed mid-hold sends the staged row on reopen.
+            await session.stageHeldUpdate(
+                new Uint8Array([3]),
+                { ...envelope, transactionId: 'held-later' },
+                'glyph:aaa'
+            );
+            session.disconnect();
+            reloaded = new CloudLiveSession(options);
+            await reloaded._ensureWalLoaded();
+            expect(sendable(reloaded).map(([id]) => id)).toEqual([
+                'held-edit',
+                'held-later'
+            ]);
+        } finally {
+            session.disconnect();
+            reloaded?.disconnect();
             global.indexedDB = originalIndexedDb;
         }
     });

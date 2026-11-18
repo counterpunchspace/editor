@@ -157,6 +157,7 @@ export function walRecordsReadyToRestore(
                 record.assetId === assetId &&
                 !!record.clientTransactionId &&
                 walUpdateBytes(record).byteLength > 0 &&
-                !!record.collaborationMessage
+                !!record.collaborationMessage &&
+                !wal.isHeldStaged(record)
         );
 }

@@ -468,7 +468,9 @@ export class CloudLiveSession {
             }
             await this._ensureWalLoaded();
             const idsByDocument = new Map<string, string[]>();
-            for (const record of this._wal.replayableRecords()) {
+            for (const record of this._wal.replayableRecords({
+                includeHeld: true
+            })) {
                 const ids = idsByDocument.get(record.documentId) ?? [];
                 ids.push(record.clientTransactionId);
                 idsByDocument.set(record.documentId, ids);
@@ -914,6 +916,16 @@ export class CloudLiveSession {
                 createdAt: existing?.createdAt || Date.now(),
                 attempts: existing?.attempts || 0
             });
+            const walKey = {
+                assetId: this._options.assetId,
+                documentId: existing?.documentId || resolvedDocumentId,
+                clientTransactionId
+            };
+            if (options.staged) {
+                this._wal.holdStaged(walKey);
+            } else {
+                this._wal.releaseStaged(walKey);
+            }
             this._emitPendingSyncCount();
             if (!options.staged) {
                 // A staged row waits for its burst; nothing is sent yet.
@@ -936,6 +948,13 @@ export class CloudLiveSession {
             if (error instanceof CloudWalPersistError) {
                 // The WAL kept the row in memory and retries the write, so
                 // the packet stays sendable; the caller still reports it.
+                if (!options.staged) {
+                    this._wal.releaseStaged({
+                        assetId: this._options.assetId,
+                        documentId: documentId || FONT_CORE_DOCUMENT_ID,
+                        clientTransactionId: messageKey
+                    });
+                }
                 this._emitPendingSyncCount();
                 this._adapters
                     .get(documentId || FONT_CORE_DOCUMENT_ID)

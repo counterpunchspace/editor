@@ -190,6 +190,13 @@ export class CloudDurableWal {
     private _loaded = false;
     /** Keys of rows held only in memory because IndexedDB refused them. */
     private _unpersisted = new Set<string>();
+    /**
+     * Rows an edit hold in this page staged. The hold sends them merged
+     * under the same id, so a resend must not send them early: the room
+     * would commit the first edit and refuse the merged one. After a
+     * reload no hold owns them and they replay like any unsent edit.
+     */
+    private _heldStaged = new Set<string>();
     private _recoveryTimer: ReturnType<typeof setTimeout> | null = null;
     private _recoveryAttempts = 0;
     /**
@@ -346,10 +353,44 @@ export class CloudDurableWal {
         return ids;
     }
 
-    /** Unacked rows in dependsOn order (creation order within independent rows). */
-    replayableRecords(): CloudWalRecord[] {
+    holdStaged(
+        record: Pick<
+            CloudWalRecord,
+            'assetId' | 'documentId' | 'clientTransactionId'
+        >
+    ): void {
+        this._heldStaged.add(recordKey(record));
+    }
+
+    releaseStaged(
+        record: Pick<
+            CloudWalRecord,
+            'assetId' | 'documentId' | 'clientTransactionId'
+        >
+    ): void {
+        this._heldStaged.delete(recordKey(record));
+    }
+
+    isHeldStaged(
+        record: Pick<
+            CloudWalRecord,
+            'assetId' | 'documentId' | 'clientTransactionId'
+        >
+    ): boolean {
+        return this._heldStaged.has(recordKey(record));
+    }
+
+    /**
+     * Unacked rows in dependsOn order (creation order within independent
+     * rows). Rows a hold in this page still owns are left out unless
+     * `includeHeld`.
+     */
+    replayableRecords(options?: { includeHeld?: boolean }): CloudWalRecord[] {
         const pending = this.recordsFor().filter(
-            (record) => record.state !== 'acknowledged'
+            (record) =>
+                record.state !== 'acknowledged' &&
+                (options?.includeHeld === true ||
+                    !this._heldStaged.has(recordKey(record)))
         );
         const byId = new Map(
             pending.map((record) => [record.clientTransactionId, record])
@@ -695,6 +736,7 @@ export class CloudDurableWal {
         for (const key of keys) {
             this._records.delete(key);
             this._unpersisted.delete(key);
+            this._heldStaged.delete(key);
         }
         this._announceDropped(keys);
         this._emitChange();

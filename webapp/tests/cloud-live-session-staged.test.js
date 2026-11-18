@@ -21,7 +21,9 @@ function session() {
         }),
         acknowledgeMany: jest.fn(async (_asset, _doc, ids) => {
             for (const id of ids) rows.delete(id);
-        })
+        }),
+        holdStaged: jest.fn(),
+        releaseStaged: jest.fn()
     };
     live._walLoad = Promise.resolve();
     live._ensureWalLoaded = async () => {};
@@ -57,6 +59,9 @@ test('a staged row is written without a send, and replaces the earlier one', asy
     expect(rows.size).toBe(1);
     expect(rows.has(firstId)).toBe(false);
     expect(adapter.noteOutboundWalReady).not.toHaveBeenCalled();
+    // The hold owns staged rows: resends leave them out until it sends.
+    expect(live._wal.holdStaged).toHaveBeenCalledTimes(2);
+    expect(live._wal.releaseStaged).not.toHaveBeenCalled();
 
     // An ordinary row still tells the socket it may send.
     await live.persistOutgoingUpdate(
@@ -65,6 +70,7 @@ test('a staged row is written without a send, and replaces the earlier one', asy
         'glyph:a'
     );
     expect(adapter.noteOutboundWalReady).toHaveBeenCalledTimes(1);
+    expect(live._wal.releaseStaged).toHaveBeenCalledTimes(1);
 
     const [stagedId] = rows.keys();
     await live.dropStagedUpdate('glyph:a', stagedId);
