@@ -442,6 +442,104 @@ describe('live font-deps updates', () => {
         expect(plugin.canMutateCurrentAsset()).toBe(true);
     });
 
+    it('writes font-deps once for a linked window commit across several glyphs', () => {
+        const { setYPath } = require('../js/change-bridge-ydoc');
+        const {
+            bridge: main,
+            plugin,
+            fontJson: live
+        } = startLiveSession({
+            upm: 1000,
+            glyphs: ['a', 'b', 'c'].map((name) => ({
+                name,
+                layers: [liveDrawing()]
+            }))
+        });
+        const linked = new PatchSyncEngine('linked');
+        linked.initFromJson(JSON.parse(JSON.stringify(live)));
+        linked.applyDocumentSetState(main.encodeDocumentSet());
+        const relayed = [];
+        linked.onLocalUpdate((update, message, _entries, documentId) => {
+            relayed.push({ update, message, documentId });
+        });
+        // One width edit in the linked window that reaches three glyphs, as
+        // metrics keys do: one packet per glyph room.
+        const shards = linked.encodeDocumentSet();
+        const operations = [];
+        const documentUpdates = [];
+        for (const glyph of live.glyphs) {
+            const drawing = glyph.layers[0];
+            const documentId = linked.documentIdForPath(['glyphs', glyph.name]);
+            const doc = new Y.Doc({ gc: false });
+            Y.applyUpdate(
+                doc,
+                shards.find((shard) => shard.documentId === documentId).bytes
+            );
+            const baseline = Y.encodeStateVector(doc);
+            const newDrawing = { ...drawing, width: 590 };
+            doc.transact(() => {
+                setYPath(
+                    doc.getMap('glyph'),
+                    ['layers', drawing.id],
+                    newDrawing
+                );
+            });
+            documentUpdates.push({
+                documentId,
+                update: Y.encodeStateAsUpdate(doc, baseline)
+            });
+            operations.push({
+                op: 'set',
+                path: ['glyphs', glyph.name, 'layers', drawing.id],
+                oldValue: drawing,
+                newValue: newDrawing,
+                applyMode: 'drawing-snapshot',
+                workerReplayTargets: [
+                    { glyphName: glyph.name, layerId: drawing.id }
+                ]
+            });
+        }
+        linked.applyLocalGeneratedYjsUpdate(
+            documentUpdates[0].update,
+            operations,
+            'Set width',
+            null,
+            documentUpdates
+        );
+        expect(relayed.map((packet) => packet.documentId)).toEqual(
+            documentUpdates.map((packet) => packet.documentId)
+        );
+
+        const sent = [];
+        main.onLocalUpdate((_update, _message, _entries, documentId) => {
+            sent.push(documentId);
+        });
+        // Main applies the relayed commit in one batch, as WindowSync does.
+        main.runWithBatchedRemoteAfterSync(() => {
+            for (const packet of relayed) {
+                main.applyRemoteUpdate(
+                    packet.update,
+                    undefined,
+                    [packet.message],
+                    packet.documentId,
+                    { fromLinkedWindow: true }
+                );
+            }
+        });
+
+        expect(sent.filter((id) => id === 'font-deps')).toHaveLength(1);
+        // That one write covers every glyph of the commit.
+        const deps = readFontDepsIndex(main.depsDoc.getMap('deps'));
+        for (const packet of relayed) {
+            expect(deps.sourceRevision).toHaveProperty(
+                packet.documentId.slice('glyph:'.length)
+            );
+        }
+        plugin._stopTrackingActiveAssetSize();
+        main.destroy();
+        linked.destroy();
+    });
+
     it('sends a font-deps write with collaboration metadata that a peer applies', () => {
         const fontJson = {
             upm: 1000,

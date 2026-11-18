@@ -5710,13 +5710,30 @@ export class PatchSyncEngine {
         }
         const batch = { pending: false };
         this._remoteAfterSyncBatch = batch;
+        // A linked window's commit arrives here as one packet per document;
+        // main projects the catalog and font-deps for it once, not per packet.
+        this._catalogDeferDepth += 1;
         try {
             fn();
         } finally {
+            this._releaseCatalogDefer();
             this._remoteAfterSyncBatch = null;
             if (batch.pending) {
                 this._onAfterSync?.();
             }
+        }
+    }
+
+    /** End one catalog-defer window; the last one writes what was queued. */
+    private _releaseCatalogDefer(): void {
+        this._catalogDeferDepth = Math.max(0, this._catalogDeferDepth - 1);
+        if (this._catalogDeferDepth !== 0) {
+            return;
+        }
+        const owners = [...this._deferredCatalogOwners];
+        this._deferredCatalogOwners.clear();
+        for (const owner of owners) {
+            owner.flushDeferredCatalogProjection?.();
         }
     }
 
@@ -11118,20 +11135,8 @@ export class PatchSyncEngine {
                 );
             } finally {
                 const persistChainAfterEmit = this._cloudEmitPersistChain;
-                const releaseCatalogDefer = (): void => {
-                    this._catalogDeferDepth = Math.max(
-                        0,
-                        this._catalogDeferDepth - 1
-                    );
-                    if (this._catalogDeferDepth !== 0) {
-                        return;
-                    }
-                    const owners = [...this._deferredCatalogOwners];
-                    this._deferredCatalogOwners.clear();
-                    for (const owner of owners) {
-                        owner.flushDeferredCatalogProjection?.();
-                    }
-                };
+                const releaseCatalogDefer = (): void =>
+                    this._releaseCatalogDefer();
                 if (persistChainAfterEmit !== persistChainBeforeEmit) {
                     persistChainAfterEmit.then(
                         releaseCatalogDefer,
