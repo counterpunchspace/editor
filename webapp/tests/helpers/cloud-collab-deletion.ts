@@ -37,8 +37,13 @@ export type Census = {
     r2: { count: number; keys: string[] };
     rooms: Record<string, RoomCensus>;
 };
-// The tombstone is the receipt of the delete and is kept on purpose.
-const RETAINED_TABLES = new Set(['font_asset_tombstones']);
+// Kept after a delete on purpose: the tombstone, the delete's receipt, and
+// the font's usage, whose costs were real.
+const RETAINED_TABLES = new Set([
+    'font_asset_tombstones',
+    'font_usage_monthly',
+    'font_usage_batches'
+]);
 
 export async function api<T>(
     page: Page,
