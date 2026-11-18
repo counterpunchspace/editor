@@ -213,6 +213,15 @@ async function runWithConcurrency<T>(
     await Promise.all(executing);
 }
 
+/**
+ * Glyph and layout rooms retry a failed connect on their own. Core fails the
+ * open instead, and nothing else would reconnect a layout room until the set
+ * of live glyphs changes.
+ */
+function retriesConnect(documentId: string): boolean {
+    return documentId.startsWith('glyph:') || isLayoutDocumentId(documentId);
+}
+
 const MAX_REFUSED_HTTP_PUBLISHES = 6;
 /** Merged HTTP publishes stay well under the room's packet limit. */
 const MAX_MERGED_HTTP_PUBLISH_BYTES = 128 * 1024;
@@ -277,12 +286,14 @@ export class CloudLiveSession {
     private _lifetimeAbort = new AbortController();
     private readonly _timers = new Set<ReturnType<typeof setTimeout>>();
     private _disconnected = false;
-    private readonly _glyphConnectAttempts = new Map<string, number>();
-    private readonly _glyphConnectInFlight = new Set<string>();
-    private readonly _glyphConnectRetryTimers = new Map<
+    private readonly _connectAttempts = new Map<string, number>();
+    private readonly _connectInFlight = new Set<string>();
+    private readonly _connectRetryTimers = new Map<
         string,
         ReturnType<typeof setTimeout>
     >();
+    /** HTTP catch-up of layout rooms that joined after the session was live. */
+    private _layoutJoinCatchUp: Promise<void> = Promise.resolve();
 
     constructor(options: CloudLiveSessionOptions) {
         this._options = options;
@@ -561,6 +572,19 @@ export class CloudLiveSession {
         );
     }
 
+    /**
+     * Wait for pending room membership changes and the HTTP catch-up of rooms
+     * that joined late, then list the rooms this window wants live but has no
+     * synced socket for.
+     */
+    async settleLiveDocuments(): Promise<string[]> {
+        await this._syncLiveChain;
+        await this._layoutJoinCatchUp;
+        return [...this._desiredDocumentIds].filter(
+            (documentId) => !this.hasSyncedLiveDocument(documentId)
+        );
+    }
+
     async catchUpDocuments(
         targets: Array<string | GlyphCatchUpTarget>,
         options?: {
@@ -745,9 +769,10 @@ export class CloudLiveSession {
             adapter.disconnect();
         }
         this._adapters.clear();
-        this._glyphConnectAttempts.clear();
-        this._glyphConnectInFlight.clear();
-        this._glyphConnectRetryTimers.clear();
+        this._connectAttempts.clear();
+        this._connectInFlight.clear();
+        this._connectRetryTimers.clear();
+        this._layoutJoinCatchUp = Promise.resolve();
         this._desiredDocumentIds = new Set([FONT_CORE_DOCUMENT_ID]);
         this._reportedConnected = false;
         this._readyOnce = false;
@@ -1027,7 +1052,7 @@ export class CloudLiveSession {
             if (!desired.has(documentId)) {
                 adapter.disconnect();
                 this._adapters.delete(documentId);
-                this._clearGlyphConnectRetry(documentId);
+                this._clearConnectRetry(documentId);
                 this._clearDocumentError(documentId);
                 if (documentId.startsWith('glyph:')) {
                     droppedGlyphIds.add(documentId);
@@ -1070,14 +1095,7 @@ export class CloudLiveSession {
             // syncs its socket from font-core's checkpoint position; load
             // its state over HTTP.
             if (joinedLayoutRooms.length) {
-                void this._catchUpDocumentsOverHttp(joinedLayoutRooms).catch(
-                    (error) => {
-                        console.warn(
-                            'CloudLiveSession: catching up joined layout rooms failed:',
-                            error
-                        );
-                    }
-                );
+                this._catchUpJoinedLayoutRooms(joinedLayoutRooms);
             }
             return;
         }
@@ -1508,35 +1526,35 @@ export class CloudLiveSession {
         this._options.onTransferActivityChange?.(next);
     }
 
-    private _cancelGlyphConnectTimer(documentId: string): void {
-        const timer = this._glyphConnectRetryTimers.get(documentId);
+    private _cancelConnectRetryTimer(documentId: string): void {
+        const timer = this._connectRetryTimers.get(documentId);
         if (!timer) {
             return;
         }
         clearTimeout(timer);
         this._timers.delete(timer);
-        this._glyphConnectRetryTimers.delete(documentId);
+        this._connectRetryTimers.delete(documentId);
     }
 
-    private _clearGlyphConnectRetry(documentId: string): void {
-        this._cancelGlyphConnectTimer(documentId);
-        this._glyphConnectAttempts.delete(documentId);
+    private _clearConnectRetry(documentId: string): void {
+        this._cancelConnectRetryTimer(documentId);
+        this._connectAttempts.delete(documentId);
     }
 
-    private _scheduleGlyphConnectRetry(documentId: string): void {
+    private _scheduleConnectRetry(documentId: string): void {
         if (
             this._disconnected ||
-            !documentId.startsWith('glyph:') ||
+            !retriesConnect(documentId) ||
             !this._desiredDocumentIds.has(documentId) ||
             this._adapters.has(documentId) ||
-            this._glyphConnectRetryTimers.has(documentId)
+            this._connectRetryTimers.has(documentId)
         ) {
             return;
         }
-        const attempt = this._glyphConnectAttempts.get(documentId) ?? 0;
-        this._glyphConnectAttempts.set(documentId, attempt + 1);
+        const attempt = this._connectAttempts.get(documentId) ?? 0;
+        this._connectAttempts.set(documentId, attempt + 1);
         const timer = this._scheduleTimer(() => {
-            this._glyphConnectRetryTimers.delete(documentId);
+            this._connectRetryTimers.delete(documentId);
             if (
                 this._disconnected ||
                 !this._desiredDocumentIds.has(documentId) ||
@@ -1544,21 +1562,28 @@ export class CloudLiveSession {
             ) {
                 return;
             }
-            void this._connectDocument(documentId);
+            void this._connectDocument(documentId).then(() => {
+                if (
+                    isLayoutDocumentId(documentId) &&
+                    this._adapters.has(documentId)
+                ) {
+                    this._catchUpJoinedLayoutRooms([documentId]);
+                }
+            });
         }, cloudReconnectDelayMs(attempt));
         if (timer) {
-            this._glyphConnectRetryTimers.set(documentId, timer);
+            this._connectRetryTimers.set(documentId, timer);
         }
     }
 
     private async _connectDocument(documentId: string): Promise<void> {
-        const isGlyph = documentId.startsWith('glyph:');
-        if (isGlyph && this._glyphConnectInFlight.has(documentId)) {
+        const retries = retriesConnect(documentId);
+        if (retries && this._connectInFlight.has(documentId)) {
             return;
         }
-        if (isGlyph) {
-            this._glyphConnectInFlight.add(documentId);
-            this._cancelGlyphConnectTimer(documentId);
+        if (retries) {
+            this._connectInFlight.add(documentId);
+            this._cancelConnectRetryTimer(documentId);
         }
         const {
             assetId,
@@ -1658,7 +1683,7 @@ export class CloudLiveSession {
             }
             if (this._desiredDocumentIds.has(documentId)) {
                 this._adapters.set(documentId, adapter);
-                this._glyphConnectAttempts.delete(documentId);
+                this._connectAttempts.delete(documentId);
                 this._emitPendingSyncCount();
                 this._emitTransferActivity();
             } else {
@@ -1670,19 +1695,19 @@ export class CloudLiveSession {
                 throw error;
             }
             console.warn(
-                `CloudLiveSession: failed to connect glyph room ${documentId}:`,
+                `CloudLiveSession: failed to connect room ${documentId}:`,
                 error
             );
             if (
-                isGlyph &&
+                retries &&
                 !isForbiddenCloudCredentialError(error) &&
                 this._desiredDocumentIds.has(documentId)
             ) {
-                this._scheduleGlyphConnectRetry(documentId);
+                this._scheduleConnectRetry(documentId);
             }
         } finally {
-            if (isGlyph) {
-                this._glyphConnectInFlight.delete(documentId);
+            if (retries) {
+                this._connectInFlight.delete(documentId);
             }
         }
     }
@@ -1997,6 +2022,25 @@ export class CloudLiveSession {
      * tail). A room seeded over HTTP has its checkpoint at log id 0, so a
      * live catch-up from 0 would bring only the tail.
      */
+    /**
+     * A layout room joined after the session was live syncs its socket from
+     * font-core's checkpoint position; load its state over HTTP.
+     */
+    private _catchUpJoinedLayoutRooms(documentIds: string[]): void {
+        const run = this._catchUpDocumentsOverHttp(documentIds).catch(
+            (error) => {
+                console.warn(
+                    'CloudLiveSession: catching up joined layout rooms failed:',
+                    error
+                );
+            }
+        );
+        this._layoutJoinCatchUp = Promise.all([
+            this._layoutJoinCatchUp,
+            run
+        ]).then(() => undefined);
+    }
+
     private async _catchUpDocumentsOverHttp(
         documentIds: string[]
     ): Promise<void> {

@@ -9,7 +9,7 @@ jest.mock('../js/logger', () => ({
 const mockConnectDirect = jest.fn().mockResolvedValue();
 const mockConnectWithCredentials = jest.fn().mockResolvedValue();
 const mockDisconnect = jest.fn();
-const glyphConnectControl = { failuresRemaining: 0 };
+const glyphConnectControl = { failuresRemaining: 0, prefix: 'glyph:' };
 
 jest.mock('../js/cloud-adapter', () => {
     const actual = jest.requireActual('../js/cloud-adapter');
@@ -29,7 +29,9 @@ jest.mock('../js/cloud-adapter', () => {
                 }),
                 connectWithCredentials: jest.fn(async (...args) => {
                     if (
-                        String(options.documentId || '').startsWith('glyph:') &&
+                        String(options.documentId || '').startsWith(
+                            glyphConnectControl.prefix
+                        ) &&
                         glyphConnectControl.failuresRemaining > 0
                     ) {
                         glyphConnectControl.failuresRemaining -= 1;
@@ -387,6 +389,56 @@ describe('CloudLiveSession', () => {
             random.mockRestore();
             jest.useRealTimers();
             glyphConnectControl.failuresRemaining = 0;
+        }
+    });
+
+    test('retries a layout room that joined late and failed to connect, then loads its state', async () => {
+        glyphConnectControl.failuresRemaining = 1;
+        glyphConnectControl.prefix = 'catalog:';
+        const random = jest.spyOn(Math, 'random').mockReturnValue(0);
+        const originalFetch = global.fetch;
+        jest.useFakeTimers();
+        let layoutRooms = [];
+        const bridge = {
+            layoutDocumentIds: () => layoutRooms,
+            applyDocumentCatchUp: jest.fn(() => true)
+        };
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge,
+            bootstrapMode: 'skip'
+        });
+        try {
+            let pending = session.syncLiveDocumentIds([]);
+            await jest.advanceTimersByTimeAsync(500);
+            await pending;
+            global.fetch = jest.fn(async () => ({
+                ok: true,
+                status: 200,
+                arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer
+            }));
+            // A peer upgraded the font: the catalog room joins mid-session.
+            layoutRooms = ['catalog:0'];
+            pending = session.syncLiveDocumentIds([]);
+            await jest.advanceTimersByTimeAsync(10);
+            await pending;
+            expect(await session.settleLiveDocuments()).toEqual(['catalog:0']);
+            await jest.advanceTimersByTimeAsync(800);
+            expect(await session.settleLiveDocuments()).toEqual([]);
+            expect(bridge.applyDocumentCatchUp).toHaveBeenCalledWith(
+                'catalog:0',
+                expect.any(Uint8Array)
+            );
+        } finally {
+            session.disconnect();
+            random.mockRestore();
+            jest.useRealTimers();
+            global.fetch = originalFetch;
+            glyphConnectControl.failuresRemaining = 0;
+            glyphConnectControl.prefix = 'glyph:';
         }
     });
 

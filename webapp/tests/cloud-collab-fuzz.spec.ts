@@ -891,21 +891,19 @@ test.describe('cloud collaboration fuzz', () => {
                 for (const fuzzWindow of windows) {
                     await waitForCloudLiveIdle(fuzzWindow.page).catch(() => {});
                     // A glyph opened for this step connects its live socket,
-                    // and asks for the room’s status once connected. Neither
-                    // is the step’s traffic, so wait for the socket here.
+                    // and asks for the room’s status once connected. A room
+                    // that joins or reconnects late also loads its state.
+                    // None of it is the step’s traffic, so wait until every
+                    // room the window wants has a synced socket.
                     await expect
                         .poll(
                             () =>
-                                fuzzWindow.page.evaluate(() => {
+                                fuzzWindow.page.evaluate(async () => {
                                     const session = (window as any).cloudPlugin
                                         ?._liveSession;
-                                    const ids: string[] =
-                                        session?.liveDocumentIds?.() ?? [];
-                                    return ids.every(
-                                        (id) =>
-                                            session.hasSyncedLiveDocument?.(
-                                                id
-                                            ) !== false
+                                    return (
+                                        (await session?.settleLiveDocuments?.()) ??
+                                        []
                                     );
                                 }),
                             {
@@ -913,7 +911,7 @@ test.describe('cloud collaboration fuzz', () => {
                                 message: `${fuzzWindow.name}: live sockets connected`
                             }
                         )
-                        .toBe(true);
+                        .toEqual([]);
                 }
                 await mainPage.waitForTimeout(1500);
                 const names = await glyphNamesById();
