@@ -1,5 +1,9 @@
 # Unreleased
 
+- **Add items here** for the next release (Replace this comment)
+
+# v0.4.2
+
 - **Updates are easier to spot**: When a new version is ready, the settings gear in the title bar becomes a green **Update available** button, in place of the small orange dot, and its tooltip names the version. In Preferences, the Version section lists the installed and the available version, offers a green **Update to …** button that shows its progress while it updates, and links to **What’s new**. After you check for updates and none is found, a green **Up to date** tick appears next to the version.
 - **The tour saves its filter when Settings Folder access has expired**: Starting the tour now asks the browser to renew access to your Settings Folder, so the filter the tour creates is saved there. If you don’t allow it, or the tour was opened from a link, the filter is kept in the browser instead of failing to save.
 
