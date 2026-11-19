@@ -1,5 +1,6 @@
 # Unreleased
 
+- **A glyph a collaborator deletes no longer comes back in your window.** On large cloud fonts, where your window loads glyphs as needed, a glyph deleted soon after it was added or renamed could stay visible until you reloaded.
 - **Cloud fonts on preview and production are kept apart.** Each editor lists only the fonts saved with it, and the cloud font limit counts each one separately. A link to a font saved with the other editor now says which editor to open it in.
 - **Add items here** for the next release (Replace this comment)
 

@@ -11299,6 +11299,98 @@ describe('syncGlyphFromJson', () => {
         receiverBridge.destroy();
     });
 
+    test('a stale glyph room checkpoint cannot bring back a glyph the catalog has since tombstoned', () => {
+        const {
+            applyCloudOwnedData,
+            tombstoneCloudOwnedGlyphs
+        } = require('../js/filesystem-plugins/cloud-glyph-catalog');
+        const senderFontJson = makeMinimalFont();
+        const senderBridge = new ChangeBridge('sender-stale-glyph-room');
+        const receiverBridge = new ChangeBridge('receiver-stale-glyph-room');
+        senderBridge.initFromJson(senderFontJson);
+        senderBridge.syncCloudOwnedProjection(
+            applyCloudOwnedData(senderFontJson)
+        );
+        const receiverFontJson = cloneValue(senderFontJson);
+        receiverBridge.setFontJson(receiverFontJson);
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
+        const glyphDocumentId = senderBridge.glyphDocumentIdForName('B');
+        const glyphId = glyphDocumentId.slice('glyph:'.length);
+        // A catch-up for B that is still in flight when B is deleted.
+        const staleGlyphRoom =
+            senderBridge.encodeDocumentState(glyphDocumentId);
+        const names = () =>
+            receiverBridge
+                .getFontJsonSnapshot()
+                .glyphs.map((glyph) => glyph.name);
+
+        const packets = attachPacketCapture(senderBridge);
+        senderFontJson.glyphs = senderFontJson.glyphs.filter(
+            (glyph) => glyph.name !== 'B'
+        );
+        senderBridge.beginTransaction('Delete glyph', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
+        try {
+            senderBridge.recordRemove(['glyphs', 'B'], { name: 'B' });
+        } finally {
+            senderBridge.endTransaction();
+        }
+        // A sparse peer is not subscribed to B's glyph room, so only the
+        // font-core half of the delete reaches it.
+        applyCapturedPackets(
+            receiverBridge,
+            packets.splice(0).filter((p) => p.documentId !== glyphDocumentId)
+        );
+        expect(names()).toEqual(['A']);
+
+        // The catalog tombstone is written after the delete; the stale room
+        // lands in between, while nothing marks B deleted yet.
+        receiverBridge.applyDocumentCheckpoint(glyphDocumentId, staleGlyphRoom);
+        senderBridge.syncCloudOwnedProjection(
+            tombstoneCloudOwnedGlyphs(senderFontJson, [glyphId])
+        );
+        applyCapturedPackets(receiverBridge, packets.splice(0));
+
+        expect(names()).toEqual(['A']);
+        senderBridge.destroy();
+        receiverBridge.destroy();
+    });
+
+    test('a tombstoned glyph that glyphOrder still lists stays, as after an undo of its delete', () => {
+        const {
+            applyCloudOwnedData,
+            tombstoneCloudOwnedGlyphs
+        } = require('../js/filesystem-plugins/cloud-glyph-catalog');
+        const senderFontJson = makeMinimalFont();
+        const senderBridge = new ChangeBridge('sender-restored-glyph');
+        const receiverBridge = new ChangeBridge('receiver-restored-glyph');
+        senderBridge.initFromJson(senderFontJson);
+        senderBridge.syncCloudOwnedProjection(
+            applyCloudOwnedData(senderFontJson)
+        );
+        receiverBridge.setFontJson(cloneValue(senderFontJson));
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
+        const glyphId = senderBridge
+            .glyphDocumentIdForName('B')
+            .slice('glyph:'.length);
+
+        const packets = attachPacketCapture(senderBridge);
+        senderBridge.syncCloudOwnedProjection(
+            tombstoneCloudOwnedGlyphs(senderFontJson, [glyphId])
+        );
+        applyCapturedPackets(receiverBridge, packets);
+
+        expect(
+            receiverBridge
+                .getFontJsonSnapshot()
+                .glyphs.map((glyph) => glyph.name)
+        ).toEqual(['A', 'B']);
+        senderBridge.destroy();
+        receiverBridge.destroy();
+    });
+
     test('collaboration log forward changes use replay values for granular layer edits', () => {
         const fontJson = makeMinimalFont();
         const bridge = new ChangeBridge('local-collaboration-log');

@@ -4219,6 +4219,47 @@ export class PatchSyncEngine {
      * it, and a glyph added again under that name must not resolve to the
      * deleted glyph.
      */
+    /**
+     * A window that is not subscribed to a glyph's room hears its delete only
+     * as a glyphOrder change. A catch-up of that room fetched before the
+     * delete can land after it and put the glyph back, and only the catalog
+     * tombstone, written later, says it is gone. Drop a tombstoned glyph
+     * glyphOrder no longer lists; one an undo restored is back in the order.
+     */
+    private _dropTombstonedGlyphsMissingFromOrder(): void {
+        const fontRecord = this._fontJson as Record<string, unknown> | null;
+        if (!fontRecord || !Array.isArray(fontRecord.glyphs)) {
+            return;
+        }
+        const catalog = catalogFromCoreJson(fontRecord)?.glyphCatalog;
+        const glyphOrder = this.fontMap.get('glyphOrder');
+        if (
+            !catalog ||
+            !(glyphOrder instanceof Y.Array) ||
+            !glyphOrder.length
+        ) {
+            return;
+        }
+        const ordered = new Set(glyphOrder.toArray().map(String));
+        const glyphs = fontRecord.glyphs as Unsafe[];
+        for (let index = glyphs.length - 1; index >= 0; index -= 1) {
+            const name =
+                typeof glyphs[index]?.name === 'string'
+                    ? String(glyphs[index].name)
+                    : '';
+            const glyphId =
+                (typeof glyphs[index]?.id === 'string' && glyphs[index].id) ||
+                this._glyphIdByName.get(name);
+            if (
+                glyphId &&
+                !ordered.has(name) &&
+                isCatalogTombstone(catalog, String(glyphId))
+            ) {
+                glyphs.splice(index, 1);
+            }
+        }
+    }
+
     private _dropDeletedGlyphNamesFromIndex(): void {
         if (!this._fontJson) {
             return;
@@ -9289,6 +9330,7 @@ export class PatchSyncEngine {
             );
         }
         if (key === CORE_GLYPH_CATALOG_KEY) {
+            this._dropTombstonedGlyphsMissingFromOrder();
             this._dropDeletedGlyphNamesFromIndex();
             this._aliasResidentGlyphNamesFromCatalog();
             // Checkpoint and live font-core applies both land here. The
