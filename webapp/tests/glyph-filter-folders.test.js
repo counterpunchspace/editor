@@ -77,6 +77,7 @@ describe('user filter folders', () => {
     function setup(files, folders) {
         adapter = memoryFolder(files, folders);
         jest.spyOn(settingsFolder, 'getAdapter').mockReturnValue(adapter);
+        jest.spyOn(settingsFolder, 'hasFolder').mockReturnValue(true);
         manager = new GlyphOverviewFilterManager();
         jest.spyOn(manager, 'discoverUserFilters').mockResolvedValue();
         // The sidebar refresh is covered elsewhere; only file effects matter.
@@ -185,7 +186,6 @@ describe('user filter folders', () => {
 
     test('the sidebar shows folders, a folder button and draggable filters that drop into folders', async () => {
         setup({ '/Filters/Caps.py': 'x' }, ['/Filters/Latin']);
-        jest.spyOn(settingsFolder, 'hasFolder').mockReturnValue(true);
         const move = jest
             .spyOn(manager, 'moveUserFilter')
             .mockResolvedValue(null);
