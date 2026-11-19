@@ -557,6 +557,7 @@
                     class="settings-button"
                     title="Settings"
                 >
+                    <span class="settings-update-label">Update available</span>
                     <span class="material-symbols-outlined">settings</span>
                     <span
                         class="settings-memory-indicator"
@@ -2098,33 +2099,41 @@
                     <div class="settings-item" id="settings-version-item">
                         <label class="settings-item-label">Version</label>
                         <div
-                            id="settings-current-version"
-                            class="settings-version-number"
-                        ></div>
-                        <div
-                            id="settings-update-available"
-                            class="settings-update-available"
-                            hidden
+                            id="settings-version-rows"
+                            class="settings-version-rows"
                         >
-                            <span id="settings-update-available-label"></span>
-                            <button
-                                type="button"
-                                class="info-icon-btn"
-                                id="settings-update-info-btn"
-                                title="How updates work"
-                                aria-label="How updates work"
-                            >
-                                <span class="material-symbols-outlined"
-                                    >question_mark</span
+                            <div class="settings-version-row">
+                                <span class="settings-version-key"
+                                    >Installed</span
                                 >
-                            </button>
-                            <a
-                                id="settings-changelog-link"
-                                href="#"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                >Changelog</a
+                                <span
+                                    id="settings-current-version"
+                                    class="settings-version-number"
+                                ></span>
+                                <span
+                                    id="settings-up-to-date"
+                                    class="settings-up-to-date"
+                                    hidden
+                                >
+                                    <span class="material-symbols-outlined"
+                                        >check_circle</span
+                                    >
+                                    Up to date
+                                </span>
+                            </div>
+                            <div
+                                id="settings-update-available"
+                                class="settings-version-row"
+                                hidden
                             >
+                                <span class="settings-version-key"
+                                    >Available</span
+                                >
+                                <span
+                                    id="settings-update-available-label"
+                                    class="settings-version-number"
+                                ></span>
+                            </div>
                         </div>
                         <div class="settings-version-actions">
                             <button
@@ -2137,10 +2146,21 @@
                             <button
                                 type="button"
                                 id="settings-apply-update-btn"
-                                class="settings-action-btn"
+                                class="settings-update-btn"
                                 hidden
                             >
-                                Update
+                                <span
+                                    id="settings-apply-update-label"
+                                    class="settings-update-btn-label"
+                                    >Update</span
+                                >
+                                <span class="settings-update-btn-end">
+                                    <span
+                                        id="settings-apply-update-icon"
+                                        class="material-symbols-outlined"
+                                        >download</span
+                                    >
+                                </span>
                             </button>
                             <button
                                 type="button"
@@ -2149,6 +2169,34 @@
                                 hidden
                             >
                                 Force update
+                            </button>
+                        </div>
+                        <div
+                            id="settings-update-links"
+                            class="settings-update-links"
+                            hidden
+                        >
+                            <a
+                                id="settings-changelog-link"
+                                href="#"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                >What’s new<span
+                                    class="material-symbols-outlined"
+                                    aria-hidden="true"
+                                    >open_in_new</span
+                                ></a
+                            >
+                            <button
+                                type="button"
+                                class="info-icon-btn"
+                                id="settings-update-info-btn"
+                                title="How updates work"
+                                aria-label="How updates work"
+                            >
+                                <span class="material-symbols-outlined"
+                                    >question_mark</span
+                                >
                             </button>
                         </div>
                         <div

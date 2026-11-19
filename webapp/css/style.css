@@ -5654,20 +5654,46 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     color: var(--text-primary);
 }
 
-.settings-button.has-update::after {
-    content: '';
-    position: absolute;
-    top: 3px;
-    left: 3px;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background-color: var(--accent-orange);
-    pointer-events: none;
-}
-
 .settings-button .material-symbols-outlined {
     font-size: 24px;
+}
+
+.settings-update-label {
+    display: none;
+}
+
+/* Update available: the gear becomes the end segment of a labelled chip,
+   styled like the Take a Tour and Link Folder buttons. */
+.settings-button.has-update {
+    width: auto;
+    align-items: stretch;
+    background-color: var(--update-button-bg);
+    border: 1px solid var(--update-button-border);
+    color: var(--update-button-text);
+}
+
+.settings-button.has-update:hover {
+    background-color: var(--update-button-bg);
+    color: var(--update-button-text);
+    filter: brightness(1.08);
+}
+
+.settings-button.has-update .settings-update-label {
+    display: flex;
+    align-items: center;
+    padding: 0 6px 0 12px;
+    font-family: var(--font-families-sans);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.settings-button.has-update .material-symbols-outlined {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    border-left: 1px solid var(--update-button-border);
+    font-size: 20px;
 }
 
 /* Memory notification indicator on settings button */
@@ -5782,22 +5808,130 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     line-height: 1.4;
 }
 
-.settings-update-available {
+.settings-version-rows {
     display: flex;
-    align-items: baseline;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-top: 8px;
-    font-size: 13px;
-    color: var(--text-primary);
+    flex-direction: column;
+    gap: 2px;
 }
 
-.settings-update-available[hidden] {
+.settings-version-row {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+}
+
+.settings-version-row[hidden] {
     display: none;
 }
 
-.settings-update-available a {
+/* Installed and Available are only labelled when both are shown. */
+.settings-version-key {
+    display: none;
+    min-width: 60px;
+    font-family: var(--font-families-sans);
+    font-size: 12px;
     color: var(--text-secondary);
+}
+
+.settings-version-rows.has-update .settings-version-key {
+    display: inline;
+}
+
+.settings-up-to-date {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: -4px;
+    font-family: var(--font-families-sans);
+    font-size: 12px;
+    color: var(--update-confirmed-text);
+}
+
+.settings-up-to-date[hidden] {
+    display: none;
+}
+
+.settings-up-to-date .material-symbols-outlined {
+    font-size: 15px;
+}
+
+/* Same look as the title-bar update button. */
+.settings-update-btn {
+    display: inline-flex;
+    align-items: stretch;
+    height: 32px;
+    padding: 0;
+    background-color: var(--update-button-bg);
+    border: 1px solid var(--update-button-border);
+    color: var(--update-button-text);
+    border-radius: 4px;
+    font-family: var(--font-families-sans);
+    cursor: pointer;
+}
+
+.settings-update-btn[hidden] {
+    display: none;
+}
+
+.settings-update-btn:hover:not(:disabled) {
+    filter: brightness(1.08);
+}
+
+.settings-update-btn:disabled {
+    cursor: default;
+    opacity: 0.75;
+}
+
+.settings-update-btn-label {
+    display: flex;
+    align-items: center;
+    padding: 0 6px 0 12px;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.settings-update-btn-end {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    border-left: 1px solid var(--update-button-border);
+}
+
+.settings-update-btn-end .material-symbols-outlined {
+    font-size: 20px;
+}
+
+.settings-update-btn-end .material-symbols-outlined.spinning {
+    animation: settings-update-spin 1s linear infinite;
+}
+
+@keyframes settings-update-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.settings-update-links {
+    display: flex;
+    align-items: center;
+    margin-top: 8px;
+    font-size: 12px;
+}
+
+.settings-update-links[hidden] {
+    display: none;
+}
+
+.settings-update-links a {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    color: var(--text-secondary);
+}
+
+.settings-update-links a .material-symbols-outlined {
+    font-size: 14px;
 }
 
 .settings-version-actions {

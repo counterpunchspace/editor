@@ -32,6 +32,8 @@ let forceUpdateOffered = false;
 let forceReinstallInFlight = false;
 let updateDownloading = false;
 let applyUpdateInFlight = false;
+/** A check the user started found no update; shows the Up to date tick. */
+let upToDateConfirmed = false;
 const trackedInstallingWorkers = new WeakSet<ServiceWorker>();
 
 export type UpdateReadiness = 'ready' | 'downloading' | 'none';
@@ -244,13 +246,35 @@ function refreshPreferencesVersionUi(): void {
     const forceBtn = document.getElementById(
         'settings-force-update-btn'
     ) as HTMLButtonElement | null;
+    const updateLabel = document.getElementById('settings-apply-update-label');
+    const updateIcon = document.getElementById('settings-apply-update-icon');
+
+    document
+        .getElementById('settings-version-rows')
+        ?.classList.toggle('has-update', !!pending);
+    setHidden(document.getElementById('settings-update-links'), !pending);
+    setHidden(
+        document.getElementById('settings-up-to-date'),
+        !!pending || !upToDateConfirmed || updateDownloading
+    );
 
     if (pending) {
         if (availableLabel) {
-            availableLabel.textContent = `Update available: ${pending.version}`;
+            availableLabel.textContent = pending.version;
         }
         if (changelogLink) {
             changelogLink.href = changelogUrlForUpdate(pending);
+        }
+        if (updateLabel) {
+            updateLabel.textContent = applyUpdateInFlight
+                ? 'Updating…'
+                : `Update to ${pending.version}`;
+        }
+        if (updateIcon) {
+            updateIcon.textContent = applyUpdateInFlight
+                ? 'progress_activity'
+                : 'download';
+            updateIcon.classList.toggle('spinning', applyUpdateInFlight);
         }
         setHidden(availableRow, false);
         setHidden(checkBtn, true);
@@ -277,6 +301,9 @@ function refreshPreferencesVersionUi(): void {
     const settingsBtn = document.getElementById('settings-btn');
     if (settingsBtn) {
         settingsBtn.classList.toggle('has-update', !!pending);
+        settingsBtn.title = pending
+            ? `Update available: ${pending.version}`
+            : 'Settings';
     }
 }
 
@@ -472,6 +499,10 @@ async function checkForUpdates(userInitiated = false): Promise<void> {
     if (userInitiated && statusEl) {
         statusEl.textContent = 'Checking for updates…';
     }
+    if (userInitiated) {
+        upToDateConfirmed = false;
+        refreshPreferencesVersionUi();
+    }
     if (userInitiated && checkBtn) {
         checkBtn.disabled = true;
     }
@@ -530,11 +561,10 @@ async function checkForUpdates(userInitiated = false): Promise<void> {
         }
 
         if (userInitiated && statusEl) {
-            statusEl.textContent = getPendingUpdate()
-                ? ''
-                : 'You’re up to date.';
+            statusEl.textContent = '';
         }
         if (userInitiated && !getPendingUpdate()) {
+            upToDateConfirmed = true;
             forceUpdateOffered = true;
         }
     } catch (error) {
@@ -638,7 +668,7 @@ async function applyPendingUpdate(): Promise<void> {
     refreshPreferencesVersionUi();
     const statusEl = document.getElementById('settings-update-status');
     if (statusEl) {
-        statusEl.textContent = 'Updating…';
+        statusEl.textContent = '';
     }
     const previousController = navigator.serviceWorker.controller;
     navigator.serviceWorker.addEventListener('controllerchange', reload, {

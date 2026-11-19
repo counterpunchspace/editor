@@ -91,6 +91,10 @@
     --tour-launch-button-bg: #ffb347;
     --tour-launch-button-border: #e0942c;
     --tour-launch-button-text: #111111;
+    --update-button-bg: #6fdc8c;
+    --update-button-border: #45c06a;
+    --update-button-text: #111111;
+    --update-confirmed-text: #6fdc8c;
     --tour-overlay: rgba(255, 255, 255, 0.26);
     --tour-guide: rgba(255, 255, 255, 0.38);
     --tour-tooltip-bg: #111111;
@@ -186,6 +190,10 @@
     --tour-launch-button-bg: #ffd08a;
     --tour-launch-button-border: #e8b05c;
     --tour-launch-button-text: #111111;
+    --update-button-bg: #b4efc2;
+    --update-button-border: #74d58e;
+    --update-button-text: #111111;
+    --update-confirmed-text: #1f8a3c;
     --tour-overlay: rgba(0, 0, 0, 0.38);
     --tour-guide: rgba(0, 0, 0, 0.32);
     --tour-tooltip-bg: #ffffff;
