@@ -111,7 +111,7 @@ After the first successful production cutover, set the editor repository variabl
 `website/scripts/e2e-product-sessions.mjs` signs in `<local>+cp-e2e-<run>-<role>@gmail.com` with the sign-in code from the real mail (IMAP secrets below) and writes a Playwright storage state per role. Its `cleanup` mode always runs afterwards: it deletes the fonts those users own through the website (the same purge the app runs), then their D1 rows and the sign-in mail, and fails if any asset row or R2 object is left. Every delete is guarded by the plus-address check.
 
 - **Preview** (`cloud-collab-preview` project, `tests/cloud-collab-preview-smoke.spec.ts`): the owner asks the deployed Assistant for one tool call, which must arrive without errors (a Luna fallback is noted, not failed). Then the owner on the free trial saves a font, invites the invitee, the invitee accepts, and a nudge syncs between both browsers. Then the owner deletes the font.
-- **Production** (`cloud-collab-product-smoke` project): one account loads the editor signed in without page errors. `wait-for-stack.mjs` already checked every commit, the schema and the room wiring.
+- **Production** (`cloud-collab-product-smoke` project): one account loads the editor signed in, saves a font to the cloud, opens it again in a fresh browser (so it loads from the room), and deletes it, all without page errors. `wait-for-stack.mjs` already checked every commit, the schema and the room wiring, including that the room accepts tokens signed with the website’s `AUTH_TOKEN_SECRET`.
 
 Neither project is part of `npm run test:cloud-collab`, and neither retries: a second attempt would find the first one's font.
 

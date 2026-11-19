@@ -13,7 +13,7 @@
  * fresh one), whether every secret and binding the site
  * and the plugins Worker need works (see website/utils/deploy-checks.js), and
  * the deep health of the room it is wired to (room, validator and compactor
- * commits).
+ * commits, and whether the room accepts tokens the website signs).
  *
  * --check asks once, prints match=true|false and exits 0 either way.
  * --wait polls until everything matches and exits 1 on timeout.
