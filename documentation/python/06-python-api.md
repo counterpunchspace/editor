@@ -1,6 +1,6 @@
 # Python API
 
-**Version:** v0.4.0
+**Version:** v0.4.1
 
 *Auto-generated from JavaScript object model introspection*
 
