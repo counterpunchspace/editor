@@ -437,12 +437,11 @@ jobs:
                     - lifecycle
                     - quota
                     - deletion
-                    - deletion-glyph
                     - sparse-closure
                     - master-topology
                     - three-window-sync
                     - three-window-relay
-                    - reconnect
+                    - room-layout
         steps:
             - name: Checkout editor
               uses: actions/checkout@v4
