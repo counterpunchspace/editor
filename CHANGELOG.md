@@ -1,5 +1,9 @@
 # Unreleased
 
+- **Add items here** for the next release (Replace this comment)
+
+# v0.4.3
+
 - **Adding glyphs from the Arabic skill works again**: Adding the skill’s glyphs, for example all of its Essential glyphs, stopped with the Python error “NameError: name ‘null’ is not defined”. The glyphs are now added with their joining forms.
 
 # v0.4.2
