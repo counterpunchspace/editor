@@ -13,6 +13,11 @@
 # Refuses unless RELEASES.txt has the release text under "# <version-tag>";
 # that text becomes the GitHub release description. Write it at the top of
 # RELEASES.txt and commit it; release.sh pushes it with the version commits.
+# A patch release may leave its text out: release.sh then renames the newest
+# section of its minor release (# v1.2.0 for v1.2.1) to the version and
+# commits that. A patch release with a section of its own is described by
+# its section and every older one of the minor release, each under its
+# heading (scripts/release-text.sh).
 #
 # Sets the version in the service worker and API docs, turns "# Unreleased" in
 # CHANGELOG.md into the version section, pushes main, then starts release.yml
@@ -131,7 +136,25 @@ if [ -n "$existing" ]; then
 fi
 
 echo "Checking RELEASES.txt for the text of $VERSION_TAG..."
-if ! RELEASE_TEXT=$(scripts/release-text.sh "$VERSION_TAG"); then
+RELEASES_FILE="RELEASES.txt"
+INHERITED_TAG=""
+if ! grep -qx "# $VERSION_TAG" "$RELEASES_FILE"; then
+    if ! INHERITED_TAG=$(scripts/release-text.sh --inherit "$VERSION_TAG" "$RELEASES_FILE" 2>/dev/null); then
+        echo "Write the release text under '# $VERSION_TAG' at the top of RELEASES.txt, commit it and run again."
+        exit 1
+    fi
+    echo "$VERSION_TAG has no text of its own; it takes over the text of $INHERITED_TAG."
+fi
+rename_inherited_section() {
+    awk -v from="# $INHERITED_TAG" -v to="# $VERSION_TAG" \
+        '!done && $0 == from { print to; done = 1; next } { print }' "$1"
+}
+if [ -n "$INHERITED_TAG" ]; then
+    RENAMED_RELEASES=$(mktemp)
+    rename_inherited_section "$RELEASES_FILE" > "$RENAMED_RELEASES"
+    RELEASE_TEXT=$(scripts/release-text.sh "$VERSION_TAG" "$RENAMED_RELEASES")
+    rm -f "$RENAMED_RELEASES"
+elif ! RELEASE_TEXT=$(scripts/release-text.sh "$VERSION_TAG" "$RELEASES_FILE"); then
     echo "Write the release text under '# $VERSION_TAG' at the top of RELEASES.txt, commit it and run again."
     exit 1
 fi
@@ -143,6 +166,9 @@ if [ "$DRY_RUN" -eq 1 ]; then
     if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
         echo "Error: a dry run needs main pushed, since it commits nothing"
         exit 1
+    fi
+    if [ -n "$INHERITED_TAG" ]; then
+        echo "Dry run: would rename '# $INHERITED_TAG' to '# $VERSION_TAG' in RELEASES.txt."
     fi
     echo "Dry run: committing nothing and starting release.yml up to the preflight checks..."
     gh workflow run release.yml --ref main -f version="$VERSION_TAG" -f dry_run=true
@@ -176,6 +202,13 @@ elif grep -q "^# Unreleased" "$CHANGELOG_FILE"; then
 else
     echo "Error: CHANGELOG.md has neither '# Unreleased' nor '# $VERSION_TAG'"
     exit 1
+fi
+
+if [ -n "$INHERITED_TAG" ]; then
+    rename_inherited_section "$RELEASES_FILE" > "$RELEASES_FILE.tmp"
+    mv "$RELEASES_FILE.tmp" "$RELEASES_FILE"
+    git add "$RELEASES_FILE"
+    git commit -m "Release $VERSION_TAG with the text of $INHERITED_TAG"
 fi
 
 echo "Release description from RELEASES.txt:"

@@ -175,7 +175,7 @@ Only when the user explicitly asks.
 
 - Add a `CHANGELOG.md` entry only for a significant change to the user experience or a significant technical change. Don’t add one for details that change no functionality, for users or technically, such as refactors, renames, wording, styling tweaks, tests or docs.
 - Write every new `CHANGELOG.md` entry at the top of the `# Unreleased` section, as its first bullet. Never insert one in the middle or at the end of the section. Previews take their notes from the bullets added since the previous preview, and production releases still turn `# Unreleased` into the version section.
-- `RELEASES.txt` holds the description of each production release, under a `# vX.Y.Z` heading, newest at the top. The user writes it by summarizing the changelog. `./release.sh vX.Y.Z` refuses until that section exists, and the GitHub release takes its description from it. Don’t write or change release texts unless the user asks.
+- `RELEASES.txt` holds the description of each production release, under a `# vX.Y.Z` heading, newest at the top. The user writes it by summarizing the changelog. `./release.sh vX.Y.Z` refuses until that section exists, and the GitHub release takes its description from it. A patch release may have no section: `release.sh` then renames the newest section of its minor release to the patch version. A patch release with its own section is described by every section of its minor release from its own down, each under its heading. Don’t write or change release texts unless the user asks.
 
 ## Docs index
 
