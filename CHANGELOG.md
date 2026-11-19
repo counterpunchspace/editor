@@ -1,5 +1,6 @@
 # Unreleased
 
+- **Cloud fonts on preview and production are kept apart.** Each editor lists only the fonts saved with it, and the cloud font limit counts each one separately. A link to a font saved with the other editor now says which editor to open it in.
 - **Add items here** for the next release (Replace this comment)
 
 # v0.4.0
