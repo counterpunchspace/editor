@@ -32,6 +32,11 @@ function lookupRecord(codepoint: number): Record<string, unknown> | null {
     };
 }
 
+/** A JavaScript value as a Python expression; `null` and `undefined` become `None`. */
+function pythonValue(value: unknown): string {
+    return `json.loads(${JSON.stringify(JSON.stringify(value ?? null))})`;
+}
+
 /**
  * Calls the installed skills through Pyodide. Each request goes to the
  * skill that claims the writing script of the character or glyph name.
@@ -104,7 +109,7 @@ json.dumps(recipe)
         const result = await runHostPythonAsync(`
 import json, builtins
 ${ENSURE_SKILLS}
-skill = builtins._cp_skill_for(${JSON.stringify(script ?? null)}, ${JSON.stringify(skillId ?? null)})
+skill = builtins._cp_skill_for(${pythonValue(script)}, ${pythonValue(skillId)})
 json.dumps(skill["provider"].anchors(${codepoint}) if skill else [])
 `);
         return JSON.parse(String(result)) as string[];
@@ -120,7 +125,7 @@ json.dumps(skill["provider"].anchors(${codepoint}) if skill else [])
         const result = await runHostPythonAsync(`
 import json, builtins
 ${ENSURE_SKILLS}
-skill = builtins._cp_skill_for(${JSON.stringify(writingScriptForName(name) ?? null)})
+skill = builtins._cp_skill_for(${pythonValue(writingScriptForName(name))})
 by_name = getattr(skill["provider"], "recipe_for_name", None) if skill else None
 json.dumps(by_name(${JSON.stringify(name)}) if callable(by_name) else None)
 `);
@@ -133,7 +138,7 @@ json.dumps(by_name(${JSON.stringify(name)}) if callable(by_name) else None)
         const result = await runHostPythonAsync(`
 import json, builtins
 ${ENSURE_SKILLS}
-skill = builtins._cp_skill_for(${JSON.stringify(writingScriptForName(token) ?? null)})
+skill = builtins._cp_skill_for(${pythonValue(writingScriptForName(token))})
 provider = skill["provider"] if skill else None
 known = provider is not None and callable(getattr(provider, "recipe_for_name", None))
 json.dumps(provider.anchors(${JSON.stringify(token)}) if known else [])

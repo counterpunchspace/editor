@@ -134,7 +134,7 @@
                     );
                     // Print error to Python console
                     await window.pyodide._originalRunPythonAsync(
-                        `print("[LazyLoader] ❌ Failed to apply matplotlib patch: ${message}")`
+                        `print(${JSON.stringify(`[LazyLoader] ❌ Failed to apply matplotlib patch: ${message}`)})`
                     );
                 }
             }
