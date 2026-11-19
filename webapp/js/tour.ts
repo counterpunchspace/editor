@@ -37,6 +37,11 @@ import { clearTourLinkParam, isTourLinkLaunch } from './tour-link';
 import { resetTourAiSteps } from './tour-ai';
 import { trackEditorEvent } from './editor-analytics';
 import { glyphOverviewFilterManager } from './glyph-overview-filters';
+import {
+    isSettingsFolderReadySync,
+    refreshFolderSetupStatus
+} from './folder-permissions-dialog';
+import { settingsFolder } from './settings-folder';
 
 const console = new Logger('Tour');
 
@@ -556,8 +561,26 @@ export async function startTour(
     }
 }
 
+/**
+ * Asks the browser to renew lapsed Settings Folder access before the tour,
+ * so the filter the tour saves lands there. Runs inside the Start click:
+ * the permission request needs that user activation. Declined, the filter
+ * is kept in the browser instead.
+ */
+async function renewSettingsFolderForTour(): Promise<void> {
+    if (!settingsFolder.hasFolder() || isSettingsFolderReadySync()) {
+        return;
+    }
+    try {
+        await settingsFolder.renewPermission();
+    } catch (error) {
+        console.warn('Settings Folder access not renewed', error);
+    }
+    await refreshFolderSetupStatus();
+}
+
 function takeTourFromIntro(): void {
-    void startTour();
+    void renewSettingsFolderForTour().then(() => startTour());
 }
 
 export function openTourIntro(): void {

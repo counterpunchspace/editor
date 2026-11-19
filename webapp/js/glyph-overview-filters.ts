@@ -763,11 +763,13 @@ export class GlyphOverviewFilterManager {
 
     /**
      * Where user filters live: the Settings Folder, or the browser while
-     * none is set up (filters made in the tour).
+     * none is set up or its access needs renewal (filters made in the tour).
      */
     private filterStore(): NativeAdapter | BrowserFilterStore {
         const adapter = settingsFolder.getAdapter();
-        return this.isDiskAdapterLike(adapter) && adapter.hasDirectory()
+        return this.isDiskAdapterLike(adapter) &&
+            adapter.hasDirectory() &&
+            isSettingsFolderReadySync()
             ? adapter
             : browserFilterStore;
     }

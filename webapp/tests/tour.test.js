@@ -247,6 +247,31 @@ describe('tour intro', () => {
         expect(document.getElementById('tour-launch-chip').hidden).toBe(false);
     });
 
+    test('Start renews lapsed Settings Folder access within the click', async () => {
+        const { settingsFolder } = require('../js/settings-folder');
+        const {
+            refreshFolderSetupStatus
+        } = require('../js/folder-permissions-dialog');
+        jest.spyOn(settingsFolder, 'initialize').mockResolvedValue(true);
+        jest.spyOn(settingsFolder, 'hasFolder').mockReturnValue(true);
+        jest.spyOn(settingsFolder, 'getAccessState').mockResolvedValue(
+            'needsRenewal'
+        );
+        await refreshFolderSetupStatus();
+        // Never settles, so the tour itself does not start in this test.
+        const renew = jest
+            .spyOn(settingsFolder, 'renewPermission')
+            .mockReturnValue(new Promise(() => {}));
+
+        tour.openTourIntro();
+        document
+            .querySelector('.tour-intro-overlay [data-action="start"]')
+            .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+        // Synchronous: the permission request needs the click's activation.
+        expect(renew).toHaveBeenCalledTimes(1);
+    });
+
     test('skip stores status, closes the modal, and shows the launch chip', () => {
         tour.openTourIntro();
         document

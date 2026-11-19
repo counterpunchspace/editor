@@ -25,6 +25,8 @@ const {
 } = require('../js/glyph-filter-legend');
 const { GlyphOverviewFilterManager } = require('../js/glyph-overview-filters');
 const { settingsFolder } = require('../js/settings-folder');
+const { browserFilterStore } = require('../js/browser-filter-store');
+const { refreshFolderSetupStatus } = require('../js/folder-permissions-dialog');
 
 describe('filter description docstring', () => {
     test('reads a missing docstring as empty', () => {
@@ -406,12 +408,37 @@ describe('creating filter files', () => {
             writeFile: jest.fn(async () => {})
         };
         jest.spyOn(settingsFolder, 'getAdapter').mockReturnValue(adapter);
+        jest.spyOn(settingsFolder, 'hasFolder').mockReturnValue(true);
         manager = new GlyphOverviewFilterManager();
         jest.spyOn(manager, 'discoverUserFilters').mockResolvedValue();
     });
 
     afterEach(() => {
         jest.restoreAllMocks();
+    });
+
+    test('keeps the filter in the browser while folder access needs renewal', async () => {
+        jest.spyOn(settingsFolder, 'initialize').mockResolvedValue(true);
+        const accessState = jest
+            .spyOn(settingsFolder, 'getAccessState')
+            .mockResolvedValue('needsRenewal');
+        const browserWrite = jest
+            .spyOn(browserFilterStore, 'writeFile')
+            .mockResolvedValue();
+        await refreshFolderSetupStatus();
+
+        await manager.createFilterFile(
+            'Tour Filter',
+            createGlyphFilterTemplate('Tour Filter')
+        );
+
+        expect(adapter.writeFile).not.toHaveBeenCalled();
+        expect(browserWrite).toHaveBeenCalledWith(
+            '/Filters/Tour Filter.py',
+            createGlyphFilterTemplate('Tour Filter')
+        );
+        accessState.mockResolvedValue('ready');
+        await refreshFolderSetupStatus();
     });
 
     test('writes straight into Filters with a free name, no file picker', async () => {
