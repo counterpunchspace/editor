@@ -1,5 +1,9 @@
 # Unreleased
 
+- **Add items here** for the next release (Replace this comment)
+
+# v0.4.4
+
 - **The update buttons are green again**: The **Update available** button in the title bar and the **Update to …** button in Preferences showed without their green colour, and the **Up to date** tick without its green, because the colours were missing from the released stylesheet.
 
 # v0.4.3
