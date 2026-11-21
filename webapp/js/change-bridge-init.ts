@@ -1998,7 +1998,12 @@ export function recomposeCollaboratorCascade(
             fontModel,
             activeDrawingId: source.layerId,
             sourceGlyphName: source.glyphName,
-            suppressor: bridge
+            suppressor: bridge,
+            // The collaborator’s drawings arrived from the documents and are
+            // the authority. Recomposing them from this window’s other
+            // glyphs, which may not have arrived yet, would put back older
+            // data that nothing reverts.
+            preserveGlyphNames: sourceGlyphNames
         });
         for (const target of closure.recomposeTargets) {
             const key = cascadeTargetKey(target);

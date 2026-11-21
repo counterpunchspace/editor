@@ -1,6 +1,6 @@
 # Unreleased
 
-- **Add items here** for the next release (Replace this comment)
+- **Collaborators’ accented and keyed glyphs stay in sync**: When a collaborator changed a glyph that others are built on, such as moving an anchor of **a** or a sidebearing of **l**, your window could keep showing an accented glyph like **ä**, or a glyph whose sidebearings follow another, the way it was before, until you reloaded. Glyph overview tiles of such glyphs could also show the old outline.
 
 # v0.4.4
 

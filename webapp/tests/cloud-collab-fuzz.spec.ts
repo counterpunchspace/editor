@@ -96,7 +96,8 @@ import {
     readChangeLogTail,
     readCompiledOutlines,
     readCompositionMismatches,
-    readFuzzSnapshot
+    readFuzzSnapshot,
+    readModelVsDocuments
 } from './helpers/cloud-collab-fuzz';
 
 const SEED =
@@ -486,6 +487,18 @@ test.describe('cloud collaboration fuzz', () => {
                                 )
                             )
                         ];
+                        // A window whose model differs from documents that
+                        // match everyone else’s drifted; one whose documents
+                        // differ is still waiting for an update.
+                        const differingDrawings = [
+                            ...new Set(
+                                differences
+                                    .map((line) =>
+                                        line.split(' ')[1].replace(':', '')
+                                    )
+                                    .filter((key) => key.includes('/'))
+                            )
+                        ].map((key) => key.split('/') as [string, string]);
                         for (const window of windows) {
                             const sync = await window.page.evaluate((names) => {
                                 const w = window as any;
@@ -521,6 +534,7 @@ test.describe('cloud collaboration fuzz', () => {
                         }
                         for (const window of windows) {
                             logs.push(
+                                `${window.name} model vs its documents:\n  ${(await readModelVsDocuments(window.page, differingDrawings)).join('\n  ')}`,
                                 `${window.name} change log:\n  ${(await readChangeLogTail(window.page, 12)).join('\n  ')}`,
                                 `${window.name} console:\n  ${(consoleTails.get(window.page) ?? []).join('\n  ')}`
                             );
@@ -611,17 +625,32 @@ test.describe('cloud collaboration fuzz', () => {
                         run,
                         `${label}: compiled font in ${window.name} differs from M`
                     ).toBe(referenceRun);
-                    const tiles = await overviewTileState(
+                    // Tiles repaint asynchronously after the worker takes
+                    // an update, like the compile above.
+                    let tiles = await overviewTileState(
                         window.page,
                         FUZZ_GLYPHS,
                         FUZZ_COMPARE_LOCATION
                     );
-                    expect(
-                        tiles
-                            .filter((tile) => tile.tileStale)
-                            .map((tile) => tile.name),
-                        `${label}: stale overview tiles in ${window.name}`
-                    ).toEqual([]);
+                    await expect
+                        .poll(
+                            async () => {
+                                tiles = await overviewTileState(
+                                    window.page,
+                                    FUZZ_GLYPHS,
+                                    FUZZ_COMPARE_LOCATION
+                                );
+                                return tiles
+                                    .filter((tile) => tile.tileStale)
+                                    .map((tile) => tile.name);
+                            },
+                            {
+                                timeout: 30000,
+                                intervals: [500, 1000, 2000],
+                                message: `${label}: stale overview tiles in ${window.name}`
+                            }
+                        )
+                        .toEqual([]);
                     const outlines = JSON.stringify(
                         tiles.map(({ name, outline }) => ({ name, outline }))
                     );

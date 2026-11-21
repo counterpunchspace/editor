@@ -118,8 +118,31 @@ describe('RemoteCascadePreview', () => {
         ]);
         expect(host.staged).toEqual([['aacute/m1']]);
         expect(host.compiles).toBe(1);
-        expect(host.repaints).toEqual([['aacute']]);
+        // Once from the model, once more after the overlay is staged.
+        expect(host.repaints).toEqual([['aacute'], ['aacute']]);
         expect(preview.pendingTargets).toEqual([aacute]);
+    });
+
+    it('repaints again only once the worker holds the overlay', async () => {
+        const time = fakeClock();
+        const host = fakeHost([[aacute]]);
+        let stage;
+        host.stageOverlay = () =>
+            new Promise((resolve) => {
+                stage = resolve;
+            });
+        const preview = new RemoteCascadePreview(host, time.clock);
+
+        preview.noteCollaboratorEdit(anchorEdit);
+        time.flush();
+        await settled();
+        // Overview tiles fetched now would get the outline before the preview.
+        expect(host.repaints).toEqual([['aacute']]);
+
+        stage(true);
+        await settled();
+        expect(host.repaints).toEqual([['aacute'], ['aacute']]);
+        expect(host.compiles).toBe(1);
     });
 
     it('keeps the stored layer once a catch-up brings it', async () => {
@@ -373,6 +396,54 @@ describe('recomposeCollaboratorCascade', () => {
         // A revert puts the documents’ layer back into the model.
         bridge.revertLivePreviewDrawings(changed);
         expect(accentOffset()).toBe(offsetBefore);
+    });
+
+    it('leaves a collaborator’s automatic composite as it was stored', () => {
+        // o’s top anchor moved here only (setUp): the collaborator placed
+        // the accent of oacute against an o this window does not have.
+        const { bridge, fontModel, layerO: drawingO } = setUp();
+        const oacuteDrawing = fontModel
+            .findGlyph('oacute')
+            .findDrawingById(drawingO.id);
+        const stored = JSON.stringify(oacuteDrawing.toJSON());
+
+        const changed = recomposeCollaboratorCascade(bridge, [
+            {
+                glyphName: 'oacute',
+                layerId: drawingO.id,
+                editKinds: new Set(['component', 'anchor'])
+            }
+        ]);
+
+        expect(JSON.stringify(oacuteDrawing.toJSON())).toBe(stored);
+        expect(changed.some((target) => target.glyphName === 'oacute')).toBe(
+            false
+        );
+    });
+
+    it('leaves a collaborator’s keyed sidebearing as it was stored', () => {
+        const { bridge, fontModel, layerO: drawingO } = setUp();
+        const glyphN = fontModel.findGlyph('n');
+        const drawingN = glyphN.findDrawingById(drawingO.id);
+        withSuppressedModelRecording(() => {
+            glyphN.format_specific = {
+                ...(glyphN.format_specific ?? {}),
+                metric_left: '=o'
+            };
+            // The collaborator’s n follows an o this window does not have.
+            drawingN.setDirectSidebearing('left', drawingN.lsb + 30);
+        });
+        const stored = JSON.stringify(drawingN.toJSON());
+
+        recomposeCollaboratorCascade(bridge, [
+            {
+                glyphName: 'n',
+                layerId: drawingO.id,
+                editKinds: new Set(['sidebearing'])
+            }
+        ]);
+
+        expect(JSON.stringify(drawingN.toJSON())).toBe(stored);
     });
 
     it('reports nothing when the dependents are already up to date', () => {

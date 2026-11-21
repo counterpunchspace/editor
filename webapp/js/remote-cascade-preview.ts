@@ -264,11 +264,15 @@ export class RemoteCascadePreview {
             return;
         }
         const targets = this.pendingTargets;
-        this.host.repaint([...new Set(targets.map((t) => t.glyphName))]);
+        const glyphNames = [...new Set(targets.map((t) => t.glyphName))];
+        this.host.repaint(glyphNames);
         void this.host
             .stageOverlay(targets)
             .then((staged) => {
                 if (staged && !this.destroyed && this.pending.size) {
+                    // Views that read the worker (overview tiles) may have
+                    // fetched while the overlay waited for worker updates.
+                    this.host.repaint(glyphNames);
                     this.host.requestCompile();
                 }
             })

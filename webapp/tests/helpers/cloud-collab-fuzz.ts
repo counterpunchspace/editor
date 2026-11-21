@@ -478,6 +478,55 @@ export type FuzzSnapshot = {
     catalog: Record<string, number[]>;
 };
 
+/**
+ * For each drawing, whether this window’s model still matches its own
+ * documents in width and component offsets, with the pending
+ * collaborator-cascade previews: the evidence that tells drift (the model
+ * differs) from a missing update (the documents differ).
+ */
+export async function readModelVsDocuments(
+    page: Page,
+    drawings: Array<[string, string]>
+): Promise<string[]> {
+    return page.evaluate((targets) => {
+        const w = window as any;
+        const summary = (width: unknown, offsets: unknown[]) =>
+            `width ${width}, offsets ${JSON.stringify(offsets)}`;
+        const lines = targets.map(([glyphName, drawingId]) => {
+            const stored = w.changeBridge
+                ?.getYValue?.(['glyphs', glyphName, 'layers', drawingId])
+                ?.toJSON?.();
+            const model = w.currentFontModel
+                ?.findGlyph?.(glyphName)
+                ?.findDrawingById?.(drawingId);
+            const document = summary(
+                stored?.width,
+                (stored?.shapes ?? [])
+                    .filter((shape: any) => shape?.reference)
+                    .map((shape: any) => shape.transform?.translation ?? [0, 0])
+            );
+            const current = summary(
+                model?.width,
+                (model?.shapes ?? [])
+                    .filter((shape: any) => shape.isComponent?.())
+                    .map(
+                        (shape: any) =>
+                            shape.asComponent().transform?.translation ?? [0, 0]
+                    )
+            );
+            return document === current
+                ? `${glyphName}/${drawingId}: model matches its documents (${current})`
+                : `${glyphName}/${drawingId}: model ${current}, documents ${document}`;
+        });
+        const pending = (w.remoteCascadePreview?.pendingTargets ?? []).map(
+            (target: { glyphName: string; layerId: string }) =>
+                `${target.glyphName}/${target.layerId}`
+        );
+        lines.push(`cascade previews: ${pending.join(', ') || 'none'}`);
+        return lines;
+    }, drawings);
+}
+
 /** This window’s font model, normalised: rounded, anchors sorted. */
 export async function readFuzzSnapshot(page: Page): Promise<FuzzSnapshot> {
     return page.evaluate(

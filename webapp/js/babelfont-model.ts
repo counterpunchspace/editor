@@ -13470,6 +13470,7 @@ export class Font extends ModelBase {
             allowedGlyphNames?: Set<string>;
             preferredDrawingId?: string | null;
             preferredSourceGlyphName?: string | null;
+            preserveGlyphNames?: Set<string>;
         }
     ): Set<string> {
         const startedAt = performance.now();
@@ -13518,8 +13519,9 @@ export class Font extends ModelBase {
                 }
 
                 if (
-                    candidateGlyphName === nextGlyphName &&
-                    options?.skipSelfGlyphNames?.has(candidateGlyphName)
+                    (candidateGlyphName === nextGlyphName &&
+                        options?.skipSelfGlyphNames?.has(candidateGlyphName)) ||
+                    options?.preserveGlyphNames?.has(candidateGlyphName)
                 ) {
                     continue;
                 }
@@ -13785,6 +13787,8 @@ export class Font extends ModelBase {
             allowedGlyphNames?: Set<string>;
             preferredDrawingId?: string | null;
             preferredSourceGlyphName?: string | null;
+            /** Glyphs left as they are; their dependents still rebuild. */
+            preserveGlyphNames?: Set<string>;
         }
     ): Set<string> {
         return this.rebuildAutomaticComposites(changedGlyphNames, options);
@@ -14058,6 +14062,9 @@ export class Font extends ModelBase {
              *  sources, but metric-induced changes must still rebuild their
              *  own automatic dependents. */
             skipInitialAutomaticCompositeRebuild?: boolean;
+            /** Glyphs whose sidebearings stay as they are; glyphs keyed to
+             *  them still follow them. */
+            preserveGlyphNames?: Set<string>;
         }
     ): Set<string> {
         if (this._isRecomputingMetricsKeys) {
@@ -14069,6 +14076,7 @@ export class Font extends ModelBase {
         const skipCompositeRebuild = !!options?.skipAutomaticCompositeRebuild;
         const skipInitialAutomaticCompositeRebuild =
             !!options?.skipInitialAutomaticCompositeRebuild;
+        const preserveGlyphNames = options?.preserveGlyphNames;
         try {
             const allowedGlyphNames = options?.allowedGlyphNames;
             const filterGlyphNames = (
@@ -14161,12 +14169,14 @@ export class Font extends ModelBase {
                 for (const glyphName of skipCompositeRebuild
                     ? this.rebuildAutomaticComposites(initialGlyphNames, {
                           skipSelfGlyphNames: new Set<string>(),
-                          allowedGlyphNames
+                          allowedGlyphNames,
+                          preserveGlyphNames
                       })
                     : this.rebuildAutomaticComposites(initialGlyphNames, {
                           skipSelfGlyphNames:
                               skipSelfAutomaticRebuildGlyphNames,
-                          allowedGlyphNames
+                          allowedGlyphNames,
+                          preserveGlyphNames
                       })) {
                     recomputedGlyphNames.add(glyphName);
                     enqueueGlyphName(glyphName);
@@ -14228,6 +14238,9 @@ export class Font extends ModelBase {
                 >();
 
                 for (const entry of candidateEntries) {
+                    if (preserveGlyphNames?.has(entry.glyphName)) {
+                        continue;
+                    }
                     const liveDrawing =
                         this.rebindMetricsKeyDependencyEntry(entry);
                     if (!liveDrawing) {
@@ -14308,7 +14321,8 @@ export class Font extends ModelBase {
                         {
                             skipSelfGlyphNames:
                                 skipSelfAutomaticRebuildGlyphNames,
-                            allowedGlyphNames
+                            allowedGlyphNames,
+                            preserveGlyphNames
                         }
                     )) {
                         recomputedGlyphNames.add(rebuiltGlyphName);

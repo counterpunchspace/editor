@@ -114,6 +114,7 @@ export interface FontModelLike {
             allowedGlyphNames?: Set<string>;
             preferredDrawingId?: string;
             preferredSourceGlyphName?: string;
+            preserveGlyphNames?: Set<string>;
         }
     ) => Set<string>;
     recomputeMetricsKeys?: (
@@ -122,6 +123,7 @@ export interface FontModelLike {
             allowedGlyphNames?: Set<string>;
             skipAutomaticCompositeRebuild?: boolean;
             skipInitialAutomaticCompositeRebuild?: boolean;
+            preserveGlyphNames?: Set<string>;
         }
     ) => Set<string>;
     /**
@@ -492,6 +494,9 @@ function collectAutomaticAlignedDependentGlyphNames(
  *                                `runWithoutRecording` wraps model mutations.
  * @param options.visibleGlyphNames Glyph names considered visible.  Used only
  *                                when scope is `'visible'` to limit dependents.
+ * @param options.preserveGlyphNames Glyphs whose drawings stay as they are
+ *                                (a collaborator’s stored drawings): only
+ *                                what depends on them is recomposed.
  */
 export function computeDrawingRecompositionClosure(options: {
     sourceTargets: RecompositionSourceTarget[];
@@ -502,6 +507,7 @@ export function computeDrawingRecompositionClosure(options: {
     sourceGlyphName?: string | null;
     suppressor?: RecordingSuppressor | null;
     visibleGlyphNames?: Iterable<string>;
+    preserveGlyphNames?: Set<string>;
 }): RecompositionClosure {
     const startedAt = performance.now();
     const finish = (closure: RecompositionClosure): RecompositionClosure => {
@@ -521,7 +527,8 @@ export function computeDrawingRecompositionClosure(options: {
         activeDrawingId,
         sourceGlyphName,
         suppressor,
-        visibleGlyphNames
+        visibleGlyphNames,
+        preserveGlyphNames
     } = options;
 
     if (!fontModel) {
@@ -637,6 +644,7 @@ export function computeDrawingRecompositionClosure(options: {
                 sourceGlyphNames,
                 {
                     ...(allowedGlyphNames ? { allowedGlyphNames } : {}),
+                    ...(preserveGlyphNames ? { preserveGlyphNames } : {}),
                     ...(preferredTarget?.layerId
                         ? {
                               preferredDrawingId: preferredTarget.layerId,
@@ -665,6 +673,7 @@ export function computeDrawingRecompositionClosure(options: {
         const metricsDeps = wrap(() =>
             fontModel.recomputeMetricsKeys!(sourceGlyphNames, {
                 ...(allowedGlyphNames ? { allowedGlyphNames } : {}),
+                ...(preserveGlyphNames ? { preserveGlyphNames } : {}),
                 // The closure already performed the initial source-component
                 // rebuild above. Keep that work single-pass, but allow the
                 // metrics queue to rebuild automatic dependents after a keyed
