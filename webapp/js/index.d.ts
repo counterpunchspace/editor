@@ -129,6 +129,8 @@ declare global {
                   entries: import('./live-text-diagnostics').LiveTextDiagnosticEntry[];
               }
             | undefined;
+        /** Collaboration trace; created only by the cloud specs (collab-trace.ts). */
+        __collabTrace: import('./collab-trace').CollabTraceState | undefined;
 
         // From perf-timeline.ts
         timelineMark: (

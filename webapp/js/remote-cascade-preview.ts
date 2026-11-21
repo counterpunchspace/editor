@@ -28,6 +28,7 @@ import {
     getPathSegments
 } from './change-log';
 import { Logger } from './logger';
+import { recordCollabTrace } from './collab-trace';
 
 const console = new Logger('RemoteCascadePreview');
 
@@ -92,6 +93,11 @@ export const REMOTE_CASCADE_BUSY_RETRY_MS = 500;
 
 function targetKey(target: CascadeDrawingTarget): string {
     return `${target.glyphName}\u0000${target.layerId}`;
+}
+
+/** `glyph/drawing` for a key from targetKey, for the collaboration trace. */
+function readableKey(key: string): string {
+    return key.replace('\u0000', '/');
 }
 
 /** The glyph and drawing an entry path writes; drawing null for glyph-wide paths. */
@@ -173,6 +179,16 @@ export class RemoteCascadePreview {
             added = true;
         }
         if (added) {
+            recordCollabTrace(
+                'cascade-source',
+                [...this.sources.values()].map(
+                    (entry) => entry.source.glyphName
+                ),
+                {
+                    kinds: [...editKinds],
+                    sources: [...this.sources.keys()].map(readableKey)
+                }
+            );
             this.queueRefresh();
         }
     }
@@ -185,6 +201,7 @@ export class RemoteCascadePreview {
         if (this.destroyed || !this.pending.size) {
             return;
         }
+        const replaced: string[] = [];
         for (const entry of entries) {
             const path = String(entry.path || '');
             const target = entryTarget(path);
@@ -198,8 +215,16 @@ export class RemoteCascadePreview {
                         isGlyphRootPath(path))
                 ) {
                     this.pending.delete(key);
+                    replaced.push(readableKey(key));
                 }
             }
+        }
+        if (replaced.length) {
+            recordCollabTrace(
+                'cascade-stored',
+                replaced.map((key) => key.split('/')[0]),
+                { replaced }
+            );
         }
         // Recompose again from the current base, since a newer edit may still
         // be ahead of what just arrived. Previews that stay are restaged:
@@ -236,6 +261,9 @@ export class RemoteCascadePreview {
             }
         }
         if (this.host.isBusyLocally()) {
+            recordCollabTrace('cascade-busy', [], {
+                sources: [...this.sources.keys()].map(readableKey)
+            });
             // The window’s own drag owns the model and the overlay; its
             // commit, and the catch-ups, bring the stored drawings.
             this.armTimer();
@@ -269,6 +297,10 @@ export class RemoteCascadePreview {
         void this.host
             .stageOverlay(targets)
             .then((staged) => {
+                recordCollabTrace('cascade-staged', glyphNames, {
+                    staged,
+                    targets: targets.map((t) => `${t.glyphName}/${t.layerId}`)
+                });
                 if (staged && !this.destroyed && this.pending.size) {
                     // Views that read the worker (overview tiles) may have
                     // fetched while the overlay waited for worker updates.
@@ -343,6 +375,11 @@ export class RemoteCascadePreview {
         for (const target of expired) {
             this.pending.delete(targetKey(target));
         }
+        recordCollabTrace(
+            'cascade-revert',
+            expired.map((t) => t.glyphName),
+            { reverted: expired.map((t) => `${t.glyphName}/${t.layerId}`) }
+        );
         try {
             this.host.revert(expired);
         } catch (error) {

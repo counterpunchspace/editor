@@ -543,6 +543,52 @@ export async function overviewTileState(
     );
 }
 
+/**
+ * For each named tile, what it drew and what the worker holds now at the
+ * overview’s location (width and shapes, shortened), with the pending
+ * collaborator-cascade previews: why a tile counts as stale.
+ */
+export async function describeStaleTiles(
+    page: Page,
+    glyphNames: string[]
+): Promise<string[]> {
+    return page.evaluate(async (names) => {
+        const w = window as any;
+        const overview = w.glyphOverviewInstance;
+        const response = await w.fontCompilation.sendMessage({
+            type: 'getGlyphOutlines',
+            glyphNames: names,
+            location: overview?.currentLocation ?? {},
+            flattenComponents: false
+        });
+        const worker = JSON.parse(response.outlinesJson || '[]') as Array<{
+            name: string;
+            shapes: unknown;
+            width: unknown;
+        }>;
+        const tiles = Array.from(overview?.tiles?.values?.() ?? []) as Array<{
+            glyphName: string;
+            cachedData?: { shapes: unknown; width: unknown };
+        }>;
+        const short = (outline?: { shapes: unknown; width: unknown }) =>
+            outline
+                ? `width ${String(outline.width)} ${JSON.stringify(outline.shapes).slice(0, 240)}`
+                : 'none';
+        const lines = names.map((name) => {
+            const tile = tiles.find((entry) => entry.glyphName === name);
+            return `${name}: tile ${short(tile?.cachedData)} | worker ${short(
+                worker.find((outline) => outline.name === name)
+            )}`;
+        });
+        const pending = (w.remoteCascadePreview?.pendingTargets ?? []).map(
+            (target: { glyphName: string; layerId: string }) =>
+                `${target.glyphName}/${target.layerId}`
+        );
+        lines.push(`cascade previews: ${pending.join(', ') || 'none'}`);
+        return lines;
+    }, glyphNames);
+}
+
 /** Room traffic one browser context sent and received, seen by Playwright. */
 export interface CloudRoomTraffic {
     frames: {

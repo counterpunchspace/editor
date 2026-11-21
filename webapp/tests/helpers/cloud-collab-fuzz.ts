@@ -480,7 +480,7 @@ export type FuzzSnapshot = {
 
 /**
  * For each drawing, whether this window’s model still matches its own
- * documents in width and component offsets, with the pending
+ * documents (width, every shape and anchor), with the pending
  * collaborator-cascade previews: the evidence that tells drift (the model
  * differs) from a missing update (the documents differ).
  */
@@ -490,33 +490,20 @@ export async function readModelVsDocuments(
 ): Promise<string[]> {
     return page.evaluate((targets) => {
         const w = window as any;
-        const summary = (width: unknown, offsets: unknown[]) =>
-            `width ${width}, offsets ${JSON.stringify(offsets)}`;
         const lines = targets.map(([glyphName, drawingId]) => {
-            const stored = w.changeBridge
-                ?.getYValue?.(['glyphs', glyphName, 'layers', drawingId])
-                ?.toJSON?.();
-            const model = w.currentFontModel
-                ?.findGlyph?.(glyphName)
-                ?.findDrawingById?.(drawingId);
-            const document = summary(
-                stored?.width,
-                (stored?.shapes ?? [])
-                    .filter((shape: any) => shape?.reference)
-                    .map((shape: any) => shape.transform?.translation ?? [0, 0])
+            const drift = w.changeBridge?.describeStoredDrawingDrift?.(
+                glyphName,
+                drawingId,
+                w.currentFontModel
+                    ?.findGlyph?.(glyphName)
+                    ?.findDrawingById?.(drawingId)
             );
-            const current = summary(
-                model?.width,
-                (model?.shapes ?? [])
-                    .filter((shape: any) => shape.isComponent?.())
-                    .map(
-                        (shape: any) =>
-                            shape.asComponent().transform?.translation ?? [0, 0]
-                    )
-            );
-            return document === current
-                ? `${glyphName}/${drawingId}: model matches its documents (${current})`
-                : `${glyphName}/${drawingId}: model ${current}, documents ${document}`;
+            if (!drift) {
+                return `${glyphName}/${drawingId}: no sync engine`;
+            }
+            return drift.difference
+                ? `${glyphName}/${drawingId}: model ${drift.model} DRIFTED from documents ${drift.stored}: ${drift.difference}`
+                : `${glyphName}/${drawingId}: model matches its documents (${drift.model})`;
         });
         const pending = (w.remoteCascadePreview?.pendingTargets ?? []).map(
             (target: { glyphName: string; layerId: string }) =>
@@ -525,6 +512,44 @@ export async function readModelVsDocuments(
         lines.push(`cascade previews: ${pending.join(', ') || 'none'}`);
         return lines;
     }, drawings);
+}
+
+export type CollabTraceEntry = {
+    sequence: number;
+    at: number;
+    kind: string;
+    glyphs: string[];
+    detail: Record<string, unknown>;
+};
+
+/** The window’s collaboration trace (js/collab-trace.ts); empty if closed. */
+export async function readCollabTrace(page: Page): Promise<CollabTraceEntry[]> {
+    return page
+        .evaluate(() => (window as any).__collabTrace?.entries ?? [])
+        .catch(() => []);
+}
+
+/**
+ * Trace entries as lines, `#sequence at+ms kind [glyphs] detail`: the last
+ * `limit` entries that touched one of `focus`, or the last ones of all.
+ */
+export function formatCollabTrace(
+    entries: CollabTraceEntry[],
+    focus: string[] = [],
+    limit = 40
+): string[] {
+    const wanted = new Set(focus);
+    const chosen = wanted.size
+        ? entries.filter((entry) =>
+              entry.glyphs.some((glyph) => wanted.has(glyph))
+          )
+        : entries;
+    return chosen
+        .slice(-limit)
+        .map(
+            (entry) =>
+                `#${entry.sequence} ${entry.at}ms ${entry.kind} [${entry.glyphs.join(' ')}] ${JSON.stringify(entry.detail).slice(0, 500)}`
+        );
 }
 
 /** This window’s font model, normalised: rounded, anchors sorted. */

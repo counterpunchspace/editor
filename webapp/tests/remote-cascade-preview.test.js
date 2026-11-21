@@ -446,6 +446,32 @@ describe('recomposeCollaboratorCascade', () => {
         expect(JSON.stringify(drawingN.toJSON())).toBe(stored);
     });
 
+    it('traces each recompose: sources, rewrites and previews', () => {
+        const { bridge, layerO: drawingO } = setUp();
+        window.__collabTrace = { enabled: true, entries: [] };
+        try {
+            recomposeCollaboratorCascade(bridge, [
+                {
+                    glyphName: 'o',
+                    layerId: drawingO.id,
+                    editKinds: new Set(['anchor'])
+                }
+            ]);
+            const [entry] = window.__collabTrace.entries;
+            expect(entry.kind).toBe('cascade-recompose');
+            expect(entry.detail.sources).toEqual([`o/${drawingO.id} [anchor]`]);
+            expect(entry.detail.sourcesRewritten).toEqual({});
+            expect(Object.keys(entry.detail.previewed)).toContain(
+                `oacute/${drawingO.id}`
+            );
+            expect(entry.glyphs).toEqual(
+                expect.arrayContaining(['o', 'oacute'])
+            );
+        } finally {
+            delete window.__collabTrace;
+        }
+    });
+
     it('reports nothing when the dependents are already up to date', () => {
         const { bridge, layerO: drawingO } = setUp();
         const source = {

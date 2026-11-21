@@ -19,6 +19,7 @@
  * that step, skip the later phases) repeat or narrow a run. A failure prints
  * the seed and every step before it.
  */
+import fs from 'node:fs';
 import { test, expect } from './fixtures';
 import { type BrowserContext, type Page } from '@playwright/test';
 import {
@@ -62,6 +63,7 @@ import {
     summarizeRoomTraffic,
     fontRoomDocumentIds,
     readRoomCounters,
+    describeStaleTiles,
     diffRoomCounters,
     expectMinimalRoomTraffic,
     liveGlyphNames,
@@ -97,7 +99,9 @@ import {
     readCompiledOutlines,
     readCompositionMismatches,
     readFuzzSnapshot,
-    readModelVsDocuments
+    readModelVsDocuments,
+    readCollabTrace,
+    formatCollabTrace
 } from './helpers/cloud-collab-fuzz';
 
 const SEED =
@@ -257,6 +261,11 @@ test.describe('cloud collaboration fuzz', () => {
             const context = await browser.newContext();
             // The fixture is far smaller than FUZZ_ROOM_LAYOUT's rooms; keep
             // them when the owner opens the font instead of shrinking.
+            // Every window records how collaboration changed it
+            // (js/collab-trace.ts); a failure attaches each window's trace.
+            await context.addInitScript(() => {
+                (window as any).__collabTrace = { enabled: true, entries: [] };
+            });
             await context.addInitScript(() => {
                 let engine: any;
                 Object.defineProperty(window, 'patchSyncEngine', {
@@ -650,7 +659,17 @@ test.describe('cloud collaboration fuzz', () => {
                                 message: `${label}: stale overview tiles in ${window.name}`
                             }
                         )
-                        .toEqual([]);
+                        .toEqual([])
+                        .catch(async (error) => {
+                            const stale = tiles
+                                .filter((tile) => tile.tileStale)
+                                .map((tile) => tile.name);
+                            throw new Error(
+                                `${error instanceof Error ? error.message : String(error)}\n${(
+                                    await describeStaleTiles(window.page, stale)
+                                ).join('\n')}`
+                            );
+                        });
                     const outlines = JSON.stringify(
                         tiles.map(({ name, outline }) => ({ name, outline }))
                     );
@@ -1730,6 +1749,33 @@ test.describe('cloud collaboration fuzz', () => {
                     `[fuzz] console of ${name}:\n  ${lines.slice(-15).join('\n  ')}`
                 );
             }
+            // Each window's trace: the events that touched the glyphs the
+            // error names in the log, all of it as an attachment (the
+            // nightly uploads test-results).
+            const message = error instanceof Error ? error.message : '';
+            const words = new Set(message.split(/[^\w.]+/));
+            const focus = FUZZ_GLYPHS.filter((name) => words.has(name));
+            for (const [page, name] of trafficNames) {
+                const entries = await readCollabTrace(page);
+                console.log(
+                    `[fuzz] trace of ${name}${focus.length ? ` for ${focus.join(', ')}` : ''} (${entries.length} events):\n  ${formatCollabTrace(entries, focus).join('\n  ')}`
+                );
+                const tracePath = test
+                    .info()
+                    .outputPath(`collab-trace-${name}.json`);
+                fs.writeFileSync(tracePath, JSON.stringify(entries, null, 1));
+                await test
+                    .info()
+                    .attach(`collab-trace-${name}.json`, {
+                        path: tracePath,
+                        contentType: 'application/json'
+                    })
+                    .catch(() => {});
+            }
+            fs.writeFileSync(
+                test.info().outputPath('fuzz-steps.txt'),
+                `seed ${SEED}\n${log.join('\n')}\n`
+            );
             throw error;
         } finally {
             for (const context of contexts) {

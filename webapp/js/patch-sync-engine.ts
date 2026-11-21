@@ -81,6 +81,13 @@ import {
 } from './change-log';
 import type { Babelfont } from './babelfont';
 import { Logger } from './logger';
+import {
+    canonicalDrawing,
+    describeDrawingDifference,
+    drawingFingerprint,
+    isCollabTraceOn,
+    recordCollabTrace
+} from './collab-trace';
 import { ApplyKind } from './apply-kind';
 import APP_SETTINGS from './settings';
 import {
@@ -8541,6 +8548,14 @@ export class PatchSyncEngine {
                 targetDoc.off('afterTransaction', observeRemoteTransaction);
             }
             if (!didChange) {
+                if (isCollabTraceOn()) {
+                    this._traceRemoteUpdate(
+                        'remote-noop',
+                        resolvedDocumentId,
+                        effectiveRemoteEntries,
+                        options
+                    );
+                }
                 // This document already had the bytes, or keeps them pending
                 // until an earlier update arrives. The worker’s copy may not:
                 // with no entries the bytes are held and merged in front of
@@ -8559,6 +8574,14 @@ export class PatchSyncEngine {
             this._reconcileGlyphDocsAfterRemoteEntries(effectiveRemoteEntries);
             this._bindAppliedGlyphDocument(resolvedDocumentId);
             this._syncRemoteJsonFromYDoc(effectiveRemoteEntries);
+            if (isCollabTraceOn()) {
+                this._traceRemoteUpdate(
+                    'remote',
+                    resolvedDocumentId,
+                    effectiveRemoteEntries,
+                    options
+                );
+            }
             const pythonBaseline = window.pythonExecutionHistoryContext;
             if (pythonBaseline?.beforeFontDataJson && this._fontJson) {
                 pythonBaseline.beforeFontDataJson =
@@ -10223,6 +10246,107 @@ export class PatchSyncEngine {
     }
 
     /** The model drawings go back to what the documents hold. */
+    /**
+     * A drawing as its document holds it, decoded to drawing JSON, or null.
+     * For diagnostics: it leaves the stored JSON and the model alone.
+     */
+    readStoredDrawing(
+        glyphName: string,
+        drawingId: string
+    ): Record<string, unknown> | null {
+        const drawingsMap = this._glyphMapForName(glyphName)?.get('layers');
+        const drawingMap =
+            drawingsMap instanceof Y.Map ? drawingsMap.get(drawingId) : null;
+        if (!(drawingMap instanceof Y.Map)) {
+            return null;
+        }
+        try {
+            return this._normalizeDrawingSnapshot(
+                drawingId,
+                fromYType(drawingMap),
+                undefined,
+                false
+            ) as Record<string, unknown>;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Where a model drawing departs from what its document holds, in words,
+     * or null when they match (fuzz and e2e diagnostics).
+     */
+    describeStoredDrawingDrift(
+        glyphName: string,
+        drawingId: string,
+        modelDrawing: unknown
+    ): { stored: string; model: string; difference: string | null } {
+        const stored = this.readStoredDrawing(glyphName, drawingId);
+        return {
+            stored: drawingFingerprint(stored),
+            model: drawingFingerprint(modelDrawing),
+            difference: describeDrawingDifference(
+                canonicalDrawing(modelDrawing),
+                canonicalDrawing(stored)
+            )
+        };
+    }
+
+    /** The touched drawings of a remote update, as stored after it (collab-trace.ts). */
+    private _traceRemoteUpdate(
+        kind: string,
+        documentId: string,
+        entries: ChangeLogEntry[],
+        options?: ApplyRemoteUpdateOptions
+    ): void {
+        const drawings = new Map<string, string>();
+        const glyphNames = new Set<string>();
+        for (const entry of entries) {
+            const path = String(entry.path || '');
+            const glyphName = this._deriveGlyphNameFromPath(path);
+            if (!glyphName) {
+                continue;
+            }
+            glyphNames.add(glyphName);
+            const drawingId = this._deriveDrawingIdFromPath(path);
+            if (drawingId) {
+                drawings.set(`${glyphName}/${drawingId}`, '');
+            }
+        }
+        const glyphs = Array.isArray((this._fontJson as Unsafe)?.glyphs)
+            ? ((this._fontJson as Unsafe).glyphs as Unsafe[])
+            : [];
+        for (const key of drawings.keys()) {
+            const [glyphName, drawingId] = key.split('/');
+            drawings.set(
+                key,
+                drawingFingerprint(
+                    glyphs
+                        .find((glyph) => glyph?.name === glyphName)
+                        ?.layers?.find(
+                            (drawing: Unsafe) => drawing?.id === drawingId
+                        )
+                )
+            );
+        }
+        recordCollabTrace(kind, glyphNames, {
+            document: documentId,
+            fromCollaborator: !!options?.fromCollaborator,
+            fromLinkedWindow: !!options?.fromLinkedWindow,
+            paths: [
+                ...new Set(
+                    entries.map((entry) =>
+                        String(entry.path || '')
+                            .split(':')
+                            .slice(0, 2)
+                            .join(':')
+                    )
+                )
+            ],
+            stored: Object.fromEntries(drawings)
+        });
+    }
+
     revertLivePreviewDrawings(
         targets: Array<{ glyphName: string; layerId: string }>
     ): void {

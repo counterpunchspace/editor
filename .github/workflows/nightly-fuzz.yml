@@ -90,6 +90,7 @@ jobs:
               run: node scripts/staging-state.mjs begin
 
             - name: Run the fuzz on staging
+              id: fuzz
               working-directory: webapp
               env:
                   CLOUD_COLLAB_FUZZ: "1"
@@ -102,6 +103,25 @@ jobs:
                   FUZZ_SEED: ${{ steps.seed.outputs.seed }}
                   FUZZ_STEPS: ${{ inputs.steps || '40' }}
               run: npx playwright test --project=cloud-collab-fuzz --reporter=list
+
+            # Tells a failure that repeats from a flaky one. The run stays
+            # failed either way; both runs' results and traces are uploaded.
+            - name: Repeat the failed seed once
+              id: repeat
+              if: failure() && steps.fuzz.outcome == 'failure'
+              continue-on-error: true
+              working-directory: webapp
+              env:
+                  CLOUD_COLLAB_FUZZ: "1"
+                  CLOUD_COLLAB_E2E: "1"
+                  CLOUD_COLLAB_REMOTE: "1"
+                  CLOUD_E2E_EDITOR_URL: https://staging.editor.counterpunch.space
+                  CLOUD_COLLAB_WEBSITE_URL: https://staging.counterpunch.space
+                  CLOUD_COLLAB_ROOM_URL: https://staging.rooms.counterpunch.space
+                  E2E_OPERATOR_TOKEN: ${{ secrets.E2E_OPERATOR_TOKEN }}
+                  FUZZ_SEED: ${{ steps.seed.outputs.seed }}
+                  FUZZ_STEPS: ${{ inputs.steps || '40' }}
+              run: npx playwright test --project=cloud-collab-fuzz --reporter=list --output=test-results/repeat
 
             # Runs after a failure or a cancel too, but only if this run holds
             # staging: otherwise it would delete another run's data.
@@ -118,6 +138,7 @@ jobs:
                   SEED: ${{ steps.seed.outputs.seed }}
                   STAGING_COMMIT: ${{ steps.staging.outputs.commit }}
                   OUTCOME: ${{ job.status }}
+                  REPEAT: ${{ steps.repeat.outcome }}
               run: |
                   now="$(curl -fsS https://staging.editor.counterpunch.space/build-info.json | jq -r .commit || true)"
                   {
@@ -128,8 +149,14 @@ jobs:
                     if [ -n "$now" ] && [ "$now" != "$STAGING_COMMIT" ]; then
                       echo "- Staging was redeployed during the run (now \`$now\`), so a failure may come from the switch."
                     fi
+                    if [ "$REPEAT" = "failure" ]; then
+                      echo "- The same seed failed again: the failure repeats."
+                    elif [ "$REPEAT" = "success" ]; then
+                      echo "- The same seed passed on a second run: the failure is flaky (timing)."
+                    fi
                     echo ""
-                    echo "Repeat locally with \`FUZZ_SEED=$SEED\`, or here with Run workflow and seed $SEED."
+                    echo "Each window's collaboration trace is in the Playwright results artifact (\`collab-trace-<window>.json\`)."
+                    echo "Repeat locally with \`npm run fuzz:replay -- --seed $SEED\` in webapp, or here with Run workflow and seed $SEED."
                   } >> "$GITHUB_STEP_SUMMARY"
 
             - name: Upload Playwright results

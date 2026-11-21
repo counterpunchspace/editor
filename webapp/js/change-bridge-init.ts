@@ -66,6 +66,11 @@ import { sidebarErrorDisplay } from './sidebar-error-display';
 import APP_SETTINGS from './settings';
 import { markQaGlyphsChanged } from './auto-qa/auto-qa-matcher';
 import {
+    drawingFingerprint,
+    isCollabTraceOn,
+    recordCollabTrace
+} from './collab-trace';
+import {
     deriveGlyphNamesFromPaths,
     deriveGlyphName,
     deriveDrawingId,
@@ -1987,6 +1992,10 @@ export function recomposeCollaboratorCascade(
         }
     }
 
+    const tracing = isCollabTraceOn();
+    const sourceDrawingsBefore = tracing
+        ? sourceDrawingFingerprints(fontModel, sourceGlyphNames)
+        : null;
     const recomposed = new Map<string, CascadeDrawingTarget>();
     for (const source of sources) {
         const closure = computeDrawingRecompositionClosure({
@@ -2019,7 +2028,7 @@ export function recomposeCollaboratorCascade(
         }
     }
 
-    return [...recomposed.values()].filter((target) => {
+    const changed = [...recomposed.values()].filter((target) => {
         if (!isResident(target.glyphName)) {
             return false;
         }
@@ -2031,6 +2040,112 @@ export function recomposeCollaboratorCascade(
             before.get(key) !== fingerprint(target.glyphName, target.layerId)
         );
     });
+    if (sourceDrawingsBefore) {
+        // A source drawing that changed here was rewritten from this
+        // window's other glyphs: the documents no longer back it.
+        const sourceDrawingsAfter = sourceDrawingFingerprints(
+            fontModel,
+            sourceGlyphNames
+        );
+        recordCollabTrace(
+            'cascade-recompose',
+            [...sourceGlyphNames, ...changed.map((t) => t.glyphName)],
+            {
+                sources: sources.map(
+                    (source) =>
+                        `${source.glyphName}/${source.layerId} [${[...source.editKinds].join(',')}]`
+                ),
+                sourcesRewritten: Object.fromEntries(
+                    [...sourceDrawingsAfter]
+                        .filter(
+                            ([key, after]) =>
+                                sourceDrawingsBefore.get(key) !== after
+                        )
+                        .map(([key, after]) => [
+                            key,
+                            `${sourceDrawingsBefore.get(key)} -> ${after}`
+                        ])
+                ),
+                previewed: Object.fromEntries(
+                    changed.map((target) => [
+                        `${target.glyphName}/${target.layerId}`,
+                        drawingFingerprint(
+                            fontModel
+                                .findGlyph?.(target.glyphName)
+                                ?.findDrawingById?.(target.layerId)
+                        )
+                    ])
+                )
+            }
+        );
+    }
+    return changed;
+}
+
+/** What the collaboration trace reads from the font model. */
+type TraceFontModel = {
+    findGlyph?: (name: string) =>
+        | {
+              drawings?: Array<{ id?: string }>;
+              findDrawingById?: (id: string) => unknown;
+          }
+        | null
+        | undefined;
+};
+
+/** Fingerprints of every drawing of these glyphs, keyed `glyph/drawing`. */
+function sourceDrawingFingerprints(
+    fontModel: TraceFontModel,
+    glyphNames: Set<string>
+): Map<string, string> {
+    const out = new Map<string, string>();
+    for (const glyphName of glyphNames) {
+        for (const drawing of fontModel.findGlyph?.(glyphName)?.drawings ??
+            []) {
+            out.set(`${glyphName}/${drawing.id}`, drawingFingerprint(drawing));
+        }
+    }
+    return out;
+}
+
+/** A committed local change, undo or redo, with what the model holds after it. */
+function traceLocalCommit(entries: ChangeLogEntry[], documentId?: string) {
+    const fontModel = window.fontManager?.currentFont?.fontModel as
+        TraceFontModel | undefined;
+    const drawings: Record<string, string> = {};
+    const glyphNames = new Set<string>();
+    for (const entry of entries) {
+        const [glyphName] = deriveGlyphNamesFromPaths([entry.path]);
+        if (!glyphName) {
+            continue;
+        }
+        glyphNames.add(glyphName);
+        const drawingId = deriveDrawingIdFromPath(entry.path);
+        if (drawingId) {
+            drawings[`${glyphName}/${drawingId}`] = drawingFingerprint(
+                fontModel?.findGlyph?.(glyphName)?.findDrawingById?.(drawingId)
+            );
+        }
+    }
+    recordCollabTrace(
+        `local-${entries[0]?.historyAction ?? 'change'}`,
+        glyphNames,
+        {
+            label: entries[0]?.transactionLabel ?? null,
+            document: documentId ?? null,
+            paths: [
+                ...new Set(
+                    entries.map((entry) =>
+                        String(entry.path || '')
+                            .split(':')
+                            .slice(0, 2)
+                            .join(':')
+                    )
+                )
+            ],
+            model: drawings
+        }
+    );
 }
 
 /**
@@ -3779,6 +3894,9 @@ function initializeBridge(detail: {
     (window as any).remoteCascadePreview = remoteCascadePreview;
     bridge.onCommittedChange((entries, context) => {
         if (context.origin !== 'remote') {
+            if (isCollabTraceOn()) {
+                traceLocalCommit(entries, context.documentId);
+            }
             return;
         }
         if (

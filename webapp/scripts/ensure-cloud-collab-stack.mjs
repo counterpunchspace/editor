@@ -327,7 +327,10 @@ function ownedPidFileLive(persistRoot) {
         if (
             state.serviceTokens?.authorize !== 'e2e-p0-authorize' ||
             state.serviceTokens?.attest !== 'e2e-p0-attest' ||
-            state.websiteControlUrl !== 'http://127.0.0.1:8786'
+            state.websiteControlUrl !== 'http://127.0.0.1:8786' ||
+            // A stack started for another editor URL refuses this one's
+            // requests (CORS, invite links).
+            state.editorOrigins !== EDITOR_ORIGINS
         ) {
             return false;
         }
@@ -780,7 +783,8 @@ export async function ensureCloudCollabStack() {
                     authorize: 'e2e-p0-authorize',
                     attest: 'e2e-p0-attest'
                 },
-                websiteControlUrl: 'http://127.0.0.1:8786'
+                websiteControlUrl: 'http://127.0.0.1:8786',
+                editorOrigins: EDITOR_ORIGINS
             },
             null,
             2
