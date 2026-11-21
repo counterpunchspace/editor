@@ -8,7 +8,12 @@ import {
     type Page
 } from '@playwright/test';
 import { shouldIgnoreCrossWindowPageError } from './change-bridge-cross-window';
-import { LOCAL_EDITOR_ORIGIN, LOCAL_ROOM_ORIGIN } from './cloud-collab-session';
+import {
+    LOCAL_EDITOR_ORIGIN,
+    LOCAL_ROOM_ORIGIN,
+    LOCAL_WEBSITE_ORIGIN,
+    cloudCollabOperatorHeaders
+} from './cloud-collab-session';
 
 export async function dumpCloudGlyphSync(
     page: Page,
@@ -869,20 +874,14 @@ export async function fontRoomDocumentIds(
 
 /** Local stack only (ensure-cloud-collab-stack.mjs). */
 const ROOM_STATUS_TOKEN = 'e2e-room-status';
+/** Rooms per staging relay call (website `/api/dev/room-status`). */
+const ROOM_STATUS_RELAY_BATCH = 40;
 
-/**
- * Each room’s own counters from its debug status (`/room/<asset>:<shard>/status`,
- * local stack only), read from Node, so the reads are not part of the
- * browser traffic measured.
- */
-export async function readRoomCounters(
+/** Each room’s debug status body, keyed by document id. */
+async function readRoomStatuses(
     page: Page,
     documentIds: string[]
-): Promise<Record<string, RoomCounters> | null> {
-    // Room debug status is open only on the local stack.
-    if (process.env.CLOUD_COLLAB_REMOTE === '1') {
-        return null;
-    }
+): Promise<Record<string, any>> {
     const session = await page.evaluate(() => {
         const s = (window as any).cloudPlugin?._liveSession;
         return {
@@ -890,9 +889,45 @@ export async function readRoomCounters(
             assetId: s?._options?.assetId as string
         };
     });
+    const out: Record<string, any> = {};
+    if (process.env.CLOUD_COLLAB_REMOTE === '1') {
+        // Staging: the website reads the rooms with the status token, for
+        // the operator token.
+        for (
+            let start = 0;
+            start < documentIds.length;
+            start += ROOM_STATUS_RELAY_BATCH
+        ) {
+            const batch = documentIds.slice(
+                start,
+                start + ROOM_STATUS_RELAY_BATCH
+            );
+            const response = await fetch(
+                `${LOCAL_WEBSITE_ORIGIN}/api/dev/room-status`,
+                {
+                    method: 'POST',
+                    headers: {
+                        ...cloudCollabOperatorHeaders(),
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        assetId: session.assetId,
+                        documentIds: batch
+                    })
+                }
+            );
+            const body: any = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(
+                    `room status relay: ${response.status} ${JSON.stringify(body).slice(0, 200)}`
+                );
+            }
+            Object.assign(out, body.rooms);
+        }
+        return out;
+    }
     const base = new URL(session.roomUrl);
     base.protocol = base.protocol === 'wss:' ? 'https:' : 'http:';
-    const out: Record<string, RoomCounters> = {};
     for (const documentId of documentIds) {
         const url = new URL(base.toString());
         // The debug route names the room raw: `<asset>:<shard>`, colons included.
@@ -907,6 +942,24 @@ export async function readRoomCounters(
                 `room status ${documentId}: ${response.status} ${JSON.stringify(body).slice(0, 200)}`
             );
         }
+        out[documentId] = body;
+    }
+    return out;
+}
+
+/**
+ * Each room’s own counters from its debug status (`/room/<asset>:<shard>/status`),
+ * read from Node, so the reads are not part of the browser traffic
+ * measured: directly on the local stack, through the website on staging.
+ */
+export async function readRoomCounters(
+    page: Page,
+    documentIds: string[]
+): Promise<Record<string, RoomCounters>> {
+    const statuses = await readRoomStatuses(page, documentIds);
+    const out: Record<string, RoomCounters> = {};
+    for (const documentId of documentIds) {
+        const body = statuses[documentId];
         const runtime = body?.operationalMetrics?.runtime ?? {};
         out[documentId] = {
             updatesApplied: Number(body?.totalUpdatesApplied ?? 0),
@@ -926,12 +979,9 @@ export async function readRoomCounters(
 
 /** `after - before` per room, dropping rooms where nothing changed. */
 export function diffRoomCounters(
-    before: Record<string, RoomCounters> | null,
-    after: Record<string, RoomCounters> | null
-): Record<string, Partial<RoomCounters>> | null {
-    if (!before || !after) {
-        return null;
-    }
+    before: Record<string, RoomCounters>,
+    after: Record<string, RoomCounters>
+): Record<string, Partial<RoomCounters>> {
     const out: Record<string, Partial<RoomCounters>> = {};
     for (const [documentId, next] of Object.entries(after)) {
         const prev = before[documentId];
@@ -965,8 +1015,7 @@ export function diffRoomCounters(
 export function expectMinimalRoomTraffic(options: {
     label: string;
     traffic: RoomTrafficSummary;
-    /** Null where room counters cannot be read (staging). */
-    rooms: Record<string, Partial<RoomCounters>> | null;
+    rooms: Record<string, Partial<RoomCounters>>;
     uploader: string | { name: string; live: string[] };
     downloader?: string;
     downloaders?: { name: string; live: string[] }[];
@@ -985,32 +1034,18 @@ export function expectMinimalRoomTraffic(options: {
         (options.downloader
             ? [{ name: options.downloader, live: shared }]
             : []);
-    let changed: string[];
-    if (rooms) {
-        changed = Object.entries(rooms)
-            .filter(([, delta]) => (delta.updatesApplied ?? 0) > 0)
-            .map(([room]) => room)
-            .sort();
-        // Glyph revisions reach peers through font-core's feed (a text
-        // frame, not counted here), not as a font-core update.
-        expect(
-            Object.fromEntries(
-                changed.map((room) => [room, rooms[room].updatesApplied])
-            ),
-            `${label}: each changed room took exactly one update`
-        ).toEqual(Object.fromEntries(changed.map((room) => [room, 1])));
-    } else {
-        // Without room counters (staging), what the uploader sent is the
-        // changed set; the checks below still demand each once, nothing more.
-        changed = [
-            ...Object.keys(traffic.requests[uploader.name] ?? {})
-                .filter((key) => /^POST glyph\/[^ ]+\/live$/.test(key))
-                .map((key) => key.slice('POST '.length, -'/live'.length)),
-            ...Object.keys(traffic.frames[uploader.name] ?? {})
-                .filter((key) => key.endsWith(' sent'))
-                .map((key) => key.slice(0, -' sent'.length))
-        ].sort();
-    }
+    const changed = Object.entries(rooms)
+        .filter(([, delta]) => (delta.updatesApplied ?? 0) > 0)
+        .map(([room]) => room)
+        .sort();
+    // Glyph revisions reach peers through font-core's feed (a text
+    // frame, not counted here), not as a font-core update.
+    expect(
+        Object.fromEntries(
+            changed.map((room) => [room, rooms[room].updatesApplied])
+        ),
+        `${label}: each changed room took exactly one update`
+    ).toEqual(Object.fromEntries(changed.map((room) => [room, 1])));
     const split = (live: string[]) => {
         const held = new Set(live.map((name) => `glyph/${name}`));
         return {
@@ -1025,9 +1060,7 @@ export function expectMinimalRoomTraffic(options: {
     // Each peer gets each room update exactly once.
     const updatesIn = (key: string) => {
         const room = key.replace(/ (sent|received)$/, '');
-        return rooms
-            ? (rooms[room]?.updatesApplied ?? 1)
-            : (traffic.frames[uploader.name]?.[`${room} sent`] ?? 1);
+        return rooms[room]?.updatesApplied ?? 1;
     };
     const count = (keys: string[]) =>
         Object.fromEntries(

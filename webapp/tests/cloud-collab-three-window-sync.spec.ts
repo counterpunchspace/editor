@@ -1923,14 +1923,12 @@ test.describe('three-window sync scenarios', () => {
                     roomsBefore,
                     await readRoomCounters(mainPage, roomDocs)
                 );
-                const rooms = roomDelta
-                    ? Object.fromEntries(
-                          Object.entries(roomDelta).map(([id, delta]) => [
-                              named(id),
-                              delta
-                          ])
-                      )
-                    : null;
+                const rooms = Object.fromEntries(
+                    Object.entries(roomDelta).map(([id, delta]) => [
+                        named(id),
+                        delta
+                    ])
+                );
                 console.log(
                     `[traffic] ${label} ${JSON.stringify({
                         detail: traffic.detail,

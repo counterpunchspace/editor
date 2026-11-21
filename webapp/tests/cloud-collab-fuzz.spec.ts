@@ -982,14 +982,12 @@ test.describe('cloud collaboration fuzz', () => {
                     measured.rooms,
                     await readRoomCounters(mainPage, measured.roomDocs)
                 );
-                const rooms = roomDelta
-                    ? Object.fromEntries(
-                          Object.entries(roomDelta).map(([id, delta]) => [
-                              named(id),
-                              delta
-                          ])
-                      )
-                    : null;
+                const rooms = Object.fromEntries(
+                    Object.entries(roomDelta).map(([id, delta]) => [
+                        named(id),
+                        delta
+                    ])
+                );
                 const uploader = mainOf(sender);
                 try {
                     expectMinimalRoomTraffic({
