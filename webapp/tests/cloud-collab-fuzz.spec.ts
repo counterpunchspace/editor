@@ -16,8 +16,10 @@
  *   CLOUD_COLLAB_FUZZ=1 CLOUD_COLLAB_E2E=1 npx playwright test \
  *     --project=cloud-collab-fuzz
  * FUZZ_SEED (number, or `random`), FUZZ_STEPS and FUZZ_STOP_AT (stop after
- * that step, skip the later phases) repeat or narrow a run. A failure prints
- * the seed and every step before it.
+ * that step, skip the later phases) repeat or narrow a run; FUZZ_KINDS
+ * (comma-separated edit kinds, such as `node-insert,variation`) makes the
+ * single steps only those. A failure prints the seed and every step before
+ * it. `npm run fuzz:replay -- --seed <n>` runs it as the nightly does.
  */
 import fs from 'node:fs';
 import { test, expect } from './fixtures';
@@ -101,18 +103,28 @@ import {
     readFuzzSnapshot,
     readModelVsDocuments,
     readCollabTrace,
-    formatCollabTrace
+    formatCollabTrace,
+    isExtendedFuzzEdit,
+    FUZZ_STRUCTURE_GLYPH,
+    FUZZ_COMPONENT_GLYPH,
+    FUZZ_NEW_GLYPH_PREFIX,
+    FUZZ_EXTRA_FEATURE
 } from './helpers/cloud-collab-fuzz';
 
 const SEED =
     process.env.FUZZ_SEED === 'random'
         ? Math.floor(Math.random() * 0x7fffffff)
         : Number(process.env.FUZZ_SEED ?? 20261110);
-const STEPS = Number(process.env.FUZZ_STEPS ?? 40);
+const STEPS = Number(process.env.FUZZ_STEPS ?? 100);
 const STOP_AT = process.env.FUZZ_STOP_AT
     ? Number(process.env.FUZZ_STOP_AT)
     : null;
+const FUZZ_KINDS = process.env.FUZZ_KINDS
+    ? new Set(process.env.FUZZ_KINDS.split(',').map((kind) => kind.trim()))
+    : null;
 const KEYED_GLYPHS = new Set(['n', 'm', 'idotless']);
+/** Glyphs the fuzz kerns besides the fixture's pairs. */
+const FUZZ_PAIR_GLYPHS = ['a', 'o', 'l', 'n', 'm', 'idotless', 'i', 'p', 'q'];
 
 type HistoryGroup = 'owner' | 'owner-second-browser' | 'invitee';
 type FuzzWindow = {
@@ -149,29 +161,36 @@ type HistoryItem = {
 };
 
 /**
- * Every value the fuzz compares, keyed by `<glyph>/<master>`,
- * `kern:<master>`, `cp:<glyph>`, `groups` and `features`: per master and
- * per glyph, so an edit to one never makes an edit to another look touched.
+ * Every value the fuzz compares, keyed by `<glyph>/<layer>` (every layer:
+ * station, free, background and variation drawings), `props:<glyph>`,
+ * `kern:<station>`, `kernrtl:<station>`, `cp:<glyph>`, `groups`,
+ * `features`, `featureset` and `font:<part>`: one value per glyph layer,
+ * station or font part, so an edit to one never makes another look touched.
  */
 function flatten(snapshot: FuzzSnapshot): Record<string, string> {
     const values: Record<string, string> = {};
-    for (const name of FUZZ_GLYPHS) {
-        const drawings = (snapshot.glyphs[name] ?? {}) as Record<
-            string,
-            unknown
-        >;
-        for (const { id } of FUZZ_STATIONS) {
-            values[`${name}/${id}`] = JSON.stringify(drawings[id] ?? null);
+    for (const [name, layers] of Object.entries(snapshot.glyphs)) {
+        values[`glyph:${name}`] = JSON.stringify(layers !== null);
+        for (const [id, drawing] of Object.entries(
+            (layers ?? {}) as Record<string, unknown>
+        )) {
+            values[`${name}/${id}`] = JSON.stringify(drawing);
         }
+        values[`props:${name}`] = JSON.stringify(snapshot.props[name] ?? null);
     }
-    for (const { id } of FUZZ_STATIONS) {
+    for (const id of Object.keys(snapshot.kerning)) {
         values[`kern:${id}`] = JSON.stringify(snapshot.kerning[id] ?? {});
+        values[`kernrtl:${id}`] = JSON.stringify(snapshot.kerningRtl[id] ?? {});
     }
-    for (const name of FUZZ_GLYPHS) {
-        values[`cp:${name}`] = JSON.stringify(snapshot.catalog[name] ?? []);
+    for (const [name, codepoints] of Object.entries(snapshot.catalog)) {
+        values[`cp:${name}`] = JSON.stringify(codepoints ?? []);
     }
     values.groups = JSON.stringify(snapshot.groups);
     values.features = JSON.stringify(snapshot.features);
+    values.featureset = JSON.stringify(snapshot.featureSet);
+    for (const [part, value] of Object.entries(snapshot.font)) {
+        values[`font:${part}`] = JSON.stringify(value);
+    }
     return values;
 }
 
@@ -199,11 +218,36 @@ function withoutDerived(value: string | undefined): string | undefined {
     });
 }
 
+/** Keys whose value changed, appeared or disappeared. */
 function changedKeys(
     before: Record<string, string>,
     after: Record<string, string>
 ): string[] {
-    return Object.keys(after).filter((key) => before[key] !== after[key]);
+    return [...new Set([...Object.keys(before), ...Object.keys(after)])].filter(
+        (key) => before[key] !== after[key]
+    );
+}
+
+/**
+ * Fails with a named error when an in-page check never returns, so a hang
+ * reaches the failure report (and its traces) instead of the test timeout.
+ */
+function withinTime<T>(
+    promise: Promise<T>,
+    ms: number,
+    what: string
+): Promise<T> {
+    let timer: ReturnType<typeof setTimeout>;
+    return Promise.race([
+        promise,
+        new Promise<never>((_, reject) => {
+            timer = setTimeout(
+                () =>
+                    reject(new Error(`${what} did not return within ${ms} ms`)),
+                ms
+            );
+        })
+    ]).finally(() => clearTimeout(timer));
 }
 
 test.describe.configure({ mode: 'serial' });
@@ -464,15 +508,27 @@ test.describe('cloud collaboration fuzz', () => {
             // ── Checks every step runs in every window ───────────────────
             const converge = async (label: string, timeout = 90000) => {
                 const reference = windows[0];
-                let snapshot = await readFuzzSnapshot(reference.page);
+                let snapshot = await withinTime(
+                    readFuzzSnapshot(reference.page),
+                    60000,
+                    `${reference.name}: reading its font`
+                );
                 const deadline = Date.now() + timeout;
                 for (;;) {
-                    snapshot = await readFuzzSnapshot(reference.page);
+                    snapshot = await withinTime(
+                        readFuzzSnapshot(reference.page),
+                        60000,
+                        `${reference.name}: reading its font`
+                    );
                     const expected = flatten(snapshot);
                     const differences: string[] = [];
                     for (const window of windows.slice(1)) {
                         const actual = flatten(
-                            await readFuzzSnapshot(window.page)
+                            await withinTime(
+                                readFuzzSnapshot(window.page),
+                                60000,
+                                `${window.name}: reading its font`
+                            )
                         );
                         for (const key of changedKeys(expected, actual)) {
                             differences.push(
@@ -593,18 +649,32 @@ test.describe('cloud collaboration fuzz', () => {
                 let referenceTiles: string | null = null;
                 for (const window of windows) {
                     expect(
-                        await readCompositionMismatches(window.page),
+                        await withinTime(
+                            readCompositionMismatches(window.page),
+                            60000,
+                            `${window.name}: checking composites`
+                        ),
                         `${label}: automatic composites in ${window.name}`
                     ).toEqual([]);
                     // The binary: what this window compiled for editing
                     // must match a fresh compile of its current data.
-                    await waitForEditingCompile(window.page);
-                    let compiled = await readCompiledOutlines(window.page);
+                    await withinTime(
+                        waitForEditingCompile(window.page),
+                        180000,
+                        `${window.name}: its editing compile`
+                    );
+                    let compiled = await withinTime(
+                        readCompiledOutlines(window.page),
+                        180000,
+                        `${window.name}: compiling its font fresh`
+                    );
                     await expect
                         .poll(
                             async () => {
-                                compiled = await readCompiledOutlines(
-                                    window.page
+                                compiled = await withinTime(
+                                    readCompiledOutlines(window.page),
+                                    180000,
+                                    `${window.name}: compiling its font fresh`
                                 );
                                 return (
                                     !compiled.error &&
@@ -636,10 +706,14 @@ test.describe('cloud collaboration fuzz', () => {
                     ).toBe(referenceRun);
                     // Tiles repaint asynchronously after the worker takes
                     // an update, like the compile above.
-                    let tiles = await overviewTileState(
-                        window.page,
-                        FUZZ_GLYPHS,
-                        FUZZ_COMPARE_LOCATION
+                    let tiles = await withinTime(
+                        overviewTileState(
+                            window.page,
+                            FUZZ_GLYPHS,
+                            FUZZ_COMPARE_LOCATION
+                        ),
+                        60000,
+                        `${window.name}: reading its overview tiles`
                     );
                     await expect
                         .poll(
@@ -721,38 +795,76 @@ test.describe('cloud collaboration fuzz', () => {
                 master: pick(FUZZ_STATIONS).id,
                 dw: delta(40)
             });
+            const kernPairKey = () =>
+                random() < 0.5
+                    ? pick(FUZZ_KERN_PAIRS)
+                    : `${random() < 0.2 ? '@L' : pick(FUZZ_PAIR_GLYPHS)}:${random() < 0.2 ? '@A' : pick(FUZZ_PAIR_GLYPHS)}`;
             const kernEdit = (): FuzzEdit => {
                 const station = pick(FUZZ_STATIONS).id;
-                const pair = pick(FUZZ_KERN_PAIRS);
-                const current = snapshot.kerning[station]?.[pair] ?? 0;
+                const rtl = random() < 0.2;
+                const pair = kernPairKey();
+                const current =
+                    (rtl ? snapshot.kerningRtl : snapshot.kerning)[station]?.[
+                        pair
+                    ] ?? 0;
                 return {
                     kind: 'kern',
                     master: station,
                     pair,
-                    value: current + delta(8) * 10
+                    value: current + delta(8) * 10,
+                    ...(rtl ? { rtl } : {})
                 };
             };
             const kernDeleteEdit = (): FuzzEdit => {
                 const station = pick(FUZZ_STATIONS).id;
-                const pairs = Object.keys(snapshot.kerning[station] ?? {});
+                const rtl = random() < 0.2;
+                const pairs = Object.keys(
+                    (rtl ? snapshot.kerningRtl : snapshot.kerning)[station] ??
+                        {}
+                );
                 if (!pairs.length) {
                     return kernEdit();
                 }
                 return {
                     kind: 'kern-delete',
                     master: station,
-                    pair: pick(pairs)
+                    pair: pick(pairs),
+                    ...(rtl ? { rtl } : {})
                 };
             };
             const kernGroupEdit = (): FuzzEdit => {
-                const glyph = pick(FUZZ_GROUP_GLYPHS);
-                const members = snapshot.groups.first?.L ?? [];
+                const side = pick(['first', 'second'] as const);
+                // `L` and `A` are kerned; the fuzz's own groups are not, so
+                // deleting them leaves no pair without its group.
+                const group = pick(
+                    side === 'first' ? ['L', 'L', 'N'] : ['A', 'A', 'B']
+                );
+                const glyph = pick([...FUZZ_GROUP_GLYPHS, 'o', 'p', 'q']);
+                const members = snapshot.groups[side]?.[group] ?? [];
                 return {
                     kind: 'kern-group',
                     master: FUZZ_STATIONS[0].id,
                     glyph,
-                    group: 'L',
-                    include: !members.includes(glyph)
+                    group,
+                    include: !members.includes(glyph),
+                    side
+                };
+            };
+            const kernGroupDeleteEdit = (): FuzzEdit => {
+                const own = (['first', 'second'] as const).flatMap((side) =>
+                    Object.keys(snapshot.groups[side] ?? {})
+                        .filter((group) => group === 'N' || group === 'B')
+                        .map((group) => ({ side, group }))
+                );
+                if (!own.length) {
+                    return kernGroupEdit();
+                }
+                const { side, group } = pick(own);
+                return {
+                    kind: 'kern-group-delete',
+                    master: FUZZ_STATIONS[0].id,
+                    side,
+                    group
                 };
             };
             const featureEdit = (): FuzzEdit => ({
@@ -779,35 +891,588 @@ test.describe('cloud collaboration fuzz', () => {
                     automatic: !shapes.every((shape: any) => shape.automatic)
                 };
             };
-            const randomEdit = (): FuzzEdit => {
-                const roll = random();
-                if (roll < 0.3) {
-                    return outlineEdit(pick(FUZZ_OUTLINE_GLYPHS));
+
+            // ── Extended edits: structure, components, drawings, font ────
+            const shapesOf = (glyph: string, station: string): any[] =>
+                (snapshot.glyphs[glyph] as any)?.[station]?.shapes ?? [];
+            const indexesWhere = (
+                glyph: string,
+                test: (shape: any) => boolean
+            ) =>
+                shapesOf(glyph, 'M1')
+                    .map((shape, index) => (test(shape) ? index : -1))
+                    .filter((index) => index >= 0);
+            const contoursOf = (glyph: string) =>
+                indexesWhere(glyph, (shape) => !!shape.nodes);
+            const componentsOf = (glyph: string) =>
+                indexesWhere(glyph, (shape) => !!shape.reference);
+            const anchorNamesOf = (glyph: string): string[] =>
+                ((snapshot.glyphs[glyph] as any)?.M1?.anchors ?? []).map(
+                    (anchor: any) => anchor[0]
+                );
+            const layersOf = (glyph: string): Record<string, any[]> =>
+                (snapshot.props[glyph] as any)?.layers ?? {};
+            const P = FUZZ_STRUCTURE_GLYPH;
+            const Q = FUZZ_COMPONENT_GLYPH;
+            const contourAddEdit = (): FuzzEdit => {
+                const x = 140 + Math.floor(random() * 160);
+                const y = 540 + Math.floor(random() * 80);
+                return {
+                    kind: 'contour-add',
+                    glyph: P,
+                    master: pick(FUZZ_STATIONS).id,
+                    rect: [
+                        x,
+                        y,
+                        x + 30 + Math.floor(random() * 50),
+                        y + 30 + Math.floor(random() * 40)
+                    ]
+                };
+            };
+            const nodeEdit = (
+                kind: 'node-insert' | 'node-remove' | 'smooth'
+            ): FuzzEdit => {
+                const contours = contoursOf(P).filter(
+                    (index) =>
+                        kind !== 'node-remove' ||
+                        shapesOf(P, 'M1')[index].nodes.length > 3
+                );
+                if (!contours.length) {
+                    return contourAddEdit();
                 }
-                if (roll < 0.5) {
-                    return anchorEdit(
-                        pick([...FUZZ_BASES_WITH_TOP, ...FUZZ_MARKS])
+                const shape = pick(contours);
+                return {
+                    kind,
+                    glyph: P,
+                    master: pick(FUZZ_STATIONS).id,
+                    shape,
+                    node: Math.floor(
+                        random() * shapesOf(P, 'M1')[shape].nodes.length
+                    )
+                };
+            };
+            const contourEdit = (
+                kind: 'contour-remove' | 'contour-reverse' | 'contour-open'
+            ): FuzzEdit => {
+                const contours = contoursOf(P);
+                if (
+                    !contours.length ||
+                    (kind === 'contour-remove' && contours.length < 2)
+                ) {
+                    return contourAddEdit();
+                }
+                const shape = pick(contours);
+                const master = pick(FUZZ_STATIONS).id;
+                return kind === 'contour-open'
+                    ? {
+                          kind,
+                          glyph: P,
+                          master,
+                          shape,
+                          closed: shapesOf(P, 'M1')[shape].closed === false
+                      }
+                    : { kind, glyph: P, master, shape };
+            };
+            const transformEdit = (): FuzzEdit => ({
+                kind: 'transform',
+                glyph: pick([P, 'a', 'o']),
+                master: pick(FUZZ_STATIONS).id,
+                op: pick(['scale', 'rotate', 'flip'] as const)
+            });
+            const nudgeEdit = (): FuzzEdit => {
+                const target = pick([
+                    'point',
+                    'point',
+                    'anchor',
+                    'component'
+                ] as const);
+                const key = pick([
+                    'ArrowLeft',
+                    'ArrowRight',
+                    'ArrowUp',
+                    'ArrowDown'
+                ] as const);
+                const master = pick(FUZZ_STATIONS).id;
+                const shift = random() < 0.3;
+                if (target === 'component' && componentsOf(Q).length) {
+                    return {
+                        kind: 'nudge',
+                        glyph: Q,
+                        master,
+                        target,
+                        shape: pick(componentsOf(Q)),
+                        index: 0,
+                        key,
+                        shift
+                    };
+                }
+                const withAnchors = [P, 'a', 'o', ...FUZZ_MARKS].filter(
+                    (glyph) => anchorNamesOf(glyph).length
+                );
+                if (target === 'anchor' && withAnchors.length) {
+                    return {
+                        kind: 'nudge',
+                        glyph: pick(withAnchors),
+                        master,
+                        target,
+                        shape: 0,
+                        index: 0,
+                        key,
+                        shift
+                    };
+                }
+                const glyph = pick(
+                    [P, 'a', 'o', ...FUZZ_MARKS].filter(
+                        (name) => contoursOf(name).length
+                    )
+                );
+                const shape = pick(contoursOf(glyph));
+                return {
+                    kind: 'nudge',
+                    glyph,
+                    master,
+                    target: 'point',
+                    shape,
+                    index: Math.floor(
+                        random() * shapesOf(glyph, 'M1')[shape].nodes.length
+                    ),
+                    key,
+                    shift
+                };
+            };
+            const componentAddEdit = (): FuzzEdit => ({
+                kind: 'component-add',
+                glyph: Q,
+                master: pick(FUZZ_STATIONS).id,
+                reference: pick(['a', 'o', 'l', 'dotaccentcomb', 'acutecomb']),
+                x: Math.floor(random() * 400),
+                y: Math.floor(random() * 200) - 100
+            });
+            const componentEdit = (
+                kind:
+                    | 'component-remove'
+                    | 'component-swap'
+                    | 'component-decompose'
+                    | 'component-transform'
+            ): FuzzEdit => {
+                const components = componentsOf(Q);
+                if (
+                    !components.length ||
+                    (kind === 'component-remove' && components.length < 2)
+                ) {
+                    return componentAddEdit();
+                }
+                const shape = pick(components);
+                const master = pick(FUZZ_STATIONS).id;
+                if (kind === 'component-swap') {
+                    const current = shapesOf(Q, 'M1')[shape].reference;
+                    return {
+                        kind,
+                        glyph: Q,
+                        master,
+                        shape,
+                        reference: pick(
+                            ['a', 'o', 'l', 'n'].filter(
+                                (name) => name !== current
+                            )
+                        )
+                    };
+                }
+                if (kind === 'component-transform') {
+                    return {
+                        kind,
+                        glyph: Q,
+                        master,
+                        shape,
+                        dx: delta(30),
+                        dy: delta(30),
+                        scale: pick([0.9, 1, 1.1])
+                    };
+                }
+                return { kind, glyph: Q, master, shape };
+            };
+            // Anchors the composites do not depend on.
+            const ownAnchors = (glyph: string) =>
+                anchorNamesOf(glyph).filter(
+                    (name) => name !== 'top' && name !== '_top'
+                );
+            const anchorAddEdit = (): FuzzEdit => {
+                const glyph = pick([P, 'o']);
+                const free = ['bottom', 'ogonek', 'center'].filter(
+                    (name) => !anchorNamesOf(glyph).includes(name)
+                );
+                if (!free.length) {
+                    return anchorEdit(glyph);
+                }
+                return {
+                    kind: 'anchor-add',
+                    glyph,
+                    master: pick(FUZZ_STATIONS).id,
+                    name: pick(free),
+                    x: 100 + Math.floor(random() * 200),
+                    y: Math.floor(random() * 100) - 50
+                };
+            };
+            const anchorChangeEdit = (
+                kind: 'anchor-remove' | 'anchor-rename'
+            ): FuzzEdit => {
+                const candidates = [P, 'o'].filter(
+                    (glyph) => ownAnchors(glyph).length
+                );
+                if (!candidates.length) {
+                    return anchorAddEdit();
+                }
+                const glyph = pick(candidates);
+                const name = pick(ownAnchors(glyph));
+                const master = pick(FUZZ_STATIONS).id;
+                if (kind === 'anchor-remove') {
+                    return { kind, glyph, master, name };
+                }
+                const to = ['bottom', 'ogonek', 'center'].find(
+                    (candidate) => !anchorNamesOf(glyph).includes(candidate)
+                );
+                return to
+                    ? { kind, glyph, master, name, to }
+                    : { kind: 'anchor-remove', glyph, master, name };
+            };
+            const glyphPropertyEdit = (): FuzzEdit => {
+                const glyph = pick([P, Q, 'o', 'l']);
+                const props = (snapshot.props[glyph] ?? {}) as any;
+                const property = pick(
+                    glyph === P || glyph === Q
+                        ? (['category', 'production_name', 'exported'] as const)
+                        : (['category', 'production_name'] as const)
+                );
+                const value =
+                    property === 'exported'
+                        ? !props.exported
+                        : property === 'category'
+                          ? pick(
+                                ['Base', 'Ligature', 'Component'].filter(
+                                    (category) => category !== props.category
+                                )
+                            )
+                          : props.production_name
+                            ? null
+                            : `fuzz${glyph}${Math.floor(random() * 100)}`;
+                return {
+                    kind: 'glyph-property',
+                    glyph,
+                    master: FUZZ_STATIONS[0].id,
+                    property,
+                    value
+                };
+            };
+            const metricsKeyEdit = (): FuzzEdit => ({
+                kind: 'metrics-key',
+                glyph: P,
+                master: FUZZ_STATIONS[0].id,
+                side: 'right',
+                value: (snapshot.props[P] as any)?.rightMetricsKey ? null : '=o'
+            });
+            const freeDrawingEdit = (): FuzzEdit => {
+                const free = Object.entries(layersOf(P))
+                    .filter(([, layer]) => layer[0] === 'FreeFloating')
+                    .map(([id, layer]) => ({ id, wght: layer[2]?.wght }));
+                const used = new Set(free.map((layer) => layer.wght));
+                const open = [300, 500, 700].filter((wght) => !used.has(wght));
+                const op = !free.length
+                    ? 'add'
+                    : pick(
+                          open.length
+                              ? (['add', 'remove', 'edit', 'edit'] as const)
+                              : (['remove', 'edit', 'edit'] as const)
+                      );
+                const chosen = op === 'add' ? null : pick(free);
+                return {
+                    kind: 'free-drawing',
+                    glyph: P,
+                    master: FUZZ_STATIONS[0].id,
+                    op,
+                    wght: op === 'add' ? pick(open) : chosen!.wght,
+                    drawing: chosen?.id ?? null,
+                    dx: delta(30),
+                    dy: delta(30)
+                };
+            };
+            const backgroundEdit = (): FuzzEdit => {
+                const master = pick(FUZZ_STATIONS).id;
+                const backgroundId = layersOf(P)[master]?.[3];
+                const filled =
+                    !!backgroundId &&
+                    shapesOf(P, backgroundId).some(
+                        (shape) => (shape.nodes ?? []).length
                     );
+                return {
+                    kind: 'background',
+                    glyph: P,
+                    master,
+                    op: filled
+                        ? pick(['add', 'edit', 'edit', 'clear'] as const)
+                        : 'add',
+                    dx: delta(30),
+                    dy: delta(30)
+                };
+            };
+            const variationEdit = (): FuzzEdit => {
+                const has = ((snapshot.props[P] as any)?.variations ?? [])
+                    .length;
+                return {
+                    kind: 'variation',
+                    glyph: P,
+                    master: pick(FUZZ_STATIONS).id,
+                    op: has ? pick(['remove', 'edit', 'edit'] as const) : 'add',
+                    min: pick([500, 600, 700]),
+                    dx: delta(30),
+                    dy: delta(30)
+                };
+            };
+            const newGlyphs = () =>
+                Object.entries(snapshot.glyphs)
+                    .filter(
+                        ([name, layers]) =>
+                            name.startsWith(FUZZ_NEW_GLYPH_PREFIX) &&
+                            layers !== null
+                    )
+                    .map(([name]) => name);
+            const freshGlyphName = () =>
+                `${FUZZ_NEW_GLYPH_PREFIX}g${Math.floor(random() * 1_000_000)}`;
+            const glyphLifecycleEdit = (): FuzzEdit => {
+                const existing = newGlyphs();
+                const op = !existing.length
+                    ? 'glyph-add'
+                    : pick([
+                          'glyph-add',
+                          'glyph-rename',
+                          'glyph-delete'
+                      ] as const);
+                const master = FUZZ_STATIONS[0].id;
+                if (op === 'glyph-add') {
+                    return { kind: op, master, name: freshGlyphName() };
                 }
-                if (roll < 0.62) {
-                    return widthEdit(pick(FUZZ_WIDTH_GLYPHS));
+                const name = pick(existing);
+                return op === 'glyph-rename'
+                    ? { kind: op, master, name, to: freshGlyphName() }
+                    : { kind: op, master, name };
+            };
+            const featureListEdit = (): FuzzEdit => ({
+                kind: 'feature-list',
+                master: FUZZ_STATIONS[0].id,
+                op: (snapshot.featureSet as any)?.tags?.includes(
+                    FUZZ_EXTRA_FEATURE[0]
+                )
+                    ? pick(['remove', 'move'] as const)
+                    : 'add'
+            });
+            const featurePrefixEdit = (): FuzzEdit => ({
+                kind: 'feature-prefix',
+                master: FUZZ_STATIONS[0].id,
+                value: Math.floor(random() * 1_000_000)
+            });
+            const featureClassEdit = (): FuzzEdit => {
+                const members = ['a', 'o', 'l', P, Q].filter(
+                    () => random() < 0.5
+                );
+                return {
+                    kind: 'feature-class',
+                    master: FUZZ_STATIONS[0].id,
+                    members: members.length ? members : ['a']
+                };
+            };
+            const stationMetricEdit = (): FuzzEdit => {
+                const master = pick(FUZZ_STATIONS).id;
+                const key = pick([
+                    'XHeight',
+                    'CapHeight',
+                    'Ascender',
+                    'XHeight overshoot'
+                ]);
+                const station = ((snapshot.font as any).stations ?? []).find(
+                    (item: any) => item.id === master
+                );
+                return {
+                    kind: 'station-metric',
+                    master,
+                    key,
+                    value: (station?.metrics?.[key] ?? 0) + delta(20)
+                };
+            };
+            const instanceEdit = (): FuzzEdit => {
+                const instances = ((snapshot.font as any).instances ??
+                    []) as any[];
+                const op = !instances.length
+                    ? 'add'
+                    : pick(['add', 'edit', 'edit', 'remove'] as const);
+                return {
+                    kind: 'instance',
+                    master: FUZZ_STATIONS[0].id,
+                    op,
+                    id:
+                        op === 'add'
+                            ? `fuzz-${Math.floor(random() * 1_000_000)}`
+                            : pick(instances).id,
+                    wght: 100 + Math.floor(random() * 8) * 100
+                };
+            };
+            const fontInfoEdit = (): FuzzEdit => ({
+                kind: 'font-info',
+                master: FUZZ_STATIONS[0].id,
+                field: pick(['designer', 'version', 'vendor'] as const),
+                value: 1 + Math.floor(random() * 999)
+            });
+
+            // Weight of each kind of edit; the first ten keep about half.
+            const EDIT_TABLE: Array<{
+                kinds: string[];
+                weight: number;
+                make: () => FuzzEdit;
+            }> = [
+                {
+                    kinds: ['outline'],
+                    weight: 15,
+                    make: () => outlineEdit(pick(FUZZ_OUTLINE_GLYPHS))
+                },
+                {
+                    kinds: ['anchor'],
+                    weight: 10,
+                    make: () =>
+                        anchorEdit(
+                            pick([...FUZZ_BASES_WITH_TOP, ...FUZZ_MARKS])
+                        )
+                },
+                {
+                    kinds: ['width'],
+                    weight: 6,
+                    make: () => widthEdit(pick(FUZZ_WIDTH_GLYPHS))
+                },
+                { kinds: ['kern'], weight: 6, make: kernEdit },
+                { kinds: ['kern-delete'], weight: 2, make: kernDeleteEdit },
+                { kinds: ['kern-group'], weight: 3, make: kernGroupEdit },
+                { kinds: ['feature'], weight: 2, make: featureEdit },
+                { kinds: ['unicode'], weight: 2, make: unicodeEdit },
+                { kinds: ['align'], weight: 4, make: alignEdit },
+                {
+                    kinds: ['node-insert'],
+                    weight: 2,
+                    make: () => nodeEdit('node-insert')
+                },
+                {
+                    kinds: ['node-remove'],
+                    weight: 2,
+                    make: () => nodeEdit('node-remove')
+                },
+                {
+                    kinds: ['smooth'],
+                    weight: 1,
+                    make: () => nodeEdit('smooth')
+                },
+                { kinds: ['contour-add'], weight: 2, make: contourAddEdit },
+                {
+                    kinds: ['contour-remove'],
+                    weight: 1,
+                    make: () => contourEdit('contour-remove')
+                },
+                {
+                    kinds: ['contour-reverse'],
+                    weight: 1,
+                    make: () => contourEdit('contour-reverse')
+                },
+                {
+                    kinds: ['contour-open'],
+                    weight: 1,
+                    make: () => contourEdit('contour-open')
+                },
+                { kinds: ['transform'], weight: 2, make: transformEdit },
+                { kinds: ['nudge'], weight: 3, make: nudgeEdit },
+                { kinds: ['component-add'], weight: 2, make: componentAddEdit },
+                {
+                    kinds: ['component-remove'],
+                    weight: 1,
+                    make: () => componentEdit('component-remove')
+                },
+                {
+                    kinds: ['component-swap'],
+                    weight: 1,
+                    make: () => componentEdit('component-swap')
+                },
+                {
+                    kinds: ['component-decompose'],
+                    weight: 1,
+                    make: () => componentEdit('component-decompose')
+                },
+                {
+                    kinds: ['component-transform'],
+                    weight: 1,
+                    make: () => componentEdit('component-transform')
+                },
+                { kinds: ['anchor-add'], weight: 1, make: anchorAddEdit },
+                {
+                    kinds: ['anchor-remove'],
+                    weight: 1,
+                    make: () => anchorChangeEdit('anchor-remove')
+                },
+                {
+                    kinds: ['anchor-rename'],
+                    weight: 1,
+                    make: () => anchorChangeEdit('anchor-rename')
+                },
+                {
+                    kinds: ['glyph-property'],
+                    weight: 2,
+                    make: glyphPropertyEdit
+                },
+                { kinds: ['metrics-key'], weight: 1, make: metricsKeyEdit },
+                { kinds: ['free-drawing'], weight: 2, make: freeDrawingEdit },
+                { kinds: ['background'], weight: 2, make: backgroundEdit },
+                { kinds: ['variation'], weight: 2, make: variationEdit },
+                {
+                    kinds: ['glyph-add', 'glyph-rename', 'glyph-delete'],
+                    weight: 2,
+                    make: glyphLifecycleEdit
+                },
+                {
+                    kinds: ['kern-group-delete'],
+                    weight: 1,
+                    make: kernGroupDeleteEdit
+                },
+                { kinds: ['feature-list'], weight: 1, make: featureListEdit },
+                {
+                    kinds: ['feature-prefix'],
+                    weight: 1,
+                    make: featurePrefixEdit
+                },
+                { kinds: ['feature-class'], weight: 1, make: featureClassEdit },
+                {
+                    kinds: ['station-metric'],
+                    weight: 2,
+                    make: stationMetricEdit
+                },
+                { kinds: ['instance'], weight: 1, make: instanceEdit },
+                { kinds: ['font-info'], weight: 1, make: fontInfoEdit }
+            ];
+            const editTable = FUZZ_KINDS
+                ? EDIT_TABLE.filter((entry) =>
+                      entry.kinds.some((kind) => FUZZ_KINDS!.has(kind))
+                  )
+                : EDIT_TABLE;
+            if (!editTable.length) {
+                throw new Error(
+                    `FUZZ_KINDS matches no edit: ${[...FUZZ_KINDS!].join(', ')}`
+                );
+            }
+            const totalWeight = editTable.reduce(
+                (sum, entry) => sum + entry.weight,
+                0
+            );
+            const randomEdit = (): FuzzEdit => {
+                let roll = random() * totalWeight;
+                for (const entry of editTable) {
+                    roll -= entry.weight;
+                    if (roll < 0) {
+                        return entry.make();
+                    }
                 }
-                if (roll < 0.72) {
-                    return kernEdit();
-                }
-                if (roll < 0.76) {
-                    return kernDeleteEdit();
-                }
-                if (roll < 0.81) {
-                    return kernGroupEdit();
-                }
-                if (roll < 0.87) {
-                    return featureEdit();
-                }
-                if (roll < 0.92) {
-                    return unicodeEdit();
-                }
-                return alignEdit();
+                return editTable.at(-1)!.make();
             };
 
             // ── History model: what each history may undo and redo ───────
@@ -910,6 +1575,43 @@ test.describe('cloud collaboration fuzz', () => {
                         );
                 });
 
+            /**
+             * Where this window filed its latest edit, read from the history
+             * the app recorded (extended edits; the first ten are modelled
+             * above): null for font scope, which undo in any glyph reaches,
+             * otherwise the glyph, whichever of its drawings it changed.
+             */
+            const observedHistoryGlyph = (page: Page, edit: FuzzEdit) =>
+                page.evaluate(
+                    (glyph) => {
+                        const log: any[] =
+                            (window as any).patchSyncEngine?._changeLog ?? [];
+                        const own = log.filter(
+                            (entry) =>
+                                entry.historyAction === 'change' &&
+                                entry.transactionLabel !== 'Glyph revision'
+                        );
+                        const last = own.at(-1);
+                        if (!last || !glyph) {
+                            return null;
+                        }
+                        const fontScoped = own
+                            .filter(
+                                (entry) =>
+                                    entry.historyItemId === last.historyItemId
+                            )
+                            .some(
+                                (entry) =>
+                                    entry.undoScope === 'font' ||
+                                    !String(entry.path || '').startsWith(
+                                        'glyphs.'
+                                    )
+                            );
+                        return fontScoped ? null : glyph;
+                    },
+                    'glyph' in edit ? edit.glyph : null
+                );
+
             // ── Traffic: each step costs the minimum the rooms prove ─────
             // One update per changed room; the sender’s main window posts
             // each changed glyph once (or sends it on the socket it holds
@@ -987,6 +1689,17 @@ test.describe('cloud collaboration fuzz', () => {
             ) => {
                 // Late catch-ups or retries would land in this window.
                 await mainPage.waitForTimeout(2500);
+                // Rooms that exist after the step: a glyph the step added
+                // has a new room, one it deleted may be purged already.
+                const namesAfter = await glyphNamesById();
+                for (const [id, name] of namesAfter) {
+                    if (!measured.names.has(id)) {
+                        measured.names.set(id, name);
+                    }
+                }
+                const roomDocsAfter = await fontRoomDocumentIds(mainPage, [
+                    ...namesAfter.keys()
+                ]);
                 const traffic = summarizeRoomTraffic(
                     roomTraffic,
                     measured.mark,
@@ -999,7 +1712,7 @@ test.describe('cloud collaboration fuzz', () => {
                         : id;
                 const roomDelta = diffRoomCounters(
                     measured.rooms,
-                    await readRoomCounters(mainPage, measured.roomDocs)
+                    await readRoomCounters(mainPage, roomDocsAfter)
                 );
                 const rooms = Object.fromEntries(
                     Object.entries(roomDelta).map(([id, delta]) => [
@@ -1277,7 +1990,9 @@ test.describe('cloud collaboration fuzz', () => {
                     if (!changed.length) {
                         throw failure('the edit changed nothing');
                     }
-                    const historyGlyph = historyGlyphOf(edit);
+                    const historyGlyph = isExtendedFuzzEdit(edit)
+                        ? await observedHistoryGlyph(window.page, edit)
+                        : historyGlyphOf(edit);
                     items.push({
                         group,
                         historyGlyph,
@@ -1530,6 +2245,130 @@ test.describe('cloud collaboration fuzz', () => {
                 step++;
             }
 
+            // ── Phase 2d: a station is added, edited and removed ─────────
+            // Font Info's Add station, which interpolates every glyph's
+            // drawing at the new location; another browser edits its
+            // metrics; a third window removes it.
+            {
+                record('station lifecycle: M adds a station at wght 500');
+                const stationId = await mainPage.evaluate(async () => {
+                    const w = window as any;
+                    const gate = w.currentFontModel.getStationTopologyGate?.();
+                    if (gate && gate.allowed === false) {
+                        throw new Error(
+                            `Add station is blocked: ${gate.reason ?? 'no reason'}`
+                        );
+                    }
+                    let station: any;
+                    try {
+                        station = await w.currentFontModel.addStation(
+                            undefined,
+                            {
+                                location: { wght: 500 },
+                                metricTemplateStationId: 'M1'
+                            }
+                        );
+                    } catch (error) {
+                        // Which glyphs no longer interpolate, and how each
+                        // of their drawings differs.
+                        // `p` takes the structure edits: always listed.
+                        const report = (w.currentFontModel.glyphs ?? [])
+                            .filter(
+                                (glyph: any) =>
+                                    glyph.name === 'p' ||
+                                    glyph.calculateOutlineCompatibility?.()
+                                        ?.compatible === false
+                            )
+                            .map((glyph: any) => {
+                                const layers =
+                                    (glyph.toJSON?.() ?? glyph.data)?.layers ??
+                                    [];
+                                return `${glyph.name}:\n${layers
+                                    .map(
+                                        (layer: any) =>
+                                            `  ${layer.id} ${layer.master?.type ?? ''}: ${(
+                                                layer.shapes ?? []
+                                            )
+                                                .map((shape: any) =>
+                                                    shape.reference
+                                                        ? `[${shape.reference}]`
+                                                        : (shape.nodes ?? [])
+                                                              .map(
+                                                                  (node: any) =>
+                                                                      `${String(node.nodetype ?? '').charAt(0)}${node.smooth ? 's' : ''}`
+                                                              )
+                                                              .join('')
+                                                )
+                                                .join(' | ')} anchors ${(
+                                                layer.anchors ?? []
+                                            )
+                                                .map(
+                                                    (anchor: any) => anchor.name
+                                                )
+                                                .join(',')}`
+                                    )
+                                    .join('\n')}`;
+                            });
+                        throw new Error(
+                            `${error instanceof Error ? error.message : String(error)}\np and any glyph the model finds incompatible:\n${report.join('\n')}`
+                        );
+                    }
+                    await w.patchSyncEngine.waitForPendingCloudCommits?.();
+                    return (station?.id as string | undefined) ?? null;
+                });
+                expect(stationId, 'Add station made a station').toBeTruthy();
+                snapshot = await checkAll('station lifecycle: added');
+                const withoutDrawing = FUZZ_GLYPHS.filter(
+                    (name) =>
+                        snapshot.glyphs[name] &&
+                        !(snapshot.glyphs[name] as any)[stationId!]
+                );
+                expect(
+                    withoutDrawing,
+                    'every glyph has a drawing at the new station'
+                ).toEqual([]);
+                record('station lifecycle: I edits its x-height');
+                await inviteePage.evaluate(async (id) => {
+                    const w = window as any;
+                    const station = w.currentFontModel.stations.find(
+                        (item: any) => item.id === id
+                    );
+                    w.patchSyncEngine.beginTransaction(
+                        'Edit station metrics',
+                        null,
+                        {
+                            compileChangeSource: 'font-info',
+                            compileEditType: null
+                        }
+                    );
+                    try {
+                        station.metrics = {
+                            ...JSON.parse(
+                                JSON.stringify(station.metrics ?? {})
+                            ),
+                            XHeight: 520
+                        };
+                    } finally {
+                        w.patchSyncEngine.endTransaction();
+                    }
+                    await w.patchSyncEngine.waitForPendingCloudCommits?.();
+                }, stationId);
+                snapshot = await checkAll('station lifecycle: edited');
+                record('station lifecycle: O2 removes it');
+                await ownerSecondPage.evaluate(async (id) => {
+                    const w = window as any;
+                    await w.currentFontModel.removeStationsByIds([id]);
+                    await w.patchSyncEngine.waitForPendingCloudCommits?.();
+                }, stationId);
+                snapshot = await checkAll('station lifecycle: removed');
+                expect(
+                    ((snapshot.font as any).stations ?? []).map(
+                        (station: any) => station.id
+                    ),
+                    'only the fixture stations are left'
+                ).toEqual(FUZZ_STATIONS.map((station) => station.id));
+            }
+
             // ── Phase 3: the second browser goes offline and catches up ──
             record('O2 offline');
             await ownerSecondContext.setOffline(true);
@@ -1712,6 +2551,34 @@ test.describe('cloud collaboration fuzz', () => {
             await paintTiles();
             await applyFuzzEdit(inviteeLinkedPage, afterReload);
             snapshot = await checkAll('edit after L2 reload');
+
+            // ── Phase 4b: an axis is added ───────────────────────────────
+            // Font Info's Add axis without station copies: every station and
+            // instance sits at the new axis's default, so no glyph changes.
+            record('axis: O2 adds a width axis');
+            // O2's tab was closed and reopened above: use its current page.
+            const reopenedSecond = windows.find(
+                (window) => window.name === 'O2'
+            )!.page;
+            await reopenedSecond.evaluate(async () => {
+                const w = window as any;
+                w.fontInfoManager.commitNewAxis(
+                    {
+                        name: { dflt: 'Width' },
+                        tag: 'wdth',
+                        min: 75,
+                        default: 100,
+                        max: 125
+                    },
+                    100
+                );
+                await w.patchSyncEngine.waitForPendingCloudCommits?.();
+            });
+            snapshot = await checkAll('axis added');
+            expect(
+                ((snapshot.font as any).axes ?? []).map((axis: any) => axis[0]),
+                'the font has both axes'
+            ).toEqual(['wght', 'wdth']);
 
             // ── Phase 5: the cloud kept it all ───────────────────────────
             const freshContext = await newContext(ownerSession);

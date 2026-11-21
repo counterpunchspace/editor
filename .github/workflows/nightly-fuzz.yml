@@ -22,7 +22,7 @@ on:
                 default: random
             steps:
                 description: "Single steps in the first phase"
-                default: "40"
+                default: "100"
 
 permissions:
     contents: read
@@ -101,7 +101,7 @@ jobs:
                   CLOUD_COLLAB_ROOM_URL: https://staging.rooms.counterpunch.space
                   E2E_OPERATOR_TOKEN: ${{ secrets.E2E_OPERATOR_TOKEN }}
                   FUZZ_SEED: ${{ steps.seed.outputs.seed }}
-                  FUZZ_STEPS: ${{ inputs.steps || '40' }}
+                  FUZZ_STEPS: ${{ inputs.steps || '100' }}
               run: npx playwright test --project=cloud-collab-fuzz --reporter=list
 
             # Tells a failure that repeats from a flaky one. The run stays
@@ -120,7 +120,7 @@ jobs:
                   CLOUD_COLLAB_ROOM_URL: https://staging.rooms.counterpunch.space
                   E2E_OPERATOR_TOKEN: ${{ secrets.E2E_OPERATOR_TOKEN }}
                   FUZZ_SEED: ${{ steps.seed.outputs.seed }}
-                  FUZZ_STEPS: ${{ inputs.steps || '40' }}
+                  FUZZ_STEPS: ${{ inputs.steps || '100' }}
               run: npx playwright test --project=cloud-collab-fuzz --reporter=list --output=test-results/repeat
 
             # Runs after a failure or a cancel too, but only if this run holds

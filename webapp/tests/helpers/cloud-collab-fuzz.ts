@@ -31,12 +31,30 @@ export const FUZZ_GLYPHS = [
     'odieresis',
     'i',
     'idieresis',
-    'adieresis.ss01'
+    'adieresis.ss01',
+    'p',
+    'q'
 ];
 
 /** Text that shapes to every fuzz glyph, so the compiled check sees all. */
 // U+E001 maps to adieresis.ss01 only while a Unicode edit has added it.
-export const FUZZ_TEXT = 'lnmıaoäáöiï̈́̇';
+export const FUZZ_TEXT = 'lnmıaoäáöiï̈́̇pq';
+
+/**
+ * `p` takes the outline-structure edits (points and contours added and
+ * removed, direction, open and closed, transforms, anchors, free,
+ * background and variation drawings); `q` is built from manual components.
+ */
+export const FUZZ_STRUCTURE_GLYPH = 'p';
+export const FUZZ_COMPONENT_GLYPH = 'q';
+/** Glyphs the fuzz adds, renames and deletes start with this. */
+export const FUZZ_NEW_GLYPH_PREFIX = 'fuzz.';
+/** Second feature the fuzz adds, removes and moves. */
+export const FUZZ_EXTRA_FEATURE: [string, string] = [
+    'ss02',
+    'sub o by odieresis;'
+];
+export const FUZZ_LANGUAGE_SYSTEMS = 'languagesystem DFLT dflt;';
 
 export const FUZZ_BASES_WITH_TOP = ['a', 'o', 'idotless'];
 export const FUZZ_MARKS = ['dieresiscomb', 'acutecomb', 'dotaccentcomb'];
@@ -138,6 +156,7 @@ function outlineGlyph(
 }
 
 const AUTOMATIC = { 'com.schriftgestalt.Glyphs.alignment': 1 };
+const MANUAL = { 'com.schriftgestalt.Glyphs.alignment': -1 };
 
 function component(reference: string, x: number, y: number) {
     return {
@@ -151,6 +170,10 @@ function component(reference: string, x: number, y: number) {
             order: 'RestOfTheWorld'
         }
     };
+}
+
+function manualComponent(reference: string, x: number, y: number) {
+    return { ...component(reference, x, y), format_specific: { ...MANUAL } };
 }
 
 /** Two-master font: line-only contours, so bounds equal node extremes. */
@@ -229,6 +252,24 @@ export function makeFuzzFontJson(familyName: string): string {
                 width: 580,
                 anchors: [{ name: 'top', x: 290, y: 500 }]
             }
+        },
+        p: {
+            M1: {
+                rects: [
+                    [60, -200, 120, 500],
+                    [120, 0, 420, 500]
+                ],
+                width: 480,
+                anchors: [{ name: 'bottom', x: 90, y: -200 }]
+            },
+            M2: {
+                rects: [
+                    [60, -200, 200, 500],
+                    [200, 0, 500, 500]
+                ],
+                width: 560,
+                anchors: [{ name: 'bottom', x: 130, y: -200 }]
+            }
         }
     };
     const marks: Record<string, Record<FuzzStationId, StationShapes>> = {
@@ -305,7 +346,9 @@ export function makeFuzzFontJson(familyName: string): string {
         'odieresis': [0xf6],
         'i': [0x69],
         'idieresis': [0xef],
-        'adieresis.ss01': [0xe000]
+        'adieresis.ss01': [0xe000],
+        'p': [0x70],
+        'q': [0x71]
     };
     const composites: Array<[string, string, string]> = [
         ['adieresis', 'a', 'dieresiscomb'],
@@ -356,6 +399,25 @@ export function makeFuzzFontJson(familyName: string): string {
             compositeGlyph(name, base, mark)
         ),
         {
+            name: FUZZ_COMPONENT_GLYPH,
+            category: 'Base',
+            codepoints: codepoints[FUZZ_COMPONENT_GLYPH],
+            layers: FUZZ_STATIONS.map(({ id }) => ({
+                width: bases.o[id].width + 160,
+                id,
+                master: { type: 'DefaultForMaster', master: id },
+                shapes: [
+                    manualComponent('o', 0, 0),
+                    manualComponent('l', bases.o[id].width - 40, -200)
+                ],
+                anchors: [],
+                guides: [],
+                format_specific: {}
+            })),
+            exported: true,
+            format_specific: {}
+        },
+        {
             name: 'adieresis.ss01',
             category: 'Base',
             codepoints: codepoints['adieresis.ss01'],
@@ -384,13 +446,28 @@ export function makeFuzzFontJson(familyName: string): string {
                 max: 900
             }
         ],
-        instances: [],
+        instances: [
+            {
+                id: 'regular',
+                name: { dflt: 'Regular' },
+                location: { wght: 400 },
+                custom_names: {},
+                variable: false,
+                format_specific: {}
+            }
+        ],
         masters: FUZZ_STATIONS.map(({ id, wght }) => ({
             name: { dflt: id === 'M1' ? 'Light' : 'Bold' },
             id,
             location: { wght },
             guides: [],
-            metrics: {},
+            metrics: {
+                'XHeight': 500,
+                'CapHeight': 700,
+                'Ascender': 750,
+                'Descender': -250,
+                'XHeight overshoot': 10
+            },
             kerning: {},
             custom_ot_values: {},
             format_specific: {}
@@ -399,8 +476,8 @@ export function makeFuzzFontJson(familyName: string): string {
         date: new Date().toISOString(),
         names: { family_name: { dflt: familyName } },
         features: {
-            classes: {},
-            prefixes: {},
+            classes: { fuzz: { code: 'a o' } },
+            prefixes: { languagesystems: { code: FUZZ_LANGUAGE_SYSTEMS } },
             features: [[FUZZ_FEATURE_TAG, { code: FUZZ_FEATURE_CODE }]]
         },
         first_kern_groups: FUZZ_KERN_GROUPS.first,
@@ -468,14 +545,24 @@ export async function waitForAutomaticComposites(page: Page) {
 }
 
 export type FuzzSnapshot = {
+    /** Every layer of every fuzz glyph, keyed by layer id: station, free,
+     *  background and variation drawings alike; null for a missing glyph. */
     glyphs: Record<string, unknown>;
+    /** Glyph-level data: category, production name, export, metrics keys,
+     *  feature-variation rules, and what each layer is. */
+    props: Record<string, unknown>;
     kerning: Record<string, Record<string, number>>;
+    kerningRtl: Record<string, Record<string, number>>;
     /** Code of the fuzz feature (features room). */
     features: string | null;
+    /** Feature tags in order, the other features' code, prefixes, classes. */
+    featureSet: unknown;
     /** Kerning groups, first and second side, members sorted. */
     groups: Record<string, Record<string, string[]>>;
     /** Codepoints of every fuzz glyph (catalog rooms). */
     catalog: Record<string, number[]>;
+    /** Font-wide data: axes, stations, instances and font info. */
+    font: Record<string, unknown>;
 };
 
 /**
@@ -555,37 +642,63 @@ export function formatCollabTrace(
 /** This window’s font model, normalised: rounded, anchors sorted. */
 export async function readFuzzSnapshot(page: Page): Promise<FuzzSnapshot> {
     return page.evaluate(
-        ({ names, featureTag }) => {
+        ({ names, featureTag, newPrefix }) => {
             const w = window as any;
             const round = (value: unknown) =>
                 typeof value === 'number'
                     ? Math.round(value * 1000) / 1000
                     : value;
+            const nodeOf = (node: any) => [
+                round(node.x),
+                round(node.y),
+                String(node.nodetype ?? node.type ?? '').charAt(0),
+                node.smooth ? 1 : 0
+            ];
+            const componentOf = (
+                reference: string,
+                transform: any,
+                automatic: boolean
+            ) => {
+                const scale = (transform?.scale ?? [1, 1]).map(round);
+                return {
+                    reference,
+                    translation: (transform?.translation ?? [0, 0]).map(round),
+                    automatic,
+                    ...(scale[0] !== 1 || scale[1] !== 1 ? { scale } : {})
+                };
+            };
+            // Model shapes, for drawings the model reaches.
             const shape = (item: any) => {
                 if (item.isComponent?.()) {
                     const component = item.asComponent();
-                    const translation = component.transform?.translation ?? [
-                        0, 0
-                    ];
-                    return {
-                        reference: component.reference,
-                        translation: translation.map(round),
-                        automatic: component.automaticAlignment === true
-                    };
+                    return componentOf(
+                        component.reference,
+                        component.transform,
+                        component.automaticAlignment === true
+                    );
                 }
                 const path = item.asPath();
                 return {
-                    nodes: (path?.nodes ?? []).map((node: any) => [
-                        round(node.x),
-                        round(node.y)
-                    ]),
+                    nodes: (path?.nodes ?? []).map(nodeOf),
                     closed: path?.closed !== false
                 };
             };
-            const drawing = (item: any) => ({
-                width: round(item.width),
-                shapes: (item.shapes ?? []).map(shape),
-                anchors: (item.anchors ?? [])
+            // Stored shapes, for layers outside glyph.drawings.
+            const rawShape = (item: any) =>
+                typeof item?.reference === 'string'
+                    ? componentOf(
+                          item.reference,
+                          item.transform,
+                          item.format_specific?.[
+                              'com.schriftgestalt.Glyphs.alignment'
+                          ] === 1
+                      )
+                    : {
+                          nodes: (item?.nodes ?? []).map(nodeOf),
+                          closed: item?.closed !== false
+                      };
+            const anchorsOf = (anchors: any[]) =>
+                (anchors ?? [])
                     .map((anchor: any) => [
                         anchor.name,
                         round(anchor.x),
@@ -593,16 +706,46 @@ export async function readFuzzSnapshot(page: Page): Promise<FuzzSnapshot> {
                     ])
                     .sort((left: any, right: any) =>
                         String(left[0]).localeCompare(String(right[0]))
-                    )
-            });
+                    );
             const glyphs: Record<string, unknown> = {};
+            const props: Record<string, unknown> = {};
             const kerning: Record<string, Record<string, number>> = {};
+            const kerningRtl: Record<string, Record<string, number>> = {};
             const catalog: Record<string, number[]> = {};
             const font = w.currentFontModel;
-            const feature = (font?.features?.features ?? []).find(
+            const allNames = [
+                ...names,
+                ...(font?.glyphs ?? [])
+                    .map((glyph: any) => glyph.name)
+                    .filter(
+                        (name: string) =>
+                            name.startsWith(newPrefix) && !names.includes(name)
+                    )
+                    .sort()
+            ];
+            const featureList = font?.features?.features ?? [];
+            const feature = featureList.find(
                 (entry: any) => entry?.[0] === featureTag
             );
             const features: string | null = feature?.[1]?.code ?? null;
+            const featureSet = {
+                tags: featureList.map((entry: any) => entry?.[0]),
+                code: Object.fromEntries(
+                    featureList
+                        .filter((entry: any) => entry?.[0] !== featureTag)
+                        .map((entry: any) => [entry[0], entry[1]?.code ?? ''])
+                ),
+                prefixes: Object.fromEntries(
+                    Object.entries(font?.features?.prefixes ?? {}).map(
+                        ([name, value]: [string, any]) => [name, value?.code]
+                    )
+                ),
+                classes: Object.fromEntries(
+                    Object.entries(font?.features?.classes ?? {}).map(
+                        ([name, value]: [string, any]) => [name, value?.code]
+                    )
+                )
+            };
             const sortedGroups = (
                 groups: Record<string, string[]> | undefined
             ) =>
@@ -616,36 +759,132 @@ export async function readFuzzSnapshot(page: Page): Promise<FuzzSnapshot> {
                 first: sortedGroups(font?.first_kern_groups),
                 second: sortedGroups(font?.second_kern_groups)
             };
-            {
-                for (const name of names) {
-                    const glyph = font?.findGlyph?.(name);
-                    catalog[name] = [...(glyph?.codepoints ?? [])].sort(
-                        (left: number, right: number) => left - right
-                    );
-                    glyphs[name] = glyph
-                        ? Object.fromEntries(
-                              (glyph.drawings ?? []).map((item: any) => [
-                                  item.id,
-                                  drawing(item)
-                              ])
-                          )
-                        : null;
+            for (const name of allNames) {
+                const glyph = font?.findGlyph?.(name);
+                catalog[name] = [...(glyph?.codepoints ?? [])].sort(
+                    (left: number, right: number) => left - right
+                );
+                if (!glyph) {
+                    glyphs[name] = null;
+                    props[name] = null;
+                    continue;
                 }
-                for (const station of font?.stations ?? []) {
-                    kerning[station.id] = { ...(station.kerning ?? {}) };
-                }
+                const layers: any[] =
+                    (glyph.toJSON?.() ?? glyph.data)?.layers ?? [];
+                const backgroundIds = new Set(
+                    layers
+                        .map((layer) => layer.background_layer_id)
+                        .filter(Boolean)
+                );
+                glyphs[name] = Object.fromEntries(
+                    layers.map((layer) => {
+                        const drawing = (glyph.drawings ?? []).find(
+                            (item: any) => item.id === layer.id
+                        );
+                        return [
+                            layer.id,
+                            {
+                                width: round(drawing?.width ?? layer.width),
+                                shapes: drawing
+                                    ? (drawing.shapes ?? []).map(shape)
+                                    : (layer.shapes ?? []).map(rawShape),
+                                anchors: anchorsOf(
+                                    drawing ? drawing.anchors : layer.anchors
+                                )
+                            }
+                        ];
+                    })
+                );
+                props[name] = {
+                    category: glyph.category ?? null,
+                    production_name: glyph.production_name ?? null,
+                    exported: glyph.exported !== false,
+                    leftMetricsKey: glyph.leftMetricsKey ?? null,
+                    rightMetricsKey: glyph.rightMetricsKey ?? null,
+                    variations: (glyph.featureVariations ?? [])
+                        .map((variation: any) =>
+                            JSON.stringify(variation.axisRules ?? null)
+                        )
+                        .sort(),
+                    layers: Object.fromEntries(
+                        layers.map((layer) => [
+                            layer.id,
+                            [
+                                backgroundIds.has(layer.id)
+                                    ? 'background'
+                                    : (layer.master?.type ?? 'none'),
+                                layer.master?.master ?? null,
+                                layer.location ?? null,
+                                layer.background_layer_id ?? null
+                            ]
+                        ])
+                    )
+                };
             }
-            for (const stationId of Object.keys(kerning)) {
-                kerning[stationId] = Object.fromEntries(
-                    Object.entries(kerning[stationId])
+            for (const station of font?.stations ?? []) {
+                kerning[station.id] = { ...(station.kerning ?? {}) };
+                kerningRtl[station.id] = { ...(station.kerning_rtl ?? {}) };
+            }
+            const sortedPairs = (pairs: Record<string, number>) =>
+                Object.fromEntries(
+                    Object.entries(pairs)
                         .filter(([, value]) => value !== 0 && value != null)
                         .sort(([left], [right]) => left.localeCompare(right))
                         .map(([pair, value]) => [pair, round(value) as number])
                 );
+            for (const stationId of Object.keys(kerning)) {
+                kerning[stationId] = sortedPairs(kerning[stationId]);
+                kerningRtl[stationId] = sortedPairs(kerningRtl[stationId]);
             }
-            return { glyphs, kerning, features, groups, catalog };
+            const plain = (value: unknown) =>
+                value === undefined ? null : JSON.parse(JSON.stringify(value));
+            const fontData = {
+                axes: plain(
+                    (font?.axes ?? []).map((axis: any) => [
+                        axis.tag,
+                        axis.min,
+                        axis.default,
+                        axis.max
+                    ])
+                ),
+                stations: plain(
+                    (font?.stations ?? []).map((station: any) => ({
+                        id: station.id,
+                        name: station.name,
+                        location: station.location,
+                        metrics: station.metrics
+                    }))
+                ),
+                instances: plain(
+                    (font?.instances ?? []).map((instance: any) => ({
+                        id: instance.id,
+                        name: instance.name,
+                        location: instance.location
+                    }))
+                ),
+                info: plain({
+                    version: font?.version,
+                    designer: font?.names?.designer,
+                    vendor: font?.custom_ot_values?.os2_vendor_id ?? null
+                })
+            };
+            return {
+                glyphs,
+                props,
+                kerning,
+                kerningRtl,
+                features,
+                featureSet,
+                groups,
+                catalog,
+                font: fontData
+            };
         },
-        { names: FUZZ_GLYPHS, featureTag: FUZZ_FEATURE_TAG }
+        {
+            names: FUZZ_GLYPHS,
+            featureTag: FUZZ_FEATURE_TAG,
+            newPrefix: FUZZ_NEW_GLYPH_PREFIX
+        }
     );
 }
 
@@ -729,20 +968,327 @@ export type FuzzEdit =
           master: FuzzStationId;
           automatic: boolean;
       }
-    | { kind: 'kern'; master: FuzzStationId; pair: string; value: number }
-    | { kind: 'kern-delete'; master: FuzzStationId; pair: string }
+    | {
+          kind: 'kern';
+          master: FuzzStationId;
+          pair: string;
+          value: number;
+          rtl?: boolean;
+      }
+    | {
+          kind: 'kern-delete';
+          master: FuzzStationId;
+          pair: string;
+          rtl?: boolean;
+      }
     | {
           kind: 'kern-group';
           master: FuzzStationId;
           glyph: string;
           group: string;
           include: boolean;
+          side?: 'first' | 'second';
       }
+    | ExtendedFuzzEdit
     | { kind: 'feature'; master: FuzzStationId; value: number }
     | { kind: 'unicode'; master: FuzzStationId; glyph: string; add: boolean }
     | { kind: 'undo' | 'redo'; glyph: string; master: FuzzStationId };
 
+/**
+ * Edits beyond the first ten kinds: outline structure, transforms,
+ * keyboard nudges, components, anchors, glyph properties and metrics keys,
+ * free, background and variation drawings, glyphs added, renamed and
+ * deleted, kerning groups, the feature list, prefixes and classes, station
+ * metrics, instances and font info. Structural edits change every drawing
+ * of the glyph alike, so the glyph stays compatible.
+ */
+export type ExtendedFuzzEdit =
+    | {
+          kind: 'node-insert' | 'node-remove' | 'smooth';
+          glyph: string;
+          master: FuzzStationId;
+          shape: number;
+          node: number;
+      }
+    | {
+          kind: 'contour-add';
+          glyph: string;
+          master: FuzzStationId;
+          rect: [number, number, number, number];
+      }
+    | {
+          kind: 'contour-remove' | 'contour-reverse';
+          glyph: string;
+          master: FuzzStationId;
+          shape: number;
+      }
+    | {
+          kind: 'contour-open';
+          glyph: string;
+          master: FuzzStationId;
+          shape: number;
+          closed: boolean;
+      }
+    | {
+          kind: 'transform';
+          glyph: string;
+          master: FuzzStationId;
+          op: 'scale' | 'rotate' | 'flip';
+      }
+    | {
+          kind: 'nudge';
+          glyph: string;
+          master: FuzzStationId;
+          target: 'point' | 'anchor' | 'component';
+          shape: number;
+          index: number;
+          key: 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown';
+          shift: boolean;
+      }
+    | {
+          kind: 'component-add';
+          glyph: string;
+          master: FuzzStationId;
+          reference: string;
+          x: number;
+          y: number;
+      }
+    | {
+          kind: 'component-remove' | 'component-decompose';
+          glyph: string;
+          master: FuzzStationId;
+          shape: number;
+      }
+    | {
+          kind: 'component-swap';
+          glyph: string;
+          master: FuzzStationId;
+          shape: number;
+          reference: string;
+      }
+    | {
+          kind: 'component-transform';
+          glyph: string;
+          master: FuzzStationId;
+          shape: number;
+          dx: number;
+          dy: number;
+          scale: number;
+      }
+    | {
+          kind: 'anchor-add';
+          glyph: string;
+          master: FuzzStationId;
+          name: string;
+          x: number;
+          y: number;
+      }
+    | {
+          kind: 'anchor-remove';
+          glyph: string;
+          master: FuzzStationId;
+          name: string;
+      }
+    | {
+          kind: 'anchor-rename';
+          glyph: string;
+          master: FuzzStationId;
+          name: string;
+          to: string;
+      }
+    | {
+          kind: 'glyph-property';
+          glyph: string;
+          master: FuzzStationId;
+          property: 'category' | 'production_name' | 'exported';
+          value: string | boolean | null;
+      }
+    | {
+          kind: 'metrics-key';
+          glyph: string;
+          master: FuzzStationId;
+          side: 'left' | 'right';
+          value: string | null;
+      }
+    | {
+          kind: 'free-drawing';
+          glyph: string;
+          master: FuzzStationId;
+          op: 'add' | 'remove' | 'edit';
+          wght: number;
+          drawing: string | null;
+          dx: number;
+          dy: number;
+      }
+    | {
+          kind: 'background';
+          glyph: string;
+          master: FuzzStationId;
+          op: 'add' | 'edit' | 'clear';
+          dx: number;
+          dy: number;
+      }
+    | {
+          kind: 'variation';
+          glyph: string;
+          master: FuzzStationId;
+          op: 'add' | 'remove' | 'edit';
+          min: number;
+          dx: number;
+          dy: number;
+      }
+    | {
+          kind: 'glyph-add' | 'glyph-delete';
+          master: FuzzStationId;
+          name: string;
+      }
+    | {
+          kind: 'glyph-rename';
+          master: FuzzStationId;
+          name: string;
+          to: string;
+      }
+    | {
+          kind: 'kern-group-delete';
+          master: FuzzStationId;
+          side: 'first' | 'second';
+          group: string;
+      }
+    | {
+          kind: 'feature-list';
+          master: FuzzStationId;
+          op: 'add' | 'remove' | 'move';
+      }
+    | { kind: 'feature-prefix'; master: FuzzStationId; value: number }
+    | { kind: 'feature-class'; master: FuzzStationId; members: string[] }
+    | {
+          kind: 'station-metric';
+          master: FuzzStationId;
+          key: string;
+          value: number;
+      }
+    | {
+          kind: 'instance';
+          master: FuzzStationId;
+          op: 'add' | 'edit' | 'remove';
+          id: string;
+          wght: number;
+      }
+    | {
+          kind: 'font-info';
+          master: FuzzStationId;
+          field: 'designer' | 'version' | 'vendor';
+          value: number;
+      };
+
+const EXTENDED_KINDS = new Set<string>([
+    'node-insert',
+    'node-remove',
+    'smooth',
+    'contour-add',
+    'contour-remove',
+    'contour-reverse',
+    'contour-open',
+    'transform',
+    'nudge',
+    'component-add',
+    'component-remove',
+    'component-decompose',
+    'component-swap',
+    'component-transform',
+    'anchor-add',
+    'anchor-remove',
+    'anchor-rename',
+    'glyph-property',
+    'metrics-key',
+    'free-drawing',
+    'background',
+    'variation',
+    'glyph-add',
+    'glyph-delete',
+    'glyph-rename',
+    'kern-group-delete',
+    'feature-list',
+    'feature-prefix',
+    'feature-class',
+    'station-metric',
+    'instance',
+    'font-info'
+]);
+
+export function isExtendedFuzzEdit(edit: FuzzEdit): edit is ExtendedFuzzEdit {
+    return EXTENDED_KINDS.has(edit.kind);
+}
+
+function describeExtendedFuzzEdit(edit: ExtendedFuzzEdit): string {
+    const at =
+        'glyph' in edit ? `${edit.glyph}/${edit.master}` : `${edit.master}`;
+    switch (edit.kind) {
+        case 'node-insert':
+        case 'node-remove':
+        case 'smooth':
+            return `${edit.kind} ${at} shape ${edit.shape} node ${edit.node}`;
+        case 'contour-add':
+            return `contour-add ${at} [${edit.rect.join(', ')}]`;
+        case 'contour-remove':
+        case 'contour-reverse':
+        case 'component-remove':
+        case 'component-decompose':
+            return `${edit.kind} ${at} shape ${edit.shape}`;
+        case 'contour-open':
+            return `${edit.closed ? 'close' : 'open'} contour ${at} shape ${edit.shape}`;
+        case 'transform':
+            return `transform ${at} ${edit.op}`;
+        case 'nudge':
+            return `nudge ${at} ${edit.target} ${edit.target === 'point' ? `${edit.shape}:` : ''}${edit.index} ${edit.shift ? 'shift+' : ''}${edit.key}`;
+        case 'component-add':
+            return `component-add ${at} ${edit.reference} at (${edit.x}, ${edit.y})`;
+        case 'component-swap':
+            return `component-swap ${at} shape ${edit.shape} to ${edit.reference}`;
+        case 'component-transform':
+            return `component-transform ${at} shape ${edit.shape} by (${edit.dx}, ${edit.dy}) scale ${edit.scale}`;
+        case 'anchor-add':
+            return `anchor-add ${at} ${edit.name} at (${edit.x}, ${edit.y})`;
+        case 'anchor-remove':
+            return `anchor-remove ${at} ${edit.name}`;
+        case 'anchor-rename':
+            return `anchor-rename ${at} ${edit.name} to ${edit.to}`;
+        case 'glyph-property':
+            return `glyph-property ${edit.glyph} ${edit.property} = ${JSON.stringify(edit.value)}`;
+        case 'metrics-key':
+            return `metrics-key ${edit.glyph} ${edit.side} = ${JSON.stringify(edit.value)}`;
+        case 'free-drawing':
+            return `free-drawing ${edit.op} ${edit.glyph} at wght ${edit.wght}${edit.op === 'edit' ? ` by (${edit.dx}, ${edit.dy})` : ''}`;
+        case 'background':
+            return `background ${edit.op} ${at}${edit.op === 'edit' ? ` by (${edit.dx}, ${edit.dy})` : ''}`;
+        case 'variation':
+            return `variation ${edit.op} ${edit.glyph} wght ≥ ${edit.min}${edit.op === 'edit' ? ` by (${edit.dx}, ${edit.dy})` : ''}`;
+        case 'glyph-add':
+        case 'glyph-delete':
+            return `${edit.kind} ${edit.name}`;
+        case 'glyph-rename':
+            return `glyph-rename ${edit.name} to ${edit.to}`;
+        case 'kern-group-delete':
+            return `delete ${edit.side} kerning group @${edit.group}`;
+        case 'feature-list':
+            return `feature-list ${edit.op} ${FUZZ_EXTRA_FEATURE[0]}`;
+        case 'feature-prefix':
+            return `languagesystems prefix, mark ${edit.value}`;
+        case 'feature-class':
+            return `class @fuzz = [${edit.members.join(' ')}]`;
+        case 'station-metric':
+            return `station-metric ${edit.master} ${edit.key} = ${edit.value}`;
+        case 'instance':
+            return `instance ${edit.op} ${edit.id} at wght ${edit.wght}`;
+        case 'font-info':
+            return `font-info ${edit.field} = ${edit.value}`;
+    }
+}
+
 export function describeFuzzEdit(edit: FuzzEdit): string {
+    if (isExtendedFuzzEdit(edit)) {
+        return describeExtendedFuzzEdit(edit);
+    }
     switch (edit.kind) {
         case 'outline':
             return `outline ${edit.glyph}/${edit.master} shape ${edit.shape} node ${edit.node} by (${edit.dx}, ${edit.dy})`;
@@ -753,11 +1299,11 @@ export function describeFuzzEdit(edit: FuzzEdit): string {
         case 'align':
             return `automatic alignment ${edit.automatic ? 'on' : 'off'} ${edit.glyph}/${edit.master}`;
         case 'kern':
-            return `kern ${edit.pair}/${edit.master} = ${edit.value}`;
+            return `kern${edit.rtl ? ' rtl' : ''} ${edit.pair}/${edit.master} = ${edit.value}`;
         case 'kern-delete':
-            return `delete kern ${edit.pair}/${edit.master}`;
+            return `delete kern${edit.rtl ? ' rtl' : ''} ${edit.pair}/${edit.master}`;
         case 'kern-group':
-            return `${edit.include ? 'add' : 'remove'} ${edit.glyph} ${edit.include ? 'to' : 'from'} kerning group @${edit.group}`;
+            return `${edit.include ? 'add' : 'remove'} ${edit.glyph} ${edit.include ? 'to' : 'from'} ${edit.side ?? 'first'} kerning group @${edit.group}`;
         case 'feature':
             return `feature ${FUZZ_FEATURE_TAG} code, mark ${edit.value}`;
         case 'unicode':
@@ -779,6 +1325,10 @@ export async function applyFuzzEdit(
     options: { awaitCloud?: boolean } = {}
 ) {
     await openFuzzGlyph(page, fuzzEditOpenGlyph(edit), edit.master);
+    if (isExtendedFuzzEdit(edit)) {
+        await applyExtendedFuzzEdit(page, edit, options.awaitCloud !== false);
+        return;
+    }
     await page.evaluate(
         async (step) => {
             const w = window as any;
@@ -837,9 +1387,15 @@ export async function applyFuzzEdit(
                     'keyboard-kerning-value',
                     'kerning-value',
                     () => {
-                        const next = { ...station.kerning };
-                        delete next[step.pair];
-                        station.kerning = next;
+                        if (step.rtl) {
+                            const next = { ...station.kerning_rtl };
+                            delete next[step.pair];
+                            station.kerning_rtl = next;
+                        } else {
+                            const next = { ...station.kerning };
+                            delete next[step.pair];
+                            station.kerning = next;
+                        }
                     }
                 );
             } else if (step.kind === 'kern-group') {
@@ -851,9 +1407,13 @@ export async function applyFuzzEdit(
                     'keyboard-kerning-groups',
                     'kerning-groups',
                     () => {
+                        const property =
+                            step.side === 'second'
+                                ? 'second_kern_groups'
+                                : 'first_kern_groups';
                         const groups: Record<string, string[]> = {};
                         for (const [name, members] of Object.entries(
-                            font.first_kern_groups ?? {}
+                            font[property] ?? {}
                         )) {
                             groups[name] = [...(members as string[])];
                         }
@@ -863,7 +1423,7 @@ export async function applyFuzzEdit(
                         groups[step.group] = step.include
                             ? [...members, step.glyph]
                             : members;
-                        font.first_kern_groups = groups;
+                        font[property] = groups;
                     }
                 );
             } else if (step.kind === 'feature') {
@@ -934,10 +1494,17 @@ export async function applyFuzzEdit(
                     'keyboard-kerning-value',
                     'kerning-value',
                     () => {
-                        station.kerning = {
-                            ...station.kerning,
-                            [step.pair]: step.value
-                        };
+                        if (step.rtl) {
+                            station.kerning_rtl = {
+                                ...station.kerning_rtl,
+                                [step.pair]: step.value
+                            };
+                        } else {
+                            station.kerning = {
+                                ...station.kerning,
+                                [step.pair]: step.value
+                            };
+                        }
                     }
                 );
             } else {
@@ -1024,13 +1591,693 @@ export async function applyFuzzEdit(
     );
 }
 
+/**
+ * Apply an extended edit in this window: a model transaction, as the editor
+ * commits it, except glyph add, rename and delete (which record their own
+ * transaction) and the keyboard nudge (the outline editor's own key path).
+ */
+async function applyExtendedFuzzEdit(
+    page: Page,
+    edit: ExtendedFuzzEdit,
+    awaitCloud: boolean
+) {
+    await page.evaluate(
+        async ({ step, awaitCloud: wait, stationIds, extra, systems }) => {
+            const w = window as any;
+            const bridge = w.patchSyncEngine;
+            const font = w.currentFontModel;
+            const plain = (value: unknown) =>
+                value === undefined
+                    ? undefined
+                    : JSON.parse(JSON.stringify(value));
+            const transact = (
+                label: string,
+                source: string,
+                editType: string | null,
+                mutate: () => void
+            ) => {
+                bridge.beginTransaction(label, null, {
+                    compileChangeSource: source,
+                    compileEditType: editType
+                });
+                try {
+                    mutate();
+                } finally {
+                    bridge.endTransaction();
+                }
+            };
+            const glyphName = 'glyph' in step ? step.glyph : '';
+            const glyph = glyphName ? font.findGlyph(glyphName) : null;
+            const atStation = (id: string) => {
+                const drawing = glyph.findDrawingById(id);
+                if (!drawing) {
+                    throw new Error(`${glyphName} has no drawing ${id}`);
+                }
+                return drawing;
+            };
+            const rawLayers = (): any[] =>
+                (glyph.toJSON?.() ?? glyph.data)?.layers ?? [];
+            // Every drawing that interpolates with the others: station,
+            // free and variation drawings, not backgrounds.
+            const compatible = () => {
+                const layers = rawLayers();
+                const backgrounds = new Set(
+                    layers
+                        .map((layer) => layer.background_layer_id)
+                        .filter(Boolean)
+                );
+                return layers
+                    .filter((layer) => !backgrounds.has(layer.id))
+                    .map((layer) => {
+                        const drawing =
+                            glyph.findDrawingById(layer.id) ??
+                            (glyph.featureVariations ?? [])
+                                .map((variation: any) =>
+                                    variation.findDrawingById?.(layer.id)
+                                )
+                                .find(Boolean);
+                        if (!drawing) {
+                            throw new Error(
+                                `${glyphName} drawing ${layer.id} is not reachable`
+                            );
+                        }
+                        return drawing;
+                    });
+            };
+            const pathAt = (drawing: any, index: number) => {
+                const path = drawing.shapes[index]?.asPath?.();
+                if (!path || drawing.shapes[index]?.isComponent?.()) {
+                    throw new Error(
+                        `${glyphName} shape ${index} is not a contour`
+                    );
+                }
+                return path;
+            };
+            const componentAt = (drawing: any, index: number) => {
+                const shape = drawing.shapes[index];
+                if (!shape?.isComponent?.()) {
+                    throw new Error(
+                        `${glyphName} shape ${index} is not a component`
+                    );
+                }
+                return shape.asComponent();
+            };
+            const appendRect = (path: any, [x0, y0, x1, y1]: number[]) => {
+                path.appendNode(x0, y0, 'Line');
+                path.appendNode(x1, y0, 'Line');
+                path.appendNode(x1, y1, 'Line');
+                path.appendNode(x0, y1, 'Line');
+            };
+            // Copy shapes and anchors into a new drawing, each point mixed
+            // from two drawings (t = 0 copies `from`) and moved by dy.
+            const copyMixed = (
+                target: any,
+                from: any,
+                to: any,
+                t: number,
+                dy = 0
+            ) => {
+                const mix = (a: number, b: number) =>
+                    Math.round(a + (b - a) * t);
+                from.shapes.forEach((shape: any, index: number) => {
+                    const other = to.shapes[index];
+                    if (shape.isComponent?.()) {
+                        const a = shape.asComponent();
+                        const b = other.asComponent();
+                        const [ax, ay] = a.transform?.translation ?? [0, 0];
+                        const [bx, by] = b.transform?.translation ?? [0, 0];
+                        target.addComponent(a.reference, {
+                            translation: [mix(ax, bx), mix(ay, by) + dy],
+                            scale: [1, 1],
+                            rotation: 0,
+                            skew: [0, 0]
+                        });
+                        return;
+                    }
+                    const a = shape.asPath();
+                    const b = other.asPath();
+                    const path = target.addPath(a.closed !== false);
+                    a.nodes.forEach((node: any, nodeIndex: number) => {
+                        const peer = b.nodes[nodeIndex];
+                        path.appendNode(
+                            mix(node.x, peer.x),
+                            mix(node.y, peer.y) + dy,
+                            node.nodetype,
+                            node.smooth
+                        );
+                    });
+                });
+                (from.anchors ?? []).forEach((anchor: any, index: number) => {
+                    const peer = to.anchors[index];
+                    target.addAnchor(
+                        mix(anchor.x, peer.x),
+                        mix(anchor.y, peer.y) + dy,
+                        anchor.name
+                    );
+                });
+            };
+            const moveFirstNode = (drawing: any, dx: number, dy: number) => {
+                const node = drawing.paths?.[0]?.nodes?.[0];
+                if (!node) {
+                    throw new Error(
+                        `${glyphName} drawing ${drawing.id} has no point`
+                    );
+                }
+                node.x = node.x + dx;
+                node.y = node.y + dy;
+            };
+            const outline = (label: string, mutate: () => void) =>
+                transact(label, 'keyboard-outline', null, mutate);
+            const fontInfo = (label: string, mutate: () => void) =>
+                transact(label, 'font-info', null, mutate);
+
+            switch (step.kind) {
+                case 'node-insert':
+                    outline('Insert point', () => {
+                        for (const drawing of compatible()) {
+                            const path = pathAt(drawing, step.shape);
+                            const count = path.nodes.length;
+                            const before =
+                                path.nodes[(step.node - 1 + count) % count];
+                            const after = path.nodes[step.node];
+                            path.insertNode(
+                                step.node,
+                                Math.round((before.x + after.x) / 2),
+                                Math.round((before.y + after.y) / 2),
+                                'Line'
+                            );
+                        }
+                    });
+                    break;
+                case 'node-remove':
+                    outline('Delete point', () => {
+                        for (const drawing of compatible()) {
+                            pathAt(drawing, step.shape).removeNode(step.node);
+                        }
+                    });
+                    break;
+                case 'smooth':
+                    // Smoothness is part of a point's type when drawings
+                    // interpolate, so it changes in every drawing alike.
+                    outline('Toggle smooth', () => {
+                        const smooth = !pathAt(
+                            atStation(step.master),
+                            step.shape
+                        ).nodes[step.node].smooth;
+                        for (const drawing of compatible()) {
+                            pathAt(drawing, step.shape).nodes[
+                                step.node
+                            ].smooth = smooth;
+                        }
+                    });
+                    break;
+                case 'contour-add':
+                    outline('Add contour', () => {
+                        for (const drawing of compatible()) {
+                            appendRect(drawing.addPath(true), step.rect);
+                        }
+                    });
+                    break;
+                case 'contour-remove':
+                    outline('Delete contour', () => {
+                        for (const drawing of compatible()) {
+                            pathAt(drawing, step.shape);
+                            drawing.removeShape(step.shape);
+                        }
+                    });
+                    break;
+                case 'contour-reverse':
+                    outline('Reverse contour direction', () => {
+                        for (const drawing of compatible()) {
+                            const path = pathAt(drawing, step.shape);
+                            const nodes = path.nodes.map((node: any) => [
+                                node.x,
+                                node.y,
+                                node.nodetype,
+                                node.smooth
+                            ]);
+                            while (path.nodes.length) {
+                                path.removeNode(0);
+                            }
+                            for (const [
+                                x,
+                                y,
+                                type,
+                                smooth
+                            ] of nodes.reverse()) {
+                                path.appendNode(x, y, type, smooth);
+                            }
+                        }
+                    });
+                    break;
+                case 'contour-open':
+                    outline(
+                        step.closed ? 'Close contour' : 'Open contour',
+                        () => {
+                            for (const drawing of compatible()) {
+                                pathAt(drawing, step.shape).closed =
+                                    step.closed;
+                            }
+                        }
+                    );
+                    break;
+                case 'transform': {
+                    const drawing = atStation(step.master);
+                    const points = drawing.paths.flatMap(
+                        (path: any) => path.nodes
+                    );
+                    const xs = points.map((node: any) => node.x);
+                    const ys = points.map((node: any) => node.y);
+                    const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+                    const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+                    const angle = (10 * Math.PI) / 180;
+                    const map = (x: number, y: number): [number, number] => {
+                        if (step.op === 'scale') {
+                            return [cx + (x - cx) * 1.1, cy + (y - cy) * 1.1];
+                        }
+                        if (step.op === 'rotate') {
+                            return [
+                                cx +
+                                    (x - cx) * Math.cos(angle) -
+                                    (y - cy) * Math.sin(angle),
+                                cy +
+                                    (x - cx) * Math.sin(angle) +
+                                    (y - cy) * Math.cos(angle)
+                            ];
+                        }
+                        return [2 * cx - x, y];
+                    };
+                    outline('Transform', () => {
+                        for (const item of [
+                            ...points,
+                            ...(drawing.anchors ?? [])
+                        ]) {
+                            const [x, y] = map(item.x, item.y);
+                            item.x = Math.round(x);
+                            item.y = Math.round(y);
+                        }
+                    });
+                    break;
+                }
+                case 'nudge': {
+                    const editor = w.glyphCanvas.outlineEditor;
+                    const drawing = atStation(step.master);
+                    const before = JSON.stringify(drawing.toJSON());
+                    editor.selectedPoints =
+                        step.target === 'point'
+                            ? [
+                                  {
+                                      contourIndex: step.shape,
+                                      nodeIndex: step.index
+                                  }
+                              ]
+                            : [];
+                    editor.selectedAnchors =
+                        step.target === 'anchor' ? [step.index] : [];
+                    editor.selectedComponents =
+                        step.target === 'component' ? [step.shape] : [];
+                    const canvas = w.glyphCanvas.canvas;
+                    const init = {
+                        key: step.key,
+                        code: step.key,
+                        shiftKey: step.shift,
+                        bubbles: true,
+                        cancelable: true
+                    };
+                    canvas.dispatchEvent(new KeyboardEvent('keydown', init));
+                    canvas.dispatchEvent(new KeyboardEvent('keyup', init));
+                    const deadline = Date.now() + 5000;
+                    while (
+                        JSON.stringify(drawing.toJSON()) === before &&
+                        Date.now() < deadline
+                    ) {
+                        await new Promise((resolve) => setTimeout(resolve, 50));
+                    }
+                    await editor.flushPendingKeyboardPreviewCommit?.();
+                    editor.selectedPoints = [];
+                    editor.selectedAnchors = [];
+                    editor.selectedComponents = [];
+                    if (JSON.stringify(drawing.toJSON()) === before) {
+                        throw new Error(`the ${step.key} key moved nothing`);
+                    }
+                    break;
+                }
+                case 'component-add':
+                    transact(
+                        'Add component',
+                        'component-property',
+                        null,
+                        () => {
+                            for (const drawing of compatible()) {
+                                drawing.addComponent(step.reference, {
+                                    translation: [step.x, step.y],
+                                    scale: [1, 1],
+                                    rotation: 0,
+                                    skew: [0, 0]
+                                });
+                            }
+                        }
+                    );
+                    break;
+                case 'component-remove':
+                    transact(
+                        'Remove component',
+                        'component-property',
+                        null,
+                        () => {
+                            for (const drawing of compatible()) {
+                                componentAt(drawing, step.shape);
+                                drawing.removeShape(step.shape);
+                            }
+                        }
+                    );
+                    break;
+                case 'component-swap':
+                    transact(
+                        'Change component',
+                        'component-property',
+                        null,
+                        () => {
+                            for (const drawing of compatible()) {
+                                componentAt(drawing, step.shape).reference =
+                                    step.reference;
+                            }
+                        }
+                    );
+                    break;
+                case 'component-decompose':
+                    transact(
+                        'Decompose component',
+                        'component-property',
+                        null,
+                        () => {
+                            for (const drawing of compatible()) {
+                                componentAt(drawing, step.shape).decompose();
+                            }
+                        }
+                    );
+                    break;
+                case 'component-transform':
+                    transact(
+                        'Transform component',
+                        'component-property',
+                        null,
+                        () => {
+                            const component = componentAt(
+                                atStation(step.master),
+                                step.shape
+                            );
+                            const transform = plain(component.transform) ?? {};
+                            const [x, y] = transform.translation ?? [0, 0];
+                            component.transform = {
+                                ...transform,
+                                translation: [x + step.dx, y + step.dy],
+                                scale: [step.scale, step.scale]
+                            };
+                        }
+                    );
+                    break;
+                case 'anchor-add':
+                    outline('Add anchor', () => {
+                        for (const drawing of compatible()) {
+                            drawing.addAnchor(step.x, step.y, step.name);
+                        }
+                    });
+                    break;
+                case 'anchor-remove':
+                    outline('Delete anchor', () => {
+                        for (const drawing of compatible()) {
+                            const index = (drawing.anchors ?? []).findIndex(
+                                (anchor: any) => anchor.name === step.name
+                            );
+                            if (index >= 0) {
+                                drawing.removeAnchor(index);
+                            }
+                        }
+                    });
+                    break;
+                case 'anchor-rename':
+                    outline('Rename anchor', () => {
+                        for (const drawing of compatible()) {
+                            const anchor = (drawing.anchors ?? []).find(
+                                (item: any) => item.name === step.name
+                            );
+                            if (anchor) {
+                                anchor.name = step.to;
+                            }
+                        }
+                    });
+                    break;
+                case 'glyph-property':
+                    fontInfo('Set glyph property', () => {
+                        glyph[step.property] =
+                            step.value === null ? undefined : step.value;
+                    });
+                    break;
+                case 'metrics-key':
+                    transact(
+                        'Set metrics key',
+                        'keyboard-sidebearing',
+                        null,
+                        () => {
+                            glyph[`${step.side}MetricsKey`] =
+                                step.value ?? undefined;
+                            for (const drawing of glyph.drawings ?? []) {
+                                drawing.recomputeOwnMetricsKeys?.();
+                            }
+                        }
+                    );
+                    break;
+                case 'free-drawing':
+                    if (step.op === 'add') {
+                        outline('Add free drawing', () => {
+                            const from = atStation(stationIds[0]);
+                            const to = atStation(stationIds[1]);
+                            const t = (step.wght - 100) / 800;
+                            const drawing = glyph.addDrawing(
+                                Math.round(
+                                    from.width + (to.width - from.width) * t
+                                ),
+                                { type: 'FreeFloating' }
+                            );
+                            drawing.location = { wght: step.wght };
+                            copyMixed(drawing, from, to, t);
+                        });
+                    } else if (step.op === 'remove') {
+                        outline('Remove free drawing', () => {
+                            glyph.removeDrawingById(step.drawing);
+                        });
+                    } else {
+                        outline('Move point', () => {
+                            moveFirstNode(
+                                glyph.findDrawingById(step.drawing),
+                                step.dx,
+                                step.dy
+                            );
+                        });
+                    }
+                    break;
+                case 'background': {
+                    const foreground = atStation(step.master);
+                    if (step.op === 'add') {
+                        outline('Add background contour', () => {
+                            const background =
+                                glyph.addBackgroundDrawing(foreground);
+                            appendRect(
+                                background.addPath(true),
+                                [30, -120, 260, 80]
+                            );
+                        });
+                    } else if (step.op === 'edit') {
+                        outline('Move background point', () => {
+                            moveFirstNode(
+                                foreground.backgroundDrawing,
+                                step.dx,
+                                step.dy
+                            );
+                        });
+                    } else {
+                        outline('Clear background', () => {
+                            const background = foreground.backgroundDrawing;
+                            while (background.shapes.length) {
+                                background.removeShape(0);
+                            }
+                        });
+                    }
+                    break;
+                }
+                case 'variation':
+                    if (step.op === 'add') {
+                        // As the editor's Add variation does: it makes the
+                        // variation's drawings, one per station.
+                        outline('Add variation', () => {
+                            glyph.addFeatureVariation([
+                                { min: step.min, max: 900 }
+                            ]);
+                        });
+                    } else if (step.op === 'remove') {
+                        outline('Remove variation', () => {
+                            glyph.removeFeatureVariation(
+                                glyph.featureVariations[0]
+                            );
+                        });
+                    } else {
+                        outline('Move point', () => {
+                            moveFirstNode(
+                                glyph.featureVariations[0].findDrawingByStationId(
+                                    step.master
+                                ),
+                                step.dx,
+                                step.dy
+                            );
+                        });
+                    }
+                    break;
+                case 'glyph-add':
+                    font.addGlyph(step.name, 'Base');
+                    break;
+                case 'glyph-delete':
+                    font.deleteGlyphs([step.name]);
+                    break;
+                case 'glyph-rename':
+                    font.renameGlyphs(new Map([[step.name, step.to]]));
+                    break;
+                case 'kern-group-delete':
+                    transact(
+                        'Delete kern group',
+                        'keyboard-kerning-groups',
+                        'kerning-groups',
+                        () => {
+                            const property =
+                                step.side === 'second'
+                                    ? 'second_kern_groups'
+                                    : 'first_kern_groups';
+                            const groups = plain(font[property]) ?? {};
+                            delete groups[step.group];
+                            font[property] = groups;
+                        }
+                    );
+                    break;
+                case 'feature-list':
+                case 'feature-prefix':
+                case 'feature-class':
+                    transact('Edit features', 'feature-code', 'feature', () => {
+                        const features = plain(font.features);
+                        if (step.kind === 'feature-list') {
+                            const list: any[] = features.features ?? [];
+                            if (step.op === 'add') {
+                                list.push([extra[0], { code: extra[1] }]);
+                            } else if (step.op === 'remove') {
+                                features.features = list.filter(
+                                    (entry) => entry[0] !== extra[0]
+                                );
+                            } else {
+                                features.features = [
+                                    list.at(-1),
+                                    ...list.slice(0, -1)
+                                ];
+                            }
+                        } else if (step.kind === 'feature-prefix') {
+                            features.prefixes = {
+                                ...features.prefixes,
+                                languagesystems: {
+                                    code: `${systems}${step.value % 2 ? '\nlanguagesystem latn dflt;' : ''}\n# fuzz ${step.value}`
+                                }
+                            };
+                        } else {
+                            features.classes = {
+                                ...features.classes,
+                                fuzz: { code: step.members.join(' ') }
+                            };
+                        }
+                        font.features = features;
+                    });
+                    break;
+                case 'station-metric':
+                    fontInfo('Edit station metrics', () => {
+                        const station = font.stations.find(
+                            (item: any) => item.id === step.master
+                        );
+                        station.metrics = {
+                            ...plain(station.metrics),
+                            [step.key]: step.value
+                        };
+                    });
+                    break;
+                case 'instance': {
+                    // Font Info's own commit: the instances setter alone
+                    // records nothing.
+                    let list: any[] = plain(font.instances) ?? [];
+                    if (step.op === 'add') {
+                        list.push({
+                            id: step.id,
+                            name: { dflt: `Fuzz ${step.wght}` },
+                            location: { wght: step.wght },
+                            custom_names: {},
+                            variable: false,
+                            format_specific: {}
+                        });
+                    } else if (step.op === 'edit') {
+                        list = list.map((instance) =>
+                            instance.id === step.id
+                                ? {
+                                      ...instance,
+                                      name: { dflt: `Fuzz ${step.wght}` },
+                                      location: {
+                                          ...instance.location,
+                                          wght: step.wght
+                                      }
+                                  }
+                                : instance
+                        );
+                    } else {
+                        list = list.filter(
+                            (instance) => instance.id !== step.id
+                        );
+                    }
+                    w.fontInfoManager.commitInstancesListChange(
+                        'Edit instances',
+                        list
+                    );
+                    break;
+                }
+                case 'font-info':
+                    fontInfo('Edit font info', () => {
+                        if (step.field === 'designer') {
+                            font.names = {
+                                ...plain(font.names),
+                                designer: { dflt: `Fuzz ${step.value}` }
+                            };
+                        } else if (step.field === 'version') {
+                            font.version = [1, step.value % 1000];
+                        } else {
+                            font.custom_ot_values = {
+                                ...plain(font.custom_ot_values),
+                                os2_vendor_id: `FZ${String(step.value % 100).padStart(2, '0')}`
+                            };
+                        }
+                    });
+                    break;
+            }
+            if (wait) {
+                await bridge.waitForPendingCloudCommits?.();
+            }
+        },
+        {
+            step: edit,
+            awaitCloud,
+            stationIds: FUZZ_STATIONS.map((station) => station.id),
+            extra: FUZZ_EXTRA_FEATURE,
+            systems: FUZZ_LANGUAGE_SYSTEMS
+        }
+    );
+}
+
 /** Edits of font-wide data, made with `a` open in the editor. */
 export function isFontWideFuzzEdit(edit: FuzzEdit): boolean {
     return (
-        edit.kind === 'kern' ||
-        edit.kind === 'kern-delete' ||
+        !('glyph' in edit) ||
         edit.kind === 'kern-group' ||
-        edit.kind === 'feature' ||
         edit.kind === 'unicode'
     );
 }
@@ -1159,11 +2406,34 @@ export async function readCompositionMismatches(page: Page): Promise<string[]> {
     );
 }
 
+/**
+ * A glyph-level metrics key the check can evaluate (`=name`, `=name+10`,
+ * `=name-5`), as [source glyph, offset]; null for anything else.
+ */
+function parseMetricsKey(value: unknown): [string, number] | null {
+    const match =
+        /^=?\s*([A-Za-z0-9._-]+?)\s*(?:([+-])\s*(\d+(?:\.\d+)?))?$/.exec(
+            String(value ?? '')
+        );
+    if (!match || !value) {
+        return null;
+    }
+    const offset = match[3]
+        ? Number(match[3]) * (match[2] === '-' ? -1 : 1)
+        : 0;
+    return [match[1], offset];
+}
+
 /** Keyed sidebearings that no longer match their source glyph. */
 export function metricsKeyMismatches(snapshot: FuzzSnapshot): string[] {
+    // Bounds from contours only; a drawing with components is skipped.
     const bounds = (glyph: string, station: string) => {
         const drawing = (snapshot.glyphs[glyph] as any)?.[station];
-        const xs = (drawing?.shapes ?? []).flatMap((shape: any) =>
+        const shapes = drawing?.shapes ?? [];
+        if (shapes.some((shape: any) => shape.reference)) {
+            return null;
+        }
+        const xs = shapes.flatMap((shape: any) =>
             (shape.nodes ?? []).map((node: any) => node[0])
         );
         if (!xs.length) {
@@ -1175,18 +2445,25 @@ export function metricsKeyMismatches(snapshot: FuzzSnapshot): string[] {
         };
     };
     const mismatches: string[] = [];
-    for (const { id } of FUZZ_STATIONS) {
-        for (const [glyph, side, source, offset] of FUZZ_METRICS_KEYS) {
-            const keyed = bounds(glyph, id);
-            const from = bounds(source, id);
-            if (!keyed || !from) {
+    for (const [glyph, props] of Object.entries(snapshot.props)) {
+        for (const side of ['left', 'right'] as const) {
+            const key = parseMetricsKey((props as any)?.[`${side}MetricsKey`]);
+            if (!key) {
                 continue;
             }
-            const expected = from[side] + offset;
-            if (Math.abs(keyed[side] - expected) > 0.5) {
-                mismatches.push(
-                    `${glyph}/${id} ${side} sidebearing ${keyed[side]}, key =${source}${offset || ''} gives ${expected}`
-                );
+            const [source, offset] = key;
+            for (const { id } of FUZZ_STATIONS) {
+                const keyed = bounds(glyph, id);
+                const from = bounds(source, id);
+                if (!keyed || !from) {
+                    continue;
+                }
+                const expected = from[side] + offset;
+                if (Math.abs(keyed[side] - expected) > 0.5) {
+                    mismatches.push(
+                        `${glyph}/${id} ${side} sidebearing ${keyed[side]}, key =${source}${offset || ''} gives ${expected}`
+                    );
+                }
             }
         }
     }
