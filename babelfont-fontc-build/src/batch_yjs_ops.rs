@@ -631,7 +631,8 @@ fn collect_reinterpolation_targets(
                 LayerType::FreeFloating => false,
             };
 
-            if !is_matching_master {
+            // A background is a reference drawing: nothing interpolates it.
+            if !is_matching_master || layer.is_background {
                 continue;
             }
 
@@ -699,6 +700,124 @@ fn font_with_axes(
     Ok(cloned)
 }
 
+/// A glyph's variations: its feature-variation layers (see
+/// `Layer::is_feature_variation`) grouped by their axis rules.
+fn variation_families(glyph: &babelfont::Glyph) -> Vec<Vec<&Layer>> {
+    let mut families: Vec<(&Vec<JsonValue>, Vec<&Layer>)> = Vec::new();
+    for layer in &glyph.layers {
+        let Some(rules) = layer.feature_variation_rules() else {
+            continue;
+        };
+        match families.iter_mut().find(|(known, _)| *known == rules) {
+            Some((_, layers)) => layers.push(layer),
+            None => families.push((rules, vec![layer])),
+        }
+    }
+    families.into_iter().map(|(_, layers)| layers).collect()
+}
+
+/// A copy of the font whose `glyph_name` holds only the layers of the
+/// variation with these axis rules, as the variation glyph the compile makes
+/// of them: interpolating that glyph interpolates the variation.
+fn font_with_variation_as_glyph(
+    font: &babelfont::Font,
+    glyph_name: &str,
+    rules: &[JsonValue],
+    excluded_layer_id: Option<&str>,
+) -> babelfont::Font {
+    let mut cloned = font.clone();
+    if let Some(glyph) = cloned.glyphs.get_mut(glyph_name) {
+        let family: Vec<Layer> = glyph
+            .layers
+            .iter()
+            .filter(|layer| layer.feature_variation_rules().map(Vec::as_slice) == Some(rules))
+            .filter(|layer| {
+                excluded_layer_id.is_none()
+                    || layer_id_for_batch(layer).as_deref() != excluded_layer_id
+            })
+            .cloned()
+            .map(|mut layer| {
+                layer.format_specific.remove(babelfont::FEATURE_VARIATION_ATTRIBUTES_KEY);
+                if layer.location.is_none() {
+                    if let LayerType::AssociatedWithMaster(master_id) = &layer.master {
+                        layer.master = LayerType::DefaultForMaster(master_id.clone());
+                    }
+                }
+                layer
+            })
+            .collect();
+        glyph.layers = family;
+    }
+    cloned
+}
+
+/// A new layer id for a glyph, from `base`, that none of its layers has.
+fn unused_layer_id(glyph: &babelfont::Glyph, base: &str) -> String {
+    let taken = |id: &str| glyph.layers.iter().any(|layer| layer.id.as_deref() == Some(id));
+    let mut candidate = base.to_string();
+    let mut suffix = 2;
+    while taken(&candidate) {
+        candidate = format!("{base}-{suffix}");
+        suffix += 1;
+    }
+    candidate
+}
+
+/// The layers a new master gives a glyph: its master layer, and one layer of
+/// each of its variations, each interpolated from its own layers.
+fn layers_for_new_master(
+    font: &babelfont::Font,
+    glyph: &babelfont::Glyph,
+    new_master: &Master,
+    forced_location: fontdrasil::coords::DesignLocation,
+) -> Result<Vec<(String, JsonValue)>, JsValue> {
+    let glyph_name = glyph.name.to_string();
+    let layer_id = new_master.id.clone();
+    let prototype_layer = Layer {
+        id: Some(layer_id.clone()),
+        master: LayerType::DefaultForMaster(new_master.id.clone()),
+        location: Some(new_master.location.clone()),
+        ..Layer::new(0.0)
+    };
+    let mut layers = vec![(
+        layer_id.clone(),
+        build_reinterpolated_layer(
+            font,
+            &glyph_name,
+            &prototype_layer,
+            &layer_id,
+            LayerType::DefaultForMaster(new_master.id.clone()),
+            Some(forced_location.clone()),
+            None,
+        )?,
+    )];
+    for (index, family) in variation_families(glyph).iter().enumerate() {
+        // Each master needs its layer of every variation, or the variation
+        // is left out of the compiled font.
+        let variation_id = unused_layer_id(glyph, &format!("{}.variation-{}", layer_id, index + 1));
+        let prototype = Layer {
+            id: Some(variation_id.clone()),
+            master: LayerType::AssociatedWithMaster(new_master.id.clone()),
+            location: None,
+            format_specific: family[0].format_specific.clone(),
+            ..Layer::new(0.0)
+        };
+        layers.push((
+            variation_id.clone(),
+            build_reinterpolated_layer(
+                font,
+                &glyph_name,
+                &prototype,
+                &variation_id,
+                LayerType::AssociatedWithMaster(new_master.id.clone()),
+                Some(forced_location.clone()),
+                None,
+            )?,
+        ));
+    }
+    Ok(layers)
+}
+
 fn build_reinterpolated_layer(
     font: &babelfont::Font,
     glyph_name: &str,
@@ -717,8 +836,19 @@ fn build_reinterpolated_layer(
                 ))
             })?;
 
-    let interpolation_font = excluded_layer_id
-        .map(|layer_id| clone_font_without_target_layer(font, glyph_name, layer_id));
+    // A variation layer interpolates from its variation's layers, never from
+    // the glyph's master layers.
+    let variation_rules = source_layer.feature_variation_rules().cloned();
+    let interpolation_font = match &variation_rules {
+        Some(rules) => Some(font_with_variation_as_glyph(
+            font,
+            glyph_name,
+            rules,
+            excluded_layer_id,
+        )),
+        None => excluded_layer_id
+            .map(|layer_id| clone_font_without_target_layer(font, glyph_name, layer_id)),
+    };
     let interpolation_font_ref = interpolation_font.as_ref().unwrap_or(font);
 
     let mut interpolated =
@@ -736,6 +866,19 @@ fn build_reinterpolated_layer(
         LayerType::AssociatedWithMaster(_) => forced_location,
         LayerType::DefaultForMaster(_) | LayerType::FreeFloating => None,
     };
+    if variation_rules.is_some() {
+        // Still a layer of the same variation, at its own location if it
+        // had one (a free layer of the variation), else at its master.
+        interpolated.location = source_layer.location.clone();
+        if let Some(attributes) =
+            source_layer.format_specific.get(babelfont::FEATURE_VARIATION_ATTRIBUTES_KEY)
+        {
+            interpolated.format_specific.insert(
+                babelfont::FEATURE_VARIATION_ATTRIBUTES_KEY.to_string(),
+                attributes.clone(),
+            );
+        }
+    }
 
     serde_json::to_value(interpolated)
         .map_err(|error| JsValue::from_str(&format!("Layer serialization failed: {}", error)))
@@ -1245,41 +1388,26 @@ pub fn add_master_with_interpolated_layers_yjs(master_json: &str) -> Result<JsVa
                     continue;
                 }
 
-                let layer_id = new_master.id.clone();
-                let prototype_layer = Layer {
-                    id: Some(layer_id.clone()),
-                    master: LayerType::DefaultForMaster(new_master.id.clone()),
-                    location: Some(new_master.location.clone()),
-                    ..Layer::new(0.0)
-                };
                 let forced_location = interpolation_locations
                     .get(&glyph_name)
                     .cloned()
                     .unwrap_or_else(|| new_master.location.clone());
-
-                let new_value = build_reinterpolated_layer(
-                    &interpolation_font,
-                    &glyph_name,
-                    &prototype_layer,
-                    &layer_id,
-                    LayerType::DefaultForMaster(new_master.id.clone()),
-                    Some(forced_location),
-                    None,
-                )?;
-
-                upsert_layer_json(&mut txn, &font_map, &glyph_name, &layer_id, &new_value)?;
-
-                changed_glyphs.insert(glyph_name.clone());
-                layer_targets.push(BatchLayerTarget {
-                    glyph_name: glyph_name.clone(),
-                    layer_id: layer_id.clone(),
-                });
-                layer_operations.push(BatchLayerOperation {
-                    glyph_name,
-                    layer_id,
-                    old_value: None,
-                    new_value: Some(new_value),
-                });
+                for (layer_id, new_value) in
+                    layers_for_new_master(&interpolation_font, glyph, &new_master, forced_location)?
+                {
+                    upsert_layer_json(&mut txn, &font_map, &glyph_name, &layer_id, &new_value)?;
+                    changed_glyphs.insert(glyph_name.clone());
+                    layer_targets.push(BatchLayerTarget {
+                        glyph_name: glyph_name.clone(),
+                        layer_id: layer_id.clone(),
+                    });
+                    layer_operations.push(BatchLayerOperation {
+                        glyph_name: glyph_name.clone(),
+                        layer_id,
+                        old_value: None,
+                        new_value: Some(new_value),
+                    });
+                }
             }
         }
     }
@@ -1294,41 +1422,29 @@ pub fn add_master_with_interpolated_layers_yjs(master_json: &str) -> Result<JsVa
             let Some(clone) = find_cloned_glyph_mut(&mut clones, &glyph_name) else {
                 continue;
             };
-            let layer_id = new_master.id.clone();
-            let prototype_layer = Layer {
-                id: Some(layer_id.clone()),
-                master: LayerType::DefaultForMaster(new_master.id.clone()),
-                location: Some(new_master.location.clone()),
-                ..Layer::new(0.0)
-            };
             let forced_location = interpolation_locations
                 .get(&glyph_name)
                 .cloned()
                 .unwrap_or_else(|| new_master.location.clone());
-            let new_value = build_reinterpolated_layer(
-                &interpolation_font,
-                &glyph_name,
-                &prototype_layer,
-                &layer_id,
-                LayerType::DefaultForMaster(new_master.id.clone()),
-                Some(forced_location),
-                None,
-            )?;
+            for (layer_id, new_value) in
+                layers_for_new_master(&interpolation_font, glyph, &new_master, forced_location)?
             {
-                let mut txn = clone.doc.transact_mut();
-                upsert_layer_on_glyph_root(&mut txn, &layer_id, &new_value)?;
+                {
+                    let mut txn = clone.doc.transact_mut();
+                    upsert_layer_on_glyph_root(&mut txn, &layer_id, &new_value)?;
+                }
+                changed_glyphs.insert(glyph_name.clone());
+                layer_targets.push(BatchLayerTarget {
+                    glyph_name: glyph_name.clone(),
+                    layer_id: layer_id.clone(),
+                });
+                layer_operations.push(BatchLayerOperation {
+                    glyph_name: glyph_name.clone(),
+                    layer_id,
+                    old_value: None,
+                    new_value: Some(new_value),
+                });
             }
-            changed_glyphs.insert(glyph_name.clone());
-            layer_targets.push(BatchLayerTarget {
-                glyph_name: glyph_name.clone(),
-                layer_id: layer_id.clone(),
-            });
-            layer_operations.push(BatchLayerOperation {
-                glyph_name,
-                layer_id,
-                old_value: None,
-                new_value: Some(new_value),
-            });
         }
         let core_update = clone_doc.transact().encode_diff_v1(&base_state_vector);
         let mut packets = vec![(FONT_CORE_DOCUMENT_ID.to_string(), core_update)];
@@ -2064,6 +2180,49 @@ mod tests {
             "glyphs": []
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn a_new_master_gets_a_layer_of_each_variation() {
+        let mut font = make_test_font();
+        let rules = json!({ "axisRules": [{ "min": 600 }] });
+        font.glyphs.push(
+            serde_json::from_value(json!({
+                "name": "A",
+                "category": "Base",
+                "exported": true,
+                "layers": [
+                    { "id": "M0", "width": 400, "master": { "type": "DefaultForMaster", "master": "M0" } },
+                    { "id": "M1", "width": 900, "master": { "type": "DefaultForMaster", "master": "M1" } },
+                    { "id": "v0", "width": 500, "master": { "type": "AssociatedWithMaster", "master": "M0" },
+                      "format_specific": { (babelfont::FEATURE_VARIATION_ATTRIBUTES_KEY): rules } },
+                    { "id": "v1", "width": 1000, "master": { "type": "AssociatedWithMaster", "master": "M1" },
+                      "format_specific": { (babelfont::FEATURE_VARIATION_ATTRIBUTES_KEY): rules } },
+                    { "id": "bg", "width": 1, "is_background": true,
+                      "master": { "type": "AssociatedWithMaster", "master": "M0" },
+                      "format_specific": { (babelfont::FEATURE_VARIATION_ATTRIBUTES_KEY): rules } }
+                ]
+            }))
+            .unwrap(),
+        );
+        let glyph = font.glyphs.get("A").unwrap().clone();
+        let master = Master::new("Semibold", "M2", make_design_location(650.0));
+
+        let layers = layers_for_new_master(&font, &glyph, &master, make_design_location(650.0)).unwrap();
+
+        assert_eq!(layers.len(), 2, "{layers:?}");
+        let (base_id, base) = &layers[0];
+        assert_eq!(base_id, "M2");
+        assert_eq!(base["width"], json!(650.0));
+        let (variation_id, variation) = &layers[1];
+        assert_eq!(variation_id, "M2.variation-1");
+        // Interpolated from the variation's layers (500 → 1000), not the
+        // glyph's master layers.
+        assert_eq!(variation["width"], json!(750.0));
+        assert_eq!(variation["master"], json!({ "type": "AssociatedWithMaster", "master": "M2" }));
+        assert!(variation.get("location").is_none_or(|location| location.is_null()));
+        let parsed: Layer = serde_json::from_value(variation.clone()).unwrap();
+        assert_eq!(parsed.feature_variation_rules(), Some(&vec![json!({ "min": 600 })]));
     }
 
     fn copy_plan(copy_intermediate_layers: bool) -> AxisMasterCopyPlan {

@@ -7,7 +7,6 @@ use babelfont::{
     BabelfontError, Font, Glyph, LayerType, NodeType,
 };
 use fea_rs::{
-    compile::NopVariationInfo,
     parse::{parse_root, SourceLoadError, SourceResolver},
     Diagnostic, GlyphMap,
 };
@@ -427,6 +426,25 @@ fn patch_filtered_font_cache_for_visual_commit(
         return Ok(false);
     }
 
+    // The filters moved each variation's layers into a glyph of its own
+    // (`name.VAR.n`). A change to a variation layer, or to a glyph that has
+    // variations, cannot be patched in place; the filters have to run again.
+    let touches_variation = changed_layer_snapshots.iter().any(|(target, layer_json)| {
+        layer_json.as_ref().is_some_and(layer_json_is_feature_variation)
+            || !filtered_glyph_has_layer(&entry.font, &target.glyph_name, &target.layer_id)
+            || glyph_has_variation_glyphs(&entry.font, &target.glyph_name)
+    }) || changed_glyph_snapshots.iter().any(|(glyph_name, glyph_json)| {
+        glyph_has_variation_glyphs(&entry.font, glyph_name)
+            || glyph_json
+                .as_ref()
+                .and_then(|glyph| glyph.get("layers"))
+                .and_then(|layers| layers.as_array())
+                .is_some_and(|layers| layers.iter().any(layer_json_is_feature_variation))
+    });
+    if touches_variation {
+        return Ok(false);
+    }
+
     let mut font = (*entry.font).clone();
     for (target, layer_json) in changed_layer_snapshots {
         replace_layer_in_font_cache(
@@ -445,6 +463,36 @@ fn patch_filtered_font_cache_for_visual_commit(
     bake_automatic_sidebearing_offsets_in_font(&mut font, &HashSet::new());
     entry.font = Arc::new(font);
     Ok(true)
+}
+
+/// A layer's JSON describes a feature-variation layer, as
+/// `babelfont::Layer::is_feature_variation` decides for a parsed layer: not a
+/// background, associated with a master, and carrying `axisRules`.
+fn layer_json_is_feature_variation(layer: &serde_json::Value) -> bool {
+    layer.get("is_background").and_then(|v| v.as_bool()) != Some(true)
+        && layer
+            .get("master")
+            .and_then(|master| master.get("type"))
+            .and_then(|kind| kind.as_str())
+            == Some("AssociatedWithMaster")
+        && layer
+            .get("format_specific")
+            .and_then(|fs| fs.get(babelfont::FEATURE_VARIATION_ATTRIBUTES_KEY))
+            .and_then(|attributes| attributes.get("axisRules"))
+            .is_some_and(|rules| rules.is_array())
+}
+
+fn filtered_glyph_has_layer(font: &babelfont::Font, glyph_name: &str, layer_id: &str) -> bool {
+    font.glyphs.iter().any(|glyph| {
+        glyph.name.as_str() == glyph_name
+            && glyph.layers.iter().any(|layer| layer.id.as_deref() == Some(layer_id))
+    })
+}
+
+/// The filtered font holds a variation glyph (`name.VAR.n`) made from this glyph.
+fn glyph_has_variation_glyphs(font: &babelfont::Font, glyph_name: &str) -> bool {
+    let prefix = format!("{glyph_name}.VAR.");
+    font.glyphs.iter().any(|glyph| glyph.name.starts_with(&prefix))
 }
 
 fn reset_debug_font_caches_with_fingerprint(committed_font_fingerprint: Option<String>) {
@@ -1449,8 +1497,11 @@ fn validate_feature_font(font: &babelfont::Font) -> Result<(), JsValue> {
             "glyph_rename_transaction",
         )));
     }
-    let validation_diagnostics =
-        fea_rs::compile::validate(&ast, &glyph_map, Some(&NopVariationInfo));
+    let validation_diagnostics = fea_rs::compile::validate(
+        &ast,
+        &glyph_map,
+        Some(&ValidationVariationInfo::for_font(&font)),
+    );
     if validation_diagnostics.has_errors() {
         return Err(JsValue::from_str(&feature_diagnostics_to_error_string(
             "glyph rename transaction: feature validation failed",
@@ -2405,6 +2456,61 @@ fn feature_validation_key(options: &CompilationOptions) -> (u64, u64, u64) {
     )
 }
 
+/// The font's axes, for validating feature code: condition sets (a
+/// variation's, among them) and variable values must name an axis the font
+/// has. Validation computes no variation data.
+struct ValidationVariationInfo {
+    axes: Vec<fontdrasil::types::Axis>,
+}
+
+impl ValidationVariationInfo {
+    fn for_font(font: &babelfont::Font) -> Self {
+        let axes = font
+            .fontdrasil_axes()
+            .map(|axes| axes.iter().cloned().collect())
+            .unwrap_or_default();
+        ValidationVariationInfo { axes }
+    }
+}
+
+/// Validation never computes variation data, so it never fails.
+#[derive(Debug)]
+struct ValidationOnly;
+
+impl std::fmt::Display for ValidationOnly {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("feature validation computes no variation data")
+    }
+}
+
+impl std::error::Error for ValidationOnly {}
+
+impl fea_rs::compile::VariationInfo for ValidationVariationInfo {
+    type Error = ValidationOnly;
+
+    fn axis_count(&self) -> u16 {
+        self.axes.len() as u16
+    }
+
+    fn axis(&self, axis_tag: write_fonts::types::Tag) -> Option<(usize, &fontdrasil::types::Axis)> {
+        self.axes.iter().enumerate().find(|(_, axis)| axis.tag == axis_tag)
+    }
+
+    fn resolve_variable_metric(
+        &self,
+        _: &HashMap<fontdrasil::coords::NormalizedLocation, i16>,
+    ) -> Result<(i16, Vec<(write_fonts::tables::variations::VariationRegion, i16)>), Self::Error> {
+        Ok((0, Vec::new()))
+    }
+
+    fn resolve_glyphs_number_value(
+        &self,
+        _: &str,
+    ) -> Result<HashMap<fontdrasil::coords::NormalizedLocation, f64>, Self::Error> {
+        Ok(HashMap::new())
+    }
+}
+
 fn validate_feature_source_with_full_filter_pipeline_internal(
     options: &CompilationOptions,
 ) -> Result<(), String> {
@@ -2461,8 +2567,11 @@ fn validate_feature_source_uncached(options: &CompilationOptions) -> Result<(), 
         ));
     }
 
-    let validation_diagnostics =
-        fea_rs::compile::validate(&ast, &glyph_map, Some(&NopVariationInfo));
+    let validation_diagnostics = fea_rs::compile::validate(
+        &ast,
+        &glyph_map,
+        Some(&ValidationVariationInfo::for_font(&filtered_font)),
+    );
     if validation_diagnostics.has_errors() {
         return Err(feature_diagnostics_to_error_string(
             "Feature validation failed",
@@ -8603,6 +8712,57 @@ mod tests {
         assert_eq!(layer.get("shapes"), Some(&json!([{ "id": "shape-a" }])));
         assert!(!layer.contains_key("shapesById"));
         assert!(!layer.contains_key("shapeOrder"));
+    }
+
+    #[test]
+    fn feature_validation_knows_the_font_axes() {
+        let mut font = babelfont::Font::new();
+        let mut axis = babelfont::Axis::new("Weight", babelfont::Tag::new(b"wght"));
+        axis.min = Some(fontdrasil::coords::UserCoord::new(100.0));
+        axis.default = Some(fontdrasil::coords::UserCoord::new(100.0));
+        axis.max = Some(fontdrasil::coords::UserCoord::new(900.0));
+        font.axes.push(axis);
+        let validate = |fea: &str| {
+            let glyph_map = GlyphMap::new(["a", "a.VAR.1"].into_iter()).unwrap();
+            let (resolver, root_path) = feature_validation_resolver(fea, None);
+            let (ast, _) = parse_root(root_path, Some(&glyph_map), resolver).unwrap();
+            fea_rs::compile::validate(
+                &ast,
+                &glyph_map,
+                Some(&ValidationVariationInfo::for_font(&font)),
+            )
+            .has_errors()
+        };
+        let variation = "conditionset heavy {\n wght 500 650;\n} heavy;\nvariation rvrn heavy {\n sub a by a.VAR.1;\n} rvrn;\n";
+        assert!(!validate(variation), "a variation on the font's axis validates");
+        assert!(validate(&variation.replace("wght 500", "wdth 500")), "an unknown axis does not");
+    }
+
+    #[test]
+    fn variation_layers_are_recognised_in_json_as_in_babelfont() {
+        let key = babelfont::FEATURE_VARIATION_ATTRIBUTES_KEY;
+        let variation = json!({
+            "id": "v1", "width": 500,
+            "master": { "type": "AssociatedWithMaster", "master": "m1" },
+            "format_specific": { (key): { "axisRules": [{ "min": 600 }] } }
+        });
+        assert!(layer_json_is_feature_variation(&variation));
+        let parsed: babelfont::Layer = serde_json::from_value(variation.clone()).unwrap();
+        assert!(parsed.is_feature_variation());
+
+        let mut background = variation.clone();
+        background["is_background"] = json!(true);
+        assert!(!layer_json_is_feature_variation(&background));
+        let mut station = variation.clone();
+        station["master"] = json!({ "type": "DefaultForMaster", "master": "m1" });
+        assert!(!layer_json_is_feature_variation(&station));
+
+        let mut font = babelfont::Font::new();
+        font.glyphs.push(babelfont::Glyph::new("p"));
+        font.glyphs.push(babelfont::Glyph::new("p.VAR.1"));
+        font.glyphs.push(babelfont::Glyph::new("q"));
+        assert!(glyph_has_variation_glyphs(&font, "p"));
+        assert!(!glyph_has_variation_glyphs(&font, "q"));
     }
 
     #[test]

@@ -5,6 +5,7 @@
 import {
     DecomposedAffineTransform,
     Drawing,
+    featureVariationAxisRules,
     type Font,
     type Glyph
 } from '../babelfont-model';
@@ -28,8 +29,6 @@ import type {
 } from './types';
 
 export { COUNTERPUNCH_CLIPBOARD_VERSION };
-
-const GLYPHS_ATTR_KEY = 'com.schriftgestalt.Glyphs.attr';
 
 export type CounterpunchSelectionClipboard = {
     version: number;
@@ -492,16 +491,9 @@ function serializeDrawingStation(
 }
 
 function readFeatureVariationAxisRules(drawing: Drawing): unknown[] | null {
-    const attributes = drawing.format_specific?.[GLYPHS_ATTR_KEY];
-    if (
-        !attributes ||
-        typeof attributes !== 'object' ||
-        Array.isArray(attributes)
-    ) {
-        return null;
-    }
-    const axisRules = (attributes as { axisRules?: unknown }).axisRules;
-    return Array.isArray(axisRules) ? axisRules : null;
+    return featureVariationAxisRules(
+        drawing.toJSON() as Parameters<typeof featureVariationAxisRules>[0]
+    );
 }
 
 function plainLocation(value: unknown): Record<string, number> | null {

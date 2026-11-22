@@ -4,6 +4,9 @@ const { Bezier } = require('bezier-js');
 const {
     Font,
     Drawing,
+    FEATURE_VARIATION_ATTRIBUTES_KEY,
+    featureVariationAxisRules,
+    isFeatureVariationLayer,
     mergeDocumentUpdatePackets,
     pathHasSubtractionFlag
 } = require('../js/babelfont-model');
@@ -373,24 +376,26 @@ describe('Babelfont Object Model', () => {
             master: { type: 'DefaultForMaster', master: 'master-2' },
             shapes: []
         };
-        jest.spyOn(
-            fontManager,
-            'buildWorkerAddStationWithInterpolatedDrawingsBatch'
-        ).mockResolvedValue({
-            update: new Uint8Array([1]),
-            metadata: {
-                changedGlyphs: ['B'],
-                layerTargets: [],
-                layerOperations: [
-                    {
-                        glyphName: 'B',
-                        layerId: 'master-2',
-                        newValue: interpolated
-                    }
-                ],
-                mastersOperation: { newValue: [] }
-            }
-        });
+        const batch = jest
+            .spyOn(
+                fontManager,
+                'buildWorkerAddStationWithInterpolatedDrawingsBatch'
+            )
+            .mockResolvedValue({
+                update: new Uint8Array([1]),
+                metadata: {
+                    changedGlyphs: ['B'],
+                    layerTargets: [],
+                    layerOperations: [
+                        {
+                            glyphName: 'B',
+                            layerId: 'master-2',
+                            newValue: interpolated
+                        }
+                    ],
+                    mastersOperation: { newValue: [] }
+                }
+            });
         const refine = jest
             .spyOn(fontManager, 'buildWorkerRefineDrawingSnapshotsBatch')
             .mockResolvedValue({ update: new Uint8Array([2]) });
@@ -436,7 +441,8 @@ describe('Babelfont Object Model', () => {
             window.currentFontModel = previous.fontModel;
             window.patchSyncEngine = previous.bridge;
             window.fontManager = previous.fontManager;
-            jest.restoreAllMocks();
+            batch.mockRestore();
+            refine.mockRestore();
         }
     });
 
@@ -7819,5 +7825,95 @@ describe('Font list setters', () => {
         ]);
         expect(recordChange.mock.calls[0][2]).toEqual([]);
         expect(recordChange.mock.calls[0][3][0].id).toBe('i1');
+    });
+});
+
+describe('variation drawings', () => {
+    const rules = {
+        [FEATURE_VARIATION_ATTRIBUTES_KEY]: { axisRules: [{ min: 600 }] }
+    };
+    const layer = (fields) => ({ id: 'x', width: 500, ...fields });
+
+    test('are associated with a station, not backgrounds, and carry axis rules', () => {
+        const associated = { type: 'AssociatedWithMaster', master: 'm1' };
+        expect(
+            featureVariationAxisRules(
+                layer({ master: associated, format_specific: rules })
+            )
+        ).toEqual([{ min: 600 }]);
+        // A free drawing of the variation is one too.
+        expect(
+            isFeatureVariationLayer(
+                layer({
+                    master: associated,
+                    location: { wght: 700 },
+                    format_specific: rules
+                })
+            )
+        ).toBe(true);
+        expect(
+            isFeatureVariationLayer(
+                layer({
+                    master: associated,
+                    is_background: true,
+                    format_specific: rules
+                })
+            )
+        ).toBe(false);
+        expect(
+            isFeatureVariationLayer(
+                layer({
+                    master: { type: 'DefaultForMaster', master: 'm1' },
+                    format_specific: rules
+                })
+            )
+        ).toBe(false);
+        expect(isFeatureVariationLayer(layer({ master: associated }))).toBe(
+            false
+        );
+    });
+
+    test('are listed under the glyph’s variations, not its drawings', () => {
+        const font = Font.fromData({
+            axes: [
+                {
+                    tag: 'wght',
+                    name: { dflt: 'Weight' },
+                    min: 100,
+                    max: 900,
+                    default: 100
+                }
+            ],
+            masters: [
+                { id: 'm1', name: { dflt: 'Light' }, location: { wght: 100 } }
+            ],
+            instances: [],
+            glyphs: [
+                {
+                    name: 'a',
+                    layers: [
+                        layer({
+                            id: 'm1',
+                            master: { type: 'DefaultForMaster', master: 'm1' }
+                        }),
+                        layer({
+                            id: 'v1',
+                            master: {
+                                type: 'AssociatedWithMaster',
+                                master: 'm1'
+                            },
+                            format_specific: rules
+                        })
+                    ]
+                }
+            ]
+        });
+        const glyph = font.findGlyph('a');
+        expect(glyph.drawings.map((drawing) => drawing.id)).toEqual(['m1']);
+        expect(glyph.featureVariations).toHaveLength(1);
+        expect(
+            glyph.featureVariations[0].drawings[0].isVariationDrawing()
+        ).toBe(true);
+        expect(glyph.drawings[0].isVariationDrawing()).toBe(false);
     });
 });

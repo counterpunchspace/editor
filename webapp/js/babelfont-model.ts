@@ -430,6 +430,47 @@ export type FeatureVariationAxisRule = {
     max?: number;
 };
 
+/** Format-specific key whose `axisRules` make a drawing a variation drawing. */
+export const FEATURE_VARIATION_ATTRIBUTES_KEY =
+    'com.schriftgestalt.Glyphs.attr';
+
+/**
+ * The axis rules of a variation drawing: one of the drawings that replace
+ * its glyph inside an axis range. A variation drawing is associated with a
+ * station, is not a background drawing, and carries `axisRules`; with a
+ * location of its own it is a free drawing of the variation. The compile
+ * decides the same way (babelfont's `Layer::is_feature_variation`).
+ */
+export function featureVariationAxisRules(
+    layer: Babelfont.Layer | null | undefined
+): FeatureVariationAxisRule[] | null {
+    if (!layer || layer.is_background) {
+        return null;
+    }
+    const station = layer.master as { type?: unknown } | null | undefined;
+    if (station?.type !== 'AssociatedWithMaster') {
+        return null;
+    }
+    const attributes =
+        layer.format_specific?.[FEATURE_VARIATION_ATTRIBUTES_KEY];
+    const axisRules =
+        attributes &&
+        typeof attributes === 'object' &&
+        !Array.isArray(attributes)
+            ? (attributes as { axisRules?: unknown }).axisRules
+            : undefined;
+    return Array.isArray(axisRules)
+        ? (axisRules as FeatureVariationAxisRule[])
+        : null;
+}
+
+/** True for a variation drawing (see `featureVariationAxisRules`). */
+export function isFeatureVariationLayer(
+    layer: Babelfont.Layer | null | undefined
+): boolean {
+    return featureVariationAxisRules(layer) !== null;
+}
+
 type AutomaticCompositionSourceData = {
     shapes: Unsafe[] | undefined;
     width: number;
@@ -7271,6 +7312,16 @@ export class Drawing extends ArrayElementBase {
         return changed;
     }
 
+    /**
+     * True for a drawing of a variation: one that replaces its glyph inside
+     * an axis range, listed under the glyph's variations.
+     * @example
+     * if drawing.isVariationDrawing(): print("variation")
+     */
+    isVariationDrawing(): boolean {
+        return isFeatureVariationLayer(this.data);
+    }
+
     isAutomaticAlignedDrawing(): boolean {
         const shapes = this.shapes || [];
         if (shapes.length === 0) {
@@ -11120,24 +11171,21 @@ function getAppliedMetricsKeySidebearing(
  * Glyph in the font
  */
 const GLYPHS_FEATURE_VARIATION_ATTRIBUTES_KEY =
-    'com.schriftgestalt.Glyphs.attr';
+    FEATURE_VARIATION_ATTRIBUTES_KEY;
 
+/** A variation drawing's family key: its axis rules, keys sorted; else null. */
 function canonicalizeFeatureVariationAxisRules(
     drawing: Babelfont.Layer
 ): string | null {
-    const attributes =
-        drawing.format_specific?.[GLYPHS_FEATURE_VARIATION_ATTRIBUTES_KEY];
-    const axisRules =
-        attributes &&
-        typeof attributes === 'object' &&
-        !Array.isArray(attributes)
-            ? (attributes as Record<string, Unsafe>).axisRules
-            : undefined;
+    const axisRules = featureVariationAxisRules(drawing);
+    return axisRules ? canonicalAxisRulesKey(axisRules) : null;
+}
 
+/** A family key for these axis rules (keys sorted); null when not an array. */
+function canonicalAxisRulesKey(axisRules: unknown): string | null {
     if (!Array.isArray(axisRules)) {
         return null;
     }
-
     const normalize = (value: Unsafe): Unsafe => {
         if (Array.isArray(value)) {
             return value.map(normalize);
@@ -11318,17 +11366,6 @@ export class Glyph extends ArrayElementBase {
 
         return this.data.layers.flatMap(
             (drawingData: Unsafe, index: number) => {
-                if (drawingData.is_background) {
-                    return [];
-                }
-                const station = drawingData.master as Unsafe;
-                if (
-                    !station ||
-                    typeof station !== 'object' ||
-                    station.type !== 'AssociatedWithMaster'
-                ) {
-                    return [];
-                }
                 const resolvedFamilyId =
                     canonicalizeFeatureVariationAxisRules(drawingData);
                 if (
@@ -11373,12 +11410,7 @@ export class Glyph extends ArrayElementBase {
         axisRules: FeatureVariationAxisRule[]
     ): FeatureVariationGlyph {
         assertModelMutationAllowed();
-        const template = {
-            format_specific: {
-                [GLYPHS_FEATURE_VARIATION_ATTRIBUTES_KEY]: { axisRules }
-            }
-        } as unknown as Babelfont.Layer;
-        const familyId = canonicalizeFeatureVariationAxisRules(template);
+        const familyId = canonicalAxisRulesKey(axisRules);
         if (!familyId) {
             throw new Error('Variation axisRules must be an array.');
         }
@@ -12445,12 +12477,7 @@ export class FeatureVariationGlyph {
      * Replace the shared Glyphs feature-variation rules on every raw family drawing.
      */
     setAxisRules(axisRules: FeatureVariationAxisRule[]): FeatureVariationGlyph {
-        const template = {
-            format_specific: {
-                [GLYPHS_FEATURE_VARIATION_ATTRIBUTES_KEY]: { axisRules }
-            }
-        } as unknown as Babelfont.Layer;
-        const nextFamilyId = canonicalizeFeatureVariationAxisRules(template);
+        const nextFamilyId = canonicalAxisRulesKey(axisRules);
         if (!nextFamilyId) {
             throw new Error('Variation axisRules must be an array.');
         }
@@ -15532,8 +15559,14 @@ export class Font extends ModelBase {
         }> = [];
         for (const operation of metadata.layerOperations) {
             const added = operation.newValue as Babelfont.Layer | undefined;
-            const addedStation = (added?.master as Unsafe)?.master;
-            if (!added || addedStation !== stationId) {
+            const addedStation = added?.master as
+                { type?: string; master?: string } | undefined;
+            // The station's own drawing, not one of its variation drawings.
+            if (
+                !added ||
+                addedStation?.type !== 'DefaultForMaster' ||
+                addedStation.master !== stationId
+            ) {
                 continue;
             }
             const free = (
@@ -15545,9 +15578,7 @@ export class Font extends ModelBase {
                 (layer: Babelfont.Layer) =>
                     !layer.is_background &&
                     (layer.master as Unsafe)?.type !== 'DefaultForMaster' &&
-                    !layer.format_specific?.[
-                        GLYPHS_FEATURE_VARIATION_ATTRIBUTES_KEY
-                    ] &&
+                    !isFeatureVariationLayer(layer) &&
                     sameLocation(
                         layer.location as Record<string, number> | undefined
                     )

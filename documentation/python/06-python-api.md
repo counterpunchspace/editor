@@ -190,7 +190,7 @@ operations. An unset font infers it from existing generator stamps.
 
 ### Methods
 
-#### `rebuildAutomaticCompositesForGlyphs(changedGlyphNames: Set<string> | None = None, options: { allowedGlyphNames?: Set<string>; preferredDrawingId?: string | null; preferredSourceGlyphName?: string | null; } | None = None) -> Set<string>`
+#### `rebuildAutomaticCompositesForGlyphs(changedGlyphNames: Set<string> | None = None, options: { allowedGlyphNames?: Set<string>; preferredDrawingId?: string | null; preferredSourceGlyphName?: string | null; /** Glyphs left as they are; their dependents still rebuild. */ preserveGlyphNames?: Set<string>; } | None = None) -> Set<string>`
 #### `rebuildAutomaticCompositesForKerningPair(firstKey: str, secondKey: str) -> Set<string>`
 Rebuild automatic ligatures whose unattached consecutive bases resolve
 to this kerning pair (glyph or `@group` keys, overlay precedence).
@@ -226,7 +226,7 @@ hidden reference and its own prerequisites have settled. The live
 recomposition closure uses this to close its allowed mutation set before
 running the same work queue as the all-scope commit path.
 
-#### `recomputeMetricsKeys(changedGlyphNames: Set<string> | None = None, options: { allowedGlyphNames?: Set<string>; skipAutomaticCompositeRebuild?: boolean; /** The caller already rebuilt automatic composites for the initial * sources | None = None, but metric-induced changes must still rebuild their * own automatic dependents. */ skipInitialAutomaticCompositeRebuild?: boolean; }) -> Set<string>`
+#### `recomputeMetricsKeys(changedGlyphNames: Set<string> | None = None, options: { allowedGlyphNames?: Set<string>; skipAutomaticCompositeRebuild?: boolean; /** The caller already rebuilt automatic composites for the initial * sources | None = None, but metric-induced changes must still rebuild their * own automatic dependents. */ skipInitialAutomaticCompositeRebuild?: boolean; /** Glyphs whose sidebearings stay as they are; glyphs keyed to * them still follow them. */ preserveGlyphNames?: Set<string>; }) -> Set<string>`
 #### `getPluginSetting(pluginId: str, settingId: str) -> unknown`
 Read one font-scoped plugin setting. Missing and invalid values return
 `undefined` so the caller can use the plugin default.
@@ -683,6 +683,15 @@ Virtual empty backgrounds remain unmaterialized and are intentionally ignored.
 Resolve and apply this drawing's own metrics keys (left/right)
 without scanning the full font. Use during interactive editing
 (keyboard/mouse) where only the current drawing needs updating.
+
+#### `isVariationDrawing() -> bool`
+True for a drawing of a variation: one that replaces its glyph inside
+an axis range, listed under the glyph's variations.
+
+**Example:**
+```python
+if drawing.isVariationDrawing(): print("variation")
+```
 
 #### `isAutomaticAlignedDrawing() -> bool`
 #### `matchesAutomaticCompositionPreflight(sourceDataCache: WeakMap<object | None = None, AutomaticCompositionSourceData>) -> bool`
