@@ -398,6 +398,11 @@ export class RemoteCascadePreview {
                 expired: expired.map((t) => `${t.glyphName}/${t.layerId}`)
             }
         );
+        // Settling drops the worker's whole overlay (a write by updating
+        // the worker, a revert by clearing it); stage what is still pending.
+        if (this.pending.size) {
+            this.queueRefresh();
+        }
         this.armTimer();
     }
 }

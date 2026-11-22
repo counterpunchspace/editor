@@ -613,6 +613,28 @@ export async function describeStaleTiles(
                 `${target.glyphName}/${target.layerId}`
         );
         lines.push(`cascade previews: ${pending.join(', ') || 'none'}`);
+        // Where the tiles were asked for, against the stations and axes now:
+        // a tile fetched before a station change interpolates differently.
+        const fontModel = w.currentFontModel;
+        lines.push(
+            `overview location ${JSON.stringify(overview?.currentLocation ?? {})}; stations ${JSON.stringify(
+                (fontModel?.stations ?? []).map(
+                    (station: { name?: unknown; location?: unknown }) => [
+                        String(station?.name ?? ''),
+                        station?.location ?? null
+                    ]
+                )
+            )}; axes ${JSON.stringify(
+                (fontModel?.axes ?? []).map(
+                    (axis: {
+                        tag?: unknown;
+                        min?: unknown;
+                        default?: unknown;
+                        max?: unknown;
+                    }) => [axis?.tag, axis?.min, axis?.default, axis?.max]
+                )
+            )}`
+        );
         return lines;
     }, glyphNames);
 }

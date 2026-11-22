@@ -808,7 +808,23 @@ test.describe('cloud collaboration fuzz', () => {
                         )
                         .toBe(true)
                         .catch(async (error) => {
-                            const why = await diagnoseStaleCompile(window.page);
+                            // A preview overlay compiles what no document
+                            // holds; name any still pending.
+                            const previews = await window.page
+                                .evaluate(() =>
+                                    (
+                                        (window as any).remoteCascadePreview
+                                            ?.pendingTargets ?? []
+                                    ).map(
+                                        (target: {
+                                            glyphName: string;
+                                            layerId: string;
+                                        }) =>
+                                            `${target.glyphName}/${target.layerId}`
+                                    )
+                                )
+                                .catch(() => []);
+                            const why = `${await diagnoseStaleCompile(window.page)}; cascade previews: ${previews.join(', ') || 'none'}`;
                             record(
                                 `${label}: ${window.name} stale compile: ${why}`
                             );

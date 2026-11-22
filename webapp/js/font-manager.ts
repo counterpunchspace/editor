@@ -7698,6 +7698,29 @@ class FontManager {
         });
     }
 
+    /**
+     * Drop a collaborator cascade's preview overlay. Only an update the
+     * worker takes drops it otherwise, and a preview reverted to drawings
+     * the documents already hold sends none.
+     */
+    clearRemoteCascadePreviewOverlay(): Promise<void> {
+        if (!fontCompilation?.isInitialized) {
+            return Promise.resolve();
+        }
+        return this.enqueueWorkerPreviewSend(async () => {
+            try {
+                await fontCompilation.sendMessage({
+                    type: 'clearPreviewDrawingOverlay'
+                });
+            } catch (error) {
+                console.warn(
+                    '[FontManager] Failed to clear the cascade preview overlay:',
+                    error
+                );
+            }
+        });
+    }
+
     async submitDrawingToWorkerCache(
         glyphName: string,
         drawingId: string

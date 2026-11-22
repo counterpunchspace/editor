@@ -224,6 +224,29 @@ describe('RemoteCascadePreview', () => {
         expect(preview.pendingTargets).toEqual([]);
     });
 
+    it('stages the previews still pending again after settling others', async () => {
+        const time = fakeClock();
+        const adieresis = { glyphName: 'adieresis', layerId: 'm1' };
+        const host = fakeHost([[aacute], [adieresis], []]);
+        const preview = new RemoteCascadePreview(host, time.clock);
+
+        preview.noteCollaboratorEdit(anchorEdit);
+        time.flush();
+        await settled();
+        time.advance(REMOTE_CASCADE_PREVIEW_MAX_MS / 2);
+        preview.noteCollaboratorEdit(anchorEdit);
+        time.flush();
+        await settled();
+        host.staged.length = 0;
+        time.advance(REMOTE_CASCADE_PREVIEW_MAX_MS / 2);
+        await settled();
+
+        // Settling aacute dropped the worker's whole overlay.
+        expect(host.settled).toEqual([['aacute/m1']]);
+        expect(preview.pendingTargets).toEqual([adieresis]);
+        expect(host.staged).toEqual([['adieresis/m1']]);
+    });
+
     it('waits to settle while the window is busy with its own edit', async () => {
         const time = fakeClock();
         const host = fakeHost([[aacute]]);
@@ -532,5 +555,44 @@ describe('recomposeCollaboratorCascade', () => {
 
         expect(recomposeCollaboratorCascade(bridge, [source])).not.toEqual([]);
         expect(recomposeCollaboratorCascade(bridge, [source])).toEqual([]);
+    });
+});
+
+describe('createRemoteCascadePreviewHost', () => {
+    const {
+        createRemoteCascadePreviewHost
+    } = require('../js/change-bridge-init');
+
+    afterEach(() => {
+        delete window.fontManager;
+        delete window.cloudPlugin;
+    });
+
+    it('clears the worker overlay before recompiling a reverted preview', async () => {
+        const calls = [];
+        let clear;
+        window.fontManager = {
+            clearRemoteCascadePreviewOverlay: () => {
+                calls.push('clear');
+                return new Promise((resolve) => {
+                    clear = resolve;
+                });
+            },
+            currentFont: {
+                requestRecompileWithoutDataChange: () => calls.push('compile')
+            }
+        };
+        // The documents already hold the preview: nothing is written.
+        const bridge = {
+            writeLivePreviewDrawings: () => [],
+            revertLivePreviewDrawings: () => calls.push('revert')
+        };
+        const host = createRemoteCascadePreviewHost(bridge);
+
+        expect(host.settle([aacute])).toEqual([]);
+        expect(calls).toEqual(['revert', 'clear']);
+        clear();
+        await settled();
+        expect(calls).toEqual(['revert', 'clear', 'compile']);
     });
 });

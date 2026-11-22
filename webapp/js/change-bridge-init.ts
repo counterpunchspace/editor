@@ -2167,9 +2167,20 @@ export function createRemoteCascadePreviewHost(
     };
     const revert = (targets: CascadeDrawingTarget[]) => {
         bridge.revertLivePreviewDrawings(targets);
-        window.fontManager?.currentFont?.requestRecompileWithoutDataChange();
-        window.autoCompileManager?.checkAndSchedule?.();
-        notifyGlyphs([...new Set(targets.map((t) => t.glyphName))]);
+        const recompile = () => {
+            window.fontManager?.currentFont?.requestRecompileWithoutDataChange();
+            window.autoCompileManager?.checkAndSchedule?.();
+            notifyGlyphs([...new Set(targets.map((t) => t.glyphName))]);
+        };
+        // The documents did not change, so the worker would keep compiling
+        // the preview; previews still pending are staged again after this.
+        const cleared =
+            window.fontManager?.clearRemoteCascadePreviewOverlay?.();
+        if (cleared) {
+            void cleared.then(recompile);
+        } else {
+            recompile();
+        }
     };
     return {
         isBusyLocally: isBusyWithOwnEdit,
