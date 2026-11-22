@@ -567,6 +567,26 @@ test.describe('cloud collaboration fuzz', () => {
                             );
                         }
                     }
+                    // A collaborator cascade this window still shows as a
+                    // preview: its model may agree while its documents lag.
+                    for (const window of windows) {
+                        const pending = await window.page.evaluate(() =>
+                            (
+                                (window as any).remoteCascadePreview
+                                    ?.pendingTargets ?? []
+                            ).map(
+                                (target: {
+                                    glyphName: string;
+                                    layerId: string;
+                                }) => `${target.glyphName}/${target.layerId}`
+                            )
+                        );
+                        for (const target of pending) {
+                            differences.push(
+                                `${window.name} preview:${target}: still a preview, not stored`
+                            );
+                        }
+                    }
                     if (!differences.length) {
                         return snapshot;
                     }
@@ -578,7 +598,10 @@ test.describe('cloud collaboration fuzz', () => {
                                     (line) =>
                                         line
                                             .split(' ')[1]
-                                            .replace(/^(glyph|props|cp):/, '')
+                                            .replace(
+                                                /^(glyph|props|cp|preview):/,
+                                                ''
+                                            )
                                             .replace(/:$/, '')
                                             .split('/')[0]
                                 )
@@ -591,7 +614,10 @@ test.describe('cloud collaboration fuzz', () => {
                             ...new Set(
                                 differences
                                     .map((line) =>
-                                        line.split(' ')[1].replace(':', '')
+                                        line
+                                            .split(' ')[1]
+                                            .replace(/^preview:/, '')
+                                            .replace(/:$/, '')
                                     )
                                     .filter((key) => key.includes('/'))
                             )
@@ -720,12 +746,32 @@ test.describe('cloud collaboration fuzz', () => {
                 let referenceRun: string | null = null;
                 let referenceTiles: string | null = null;
                 for (const window of windows) {
+                    const compositeMismatches = await withinTime(
+                        readCompositionMismatches(window.page),
+                        60000,
+                        `${window.name}: checking composites`
+                    );
+                    if (compositeMismatches.length) {
+                        // Stale in the model only, or in this window's
+                        // documents too (a missed update)?
+                        const drawings = [
+                            ...new Set(
+                                compositeMismatches.map(
+                                    (line) => line.split(' ')[0]
+                                )
+                            )
+                        ].map((key) => key.split('/') as [string, string]);
+                        record(
+                            `${label}: ${window.name} composites:\n  ${(
+                                await readModelVsDocuments(
+                                    window.page,
+                                    drawings
+                                )
+                            ).join('\n  ')}`
+                        );
+                    }
                     expect(
-                        await withinTime(
-                            readCompositionMismatches(window.page),
-                            60000,
-                            `${window.name}: checking composites`
-                        ),
+                        compositeMismatches,
                         `${label}: automatic composites in ${window.name}`
                     ).toEqual([]);
                     // The binary: what this window compiled for editing

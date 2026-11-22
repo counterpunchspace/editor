@@ -3372,8 +3372,21 @@ export class PatchSyncEngine {
         if (!entries.length) {
             return entries;
         }
+        // A glyph catch-up brings writes this window did not make. Like a
+        // live collaborator packet, its drawings are cascade sources: a
+        // composite stored by a concurrent writer from an older view of
+        // them must be recomposed. Only in the window that caught up: a
+        // linked window gets the main window's relay, and the main window's
+        // recomposition, not one from its own view.
+        const fromCollaborator =
+            before.kind === 'glyph' && !window.windowRole?.isLinkedWindow?.();
         for (const cb of this._committedChangeListeners) {
-            cb(entries, { origin: 'remote', update, documentId });
+            cb(entries, {
+                origin: 'remote',
+                update,
+                documentId,
+                ...(fromCollaborator ? { fromCollaborator } : {})
+            });
         }
         return entries;
     }
@@ -13135,19 +13148,38 @@ export class PatchSyncEngine {
      * Give an added glyph its own glyphOrder entry. Its name can still be
      * listed for a glyph deleted elsewhere, whose delete has not reached
      * this window's order yet; when that delete's removal of the old entry
-     * arrives, it must not take the new glyph's name with it.
+     * arrives, it must not take the new glyph's name with it. That removal
+     * can also land between recording the add and applying it (a cloud
+     * commit waits for its WAL write), after the add found the name listed
+     * and queued no glyphOrder change; then the name goes back in at the
+     * glyph's place in the model.
      */
     private _renewGlyphOrderEntry(glyphName: string): void {
         const glyphOrder = this.fontMap.get('glyphOrder');
         if (!(glyphOrder instanceof Y.Array)) {
             return;
         }
-        const index = glyphOrder.toArray().indexOf(glyphName);
-        if (index < 0) {
+        const names = glyphOrder.toArray().map(String);
+        const index = names.indexOf(glyphName);
+        if (index >= 0) {
+            glyphOrder.delete(index, 1);
+            glyphOrder.insert(index, [glyphName]);
             return;
         }
-        glyphOrder.delete(index, 1);
-        glyphOrder.insert(index, [glyphName]);
+        const modelOrder = this._glyphNamesFromFontJson();
+        const modelIndex = modelOrder.indexOf(glyphName);
+        if (modelIndex < 0) {
+            return;
+        }
+        let insertAt = names.length;
+        for (let before = modelIndex - 1; before >= 0; before -= 1) {
+            const at = names.indexOf(modelOrder[before]);
+            if (at >= 0) {
+                insertAt = at + 1;
+                break;
+            }
+        }
+        glyphOrder.insert(insertAt, [glyphName]);
     }
 
     private _readYGlyphOrderNames(): string[] {

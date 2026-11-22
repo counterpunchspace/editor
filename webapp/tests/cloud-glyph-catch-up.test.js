@@ -715,9 +715,11 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
             receiver.applyDocumentCatchUp(glyphDocumentId('id-b'), liveTail)
         ).toBe(true);
         expect(committed).toHaveLength(1);
+        // A collaborator edit: its drawings are cascade sources here.
         expect(committed[0].context).toMatchObject({
             origin: 'remote',
-            documentId: glyphDocumentId('id-b')
+            documentId: glyphDocumentId('id-b'),
+            fromCollaborator: true
         });
         expect(committed[0].entries).toEqual([
             expect.objectContaining({
@@ -1136,7 +1138,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         }
     });
 
-    test('relays what main applied even before the expected revision arrives', async () => {
+    test('relays what main applied, and is done at the room tail whatever stamp won', async () => {
         const previousRole = window.windowRole;
         const previousSync = window.windowSync;
         const relay = jest.fn();
@@ -1161,10 +1163,14 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
                     assetId: 'asset-1',
                     documentId: glyphDocumentId('id-b'),
                     expectedRevision: 'rev-2',
-                    maxAttempts: 1,
+                    maxAttempts: 4,
                     wait: async () => {}
                 })
-            ).rejects.toThrow('revision mismatch');
+            ).resolves.toBe(true);
+            // The room names a revision only once its write is durable: the
+            // tail holds it, even when a concurrent writer's stamp won, so
+            // one fetch is enough.
+            expect(global.fetch).toHaveBeenCalledTimes(1);
             expect(relay.mock.calls.map(([bytes]) => [...bytes])).toEqual([
                 [7]
             ]);

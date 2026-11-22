@@ -56,3 +56,21 @@ test('a catalog tombstone that arrives after the glyph was indexed frees its nam
     expect(engine._glyphIdByName.has('fuzz.renamed')).toBe(false);
     expect(engine._glyphIdByName.get('A')).toBe(idOf('A'));
 });
+
+test('an added glyph whose name a delete removed from glyphOrder before it applied goes back in', () => {
+    const { engine, json } = engineWith(['A', 'fuzz.renamed', 'B']);
+    const glyphOrder = engine.fontMap.get('glyphOrder');
+    const names = () => glyphOrder.toArray().map(String);
+    // The add found the name listed and queued no glyphOrder change; the
+    // delete's removal of the old entry landed before the add applied.
+    glyphOrder.delete(names().indexOf('fuzz.renamed'), 1);
+    expect(json.glyphs.map((glyph) => glyph.name)).toContain('fuzz.renamed');
+    engine._renewGlyphOrderEntry('fuzz.renamed');
+    expect(names()).toEqual(['A', 'fuzz.renamed', 'B']);
+    // Listed already: the entry is renewed in place.
+    engine._renewGlyphOrderEntry('fuzz.renamed');
+    expect(names()).toEqual(['A', 'fuzz.renamed', 'B']);
+    // Not in the model: nothing to put back.
+    engine._renewGlyphOrderEntry('missing');
+    expect(names()).toEqual(['A', 'fuzz.renamed', 'B']);
+});

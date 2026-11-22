@@ -287,8 +287,14 @@ export const cloudPluginCatchUpMethods = {
         for (const target of targets) {
             this._glyphCatchUpInFlight.add(target.documentId);
         }
+        // Documents brought to the room's tail: they hold the expected
+        // write even when a concurrent writer's stamp won.
+        let reachedTail = new Set<string>();
         void this._liveSession
             .catchUpDocuments(targets, { includeLiveDocuments: true })
+            .then((succeeded) => {
+                reachedTail = new Set(succeeded ?? []);
+            })
             .catch((error) => {
                 console.warn(
                     '[CloudPlugin] Failed to catch up glyphs outside the live subset:',
@@ -324,6 +330,7 @@ export const cloudPluginCatchUpMethods = {
                     // revision stamp, so a catch-up may finish without it.
                     const current =
                         !target.expectedRevision ||
+                        reachedTail.has(target.documentId) ||
                         typeof bridge.glyphHasCatchUpRevision !== 'function' ||
                         bridge.glyphHasCatchUpRevision(
                             target.documentId,

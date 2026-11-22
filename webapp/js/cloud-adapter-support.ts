@@ -760,6 +760,14 @@ export async function catchUpCloudDocument(options: {
                         : new Uint8Array();
             }
             if (!update.length && !payloadsToApply.length) {
+                // Nothing after this document's cursor: it already holds the
+                // room's tail. The room names a revision only once its write
+                // is durable, so the expected write is in it, whichever
+                // concurrent writer's stamp the document kept. Waiting for
+                // that stamp would hold back every later catch-up.
+                if (resident && Number.isInteger(tailHighWater)) {
+                    return true;
+                }
                 lastError = new Error(
                     `Live glyph catch-up returned empty state for ${options.documentId}`
                 );
@@ -810,9 +818,12 @@ export async function catchUpCloudDocument(options: {
                     options.documentId
                 );
             }
+            // Through the room's tail, the document holds the expected
+            // write even when a concurrent writer's stamp won (see above).
             if (
                 applied &&
                 expectedRevision &&
+                !Number.isInteger(tailHighWater) &&
                 typeof options.bridge.glyphHasCatchUpRevision === 'function' &&
                 !options.bridge.glyphHasCatchUpRevision(
                     options.documentId,
