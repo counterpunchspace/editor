@@ -17,8 +17,12 @@
  * - When a catch-up (or a live packet) brings a previewed drawing, the
  *   documents replace the preview. If the base glyph has moved on in the
  *   meantime, the drawing is recomposed again from the current base.
- * - A preview whose stored drawing never arrives is reverted to the documents
- *   after `REMOTE_CASCADE_PREVIEW_MAX_MS`.
+ * - A preview whose stored drawing never catches up within
+ *   `REMOTE_CASCADE_PREVIEW_MAX_MS` is settled: written to the documents
+ *   when this window may edit, else reverted to them. That happens when two
+ *   collaborators recomposed one drawing at once, each from a view missing
+ *   the other's source edit, and the stored result went stale. Every window
+ *   that saw both edits recomposes the same drawing, so their writes agree.
  */
 import type { RecompositionEditKind } from './recomposition-closure';
 import { deriveEditKindsFromChangeLogEntries } from './recomposition-closure';
@@ -64,6 +68,11 @@ export type RemoteCascadePreviewHost = {
     repaint(glyphNames: string[]): void;
     /** Put the model drawings back to what the documents hold, and recompile. */
     revert(targets: CascadeDrawingTarget[]): void;
+    /**
+     * Write these previewed drawings to the documents, or revert them when
+     * this window may not edit. Returns the drawings written.
+     */
+    settle(targets: CascadeDrawingTarget[]): CascadeDrawingTarget[];
 };
 
 export type RemoteCascadeClock = {
@@ -375,16 +384,20 @@ export class RemoteCascadePreview {
         for (const target of expired) {
             this.pending.delete(targetKey(target));
         }
-        recordCollabTrace(
-            'cascade-revert',
-            expired.map((t) => t.glyphName),
-            { reverted: expired.map((t) => `${t.glyphName}/${t.layerId}`) }
-        );
+        let written: CascadeDrawingTarget[] = [];
         try {
-            this.host.revert(expired);
+            written = this.host.settle(expired);
         } catch (error) {
-            console.warn('Could not revert the collaborator’s cascade:', error);
+            console.warn('Could not settle the collaborator’s cascade:', error);
         }
+        recordCollabTrace(
+            'cascade-settle',
+            expired.map((t) => t.glyphName),
+            {
+                written: written.map((t) => `${t.glyphName}/${t.layerId}`),
+                expired: expired.map((t) => `${t.glyphName}/${t.layerId}`)
+            }
+        );
         this.armTimer();
     }
 }

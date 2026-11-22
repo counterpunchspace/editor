@@ -2381,6 +2381,11 @@ export class GlyphOverviewView {
             if (!fontComp) {
                 return;
             }
+            // The change that asked for this refresh reaches the worker
+            // asynchronously, behind any sync in flight. Fetching first
+            // would draw the old outline, and nothing asks again.
+            await window.fontManager?.awaitWorkerCacheUpdate?.();
+            await fontComp.awaitWorkerDocumentReadyForCompile?.();
 
             const response = await fontComp.sendMessage({
                 type: 'getGlyphOutlines',

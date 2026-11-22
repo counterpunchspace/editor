@@ -534,6 +534,12 @@ export class FontCompilation {
     pendingStoreFontJsonPayload: string | null;
     lastEditingSubsetKey: string | null;
     workerCacheDocumentReady: boolean;
+    /**
+     * The worker holds the bridge's documents (it was seeded from them), so
+     * the bridge's Yjs updates apply on top. Unlike `workerCacheDocumentReady`
+     * this stays true while a sync is in flight.
+     */
+    workerDocumentsSeeded: boolean;
     pendingWorkerDocumentSync: Promise<void>;
     pendingWorkerDocumentSyncCount: number;
     pendingWorkerDocumentReplaces: Map<string, Uint8Array>;
@@ -556,6 +562,7 @@ export class FontCompilation {
         this.pendingStoreFontJsonPayload = null;
         this.lastEditingSubsetKey = null;
         this.workerCacheDocumentReady = false;
+        this.workerDocumentsSeeded = false;
         this.pendingWorkerDocumentSync = Promise.resolve();
         this.pendingWorkerDocumentSyncCount = 0;
         this.pendingWorkerDocumentReplaces = new Map();
@@ -567,6 +574,45 @@ export class FontCompilation {
     /** Mark whether editing compiles may rely on the worker's current document cache. */
     setWorkerCacheDocumentReady(isReady: boolean): void {
         this.workerCacheDocumentReady = isReady;
+        if (!isReady) {
+            // Callers clear readiness when the worker's documents are no
+            // longer the bridge's; the next seed reads them whole.
+            this.workerDocumentsSeeded = false;
+        }
+    }
+
+    /** Whether the bridge's Yjs updates may be applied on this worker's documents. */
+    hasSeededWorkerDocuments(): boolean {
+        return this.workerDocumentsSeeded;
+    }
+
+    /**
+     * Apply an update the bridge sent, in order behind any seed or sync in
+     * flight. Nothing is sent while this worker holds no bridge documents:
+     * its next seed reads them whole. A worker that misses one update keeps
+     * every later update of that document pending, and a delete applied
+     * without its insert leaves records with fields missing.
+     */
+    mirrorYjsUpdate(message: Record<string, unknown>): Promise<void> {
+        if (!this.hasSeededWorkerDocuments()) {
+            return Promise.resolve();
+        }
+        const previous = this.pendingWorkerDocumentSync;
+        const work = (async () => {
+            await previous.catch(() => undefined);
+            if (!this.hasSeededWorkerDocuments()) {
+                return;
+            }
+            const result = await this.sendMessage({
+                ...message,
+                type: 'applyYjsUpdate'
+            });
+            if (result?.skipped === 'ydoc_not_initialized') {
+                this.setWorkerCacheDocumentReady(false);
+            }
+        })();
+        this.trackWorkerDocumentSync(work);
+        return work;
     }
 
     /** Return whether the worker already holds a document suitable for editing compiles. */
@@ -653,6 +699,8 @@ export class FontCompilation {
         }
 
         this.workerCacheDocumentReady = false;
+        // Updates the bridge sends from now on queue behind this seed.
+        this.workerDocumentsSeeded = true;
 
         const seedResult = await this.sendMessage({
             type: 'seedYdoc',
@@ -662,7 +710,7 @@ export class FontCompilation {
         });
 
         if (seedResult?.error) {
-            this.workerCacheDocumentReady = false;
+            this.setWorkerCacheDocumentReady(false);
             throw new Error(
                 `Failed to seed worker Yjs document: ${seedResult.error}`
             );
@@ -698,6 +746,8 @@ export class FontCompilation {
                     bytes: ensureCoreUpdateHasGlyphsMap(document.bytes)
                 };
             });
+            // Updates the bridge sends from now on queue behind this seed.
+            this.workerDocumentsSeeded = true;
             const seedResult = await this.sendMessage({
                 type: 'seedYdoc',
                 documents: seededDocuments.map((document) => ({
@@ -707,7 +757,7 @@ export class FontCompilation {
             });
 
             if (seedResult?.error) {
-                this.workerCacheDocumentReady = false;
+                this.setWorkerCacheDocumentReady(false);
                 throw new Error(
                     `Failed to seed worker Yjs document: ${seedResult.error}`
                 );
@@ -1378,6 +1428,14 @@ export class FontCompilation {
                 if (messageType === 'storeFontJson') {
                     this.pendingStoreFontJsonPromise = null;
                     this.pendingStoreFontJsonPayload = null;
+                }
+                if (
+                    messageType === 'seedYdoc' ||
+                    messageType === 'replaceYdocDocuments' ||
+                    messageType === 'applyYjsUpdate'
+                ) {
+                    // The worker discards its documents when one of these fails.
+                    this.workerDocumentsSeeded = false;
                 }
                 reject(reason);
             };

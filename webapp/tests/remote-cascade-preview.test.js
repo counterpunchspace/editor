@@ -11,6 +11,7 @@ const { PatchSyncEngine } = require('../js/patch-sync-engine');
 const { Font, withSuppressedModelRecording } = require('../js/babelfont-model');
 const { open_font_file } = require('../wasm-dist/babelfont_fontc_web');
 const { joinPathWithGlyphSeparator } = require('../js/change-log');
+const { drawingFingerprint } = require('../js/collab-trace');
 
 const at = (...segments) => joinPathWithGlyphSeparator(segments);
 
@@ -61,6 +62,7 @@ function fakeHost(recomposeResults = []) {
         compiles: 0,
         repaints: [],
         reverted: [],
+        settled: [],
         isBusyLocally: () => host.busy,
         recompose: (sources) => {
             host.recomposeCalls.push(
@@ -83,7 +85,13 @@ function fakeHost(recomposeResults = []) {
         revert: (targets) =>
             host.reverted.push(
                 targets.map((t) => `${t.glyphName}/${t.layerId}`)
-            )
+            ),
+        settle: (targets) => {
+            host.settled.push(
+                targets.map((t) => `${t.glyphName}/${t.layerId}`)
+            );
+            return targets;
+        }
     };
     return host;
 }
@@ -199,7 +207,7 @@ describe('RemoteCascadePreview', () => {
         expect(host.staged.at(-1)).toEqual(['aacute/m1']);
     });
 
-    it('reverts a preview whose stored layer never arrives', async () => {
+    it('settles a preview whose stored layer never catches up', async () => {
         const time = fakeClock();
         const host = fakeHost([[aacute]]);
         const preview = new RemoteCascadePreview(host, time.clock);
@@ -208,14 +216,15 @@ describe('RemoteCascadePreview', () => {
         time.flush();
         await settled();
         time.advance(REMOTE_CASCADE_PREVIEW_MAX_MS - 1);
-        expect(host.reverted).toEqual([]);
+        expect(host.settled).toEqual([]);
         time.advance(1);
 
-        expect(host.reverted).toEqual([['aacute/m1']]);
+        expect(host.settled).toEqual([['aacute/m1']]);
+        expect(host.reverted).toEqual([]);
         expect(preview.pendingTargets).toEqual([]);
     });
 
-    it('waits with the revert while the window is busy with its own edit', async () => {
+    it('waits to settle while the window is busy with its own edit', async () => {
         const time = fakeClock();
         const host = fakeHost([[aacute]]);
         const preview = new RemoteCascadePreview(host, time.clock);
@@ -225,11 +234,11 @@ describe('RemoteCascadePreview', () => {
         await settled();
         host.busy = true;
         time.advance(REMOTE_CASCADE_PREVIEW_MAX_MS);
-        expect(host.reverted).toEqual([]);
+        expect(host.settled).toEqual([]);
         host.busy = false;
         time.advance(REMOTE_CASCADE_BUSY_RETRY_MS);
 
-        expect(host.reverted).toEqual([['aacute/m1']]);
+        expect(host.settled).toEqual([['aacute/m1']]);
     });
 
     it('leaves the model alone while the window is busy with its own edit', () => {
@@ -396,6 +405,47 @@ describe('recomposeCollaboratorCascade', () => {
         // A revert puts the documents’ layer back into the model.
         bridge.revertLivePreviewDrawings(changed);
         expect(accentOffset()).toBe(offsetBefore);
+    });
+
+    it('settles a preview into the documents outside the undo history', () => {
+        const { bridge, fontModel, layerO: drawingO } = setUp();
+        const changed = recomposeCollaboratorCascade(bridge, [
+            {
+                glyphName: 'o',
+                layerId: drawingO.id,
+                editKinds: new Set(['anchor'])
+            }
+        ]);
+        const oacuteId = fontModel
+            .findGlyph('oacute')
+            .findDrawingById(drawingO.id).id;
+        const previewed = drawingFingerprint(
+            fontModel.findGlyph('oacute').findDrawingById(oacuteId)
+        );
+        const committed = [];
+        bridge.onCommittedChange((entries) => committed.push(entries));
+        const before = documentsOf(bridge);
+
+        const written = bridge.writeLivePreviewDrawings(changed);
+
+        expect(written).toContainEqual({
+            glyphName: 'oacute',
+            layerId: oacuteId
+        });
+        expect(documentsOf(bridge)).not.toBe(before);
+        expect(committed.flat().map((entry) => entry.path)).toContain(
+            `glyphs.oacute:layers.${oacuteId}:`
+        );
+        // The documents now hold the preview: a revert keeps it.
+        bridge.revertLivePreviewDrawings(written);
+        expect(
+            drawingFingerprint(
+                fontModel.findGlyph('oacute').findDrawingById(oacuteId)
+            )
+        ).toBe(previewed);
+        expect(bridge.canUndo('oacute', oacuteId)).toBe(false);
+        // Written once: a second settle finds nothing to change.
+        expect(bridge.writeLivePreviewDrawings(written)).toEqual([]);
     });
 
     it('leaves a collaborator’s automatic composite as it was stored', () => {

@@ -2,6 +2,15 @@
 
 - **Collaborators’ accented and keyed glyphs stay in sync**: When a collaborator changed a glyph that others are built on, such as moving an anchor of **a** or a sidebearing of **l**, your window could keep showing an accented glyph like **ä**, or a glyph whose sidebearings follow another, the way it was before, until you reloaded. Glyph overview tiles of such glyphs could also show the old outline.
 
+- **Add station works with background drawings**: Adding a station stopped with “Path node types do not match” when a glyph had a background drawing made in Counterpunch whose outline differs from its drawing. Background drawings no longer take part in interpolation.
+- **Two collaborators, one accented glyph**: When two collaborators changed glyphs that one accented glyph is built on at the same moment, for example the anchor of **ı** and the outline of the dot accent, the accent of **i** could stay a few units off for everyone. Windows that saw both edits now settle it on where its components put it.
+- **No lost edits when two people change one glyph at once**: When you, or another window of yours, changed a cloud glyph at the same moment as a collaborator, for example its Unicode values while the collaborator’s edit changed its width, your window could miss the collaborator’s change for good. It now keeps catching up until it has it.
+- **A glyph added again under a just-deleted name stays**: When a collaborator deleted a cloud glyph and you added a new glyph with the same name moments later, your new glyph could vanish from your window once their delete arrived.
+- **Adding a background drawing no longer stops the preview elsewhere**: In another window of yours or a collaborator’s, adding a background drawing to a glyph could make the preview compile fail with “DuplicateLocation” until the font was reopened, because for a moment the background counted as a second drawing at its station.
+- **Glyph overview tiles follow every change**: When the preview compile after a collaborator’s change failed or took too long, the glyph overview could keep showing the old outline, and a tile could be drawn from an outline the preview worker hadn’t received yet.
+- **The compiled preview keeps up with renamed and deleted glyphs**: After a glyph in a cloud font was renamed or deleted, or while collaborators edited quickly, the preview and the full compile could fall back to rebuilding the whole font, with “missing field” errors in the console, because they missed some of the changes.
+- **Python: assigning stations, axes or instances reaches collaborators**: `font.stations = …`, `font.axes = …` and `font.instances = …` changed only your window. They are now recorded like Font Info’s own edits, so collaborators get them and you can undo them.
+
 # v0.4.4
 
 - **The update buttons are green again**: The **Update available** button in the title bar and the **Update to …** button in Preferences showed without their green colour, and the **Up to date** tick without its green, because the colours were missing from the released stylesheet.

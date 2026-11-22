@@ -1,3 +1,4 @@
+const Y = require('yjs');
 const { webcrypto } = require('crypto');
 const { TextDecoder, TextEncoder } = require('util');
 Object.defineProperty(global, 'crypto', {
@@ -437,6 +438,56 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         expect(revisionFor(bridge, 'id-b')).toBe('linked:1');
     });
 
+    test('a name added again gets a fresh glyph order entry', () => {
+        const { bridge } = createEngine('writer');
+        const order = () => bridge.fontMap.get('glyphOrder').toArray();
+        // Another window deleted B; this window has not heard of it in the
+        // order yet, and adds B again.
+        const peer = new Y.Doc();
+        Y.applyUpdate(peer, bridge.encodeDocumentState('font-core'));
+        const peerOrder = peer.getMap('font').get('glyphOrder');
+        const before = Y.encodeStateVector(peer);
+        peerOrder.delete(peerOrder.toArray().indexOf('B'), 1);
+        const peerDelete = Y.encodeStateAsUpdate(peer, before);
+
+        bridge.recordAdd(['glyphs', 'B'], {
+            name: 'B',
+            id: 'id-b-again',
+            category: 'Base',
+            layers: []
+        });
+        expect(order()).toContain('B');
+
+        // The peer's delete of the old entry arrives afterwards.
+        Y.applyUpdate(bridge.yDoc, peerDelete);
+        expect(order().filter((name) => name === 'B')).toEqual(['B']);
+    });
+
+    test('an own write does not replace a collaborator revision not yet fetched', () => {
+        const { bridge, font } = createEngine('writer');
+        bridge.applyGlyphRevisionFeed(
+            [{ glyphId: 'id-b', revision: 'collaborator:1' }],
+            { hold: false }
+        );
+        expect(revisionFor(bridge, 'id-b')).toBe('collaborator:1');
+
+        // Written here before a catch-up brought the collaborator's write:
+        // the catch-up must still look for the collaborator's revision.
+        font.findGlyph('B').drawings[0].width = 600;
+        expect(revisionFor(bridge, 'id-b')).toBe('collaborator:1');
+        bridge.relayPeerPacketToCloud(
+            new Uint8Array(),
+            { glyphRevision: 'linked:1' },
+            'glyph:id-b'
+        );
+        expect(revisionFor(bridge, 'id-b')).toBe('collaborator:1');
+
+        // Once fetched, this window's writes name the revision again.
+        bridge.noteGlyphRevisionFetched('id-b', 'collaborator:1');
+        font.findGlyph('B').drawings[0].width = 700;
+        expect(revisionFor(bridge, 'id-b')).not.toBe('collaborator:1');
+    });
+
     test('glyph packets include the catch-up stamp', () => {
         const { bridge, font } = createEngine('writer');
         const receiver = hydrateReceiverFromWriter(bridge);
@@ -550,6 +601,29 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
             jest.advanceTimersByTime(GLYPH_REVISION_COMMIT_HOLD_MS);
             expect(revisionFor(receiver, 'id-b')).toBe('writer:8/7-8');
             expect(events).toEqual([['id-b']]);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    test('a held collaborator revision still applies after an own write', () => {
+        jest.useFakeTimers();
+        try {
+            const { bridge: receiver } = createEngine('receiver');
+            // A collaborator's multi-glyph commit, held for its siblings.
+            receiver.applyGlyphRevisionFeed([
+                { glyphId: 'id-b', revision: 'writer:8/7-8' }
+            ]);
+            // This window (or a linked one) writes the glyph meanwhile.
+            receiver.relayPeerPacketToCloud(
+                new Uint8Array(),
+                { glyphRevision: 'linked:1' },
+                'glyph:id-b'
+            );
+            expect(revisionFor(receiver, 'id-b')).toBe('linked:1');
+            jest.advanceTimersByTime(GLYPH_REVISION_COMMIT_HOLD_MS);
+            // The collaborator's write is what the next catch-up must fetch.
+            expect(revisionFor(receiver, 'id-b')).toBe('writer:8/7-8');
         } finally {
             jest.useRealTimers();
         }

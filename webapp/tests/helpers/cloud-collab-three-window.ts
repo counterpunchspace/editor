@@ -570,15 +570,43 @@ export async function describeStaleTiles(
             glyphName: string;
             cachedData?: { shapes: unknown; width: unknown };
         }>;
-        const short = (outline?: { shapes: unknown; width: unknown }) =>
-            outline
-                ? `width ${String(outline.width)} ${JSON.stringify(outline.shapes).slice(0, 240)}`
-                : 'none';
+        // Width, then the first shape where tile and worker differ, in full.
+        const describe = (
+            tile?: { shapes: unknown; width: unknown },
+            held?: { shapes: unknown; width: unknown }
+        ) => {
+            if (!tile || !held) {
+                return `tile ${tile ? 'present' : 'none'} | worker ${held ? 'present' : 'none'}`;
+            }
+            const tileShapes = Array.isArray(tile.shapes) ? tile.shapes : [];
+            const heldShapes = Array.isArray(held.shapes) ? held.shapes : [];
+            const count = Math.max(tileShapes.length, heldShapes.length);
+            for (let index = 0; index < count; index += 1) {
+                const a = JSON.stringify(tileShapes[index] ?? null);
+                const b = JSON.stringify(heldShapes[index] ?? null);
+                if (a !== b) {
+                    return `width ${String(tile.width)} vs ${String(held.width)}; shape ${index} of ${tileShapes.length} vs ${heldShapes.length}: tile ${a} | worker ${b}`;
+                }
+            }
+            return `width ${String(tile.width)} vs ${String(held.width)}; shapes match`;
+        };
+        const changedLog = (w.__glyphChangedLog ?? []) as Array<{
+            at: number;
+            glyphs: string[];
+        }>;
+        const now = Math.round(performance.now());
         const lines = names.map((name) => {
             const tile = tiles.find((entry) => entry.glyphName === name);
-            return `${name}: tile ${short(tile?.cachedData)} | worker ${short(
+            // When this window was last told the glyph changed, if the spec
+            // records it.
+            const told = changedLog
+                .filter((entry) => entry.glyphs.includes(name))
+                .slice(-3)
+                .map((entry) => `${now - entry.at} ms ago`);
+            return `${name}: ${describe(
+                tile?.cachedData,
                 worker.find((outline) => outline.name === name)
-            )}`;
+            )}; glyphChanged ${told.length ? told.join(', ') : 'never recorded'}`;
         });
         const pending = (w.remoteCascadePreview?.pendingTargets ?? []).map(
             (target: { glyphName: string; layerId: string }) =>

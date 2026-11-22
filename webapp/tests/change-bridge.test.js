@@ -4655,10 +4655,23 @@ describe('Model setter change recording', () => {
             nodes: [{ x: 100, y: 200, nodetype: 'Line', smooth: false }],
             closed: true
         });
-        expect(bridge.getChangeLog().map((entry) => entry.path)).toEqual(
+        expect(rawBridgeBackground.is_background).toBe(true);
+        expect(rawBridgeBackground.background_layer_id).toBe('layer-1');
+        // The background is added whole, already marked as a background, then
+        // linked from its foreground; never a plain drawing in between.
+        const log = bridge.getChangeLog();
+        const added = log.find(
+            (entry) => entry.path === `glyphs.A:layers.${materialized.id}:`
+        );
+        expect(added?.newValue).toEqual(
+            expect.objectContaining({
+                is_background: true,
+                background_layer_id: 'layer-1'
+            })
+        );
+        expect(log.map((entry) => entry.path)).toEqual(
             expect.arrayContaining([
-                expect.stringContaining(':is_background'),
-                expect.stringContaining(':background_layer_id'),
+                'glyphs.A:layers.layer-1:background_layer_id',
                 expect.stringContaining(':shapes.0')
             ])
         );

@@ -11968,13 +11968,23 @@ export class Glyph extends ArrayElementBase {
             return existing;
         }
 
-        const background = this.addDrawing(
-            foreground.width,
-            cloneForHistory(foreground.station)
-        );
-        background.location = cloneForHistory(foreground.location);
-        background.is_background = true;
-        background.background_drawing_id = foreground.id;
+        // Added whole: a drawing first added as a station drawing and only
+        // then marked as a background is, in between, a second drawing at
+        // that station, and caches built from that state fail to compile.
+        const drawingData: Babelfont.Layer = {
+            width: foreground.width,
+            id: this.createUniqueDrawingId(),
+            shapes: [],
+            is_background: true,
+            background_layer_id: foreground.id
+        };
+        if (foreground.station) {
+            drawingData.master = cloneForHistory(foreground.station);
+        }
+        if (foreground.location) {
+            drawingData.location = cloneForHistory(foreground.location);
+        }
+        const background = this.appendRawDrawing(drawingData);
         foreground.background_drawing_id = background.id;
         return background;
     }
@@ -13389,8 +13399,11 @@ export class Font extends ModelBase {
 
     set axes(value: Babelfont.Axis[] | Babelfont.Axis) {
         assertModelMutationAllowed();
+        const old = this._data.axes;
         this._data.axes = value;
         this._axisWrappers = null;
+        // The whole list, as Font Info records it, so collaborators get it.
+        recordAndMarkDirty(this, 'axes', old, value);
     }
 
     get instances(): Instance[] | undefined {
@@ -13415,8 +13428,11 @@ export class Font extends ModelBase {
 
     set instances(value: Babelfont.Instance[] | Babelfont.Instance) {
         assertModelMutationAllowed();
+        const old = this._data.instances;
         this._data.instances = value;
         this._instanceWrappers = null;
+        // The whole list, as Font Info records it, so collaborators get it.
+        recordAndMarkDirty(this, 'instances', old, value);
     }
 
     get stations(): Station[] | undefined {
@@ -13441,8 +13457,11 @@ export class Font extends ModelBase {
 
     set stations(value: Babelfont.Master[] | Babelfont.Master) {
         assertModelMutationAllowed();
+        const old = this._data.masters;
         this._data.masters = value;
         this._stationWrappers = null;
+        // The whole list, as Font Info records it, so collaborators get it.
+        recordAndMarkDirty(this, 'masters', old, value);
     }
 
     get glyphs(): Glyph[] {
@@ -15471,6 +15490,85 @@ export class Font extends ModelBase {
         this._stationWrappers = null;
     }
 
+    /**
+     * Free drawings at exactly the new station's location, as overrides that
+     * give the station's new drawing their outline.
+     */
+    private collectFreeDrawingsAtNewStation(
+        station: Babelfont.Master,
+        metadata: InterpolationRustBatchMetadata
+    ): Array<{
+        glyphName: string;
+        layerId: string;
+        layer: Babelfont.Layer;
+        freeDrawingId: string;
+    }> {
+        const stationId = station.id;
+        if (!stationId || !Array.isArray(metadata.layerOperations)) {
+            return [];
+        }
+        const axes: Babelfont.Axis[] = this._data.axes ?? [];
+        const valueAt = (
+            location: Record<string, number> | undefined,
+            axis: Babelfont.Axis
+        ): number | undefined =>
+            location?.[axis.tag as string] ??
+            (axis.default as number | undefined);
+        const sameLocation = (location: Record<string, number> | undefined) =>
+            !!location &&
+            axes.every(
+                (axis) =>
+                    valueAt(location, axis) ===
+                    valueAt(
+                        station.location as Record<string, number> | undefined,
+                        axis
+                    )
+            );
+        const found: Array<{
+            glyphName: string;
+            layerId: string;
+            layer: Babelfont.Layer;
+            freeDrawingId: string;
+        }> = [];
+        for (const operation of metadata.layerOperations) {
+            const added = operation.newValue as Babelfont.Layer | undefined;
+            const addedStation = (added?.master as Unsafe)?.master;
+            if (!added || addedStation !== stationId) {
+                continue;
+            }
+            const free = (
+                this._data.glyphs.find(
+                    (glyph: Babelfont.Glyph) =>
+                        glyph.name === operation.glyphName
+                )?.layers ?? []
+            ).find(
+                (layer: Babelfont.Layer) =>
+                    !layer.is_background &&
+                    (layer.master as Unsafe)?.type !== 'DefaultForMaster' &&
+                    !layer.format_specific?.[
+                        GLYPHS_FEATURE_VARIATION_ATTRIBUTES_KEY
+                    ] &&
+                    sameLocation(
+                        layer.location as Record<string, number> | undefined
+                    )
+            );
+            if (!free?.id) {
+                continue;
+            }
+            const layer = this.clonePlainValue(free) as Babelfont.Layer;
+            layer.id = added.id ?? operation.layerId;
+            layer.master = this.clonePlainValue(added.master);
+            delete layer.location;
+            found.push({
+                glyphName: operation.glyphName,
+                layerId: operation.layerId,
+                layer,
+                freeDrawingId: free.id
+            });
+        }
+        return found;
+    }
+
     private collectAutomaticNewDrawingOverrides(
         metadata: InterpolationRustBatchMetadata
     ): Array<{
@@ -15686,8 +15784,19 @@ export class Font extends ModelBase {
                         newValue: axisExtension.axes
                     };
                 }
-                const overrides =
-                    this.collectAutomaticNewDrawingOverrides(metadata);
+                // A free drawing already at the new station's location becomes
+                // that station's drawing; an interpolated one beside it would
+                // put two drawings at one location, which no compile accepts.
+                const freeDrawings = this.collectFreeDrawingsAtNewStation(
+                    clonedStation,
+                    metadata
+                );
+                const overrides = [
+                    ...this.collectAutomaticNewDrawingOverrides(metadata),
+                    ...freeDrawings.map(
+                        ({ freeDrawingId: _, ...override }) => override
+                    )
+                ];
                 if (overrides.length) {
                     const refined =
                         await window.fontManager.buildWorkerRefineDrawingSnapshotsBatch(
@@ -15731,6 +15840,23 @@ export class Font extends ModelBase {
                     'Add station',
                     documentUpdates?.length ? documentUpdates : undefined
                 );
+                if (freeDrawings.length) {
+                    withBridgeTransaction(
+                        'Add station',
+                        'station-topology',
+                        'station-topology',
+                        () => {
+                            for (const {
+                                glyphName,
+                                freeDrawingId
+                            } of freeDrawings) {
+                                this.findGlyph(glyphName)?.removeDrawingById(
+                                    freeDrawingId
+                                );
+                            }
+                        }
+                    );
+                }
             } finally {
                 endStartupInteractionLock();
                 endLoadingCursor();

@@ -100,6 +100,7 @@ import {
     readChangeLogTail,
     readCompiledOutlines,
     readCompositionMismatches,
+    loadCatalogGlyphs,
     readFuzzSnapshot,
     readModelVsDocuments,
     readCollabTrace,
@@ -176,7 +177,22 @@ function flatten(snapshot: FuzzSnapshot): Record<string, string> {
         )) {
             values[`${name}/${id}`] = JSON.stringify(drawing);
         }
-        values[`props:${name}`] = JSON.stringify(snapshot.props[name] ?? null);
+        // Layers as a set: windows that built the glyph in a different order
+        // (a reopened one, say) list the same layers in another order.
+        const props = snapshot.props[name] as
+            { layers?: Record<string, unknown> } | null | undefined;
+        values[`props:${name}`] = JSON.stringify(
+            props
+                ? {
+                      ...props,
+                      layers: Object.fromEntries(
+                          Object.entries(props.layers ?? {}).sort(
+                              ([left], [right]) => left.localeCompare(right)
+                          )
+                      )
+                  }
+                : null
+        );
     }
     for (const id of Object.keys(snapshot.kerning)) {
         values[`kern:${id}`] = JSON.stringify(snapshot.kerning[id] ?? {});
@@ -309,6 +325,21 @@ test.describe('cloud collaboration fuzz', () => {
             // (js/collab-trace.ts); a failure attaches each window's trace.
             await context.addInitScript(() => {
                 (window as any).__collabTrace = { enabled: true, entries: [] };
+                // Which glyphs each window was told changed, for stale tiles.
+                const changed: Array<{ at: number; glyphs: string[] }> = [];
+                (window as any).__glyphChangedLog = changed;
+                window.addEventListener('glyphChanged', (event) => {
+                    const detail = (event as CustomEvent).detail ?? {};
+                    changed.push({
+                        at: Math.round(performance.now()),
+                        glyphs: Array.isArray(detail.glyphNames)
+                            ? detail.glyphNames
+                            : [detail.glyphName].filter(Boolean)
+                    });
+                    if (changed.length > 500) {
+                        changed.shift();
+                    }
+                });
             });
             await context.addInitScript(() => {
                 let engine: any;
@@ -547,7 +578,8 @@ test.describe('cloud collaboration fuzz', () => {
                                     (line) =>
                                         line
                                             .split(' ')[1]
-                                            .replace(':', '')
+                                            .replace(/^(glyph|props|cp):/, '')
+                                            .replace(/:$/, '')
                                             .split('/')[0]
                                 )
                             )
@@ -589,12 +621,52 @@ test.describe('cloud collaboration fuzz', () => {
                                             bridge?.glyphDocumentIdForName?.(
                                                 name
                                             ) ?? null;
-                                        return `${name} ${id} sv=${id ? toHex(bridge.encodeDocumentStateVector?.(id) ?? null) : '-'}`;
-                                    })
+                                        // Every catalog entry under this
+                                        // name, deleted ones too, and
+                                        // whether glyphOrder lists it.
+                                        const fontJson = bridge?._fontJson;
+                                        const catalog =
+                                            fontJson?.glyphCatalog ??
+                                            fontJson?.format_specific?.[
+                                                'com.counterpunch.cloud'
+                                            ]?.glyphCatalog ??
+                                            {};
+                                        const entries = Object.values(
+                                            catalog as Record<string, any>
+                                        )
+                                            .filter(
+                                                (entry: any) =>
+                                                    entry?.name === name
+                                            )
+                                            .map(
+                                                (entry: any) =>
+                                                    `${entry.glyphId}${entry.deleted ? ' deleted' : ''} gen ${entry.generation ?? 0}`
+                                            );
+                                        const order =
+                                            bridge?.fontMap
+                                                ?.get?.('glyphOrder')
+                                                ?.toArray?.() ?? [];
+                                        const liveId = Object.values(
+                                            catalog as Record<string, any>
+                                        ).find(
+                                            (entry: any) =>
+                                                entry?.name === name &&
+                                                !entry.deleted
+                                        )?.glyphId;
+                                        const liveResident = liveId
+                                            ? bridge?.hasResidentGlyphDocument?.(
+                                                  `glyph:${liveId}`
+                                              )
+                                            : null;
+                                        return `${name} ${id} sv=${id ? toHex(bridge.encodeDocumentStateVector?.(id) ?? null) : '-'} catalog [${entries.join(', ')}] ${order.includes(name) ? 'in' : 'not in'} glyphOrder; live id ${liveResident ? 'resident' : 'not resident'}`;
+                                    }),
+                                    // Which glyph documents this window
+                                    // holds of those the catalog lists.
+                                    residency: `${bridge?.hasSparseWorkingSet?.() ? 'sparse' : 'full'}, ${bridge?.listLiveGlyphDocumentIds?.()?.length ?? '?'} glyph documents resident, ${bridge?.listLiveCatalogGlyphIds?.()?.length ?? '?'} live in the catalog`
                                 };
                             }, differing);
                             logs.push(
-                                `${window.name} sync: pending ${sync.pending}, ${sync.status}; ${sync.docs.join('; ')}`
+                                `${window.name} sync: pending ${sync.pending}, ${sync.status}, ${sync.residency}; ${sync.docs.join('; ')}`
                             );
                         }
                         for (const window of windows) {
@@ -694,6 +766,26 @@ test.describe('cloud collaboration fuzz', () => {
                             record(
                                 `${label}: ${window.name} stale compile: ${why}`
                             );
+                            // The font this window compiles, to compile it
+                            // again outside the browser.
+                            const fontJson = await window.page
+                                .evaluate(() =>
+                                    JSON.stringify(
+                                        (
+                                            window as any
+                                        ).patchSyncEngine?.getFontJsonSnapshot?.() ??
+                                            null
+                                    )
+                                )
+                                .catch(() => null);
+                            if (fontJson) {
+                                fs.writeFileSync(
+                                    test
+                                        .info()
+                                        .outputPath(`font-${window.name}.json`),
+                                    fontJson
+                                );
+                            }
                             throw new Error(
                                 `${error instanceof Error ? error.message : String(error)}\n${why}\n${compiled.error ?? ''}\nediting ${JSON.stringify(compiled.editing)}\nfresh   ${JSON.stringify(compiled.fresh)}`
                             );
@@ -2474,6 +2566,12 @@ test.describe('cloud collaboration fuzz', () => {
                 windows[2].errors = reopened.errors;
                 trafficNames.set(reopened.page, 'O2');
                 record('tab close: O2 reopened');
+                // Glyphs the text does not show load as the overview shows
+                // them, the re-added one among them.
+                const loaded = await loadCatalogGlyphs(reopened.page);
+                if (loaded.length) {
+                    record(`tab close: O2 loads ${loaded.join(', ')}`);
+                }
                 await converge('after O2 reopened', 180000);
                 snapshot = await checkAll('after O2 reopened');
                 expect(
@@ -2585,6 +2683,7 @@ test.describe('cloud collaboration fuzz', () => {
             const { page: freshPage, errors: freshErrors } =
                 await openCloudWindow(freshContext, editorHref);
             await openEditor(freshPage);
+            await loadCatalogGlyphs(freshPage);
             await expect
                 .poll(async () => flatten(await readFuzzSnapshot(freshPage)), {
                     timeout: 90000,

@@ -266,6 +266,7 @@ export class CloudPlugin extends FilesystemPlugin {
         catalogDirty: boolean;
         deletedGlyphIds: string[];
         catalogGlyphs: string[];
+        addedGlyphIds: Record<string, string>;
         depsGlyphs: Set<string>;
     } | null = null;
     private _activeAssetId: string | null = null;
@@ -2706,6 +2707,23 @@ export class CloudPlugin extends FilesystemPlugin {
                     .filter((name): name is string => Boolean(name))
             )
         ];
+        // Glyphs this commit added, by name: their catalog entry is keyed by
+        // the id the add gave them.
+        const addedGlyphIds: Record<string, string> = {};
+        for (const entry of entries) {
+            const path = pathFromCommittedEntry(entry);
+            const id = (entry.newValue as { id?: unknown } | null | undefined)
+                ?.id;
+            if (
+                entry.op === 'add' &&
+                path[0] === 'glyphs' &&
+                path.length === 2 &&
+                typeof id === 'string' &&
+                id
+            ) {
+                addedGlyphIds[String(path[1])] = id;
+            }
+        }
         // Every packet of a multi-document commit carries the whole commit,
         // and rebuilding the projection reads the whole font. Queue until the
         // commit's last packet instead of rebuilding once per glyph shard.
@@ -2715,6 +2733,7 @@ export class CloudPlugin extends FilesystemPlugin {
                 catalogDirty,
                 deletedGlyphIds,
                 catalogGlyphs,
+                addedGlyphIds,
                 depsGlyphs
             },
             { holdForBatch: !!batch && batch.index < batch.count - 1 }
@@ -2726,6 +2745,7 @@ export class CloudPlugin extends FilesystemPlugin {
             catalogDirty: boolean;
             deletedGlyphIds: string[];
             catalogGlyphs: string[];
+            addedGlyphIds: Record<string, string>;
             depsGlyphs: Set<string>;
         },
         options?: { holdForBatch?: boolean }
@@ -2742,6 +2762,7 @@ export class CloudPlugin extends FilesystemPlugin {
             pending.catalogGlyphs = [
                 ...new Set([...pending.catalogGlyphs, ...update.catalogGlyphs])
             ];
+            Object.assign(pending.addedGlyphIds, update.addedGlyphIds);
             for (const glyph of update.depsGlyphs) {
                 pending.depsGlyphs.add(glyph);
             }
@@ -2750,6 +2771,7 @@ export class CloudPlugin extends FilesystemPlugin {
                 catalogDirty: update.catalogDirty,
                 deletedGlyphIds: [...update.deletedGlyphIds],
                 catalogGlyphs: [...update.catalogGlyphs],
+                addedGlyphIds: { ...update.addedGlyphIds },
                 depsGlyphs: new Set(update.depsGlyphs)
             };
         }
@@ -2779,17 +2801,28 @@ export class CloudPlugin extends FilesystemPlugin {
             this._isSyncingCatalog = true;
             try {
                 if (pending.catalogDirty) {
-                    const owned = pending.deletedGlyphIds.length
+                    let owned = pending.deletedGlyphIds.length
                         ? tombstoneCloudOwnedGlyphs(
                               fontJson,
                               pending.deletedGlyphIds
                           )
-                        : pending.catalogGlyphs.length !== 1
-                          ? applyCloudOwnedData(fontJson)
-                          : patchCloudOwnedGlyph(
-                                fontJson,
-                                pending.catalogGlyphs[0]
-                            );
+                        : null;
+                    // Adds queued with the deletes (a name deleted and added
+                    // again) still need their own entries.
+                    const added = Object.keys(pending.addedGlyphIds);
+                    if (!owned || added.length) {
+                        const [only] = pending.catalogGlyphs;
+                        owned =
+                            pending.catalogGlyphs.length !== 1
+                                ? applyCloudOwnedData(fontJson, {
+                                      deletedGlyphIds: pending.deletedGlyphIds
+                                  })
+                                : patchCloudOwnedGlyph(
+                                      fontJson,
+                                      only,
+                                      pending.addedGlyphIds[only]
+                                  );
+                    }
                     window.patchSyncEngine?.syncCloudOwnedProjection?.(owned);
                 }
                 if (pending.depsGlyphs.size > 0) {

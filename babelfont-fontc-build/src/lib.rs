@@ -3936,18 +3936,37 @@ fn glyph_id_from_document_id(document_id: &str) -> Option<&str> {
     document_id.strip_prefix("glyph:")
 }
 
+/// Index a glyph document under its current name, and only that name: one
+/// it was renamed from no longer points at it, and a deleted glyph (its map
+/// emptied) has none. A stale name would put the document back in the font
+/// under a name it no longer has, or as a glyph with no data.
 fn remember_glyph_name(glyph_id: &str, doc: &yrs::Doc) {
-    let txn = doc.transact();
-    let Some(glyph_map) = txn.get_map("glyph") else {
-        return;
+    let current = {
+        let txn = doc.transact();
+        txn.get_map("glyph").and_then(|glyph_map| {
+            match glyph_map.get(&txn, "name") {
+                Some(yrs::types::Value::Any(yrs::Any::String(name))) if !name.is_empty() => {
+                    Some(name.to_string())
+                }
+                _ => None,
+            }
+        })
     };
-    if let Some(yrs::types::Value::Any(yrs::Any::String(name))) = glyph_map.get(&txn, "name") {
-        if !name.is_empty() {
-            GLYPH_ID_BY_NAME
-                .lock()
-                .unwrap()
-                .insert(name.to_string(), glyph_id.to_string());
+    let mut ids = GLYPH_ID_BY_NAME.lock().unwrap();
+    ids.retain(|name, id| id != glyph_id || current.as_deref() == Some(name.as_str()));
+    if let Some(name) = current {
+        ids.insert(name, glyph_id.to_string());
+    }
+}
+
+/// The glyph map of a document that still holds a glyph: one with a name.
+fn named_glyph_map<T: yrs::ReadTxn>(txn: &T) -> Option<yrs::MapRef> {
+    let glyph_map = txn.get_map("glyph")?;
+    match glyph_map.get(txn, "name") {
+        Some(yrs::types::Value::Any(yrs::Any::String(name))) if !name.is_empty() => {
+            Some(glyph_map)
         }
+        _ => None,
     }
 }
 
@@ -4176,7 +4195,7 @@ fn ydoc_glyph_json_from_shards(glyph_name: &str) -> Option<serde_json::Value> {
     let glyph_id = ids.get(glyph_name)?;
     let doc = docs.get(glyph_id)?;
     let txn = doc.transact();
-    let glyph_map = txn.get_map("glyph")?;
+    let glyph_map = named_glyph_map(&txn)?;
     Some(ydoc_glyph_to_json(glyph_name, &glyph_map, &txn))
 }
 
@@ -4254,7 +4273,7 @@ fn assembled_babelfont_json() -> Result<serde_json::Value, JsValue> {
             continue;
         };
         let glyph_txn = glyph_doc.transact();
-        let Some(glyph_map) = glyph_txn.get_map("glyph") else {
+        let Some(glyph_map) = named_glyph_map(&glyph_txn) else {
             continue;
         };
         glyphs.push(ydoc_glyph_to_json(&name, &glyph_map, &glyph_txn));
@@ -4726,12 +4745,32 @@ fn native_features_from_json(features_json: &serde_json::Value) -> Option<babelf
 /// failing path.
 fn deserialize_font_from_value(json_value: &serde_json::Value) -> Result<babelfont::Font, JsValue> {
     serde_path_to_error::deserialize(json_value).map_err(|e| {
+        let path = e.path().to_string();
         JsValue::from_str(&format!(
-            "Font deserialization error: {} (path: {})",
+            "Font deserialization error: {} (path: {}{})",
             e.inner(),
-            e.path()
+            path,
+            glyph_name_for_error_path(json_value, &path)
+                .map(|name| format!(", glyph {}", name))
+                .unwrap_or_default()
         ))
     })
+}
+
+/// The glyph a `glyphs[N]…` error path points into, so the error names it.
+fn glyph_name_for_error_path(json_value: &serde_json::Value, path: &str) -> Option<String> {
+    let index: usize = path
+        .strip_prefix("glyphs[")?
+        .split(']')
+        .next()?
+        .parse()
+        .ok()?;
+    json_value
+        .get("glyphs")?
+        .get(index)?
+        .get("name")?
+        .as_str()
+        .map(str::to_string)
 }
 
 /// Internal: store a babelfont `serde_json::Value` in all Rust caches.
@@ -8564,6 +8603,56 @@ mod tests {
         assert_eq!(layer.get("shapes"), Some(&json!([{ "id": "shape-a" }])));
         assert!(!layer.contains_key("shapesById"));
         assert!(!layer.contains_key("shapeOrder"));
+    }
+
+    #[test]
+    fn glyph_name_index_follows_renames_and_deletes() {
+        // A source document whose updates the worker's copy receives, as the
+        // bridge sends them. Names unique to this test: the index is global.
+        let source = Doc::new();
+        let glyph_map = source.get_or_insert_map("glyph");
+        let id = "name-index-test-glyph";
+        let send = |before: &yrs::StateVector| {
+            let update = source.transact().encode_state_as_update_v1(before);
+            apply_update_to_glyph_doc(id, yrs::Update::decode_v1(&update).unwrap()).unwrap();
+        };
+        let names = || {
+            let mut out: Vec<String> = GLYPH_ID_BY_NAME
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(_, glyph_id)| glyph_id.as_str() == id)
+                .map(|(name, _)| name.clone())
+                .collect();
+            out.sort();
+            out
+        };
+
+        let before = source.transact().state_vector();
+        {
+            let mut txn = source.transact_mut();
+            glyph_map.insert(&mut txn, "name", "name-index.new");
+            glyph_map.insert(&mut txn, "category", "Base");
+        }
+        send(&before);
+        assert_eq!(names(), vec!["name-index.new".to_string()]);
+
+        let before = source.transact().state_vector();
+        glyph_map.insert(&mut source.transact_mut(), "name", "name-index.renamed");
+        send(&before);
+        assert_eq!(names(), vec!["name-index.renamed".to_string()]);
+
+        // A delete empties the map: the glyph has no name and is not built.
+        let before = source.transact().state_vector();
+        {
+            let mut txn = source.transact_mut();
+            glyph_map.remove(&mut txn, "name");
+            glyph_map.remove(&mut txn, "category");
+        }
+        send(&before);
+        assert!(names().is_empty());
+        assert!(ydoc_glyph_json_from_shards("name-index.renamed").is_none());
+        GLYPH_DOCS.lock().unwrap().remove(id);
     }
 
     #[test]

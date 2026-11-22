@@ -296,6 +296,150 @@ describe('Babelfont Object Model', () => {
         }
     });
 
+    test('Font.addStation turns a free drawing at the new location into the station drawing', async () => {
+        const stationFont = Font.fromData({
+            upm: 1000,
+            version: [1, 0],
+            axes: [
+                {
+                    name: { dflt: 'Weight' },
+                    tag: 'wght',
+                    min: 100,
+                    default: 400,
+                    max: 900
+                }
+            ],
+            cross_axis_mappings: [],
+            instances: [],
+            masters: [
+                {
+                    name: { dflt: 'Regular' },
+                    id: 'master-1',
+                    location: { wght: 400 },
+                    guides: [],
+                    metrics: {},
+                    kerning: {}
+                }
+            ],
+            glyphs: [
+                {
+                    name: 'B',
+                    category: 'Base',
+                    exported: true,
+                    layers: [
+                        {
+                            width: 520,
+                            id: 'master-1',
+                            master: {
+                                type: 'DefaultForMaster',
+                                master: 'master-1'
+                            }
+                        },
+                        {
+                            width: 540,
+                            id: 'brace-1',
+                            master: {
+                                type: 'AssociatedWithMaster',
+                                master: 'master-1'
+                            },
+                            location: { wght: 650 },
+                            shapes: [
+                                {
+                                    closed: true,
+                                    nodes: [
+                                        { x: 0, y: 0, nodetype: 'Line' },
+                                        { x: 10, y: 0, nodetype: 'Line' },
+                                        { x: 10, y: 10, nodetype: 'Line' }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+            note: '',
+            date: new Date('2020-01-01T00:00:00.000Z'),
+            names: {},
+            features: { classes: {}, prefixes: {}, features: [] }
+        });
+        const previous = {
+            fontModel: window.currentFontModel,
+            bridge: window.patchSyncEngine,
+            fontManager: window.fontManager
+        };
+        const interpolated = {
+            id: 'master-2',
+            width: 530,
+            master: { type: 'DefaultForMaster', master: 'master-2' },
+            shapes: []
+        };
+        jest.spyOn(
+            fontManager,
+            'buildWorkerAddStationWithInterpolatedDrawingsBatch'
+        ).mockResolvedValue({
+            update: new Uint8Array([1]),
+            metadata: {
+                changedGlyphs: ['B'],
+                layerTargets: [],
+                layerOperations: [
+                    {
+                        glyphName: 'B',
+                        layerId: 'master-2',
+                        newValue: interpolated
+                    }
+                ],
+                mastersOperation: { newValue: [] }
+            }
+        });
+        const refine = jest
+            .spyOn(fontManager, 'buildWorkerRefineDrawingSnapshotsBatch')
+            .mockResolvedValue({ update: new Uint8Array([2]) });
+        const removed = [];
+        window.currentFontModel = stationFont;
+        window.fontManager = fontManager;
+        window.patchSyncEngine = {
+            applyLocalGeneratedYjsUpdate: jest.fn(),
+            beginTransaction: jest.fn(),
+            endTransaction: jest.fn(),
+            recordRemove: (path) => removed.push(path.join('/'))
+        };
+        try {
+            await stationFont.addStation({
+                id: 'master-2',
+                name: { dflt: 'Semibold' },
+                location: { wght: 650 },
+                guides: [],
+                metrics: {},
+                kerning: {}
+            });
+            const [, overrides] = refine.mock.calls[0];
+            expect(overrides).toEqual([
+                expect.objectContaining({
+                    glyphName: 'B',
+                    layerId: 'master-2',
+                    layer: expect.objectContaining({
+                        id: 'master-2',
+                        width: 540,
+                        master: { type: 'DefaultForMaster', master: 'master-2' }
+                    })
+                })
+            ]);
+            expect(overrides[0].layer.location).toBeUndefined();
+            expect(overrides[0].layer.shapes[0].nodes).toHaveLength(3);
+            expect(
+                stationFont
+                    .findGlyph('B')
+                    .toJSON()
+                    .layers.map((layer) => layer.id)
+            ).not.toContain('brace-1');
+        } finally {
+            window.currentFontModel = previous.fontModel;
+            window.patchSyncEngine = previous.bridge;
+            window.fontManager = previous.fontManager;
+            jest.restoreAllMocks();
+        }
+    });
+
     test('Font.addStation extends axis range when the new master is outside existing coverage', async () => {
         const addStationFont = Font.fromData({
             upm: 1000,
@@ -7619,5 +7763,61 @@ describe('Font.findGlyph name index', () => {
         font.toJSON().glyphs = [{ name: 'x', layers: [] }];
         expect(font.findGlyph('x').name).toBe('x');
         expect(font.findGlyph('bb')).toBeUndefined();
+    });
+});
+
+describe('Font list setters', () => {
+    test('record the whole list, as Font Info does', () => {
+        const font = Font.fromData({
+            axes: [
+                {
+                    tag: 'wght',
+                    name: { dflt: 'Weight' },
+                    min: 100,
+                    max: 900,
+                    default: 400
+                }
+            ],
+            masters: [
+                { id: 'm1', name: { dflt: 'Regular' }, location: { wght: 400 } }
+            ],
+            instances: [],
+            glyphs: []
+        });
+        const recordChange = jest.fn();
+        const previousBridge = window.patchSyncEngine;
+        window.patchSyncEngine = { recordChange };
+        try {
+            const instances = [
+                { id: 'i1', name: { dflt: 'Bold' }, location: { wght: 700 } }
+            ];
+            font.instances = instances;
+            const axes = [
+                ...font.toJSON().axes,
+                {
+                    tag: 'wdth',
+                    name: { dflt: 'Width' },
+                    min: 75,
+                    max: 100,
+                    default: 100
+                }
+            ];
+            font.axes = axes;
+            const stations = [
+                { id: 'm1', name: { dflt: 'Book' }, location: { wght: 400 } }
+            ];
+            font.stations = stations;
+        } finally {
+            window.patchSyncEngine = previousBridge;
+        }
+        expect(
+            recordChange.mock.calls.map(([path, prop]) => [path, prop])
+        ).toEqual([
+            [[], 'instances'],
+            [[], 'axes'],
+            [[], 'masters']
+        ]);
+        expect(recordChange.mock.calls[0][2]).toEqual([]);
+        expect(recordChange.mock.calls[0][3][0].id).toBe('i1');
     });
 });

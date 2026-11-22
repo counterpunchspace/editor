@@ -640,6 +640,41 @@ export function formatCollabTrace(
 }
 
 /** This window’s font model, normalised: rounded, anchors sorted. */
+/**
+ * A window that opens the font holds the glyphs its text shows and what they
+ * need (a sparse working set); the overview loads the others as it shows
+ * them. Load every live catalog glyph this window lacks, the way the
+ * overview would, so its model can be compared whole. Returns their names.
+ */
+export async function loadCatalogGlyphs(page: Page): Promise<string[]> {
+    return page.evaluate(async (text) => {
+        const w = window as any;
+        const bridge = w.patchSyncEngine;
+        const fontJson = bridge?._fontJson;
+        const catalog =
+            fontJson?.glyphCatalog ??
+            fontJson?.format_specific?.['com.counterpunch.cloud']
+                ?.glyphCatalog ??
+            {};
+        const names = Object.values(catalog as Record<string, any>)
+            .filter(
+                (entry: any) =>
+                    entry?.name &&
+                    entry.deleted !== true &&
+                    !bridge.hasResidentGlyphDocument?.(`glyph:${entry.glyphId}`)
+            )
+            .map((entry: any) => String(entry.name));
+        if (names.length) {
+            await w.cloudPlugin.ensureSparseHydration({
+                text,
+                glyphNames: names,
+                purpose: 'ui'
+            });
+        }
+        return names;
+    }, FUZZ_TEXT);
+}
+
 export async function readFuzzSnapshot(page: Page): Promise<FuzzSnapshot> {
     return page.evaluate(
         ({ names, featureTag, newPrefix }) => {
@@ -771,11 +806,6 @@ export async function readFuzzSnapshot(page: Page): Promise<FuzzSnapshot> {
                 }
                 const layers: any[] =
                     (glyph.toJSON?.() ?? glyph.data)?.layers ?? [];
-                const backgroundIds = new Set(
-                    layers
-                        .map((layer) => layer.background_layer_id)
-                        .filter(Boolean)
-                );
                 glyphs[name] = Object.fromEntries(
                     layers.map((layer) => {
                         const drawing = (glyph.drawings ?? []).find(
@@ -810,7 +840,7 @@ export async function readFuzzSnapshot(page: Page): Promise<FuzzSnapshot> {
                         layers.map((layer) => [
                             layer.id,
                             [
-                                backgroundIds.has(layer.id)
+                                layer.is_background === true
                                     ? 'background'
                                     : (layer.master?.type ?? 'none'),
                                 layer.master?.master ?? null,
@@ -940,7 +970,33 @@ export async function openFuzzGlyph(
                 ),
             { timeout: 15000, message: `open ${glyphName} at ${stationId}` }
         )
-        .toBe(stationId);
+        .toBe(stationId)
+        .catch(async (error) => {
+            const state = await page.evaluate(
+                ({ name }) => {
+                    const w = window as any;
+                    const canvas = w.glyphCanvas;
+                    const editor = canvas?.outlineEditor;
+                    return {
+                        inText: (
+                            canvas?.textRunEditor?.glyphNameBuffer ?? []
+                        ).includes(name),
+                        shaped: canvas?.textRunEditor?.glyphNameBuffer ?? null,
+                        text: canvas?.textRunEditor?.textBuffer ?? null,
+                        modelHas: !!w.currentFontModel?.findGlyph?.(name),
+                        currentGlyph: editor?.currentGlyphName ?? null,
+                        selectedDrawing: editor?.selectedDrawingId ?? null,
+                        location: canvas?.axesManager?.variationSettings ?? null
+                    };
+                },
+                { name: glyphName }
+            );
+            throw new Error(
+                `${error instanceof Error ? error.message : String(error)}\n${JSON.stringify(state)}\n${(
+                    await describeGlyphLayers(page, [glyphName])
+                ).join('\n')}`
+            );
+        });
 }
 
 export type FuzzEdit =
@@ -1640,14 +1696,10 @@ async function applyExtendedFuzzEdit(
             // Every drawing that interpolates with the others: station,
             // free and variation drawings, not backgrounds.
             const compatible = () => {
-                const layers = rawLayers();
-                const backgrounds = new Set(
-                    layers
-                        .map((layer) => layer.background_layer_id)
-                        .filter(Boolean)
-                );
-                return layers
-                    .filter((layer) => !backgrounds.has(layer.id))
+                // Not by background links: a background links back to its
+                // foreground too.
+                return rawLayers()
+                    .filter((layer) => layer.is_background !== true)
                     .map((layer) => {
                         const drawing =
                             glyph.findDrawingById(layer.id) ??
@@ -2109,10 +2161,13 @@ async function applyExtendedFuzzEdit(
                 case 'variation':
                     if (step.op === 'add') {
                         // As the editor's Add variation does: it makes the
-                        // variation's drawings, one per station.
+                        // variation's drawings, one per station. The range
+                        // stays between the stations: at a station inside it
+                        // the text shows the variation, and the edits that
+                        // open the glyph there would find no base glyph.
                         outline('Add variation', () => {
                             glyph.addFeatureVariation([
-                                { min: step.min, max: 900 }
+                                { min: step.min, max: step.min + 150 }
                             ]);
                         });
                     } else if (step.op === 'remove') {
@@ -2546,13 +2601,73 @@ export async function diagnoseStaleCompile(page: Page): Promise<string> {
         },
         { names: FUZZ_GLYPHS, location: FUZZ_COMPARE_LOCATION }
     );
-    await page.evaluate(() =>
-        (window as any).fontManager?.recompileEditingFont?.()
-    );
+    // A recompile that fails is part of the answer, not a reason to stop.
+    const recompileError = await page.evaluate(async () => {
+        try {
+            await (window as any).fontManager?.recompileEditingFont?.();
+            return null;
+        } catch (error) {
+            return error instanceof Error ? error.message : String(error);
+        }
+    });
     await page.waitForTimeout(1500);
     const after = await readCompiledOutlines(page);
     const healed =
         !after.error &&
         JSON.stringify(after.editing) === JSON.stringify(after.fresh);
-    return `editing worker differs from fresh worker for: ${workerDiff.join(', ') || 'none'}; recompile ${healed ? 'fixes' : 'does not fix'} the font`;
+    // A compile that fails on a glyph names it: show that glyph's layers.
+    const failing = [
+        ...new Set(
+            [
+                ...String(after.error ?? '').matchAll(
+                    /GlyphError\((?:\s|\\n)*([^,\s\\]+)/g
+                )
+            ].map((match) => match[1])
+        )
+    ];
+    const layers = failing.length
+        ? `\n${(await describeGlyphLayers(page, failing)).join('\n')}`
+        : '';
+    return `editing worker differs from fresh worker for: ${workerDiff.join(', ') || 'none'}; recompile ${healed ? 'fixes' : 'does not fix'} the font${recompileError ? ` (recompile failed: ${recompileError.slice(0, 300)})` : ''}${layers}`;
+}
+
+/**
+ * Each stored layer of these glyphs, as the model holds them: id, station
+ * link, background flag, and per shape the point types (l line, c curve,
+ * o off-curve, q quadratic; s smooth) or the component.
+ */
+export async function describeGlyphLayers(
+    page: Page,
+    glyphNames: string[]
+): Promise<string[]> {
+    return page.evaluate((names) => {
+        const w = window as any;
+        return names.map((name: string) => {
+            const glyph = w.currentFontModel?.findGlyph?.(name);
+            const layers = (glyph?.toJSON?.() ?? glyph?.data)?.layers ?? [];
+            return `${name}:\n${layers
+                .map(
+                    (layer: any) =>
+                        `  ${layer.id} ${layer.master?.type ?? ''} ${layer.master?.master ?? ''}${layer.is_background ? ' background' : ''}${layer.background_layer_id ? ` (background ${layer.background_layer_id})` : ''}: ${(
+                            layer.shapes ?? []
+                        )
+                            .map((shape: any) =>
+                                shape.reference
+                                    ? `[${shape.reference}]`
+                                    : `${shape.closed === false ? 'open ' : ''}${(
+                                          shape.nodes ?? []
+                                      )
+                                          .map(
+                                              (node: any) =>
+                                                  `${String(node.nodetype ?? '')
+                                                      .charAt(0)
+                                                      .toLowerCase()}${node.smooth ? 's' : ''}`
+                                          )
+                                          .join('')}`
+                            )
+                            .join(' | ')}`
+                )
+                .join('\n')}`;
+        });
+    }, glyphNames);
 }

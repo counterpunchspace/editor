@@ -7,6 +7,13 @@ jest.mock('../js/glyph-tile-renderer-fast', () => ({
 
 jest.mock('../js/glyph-overview-filters', () => ({}));
 
+// The refresh waits for queued worker updates before fetching outlines.
+const flushMicrotasks = async () => {
+    for (let i = 0; i < 10; i += 1) {
+        await Promise.resolve();
+    }
+};
+
 describe('GlyphOverview glyphChanged refresh scheduling', () => {
     let GlyphOverview;
     let overview;
@@ -81,8 +88,7 @@ describe('GlyphOverview glyphChanged refresh scheduling', () => {
 
         window.glyphCanvas.outlineEditor.draggingSomething = false;
         jest.advanceTimersByTime(120);
-        await Promise.resolve();
-        await Promise.resolve();
+        await flushMicrotasks();
 
         expect(window.fontCompilation.sendMessage).toHaveBeenCalledTimes(1);
         expect(window.fontCompilation.sendMessage).toHaveBeenCalledWith({
@@ -119,8 +125,7 @@ describe('GlyphOverview glyphChanged refresh scheduling', () => {
 
         window.glyphCanvas.outlineEditor.draggingSomething = false;
         jest.advanceTimersByTime(120);
-        await Promise.resolve();
-        await Promise.resolve();
+        await flushMicrotasks();
 
         expect(window.fontCompilation.sendMessage).toHaveBeenLastCalledWith({
             type: 'getGlyphOutlines',
@@ -168,8 +173,7 @@ describe('GlyphOverview glyphChanged refresh scheduling', () => {
         );
 
         jest.advanceTimersByTime(1);
-        await Promise.resolve();
-        await Promise.resolve();
+        await flushMicrotasks();
 
         expect(
             window.fontCompilation.sendMessage.mock.calls.length

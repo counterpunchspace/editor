@@ -252,6 +252,18 @@ describe('cloud glyph catalog', () => {
         expect(owned.codepointIndex['67']).toEqual([aId]);
     });
 
+    it('patches an added glyph by its id when a deleted one keeps the name', () => {
+        applyCloudOwnedData(font);
+        const staleId = font.glyphs[0].id;
+        // The body still lists the glyph deleted elsewhere, and the new one.
+        font.glyphs.push({ ...font.glyphs[0], id: 'id-added', codepoints: [] });
+        const owned = patchCloudOwnedGlyph(font, 'A', 'id-added');
+        expect(owned.glyphCatalog['id-added']).toEqual(
+            expect.objectContaining({ glyphId: 'id-added', name: 'A' })
+        );
+        expect(owned.glyphCatalog[staleId]).toBeDefined();
+    });
+
     it('ignores outline and format-specific edits for catalog rebuilds', () => {
         expect(
             catalogNeedsUpdate([

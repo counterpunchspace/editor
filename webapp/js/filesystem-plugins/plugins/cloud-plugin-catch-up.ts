@@ -15,6 +15,7 @@ import {
     activeEditorGlyphNames,
     liveGlyphDocumentIdsFromSubset
 } from '../../cloud-live-session';
+import { recordCollabTrace } from '../../collab-trace';
 
 export const cloudPluginCatchUpMethods = {
     _syncGlyphCatchUpFromCommittedChange(entries, context) {
@@ -205,6 +206,12 @@ export const cloudPluginCatchUpMethods = {
                     : token?.revision
             };
         });
+        // Why each glyph is fetched or not, for the collaboration trace.
+        const skipped: Record<string, string> = {};
+        const skip = (target, reason: string): false => {
+            skipped[target.documentId] = reason;
+            return false;
+        };
         const targets = selected
             .map((entry) => ({
                 documentId: glyphDocumentId(entry.glyphId),
@@ -214,14 +221,19 @@ export const cloudPluginCatchUpMethods = {
                 // A deleted glyph's last write still reaches the revision
                 // feed; there is nothing to fetch.
                 if (bridge.isDeletedGlyphDocument?.(target.documentId)) {
-                    return false;
+                    return skip(target, 'deleted');
                 }
                 // The open glyph’s synced socket already receives every
                 // update; fetching it again over HTTP only adds work.
                 if (
                     this._liveSession.hasSyncedLiveDocument?.(target.documentId)
                 ) {
-                    return false;
+                    // The socket delivers every update of this glyph.
+                    bridge.noteGlyphRevisionFetched?.(
+                        target.documentId.slice('glyph:'.length),
+                        target.expectedRevision
+                    );
+                    return skip(target, 'live socket');
                 }
                 // A loaded glyph with no revision stamp has not changed since
                 // it was loaded: nobody edited it. Fetching it again on every
@@ -234,11 +246,11 @@ export const cloudPluginCatchUpMethods = {
                     bridge.hasResidentGlyphDocument?.(target.documentId) ===
                         true
                 ) {
-                    return false;
+                    return skip(target, 'resident, no revision');
                 }
                 if (this._glyphCatchUpInFlight.has(target.documentId)) {
                     this._glyphCatchUpAgain.add(target.documentId);
-                    return false;
+                    return skip(target, 'in flight, again after');
                 }
                 if (
                     target.expectedRevision &&
@@ -248,10 +260,27 @@ export const cloudPluginCatchUpMethods = {
                         target.expectedRevision
                     )
                 ) {
-                    return false;
+                    bridge.noteGlyphRevisionFetched?.(
+                        target.documentId.slice('glyph:'.length),
+                        target.expectedRevision
+                    );
+                    return skip(target, 'has revision');
                 }
                 return true;
             });
+        recordCollabTrace(
+            'catch-up',
+            selected
+                .map((entry) => bridge.glyphNameForId?.(entry.glyphId))
+                .filter(Boolean),
+            {
+                fetch: targets.map(
+                    (target) =>
+                        `${target.documentId} ${target.expectedRevision ?? '-'}`
+                ),
+                skipped
+            }
+        );
         if (!targets.length) {
             return;
         }
@@ -300,7 +329,22 @@ export const cloudPluginCatchUpMethods = {
                             target.documentId,
                             target.expectedRevision
                         ) === true;
+                    recordCollabTrace(
+                        'catch-up-done',
+                        [bridge.glyphNameForId?.(glyphId)].filter(Boolean),
+                        {
+                            document: target.documentId,
+                            expected: target.expectedRevision ?? null,
+                            resident,
+                            modeled,
+                            current
+                        }
+                    );
                     if (resident && modeled && current) {
+                        bridge.noteGlyphRevisionFetched?.(
+                            glyphId,
+                            target.expectedRevision
+                        );
                         this._glyphCatchUpAttempts.delete(target.documentId);
                         this._glyphCatchUpForceBody.delete(glyphId);
                     } else if (glyphId) {
@@ -317,6 +361,14 @@ export const cloudPluginCatchUpMethods = {
                         );
                         if (attempts < 8) {
                             retryIds.push(glyphId);
+                        } else {
+                            // Concurrent writers can leave another stamp on
+                            // the glyph for good; every attempt fetched the
+                            // room's whole state, so stop waiting for it.
+                            bridge.noteGlyphRevisionFetched?.(
+                                glyphId,
+                                target.expectedRevision
+                            );
                         }
                     }
                 }

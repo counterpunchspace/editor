@@ -442,4 +442,87 @@ describe('FontCompilation worker document readiness', () => {
             'compileEditingCached'
         ]);
     });
+
+    describe('mirrored Yjs updates', () => {
+        function createMirror() {
+            const fontCompilation = new FontCompilation({
+                connectInterpolation: false
+            });
+            const posted = [];
+            fontCompilation.worker = {
+                postMessage: jest.fn((message) => posted.push(message))
+            };
+            fontCompilation.isInitialized = true;
+            const answer = (index) =>
+                fontCompilation.handleWorkerMessage({
+                    data: {
+                        id: posted[index].id,
+                        type: posted[index].type,
+                        success: true
+                    }
+                });
+            const settle = () =>
+                new Promise((resolve) => setTimeout(resolve, 0));
+            return { fontCompilation, posted, answer, settle };
+        }
+
+        test('are not sent before the worker holds the bridge documents', async () => {
+            const { fontCompilation, posted } = createMirror();
+            await fontCompilation.mirrorYjsUpdate({
+                update: new Uint8Array([1])
+            });
+            expect(posted).toEqual([]);
+        });
+
+        test('queue behind a seed in flight and behind each other', async () => {
+            const { fontCompilation, posted, answer, settle } = createMirror();
+            const seed = fontCompilation.seedWorkerDocumentSet([
+                { documentId: 'glyph:a', bytes: new Uint8Array([1]) }
+            ]);
+            await settle();
+            expect(posted.map((message) => message.type)).toEqual(['seedYdoc']);
+
+            const first = fontCompilation.mirrorYjsUpdate({
+                update: new Uint8Array([2])
+            });
+            const second = fontCompilation.mirrorYjsUpdate({
+                update: new Uint8Array([3])
+            });
+            await settle();
+            // Nothing dropped while the seed is in flight; nothing overtakes it.
+            expect(posted).toHaveLength(1);
+
+            answer(0);
+            await seed;
+            await settle();
+            expect(posted.map((message) => message.type)).toEqual([
+                'seedYdoc',
+                'applyYjsUpdate'
+            ]);
+            expect(posted[1].update).toEqual(new Uint8Array([2]));
+
+            answer(1);
+            await first;
+            await settle();
+            expect(posted[2].update).toEqual(new Uint8Array([3]));
+            answer(2);
+            await second;
+        });
+
+        test('stop once the documents are no longer the bridge’s', async () => {
+            const { fontCompilation, posted, answer, settle } = createMirror();
+            const seed = fontCompilation.seedWorkerDocumentSet([
+                { documentId: 'glyph:a', bytes: new Uint8Array([1]) }
+            ]);
+            await settle();
+            answer(0);
+            await seed;
+
+            fontCompilation.setWorkerCacheDocumentReady(false);
+            await fontCompilation.mirrorYjsUpdate({
+                update: new Uint8Array([2])
+            });
+            expect(posted).toHaveLength(1);
+        });
+    });
 });

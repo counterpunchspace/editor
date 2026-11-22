@@ -2165,6 +2165,12 @@ export function createRemoteCascadePreviewHost(
             })
         );
     };
+    const revert = (targets: CascadeDrawingTarget[]) => {
+        bridge.revertLivePreviewDrawings(targets);
+        window.fontManager?.currentFont?.requestRecompileWithoutDataChange();
+        window.autoCompileManager?.checkAndSchedule?.();
+        notifyGlyphs([...new Set(targets.map((t) => t.glyphName))]);
+    };
     return {
         isBusyLocally: isBusyWithOwnEdit,
         recompose: (sources) => recomposeCollaboratorCascade(bridge, sources),
@@ -2177,11 +2183,26 @@ export function createRemoteCascadePreviewHost(
                 editType: 'anchor'
             }),
         repaint: notifyGlyphs,
-        revert: (targets) => {
-            bridge.revertLivePreviewDrawings(targets);
-            window.fontManager?.currentFont?.requestRecompileWithoutDataChange();
-            window.autoCompileManager?.checkAndSchedule?.();
-            notifyGlyphs([...new Set(targets.map((t) => t.glyphName))]);
+        revert,
+        settle: (targets) => {
+            if (window.cloudPlugin?.canMutateCurrentAsset?.() === false) {
+                revert(targets);
+                return [];
+            }
+            const written = bridge.writeLivePreviewDrawings(targets);
+            // The rest already match the documents.
+            const unchanged = targets.filter(
+                (target) =>
+                    !written.some(
+                        (done) =>
+                            done.glyphName === target.glyphName &&
+                            done.layerId === target.layerId
+                    )
+            );
+            if (unchanged.length) {
+                revert(unchanged);
+            }
+            return written;
         }
     };
 }
@@ -3056,138 +3077,143 @@ export async function handleCommittedChangeRefresh(
         );
     };
 
-    if (origin === 'remote') {
-        const awaitWorkerSync =
-            dependencies?.awaitWorkerSync ??
-            (() => fontCompilation.awaitWorkerDocumentReadyForCompile());
-        await awaitCommittedWorkerCacheSettled(awaitWorkerSync);
+    // The overview and filters follow the change even when the canvas
+    // refresh or the compile fails; a tile otherwise keeps the old outline.
+    try {
+        if (origin === 'remote') {
+            const awaitWorkerSync =
+                dependencies?.awaitWorkerSync ??
+                (() => fontCompilation.awaitWorkerDocumentReadyForCompile());
+            await awaitCommittedWorkerCacheSettled(awaitWorkerSync);
 
-        const replayTargets = collectReplayTargetsFromEntries(entries);
-        const { editType, changeSource } = readStampForOrigin(
-            entries,
-            'remote'
-        );
-        const liveAdvanceDeltas = shouldApplyCommittedLiveAdvanceRefresh(
-            editType
-        )
-            ? collectLiveAdvanceDeltas(
-                  entries,
-                  window.glyphCanvas?.outlineEditor?.selectedDrawingId,
-                  getActiveEditedGlyphName()
-              )
-            : {};
-        await refreshCanvasFromCommittedModelSync(undefined, undefined, {
-            skipDeferredCanvasRepaint: appliedIdleViewLock,
-            ...(Object.keys(liveAdvanceDeltas).length > 0
-                ? { liveAdvanceDeltas }
-                : {}),
-            ...(replayTargets.length > 0
-                ? { workerReplayTargets: replayTargets }
-                : {})
-        });
-        reapplyIdleViewLockAfterModelSync(appliedIdleViewLock);
-
-        if (
-            !(await awaitCommittedEditingCompileReady(
-                isUndoRedoPacket,
-                awaitWorkerSync
-            ))
-        ) {
-            window.glyphCanvas?.clearIdleViewLock?.();
-            await refreshPostCommitUi();
-            return;
-        }
-        await requestCompile(changeSource, editType);
-    } else {
-        const localUndoRedoVisualSync = applyLocalUndoRedoVisualSync(
-            entries,
-            dependencies?.localUndoRedoContext,
-            localCompileContext
-        );
-        const isSidebearingCommit = hasSidebearingVisualAnchor(entries);
-
-        const awaitWorkerSync =
-            dependencies?.awaitWorkerSync ??
-            (() => fontCompilation.awaitWorkerDocumentReadyForCompile());
-        await awaitCommittedWorkerCacheSettled(awaitWorkerSync);
-
-        if (window.fontManager) {
-            window.fontManager.pendingCommittedKeyboardDriftCheckAfterDrag = false;
-        }
-
-        const replayTargets = collectReplayTargetsFromEntries(entries);
-        const selectedDrawingId =
-            window.glyphCanvas?.outlineEditor?.selectedDrawingId;
-        const selectedGlyphName = getActiveEditedGlyphName();
-        const { editType, changeSource } =
-            localCompileContext ?? resolveLocalCommittedCompileContext(entries);
-        const liveAdvanceDeltas =
-            shouldApplyCommittedLiveAdvanceRefresh(editType) &&
-            !isSidebearingCommit
+            const replayTargets = collectReplayTargetsFromEntries(entries);
+            const { editType, changeSource } = readStampForOrigin(
+                entries,
+                'remote'
+            );
+            const liveAdvanceDeltas = shouldApplyCommittedLiveAdvanceRefresh(
+                editType
+            )
                 ? collectLiveAdvanceDeltas(
                       entries,
-                      selectedDrawingId,
-                      selectedGlyphName
+                      window.glyphCanvas?.outlineEditor?.selectedDrawingId,
+                      getActiveEditedGlyphName()
                   )
                 : {};
-        const selectedDrawing =
-            selectedGlyphName && selectedDrawingId
-                ? window.fontManager?.currentFont?.fontModel
-                      ?.findGlyph(selectedGlyphName)
-                      ?.findDrawingById(selectedDrawingId)
-                : null;
-        const requiresBackgroundDrawingRefresh =
-            selectedDrawing?.is_background === true ||
-            (selectedDrawingId?.startsWith('background-') ?? false);
-        const canPreferExactLocalVisualRefresh =
-            !isUndoRedoPacket &&
-            !requiresBackgroundDrawingRefresh &&
-            (localCompileContext?.editType === 'outline' ||
-                localCompileContext?.editType === 'anchor') &&
-            selectedDrawing?.isAutomaticAlignedDrawing?.() !== true;
-        const hasLiveAdvancePreview =
-            !isUndoRedoPacket && hasLocalLiveAdvancePreview(entries);
-        await refreshCanvasFromCommittedModelSync(undefined, undefined, {
-            skipDeferredCanvasRepaint:
-                (appliedIdleViewLock ||
-                    isUndoRedoPacket ||
-                    isSidebearingCommit) &&
+            await refreshCanvasFromCommittedModelSync(undefined, undefined, {
+                skipDeferredCanvasRepaint: appliedIdleViewLock,
+                ...(Object.keys(liveAdvanceDeltas).length > 0
+                    ? { liveAdvanceDeltas }
+                    : {}),
+                ...(replayTargets.length > 0
+                    ? { workerReplayTargets: replayTargets }
+                    : {})
+            });
+            reapplyIdleViewLockAfterModelSync(appliedIdleViewLock);
+
+            if (
+                !(await awaitCommittedEditingCompileReady(
+                    isUndoRedoPacket,
+                    awaitWorkerSync
+                ))
+            ) {
+                window.glyphCanvas?.clearIdleViewLock?.();
+                await refreshPostCommitUi();
+                return;
+            }
+            await requestCompile(changeSource, editType);
+        } else {
+            const localUndoRedoVisualSync = applyLocalUndoRedoVisualSync(
+                entries,
+                dependencies?.localUndoRedoContext,
+                localCompileContext
+            );
+            const isSidebearingCommit = hasSidebearingVisualAnchor(entries);
+
+            const awaitWorkerSync =
+                dependencies?.awaitWorkerSync ??
+                (() => fontCompilation.awaitWorkerDocumentReadyForCompile());
+            await awaitCommittedWorkerCacheSettled(awaitWorkerSync);
+
+            if (window.fontManager) {
+                window.fontManager.pendingCommittedKeyboardDriftCheckAfterDrag = false;
+            }
+
+            const replayTargets = collectReplayTargetsFromEntries(entries);
+            const selectedDrawingId =
+                window.glyphCanvas?.outlineEditor?.selectedDrawingId;
+            const selectedGlyphName = getActiveEditedGlyphName();
+            const { editType, changeSource } =
+                localCompileContext ??
+                resolveLocalCommittedCompileContext(entries);
+            const liveAdvanceDeltas =
+                shouldApplyCommittedLiveAdvanceRefresh(editType) &&
+                !isSidebearingCommit
+                    ? collectLiveAdvanceDeltas(
+                          entries,
+                          selectedDrawingId,
+                          selectedGlyphName
+                      )
+                    : {};
+            const selectedDrawing =
+                selectedGlyphName && selectedDrawingId
+                    ? window.fontManager?.currentFont?.fontModel
+                          ?.findGlyph(selectedGlyphName)
+                          ?.findDrawingById(selectedDrawingId)
+                    : null;
+            const requiresBackgroundDrawingRefresh =
+                selectedDrawing?.is_background === true ||
+                (selectedDrawingId?.startsWith('background-') ?? false);
+            const canPreferExactLocalVisualRefresh =
+                !isUndoRedoPacket &&
                 !requiresBackgroundDrawingRefresh &&
-                !localUndoRedoVisualSync.deferAdvanceRefreshUntilCommittedCanvas,
-            skipLayerDataFetch: localUndoRedoVisualSync.skipLayerDataFetch,
-            preferExactDrawingDataRefresh: canPreferExactLocalVisualRefresh,
-            // A sidebearing packet's raw drawing-width entries are not shaped
-            // advances. Its committed font result reshapes authoritatively;
-            // applying these deltas first can transiently move text to an
-            // impossible layout. The same rule applies to full (editType null)
-            // outline/structural commits: wait for the kerning-preserving reshape.
-            ...(!hasLiveAdvancePreview &&
-            (!isUndoRedoPacket ||
-                localUndoRedoVisualSync.deferAdvanceRefreshUntilCommittedCanvas) &&
-            Object.keys(liveAdvanceDeltas).length > 0
-                ? { liveAdvanceDeltas }
-                : {}),
-            ...(replayTargets.length > 0
-                ? { workerReplayTargets: replayTargets }
-                : {})
-        });
+                (localCompileContext?.editType === 'outline' ||
+                    localCompileContext?.editType === 'anchor') &&
+                selectedDrawing?.isAutomaticAlignedDrawing?.() !== true;
+            const hasLiveAdvancePreview =
+                !isUndoRedoPacket && hasLocalLiveAdvancePreview(entries);
+            await refreshCanvasFromCommittedModelSync(undefined, undefined, {
+                skipDeferredCanvasRepaint:
+                    (appliedIdleViewLock ||
+                        isUndoRedoPacket ||
+                        isSidebearingCommit) &&
+                    !requiresBackgroundDrawingRefresh &&
+                    !localUndoRedoVisualSync.deferAdvanceRefreshUntilCommittedCanvas,
+                skipLayerDataFetch: localUndoRedoVisualSync.skipLayerDataFetch,
+                preferExactDrawingDataRefresh: canPreferExactLocalVisualRefresh,
+                // A sidebearing packet's raw drawing-width entries are not shaped
+                // advances. Its committed font result reshapes authoritatively;
+                // applying these deltas first can transiently move text to an
+                // impossible layout. The same rule applies to full (editType null)
+                // outline/structural commits: wait for the kerning-preserving reshape.
+                ...(!hasLiveAdvancePreview &&
+                (!isUndoRedoPacket ||
+                    localUndoRedoVisualSync.deferAdvanceRefreshUntilCommittedCanvas) &&
+                Object.keys(liveAdvanceDeltas).length > 0
+                    ? { liveAdvanceDeltas }
+                    : {}),
+                ...(replayTargets.length > 0
+                    ? { workerReplayTargets: replayTargets }
+                    : {})
+            });
 
-        reapplyIdleViewLockAfterModelSync(appliedIdleViewLock);
+            reapplyIdleViewLockAfterModelSync(appliedIdleViewLock);
 
-        if (
-            !(await awaitCommittedEditingCompileReady(
-                isUndoRedoPacket,
-                awaitWorkerSync
-            ))
-        ) {
-            window.glyphCanvas?.clearIdleViewLock?.();
-            await refreshPostCommitUi();
-            return;
+            if (
+                !(await awaitCommittedEditingCompileReady(
+                    isUndoRedoPacket,
+                    awaitWorkerSync
+                ))
+            ) {
+                window.glyphCanvas?.clearIdleViewLock?.();
+                await refreshPostCommitUi();
+                return;
+            }
+            await requestCompile(changeSource, editType);
         }
-        await requestCompile(changeSource, editType);
+    } finally {
+        await refreshPostCommitUi();
     }
-
-    await refreshPostCommitUi();
 }
 
 export async function handleRemoteChangeRefresh(
@@ -3752,7 +3778,7 @@ function initializeBridge(detail: {
             state,
             readCurrent
         );
-        if (fullFontCompilation.hasWorkerCacheDocument()) {
+        if (fullFontCompilation.hasSeededWorkerDocuments()) {
             fullFontCompilation.scheduleReplaceWorkerDocument(
                 documentId,
                 state,
@@ -3827,28 +3853,27 @@ function initializeBridge(detail: {
                 ) ?? Promise.resolve(false);
             latestWorkerForward = forwarded.then(() => undefined);
 
-            if (fullFontCompilation.hasWorkerCacheDocument()) {
-                void fullFontCompilation
-                    .sendMessage({
-                        type: 'applyYjsUpdate',
-                        update: workerUpdate,
-                        changedGlyphs,
-                        nonGlyphChangeHints,
-                        ...(glyphRenames.length ? { glyphRenames } : undefined),
-                        ...(drawingTargets.length
-                            ? { layerTargets: drawingTargets }
-                            : undefined),
-                        invalidateLayoutClosure,
-                        documentId
-                    })
-                    .catch((error) => {
-                        console.warn(
-                            'Failed to mirror Yjs update to full compile worker',
-                            error
-                        );
-                        fullFontCompilation.setWorkerCacheDocumentReady(false);
-                    });
-            }
+            // Queued behind the worker's seed and earlier updates: one it
+            // missed would leave every later update of that document pending.
+            void fullFontCompilation
+                .mirrorYjsUpdate({
+                    update: workerUpdate,
+                    changedGlyphs,
+                    nonGlyphChangeHints,
+                    ...(glyphRenames.length ? { glyphRenames } : undefined),
+                    ...(drawingTargets.length
+                        ? { layerTargets: drawingTargets }
+                        : undefined),
+                    invalidateLayoutClosure,
+                    documentId
+                })
+                .catch((error) => {
+                    console.warn(
+                        'Failed to mirror Yjs update to full compile worker',
+                        error
+                    );
+                    fullFontCompilation.setWorkerCacheDocumentReady(false);
+                });
         }
     );
 

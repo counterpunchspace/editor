@@ -372,7 +372,8 @@ export function applyCloudOwnedData(
 
 export function patchCloudOwnedGlyph(
     fontJson: Record<string, unknown>,
-    glyphName: string
+    glyphName: string,
+    addedGlyphId?: string
 ): CloudOwnedFontData {
     const existing = catalogFromCoreJson(fontJson);
     if (!existing) {
@@ -380,9 +381,16 @@ export function patchCloudOwnedGlyph(
     }
     const glyphCatalog = { ...existing.glyphCatalog };
     const codepointIndex = { ...existing.codepointIndex };
-    const glyph = listGlyphRecords(fontJson).find(
-        (entry) => String(entry.name || '') === glyphName
-    );
+    const records = listGlyphRecords(fontJson);
+    // An added glyph by its own id: the body can still hold a glyph deleted
+    // elsewhere under the same name.
+    const glyph =
+        (addedGlyphId
+            ? records.find(
+                  (entry) => ensureImmutableGlyphId(entry) === addedGlyphId
+              )
+            : undefined) ??
+        records.find((entry) => String(entry.name || '') === glyphName);
     if (!glyph) {
         // A catalog-dirty path for a glyph the body does not list yet is not
         // a delete. Deletes arrive as explicit glyph-root removes.

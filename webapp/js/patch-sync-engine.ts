@@ -2810,6 +2810,11 @@ export class PatchSyncEngine {
         this._glyphNameById.clear();
     }
 
+    /** The name the index gives a glyph id, or null. */
+    glyphNameForId(glyphId: string): string | null {
+        return this._glyphNameById.get(glyphId) ?? null;
+    }
+
     glyphDocumentIdForName(glyphName: string): string | null {
         const glyphId = this._glyphIdByName.get(glyphName);
         return glyphId ? glyphDocumentId(glyphId) : null;
@@ -3445,8 +3450,18 @@ export class PatchSyncEngine {
         ) {
             return;
         }
-        this._aliasResidentGlyphNamesFromCatalog();
         const glyphId = documentId.slice('glyph:'.length);
+        // A delete empties the glyph's map. Its catalog tombstone can still
+        // be on its way, and the name its index entry keeps may already
+        // belong to a glyph added again under it.
+        const storedName = this._glyphDocs
+            .get(glyphId)
+            ?.getMap('glyph')
+            .get('name');
+        if (typeof storedName !== 'string' || !storedName) {
+            return;
+        }
+        this._aliasResidentGlyphNamesFromCatalog();
         const name = this._glyphNameById.get(glyphId);
         if (!name || name === glyphId) {
             return;
@@ -3507,10 +3522,11 @@ export class PatchSyncEngine {
      */
     applyGlyphRevisionFeed(
         revisions: Array<{ glyphId: string; revision: string }>,
-        options: { initial?: boolean; hold?: boolean } = {}
+        options: { initial?: boolean; hold?: boolean; own?: boolean } = {}
     ): string[] {
         const hold = options.hold !== false && options.initial !== true;
         const ready: HeldGlyphRevision[] = [];
+        const traced: string[] = [];
         for (const entry of revisions) {
             if (
                 !entry ||
@@ -3522,6 +3538,7 @@ export class PatchSyncEngine {
                 continue;
             }
             if (this._ownGlyphRevisions.has(entry.revision)) {
+                traced.push(`${entry.glyphId} ${entry.revision} own`);
                 continue;
             }
             const arrived = {
@@ -3529,31 +3546,81 @@ export class PatchSyncEngine {
                 revision: entry.revision,
                 arrival: ++this._glyphRevisionArrivals
             };
-            ready.push(
-                ...(hold ? this._takeGlyphRevisionCommit(arrived) : [arrived])
+            const released = hold
+                ? this._takeGlyphRevisionCommit(arrived)
+                : [arrived];
+            traced.push(
+                `${entry.glyphId} ${entry.revision}${released.length ? '' : ' held'}`
+            );
+            ready.push(...released);
+        }
+        if (traced.length && !options.initial) {
+            recordCollabTrace(
+                'revision-feed',
+                revisions
+                    .map((entry) => this._glyphNameById.get(entry?.glyphId))
+                    .filter((name): name is string => !!name),
+                { revisions: traced }
             );
         }
-        return this._applyReadyGlyphRevisions(ready, options.initial === true);
+        return this._applyReadyGlyphRevisions(
+            ready,
+            options.initial === true,
+            options.own === true
+        );
+    }
+
+    /**
+     * A catch-up brought this collaborator revision, or the glyph's live
+     * socket delivers it: this window's own writes may name the glyph's
+     * revision again.
+     */
+    noteGlyphRevisionFetched(glyphId: string, revision?: string): void {
+        if (
+            !revision ||
+            this._glyphRevisionsAwaitingFetch.get(glyphId) === revision
+        ) {
+            this._glyphRevisionsAwaitingFetch.delete(glyphId);
+        }
     }
 
     private _applyReadyGlyphRevisions(
         ready: HeldGlyphRevision[],
-        initial: boolean
+        initial: boolean,
+        own = false
     ): string[] {
         const changed: string[] = [];
         for (const item of ready) {
-            // The feed names a glyph's revisions oldest first. One released
-            // late must not replace a revision that arrived after it.
-            if (
-                (this._glyphRevisionFeedArrival.get(item.glyphId) ?? 0) >
-                item.arrival
-            ) {
+            // A collaborator's revision this window has not fetched stays the
+            // one to catch up to. This window's own write to the glyph would
+            // otherwise replace it, and the catch-up, finding its own stamp,
+            // would never fetch the collaborator's write.
+            if (own && this._glyphRevisionsAwaitingFetch.has(item.glyphId)) {
                 continue;
             }
-            this._glyphRevisionFeedArrival.set(item.glyphId, item.arrival);
+            // The feed names a glyph's revisions oldest first. One released
+            // late must not replace a revision that arrived after it. This
+            // window's own revisions are not feed arrivals: a collaborator
+            // revision held for its commit's siblings still applies after
+            // this window wrote the glyph.
+            if (!own) {
+                if (
+                    (this._glyphRevisionFeedArrival.get(item.glyphId) ?? 0) >
+                    item.arrival
+                ) {
+                    continue;
+                }
+                this._glyphRevisionFeedArrival.set(item.glyphId, item.arrival);
+            }
             if (this._glyphRevisionFeed.get(item.glyphId) !== item.revision) {
                 this._glyphRevisionFeed.set(item.glyphId, item.revision);
                 changed.push(item.glyphId);
+                if (!own && !initial) {
+                    this._glyphRevisionsAwaitingFetch.set(
+                        item.glyphId,
+                        item.revision
+                    );
+                }
             }
         }
         if (changed.length || initial) {
@@ -4458,6 +4525,8 @@ export class PatchSyncEngine {
     }
 
     private _pendingDestroyedGlyphIds = new Set<string>();
+    /** Collaborator revisions per glyph id that no catch-up has confirmed yet. */
+    private _glyphRevisionsAwaitingFetch = new Map<string, string>();
     private _retiredGlyphIdByName = new Map<string, string>();
 
     private _removeGlyphDoc(glyphName: string): void {
@@ -5375,7 +5444,7 @@ export class PatchSyncEngine {
             // its stamp; record it as the glyph's current revision.
             this.applyGlyphRevisionFeed(
                 [{ glyphId: relayedGlyphId, revision: relayedRevision }],
-                { hold: false }
+                { hold: false, own: true }
             );
         }
         this._noteOwnGlyphRevision(relayedRevision);
@@ -10347,6 +10416,96 @@ export class PatchSyncEngine {
         });
     }
 
+    /**
+     * Write drawings the model shows ahead of the documents into them, and
+     * send them. For a collaborator cascade whose stored result never caught
+     * up with its sources: two windows recomposed one composite at once,
+     * each from a view missing the other's source edit, and the stale write
+     * won. Every window that saw both edits writes the same drawing.
+     *
+     * Outside the undo history: nobody here made this edit. Returns the
+     * drawings written; one the documents already match is skipped.
+     */
+    writeLivePreviewDrawings(
+        targets: Array<{ glyphName: string; layerId: string }>
+    ): Array<{ glyphName: string; layerId: string }> {
+        const fontModel = (window as Unsafe).fontManager?.currentFont
+            ?.fontModel;
+        if (!fontModel || !this._fontJson) {
+            return [];
+        }
+        const written: Array<{ glyphName: string; layerId: string }> = [];
+        for (const target of targets) {
+            const glyphId = this._glyphIdByName.get(target.glyphName);
+            const doc = glyphId ? this._glyphDocs.get(glyphId) : undefined;
+            const drawingMap = (
+                doc?.getMap('glyph').get('layers') as Y.Map<unknown> | undefined
+            )?.get(target.layerId);
+            const modelDrawing = fontModel
+                .findGlyph?.(target.glyphName)
+                ?.findDrawingById?.(target.layerId);
+            if (
+                !glyphId ||
+                !doc ||
+                !(drawingMap instanceof Y.Map) ||
+                !modelDrawing
+            ) {
+                continue;
+            }
+            const record = (
+                typeof modelDrawing.toJSON === 'function'
+                    ? modelDrawing.toJSON()
+                    : modelDrawing
+            ) as Record<string, unknown>;
+            if (
+                drawingFingerprint(record) ===
+                drawingFingerprint(fromYType(drawingMap))
+            ) {
+                continue;
+            }
+            const before = Y.encodeStateVector(doc);
+            doc.transact(() => {
+                this._replaceDrawingMapContents(
+                    drawingMap,
+                    cloneHistoryValue(record) as Record<string, unknown>
+                );
+            }, LAYOUT_FORWARD_ORIGIN);
+            const entry = createLogEntry({
+                timestamp: Date.now(),
+                windowId: this.windowId,
+                windowRoleLabel: this._getWindowRoleLabel(),
+                historyItemId: this._createHistoryItemId(),
+                historyAction: 'change',
+                transactionLabel: 'Settle collaborator cascade',
+                transactionId: null,
+                op: 'set',
+                undoScope: 'layer',
+                path: joinPathWithGlyphSeparator([
+                    'glyphs',
+                    target.glyphName,
+                    'layers',
+                    target.layerId
+                ]),
+                oldValue: undefined,
+                newValue: cloneHistoryValue(record),
+                replayOldValue: undefined,
+                replayNewValue: undefined,
+                compileChangeSource: 'remote-cascade-preview',
+                compileEditType: 'anchor'
+            });
+            // Emitted, not committed: the change log, and so undo, never
+            // holds it.
+            this._emitLocalUpdate(
+                Y.encodeStateAsUpdate(doc, before),
+                [entry],
+                glyphDocumentId(glyphId)
+            );
+            this._patchDrawingFromYDoc(target);
+            written.push(target);
+        }
+        return written;
+    }
+
     revertLivePreviewDrawings(
         targets: Array<{ glyphName: string; layerId: string }>
     ): void {
@@ -11692,6 +11851,9 @@ export class PatchSyncEngine {
             this._isGlyphRootPath(applyPath)
         ) {
             this._applyGlyphSnapshot(String(applyPath[1]), applyValue);
+            if (operation.op === 'add') {
+                this._renewGlyphOrderEntry(String(applyPath[1]));
+            }
             return;
         }
 
@@ -11978,7 +12140,7 @@ export class PatchSyncEngine {
         // This window holds these revisions already; linked windows learn
         // them from the feed listeners.
         if (tokens.length) {
-            this.applyGlyphRevisionFeed(tokens, { hold: false });
+            this.applyGlyphRevisionFeed(tokens, { hold: false, own: true });
             for (const { revision } of tokens) {
                 this._noteOwnGlyphRevision(revision);
             }
@@ -12967,6 +13129,25 @@ export class PatchSyncEngine {
                     : ''
             )
             .filter((name) => name.length > 0);
+    }
+
+    /**
+     * Give an added glyph its own glyphOrder entry. Its name can still be
+     * listed for a glyph deleted elsewhere, whose delete has not reached
+     * this window's order yet; when that delete's removal of the old entry
+     * arrives, it must not take the new glyph's name with it.
+     */
+    private _renewGlyphOrderEntry(glyphName: string): void {
+        const glyphOrder = this.fontMap.get('glyphOrder');
+        if (!(glyphOrder instanceof Y.Array)) {
+            return;
+        }
+        const index = glyphOrder.toArray().indexOf(glyphName);
+        if (index < 0) {
+            return;
+        }
+        glyphOrder.delete(index, 1);
+        glyphOrder.insert(index, [glyphName]);
     }
 
     private _readYGlyphOrderNames(): string[] {

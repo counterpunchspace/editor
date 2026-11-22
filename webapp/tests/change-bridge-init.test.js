@@ -3451,7 +3451,7 @@ describe('bridge Yjs worker callback', () => {
             .spyOn(fontCompilation, 'sendMessage')
             .mockResolvedValue({ success: true });
         const hasWorkerCacheDocumentSpy = jest
-            .spyOn(fullFontCompilation, 'hasWorkerCacheDocument')
+            .spyOn(fullFontCompilation, 'hasSeededWorkerDocuments')
             .mockReturnValue(true);
         const fullWorkerUpdateSpy = jest
             .spyOn(fullFontCompilation, 'sendMessage')
@@ -3600,7 +3600,7 @@ describe('bridge Yjs worker callback', () => {
             .spyOn(fontCompilation, 'sendMessage')
             .mockResolvedValue({ success: true });
         const hasWorkerCacheDocumentSpy = jest
-            .spyOn(fullFontCompilation, 'hasWorkerCacheDocument')
+            .spyOn(fullFontCompilation, 'hasSeededWorkerDocuments')
             .mockReturnValue(true);
         const fullWorkerUpdateSpy = jest
             .spyOn(fullFontCompilation, 'sendMessage')
@@ -3633,7 +3633,7 @@ describe('bridge Yjs worker callback', () => {
             .spyOn(fontCompilation, 'sendMessage')
             .mockResolvedValue({ success: true });
         const hasWorkerCacheDocumentSpy = jest
-            .spyOn(fullFontCompilation, 'hasWorkerCacheDocument')
+            .spyOn(fullFontCompilation, 'hasSeededWorkerDocuments')
             .mockReturnValue(true);
         const fullWorkerUpdateSpy = jest
             .spyOn(fullFontCompilation, 'sendMessage')
@@ -3704,7 +3704,7 @@ describe('bridge Yjs worker callback', () => {
             .spyOn(fontCompilation, 'sendMessage')
             .mockResolvedValue({ success: true });
         const hasWorkerCacheDocumentSpy = jest
-            .spyOn(fullFontCompilation, 'hasWorkerCacheDocument')
+            .spyOn(fullFontCompilation, 'hasSeededWorkerDocuments')
             .mockReturnValue(true);
         const fullWorkerUpdateSpy = jest
             .spyOn(fullFontCompilation, 'sendMessage')
@@ -3880,7 +3880,7 @@ describe('bridge Yjs worker callback', () => {
             .spyOn(fontCompilation, 'sendMessage')
             .mockResolvedValue({ success: true });
         const hasWorkerCacheDocumentSpy = jest
-            .spyOn(fullFontCompilation, 'hasWorkerCacheDocument')
+            .spyOn(fullFontCompilation, 'hasSeededWorkerDocuments')
             .mockReturnValue(true);
         const fullWorkerUpdateSpy = jest
             .spyOn(fullFontCompilation, 'sendMessage')
@@ -3936,7 +3936,7 @@ describe('bridge Yjs worker callback', () => {
             .spyOn(fontCompilation, 'sendMessage')
             .mockResolvedValue({ success: true });
         const hasWorkerCacheDocumentSpy = jest
-            .spyOn(fullFontCompilation, 'hasWorkerCacheDocument')
+            .spyOn(fullFontCompilation, 'hasSeededWorkerDocuments')
             .mockReturnValue(true);
         const fullWorkerUpdateSpy = jest
             .spyOn(fullFontCompilation, 'sendMessage')
