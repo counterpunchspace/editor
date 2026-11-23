@@ -140,8 +140,25 @@ describe('TextRunEditor explicit-token model kerning', () => {
     });
 
     test('RTL uses kerning_rtl and adjusts the visually-left (Second) glyph ax', () => {
+        // Read from the right, beh-ar is first and kerns with its left group,
+        // alef-ar is second and kerns with its right group (LKG / RKG).
+        window.currentFontModel = {
+            ...makeFontModel({
+                kerningRtl: {
+                    'beh-ar:@ALEF': -55,
+                    '@BEH:@ALEF': -200,
+                    // alef-ar's left group is not the side that faces beh-ar.
+                    'beh-ar:@ALEF_LEFT': -999
+                }
+            }),
+            first_kern_groups: { ALEF: ['alef-ar'] },
+            second_kern_groups: { BEH: ['beh-ar'], ALEF_LEFT: ['alef-ar'] },
+            findGlyph: jest.fn((name) =>
+                name === 'beh-ar' || name === 'alef-ar' ? { name } : null
+            )
+        };
         const editor = makeEditor();
-        // Visual order: V (left/Second) then A (right/First).
+        // Visual order: alef-ar (left/Second) then beh-ar (right/First).
         editor.embeddingLevels = { levels: [1, 1, 1, 1] };
         editor.shapedGlyphs = [
             {
@@ -151,7 +168,7 @@ describe('TextRunEditor explicit-token model kerning', () => {
                 ay: 0,
                 cl: 2,
                 g: 2,
-                explicitGlyphName: 'V'
+                explicitGlyphName: 'alef-ar'
             },
             {
                 dx: 0,
@@ -160,10 +177,10 @@ describe('TextRunEditor explicit-token model kerning', () => {
                 ay: 0,
                 cl: 0,
                 g: 1,
-                explicitGlyphName: 'A'
+                explicitGlyphName: 'beh-ar'
             }
         ];
-        editor.glyphNameBuffer = ['V', 'A'];
+        editor.glyphNameBuffer = ['alef-ar', 'beh-ar'];
 
         expect(editor.applyModelKerningForExplicitTokenAdjacencies()).toBe(
             true

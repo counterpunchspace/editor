@@ -87,6 +87,8 @@ import { LatestSamplePump } from './latest-sample-pump';
 import { DrawingDataNormalizer } from './drawing-data-normalizer';
 import {
     buildOrderedKerningPairs,
+    collectOperandKerningGroupMemberships,
+    kerningGroupListSide,
     getKerningPairValue,
     getOrderedKerningPairKey,
     setKerningPairValueOnStation,
@@ -8561,17 +8563,12 @@ class GlyphCanvas {
             return fallbackSelection;
         }
 
+        // The pair the compiled font uses: the first defined one, so an
+        // explicit 0 is an exception that cancels group kerning.
         const preferredPairs = buildOrderedTextModeKerningPairs(
             firstKeys,
             secondKeys
         );
-
-        for (const { firstKey, secondKey } of preferredPairs) {
-            const value = getKerningPairValue(kerning, firstKey, secondKey);
-            if (value !== null && value !== 0) {
-                return { firstKey, secondKey };
-            }
-        }
 
         for (const { firstKey, secondKey } of preferredPairs) {
             const value = getKerningPairValue(kerning, firstKey, secondKey);
@@ -8635,8 +8632,7 @@ class GlyphCanvas {
         if (
             (currentValue === null || currentValue === 0) &&
             !this.textModeKerningSelectionPinned &&
-            preferredValue !== null &&
-            preferredValue !== 0
+            preferredValue !== null
         ) {
             return preferredSelection;
         }
@@ -8819,13 +8815,19 @@ class GlyphCanvas {
         );
 
         const fontModel = fontManager.currentFont.fontModel;
-        const firstGroupNames = collectKerningGroupMemberships(
-            fontModel.first_kern_groups,
-            firstGlyphName
+        // In a right-to-left pair the first glyph kerns with its left group
+        // and the second with its right group, as the LKG / RKG labels say.
+        const firstGroupNames = collectOperandKerningGroupMemberships(
+            fontModel,
+            firstGlyphName,
+            'first',
+            firstCluster.isRTL
         );
-        const secondGroupNames = collectKerningGroupMemberships(
-            fontModel.second_kern_groups,
-            secondGlyphName
+        const secondGroupNames = collectOperandKerningGroupMemberships(
+            fontModel,
+            secondGlyphName,
+            'second',
+            firstCluster.isRTL
         );
         const firstKeys = [
             firstGlyphName,
@@ -9036,7 +9038,6 @@ class GlyphCanvas {
             TextModeKerningOverlayCacheEntry
         >();
         const candidatePairToAdjacencyKeys = new Map<string, Set<string>>();
-
         for (let index = 0; index < sortedClusters.length - 1; index++) {
             const firstCluster = sortedClusters[index];
             const secondCluster = sortedClusters[index + 1];
@@ -9055,13 +9056,17 @@ class GlyphCanvas {
                 continue;
             }
 
-            const firstGroupNames = collectKerningGroupMemberships(
-                fontModel.first_kern_groups,
-                firstGlyphName
+            const firstGroupNames = collectOperandKerningGroupMemberships(
+                fontModel,
+                firstGlyphName,
+                'first',
+                firstCluster.isRTL
             );
-            const secondGroupNames = collectKerningGroupMemberships(
-                fontModel.second_kern_groups,
-                secondGlyphName
+            const secondGroupNames = collectOperandKerningGroupMemberships(
+                fontModel,
+                secondGlyphName,
+                'second',
+                firstCluster.isRTL
             );
             const firstKeys = [
                 firstGlyphName,
@@ -11240,26 +11245,34 @@ class GlyphCanvas {
             (option) => option.kind === 'group'
         );
 
+        const firstSide = {
+            pairSide: 'first' as const,
+            title: formatTextModeKerningSideTitle('first', context.isRTL),
+            glyphNames: firstGlyphNames,
+            missingGlyphNames: firstHasGroup ? [] : firstGlyphNames,
+            chips: context.firstOptions.map(toChip)
+        };
+        const secondSide = {
+            pairSide: 'second' as const,
+            title: formatTextModeKerningSideTitle('second', context.isRTL),
+            glyphNames: secondGlyphNames,
+            missingGlyphNames: secondHasGroup ? [] : secondGlyphNames,
+            chips: context.secondOptions.map(toChip)
+        };
         renderKerningGroupWidget(this.propertyPanel, {
-            startSide: {
-                pairSide: 'first',
-                title: formatTextModeKerningSideTitle('first', context.isRTL),
-                glyphNames: firstGlyphNames,
-                missingGlyphNames: firstHasGroup ? [] : firstGlyphNames,
-                chips: context.firstOptions.map(toChip)
-            },
-            endSide: {
-                pairSide: 'second',
-                title: formatTextModeKerningSideTitle('second', context.isRTL),
-                glyphNames: secondGlyphNames,
-                missingGlyphNames: secondHasGroup ? [] : secondGlyphNames,
-                chips: context.secondOptions.map(toChip)
-            },
+            // The columns sit where the glyphs are: in right-to-left text the
+            // first glyph is on the right, so its column is too. Either way
+            // the left column is a right group (RKG) and the right column a
+            // left group (LKG), facing the value between them.
+            startSide: context.isRTL ? secondSide : firstSide,
+            endSide: context.isRTL ? firstSide : secondSide,
             center,
             isRTL: context.isRTL,
             onSelectChip: (chip) => {
                 this.setTextModeKerningSelection(chip.pairSide, chip.key);
             },
+            // Chips sit on a pair side; the group list they name follows
+            // the reading direction (an RTL pair's first glyph shows LKG).
             onRemoveChip: (chip) => {
                 const glyphName =
                     chip.pairSide === 'first'
@@ -11269,7 +11282,7 @@ class GlyphCanvas {
                     return;
                 }
                 this.updateTextModeKerningGroupMembership(
-                    chip.pairSide,
+                    kerningGroupListSide(chip.pairSide, context.isRTL),
                     glyphName,
                     chip.name,
                     false
@@ -11277,7 +11290,7 @@ class GlyphCanvas {
             },
             onAdd: (pairSide, glyphNames) => {
                 this.promptAndAddTextModeKerningGroup(
-                    pairSide,
+                    kerningGroupListSide(pairSide, context.isRTL),
                     glyphNames[0] ?? null,
                     formatKerningGroupKindLabel(pairSide, context.isRTL)
                 );

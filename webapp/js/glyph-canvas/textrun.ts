@@ -24,8 +24,8 @@ import {
     get_glyph_name,
     get_glyph_order
 } from '../../wasm-dist/babelfont_fontc_web';
-import { collectKerningGroupMemberships } from './kerning-group-widget';
 import {
+    collectOperandKerningGroupMemberships,
     resolvePreferredKerningPairValue,
     type KerningContainer
 } from '../kerning-utils';
@@ -2754,18 +2754,24 @@ export class TextRunEditor {
             const firstGlyphName = isRTL ? rightName : leftName;
             const secondGlyphName = isRTL ? leftName : rightName;
 
+            // In a right-to-left pair the first glyph kerns with its left
+            // group and the second with its right group.
             const firstKeys = [
                 firstGlyphName,
-                ...collectKerningGroupMemberships(
-                    fontModel.first_kern_groups,
-                    firstGlyphName
+                ...collectOperandKerningGroupMemberships(
+                    fontModel,
+                    firstGlyphName,
+                    'first',
+                    isRTL
                 ).map((name) => `@${name}`)
             ];
             const secondKeys = [
                 secondGlyphName,
-                ...collectKerningGroupMemberships(
-                    fontModel.second_kern_groups,
-                    secondGlyphName
+                ...collectOperandKerningGroupMemberships(
+                    fontModel,
+                    secondGlyphName,
+                    'second',
+                    isRTL
                 ).map((name) => `@${name}`)
             ];
 

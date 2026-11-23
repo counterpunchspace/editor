@@ -2007,12 +2007,15 @@ class FontManager {
             glyphName: string;
             layerId: string;
             layer: unknown;
-        }>
+        }>,
+        /** The base batch's packets per document, glyph packets included. */
+        baseUpdates: Array<{ documentId: string; update: Uint8Array }> = []
     ): Promise<RustBatchResult> {
         return this.requestRustBatchFromWorker({
             type: 'refineDrawingSnapshotsYjs',
             baseUpdate,
-            overrides
+            overrides,
+            baseUpdates
         });
     }
 

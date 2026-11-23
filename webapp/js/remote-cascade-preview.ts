@@ -18,7 +18,8 @@
  *   documents replace the preview. If the base glyph has moved on in the
  *   meantime, the drawing is recomposed again from the current base.
  * - A preview whose stored drawing never catches up within
- *   `REMOTE_CASCADE_PREVIEW_MAX_MS` is settled: written to the documents
+ *   `REMOTE_CASCADE_PREVIEW_MAX_MS` is settled: recomposed again from the
+ *   current base by the cascade that made it, and written to the documents
  *   when this window may edit, else reverted to them. That happens when two
  *   collaborators recomposed one drawing at once, each from a view missing
  *   the other's source edit, and the stored result went stale. Every window
@@ -70,9 +71,25 @@ export type RemoteCascadePreviewHost = {
     revert(targets: CascadeDrawingTarget[]): void;
     /**
      * Write these previewed drawings to the documents, or revert them when
-     * this window may not edit. Returns the drawings written.
+     * this window may not edit. `sources` are the collaborator's edits that
+     * recomposed them, to recompose them again from the current base;
+     * `stillPending` are previews that stay. Returns the drawings written.
      */
-    settle(targets: CascadeDrawingTarget[]): CascadeDrawingTarget[];
+    settle(
+        targets: CascadeDrawingTarget[],
+        sources: CascadeSource[],
+        stillPending: CascadeDrawingTarget[]
+    ): CascadeDrawingTarget[];
+    /**
+     * Write the automatic composites among these glyphs, and those built on
+     * them, whose stored drawings differ from what their components make
+     * now; leave `stillPending` previews alone. Returns the drawings
+     * written.
+     */
+    repairComposites(
+        glyphNames: string[],
+        stillPending: CascadeDrawingTarget[]
+    ): CascadeDrawingTarget[];
 };
 
 export type RemoteCascadeClock = {
@@ -96,6 +113,12 @@ const realClock: RemoteCascadeClock = {
  * stored drawings are normally here.
  */
 export const REMOTE_CASCADE_PREVIEW_MAX_MS = 10_000;
+
+/**
+ * The composite check waits for stored changes to be quiet, but no longer
+ * than this after the first change it has not checked yet.
+ */
+export const REMOTE_CASCADE_CHECK_MAX_WAIT_MS = 60_000;
 
 /** A revert waits this long while the window is busy with its own edit. */
 export const REMOTE_CASCADE_BUSY_RETRY_MS = 500;
@@ -133,8 +156,23 @@ export class RemoteCascadePreview {
     >();
     private pending = new Map<
         string,
-        { target: CascadeDrawingTarget; expiresAt: number }
+        {
+            target: CascadeDrawingTarget;
+            expiresAt: number;
+            /** The edits whose cascade last recomposed it. */
+            sources: CascadeSource[];
+        }
     >();
+    /**
+     * Glyphs whose stored drawings changed from outside lately. Once they
+     * are quiet, the automatic composites among them and built on them are
+     * checked against their components: two collaborators can store a
+     * composite at once, each from a view missing the other's component
+     * edit, and the stale write can win.
+     */
+    private toCheck = new Set<string>();
+    private checkDueAt = Number.POSITIVE_INFINITY;
+    private firstUncheckedAt = Number.POSITIVE_INFINITY;
     private refreshQueued = false;
     private timer: ReturnType<typeof setTimeout> | null = null;
     private timerDueAt = Number.POSITIVE_INFINITY;
@@ -144,6 +182,11 @@ export class RemoteCascadePreview {
         private readonly host: RemoteCascadePreviewHost,
         private readonly clock: RemoteCascadeClock = realClock
     ) {}
+
+    /** Glyphs whose composites this window still has to check. */
+    get pendingChecks(): string[] {
+        return [...this.toCheck];
+    }
 
     /** Drawings this window shows ahead of its documents. */
     get pendingTargets(): CascadeDrawingTarget[] {
@@ -207,7 +250,11 @@ export class RemoteCascadePreview {
      * packet). Previewed drawings they now hold are theirs again.
      */
     noteStoredChange(entries: CascadeEntry[]): void {
-        if (this.destroyed || !this.pending.size) {
+        if (this.destroyed) {
+            return;
+        }
+        this.noteToCheck(entries);
+        if (!this.pending.size) {
             return;
         }
         const replaced: string[] = [];
@@ -245,7 +292,29 @@ export class RemoteCascadePreview {
         this.destroyed = true;
         this.sources.clear();
         this.pending.clear();
+        this.toCheck.clear();
+        this.firstUncheckedAt = Number.POSITIVE_INFINITY;
         this.clearTimer();
+    }
+
+    private noteToCheck(entries: CascadeEntry[]): void {
+        let added = false;
+        for (const entry of entries) {
+            const target = entryTarget(String(entry.path || ''));
+            if (target) {
+                this.toCheck.add(target.glyphName);
+                added = true;
+            }
+        }
+        if (added) {
+            const now = this.clock.now();
+            this.firstUncheckedAt = Math.min(this.firstUncheckedAt, now);
+            this.checkDueAt = Math.min(
+                now + REMOTE_CASCADE_PREVIEW_MAX_MS,
+                this.firstUncheckedAt + REMOTE_CASCADE_CHECK_MAX_WAIT_MS
+            );
+            this.armTimer();
+        }
     }
 
     private queueRefresh(): void {
@@ -279,11 +348,13 @@ export class RemoteCascadePreview {
             return;
         }
         let changed: CascadeDrawingTarget[] = [];
-        if (this.sources.size) {
+        const sources = [...this.sources.values()].map((entry) => ({
+            ...entry.source,
+            editKinds: new Set(entry.source.editKinds)
+        }));
+        if (sources.length) {
             try {
-                changed = this.host.recompose(
-                    [...this.sources.values()].map((entry) => entry.source)
-                );
+                changed = this.host.recompose(sources);
             } catch (error) {
                 console.warn(
                     'Could not recompose the collaborator’s edit:',
@@ -294,7 +365,7 @@ export class RemoteCascadePreview {
         }
         const expiresAt = now + REMOTE_CASCADE_PREVIEW_MAX_MS;
         for (const target of changed) {
-            this.pending.set(targetKey(target), { target, expiresAt });
+            this.pending.set(targetKey(target), { target, expiresAt, sources });
         }
         this.armTimer();
         if (!this.pending.size) {
@@ -326,7 +397,9 @@ export class RemoteCascadePreview {
     }
 
     private armTimer(): void {
-        let dueAt = Number.POSITIVE_INFINITY;
+        let dueAt = this.toCheck.size
+            ? this.checkDueAt
+            : Number.POSITIVE_INFINITY;
         for (const entry of this.pending.values()) {
             dueAt = Math.min(dueAt, entry.expiresAt);
         }
@@ -362,12 +435,24 @@ export class RemoteCascadePreview {
         }
         const now = this.clock.now();
         const expired: CascadeDrawingTarget[] = [];
-        for (const [key, entry] of this.pending) {
-            if (entry.expiresAt <= now) {
-                expired.push(entry.target);
+        // Entries one refresh recomposed share their sources; each group is
+        // settled with its own, since a glyph one cascade recomposes may be
+        // a source of another.
+        const groups = new Map<CascadeSource[], CascadeDrawingTarget[]>();
+        for (const entry of this.pending.values()) {
+            if (entry.expiresAt > now) {
+                continue;
+            }
+            expired.push(entry.target);
+            const group = groups.get(entry.sources);
+            if (group) {
+                group.push(entry.target);
+            } else {
+                groups.set(entry.sources, [entry.target]);
             }
         }
-        if (!expired.length) {
+        const checkDue = this.toCheck.size > 0 && this.checkDueAt <= now;
+        if (!expired.length && !checkDue) {
             this.armTimer();
             return;
         }
@@ -384,20 +469,53 @@ export class RemoteCascadePreview {
         for (const target of expired) {
             this.pending.delete(targetKey(target));
         }
-        let written: CascadeDrawingTarget[] = [];
-        try {
-            written = this.host.settle(expired);
-        } catch (error) {
-            console.warn('Could not settle the collaborator’s cascade:', error);
-        }
-        recordCollabTrace(
-            'cascade-settle',
-            expired.map((t) => t.glyphName),
-            {
-                written: written.map((t) => `${t.glyphName}/${t.layerId}`),
-                expired: expired.map((t) => `${t.glyphName}/${t.layerId}`)
+        const written: CascadeDrawingTarget[] = [];
+        const unsettled = [...groups.values()];
+        for (const [sources, targets] of groups) {
+            unsettled.shift();
+            try {
+                written.push(
+                    ...this.host.settle(targets, sources, [
+                        ...this.pendingTargets,
+                        ...unsettled.flat()
+                    ])
+                );
+            } catch (error) {
+                console.warn(
+                    'Could not settle the collaborator’s cascade:',
+                    error
+                );
             }
-        );
+        }
+        if (expired.length) {
+            recordCollabTrace(
+                'cascade-settle',
+                expired.map((t) => t.glyphName),
+                {
+                    written: written.map((t) => `${t.glyphName}/${t.layerId}`),
+                    expired: expired.map((t) => `${t.glyphName}/${t.layerId}`)
+                }
+            );
+        }
+        if (checkDue) {
+            const glyphNames = [...this.toCheck];
+            this.toCheck.clear();
+            this.checkDueAt = Number.POSITIVE_INFINITY;
+            this.firstUncheckedAt = Number.POSITIVE_INFINITY;
+            let repaired: CascadeDrawingTarget[] = [];
+            try {
+                repaired = this.host.repairComposites(
+                    glyphNames,
+                    this.pendingTargets
+                );
+            } catch (error) {
+                console.warn('Could not check composites:', error);
+            }
+            recordCollabTrace('cascade-repair', glyphNames, {
+                checked: glyphNames,
+                written: repaired.map((t) => `${t.glyphName}/${t.layerId}`)
+            });
+        }
         // Settling drops the worker's whole overlay (a write by updating
         // the worker, a revert by clearing it); stage what is still pending.
         if (this.pending.size) {

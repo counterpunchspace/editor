@@ -5501,7 +5501,52 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
                         // leave an in-place-patched subset that references glyphs outside
                         // the previously closed set. Drop the active subset so the next
                         // primed compile rebuilds from the full font + new closure.
-                        if invalidate_layout_closure || !glyph_renames.is_empty() {
+                        // Building the subset drops a station no retained glyph has
+                        // a drawing at yet. A station's drawings can arrive after
+                        // its station (cloud packets are per document), so a
+                        // retained glyph's drawing at a station the subset lacks
+                        // needs the subset built again; the rebuilt subset keeps
+                        // that station, so this does not repeat.
+                        let subset_lacks_layer_station = {
+                            let subset_lock = SUBSET_JSON_CACHE.lock().unwrap();
+                            subset_lock.as_ref().is_some_and(|(_, _, subset_json)| {
+                                let ids = |key: &str, field: &str| -> HashSet<String> {
+                                    subset_json
+                                        .get(key)
+                                        .and_then(|items| items.as_array())
+                                        .map(|items| {
+                                            items
+                                                .iter()
+                                                .filter_map(|item| {
+                                                    item.get(field)
+                                                        .and_then(|value| value.as_str())
+                                                        .map(str::to_string)
+                                                })
+                                                .collect()
+                                        })
+                                        .unwrap_or_default()
+                                };
+                                let stations = ids("masters", "id");
+                                let retained = ids("glyphs", "name");
+                                changed_layer_snapshots.iter().any(|(target, layer_json)| {
+                                    retained.contains(&target.glyph_name)
+                                        && layer_json
+                                            .as_ref()
+                                            .and_then(|layer| layer.get("master"))
+                                            .filter(|master| {
+                                                master.get("type").and_then(|kind| kind.as_str())
+                                                    == Some("DefaultForMaster")
+                                            })
+                                            .and_then(|master| master.get("master"))
+                                            .and_then(|id| id.as_str())
+                                            .is_some_and(|id| !stations.contains(id))
+                                })
+                            })
+                        };
+                        if invalidate_layout_closure
+                            || !glyph_renames.is_empty()
+                            || subset_lacks_layer_station
+                        {
                             clear_active_subset_caches_for_closure_invalidation();
                         } else {
                             let mut subset_lock = SUBSET_JSON_CACHE.lock().unwrap();
@@ -8712,6 +8757,61 @@ mod tests {
         assert_eq!(layer.get("shapes"), Some(&json!([{ "id": "shape-a" }])));
         assert!(!layer.contains_key("shapesById"));
         assert!(!layer.contains_key("shapeOrder"));
+    }
+
+    #[test]
+    fn a_nested_composite_outline_follows_its_innermost_component() {
+        // c uses b, which uses a; only c is fetched. Names unique to this
+        // test: the outline cache is global.
+        let font_with = |x: i32| -> babelfont::Font {
+            let mut font = babelfont::Font::new();
+            font.masters.push(babelfont::Master::new(
+                "Regular",
+                "m1",
+                babelfont::DesignLocation::default(),
+            ));
+            let layer = |shape: babelfont::Shape| {
+                let mut layer = babelfont::Layer::new(500.0);
+                layer.id = Some("m1".to_string());
+                layer.master = babelfont::LayerType::DefaultForMaster("m1".to_string());
+                layer.shapes.push(shape);
+                layer
+            };
+            let component = |reference: &str| {
+                babelfont::Shape::Component(babelfont::Component {
+                    reference: reference.into(),
+                    ..Default::default()
+                })
+            };
+            let path = babelfont::Shape::Path(babelfont::Path {
+                nodes: vec![
+                    babelfont::Node::new_line(0, 0),
+                    babelfont::Node::new_line(x, 0),
+                    babelfont::Node::new_line(x, 100),
+                ],
+                closed: true,
+                ..Default::default()
+            });
+            for (name, shape) in [
+                ("nested-test-a", path),
+                ("nested-test-b", component("nested-test-a")),
+                ("nested-test-c", component("nested-test-b")),
+            ] {
+                let mut glyph = babelfont::Glyph::new(name);
+                glyph.layers.push(layer(shape));
+                font.glyphs.push(glyph);
+            }
+            font
+        };
+        let fetch = |font: &babelfont::Font| {
+            glyph_outlines::get_glyphs_outlines(font, &["nested-test-c".to_string()], "{}", false)
+                .unwrap()
+        };
+        let before = fetch(&font_with(111));
+        assert!(before.contains("111"), "{before}");
+        glyph_outlines::clear_outline_cache_for_glyph("nested-test-a");
+        let after = fetch(&font_with(222));
+        assert!(after.contains("222"), "{after}");
     }
 
     #[test]

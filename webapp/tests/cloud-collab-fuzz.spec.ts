@@ -72,6 +72,13 @@ import {
     type CloudRoomTraffic
 } from './helpers/cloud-collab-three-window';
 import { acceptCloudInviteAndGetEditorHref } from './helpers/cloud-collab-e2e';
+import {
+    type BinaryDigest,
+    collectBinaryFacts,
+    compareBinaryWithModel,
+    confirmEditChanged,
+    defaultBinaryNames
+} from './helpers/fuzz-binary-checks';
 import { makeSeededRandom } from './helpers/seeded-random';
 import {
     FUZZ_BASES_WITH_TOP,
@@ -81,6 +88,7 @@ import {
     FUZZ_GLYPHS,
     FUZZ_GROUP_GLYPHS,
     FUZZ_KERN_PAIRS,
+    FUZZ_RTL_KERN_PAIRS,
     FUZZ_ROOM_LAYOUT,
     FUZZ_UNICODE_GLYPH,
     FUZZ_MARKS,
@@ -361,6 +369,8 @@ test.describe('cloud collaboration fuzz', () => {
             return context;
         };
         const consoleTails = new Map<Page, string[]>();
+        /** When a room last closed a socket for an expired token. */
+        let lastTokenExpiryAt = Number.NEGATIVE_INFINITY;
         /** Window names for the failure report. */
         const trafficNames = new Map<Page, string>();
         const captureConsole = (page: Page) => {
@@ -372,6 +382,9 @@ test.describe('cloud collaboration fuzz', () => {
                     message.type() !== 'error'
                 ) {
                     return;
+                }
+                if (message.text().includes('Room token expired')) {
+                    lastTokenExpiryAt = Date.now();
                 }
                 lines.push(
                     `${message.type()}: ${message.text().slice(0, 400)}`
@@ -586,6 +599,18 @@ test.describe('cloud collaboration fuzz', () => {
                                 `${window.name} preview:${target}: still a preview, not stored`
                             );
                         }
+                        // Composites this window checks against their
+                        // components once the stored changes are quiet.
+                        const checks = await window.page.evaluate(
+                            () =>
+                                ((window as any).remoteCascadePreview
+                                    ?.pendingChecks ?? []) as string[]
+                        );
+                        for (const glyphName of checks) {
+                            differences.push(
+                                `${window.name} check:${glyphName}: composites not checked yet`
+                            );
+                        }
                     }
                     if (!differences.length) {
                         return snapshot;
@@ -709,6 +734,11 @@ test.describe('cloud collaboration fuzz', () => {
                     await mainPage.waitForTimeout(500);
                 }
             };
+            // The compiled font against the model, in every window: names
+            // the compiler gives glyphs, from the baseline, and M's facts
+            // after the last check, for the per-edit change check.
+            let binaryDefaults: Record<string, string> | null = null;
+            let binaryDigest: BinaryDigest | null = null;
             const checkAll = async (label: string) => {
                 const snapshot = await converge(label);
                 for (const window of windows) {
@@ -858,6 +888,45 @@ test.describe('cloud collaboration fuzz', () => {
                         run,
                         `${label}: compiled font in ${window.name} differs from M`
                     ).toBe(referenceRun);
+                    // What the binary holds, read back, against the model.
+                    const raw = await withinTime(
+                        collectBinaryFacts(window.page),
+                        60000,
+                        `${window.name}: reading its compiled font`
+                    );
+                    binaryDefaults ??= defaultBinaryNames(raw);
+                    const binary = compareBinaryWithModel(raw, binaryDefaults);
+                    if (binary.problems.length) {
+                        // The font as this window's documents hold it, to
+                        // compile again outside the browser.
+                        const fontJson = await window.page
+                            .evaluate(() =>
+                                JSON.stringify(
+                                    (
+                                        window as any
+                                    ).patchSyncEngine?.getFontJsonSnapshot?.() ??
+                                        null
+                                )
+                            )
+                            .catch(() => null);
+                        if (fontJson) {
+                            fs.writeFileSync(
+                                test
+                                    .info()
+                                    .outputPath(
+                                        `binary-font-${window.name}.json`
+                                    ),
+                                fontJson
+                            );
+                        }
+                    }
+                    expect(
+                        binary.problems,
+                        `${label}: compiled font in ${window.name} against its model`
+                    ).toEqual([]);
+                    if (window === windows[0]) {
+                        binaryDigest = binary.digest;
+                    }
                     // Tiles repaint asynchronously after the worker takes
                     // an update, like the compile above.
                     let tiles = await withinTime(
@@ -956,7 +1025,8 @@ test.describe('cloud collaboration fuzz', () => {
             const kernEdit = (): FuzzEdit => {
                 const station = pick(FUZZ_STATIONS).id;
                 const rtl = random() < 0.2;
-                const pair = kernPairKey();
+                // Right-to-left kerning is for Arabic glyphs only.
+                const pair = rtl ? pick(FUZZ_RTL_KERN_PAIRS) : kernPairKey();
                 const current =
                     (rtl ? snapshot.kerningRtl : snapshot.kerning)[station]?.[
                         pair
@@ -1833,7 +1903,8 @@ test.describe('cloud collaboration fuzz', () => {
                     roomDocs,
                     live,
                     rooms: await readRoomCounters(mainPage, roomDocs),
-                    mark: markCloudRoomTraffic(...roomTraffic)
+                    mark: markCloudRoomTraffic(...roomTraffic),
+                    startedAt: Date.now()
                 };
             };
             const expectMinimalStepTraffic = async (
@@ -1875,6 +1946,17 @@ test.describe('cloud collaboration fuzz', () => {
                     ])
                 );
                 const uploader = mainOf(sender);
+                // A room closes a socket whose token expired, and the window
+                // reconnects and syncs again: a long run outlives its room
+                // tokens. That traffic is not the edit's.
+                // Its reconnect can still be syncing when the next step
+                // starts.
+                if (lastTokenExpiryAt >= measured.startedAt - 60000) {
+                    record(
+                        `${label}: traffic not checked, a room token expired during or just before the step and its window reconnected`
+                    );
+                    return;
+                }
                 try {
                     expectMinimalRoomTraffic({
                         label,
@@ -1984,6 +2066,8 @@ test.describe('cloud collaboration fuzz', () => {
                 record(`step ${step}: ${description}`);
 
                 const before = flatten(snapshot);
+                const snapshotBefore = snapshot;
+                const digestBefore = binaryDigest;
                 await paintTiles();
                 // Open the glyph first: moving the live socket to it is not
                 // part of the edit’s cost.
@@ -2000,6 +2084,18 @@ test.describe('cloud collaboration fuzz', () => {
                     window,
                     measured
                 );
+                if (digestBefore && binaryDigest) {
+                    expect(
+                        confirmEditChanged(
+                            edit,
+                            digestBefore,
+                            binaryDigest,
+                            snapshotBefore,
+                            snapshot
+                        ),
+                        `step ${step} (${description}): the edit in the compiled font`
+                    ).toBeNull();
+                }
                 const after = flatten(snapshot);
                 const changed = changedKeys(before, after);
                 const diagnostics = async () => {

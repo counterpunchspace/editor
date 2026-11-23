@@ -356,6 +356,23 @@ fn encode_glyph_diffs(clones: &[ClonedGlyphDoc]) -> Vec<(String, Vec<u8>)> {
         .collect()
 }
 
+/// `[{ documentId, update }]` packets from JS; anything else is ignored.
+fn base_glyph_packets(value: &JsValue) -> Vec<(String, Vec<u8>)> {
+    let Some(array) = value.dyn_ref::<js_sys::Array>() else {
+        return Vec::new();
+    };
+    array
+        .iter()
+        .filter_map(|entry| {
+            let document_id = js_sys::Reflect::get(&entry, &JsValue::from_str("documentId"))
+                .ok()?
+                .as_string()?;
+            let update = js_sys::Reflect::get(&entry, &JsValue::from_str("update")).ok()?;
+            Some((document_id, js_sys::Uint8Array::new(&update).to_vec()))
+        })
+        .collect()
+}
+
 fn find_cloned_glyph_mut<'a>(
     clones: &'a mut [ClonedGlyphDoc],
     glyph_name: &str,
@@ -1486,6 +1503,7 @@ pub fn add_master_with_interpolated_layers_yjs(master_json: &str) -> Result<JsVa
 pub fn refine_layer_snapshots_yjs(
     base_update: &[u8],
     overrides_json: &str,
+    base_document_updates: JsValue,
 ) -> Result<JsValue, JsValue> {
     let overrides: Vec<LayerSnapshotOverride> =
         serde_json::from_str(overrides_json).map_err(|error| {
@@ -1527,6 +1545,25 @@ pub fn refine_layer_snapshots_yjs(
             .map(|entry| entry.glyph_name.clone())
             .collect();
         let mut clones = clone_named_glyph_docs(&names)?;
+        // The base batch's own glyph packets first: the refined packet of a
+        // glyph replaces the base one, so it must carry the base's layers
+        // too (a new station's variation layer, for one).
+        let base_packets = base_glyph_packets(&base_document_updates);
+        for clone in clones.iter_mut() {
+            let document_id = glyph_document_id(&clone.glyph_id);
+            for (packet_document_id, packet) in &base_packets {
+                if *packet_document_id != document_id {
+                    continue;
+                }
+                let update = yrs::Update::decode_v1(packet).map_err(|error| {
+                    JsValue::from_str(&format!(
+                        "refine_layer_snapshots_yjs glyph decode failed: {:?}",
+                        error
+                    ))
+                })?;
+                clone.doc.transact_mut().apply_update(update);
+            }
+        }
         for override_entry in overrides {
             let Some(clone) = find_cloned_glyph_mut(&mut clones, &override_entry.glyph_name) else {
                 continue;

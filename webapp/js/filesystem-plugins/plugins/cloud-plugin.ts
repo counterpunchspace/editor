@@ -917,7 +917,8 @@ export class CloudPlugin extends FilesystemPlugin {
         if (!currentFont?.isCloudBacked?.()) {
             return true;
         }
-        if (window.windowRole?.isLinkedWindow?.()) {
+        const linked = window.windowRole?.isLinkedWindow?.() === true;
+        if (linked) {
             // Main owns the cloud session: its role, access, sign-in and
             // outbox health decide, and an edit made while main is gone
             // would never reach the cloud.
@@ -928,7 +929,14 @@ export class CloudPlugin extends FilesystemPlugin {
                 return false;
             }
         }
-        if (!this._sessionAllowsMutation()) {
+        // A linked window has no session of its own: its connection status is
+        // main's, relayed, and main keeps editing through a reconnect (a room
+        // token renews every 15 minutes) while its outbox holds the edits.
+        const sessionAllows =
+            linked && this._relayedCanMutate !== null
+                ? this._relayedCanMutate
+                : this._sessionAllowsMutation();
+        if (!sessionAllows) {
             return false;
         }
         const glyphName = window.glyphCanvas?.getCurrentGlyphName?.();

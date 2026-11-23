@@ -31,7 +31,7 @@ import {
     FONT_CORE_DOCUMENT_ID,
     isGlyphRevisionPath
 } from './filesystem-plugins/cloud-document-set';
-import { Font } from './babelfont-model';
+import { Font, withSuppressedModelRecording } from './babelfont-model';
 import {
     WindowSync,
     createWindowSyncChannelName,
@@ -2082,6 +2082,213 @@ export function recomposeCollaboratorCascade(
     return changed;
 }
 
+/**
+ * Put these previewed drawings back to their documents, then run the cascade
+ * of `sources` (the collaborator's edits that recomposed them) again from
+ * the current base. Returns the drawings to write: the targets whose
+ * recomposed data differs from their documents, and what the cascade
+ * rebuilt on top of them, so a composite is never stored on an older version
+ * of its component. Other drawings the cascade changes are put back to their
+ * documents, except previews in `stillPending`, which stay previews.
+ */
+export function recomposeForSettle(
+    bridge: PatchSyncEngine,
+    targets: CascadeDrawingTarget[],
+    sources: CascadeSource[],
+    stillPending: CascadeDrawingTarget[] = []
+): CascadeDrawingTarget[] {
+    bridge.revertLivePreviewDrawings(targets);
+    if (!targets.length || !sources.length) {
+        return [];
+    }
+    let changed: CascadeDrawingTarget[];
+    try {
+        changed = recomposeCollaboratorCascade(bridge, sources);
+    } catch (error) {
+        console.warn('Could not recompose a cascade to settle it:', error);
+        return [];
+    }
+    const targetKeys = new Set(targets.map(cascadeTargetKey));
+    const pendingKeys = new Set(stillPending.map(cascadeTargetKey));
+    const writtenTargets = changed.filter((target) =>
+        targetKeys.has(cascadeTargetKey(target))
+    );
+    const fontModel = window.fontManager?.currentFont?.fontModel as any;
+    const writtenGlyphNames = new Set(writtenTargets.map((t) => t.glyphName));
+    const builtOnWritten = new Set<string>([
+        ...(fontModel?.collectComponentDependentGlyphs?.(writtenGlyphNames) ??
+            []),
+        ...(fontModel?.collectMetricsKeyDependentGlyphs?.(writtenGlyphNames) ??
+            [])
+    ]);
+    const write: CascadeDrawingTarget[] = [];
+    const putBack: CascadeDrawingTarget[] = [];
+    for (const target of changed) {
+        const key = cascadeTargetKey(target);
+        if (targetKeys.has(key) || builtOnWritten.has(target.glyphName)) {
+            write.push(target);
+        } else if (!pendingKeys.has(key)) {
+            putBack.push(target);
+        }
+    }
+    if (putBack.length) {
+        bridge.revertLivePreviewDrawings(putBack);
+    }
+    return write;
+}
+
+/**
+ * Recompose the automatically aligned drawings among these glyphs, and those
+ * built on them, from their components as the model holds them now,
+ * components first, the way the editor recomposes them. Returns the drawings
+ * whose recomposed data differs from their documents; the model shows that
+ * data, the others are put back to their documents. Previews in
+ * `stillPending`, and drawings built on one, are left alone.
+ */
+export function recomposeStaleComposites(
+    bridge: PatchSyncEngine,
+    glyphNames: string[],
+    stillPending: CascadeDrawingTarget[] = []
+): CascadeDrawingTarget[] {
+    const fontModel = window.fontManager?.currentFont?.fontModel as any;
+    if (!fontModel || !glyphNames.length) {
+        return [];
+    }
+    const names = new Set(glyphNames);
+    for (const dependent of fontModel.collectComponentDependentGlyphs?.(
+        names
+    ) ?? []) {
+        names.add(dependent);
+    }
+    // Held here and complete: a document still waiting for updates it never
+    // received shows a glyph older than everyone else's.
+    const isResident = (glyphName: string): boolean => {
+        const documentId = bridge.glyphDocumentIdForName(glyphName);
+        return (
+            !!documentId &&
+            bridge.hasResidentGlyphDocument(documentId) &&
+            !bridge.glyphDocumentHasPendingUpdates?.(documentId)
+        );
+    };
+    const references = (drawing: any): string[] =>
+        ((drawing?.components ?? []) as Array<{ reference?: unknown }>)
+            .map((component) => component?.reference)
+            .filter(
+                (reference): reference is string =>
+                    typeof reference === 'string'
+            );
+    // Components before the composites built on them.
+    const depths = new Map<string, number>();
+    const depth = (glyphName: string, seen = new Set<string>()): number => {
+        const known = depths.get(glyphName);
+        if (known !== undefined) {
+            return known;
+        }
+        if (seen.has(glyphName)) {
+            return 0;
+        }
+        seen.add(glyphName);
+        let result = 0;
+        for (const drawing of fontModel.findGlyph?.(glyphName)?.drawings ??
+            []) {
+            for (const reference of references(drawing)) {
+                result = Math.max(result, depth(reference, seen) + 1);
+            }
+        }
+        depths.set(glyphName, result);
+        return result;
+    };
+    const candidates = [...names]
+        .filter((glyphName) => isResident(glyphName) && depth(glyphName) > 0)
+        .sort((left, right) => depth(left) - depth(right));
+    const residentClosure = new Map<string, boolean>();
+    const builtFromResident = (
+        glyphName: string,
+        seen = new Set<string>()
+    ): boolean => {
+        const known = residentClosure.get(glyphName);
+        if (known !== undefined) {
+            return known;
+        }
+        if (seen.has(glyphName)) {
+            return true;
+        }
+        seen.add(glyphName);
+        let result = isResident(glyphName);
+        for (const drawing of fontModel.findGlyph?.(glyphName)?.drawings ??
+            []) {
+            for (const reference of references(drawing)) {
+                if (!result) {
+                    break;
+                }
+                result = builtFromResident(reference, seen);
+            }
+        }
+        residentClosure.set(glyphName, result);
+        return result;
+    };
+    const pendingKeys = new Set(stillPending.map(cascadeTargetKey));
+    const rebuilt: CascadeDrawingTarget[] = [];
+    for (const glyphName of candidates) {
+        for (const drawing of fontModel.findGlyph?.(glyphName)?.drawings ??
+            []) {
+            const target = { glyphName, layerId: String(drawing?.id ?? '') };
+            // Each component drawing as composition resolves it: by
+            // location, else the glyph's first drawing.
+            const componentDrawings = references(drawing).map((reference) => ({
+                reference,
+                drawing:
+                    drawing.getMatchingDrawingOnGlyph?.(reference) ??
+                    fontModel.findGlyph?.(reference)?.drawings?.[0]
+            }));
+            if (
+                !target.layerId ||
+                pendingKeys.has(cascadeTargetKey(target)) ||
+                !drawing.isAutomaticAlignedDrawing?.() ||
+                // Only from glyphs whose documents this window holds, at
+                // every level of nesting.
+                !builtFromResident(glyphName) ||
+                // Not from a component the model only previews: once that
+                // settles, its stored change brings this composite back here.
+                componentDrawings.some(
+                    ({ reference, drawing: componentDrawing }) =>
+                        !componentDrawing ||
+                        pendingKeys.has(
+                            cascadeTargetKey({
+                                glyphName: reference,
+                                layerId: String(componentDrawing.id ?? '')
+                            })
+                        )
+                )
+            ) {
+                continue;
+            }
+            try {
+                withSuppressedModelRecording(() => {
+                    drawing.invalidateContentCaches?.();
+                    drawing.invalidateLayoutCache?.();
+                    drawing.rebuildAutomaticComposition?.();
+                });
+            } catch (error) {
+                console.warn('Could not recompose a composite:', error);
+                continue;
+            }
+            rebuilt.push(target);
+        }
+    }
+    const stale = rebuilt.filter((target) =>
+        bridge.livePreviewDrawingDiffers(target)
+    );
+    const staleKeys = new Set(stale.map(cascadeTargetKey));
+    const unchanged = rebuilt.filter(
+        (target) => !staleKeys.has(cascadeTargetKey(target))
+    );
+    if (unchanged.length) {
+        bridge.revertLivePreviewDrawings(unchanged);
+    }
+    return stale;
+}
+
 /** What the collaboration trace reads from the font model. */
 type TraceFontModel = {
     findGlyph?: (name: string) =>
@@ -2153,7 +2360,12 @@ function traceLocalCommit(entries: ChangeLogEntry[], documentId?: string) {
  * documents (see remote-cascade-preview.ts).
  */
 export function createRemoteCascadePreviewHost(
-    bridge: PatchSyncEngine
+    bridge: PatchSyncEngine,
+    /**
+     * A linked window's live drag or key burst shows in this window's model
+     * without a commit: nothing is settled or repaired from it meanwhile.
+     */
+    isLinkedPreviewActive: () => boolean = () => false
 ): RemoteCascadePreviewHost {
     const notifyGlyphs = (glyphNames: string[]) => {
         if (!glyphNames.length) {
@@ -2183,7 +2395,7 @@ export function createRemoteCascadePreviewHost(
         }
     };
     return {
-        isBusyLocally: isBusyWithOwnEdit,
+        isBusyLocally: () => isBusyWithOwnEdit() || isLinkedPreviewActive(),
         recompose: (sources) => recomposeCollaboratorCascade(bridge, sources),
         stageOverlay: (targets) =>
             window.fontManager?.stageRemoteCascadePreview(targets) ??
@@ -2195,12 +2407,17 @@ export function createRemoteCascadePreviewHost(
             }),
         repaint: notifyGlyphs,
         revert,
-        settle: (targets) => {
+        settle: (targets, sources, stillPending) => {
             if (window.cloudPlugin?.canMutateCurrentAsset?.() === false) {
                 revert(targets);
                 return [];
             }
-            const written = bridge.writeLivePreviewDrawings(targets);
+            // The preview was recomposed from the base as this window had it
+            // then; the base may have changed since without recomposing it.
+            // Write what the cascade makes now, not the old preview.
+            const written = bridge.writeLivePreviewDrawings(
+                recomposeForSettle(bridge, targets, sources, stillPending)
+            );
             // The rest already match the documents.
             const unchanged = targets.filter(
                 (target) =>
@@ -2214,6 +2431,17 @@ export function createRemoteCascadePreviewHost(
                 revert(unchanged);
             }
             return written;
+        },
+        repairComposites: (glyphNames, stillPending) => {
+            if (window.cloudPlugin?.canMutateCurrentAsset?.() === false) {
+                return [];
+            }
+            const stale = recomposeStaleComposites(
+                bridge,
+                glyphNames,
+                stillPending
+            );
+            return stale.length ? bridge.writeLivePreviewDrawings(stale) : [];
         }
     };
 }
@@ -3925,7 +4153,10 @@ function initializeBridge(detail: {
     );
     sync.setLivePreviewReceiver(livePreviewReceiver);
     const remoteCascadePreview = new RemoteCascadePreview(
-        createRemoteCascadePreviewHost(bridge)
+        createRemoteCascadePreviewHost(
+            bridge,
+            () => livePreviewReceiver.isPreviewing
+        )
     );
     (window as any).remoteCascadePreview = remoteCascadePreview;
     bridge.onCommittedChange((entries, context) => {

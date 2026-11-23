@@ -3190,7 +3190,19 @@ export class PatchSyncEngine {
         const stateBefore = this.hasResidentGlyphDocument(documentId)
             ? this.encodeDocumentStateVector(documentId)
             : null;
-        const describedBefore = this._readCatchUpDescription(documentId);
+        // A glyph this window holds can be malformed until the catch-up
+        // lands: a later packet whose earlier one never arrived applies its
+        // deletions (a drawing's old width) while its new values wait. The
+        // catch-up brings what is missing, so describing it must not stop it.
+        let describedBefore: CatchUpDescription | null = null;
+        try {
+            describedBefore = this._readCatchUpDescription(documentId);
+        } catch (error) {
+            console.warn(
+                `[PatchSyncEngine] Catching up ${documentId} without describing it first:`,
+                error
+            );
+        }
         this.beginDeferredAfterSync();
         try {
             this.applyDocumentCheckpoint(documentId, update);
@@ -5490,6 +5502,10 @@ export class PatchSyncEngine {
             relay(update, collaborationMessage, documentId);
             return;
         }
+        recordCollabTrace('relay-in', [], {
+            document: documentId,
+            burstKey: key
+        });
         const decision = this._cloudHold.submit(
             {
                 kind: 'relay',
@@ -5501,6 +5517,10 @@ export class PatchSyncEngine {
             },
             this._currentCloudCommitId()
         );
+        recordCollabTrace('relay-hold', [], {
+            document: documentId,
+            decision
+        });
         if (decision === 'passthrough') {
             relay(update, collaborationMessage, documentId);
         } else {
@@ -5668,6 +5688,10 @@ export class PatchSyncEngine {
                 envelope
             );
             if (group[0].kind === 'relay') {
+                recordCollabTrace('relay-flush', [], {
+                    document: documentId,
+                    packets: group.length
+                });
                 void staged.written.then(async () => {
                     await window.cloudPlugin?.relayPeerWindowUpdateToCloud?.(
                         update,
@@ -10447,7 +10471,15 @@ export class PatchSyncEngine {
         if (!fontModel || !this._fontJson) {
             return [];
         }
-        const written: Array<{ glyphName: string; layerId: string }> = [];
+        // What differs from the documents, by glyph document.
+        const pendingWrites = new Map<
+            string,
+            Array<{
+                target: { glyphName: string; layerId: string };
+                drawingMap: Y.Map<unknown>;
+                record: Record<string, unknown>;
+            }>
+        >();
         for (const target of targets) {
             const glyphId = this._glyphIdByName.get(target.glyphName);
             const doc = glyphId ? this._glyphDocs.get(glyphId) : undefined;
@@ -10476,47 +10508,112 @@ export class PatchSyncEngine {
             ) {
                 continue;
             }
-            const before = Y.encodeStateVector(doc);
-            doc.transact(() => {
-                this._replaceDrawingMapContents(
-                    drawingMap,
-                    cloneHistoryValue(record) as Record<string, unknown>
+            const writes = pendingWrites.get(glyphId) ?? [];
+            writes.push({ target, drawingMap, record });
+            pendingWrites.set(glyphId, writes);
+        }
+        const written: Array<{ glyphName: string; layerId: string }> = [];
+        if (!pendingWrites.size) {
+            return written;
+        }
+        const before = new Map(
+            [...pendingWrites.keys()].map((glyphId) => [
+                glyphId,
+                Y.encodeStateVector(this._glyphDocs.get(glyphId)!)
+            ])
+        );
+        // One commit, stamped with glyph revisions like any commit: windows
+        // that keep no socket for these glyphs learn of the writes from the
+        // revision feed, and fetch them. One packet per glyph document.
+        this._withGlyphRevisionCatchUp([...pendingWrites.keys()], () => {
+            for (const [glyphId, writes] of pendingWrites) {
+                const doc = this._glyphDocs.get(glyphId)!;
+                doc.transact(() => {
+                    for (const { drawingMap, record } of writes) {
+                        this._replaceDrawingMapContents(
+                            drawingMap,
+                            cloneHistoryValue(record) as Record<string, unknown>
+                        );
+                    }
+                }, LAYOUT_FORWARD_ORIGIN);
+                const entries = writes.map(({ target, record }) =>
+                    createLogEntry({
+                        timestamp: Date.now(),
+                        windowId: this.windowId,
+                        windowRoleLabel: this._getWindowRoleLabel(),
+                        historyItemId: this._createHistoryItemId(),
+                        historyAction: 'change',
+                        transactionLabel: 'Settle collaborator cascade',
+                        transactionId: null,
+                        op: 'set',
+                        undoScope: 'layer',
+                        path: joinPathWithGlyphSeparator([
+                            'glyphs',
+                            target.glyphName,
+                            'layers',
+                            target.layerId
+                        ]),
+                        oldValue: undefined,
+                        newValue: cloneHistoryValue(record),
+                        replayOldValue: undefined,
+                        replayNewValue: undefined,
+                        compileChangeSource: 'remote-cascade-preview',
+                        compileEditType: 'anchor'
+                    })
                 );
-            }, LAYOUT_FORWARD_ORIGIN);
-            const entry = createLogEntry({
-                timestamp: Date.now(),
-                windowId: this.windowId,
-                windowRoleLabel: this._getWindowRoleLabel(),
-                historyItemId: this._createHistoryItemId(),
-                historyAction: 'change',
-                transactionLabel: 'Settle collaborator cascade',
-                transactionId: null,
-                op: 'set',
-                undoScope: 'layer',
-                path: joinPathWithGlyphSeparator([
-                    'glyphs',
-                    target.glyphName,
-                    'layers',
-                    target.layerId
-                ]),
-                oldValue: undefined,
-                newValue: cloneHistoryValue(record),
-                replayOldValue: undefined,
-                replayNewValue: undefined,
-                compileChangeSource: 'remote-cascade-preview',
-                compileEditType: 'anchor'
-            });
-            // Emitted, not committed: the change log, and so undo, never
-            // holds it.
-            this._emitLocalUpdate(
-                Y.encodeStateAsUpdate(doc, before),
-                [entry],
-                glyphDocumentId(glyphId)
-            );
-            this._patchDrawingFromYDoc(target);
-            written.push(target);
+                // Emitted, not committed: the change log, and so undo, never
+                // holds it.
+                this._emitLocalUpdate(
+                    Y.encodeStateAsUpdate(doc, before.get(glyphId)),
+                    entries,
+                    glyphDocumentId(glyphId)
+                );
+            }
+        });
+        for (const writes of pendingWrites.values()) {
+            for (const { target } of writes) {
+                this._patchDrawingFromYDoc(target);
+                written.push(target);
+            }
         }
         return written;
+    }
+
+    /**
+     * True when this glyph's document holds updates that wait for ones it
+     * never received: it is incomplete here until a catch-up fills the gap.
+     */
+    glyphDocumentHasPendingUpdates(documentId: string): boolean {
+        const store = (this._docForId(documentId) as Unsafe)?.store;
+        return !!(store?.pendingStructs || store?.pendingDs);
+    }
+
+    /** True when the model shows this drawing other than its document. */
+    livePreviewDrawingDiffers(target: {
+        glyphName: string;
+        layerId: string;
+    }): boolean {
+        const fontModel = (window as Unsafe).fontManager?.currentFont
+            ?.fontModel;
+        const glyphId = this._glyphIdByName.get(target.glyphName);
+        const doc = glyphId ? this._glyphDocs.get(glyphId) : undefined;
+        const drawingMap = (
+            doc?.getMap('glyph').get('layers') as Y.Map<unknown> | undefined
+        )?.get(target.layerId);
+        const modelDrawing = fontModel
+            ?.findGlyph?.(target.glyphName)
+            ?.findDrawingById?.(target.layerId);
+        if (!(drawingMap instanceof Y.Map) || !modelDrawing) {
+            return false;
+        }
+        const record =
+            typeof modelDrawing.toJSON === 'function'
+                ? modelDrawing.toJSON()
+                : modelDrawing;
+        return (
+            drawingFingerprint(record) !==
+            drawingFingerprint(fromYType(drawingMap))
+        );
     }
 
     revertLivePreviewDrawings(

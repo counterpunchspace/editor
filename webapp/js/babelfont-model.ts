@@ -15832,7 +15832,8 @@ export class Font extends ModelBase {
                     const refined =
                         await window.fontManager.buildWorkerRefineDrawingSnapshotsBatch(
                             batchResult.update,
-                            overrides
+                            overrides,
+                            batchResult.updates ?? []
                         );
                     if (refined.update.length) {
                         finalUpdate = refined.update;

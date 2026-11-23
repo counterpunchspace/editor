@@ -129,6 +129,43 @@ export function collectKerningGroupMemberships(
     return memberships;
 }
 
+/**
+ * The group list a pair operand kerns with, as the LKG / RKG labels name
+ * it: in a left-to-right pair the first glyph its right group
+ * (first_kern_groups) and the second its left group (second_kern_groups);
+ * in a right-to-left pair, read from the right, the first glyph its left
+ * group and the second its right group (Glyphs, glyphsLib).
+ */
+export function kerningGroupListSide(
+    pairSide: 'first' | 'second',
+    isRTL: boolean
+): 'first' | 'second' {
+    return (pairSide === 'first') !== isRTL ? 'first' : 'second';
+}
+
+/** The kerning groups a pair operand kerns with (see kerningGroupListSide). */
+export function collectOperandKerningGroupMemberships(
+    font:
+        | {
+              first_kern_groups?: Record<string, string[]> | null;
+              second_kern_groups?: Record<string, string[]> | null;
+          }
+        | null
+        | undefined,
+    glyphName: string | null,
+    pairSide: 'first' | 'second',
+    isRTL: boolean
+): string[] {
+    if (!font || !glyphName) {
+        return [];
+    }
+    const groups =
+        kerningGroupListSide(pairSide, isRTL) === 'first'
+            ? font.first_kern_groups
+            : font.second_kern_groups;
+    return collectKerningGroupMemberships(groups ?? undefined, glyphName);
+}
+
 export function getKerningOperandKeys(
     glyphName: string,
     groups: Record<string, string[]> | undefined
@@ -181,9 +218,9 @@ export function buildOrderedKerningPairs(
 }
 
 /**
- * Pick the winning kerning value for a glyph pair using the same preference
- * as text-mode overlays: first non-zero defined pair in precedence order,
- * else first defined pair (including explicit 0).
+ * Pick the winning kerning value for a glyph pair as the compiled font
+ * does: the first defined pair in precedence order, so an explicit 0 is an
+ * exception that cancels group kerning.
  */
 export function resolvePreferredKerningPairValue(
     kerning: KerningContainer | undefined,
@@ -195,13 +232,6 @@ export function resolvePreferredKerningPairValue(
     }
 
     const preferredPairs = buildOrderedKerningPairs(firstKeys, secondKeys);
-    for (const { firstKey, secondKey } of preferredPairs) {
-        const value = getKerningPairValue(kerning, firstKey, secondKey);
-        if (value !== null && value !== 0) {
-            return value;
-        }
-    }
-
     for (const { firstKey, secondKey } of preferredPairs) {
         const value = getKerningPairValue(kerning, firstKey, secondKey);
         if (value !== null) {

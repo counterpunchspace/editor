@@ -16403,6 +16403,25 @@ describe('Text-mode kerning property panel', () => {
                     : [])
             ],
             glyphs: [
+                ...['beh-ar', 'alef-ar'].map((name, index) => ({
+                    name,
+                    category: 'Base',
+                    exported: true,
+                    codepoints: [index ? 0x0627 : 0x0628],
+                    layers: [
+                        {
+                            id: `layer-${name}`,
+                            width: 400,
+                            master: {
+                                type: 'DefaultForMaster',
+                                master: 'master-1'
+                            },
+                            shapes: [],
+                            anchors: [],
+                            guides: []
+                        }
+                    ]
+                })),
                 {
                     name: 'A',
                     category: 'Base',
@@ -16476,11 +16495,16 @@ describe('Text-mode kerning property panel', () => {
             note: '',
             date: '2026-05-18',
             features: {},
+            // Right-to-left pairs are Arabic: read from the right, beh-ar
+            // (first) kerns with its left group and alef-ar (second) with its
+            // right group.
             first_kern_groups: {
-                AFirst: ['A']
+                AFirst: ['A'],
+                ALEF: ['alef-ar']
             },
             second_kern_groups: {
-                VSecond: ['V']
+                VSecond: ['V'],
+                BEH: ['beh-ar']
             },
             custom_ot_values: [],
             variation_sequences: [],
@@ -16533,8 +16557,10 @@ describe('Text-mode kerning property panel', () => {
         canvas.textRunEditor.cursorPosition = 1;
         canvas.textRunEditor.selectedStationId = stationId;
         canvas.textRunEditor.clusterMap = clusterMap;
-        canvas.textRunEditor.glyphNameBuffer = ['A', 'V'];
-        canvas.textRunEditor.textBuffer = 'AV';
+        canvas.textRunEditor.glyphNameBuffer = rtl
+            ? ['beh-ar', 'alef-ar']
+            : ['A', 'V'];
+        canvas.textRunEditor.textBuffer = rtl ? '\u0628\u0627' : 'AV';
         // Live kerning preview adjusts ax on these glyphs. Keep the hand-built
         // clusterMap stable so panel/overlay tests stay deterministic.
         canvas.textRunEditor.shapedGlyphs = [
@@ -16627,7 +16653,7 @@ describe('Text-mode kerning property panel', () => {
         ).toContain('Select an exact station');
     });
 
-    test('inverts First and Second kerning-group colors in RTL text mode', () => {
+    test('mirrors the kerning-group columns in RTL text mode, keeping each side its color', () => {
         setTextRunState({ rtl: true });
 
         canvas.updatePropertyPanel();
@@ -16646,14 +16672,26 @@ describe('Text-mode kerning property panel', () => {
                     '.glyph-kerning-side .glyph-property-control-label'
                 )
             ).map((element) => element.textContent)
-        ).toEqual(['First (LKG)', 'Second (RKG)']);
+        ).toEqual(['Second (RKG)', 'First (LKG)']);
         expect(
             Array.from(
                 document.querySelectorAll(
                     '.glyph-kerning-side .glyph-property-control-label'
                 )
             ).map((element) => element.title)
-        ).toEqual(['Left kerning group', 'Right kerning group']);
+        ).toEqual(['Right kerning group', 'Left kerning group']);
+        // The left column is the left glyph (alef-ar, second when read from
+        // the right) with its right group; the right column is beh-ar.
+        expect(
+            Array.from(document.querySelectorAll('.glyph-kerning-side')).map(
+                (side) =>
+                    Array.from(
+                        side.querySelectorAll('.glyph-kerning-pill-label')
+                    )
+                        .map((label) => label.textContent)
+                        .join(' ')
+            )
+        ).toEqual(['alef-ar @ALEF', 'beh-ar @BEH']);
     });
 
     test('hides the add placeholder when both sides already have a group', () => {
@@ -16965,8 +17003,8 @@ describe('Text-mode kerning property panel', () => {
         };
         setTextRunState({ rtl: true });
         canvas.textModeKerningSelection = {
-            firstKey: '@AFirst',
-            secondKey: '@VSecond'
+            firstKey: '@BEH',
+            secondKey: '@ALEF'
         };
 
         try {
@@ -17002,13 +17040,11 @@ describe('Text-mode kerning property panel', () => {
             expect(recordChange).toHaveBeenCalledTimes(1);
             expect(recordChange).toHaveBeenCalledWith(
                 ['masters', 0, 'kerning_rtl'],
-                '@AFirst:@VSecond',
+                '@BEH:@ALEF',
                 undefined,
                 -55
             );
-            expect(fontModel.stations[0].kerning_rtl['@AFirst:@VSecond']).toBe(
-                -55
-            );
+            expect(fontModel.stations[0].kerning_rtl['@BEH:@ALEF']).toBe(-55);
             expect(
                 fontModel.format_specific?.[
                     'com.schriftgestalt.Glyphs.kerningRTL'
@@ -17068,11 +17104,11 @@ describe('Text-mode kerning property panel', () => {
         try {
             setTextRunState({ rtl: true });
             fontModel.stations[0].kerning_rtl = {
-                '@AFirst:@VSecond': -40
+                '@BEH:@ALEF': -40
             };
             canvas.textModeKerningSelection = {
-                firstKey: '@AFirst',
-                secondKey: '@VSecond'
+                firstKey: '@BEH',
+                secondKey: '@ALEF'
             };
 
             // Default RTL junction (second right edge) is the right edge of a
@@ -17090,11 +17126,11 @@ describe('Text-mode kerning property panel', () => {
         try {
             setTextRunState({ rtl: true });
             fontModel.stations[0].kerning_rtl = {
-                '@AFirst:@VSecond': 40
+                '@BEH:@ALEF': 40
             };
             canvas.textModeKerningSelection = {
-                firstKey: '@AFirst',
-                secondKey: '@VSecond'
+                firstKey: '@BEH',
+                secondKey: '@ALEF'
             };
 
             canvas.textRunEditor.updateCursorVisualPosition();
@@ -17111,11 +17147,11 @@ describe('Text-mode kerning property panel', () => {
         try {
             setTextRunState({ rtl: true });
             fontModel.stations[0].kerning_rtl = {
-                '@AFirst:@VSecond': -40
+                '@BEH:@ALEF': -40
             };
             canvas.textModeKerningSelection = {
-                firstKey: '@AFirst',
-                secondKey: '@VSecond'
+                firstKey: '@BEH',
+                secondKey: '@ALEF'
             };
             canvas.viewportManager.scale = 2;
             canvas.viewportManager.panX = 100;
@@ -17163,11 +17199,11 @@ describe('Text-mode kerning property panel', () => {
         try {
             setTextRunState({ rtl: true });
             fontModel.stations[0].kerning_rtl = {
-                '@AFirst:@VSecond': -40
+                '@BEH:@ALEF': -40
             };
             canvas.textModeKerningSelection = {
-                firstKey: '@AFirst',
-                secondKey: '@VSecond'
+                firstKey: '@BEH',
+                secondKey: '@ALEF'
             };
             canvas.viewportManager.scale = 2;
             canvas.viewportManager.panX = 100;
@@ -17260,11 +17296,11 @@ describe('Text-mode kerning property panel', () => {
     test('RTL live kerning overlay grows left from the right-edge caret for negative values', () => {
         setTextRunState({ rtl: true });
         fontModel.stations[0].kerning_rtl = {
-            '@AFirst:@VSecond': -40
+            '@BEH:@ALEF': -40
         };
         canvas.textModeKerningSelection = {
-            firstKey: '@AFirst',
-            secondKey: '@VSecond'
+            firstKey: '@BEH',
+            secondKey: '@ALEF'
         };
         canvas.textRunEditor.cursorX = 110;
 
@@ -17277,7 +17313,7 @@ describe('Text-mode kerning property panel', () => {
             })
         );
 
-        fontModel.stations[0].kerning_rtl['@AFirst:@VSecond'] = -50;
+        fontModel.stations[0].kerning_rtl['@BEH:@ALEF'] = -50;
         // Caret stays put until live nudge/reshape; overlay widens away left.
         expect(canvas.textRunEditor.cursorX).toBe(110);
         const overlay50 = canvas.getTextModeKerningOverlayState();
@@ -17293,11 +17329,11 @@ describe('Text-mode kerning property panel', () => {
     test('RTL live kerning overlay grows right from the left-edge caret for positive values', () => {
         setTextRunState({ rtl: true });
         fontModel.stations[0].kerning_rtl = {
-            '@AFirst:@VSecond': 40
+            '@BEH:@ALEF': 40
         };
         canvas.textModeKerningSelection = {
-            firstKey: '@AFirst',
-            secondKey: '@VSecond'
+            firstKey: '@BEH',
+            secondKey: '@ALEF'
         };
         canvas.textRunEditor.cursorX = 110;
 
@@ -17310,7 +17346,7 @@ describe('Text-mode kerning property panel', () => {
             })
         );
 
-        fontModel.stations[0].kerning_rtl['@AFirst:@VSecond'] = 50;
+        fontModel.stations[0].kerning_rtl['@BEH:@ALEF'] = 50;
         expect(canvas.textRunEditor.cursorX).toBe(110);
         const overlay50 = canvas.getTextModeKerningOverlayState();
         expect(overlay50).toEqual(
@@ -17388,8 +17424,8 @@ describe('Text-mode kerning property panel', () => {
 
     test('RTL kerning nudge shifts every glyph visually left of the caret', async () => {
         setTextRunState({ rtl: true });
-        // Logical "HAV": cursor between A and V. Visual left→right: H, V, A.
-        // Everything left of the caret (H, V) moves; A stays.
+        // Logical "H" + beh + alef: cursor between beh and alef. Visual left→right: H, alef, beh.
+        // Everything left of the caret (H, alef) moves; beh stays.
         canvas.textRunEditor.clusterMap = [
             {
                 glyphIndex: 2,
@@ -17419,8 +17455,8 @@ describe('Text-mode kerning property panel', () => {
                 isRTL: true
             }
         ];
-        canvas.textRunEditor.glyphNameBuffer = ['A', 'V', 'H'];
-        canvas.textRunEditor.textBuffer = 'HAV';
+        canvas.textRunEditor.glyphNameBuffer = ['beh-ar', 'alef-ar', 'H'];
+        canvas.textRunEditor.textBuffer = 'H\u0628\u0627';
         canvas.textRunEditor.shapedGlyphs = [
             { ax: 40, dx: 0, dy: 0, g: 0, cl: 1 },
             { ax: 50, dx: 0, dy: 0, g: 1, cl: 2 },
@@ -17434,12 +17470,12 @@ describe('Text-mode kerning property panel', () => {
             (clusterPos) => (clusterPos === 0 ? 2 : clusterPos === 1 ? 0 : 1)
         );
         fontModel.stations[0].kerning_rtl = {
-            'A:V': -40
+            'beh-ar:alef-ar': -40
         };
         // Prefer glyph keys for this fixture (no group dependency).
         canvas.textModeKerningSelection = {
-            firstKey: 'A',
-            secondKey: 'V'
+            firstKey: 'beh-ar',
+            secondKey: 'alef-ar'
         };
         canvas.viewportManager.scale = 2;
         canvas.viewportManager.panX = 100;
@@ -17457,7 +17493,7 @@ describe('Text-mode kerning property panel', () => {
         );
 
         // Written at once; the compiled font moves the glyphs, not a preview.
-        expect(fontModel.stations[0].kerning_rtl['A:V']).toBe(-41);
+        expect(fontModel.stations[0].kerning_rtl['beh-ar:alef-ar']).toBe(-41);
         expect(canvas.textRunEditor.shapedGlyphs[1].dx || 0).toBe(0);
         expect(canvas.textRunEditor.clusterMap[2].x).toBe(rightBeforeX);
         expect(canvas.textRunEditor.cursorX).toBe(beforeCaret);
@@ -17959,12 +17995,12 @@ describe('Text-mode kerning property panel', () => {
 
     test('renders a single RTL ValueRecord field', () => {
         fontModel.stations[0].kerning_rtl = {
-            '@AFirst:@VSecond': -120
+            '@BEH:@ALEF': -120
         };
         setTextRunState({ rtl: true });
         canvas.textModeKerningSelection = {
-            firstKey: '@AFirst',
-            secondKey: '@VSecond'
+            firstKey: '@BEH',
+            secondKey: '@ALEF'
         };
 
         canvas.updatePropertyPanel();

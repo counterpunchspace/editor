@@ -427,7 +427,7 @@ export function prime_preview_layout_closure_cache(font_revision: string, glyph_
 
 export function rebuild_caches_from_ydoc_set(): void;
 
-export function refine_layer_snapshots_yjs(base_update: Uint8Array, overrides_json: string): any;
+export function refine_layer_snapshots_yjs(base_update: Uint8Array, overrides_json: string, base_document_updates: any): any;
 
 export function reinterpolate_layer_yjs(glyph_name: string, layer_id: string): any;
 
@@ -565,18 +565,18 @@ export interface InitOutput {
     readonly ufo_glyph_files_for_paths: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly validate_feature_source_with_full_filter_pipeline: (a: any) => [number, number];
     readonly version: () => [number, number];
+    readonly add_axis_with_master_copies_yjs: (a: number, b: number) => [number, number, number];
+    readonly add_master_with_interpolated_layers_yjs: (a: number, b: number) => [number, number, number];
+    readonly refine_layer_snapshots_yjs: (a: number, b: number, c: number, d: number, e: any) => [number, number, number];
+    readonly reinterpolate_layer_yjs: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly reinterpolate_master_layers_yjs: (a: number, b: number) => [number, number, number];
+    readonly remove_masters_yjs: (a: number, b: number) => [number, number, number];
     readonly get_font_axes: (a: number, b: number) => [number, number, number, number];
     readonly get_font_features: (a: number, b: number) => [number, number, number, number];
     readonly get_font_features_with_tables: (a: number, b: number) => [number, number, number, number];
     readonly get_glyph_name: (a: number, b: number, c: number) => [number, number, number, number];
     readonly get_glyph_order: (a: number, b: number) => [number, number, number, number];
     readonly get_stylistic_set_names: (a: number, b: number) => [number, number, number, number];
-    readonly add_axis_with_master_copies_yjs: (a: number, b: number) => [number, number, number];
-    readonly add_master_with_interpolated_layers_yjs: (a: number, b: number) => [number, number, number];
-    readonly refine_layer_snapshots_yjs: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly reinterpolate_layer_yjs: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly reinterpolate_master_layers_yjs: (a: number, b: number) => [number, number, number];
-    readonly remove_masters_yjs: (a: number, b: number) => [number, number, number];
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;

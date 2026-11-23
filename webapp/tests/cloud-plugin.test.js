@@ -2452,6 +2452,15 @@ describe('CloudPlugin sharing APIs', () => {
             });
             expect(plugin.canMutateCurrentAsset()).toBe(false);
 
+            // Main reconnects (its room token renewed) and still accepts
+            // edits: so does the linked window.
+            plugin.applyRelayedConnectionState({
+                assetId: 'asset-1',
+                status: 'error',
+                canMutate: true
+            });
+            expect(plugin.canMutateCurrentAsset()).toBe(true);
+
             plugin.applyRelayedConnectionState({
                 assetId: 'asset-1',
                 status: 'connected',

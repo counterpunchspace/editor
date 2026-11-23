@@ -2208,7 +2208,7 @@ self.onmessage = async (event) => {
             const refineSpanId = timelineSpanStart(
                 'font.worker.refineDrawingSnapshotsYjs'
             );
-            const { id, baseUpdate, overrides } = data;
+            const { id, baseUpdate, overrides, baseUpdates } = data;
 
             try {
                 timelineMark('font.worker.refineDrawingSnapshotsYjs.started');
@@ -2216,7 +2216,8 @@ self.onmessage = async (event) => {
                     baseUpdate instanceof Uint8Array
                         ? baseUpdate
                         : new Uint8Array(baseUpdate || []),
-                    JSON.stringify(overrides ?? [])
+                    JSON.stringify(overrides ?? []),
+                    baseUpdates ?? []
                 ) as RustYjsBatchResult;
                 self.postMessage({
                     id,

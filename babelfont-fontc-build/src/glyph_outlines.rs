@@ -87,18 +87,49 @@ fn persist_layer_cache(cache_key: &str, layer_cache: &RefCell<HashMap<String, La
     }
 }
 
-fn record_component_dependencies(layer: &Layer, glyph_name: &str) {
-    for shape in &layer.shapes {
-        if let Shape::Component(component) = shape {
-            let base_name = component.reference.to_string();
-            let mut deps = COMPONENT_DEPENDENTS.lock().unwrap();
-            let dep_map = deps.get_or_insert_with(HashMap::new);
+/// Record which glyphs this glyph's result depends on, down every level of
+/// nested components: a cached `Aacute.ss01` holds the outline of `A` inside
+/// `Aacute`, so a change to `A` must reach it even when `Aacute` itself was
+/// never fetched.
+fn record_component_dependencies(font: &babelfont::Font, layer: &Layer, glyph_name: &str) {
+    let mut deps = COMPONENT_DEPENDENTS.lock().unwrap();
+    let dep_map = deps.get_or_insert_with(HashMap::new);
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut pending: Vec<(String, Vec<String>)> = vec![(
+        glyph_name.to_string(),
+        component_references(layer.shapes.iter()),
+    )];
+    while let Some((dependent, references)) = pending.pop() {
+        for reference in references {
             dep_map
-                .entry(base_name)
+                .entry(reference.clone())
                 .or_insert_with(HashSet::new)
-                .insert(glyph_name.to_string());
+                .insert(dependent.clone());
+            if !visited.insert(reference.clone()) {
+                continue;
+            }
+            if let Some(glyph) = font.glyphs.get(&reference) {
+                let nested =
+                    component_references(glyph.layers.iter().flat_map(|layer| layer.shapes.iter()));
+                if !nested.is_empty() {
+                    pending.push((reference, nested));
+                }
+            }
         }
     }
+}
+
+fn component_references<'a>(shapes: impl Iterator<Item = &'a Shape>) -> Vec<String> {
+    let mut references: Vec<String> = Vec::new();
+    for shape in shapes {
+        if let Shape::Component(component) = shape {
+            let reference = component.reference.to_string();
+            if !references.contains(&reference) {
+                references.push(reference);
+            }
+        }
+    }
+    references
 }
 
 /// Retained-size estimate for overview outline / interpolated-layer caches.
@@ -279,7 +310,7 @@ pub fn interpolate_glyph_json_cached_for_domain(
         obj.insert("_verticalMetrics".to_string(), vertical_metrics);
     }
 
-    record_component_dependencies(&layer, glyph_name);
+    record_component_dependencies(font, &layer, glyph_name);
     persist_layer_cache(&cache_key, &layer_cache);
 
     serde_json::to_string(&result)
@@ -485,7 +516,7 @@ pub fn get_glyphs_outlines(
         // Store in new_results for adding to persistent cache
         new_results.push((glyph_name.clone(), result));
 
-        record_component_dependencies(&layer, glyph_name);
+        record_component_dependencies(font, &layer, glyph_name);
     }
 
     // Add new results to persistent cache

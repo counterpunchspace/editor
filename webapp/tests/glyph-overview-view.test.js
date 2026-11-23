@@ -161,6 +161,92 @@ describe('GlyphOverviewView second instance', () => {
         expect(titleBar.children).toHaveLength(3);
     });
 
+    test('a changed-glyph refresh answered after the location moved leaves the tile to the new location', async () => {
+        const host = document.createElement('div');
+        document.body.appendChild(host);
+        const view = new GlyphOverviewView(host);
+        await view.setGlyphs([{ id: 'a', name: 'a' }]);
+        await view.ensureTilesRendered(1);
+
+        // The refresh asks at the old location; the sliders move on before
+        // the worker answers.
+        let answer;
+        window.fontCompilation.sendMessage.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    answer = resolve;
+                })
+        );
+        const refresh = view.refreshChangedGlyphTiles(['a']);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        window.fontCompilation.sendMessage.mockImplementation(
+            async ({ glyphNames, location }) => ({
+                outlinesJson: JSON.stringify(
+                    glyphNames.map((name) => ({ name, at: location }))
+                )
+            })
+        );
+        await view.renderGlyphOutlines({ wght: 900 }, { force: true });
+        await view.ensureTilesRendered(1);
+        const callsBeforeAnswer =
+            window.fontCompilation.sendMessage.mock.calls.length;
+        answer({
+            outlinesJson: JSON.stringify([{ name: 'a', at: 'old location' }])
+        });
+        await refresh;
+
+        expect(view.tiles.get('a').cachedData.at).toEqual({ wght: 900 });
+        // The refresh asked again at the new location: the repaint may have
+        // drawn from outlines cached before the change.
+        const retries = window.fontCompilation.sendMessage.mock.calls
+            .slice(callsBeforeAnswer)
+            .map(([message]) => message);
+        expect(retries).toContainEqual(
+            expect.objectContaining({
+                type: 'getGlyphOutlines',
+                glyphNames: ['a'],
+                location: { wght: 900 }
+            })
+        );
+        view.destroy();
+    });
+
+    test('a changed-glyph refresh answered after a repaint at the same location still lands', async () => {
+        const host = document.createElement('div');
+        document.body.appendChild(host);
+        const view = new GlyphOverviewView(host);
+        await view.setGlyphs([{ id: 'a', name: 'a' }]);
+        await view.ensureTilesRendered(1);
+        const location = { ...view.currentLocation };
+
+        let answer;
+        window.fontCompilation.sendMessage.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    answer = resolve;
+                })
+        );
+        const refresh = view.refreshChangedGlyphTiles(['a']);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        // The repaint draws what was cached before the change.
+        window.fontCompilation.sendMessage.mockImplementation(
+            async ({ glyphNames }) => ({
+                outlinesJson: JSON.stringify(
+                    glyphNames.map((name) => ({ name, outline: 'before' }))
+                )
+            })
+        );
+        await view.renderGlyphOutlines(location, { force: true });
+        await view.ensureTilesRendered(1);
+        answer({
+            outlinesJson: JSON.stringify([{ name: 'a', outline: 'after' }])
+        });
+        await refresh;
+
+        expect(view.tiles.get('a').cachedData.outline).toBe('after');
+        view.destroy();
+    });
+
     test('a second widget paints from outlines another widget already fetched', async () => {
         const {
             invalidateSharedGlyphOutlines

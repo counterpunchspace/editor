@@ -1,3 +1,4 @@
+import { recordCollabTrace } from './collab-trace';
 /**
  * Live cloud session: one WebSocket per Durable Object shard.
  *
@@ -748,6 +749,11 @@ export class CloudLiveSession {
                 }
             }
             this.sendForwardedUpdate(update, collaborationMessage, documentId);
+            recordCollabTrace('relay-sent', [], {
+                document: resolvedId,
+                socket: this._adapters.has(resolvedId),
+                durable
+            });
             return durable;
         });
         this._relayChain = relay.then(

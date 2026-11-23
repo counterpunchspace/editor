@@ -317,9 +317,19 @@ export const cloudPluginCatchUpMethods = {
                         typeof bridge.materializeResidentCatalogGlyph ===
                             'function'
                     ) {
-                        bridge.materializeResidentCatalogGlyph(
-                            target.documentId
-                        );
+                        // A glyph still malformed here (its catch-up failed)
+                        // must not stop the bookkeeping: retries and the
+                        // attempt limit depend on it.
+                        try {
+                            bridge.materializeResidentCatalogGlyph(
+                                target.documentId
+                            );
+                        } catch (error) {
+                            console.warn(
+                                `[CloudPlugin] Could not model ${target.documentId} after its catch-up:`,
+                                error
+                            );
+                        }
                     }
                     const modeled =
                         typeof bridge.catalogGlyphIsInModel !== 'function' ||

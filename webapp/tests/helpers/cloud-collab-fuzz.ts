@@ -12,6 +12,25 @@ export const FUZZ_STATIONS = [
 ] as const;
 export type FuzzStationId = (typeof FUZZ_STATIONS)[number]['id'];
 
+/**
+ * Arabic glyphs, the only ones in right-to-left kerning: beh-ar kerns first
+ * with its left group BEH, alef-ar second with its right group ALEF.
+ */
+export const FUZZ_ARABIC_GLYPHS: Record<string, number> = {
+    'beh-ar': 0x0628,
+    'alef-ar': 0x0627,
+    'reh-ar': 0x0631
+};
+/** Right-to-left pairs, read from the right: first glyph, then second. */
+export const FUZZ_RTL_KERN_PAIRS = [
+    'beh-ar:alef-ar',
+    'reh-ar:alef-ar',
+    'alef-ar:beh-ar',
+    'beh-ar:@ALEF',
+    '@BEH:alef-ar',
+    '@BEH:@ALEF'
+];
+
 /** Location the compiled outlines are compared at (between the masters). */
 export const FUZZ_COMPARE_LOCATION = { wght: 500 };
 
@@ -33,12 +52,13 @@ export const FUZZ_GLYPHS = [
     'idieresis',
     'adieresis.ss01',
     'p',
-    'q'
+    'q',
+    ...Object.keys(FUZZ_ARABIC_GLYPHS)
 ];
 
 /** Text that shapes to every fuzz glyph, so the compiled check sees all. */
 // U+E001 maps to adieresis.ss01 only while a Unicode edit has added it.
-export const FUZZ_TEXT = 'lnmıaoäáöiï̈́̇pq';
+export const FUZZ_TEXT = 'lnmıaoäáöiï̈́̇pq\u0628\u0627\u0631';
 
 /**
  * `p` takes the outline-structure edits (points and contours added and
@@ -54,7 +74,14 @@ export const FUZZ_EXTRA_FEATURE: [string, string] = [
     'ss02',
     'sub o by odieresis;'
 ];
-export const FUZZ_LANGUAGE_SYSTEMS = 'languagesystem DFLT dflt;';
+/**
+ * Declared as a Latin font declares them. The prefix edit drops `latn` at
+ * times: then the compiler registers marks under DFLT alone while kerning
+ * still adds a `latn` record, and Latin text loses mark positioning.
+ */
+export const FUZZ_LANGUAGE_SYSTEMS =
+    'languagesystem DFLT dflt;\nlanguagesystem latn dflt;';
+export const FUZZ_LANGUAGE_SYSTEMS_DFLT_ONLY = 'languagesystem DFLT dflt;';
 
 export const FUZZ_BASES_WITH_TOP = ['a', 'o', 'idotless'];
 export const FUZZ_MARKS = ['dieresiscomb', 'acutecomb', 'dotaccentcomb'];
@@ -89,8 +116,8 @@ export const FUZZ_KERN_PAIRS = [
 
 /** Kerning groups of the fixture: first side (MMK_R) and second side (MMK_L). */
 export const FUZZ_KERN_GROUPS = {
-    first: { L: ['l'] } as Record<string, string[]>,
-    second: { A: ['a'] } as Record<string, string[]>
+    first: { L: ['l'], ALEF: ['alef-ar'] } as Record<string, string[]>,
+    second: { A: ['a'], BEH: ['beh-ar'] } as Record<string, string[]>
 };
 /** Glyphs a kerning-group edit adds to or removes from the group `L`. */
 export const FUZZ_GROUP_GLYPHS = ['n', 'm'];
@@ -383,8 +410,22 @@ export function makeFuzzFontJson(familyName: string): string {
         M1: { rects: [[50, 0, 450, 700]], width: 500 },
         M2: { rects: [[50, 0, 450, 700]], width: 500 }
     });
+    const arabicGlyphs = Object.entries(FUZZ_ARABIC_GLYPHS).map(
+        ([name, codepoint], index) =>
+            outlineGlyph(name, [codepoint], {
+                M1: {
+                    rects: [[40, 0, 100 + index * 60, 300]],
+                    width: 200 + index * 60
+                },
+                M2: {
+                    rects: [[40, 0, 160 + index * 60, 300]],
+                    width: 260 + index * 60
+                }
+            })
+    );
     const glyphs = [
         notdef,
+        ...arabicGlyphs,
         ...Object.entries(bases).map(([name, perStation]) =>
             outlineGlyph(name, codepoints[name], perStation, {
                 formatSpecific: metricsFormatSpecific(name)
@@ -469,6 +510,10 @@ export function makeFuzzFontJson(familyName: string): string {
                 'XHeight overshoot': 10
             },
             kerning: {},
+            kerning_rtl: {
+                'beh-ar:alef-ar': id === 'M1' ? -20 : -40,
+                '@BEH:@ALEF': id === 'M1' ? -30 : -50
+            },
             custom_ot_values: {},
             format_specific: {}
         })),
@@ -1329,7 +1374,7 @@ function describeExtendedFuzzEdit(edit: ExtendedFuzzEdit): string {
         case 'feature-list':
             return `feature-list ${edit.op} ${FUZZ_EXTRA_FEATURE[0]}`;
         case 'feature-prefix':
-            return `languagesystems prefix, mark ${edit.value}`;
+            return `languagesystems ${edit.value % 2 ? 'DFLT only' : 'DFLT and latn'}, mark ${edit.value}`;
         case 'feature-class':
             return `class @fuzz = [${edit.members.join(' ')}]`;
         case 'station-metric':
@@ -1376,6 +1421,41 @@ export function describeFuzzEdit(edit: FuzzEdit): string {
  * the Undo command for undo and redo. Resolves once the edit is committed.
  */
 export async function applyFuzzEdit(
+    page: Page,
+    edit: FuzzEdit,
+    options: { awaitCloud?: boolean } = {}
+) {
+    try {
+        await applyFuzzEditUnguarded(page, edit, options);
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!message.includes('read-only')) {
+            throw error;
+        }
+        // Why the window refused: its own session, or what main relayed.
+        const why = await page
+            .evaluate(() => {
+                const w = window as any;
+                const plugin = w.cloudPlugin;
+                return JSON.stringify({
+                    linked: w.windowRole?.isLinkedWindow?.() === true,
+                    relayedCanMutate: plugin?._relayedCanMutate ?? null,
+                    relayedStatus: plugin?._relayedConnectionStatus ?? null,
+                    linkedReadOnly: w.windowSync?.linkedReadOnly ?? null,
+                    mainMissing: w.windowSync?.mainMissingLatched ?? null,
+                    sessionAllows: plugin?._sessionAllowsMutation?.() ?? null,
+                    connectionStatus: plugin?.connectionStatus ?? null,
+                    walHealth: plugin?._liveSession?.walHealth ?? null,
+                    offlineLevel: plugin?._offlineEditLimit?.level ?? null,
+                    role: plugin?.getCurrentAssetRole?.() ?? null
+                });
+            })
+            .catch(() => 'unknown');
+        throw new Error(`${message}\nread-only state: ${why}`);
+    }
+}
+
+async function applyFuzzEditUnguarded(
     page: Page,
     edit: FuzzEdit,
     options: { awaitCloud?: boolean } = {}
@@ -1658,7 +1738,14 @@ async function applyExtendedFuzzEdit(
     awaitCloud: boolean
 ) {
     await page.evaluate(
-        async ({ step, awaitCloud: wait, stationIds, extra, systems }) => {
+        async ({
+            step,
+            awaitCloud: wait,
+            stationIds,
+            extra,
+            systems,
+            dfltOnly
+        }) => {
             const w = window as any;
             const bridge = w.patchSyncEngine;
             const font = w.currentFontModel;
@@ -2035,10 +2122,8 @@ async function applyExtendedFuzzEdit(
                         'component-property',
                         null,
                         () => {
-                            const component = componentAt(
-                                atStation(step.master),
-                                step.shape
-                            );
+                            const drawing = atStation(step.master);
+                            const component = componentAt(drawing, step.shape);
                             const transform = plain(component.transform) ?? {};
                             const [x, y] = transform.translation ?? [0, 0];
                             component.transform = {
@@ -2046,6 +2131,11 @@ async function applyExtendedFuzzEdit(
                                 translation: [x + step.dx, y + step.dy],
                                 scale: [step.scale, step.scale]
                             };
+                            // As the editor does: an automatically aligned
+                            // composite keeps the scale and is placed again.
+                            drawing.invalidateContentCaches?.();
+                            drawing.invalidateLayoutCache?.();
+                            drawing.rebuildAutomaticComposition?.();
                         }
                     );
                     break;
@@ -2236,7 +2326,7 @@ async function applyExtendedFuzzEdit(
                             features.prefixes = {
                                 ...features.prefixes,
                                 languagesystems: {
-                                    code: `${systems}${step.value % 2 ? '\nlanguagesystem latn dflt;' : ''}\n# fuzz ${step.value}`
+                                    code: `${step.value % 2 ? dfltOnly : systems}\n# fuzz ${step.value}`
                                 }
                             };
                         } else {
@@ -2323,7 +2413,8 @@ async function applyExtendedFuzzEdit(
             awaitCloud,
             stationIds: FUZZ_STATIONS.map((station) => station.id),
             extra: FUZZ_EXTRA_FEATURE,
-            systems: FUZZ_LANGUAGE_SYSTEMS
+            systems: FUZZ_LANGUAGE_SYSTEMS,
+            dfltOnly: FUZZ_LANGUAGE_SYSTEMS_DFLT_ONLY
         }
     );
 }

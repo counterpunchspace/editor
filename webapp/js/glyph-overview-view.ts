@@ -2387,12 +2387,25 @@ export class GlyphOverviewView {
             await window.fontManager?.awaitWorkerCacheUpdate?.();
             await fontComp.awaitWorkerDocumentReadyForCompile?.();
 
+            // The location can change while the worker answers (opening a
+            // glyph at a station moves the sliders): outlines for the old
+            // one must not land in the tiles or the shared cache. Ask again
+            // at the new one: the render that moved it may draw these
+            // glyphs from the shared cache, which still holds the outlines
+            // from before this change.
+            const location = { ...this.currentLocation };
             const response = await fontComp.sendMessage({
                 type: 'getGlyphOutlines',
                 glyphNames: refreshGlyphNames,
-                location: this.currentLocation,
+                location,
                 flattenComponents: false
             });
+            if (
+                sharedOutlineLocationKey(location) !==
+                sharedOutlineLocationKey(this.currentLocation)
+            ) {
+                return this.refreshChangedGlyphTiles(refreshGlyphNames);
+            }
 
             if (response.error) {
                 console.error(
@@ -2409,7 +2422,7 @@ export class GlyphOverviewView {
             }
             storeSharedOutlines(
                 this.overviewFontIdentityKey(),
-                sharedOutlineLocationKey(this.currentLocation),
+                sharedOutlineLocationKey(location),
                 outlines
             );
 

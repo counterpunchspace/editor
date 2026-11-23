@@ -1199,14 +1199,15 @@ export function rebuild_caches_from_ydoc_set() {
 /**
  * @param {Uint8Array} base_update
  * @param {string} overrides_json
+ * @param {any} base_document_updates
  * @returns {any}
  */
-export function refine_layer_snapshots_yjs(base_update, overrides_json) {
+export function refine_layer_snapshots_yjs(base_update, overrides_json, base_document_updates) {
     const ptr0 = passArray8ToWasm0(base_update, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passStringToWasm0(overrides_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.refine_layer_snapshots_yjs(ptr0, len0, ptr1, len1);
+    const ret = wasm.refine_layer_snapshots_yjs(ptr0, len0, ptr1, len1, base_document_updates);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -1578,6 +1579,10 @@ function __wbg_get_imports() {
         },
         __wbg_new_227d7c05414eb861: function() {
             const ret = new Error();
+            return ret;
+        },
+        __wbg_new_6e7681a5f6f98ceb: function(arg0) {
+            const ret = new Uint8Array(arg0);
             return ret;
         },
         __wbg_new_6feff3e11e4d0799: function() {
