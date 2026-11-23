@@ -374,6 +374,44 @@ code:
 format_specific: {"com.schriftgestalt.Glyphs.disabled":true,"com.schriftgestalt.Glyphs.labels":[{"language":"dflt","value":"Standard Ligatures"}],"com.schriftgestalt.Glyphs.notes":"old liga"}
 ```
 
+## Spacing without rewriting nodes (idea)
+
+Not decided. Today a side-bearing change moves every node of the drawing. That makes it a diff of every path line, a write of every node position in a cloud room, and a merge hazard: a collaborator’s concurrent point move can be overwritten by the shifted copy of the old position. This idea makes a spacing change touch one line.
+
+**Model.** Internally a drawing keeps a horizontal `offset` next to its `width`. A node’s real position is its stored position plus the offset. Anchors move with it; the width does not. Moving the whole drawing, centering it or changing a side bearing changes only the offset. Moving some nodes, one contour or one component still writes those positions or that component’s transform. Interpolation runs on the offset and the width, which interpolate linearly; side bearings do not when an extreme sits on different nodes or between nodes.
+
+**File.** People think in side bearings, so the file writes those, plus the outline’s edges as the writer measured them:
+
+```text
+layers:
+  regular:
+    lsb: 52
+    rsb: 48
+    bounds: 118 530
+    shapes:
+      path: l 118 0 ...
+```
+
+- Nodes stay in the coordinates they were drawn in. They are not normalized to a zero origin: re-normalizing whenever the leftmost extreme moves would rewrite every node again. For an imported or newly drawn glyph the offset is 0, so nodes are screen positions until the first spacing change. After that every node differs from its screen position by the same amount: screen x = node x − left edge + lsb.
+- A reader only adds: offset = `lsb` − left edge, width = `lsb` + (right edge − left edge) + `rsb`. No reader looks for extremes to place anything, so curves without nodes at their extremes and rotated or skewed components cannot give two implementations different positions or widths.
+- A writer measures real curve extremes, including transformed components, rounds them to the left and right edge, then writes `lsb` = offset + left edge and `rsb` = width − offset − right edge. Because the side bearings are computed from the same rounded edges that are written, the reader gets back exactly the offset and width the writer held, however the rounding went. Two writers that round an extreme of 117.5 differently write different files that load identically.
+- Rounding rule for byte-identical saves: floor for the left edge, ceiling for the right, after snapping any value within 0.000001 of an integer to it. When the extreme is a node, the value is that node’s coordinate and nothing is rounded.
+- All of this is exact only with exact arithmetic: integer offsets, widths and edges, or fixed decimals handled as scaled integers for fonts with fractional coordinates. Never binary floats.
+- Bounds are measured, not taken from the leftmost and rightmost point. With points, `lsb` would disagree with the side bearing the UI shows whenever a curve bulges past its nodes, and on a composite it would be the distance to a component’s origin, which means nothing to a reader.
+
+**Load check.** A loader measures the outline itself and compares it with `bounds`. Within 1 unit it uses the stored value, never its own; that absorbs rounding differences between implementations. A larger difference means the file is inconsistent, usually because nodes or a base glyph were edited by hand, and the load fails naming the glyph and drawing. Leaving `bounds` out, or a “refresh bounds” command, makes the tool measure and write it. The check decides whether to fail, never where anything goes.
+
+**Other cases.**
+- A drawing without outlines (space, anchors only) writes `width` instead of side bearings and bounds.
+- `width` may also be written as a checked redundancy: it must equal `lsb` + (right edge − left edge) + `rsb`.
+- Exports to `.glyphs`, UFO, designspace and the compiled font add the offset into the node positions, so files outside the editor are unchanged.
+
+**If the cloud model adopts the offset too.**
+- The offset is a replaced plain value, like the width, so it must never default to 0 when missing; a missing offset fails like a missing width.
+- Existing rooms convert without moving anything (offset 0). A per-glyph format version avoids writing every drawing at once.
+- Older editors must be refused by a converted room: they would draw the outline unshifted and write node positions as real positions.
+- The room’s validator and compactor, the Rust worker, plugin contracts and checkpoint restore all need to know the offset.
+
 ## Canonical bytes
 
 Two writers must emit the same bytes for the same font. That is the diff rule.
