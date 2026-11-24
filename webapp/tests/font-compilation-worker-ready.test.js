@@ -400,6 +400,250 @@ describe('FontCompilation worker document readiness', () => {
         expect(replaced).toEqual([['glyph:a', [1, 2]]]);
     });
 
+    describe('queued replaces whose document is gone', () => {
+        function createReplaceRecorder() {
+            const { fontCompilation } = createReadyFontCompilation();
+            const posted = [];
+            fontCompilation.worker.postMessage = jest.fn((message) => {
+                posted.push(message);
+                queueMicrotask(() => {
+                    fontCompilation.handleWorkerMessage({
+                        data: {
+                            id: message.id,
+                            type: message.type,
+                            success: true
+                        }
+                    });
+                });
+            });
+            return { fontCompilation, posted };
+        }
+
+        async function settleWithin(promise, ms = 1000) {
+            let timer;
+            const timeout = new Promise((_, reject) => {
+                timer = setTimeout(
+                    () => reject(new Error('flush did not settle')),
+                    ms
+                );
+            });
+            try {
+                return await Promise.race([promise, timeout]);
+            } finally {
+                clearTimeout(timer);
+            }
+        }
+
+        test('a document the editor unloaded before the flush is replaced with the state taken when it was scheduled', async () => {
+            const { fontCompilation, posted } = createReplaceRecorder();
+            fontCompilation.workerLoadedDocumentIds.add('glyph:x');
+            const sendSpy = jest.spyOn(fontCompilation, 'sendMessage');
+            fontCompilation.scheduleReplaceWorkerDocument(
+                'glyph:x',
+                new Uint8Array([1]),
+                () => new Uint8Array()
+            );
+            fontCompilation.scheduleReplaceWorkerDocument(
+                'glyph:y',
+                new Uint8Array([2]),
+                () => new Uint8Array([2, 3])
+            );
+
+            await settleWithin(
+                fontCompilation.awaitWorkerDocumentReadyForCompile()
+            );
+
+            expect(sendSpy).toHaveBeenCalledTimes(1);
+            expect(posted).toHaveLength(1);
+            expect(posted[0].documents).toEqual([
+                { documentId: 'glyph:x', state: new Uint8Array([1]) },
+                { documentId: 'glyph:y', state: new Uint8Array([2, 3]) }
+            ]);
+            expect(fontCompilation.pendingWorkerDocumentReplaces.size).toBe(0);
+            expect(fontCompilation.workerDocumentReplaceFlush).toBeNull();
+            expect(fontCompilation.workerHoldsDocument('glyph:x')).toBe(true);
+            expect(fontCompilation.workerHoldsDocument('glyph:y')).toBe(true);
+        });
+
+        test('a document unloaded before the flush is read once, never retried', async () => {
+            const { fontCompilation, posted } = createReplaceRecorder();
+            // Empty while unloaded; a retry would read it again later.
+            const reader = jest
+                .fn()
+                .mockReturnValueOnce(new Uint8Array())
+                .mockReturnValue(new Uint8Array([9]));
+            fontCompilation.scheduleReplaceWorkerDocument(
+                'glyph:x',
+                new Uint8Array([1]),
+                reader
+            );
+            await settleWithin(
+                fontCompilation.awaitWorkerDocumentReadyForCompile()
+            );
+            expect(reader).toHaveBeenCalledTimes(1);
+            expect(posted.map((message) => message.documents)).toEqual([
+                [{ documentId: 'glyph:x', state: new Uint8Array([1]) }]
+            ]);
+            expect(fontCompilation.workerDocumentReplaceFlush).toBeNull();
+        });
+
+        test('a reader that throws fails the flush once, after the rest of the batch', async () => {
+            const { fontCompilation, posted } = createReplaceRecorder();
+            const errorSpy = jest
+                .spyOn(console, 'error')
+                .mockImplementation(() => undefined);
+            const reader = jest.fn(() => {
+                throw new Error('document destroyed');
+            });
+            try {
+                fontCompilation.scheduleReplaceWorkerDocument(
+                    'glyph:x',
+                    new Uint8Array([1]),
+                    reader
+                );
+                fontCompilation.scheduleReplaceWorkerDocument(
+                    'glyph:y',
+                    new Uint8Array([2])
+                );
+                await expect(
+                    settleWithin(
+                        fontCompilation.awaitWorkerDocumentReadyForCompile()
+                    )
+                ).rejects.toThrow('document destroyed');
+                await new Promise((resolve) => setTimeout(resolve, 0));
+                expect(reader).toHaveBeenCalledTimes(1);
+                expect(posted.map((message) => message.documents)).toEqual([
+                    [{ documentId: 'glyph:y', state: new Uint8Array([2]) }]
+                ]);
+                expect(fontCompilation.workerDocumentReplaceFlush).toBeNull();
+                expect(fontCompilation.hasWorkerCacheDocument()).toBe(false);
+                expect(fontCompilation.workerHoldsDocument('glyph:x')).toBe(
+                    false
+                );
+            } finally {
+                errorSpy.mockRestore();
+            }
+        });
+
+        test('an update sent while a replace is queued is part of the replace, even for an unloaded document', async () => {
+            const Y = require('yjs');
+            const { fontCompilation, posted } = createReplaceRecorder();
+            const doc = new Y.Doc({ gc: false });
+            doc.getMap('glyph').set('name', 'x');
+            const scheduled = Y.encodeStateAsUpdate(doc);
+            const before = Y.encodeStateVector(doc);
+            doc.getMap('glyph').set('width', 300);
+            const update = Y.encodeStateAsUpdate(doc, before);
+            doc.destroy();
+
+            fontCompilation.scheduleReplaceWorkerDocument(
+                'glyph:x',
+                scheduled,
+                () => new Uint8Array()
+            );
+            await fontCompilation.sendMessage({
+                type: 'applyYjsUpdate',
+                update,
+                documentId: 'glyph:x'
+            });
+            await settleWithin(
+                fontCompilation.awaitWorkerDocumentReadyForCompile()
+            );
+
+            const replace = posted.find(
+                (message) => message.type === 'replaceYdocDocuments'
+            );
+            const replaced = new Y.Doc({ gc: false });
+            Y.applyUpdate(replaced, replace.documents[0].state);
+            expect(replaced.getMap('glyph').toJSON()).toEqual({
+                name: 'x',
+                width: 300
+            });
+            replaced.destroy();
+        });
+
+        test('a replace queued after a failed sync still goes', async () => {
+            const { fontCompilation, posted } = createReplaceRecorder();
+            const errorSpy = jest
+                .spyOn(console, 'error')
+                .mockImplementation(() => undefined);
+            try {
+                fontCompilation
+                    .trackWorkerDocumentSync(
+                        Promise.reject(new Error('seed failed'))
+                    )
+                    .catch(() => undefined);
+                fontCompilation.scheduleReplaceWorkerDocument(
+                    'glyph:x',
+                    new Uint8Array([1])
+                );
+                await settleWithin(
+                    Promise.resolve(fontCompilation.workerDocumentReplaceFlush)
+                );
+                expect(fontCompilation.workerDocumentReplaceFlush).toBeNull();
+                expect(posted.map((message) => message.documents)).toEqual([
+                    [{ documentId: 'glyph:x', state: new Uint8Array([1]) }]
+                ]);
+
+                fontCompilation.scheduleReplaceWorkerDocument(
+                    'glyph:y',
+                    new Uint8Array([2])
+                );
+                await settleWithin(
+                    fontCompilation
+                        .awaitWorkerDocumentReadyForCompile()
+                        .catch(() => undefined)
+                );
+                expect(
+                    posted.flatMap((message) =>
+                        (message.documents || []).map(
+                            (document) => document.documentId
+                        )
+                    )
+                ).toContain('glyph:y');
+            } finally {
+                errorSpy.mockRestore();
+            }
+        });
+
+        test('a replace the worker refuses fails once and is not retried', async () => {
+            const { fontCompilation } = createReadyFontCompilation();
+            const posted = [];
+            fontCompilation.worker.postMessage = jest.fn((message) => {
+                posted.push(message);
+                queueMicrotask(() => {
+                    fontCompilation.handleWorkerMessage({
+                        data: {
+                            id: message.id,
+                            type: message.type,
+                            error: 'replace failed'
+                        }
+                    });
+                });
+            });
+            const errorSpy = jest
+                .spyOn(console, 'error')
+                .mockImplementation(() => undefined);
+            try {
+                fontCompilation.scheduleReplaceWorkerDocument(
+                    'glyph:x',
+                    new Uint8Array([1]),
+                    () => new Uint8Array([1, 2])
+                );
+                await expect(
+                    settleWithin(
+                        fontCompilation.awaitWorkerDocumentReadyForCompile()
+                    )
+                ).rejects.toThrow('replace failed');
+                await new Promise((resolve) => setTimeout(resolve, 10));
+                expect(posted).toHaveLength(1);
+                expect(fontCompilation.workerDocumentReplaceFlush).toBeNull();
+            } finally {
+                errorSpy.mockRestore();
+            }
+        });
+    });
+
     test('cached editing compiles wait for queued worker document replaces', async () => {
         const { fontCompilation } = createReadyFontCompilation();
         const postedTypes = [];

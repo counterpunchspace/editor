@@ -1576,6 +1576,164 @@ describe('CloudAdapter outbound updates', () => {
         }
     });
 
+    it('seeds a still-starting worker with the bridge after the sync-response row, not the bridge-init copy', async () => {
+        const statuses = [];
+        const adapter = new CloudAdapter({
+            assetId: 'asset-late-worker',
+            onConnectionStatus: (status, detail) => {
+                statuses.push({ status, detail });
+            }
+        });
+        const preSyncSet = [
+            { documentId: 'font-core', bytes: new Uint8Array([1]) }
+        ];
+        const postSyncSet = [
+            { documentId: 'font-core', bytes: new Uint8Array([1, 2]) }
+        ];
+        let currentSet = preSyncSet;
+        let resolveInitialize;
+        let resolveInitialSeed;
+        const initialSeed = new Promise((resolve) => {
+            resolveInitialSeed = resolve;
+        });
+        const originalFontCompilation = window.fontCompilation;
+        const originalFontManager = window.fontManager;
+
+        try {
+            window.fontCompilation = {
+                isInitialized: false,
+                initialize: jest.fn(
+                    () =>
+                        new Promise((resolve) => {
+                            resolveInitialize = resolve;
+                        })
+                ),
+                // The bridge-init seed is still in flight with its copy.
+                awaitWorkerDocumentSync: jest.fn(() => initialSeed),
+                seedWorkerDocumentSet: jest.fn(() => Promise.resolve()),
+                setWorkerCacheDocumentReady: jest.fn(),
+                hasWorkerCacheDocument: jest.fn(() => false)
+            };
+            window.fontManager = {
+                recordFullFontCrossing: jest.fn(),
+                acknowledgeWorkerBridgeReseed: jest.fn()
+            };
+            adapter._bridge = {
+                mergeImportedChangeLog: jest.fn(),
+                mergeImportedCollaborationMessages: jest.fn(),
+                applyFullState: jest.fn(() => {
+                    currentSet = postSyncSet;
+                }),
+                encodeDocumentSet: jest.fn(() => currentSet),
+                onLocalUpdate: jest.fn(),
+                offLocalUpdate: jest.fn()
+            };
+
+            adapter._handleMessage(
+                JSON.stringify({
+                    type: 'sync-response',
+                    update: Buffer.from([9, 9]).toString('base64'),
+                    serverStateVector: Buffer.from([4]).toString('base64'),
+                    collaborationMessageHistory: []
+                })
+            );
+            await flushCloudIo(adapter);
+
+            expect(adapter._bridge.applyFullState).toHaveBeenCalled();
+            expect(window.fontCompilation.initialize).toHaveBeenCalled();
+            expect(
+                window.fontCompilation.seedWorkerDocumentSet
+            ).not.toHaveBeenCalled();
+            expect(statuses).not.toContainEqual({
+                status: 'connected',
+                detail: undefined
+            });
+
+            window.fontCompilation.isInitialized = true;
+            resolveInitialize(true);
+            await flushCloudIo(adapter);
+            expect(
+                window.fontCompilation.seedWorkerDocumentSet
+            ).not.toHaveBeenCalled();
+
+            resolveInitialSeed();
+            await flushCloudIo(adapter);
+
+            expect(
+                window.fontCompilation.seedWorkerDocumentSet
+            ).toHaveBeenCalledTimes(1);
+            expect(
+                window.fontCompilation.seedWorkerDocumentSet
+            ).toHaveBeenCalledWith(postSyncSet);
+            expect(
+                window.fontManager.acknowledgeWorkerBridgeReseed
+            ).toHaveBeenCalled();
+            expect(statuses).toContainEqual({
+                status: 'connected',
+                detail: undefined
+            });
+        } finally {
+            window.fontCompilation = originalFontCompilation;
+            window.fontManager = originalFontManager;
+            adapter.disconnect();
+        }
+    });
+
+    it('connects without a worker reseed when the worker cannot start', async () => {
+        const statuses = [];
+        const adapter = new CloudAdapter({
+            assetId: 'asset-no-worker',
+            onConnectionStatus: (status, detail) => {
+                statuses.push({ status, detail });
+            }
+        });
+        const originalFontCompilation = window.fontCompilation;
+
+        try {
+            window.fontCompilation = {
+                isInitialized: false,
+                initialize: jest.fn(() => Promise.resolve(false)),
+                awaitWorkerDocumentSync: jest.fn(() => Promise.resolve()),
+                seedWorkerDocumentSet: jest.fn(() => Promise.resolve()),
+                setWorkerCacheDocumentReady: jest.fn()
+            };
+            adapter._bridge = {
+                mergeImportedChangeLog: jest.fn(),
+                mergeImportedCollaborationMessages: jest.fn(),
+                applyFullState: jest.fn(),
+                encodeDocumentSet: jest.fn(() => [
+                    { documentId: 'font-core', bytes: new Uint8Array([1]) }
+                ]),
+                onLocalUpdate: jest.fn(),
+                offLocalUpdate: jest.fn()
+            };
+
+            adapter._handleMessage(
+                JSON.stringify({
+                    type: 'sync-response',
+                    update: Buffer.from([9]).toString('base64'),
+                    serverStateVector: Buffer.from([4]).toString('base64'),
+                    collaborationMessageHistory: []
+                })
+            );
+            await flushCloudIo(adapter);
+
+            expect(
+                window.fontCompilation.seedWorkerDocumentSet
+            ).not.toHaveBeenCalled();
+            expect(statuses.map((entry) => entry.status)).not.toContain(
+                'error'
+            );
+            expect(statuses).toContainEqual({
+                status: 'connected',
+                detail: undefined
+            });
+        } finally {
+            window.fontCompilation = originalFontCompilation;
+            adapter.disconnect();
+        }
+    });
+
     it('rebuilds the Rust worker bridge state for no-diff sync-response before connected', async () => {
         const statuses = [];
         const adapter = new CloudAdapter({

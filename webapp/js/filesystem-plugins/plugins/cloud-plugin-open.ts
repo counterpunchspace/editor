@@ -8,6 +8,7 @@ import { fetchCloudDocumentStateWithLogId } from '../../cloud-adapter-bootstrap'
 import { beginLoadingCursor, endLoadingCursor } from '../../loading-cursor';
 import { readUrlState } from '../../url-state';
 import { CloudAdapter } from '../../cloud-adapter';
+import type { FontModelReadyDetail } from '../../change-bridge-init';
 import {
     CloudDocumentSet,
     FONT_CORE_DOCUMENT_ID,
@@ -474,12 +475,28 @@ export const cloudPluginOpenMethods = {
                     reject(new Error('cloud bridge bootstrap timed out'));
                 }, 30_000);
 
-                const onFontModelReady = async () => {
+                const onFontModelReady = async (event: Event) => {
                     window.clearTimeout(timeoutId);
                     window.removeEventListener(
                         'fontModelReady',
                         onFontModelReady
                     );
+                    // The bridge could not load the room's documents; it
+                    // is gone, and so is this open's session state. The
+                    // open fails with why.
+                    const bridgeError = (
+                        event as CustomEvent<FontModelReadyDetail | undefined>
+                    ).detail?.bridgeError;
+                    if (bridgeError) {
+                        delete (
+                            window as Window & {
+                                __skipCloudBridgeRebindMerge?: boolean;
+                            }
+                        ).__skipCloudBridgeRebindMerge;
+                        this._disconnectCurrent();
+                        reject(bridgeError);
+                        return;
+                    }
                     try {
                         const liveBridge = window.patchSyncEngine;
                         if (!liveBridge) {

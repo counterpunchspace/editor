@@ -3242,66 +3242,32 @@ export class CloudAdapter implements FileSystemAdapter {
     private _scheduleWorkerBridgeSyncAfterServerState(): boolean {
         const syncGeneration = ++this._syncGeneration;
         const fontCompilation = window.fontCompilation;
-        if (!fontCompilation?.isInitialized) {
+        if (!fontCompilation) {
             this._workerBridgeSyncPromise = null;
             return true;
         }
 
-        const bridge = this._bridge;
-        const fontManager = window.fontManager as
-            | (typeof window.fontManager & {
-                  buildWorkerSeedYjsState?: () => Uint8Array | null;
-                  recordFullFontCrossing?: () => void;
-                  acknowledgeWorkerBridgeReseed?: () => void;
-              })
-            | undefined;
-        const documentSet = bridge?.encodeDocumentSet?.() ?? [];
-        const seedState = documentSet.length
-            ? null
-            : (bridge?.encodeBridgeState?.() ??
-              fontManager?.buildWorkerSeedYjsState?.());
-        if (!documentSet.length && !seedState?.length) {
-            if (this._syncGeneration === syncGeneration) {
-                fontCompilation.setWorkerCacheDocumentReady?.(false);
+        let seedWork: Promise<void>;
+        if (fontCompilation.isInitialized) {
+            const seed = this._encodeWorkerBridgeSeed();
+            if (!seed) {
+                if (this._syncGeneration === syncGeneration) {
+                    fontCompilation.setWorkerCacheDocumentReady?.(false);
+                }
+                this._workerBridgeSyncPromise = null;
+                this._setStatus('error', 'Cloud worker rebaseline failed');
+                console.warn(
+                    'Unable to rebuild Rust worker state after cloud server sync: missing bridge Yjs state'
+                );
+                return false;
             }
-            this._workerBridgeSyncPromise = null;
-            this._setStatus('error', 'Cloud worker rebaseline failed');
-            console.warn(
-                'Unable to rebuild Rust worker state after cloud server sync: missing bridge Yjs state'
-            );
-            return false;
+            seedWork = this._sendWorkerBridgeSeed(seed);
+        } else {
+            seedWork =
+                this._seedWorkerFromBridgeOnceInitialized(syncGeneration);
         }
 
-        fontManager?.recordFullFontCrossing?.();
-
-        const syncPromise = (async () => {
-            if (
-                documentSet.length &&
-                typeof fontCompilation.seedWorkerDocumentSet === 'function'
-            ) {
-                await fontCompilation.seedWorkerDocumentSet(documentSet);
-            } else if (
-                typeof fontCompilation.seedWorkerYDocFromState === 'function'
-            ) {
-                await fontCompilation.seedWorkerYDocFromState(
-                    seedState as Uint8Array
-                );
-            } else {
-                await fontCompilation.sendMessage({
-                    type: 'seedYdoc',
-                    state: seedState
-                });
-            }
-            // Clear quarantine + ready so later incremental packets are not
-            // forced through a redundant recover after a successful rebaseline.
-            if (
-                typeof fontManager?.acknowledgeWorkerBridgeReseed === 'function'
-            ) {
-                fontManager.acknowledgeWorkerBridgeReseed();
-            } else {
-                fontCompilation.setWorkerCacheDocumentReady?.(true);
-            }
-        })().catch((error) => {
+        const syncPromise = seedWork.catch((error) => {
             if (this._syncGeneration !== syncGeneration) {
                 this._scheduleCurrentWorkerBridgeSyncRecovery();
             } else {
@@ -3327,6 +3293,102 @@ export class CloudAdapter implements FileSystemAdapter {
                 }
             });
         return true;
+    }
+
+    /**
+     * The worker is still starting, and the bridge-init seed it will get
+     * holds the bridge as it was before this server state. Seed it again
+     * from the bridge as it is once that seed has landed, so the worker
+     * ends on the server state and not on the earlier copy.
+     */
+    private async _seedWorkerFromBridgeOnceInitialized(
+        syncGeneration: number
+    ): Promise<void> {
+        const fontCompilation = window.fontCompilation;
+        const bridge = this._bridge;
+        if (!fontCompilation || !(await fontCompilation.initialize())) {
+            // No worker runs in this window, so there is nothing to align.
+            return;
+        }
+        // A failed earlier seed is recovered by this one.
+        await fontCompilation.awaitWorkerDocumentSync().catch(() => undefined);
+        if (
+            this._destroyed ||
+            this._bridge !== bridge ||
+            this._syncGeneration !== syncGeneration
+        ) {
+            // A newer sync (or teardown) owns the worker now.
+            return;
+        }
+        const seed = this._encodeWorkerBridgeSeed();
+        if (!seed) {
+            throw new Error(
+                'Unable to rebuild Rust worker state after cloud server sync: missing bridge Yjs state'
+            );
+        }
+        await this._sendWorkerBridgeSeed(seed);
+    }
+
+    private _encodeWorkerBridgeSeed(): {
+        documentSet: Array<{ documentId: string; bytes: Uint8Array }>;
+        seedState: Uint8Array | null;
+    } | null {
+        const bridge = this._bridge;
+        const fontManager = window.fontManager as
+            | (typeof window.fontManager & {
+                  buildWorkerSeedYjsState?: () => Uint8Array | null;
+              })
+            | undefined;
+        const documentSet = bridge?.encodeDocumentSet?.() ?? [];
+        const seedState = documentSet.length
+            ? null
+            : (bridge?.encodeBridgeState?.() ??
+              fontManager?.buildWorkerSeedYjsState?.() ??
+              null);
+        if (!documentSet.length && !seedState?.length) {
+            return null;
+        }
+        return { documentSet, seedState };
+    }
+
+    private async _sendWorkerBridgeSeed(seed: {
+        documentSet: Array<{ documentId: string; bytes: Uint8Array }>;
+        seedState: Uint8Array | null;
+    }): Promise<void> {
+        const fontCompilation = window.fontCompilation;
+        if (!fontCompilation) {
+            return;
+        }
+        const fontManager = window.fontManager as
+            | (typeof window.fontManager & {
+                  recordFullFontCrossing?: () => void;
+                  acknowledgeWorkerBridgeReseed?: () => void;
+              })
+            | undefined;
+        fontManager?.recordFullFontCrossing?.();
+        const { documentSet, seedState } = seed;
+        if (
+            documentSet.length &&
+            typeof fontCompilation.seedWorkerDocumentSet === 'function'
+        ) {
+            await fontCompilation.seedWorkerDocumentSet(documentSet);
+        } else if (
+            typeof fontCompilation.seedWorkerYDocFromState === 'function'
+        ) {
+            await fontCompilation.seedWorkerYDocFromState(seedState);
+        } else {
+            await fontCompilation.sendMessage({
+                type: 'seedYdoc',
+                state: seedState
+            });
+        }
+        // Clear quarantine + ready so later incremental packets are not
+        // forced through a redundant recover after a successful rebaseline.
+        if (typeof fontManager?.acknowledgeWorkerBridgeReseed === 'function') {
+            fontManager.acknowledgeWorkerBridgeReseed();
+        } else {
+            fontCompilation.setWorkerCacheDocumentReady?.(true);
+        }
     }
 
     /**

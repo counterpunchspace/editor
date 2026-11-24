@@ -326,6 +326,7 @@ describe('CloudPlugin.openAsset', () => {
     let originalWindowRole;
     let dispatchSpy;
     let eventListeners;
+    let fontModelReadyBridgeError = null;
 
     beforeEach(() => {
         mockConnectDirect.mockReset();
@@ -364,6 +365,7 @@ describe('CloudPlugin.openAsset', () => {
         global.fetch = jest.fn();
         global.TextEncoder = TextEncoder;
         eventListeners = new Map();
+        fontModelReadyBridgeError = null;
 
         window.setTimeout = jest.fn(() => 1);
         window.clearTimeout = jest.fn();
@@ -400,7 +402,17 @@ describe('CloudPlugin.openAsset', () => {
                 }
                 const handler = eventListeners.get('fontModelReady');
                 if (handler) {
-                    handler();
+                    handler(
+                        new CustomEvent('fontModelReady', {
+                            detail: {
+                                path: event.detail?.path,
+                                babelfontData: {},
+                                ...(fontModelReadyBridgeError
+                                    ? { bridgeError: fontModelReadyBridgeError }
+                                    : {})
+                            }
+                        })
+                    );
                 }
             }
         });
@@ -639,6 +651,23 @@ describe('CloudPlugin.openAsset', () => {
         expect(mockConnectDirect.mock.calls[1][3]).toEqual({
             bootstrapMode: 'skip'
         });
+    });
+
+    test('fails the open when the bridge cannot load the room’s documents', async () => {
+        fontModelReadyBridgeError = new Error(
+            'Refused history snapshot: a whole drawing replace carries no shapes.'
+        );
+        mockConnectDirectStatusQueue = [
+            [{ status: 'connected' }],
+            [{ status: 'connected' }]
+        ];
+
+        await expect(plugin.openAsset('asset-1')).rejects.toBe(
+            fontModelReadyBridgeError
+        );
+        expect(plugin._readOnlyEngine).toBeFalsy();
+        expect(plugin._activeAssetId).toBeNull();
+        expect(window.__skipCloudBridgeRebindMerge).toBeUndefined();
     });
 
     test('resolves once bootstrap completes even if the live room handoff stalls', async () => {

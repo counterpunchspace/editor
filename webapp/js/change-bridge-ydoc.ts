@@ -1119,7 +1119,7 @@ function fromYGlyphMap(glyphMap: Y.Map<unknown>): Record<string, unknown> {
             drawingsMap,
             glyphMap.get('layerOrder')
         )) {
-            const drawingJson = fromYType(drawingValue);
+            const drawingJson = fromYDrawing(drawingValue);
             if (!isPlainObject(drawingJson)) {
                 throw new MissingDrawingError(
                     `Drawing “${drawingId}” is not a map in the document.`
@@ -1166,8 +1166,13 @@ export function fromYType(value: unknown): unknown {
             return kernGroupsFromY(value);
         }
 
-        // Check for indexed-map structure (any *ById key indicates a drawing)
+        // A drawing map: an entry of a glyph's `layers` map, or a detached
+        // map with its geometry or keyed maps. Rooms written before every
+        // drawing map was created with those hold a drawing without shapes,
+        // anchors or guides as its plain keys alone, so where a map sits,
+        // not what it holds, says that it is a drawing.
         if (
+            isDrawingYMap(value) ||
             geometryHasNormalizedStorage(value) ||
             (yMapHas(value, 'anchorsById') &&
                 yMapGet(value, 'anchorsById') instanceof Y.Map) ||
@@ -1223,9 +1228,6 @@ export function fromYType(value: unknown): unknown {
             }
             obj.features = features;
         }
-        if (isDrawingYMap(value)) {
-            readBabelfontDrawingStation(obj);
-        }
         return obj;
     }
     if (value instanceof Y.Array) {
@@ -1246,6 +1248,16 @@ function readBabelfontDrawingStation(drawing: Record<string, unknown>): void {
     if (!('master' in drawing)) {
         drawing.master = { type: 'FreeFloating' };
     }
+}
+
+/**
+ * Read a value stored as a drawing, attached to its glyph or not. A map
+ * read here is always read as a drawing; `fromYType` tells a detached map
+ * apart by its geometry or keyed maps, which an old drawing without
+ * shapes, anchors or guides does not have.
+ */
+export function fromYDrawing(value: unknown): unknown {
+    return value instanceof Y.Map ? fromYDrawingMap(value) : fromYType(value);
 }
 
 /**
@@ -1309,6 +1321,12 @@ function fromYDrawingMap(drawingMap: Y.Map<unknown>): Record<string, unknown> {
             obj.shapes = normalizedShapes;
         } else if (shapes) {
             obj.shapes = shapes;
+        } else {
+            // Rooms written before every drawing map was created with its
+            // geometry hold a drawing without shapes as its plain keys
+            // alone. It has no shapes: a whole drawing always reads with
+            // its `shapes` list, as Drawing.toJSON writes it.
+            obj.shapes = [];
         }
     }
 
@@ -1368,9 +1386,7 @@ function fromYDrawingMap(drawingMap: Y.Map<unknown>): Record<string, unknown> {
         }
     }
 
-    if (isDrawingYMap(drawingMap)) {
-        readBabelfontDrawingStation(obj);
-    }
+    readBabelfontDrawingStation(obj);
     return obj;
 }
 

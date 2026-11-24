@@ -21,7 +21,7 @@ import {
     type CommittedUiBatch
 } from './patch-sync-engine';
 import * as Y from 'yjs';
-import { fromYType } from './change-bridge-ydoc';
+import { fromYDrawing, fromYType } from './change-bridge-ydoc';
 import {
     decodePackedXY,
     DRAWING_GEOMETRY_TOPOLOGY_KEY,
@@ -804,7 +804,7 @@ function buildCascadeDrawingOperations(
             continue;
         }
 
-        const yDrawingJson = fromYType(yDrawingMap as never) as Record<
+        const yDrawingJson = fromYDrawing(yDrawingMap) as Record<
             string,
             unknown
         >;
@@ -3802,11 +3802,7 @@ function destroyExisting(): void {
     }
 }
 
-function initializeBridge(detail: {
-    path: string;
-    babelfontData: Record<string, unknown>;
-    linkedSnapshot?: boolean;
-}): void {
+function initializeBridge(detail: FontModelReadyDetail): void {
     if (
         detail?.linkedSnapshot &&
         linkedPeerBootstrapActive &&
@@ -3879,6 +3875,17 @@ function initializeBridge(detail: {
             __pendingCloudBridgeBootstrapChangeLog?: ChangeLogEntry[];
         }
     ).__pendingCloudBridgeBootstrapChangeLog;
+    // Taken before anything can fail, like the bootstrap documents: a load
+    // that fails must not hand them to the next font's open.
+    const pendingSparse = window as Window & {
+        __pendingSparseSession?: boolean;
+        __pendingSparseWorkingGlyphIds?: string[];
+    };
+    const sparseWorkingGlyphIds = pendingSparse.__pendingSparseSession
+        ? (pendingSparse.__pendingSparseWorkingGlyphIds ?? [])
+        : null;
+    delete pendingSparse.__pendingSparseSession;
+    delete pendingSparse.__pendingSparseWorkingGlyphIds;
 
     // Called after _syncJsonFromYDoc in undo/redo/remote.
     // Rebuilds the Font model from the already-patched babelfontData.
@@ -4055,16 +4062,8 @@ function initializeBridge(detail: {
         timelineSpanEnd(initJsonSpanId);
     }
 
-    const pendingSparse = window as Window & {
-        __pendingSparseSession?: boolean;
-        __pendingSparseWorkingGlyphIds?: string[];
-    };
-    if (pendingSparse.__pendingSparseSession) {
-        bridge.beginSparseWorkingSet(
-            pendingSparse.__pendingSparseWorkingGlyphIds ?? []
-        );
-        delete pendingSparse.__pendingSparseSession;
-        delete pendingSparse.__pendingSparseWorkingGlyphIds;
+    if (sparseWorkingGlyphIds) {
+        bridge.beginSparseWorkingSet(sparseWorkingGlyphIds);
     }
 
     // ── Wire Yjs updates → Rust compilation worker ───────────────────────
@@ -4288,14 +4287,47 @@ function initializeBridge(detail: {
     }
 }
 
-window.addEventListener('fontModelReady', (event: Event) => {
-    const detail = (event as CustomEvent).detail as {
-        path: string;
-        babelfontData: Record<string, unknown>;
-        linkedSnapshot?: boolean;
-    };
+/**
+ * The `fontModelReady` event's detail. When the bridge cannot be built from
+ * the font (its documents do not load), `bridgeError` holds why, set before
+ * the dispatch returns: the dispatcher and later listeners stop the open on
+ * it instead of carrying on with a font that has no bridge.
+ */
+export type FontModelReadyDetail = {
+    path: string;
+    babelfontData: Record<string, unknown>;
+    linkedSnapshot?: boolean;
+    bridgeError?: Error;
+};
 
-    initializeBridge(detail);
+/**
+ * A bridge that failed half-way is never left in place: without its worker
+ * wiring the compile worker never gets the font while the editor looks
+ * ready. The failure is shown where errors stay visible.
+ */
+function failBridgeInitialization(
+    error: unknown,
+    detail?: FontModelReadyDetail
+): void {
+    destroyExisting();
+    const failure = error instanceof Error ? error : new Error(String(error));
+    if (detail) {
+        detail.bridgeError = failure;
+    }
+    console.error(
+        '[ChangeBridge] The font’s documents could not be loaded',
+        failure
+    );
+    sidebarErrorDisplay.showError(failure, 'editing', { sticky: true });
+}
+
+window.addEventListener('fontModelReady', (event: Event) => {
+    const detail = (event as CustomEvent<FontModelReadyDetail>).detail;
+    try {
+        initializeBridge(detail);
+    } catch (error) {
+        failBridgeInitialization(error, detail);
+    }
 });
 
 window.addEventListener('linkedWindowPeerOpen', (event: Event) => {
@@ -4311,10 +4343,16 @@ window.addEventListener('linkedWindowPeerOpen', (event: Event) => {
         sourcePlugin: detail.sourcePlugin ?? null
     };
     linkedPeerBootstrapActive = true;
-    initializeBridge({
-        path: detail.path,
-        babelfontData: {}
-    });
+    try {
+        initializeBridge({
+            path: detail.path,
+            babelfontData: {}
+        });
+    } catch (error) {
+        linkedPeerBootstrapActive = false;
+        linkedPeerOpenDetail = null;
+        failBridgeInitialization(error);
+    }
 });
 
 // Fallback bootstrap: if a font is already loaded before this module
@@ -4327,10 +4365,15 @@ queueMicrotask(() => {
     if (!currentFont?.babelfontData) {
         return;
     }
-    initializeBridge({
-        path: currentFont.path || 'unsaved',
-        babelfontData: currentFont.babelfontData as Record<string, unknown>
-    });
+    try {
+        initializeBridge({
+            path: currentFont.path || 'unsaved',
+            babelfontData: currentFont.babelfontData as Record<string, unknown>
+        });
+    } catch (error) {
+        failBridgeInitialization(error);
+        return;
+    }
     console.log('Recovered PatchSyncEngine from currentFont fallback');
 });
 

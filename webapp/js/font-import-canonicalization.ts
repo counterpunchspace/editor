@@ -2,6 +2,7 @@ import type { Babelfont } from './babelfont';
 import {
     ensureStableIds,
     Font,
+    generateStableId,
     withSuppressedModelRecording
 } from './babelfont-model';
 import { timelineSpanEnd, timelineSpanStart } from './perf-timeline';
@@ -35,8 +36,11 @@ function asJsonRecordArray(value: unknown): JsonRecord[] {
         : [];
 }
 
-/** Normalize the `master` field of imported drawings to the tagged representation used at runtime. */
-function normalizeImportedDrawingStations(fontData: Babelfont.Font): void {
+/**
+ * Read imported drawings in the representation used at runtime: their
+ * `shapes` list and their tagged `master` field.
+ */
+function normalizeImportedDrawings(fontData: Babelfont.Font): void {
     const fontRecord = fontData as unknown as JsonRecord;
     const stations = asJsonRecordArray(fontRecord.masters);
     const knownStationIds = new Set(
@@ -47,6 +51,19 @@ function normalizeImportedDrawingStations(fontData: Babelfont.Font): void {
 
     for (const glyph of asJsonRecordArray(fontRecord.glyphs)) {
         for (const drawing of asJsonRecordArray(glyph.layers)) {
+            // Babelfont leaves an empty list out (`skip_serializing_if =
+            // "Vec::is_empty"`): a drawing without shapes, such as a
+            // space's, comes in without `shapes`. This reads that encoding;
+            // a whole drawing always carries its list.
+            if (drawing.shapes === undefined) {
+                drawing.shapes = [];
+            }
+            // Babelfont's layer id is optional: a drawing read without one
+            // gets a new id here, before anything stores it, as every
+            // drawing must carry its own.
+            if (typeof drawing.id !== 'string' || !drawing.id) {
+                drawing.id = generateStableId();
+            }
             const drawingId =
                 typeof drawing.id === 'string' ? drawing.id : null;
             const stationValue = drawing.master;
@@ -174,7 +191,7 @@ export function canonicalizeImportedFontData(
     const stationsSpan = timelineSpanStart(
         'font.canonicalize.normalizeLayerMasters'
     );
-    normalizeImportedDrawingStations(fontData);
+    normalizeImportedDrawings(fontData);
     timelineSpanEnd(stationsSpan);
 
     const fromDataSpan = timelineSpanStart('font.canonicalize.fromData');
@@ -206,7 +223,7 @@ export function canonicalizeImportedGlyphs(
         glyphs: JSON.parse(JSON.stringify(glyphs))
     } as unknown as Babelfont.Font;
     ensureStableIds(fontData as unknown as JsonRecord);
-    normalizeImportedDrawingStations(fontData);
+    normalizeImportedDrawings(fontData);
     // Building the model fills in the defaults a whole import gets too.
     Font.fromData(fontData);
     return fontData.glyphs;

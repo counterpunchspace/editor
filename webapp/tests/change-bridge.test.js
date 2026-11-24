@@ -13583,6 +13583,73 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         bridge.destroy();
     });
 
+    test('external source reload takes a glyph added on disk without an outline, as Babelfont encodes it', () => {
+        const {
+            canonicalizeImportedFontData
+        } = require('../js/font-import-canonicalization');
+        const bridge = new ChangeBridge('external-reload-empty-glyph');
+        bridge.initFromJson(makeMinimalFont());
+
+        // Babelfont leaves an empty `shapes` list out of its JSON.
+        const onDisk = cloneValue(bridge.getFontJsonSnapshot());
+        const added = cloneValue(onDisk.glyphs[0]);
+        added.name = 'space';
+        delete added.id;
+        added.codepoints = [32];
+        added.layers = added.layers.map((drawing) => {
+            const { shapes: _shapes, anchors: _anchors, ...rest } = drawing;
+            return { ...rest, width: 250 };
+        });
+        onDisk.glyphs.push(added);
+        const { fontData } = canonicalizeImportedFontData(onDisk);
+
+        expect(
+            bridge.applyExternalSourceReload(
+                fontData,
+                bridge.encodeBridgeStateVector()
+            ).status
+        ).toBe('committed');
+        const space = bridge
+            .getFontJsonSnapshot()
+            .glyphs.find((glyph) => glyph.name === 'space');
+        expect(space.layers[0].shapes).toEqual([]);
+        expect(space.layers[0].width).toBe(250);
+
+        bridge.destroy();
+    });
+
+    test('external source reload empties a glyph whose outlines were deleted on disk', () => {
+        const {
+            canonicalizeImportedFontData
+        } = require('../js/font-import-canonicalization');
+        const bridge = new ChangeBridge('external-reload-emptied-glyph');
+        bridge.initFromJson(makeMinimalFont());
+        const before = bridge
+            .getFontJsonSnapshot()
+            .glyphs.find((glyph) => glyph.name === 'A');
+        expect(before.layers[0].shapes.length).toBeGreaterThan(0);
+
+        // Babelfont writes the emptied drawing without `shapes`.
+        const onDisk = cloneValue(bridge.getFontJsonSnapshot());
+        delete onDisk.glyphs.find((glyph) => glyph.name === 'A').layers[0]
+            .shapes;
+        const { fontData } = canonicalizeImportedFontData(onDisk);
+
+        expect(
+            bridge.applyExternalSourceReload(
+                fontData,
+                bridge.encodeBridgeStateVector()
+            ).status
+        ).toBe('committed');
+        expect(
+            bridge
+                .getFontJsonSnapshot()
+                .glyphs.find((glyph) => glyph.name === 'A').layers[0].shapes
+        ).toEqual([]);
+
+        bridge.destroy();
+    });
+
     test('external source reload diffs against Y.Doc, not stale model projection', () => {
         const fontJson = makeMinimalFont();
         const secondGlyph = cloneValue(fontJson.glyphs[0]);

@@ -3332,6 +3332,101 @@ describe('bridge Yjs worker callback', () => {
         expect(updateButtonState).toHaveBeenCalledTimes(1);
     });
 
+    test('a bridge whose documents do not load is torn down and stops the open', () => {
+        const workerSeedSpy = jest
+            .spyOn(fontCompilation, 'seedWorkerDocumentSet')
+            .mockResolvedValue();
+        const showError = jest
+            .spyOn(sidebarErrorDisplay, 'showError')
+            .mockImplementation(() => {});
+        jest.spyOn(console, 'error').mockImplementation(() => {});
+        const loadFailure = new Error('the room’s documents do not load');
+        jest.spyOn(ChangeBridge.prototype, 'initFromJson').mockImplementation(
+            () => {
+                throw loadFailure;
+            }
+        );
+        window.windowRole = { isLinkedWindow: () => false };
+        window.fontManager = {};
+        window.__pendingSparseSession = true;
+        window.__pendingSparseWorkingGlyphIds = ['A'];
+
+        const detail = {
+            path: '/tmp/TestFont.glyphs',
+            babelfontData: makeBridgeInitFont()
+        };
+        window.dispatchEvent(new CustomEvent('fontModelReady', { detail }));
+
+        expect(detail.bridgeError).toBe(loadFailure);
+        // The failed open's inputs are not left for the next open.
+        expect(window.__pendingSparseSession).toBeUndefined();
+        expect(window.__pendingSparseWorkingGlyphIds).toBeUndefined();
+        expect(window.patchSyncEngine).toBeUndefined();
+        expect(window.windowSync).toBeUndefined();
+        expect(workerSeedSpy).not.toHaveBeenCalled();
+        expect(showError).toHaveBeenCalledWith(loadFailure, 'editing', {
+            sticky: true
+        });
+    });
+
+    test('a cloud room whose empty drawings have no shapes opens and seeds the worker', async () => {
+        const Y = require('yjs');
+        const workerSeedSpy = jest
+            .spyOn(fontCompilation, 'seedWorkerDocumentSet')
+            .mockResolvedValue();
+        const showError = jest
+            .spyOn(sidebarErrorDisplay, 'showError')
+            .mockImplementation(() => {});
+        fontCompilation.isInitialized = false;
+        window.windowRole = { isLinkedWindow: () => false };
+        window.fontManager = {};
+
+        const font = makeBridgeInitFont();
+        const writer = new ChangeBridge('legacy-room-writer');
+        writer.initFromJson(font);
+        const glyphId = writer._glyphIdByName.get('A');
+        // The room was written before every drawing map was created with
+        // its geometry and keyed maps: the empty drawing is its plain keys.
+        const documents = writer.encodeDocumentSet().map((shard) => {
+            if (shard.documentId !== `glyph:${glyphId}`) {
+                return shard;
+            }
+            const doc = new Y.Doc({ gc: false });
+            Y.applyUpdate(doc, shard.bytes);
+            doc.transact(() => {
+                const legacy = new Y.Map();
+                legacy.set('width', 600);
+                legacy.set('id', 'layer-1');
+                const station = new Y.Map();
+                station.set('type', 'DefaultForMaster');
+                station.set('master', 'master-1');
+                legacy.set('master', station);
+                doc.getMap('glyph').get('layers').set('layer-1', legacy);
+            });
+            const bytes = Y.encodeStateAsUpdate(doc);
+            doc.destroy();
+            return { documentId: shard.documentId, bytes };
+        });
+        writer.destroy?.();
+        window.__pendingCloudBridgeBootstrapDocuments = documents;
+
+        const detail = {
+            path: 'cloud://legacy-room',
+            babelfontData: font
+        };
+        window.dispatchEvent(new CustomEvent('fontModelReady', { detail }));
+        await Promise.resolve();
+
+        expect(detail.bridgeError).toBeUndefined();
+        expect(showError).not.toHaveBeenCalled();
+        expect(window.windowSync).toBeDefined();
+        expect(workerSeedSpy).toHaveBeenCalledTimes(1);
+        const glyph = window.patchSyncEngine
+            .getFontJsonSnapshot()
+            .glyphs.find((entry) => entry.name === 'A');
+        expect(glyph.layers[0].shapes).toEqual([]);
+    });
+
     test('seeds the worker from the authoritative bridge Y.Doc', async () => {
         const workerSeedSpy = jest
             .spyOn(fontCompilation, 'seedWorkerDocumentSet')

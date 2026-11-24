@@ -3168,6 +3168,31 @@ describe('FontManager loadFont', () => {
         return { writable, fileHandle, diskPlugin };
     }
 
+    test('an open whose bridge cannot load the font leaves no font open and fails', async () => {
+        const { diskPlugin } = diskSaveTarget();
+        const bridgeFailure = new Error('the font’s documents do not load');
+        const failBridge = (event) => {
+            event.detail.bridgeError = bridgeFailure;
+        };
+        window.addEventListener('fontModelReady', failBridge);
+        try {
+            await expect(
+                fontManager.loadFont(
+                    JSON.stringify(cloneJson(freeDrawingData)),
+                    '/user/intermediate_layer_on_a.babelfont',
+                    diskPlugin
+                )
+            ).rejects.toBe(bridgeFailure);
+        } finally {
+            window.removeEventListener('fontModelReady', failBridge);
+        }
+
+        expect(fontManager.currentFont).toBeNull();
+        expect(fontManager.openedFonts.size).toBe(0);
+        expect(window.currentFontModel).toBeNull();
+        expect(document.title).not.toContain('intermediate_layer_on_a');
+    });
+
     test('saves a .babelfont source byte for byte without a whole-font string', async () => {
         const { writable, fileHandle, diskPlugin } = diskSaveTarget();
         await fontManager.loadFont(

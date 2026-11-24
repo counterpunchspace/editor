@@ -25,6 +25,7 @@ import {
     timelineSpanEnd,
     timelineSpanStart
 } from './perf-timeline';
+import * as Y from 'yjs';
 import { ensureCoreUpdateHasGlyphsMap } from './change-bridge-ydoc';
 
 const console = new Logger('FontCompilation');
@@ -989,32 +990,69 @@ export class FontCompilation {
         }
         const flush = (async () => {
             await Promise.resolve();
-            await this.awaitWorkerDocumentSync();
             try {
+                // Earlier syncs go first; their failure is reported where
+                // they were sent. A replace builds the worker's copy afresh,
+                // so it still goes: waiting on a failed sync would hold every
+                // later replace back, and rerunning on it would never end.
+                await this.awaitWorkerDocumentSync().catch(() => undefined);
                 while (this.pendingWorkerDocumentReplaces.size > 0) {
-                    const documents = Array.from(
+                    // Take the batch before reading it: an entry left queued
+                    // after a failure would make the `finally` below rerun
+                    // this flush on it forever.
+                    const batch = Array.from(
                         this.pendingWorkerDocumentReplaces.entries()
-                    ).map(([documentId, bytes]) => {
-                        const reader =
-                            this.pendingWorkerDocumentReaders.get(documentId);
+                    ).map(([documentId, bytes]) => ({
+                        documentId,
+                        bytes,
+                        reader: this.pendingWorkerDocumentReaders.get(
+                            documentId
+                        )
+                    }));
+                    this.pendingWorkerDocumentReplaces.clear();
+                    this.pendingWorkerDocumentReaders.clear();
+                    const documents: Array<{
+                        documentId: string;
+                        bytes: Uint8Array;
+                    }> = [];
+                    let readFailure: Error | null = null;
+                    for (const { documentId, bytes, reader } of batch) {
                         if (!reader) {
-                            return { documentId, bytes };
+                            documents.push({ documentId, bytes });
+                            continue;
                         }
                         // The document as it is now: the older snapshot
                         // would drop updates forwarded since it was taken.
-                        const current = reader();
-                        if (!current?.length) {
-                            throw new Error(
-                                `Cannot replace worker document ${documentId}: the editor no longer has its state.`
-                            );
+                        let current: Uint8Array | null | undefined;
+                        try {
+                            current = reader();
+                        } catch (error) {
+                            // The rest of the batch still goes; the failure
+                            // surfaces once, after it.
+                            readFailure ??=
+                                error instanceof Error
+                                    ? error
+                                    : new Error(String(error));
+                            this.workerLoadedDocumentIds.delete(documentId);
+                            continue;
                         }
-                        return { documentId, bytes: current };
-                    });
-                    this.pendingWorkerDocumentReplaces.clear();
-                    this.pendingWorkerDocumentReaders.clear();
-                    const work = this.replaceWorkerDocuments(documents);
-                    this.trackWorkerDocumentSync(work);
-                    await work;
+                        // The editor unloaded the document (sparse
+                        // residency) after scheduling: the queued state is
+                        // the newest it had, since every update sent for the
+                        // document meanwhile was merged into it.
+                        documents.push({
+                            documentId,
+                            bytes: current?.length ? current : bytes
+                        });
+                    }
+                    if (documents.length) {
+                        const work = this.replaceWorkerDocuments(documents);
+                        this.trackWorkerDocumentSync(work);
+                        await work;
+                    }
+                    if (readFailure) {
+                        throw readFailure;
+                    }
                 }
             } finally {
                 this.workerDocumentReplaceFlush = null;
@@ -1470,6 +1508,24 @@ export class FontCompilation {
         }
 
         const messageType = data.type || 'unknown';
+        if (
+            messageType === 'applyYjsUpdate' &&
+            typeof data.documentId === 'string' &&
+            data.update instanceof Uint8Array
+        ) {
+            // A replace queued for this document is sent after this update
+            // and builds the worker's copy afresh from its bytes: they take
+            // the update too, so the replace never sets the copy back.
+            const queued = this.pendingWorkerDocumentReplaces.get(
+                data.documentId
+            );
+            if (queued) {
+                this.pendingWorkerDocumentReplaces.set(
+                    data.documentId,
+                    Y.mergeUpdates([queued, data.update])
+                );
+            }
+        }
         if (
             (messageType === 'compile' ||
                 messageType === 'compileCached' ||

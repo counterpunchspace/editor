@@ -55,7 +55,12 @@ import {
     type FolderSourceFormat
 } from './folder-source';
 import { compilationPlan, type CompileEditStamp } from './edit-intent';
-import { jsonToYDoc, fromYType, getYPath } from './change-bridge-ydoc';
+import {
+    jsonToYDoc,
+    fromYDrawing,
+    fromYType,
+    getYPath
+} from './change-bridge-ydoc';
 import {
     describeDrawingStationViolation,
     describeRestingDrawingViolation,
@@ -65,6 +70,7 @@ import {
 } from './resting-drawing-json';
 import { sidebarErrorDisplay } from './sidebar-error-display';
 import type { FilesystemPlugin } from './filesystem-plugins';
+import type { FontModelReadyDetail } from './change-bridge-init';
 import { FONT_DEPS_DOCUMENT_ID } from './filesystem-plugins/cloud-document-set';
 import { catalogBucketOfDocument } from './filesystem-plugins/cloud-room-layout';
 import { Logger } from './logger';
@@ -3127,14 +3133,15 @@ class FontManager {
         this.updateWindowTitle();
 
         // Notify the patch sync engine bootstrap pipeline that the font model is ready
+        const readyDetail: FontModelReadyDetail = {
+            path,
+            babelfontData: newFont.babelfontData
+        };
         window.dispatchEvent(
-            new CustomEvent('fontModelReady', {
-                detail: {
-                    path,
-                    babelfontData: newFont.babelfontData
-                }
-            })
+            new CustomEvent('fontModelReady', { detail: readyDetail })
         );
+        // The bridge could not load the font: the open stops here.
+        this.abandonOpenWithoutBridge(readyDetail);
     }
 
     /**
@@ -3174,15 +3181,30 @@ class FontManager {
             window.glyphCanvas.initialFontLoaded = false;
         }
         this.updateWindowTitle();
+        const readyDetail: FontModelReadyDetail = {
+            path,
+            babelfontData: newFont.babelfontData,
+            linkedSnapshot: true
+        };
         window.dispatchEvent(
-            new CustomEvent('fontModelReady', {
-                detail: {
-                    path,
-                    babelfontData: newFont.babelfontData,
-                    linkedSnapshot: true
-                }
-            })
+            new CustomEvent('fontModelReady', { detail: readyDetail })
         );
+        this.abandonOpenWithoutBridge(readyDetail);
+    }
+
+    /**
+     * A font whose bridge could not be built is not left open: nothing
+     * would record or compile its edits. The previous font's bridge is
+     * already gone, so the editor holds no font, and the open fails with
+     * why.
+     */
+    private abandonOpenWithoutBridge(readyDetail: FontModelReadyDetail): void {
+        if (!readyDetail.bridgeError) {
+            return;
+        }
+        this.resetStateForNewFont();
+        this.updateWindowTitle();
+        throw readyDetail.bridgeError;
     }
 
     /**
@@ -5844,7 +5866,7 @@ class FontManager {
             if (drawingValue === undefined || drawingValue === null) {
                 continue;
             }
-            const drawingJson = fromYType(drawingValue);
+            const drawingJson = fromYDrawing(drawingValue);
             if (
                 !drawingJson ||
                 typeof drawingJson !== 'object' ||
@@ -8142,7 +8164,7 @@ window.addEventListener('fontLoaded', async (event: Event) => {
             error instanceof Error ? error.stack : 'No stack'
         );
         console.error('[FontManager]', 'Raw error object:', error);
-
-        // Error will be shown in sidebar by the error handlers above
+        // A failed open stays visible, not only in the console.
+        sidebarErrorDisplay.showError(error, 'editing', { sticky: true });
     }
 });

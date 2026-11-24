@@ -1,0 +1,260 @@
+{
+    "upm": 1000,
+    "version": [
+        1,
+        0
+    ],
+    "date": "2026-01-01T00:00:00.000Z",
+    "names": {
+        "family_name": {
+            "dflt": "Legacy Room"
+        }
+    },
+    "axes": [
+        {
+            "name": {
+                "dflt": "Weight"
+            },
+            "tag": "wght",
+            "id": "axis-wght",
+            "min": 100,
+            "max": 900,
+            "default": 100
+        }
+    ],
+    "masters": [
+        {
+            "name": {
+                "dflt": "Thin"
+            },
+            "id": "m-thin",
+            "location": {
+                "wght": 100
+            },
+            "metrics": {
+                "Ascender": 800,
+                "Descender": -200,
+                "XHeight": 500,
+                "CapHeight": 700
+            },
+            "kerning": {}
+        },
+        {
+            "name": {
+                "dflt": "Black"
+            },
+            "id": "m-black",
+            "location": {
+                "wght": 900
+            },
+            "metrics": {
+                "Ascender": 800,
+                "Descender": -200,
+                "XHeight": 500,
+                "CapHeight": 700
+            },
+            "kerning": {}
+        }
+    ],
+    "glyphs": [
+        {
+            "name": "A",
+            "category": "Base",
+            "codepoints": [
+                65
+            ],
+            "layers": [
+                {
+                    "id": "m-thin",
+                    "width": 600,
+                    "master": {
+                        "DefaultForMaster": "m-thin"
+                    },
+                    "shapes": [
+                        {
+                            "nodes": [
+                                {
+                                    "x": 0,
+                                    "y": 0,
+                                    "nodetype": "Line"
+                                },
+                                {
+                                    "x": 600,
+                                    "y": 0,
+                                    "nodetype": "Line"
+                                },
+                                {
+                                    "x": 300,
+                                    "y": 700,
+                                    "nodetype": "Line"
+                                }
+                            ],
+                            "closed": true
+                        }
+                    ],
+                    "anchors": [
+                        {
+                            "name": "top",
+                            "x": 300,
+                            "y": 700
+                        }
+                    ]
+                },
+                {
+                    "id": "m-black",
+                    "width": 700,
+                    "master": {
+                        "DefaultForMaster": "m-black"
+                    },
+                    "shapes": [
+                        {
+                            "nodes": [
+                                {
+                                    "x": 0,
+                                    "y": 0,
+                                    "nodetype": "Line"
+                                },
+                                {
+                                    "x": 700,
+                                    "y": 0,
+                                    "nodetype": "Line"
+                                },
+                                {
+                                    "x": 350,
+                                    "y": 700,
+                                    "nodetype": "Line"
+                                }
+                            ],
+                            "closed": true
+                        }
+                    ],
+                    "anchors": [
+                        {
+                            "name": "top",
+                            "x": 350,
+                            "y": 700
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "space",
+            "category": "Unknown",
+            "codepoints": [
+                32
+            ],
+            "layers": [
+                {
+                    "id": "m-thin",
+                    "width": 220,
+                    "master": {
+                        "DefaultForMaster": "m-thin"
+                    }
+                },
+                {
+                    "id": "m-black",
+                    "width": 260,
+                    "master": {
+                        "DefaultForMaster": "m-black"
+                    }
+                },
+                {
+                    "id": "space-free",
+                    "name": "{500}",
+                    "width": 240,
+                    "location": {
+                        "wght": 500
+                    }
+                }
+            ]
+        },
+        {
+            "name": "B",
+            "category": "Base",
+            "codepoints": [
+                66
+            ],
+            "layers": [
+                {
+                    "id": "m-thin",
+                    "width": 560,
+                    "master": {
+                        "DefaultForMaster": "m-thin"
+                    },
+                    "background_layer_id": "B-thin-bg",
+                    "shapes": [
+                        {
+                            "nodes": [
+                                {
+                                    "x": 0,
+                                    "y": 0,
+                                    "nodetype": "Line"
+                                },
+                                {
+                                    "x": 500,
+                                    "y": 0,
+                                    "nodetype": "Line"
+                                },
+                                {
+                                    "x": 500,
+                                    "y": 700,
+                                    "nodetype": "Line"
+                                },
+                                {
+                                    "x": 0,
+                                    "y": 700,
+                                    "nodetype": "Line"
+                                }
+                            ],
+                            "closed": true
+                        }
+                    ]
+                },
+                {
+                    "id": "B-thin-bg",
+                    "width": 560,
+                    "master": {
+                        "type": "DefaultForMaster",
+                        "master": ""
+                    },
+                    "is_background": true
+                },
+                {
+                    "id": "m-black",
+                    "width": 640,
+                    "master": {
+                        "DefaultForMaster": "m-black"
+                    },
+                    "shapes": [
+                        {
+                            "nodes": [
+                                {
+                                    "x": 0,
+                                    "y": 0,
+                                    "nodetype": "Line"
+                                },
+                                {
+                                    "x": 580,
+                                    "y": 0,
+                                    "nodetype": "Line"
+                                },
+                                {
+                                    "x": 580,
+                                    "y": 700,
+                                    "nodetype": "Line"
+                                },
+                                {
+                                    "x": 0,
+                                    "y": 700,
+                                    "nodetype": "Line"
+                                }
+                            ],
+                            "closed": true
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

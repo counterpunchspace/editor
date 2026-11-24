@@ -16,6 +16,7 @@ import {
     jsonToCoreFontMap,
     fillGlyphYMap,
     yDocToJson,
+    fromYDrawing,
     fromYType,
     toYType,
     setYPath,
@@ -8363,7 +8364,7 @@ export class PatchSyncEngine {
                 drawingId,
                 drawingJson,
                 yDrawingForHistory instanceof Y.Map
-                    ? fromYType(yDrawingForHistory)
+                    ? fromYDrawing(yDrawingForHistory)
                     : null,
                 yDrawingForHistory instanceof Y.Map ? yDrawingForHistory : null
             );
@@ -8473,7 +8474,7 @@ export class PatchSyncEngine {
             }
 
             const yDrawingMap = drawingsMap.get(drawingId);
-            const yDrawingJson = yDrawingMap ? fromYType(yDrawingMap) : null;
+            const yDrawingJson = yDrawingMap ? fromYDrawing(yDrawingMap) : null;
             const storageDrawingJson = this._prepareDrawingSnapshotForHistory(
                 drawingId,
                 drawingJson,
@@ -8706,7 +8707,7 @@ export class PatchSyncEngine {
         metadata: DrawingSyncMetadata
     ): TransactionBufferedOperation[] {
         const yDrawingMap = drawingsMap.get(drawingId);
-        const yDrawingJson = yDrawingMap ? fromYType(yDrawingMap) : null;
+        const yDrawingJson = yDrawingMap ? fromYDrawing(yDrawingMap) : null;
         if (!yDrawingJson) {
             return [
                 {
@@ -12351,7 +12352,7 @@ export class PatchSyncEngine {
             // font JSON drawing too (see `fromStore`).
             this._normalizeDrawingSnapshot(
                 scopeHint.layerId,
-                fromYType(drawingMap),
+                fromYDrawing(drawingMap),
                 undefined,
                 false,
                 undefined,
@@ -12451,7 +12452,7 @@ export class PatchSyncEngine {
         // must show the damage, not hide it.
         return this._normalizeDrawingSnapshot(
             drawingId,
-            fromYType(drawingMap),
+            fromYDrawing(drawingMap),
             undefined,
             false,
             undefined,
@@ -12586,7 +12587,7 @@ export class PatchSyncEngine {
             ) as Record<string, unknown>;
             if (
                 drawingFingerprint(record) ===
-                drawingFingerprint(fromYType(drawingMap))
+                drawingFingerprint(fromYDrawing(drawingMap))
             ) {
                 continue;
             }
@@ -12702,7 +12703,7 @@ export class PatchSyncEngine {
                 : modelDrawing;
         return (
             drawingFingerprint(record) !==
-            drawingFingerprint(fromYType(drawingMap))
+            drawingFingerprint(fromYDrawing(drawingMap))
         );
     }
 
@@ -14514,7 +14515,7 @@ export class PatchSyncEngine {
             return false;
         }
 
-        const drawingSnapshot = fromYType(drawingValue);
+        const drawingSnapshot = fromYDrawing(drawingValue);
         if (
             !drawingSnapshot ||
             typeof drawingSnapshot !== 'object' ||
@@ -15370,7 +15371,10 @@ export class PatchSyncEngine {
             return false;
         }
 
-        const yDrawingJson = fromYType(yDrawingMap) as Record<string, unknown>;
+        const yDrawingJson = fromYDrawing(yDrawingMap) as Record<
+            string,
+            unknown
+        >;
         const delta: Record<string, unknown> = { id: drawingId };
         let hasChanges = false;
         for (const [key, value] of Object.entries(drawingJson)) {
@@ -15936,7 +15940,7 @@ export class PatchSyncEngine {
         drawingMap: Y.Map<unknown>,
         nextRecord: Record<string, unknown>
     ): void {
-        const existingRecord = fromYType(drawingMap) as Record<
+        const existingRecord = fromYDrawing(drawingMap) as Record<
             string,
             unknown
         > | null;

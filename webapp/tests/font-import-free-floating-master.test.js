@@ -185,7 +185,7 @@ describe('a stored drawing without a master', () => {
         expect(fromYType(drawing).master).toEqual({ type: 'FreeFloating' });
     });
 
-    test('a drawing map without keyed storage reads as FreeFloating too', () => {
+    test('a drawing map without keyed storage reads as a FreeFloating drawing without shapes', () => {
         const drawing = storedDrawing(() => {
             const map = new Y.Map();
             map.set('id', 'bg');
@@ -195,7 +195,8 @@ describe('a stored drawing without a master', () => {
         expect(fromYType(drawing)).toEqual({
             id: 'bg',
             width: 500,
-            master: { type: 'FreeFloating' }
+            master: { type: 'FreeFloating' },
+            shapes: []
         });
     });
 
