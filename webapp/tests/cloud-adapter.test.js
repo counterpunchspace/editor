@@ -4607,6 +4607,44 @@ describe('R2 bootstrap (GET /state before WebSocket)', () => {
         expect(webSocketOpened).toBe(false);
     });
 
+    it('opens the socket without a checkpoint when bootstrap is if-present', async () => {
+        const adapter = makeAdapter();
+        var appliedUpdates = [];
+        var webSocketOpened = false;
+
+        adapter._bridge = {
+            encodeBridgeStateVector: function () {
+                return new Uint8Array(0);
+            },
+            applyFullState: function (bytes) {
+                appliedUpdates.push(bytes);
+            },
+            applyYDocUpdateSilent: function (bytes) {
+                appliedUpdates.push(bytes);
+            },
+            onLocalUpdate: jest.fn(),
+            offLocalUpdate: jest.fn()
+        };
+
+        global.WebSocket = function FakeWebSocket() {
+            webSocketOpened = true;
+            this.readyState = 1;
+            this.close = function () {};
+        };
+
+        mockFetchWithStateEndpoint({ status: 404 });
+
+        await adapter.connectDirect(
+            adapter._bridge,
+            'room-token',
+            'wss://rooms.example.com/room/asset-123',
+            { bootstrapMode: 'if-present' }
+        );
+
+        expect(appliedUpdates).toHaveLength(0);
+        expect(webSocketOpened).toBe(true);
+    });
+
     it('fails closed on 503 (R2 failure) when bootstrap is required', async () => {
         const adapter = makeAdapter();
         var appliedUpdates = [];

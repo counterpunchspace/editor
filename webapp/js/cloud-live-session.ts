@@ -2305,9 +2305,9 @@ export class CloudLiveSession {
 
     /**
      * Open `documentId`'s room socket. `loadRoomState` loads the room's own
-     * checkpoint first, as a reconnect without a cursor does: a layout room
-     * joined mid-session has nothing of it yet, and its socket replays only
-     * the rows after the room's checkpoint.
+     * checkpoint first, when it has one: a layout room joined mid-session
+     * has nothing of it yet, and its socket replays only the rows after the
+     * room's checkpoint. A room without a checkpoint replays every row.
      */
     private async _connectDocument(
         documentId: string,
@@ -2400,10 +2400,10 @@ export class CloudLiveSession {
         const shardBootstrap = isCore
             ? (bootstrapMode ?? 'skip')
             : loadRoomState
-              ? 'required'
+              ? 'if-present'
               : 'skip';
         const connectOptions: {
-            bootstrapMode: 'required' | 'skip';
+            bootstrapMode: 'required' | 'if-present' | 'skip';
             checkpointLogId?: number | null;
         } = {
             bootstrapMode: shardBootstrap

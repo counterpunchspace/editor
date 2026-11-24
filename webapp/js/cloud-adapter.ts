@@ -891,7 +891,7 @@ export class CloudAdapter implements FileSystemAdapter {
         token: string,
         roomUrl: string,
         options?: {
-            bootstrapMode?: 'required' | 'skip';
+            bootstrapMode?: 'required' | 'if-present' | 'skip';
             checkpointLogId?: number | null;
         }
     ): Promise<void> {
@@ -923,7 +923,22 @@ export class CloudAdapter implements FileSystemAdapter {
         this._checkpointLogId = Number.isInteger(options?.checkpointLogId)
             ? (options?.checkpointLogId as number)
             : null;
-        if (options?.bootstrapMode !== 'skip') {
+        if (options?.bootstrapMode === 'if-present') {
+            // A room that has no checkpoint yet syncs from the socket alone:
+            // its socket replays every row. Any other failure would leave
+            // this document without the checkpoint the room's tail builds on.
+            try {
+                await this._bootstrapFromR2(token, roomUrl);
+            } catch (error) {
+                const msg =
+                    error instanceof Error ? error.message : String(error);
+                if (!/no checkpoint available/.test(msg)) {
+                    throw error;
+                }
+                this._checkpointLogId = null;
+                this._appliedLogId = null;
+            }
+        } else if (options?.bootstrapMode !== 'skip') {
             await this._bootstrapFromR2(token, roomUrl);
         }
 
@@ -939,7 +954,7 @@ export class CloudAdapter implements FileSystemAdapter {
         token: string,
         roomUrl: string,
         options?: {
-            bootstrapMode?: 'required' | 'skip';
+            bootstrapMode?: 'required' | 'if-present' | 'skip';
             checkpointLogId?: number | null;
         }
     ): Promise<void> {

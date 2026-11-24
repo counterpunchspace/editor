@@ -602,7 +602,7 @@ describe('CloudLiveSession', () => {
             pending = session.syncLiveDocumentIds([]);
             await jest.advanceTimersByTimeAsync(10);
             await pending;
-            expect(bootstrapFor('kerning:3')).toEqual(['required']);
+            expect(bootstrapFor('kerning:3')).toEqual(['if-present']);
         } finally {
             session.disconnect();
             jest.useRealTimers();
