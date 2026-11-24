@@ -61,6 +61,7 @@ import {
     saveCurrentFontToCloud,
     waitForCloudLiveIdle,
     recordCloudRoomTraffic,
+    settledRoomTrafficStart,
     markCloudRoomTraffic,
     summarizeRoomTraffic,
     fontRoomDocumentIds,
@@ -1936,7 +1937,6 @@ test.describe('cloud collaboration fuzz', () => {
                         )
                         .toEqual([]);
                 }
-                await mainPage.waitForTimeout(1500);
                 const names = await glyphNamesById();
                 const roomDocs = await fontRoomDocumentIds(mainPage, [
                     ...names.keys()
@@ -1947,12 +1947,19 @@ test.describe('cloud collaboration fuzz', () => {
                         windows.find((w) => w.name === name)!.page
                     );
                 }
+                // Let earlier work settle so it is not counted here.
+                const { rooms, mark } = await settledRoomTrafficStart(
+                    mainPage,
+                    roomDocs,
+                    roomTraffic,
+                    { quietMs: 1500 }
+                );
                 return {
                     names,
                     roomDocs,
                     live,
-                    rooms: await readRoomCounters(mainPage, roomDocs),
-                    mark: markCloudRoomTraffic(...roomTraffic),
+                    rooms,
+                    mark,
                     startedAt: Date.now()
                 };
             };

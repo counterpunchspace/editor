@@ -82,9 +82,34 @@ test.describe('Cloud P0 integrity Playwright gates', () => {
             });
             await ownerPage.evaluate(async (documentId) => {
                 const session = (window as any).cloudPlugin._liveSession;
+                // An empty Yjs update with its envelope: the room takes it
+                // once the injected refusals are retried, and no glyph data
+                // changes. (Sends without an envelope are refused locally.)
+                const transactionId = `p0-http-probe-${Date.now()}`;
                 session.sendForwardedUpdate(
-                    new Uint8Array([1, 2, 3, 4, 5]),
-                    null,
+                    new Uint8Array([0, 0]),
+                    {
+                        schemaVersion: 1,
+                        transactionId,
+                        localSequence: 0,
+                        roomSequence: null,
+                        baseRevision: null,
+                        changes: [],
+                        metadata: {
+                            editType: 'font',
+                            changedGlyphNames: [],
+                            changedLayerIds: [],
+                            workerReplayTargets: [],
+                            historyItemId: transactionId,
+                            historyAction: 'change',
+                            undoScope: 'font'
+                        },
+                        source: 'p0-integrity.http-probe',
+                        label: null,
+                        summary: 'HTTP fault probe',
+                        windowId: null,
+                        timestamp: Date.now()
+                    },
                     documentId
                 );
                 await session.flushPendingHttpPublishes();

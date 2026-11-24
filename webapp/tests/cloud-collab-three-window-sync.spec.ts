@@ -82,6 +82,7 @@ import {
     diffRoomCounters,
     expectMinimalRoomTraffic,
     recordCloudRoomTraffic,
+    settledRoomTrafficStart,
     expectGlyphEditOverWebSocket,
     overviewTileState,
     paintOverviewTiles,
@@ -136,6 +137,12 @@ test.describe('three-window sync scenarios', () => {
         const inviteeContext = await browser.newContext();
         await installCrossWindowTrackersOnContext(ownerContext);
         await installCrossWindowTrackersOnContext(inviteeContext);
+        // The collaboration trace, printed when a traffic check fails.
+        for (const context of [ownerContext, inviteeContext]) {
+            await context.addInitScript(() => {
+                (window as any).__collabTrace = { enabled: true, entries: [] };
+            });
+        }
         // Before any page opens, so every room socket is seen.
         const ownerTraffic = recordCloudRoomTraffic(ownerContext);
         const inviteeTraffic = recordCloudRoomTraffic(inviteeContext);
@@ -1907,9 +1914,11 @@ test.describe('three-window sync scenarios', () => {
                         ? `glyph/${glyphNameById.get(id.slice(6)) ?? id}`
                         : id;
                 // Let earlier work settle so it is not counted here.
-                await mainPage.waitForTimeout(2000);
-                const roomsBefore = await readRoomCounters(mainPage, roomDocs);
-                const mark = markCloudRoomTraffic(ownerTraffic, inviteeTraffic);
+                const { rooms: roomsBefore, mark } =
+                    await settledRoomTrafficStart(mainPage, roomDocs, [
+                        ownerTraffic,
+                        inviteeTraffic
+                    ]);
                 await run();
                 // Late retries or catch-ups would show up in this window.
                 await mainPage.waitForTimeout(3000);
@@ -1938,15 +1947,33 @@ test.describe('three-window sync scenarios', () => {
                     })}`
                 );
                 const uploader = sender === inviteePage ? 'invitee' : 'main';
-                expectMinimalRoomTraffic({
-                    label,
-                    traffic,
-                    rooms,
-                    uploader,
-                    downloader: uploader === 'main' ? 'invitee' : 'main',
-                    quiet: ['linked'],
-                    liveGlyphs
-                });
+                try {
+                    expectMinimalRoomTraffic({
+                        label,
+                        traffic,
+                        rooms,
+                        uploader,
+                        downloader: uploader === 'main' ? 'invitee' : 'main',
+                        quiet: ['linked'],
+                        liveGlyphs
+                    });
+                } catch (error) {
+                    for (const [name, page] of [
+                        ['main', mainPage],
+                        ['invitee', inviteePage]
+                    ] as const) {
+                        const entries = await page
+                            .evaluate(
+                                () =>
+                                    (window as any).__collabTrace?.entries ?? []
+                            )
+                            .catch(() => []);
+                        console.log(
+                            `[trace] ${label} ${name}: ${JSON.stringify(entries.slice(-80))}`
+                        );
+                    }
+                    throw error;
+                }
             };
 
             const editOffEditorGlyph = async (
@@ -2322,6 +2349,36 @@ test.describe('three-window sync scenarios', () => {
                 'aacute',
                 thinDrawingId!
             );
+            // The alignment edit's own catch-up of `aacute` must be done
+            // before the next one is held: a fetch still in flight would
+            // take the held request's place and the edit would only be
+            // queued behind it.
+            const unsettledCatchUps = () =>
+                inviteePage.evaluate(() => {
+                    const plugin = (window as any).cloudPlugin;
+                    return [
+                        ...(plugin?._glyphCatchUpInFlight ?? []),
+                        ...[...(plugin?._glyphCatchUpAgain ?? [])].map(
+                            (id: string) => `${id} (again)`
+                        )
+                    ];
+                });
+            try {
+                await expect
+                    .poll(unsettledCatchUps, {
+                        timeout: 30000,
+                        message: 'invitee glyph catch-ups settle'
+                    })
+                    .toEqual([]);
+            } catch (error) {
+                const entries = await inviteePage.evaluate(
+                    () => (window as any).__collabTrace?.entries ?? []
+                );
+                console.log(
+                    `[trace] unsettled ${JSON.stringify(await unsettledCatchUps())}: ${JSON.stringify(entries.slice(-120))}`
+                );
+                throw error;
+            }
             let releaseAacuteCatchUp: () => void = () => {};
             const aacuteCatchUpHeld = new Promise<void>((resolve) => {
                 releaseAacuteCatchUp = resolve;
@@ -2338,6 +2395,8 @@ test.describe('three-window sync scenarios', () => {
                 await route.continue();
             });
             let aacuteAfterOwnerEdit: unknown = null;
+            // Runs alongside the checks below; its failure is kept until it
+            // is awaited, so a failing check reports its own error first.
             const ownerAnchorEdit = liveEditOfA(
                 mainPage,
                 'owner anchor a',
@@ -2389,6 +2448,9 @@ test.describe('three-window sync scenarios', () => {
                         thinDrawingId!
                     );
                 }
+            ).then(
+                () => null,
+                (error: unknown) => error
             );
             try {
                 await expect
@@ -2426,7 +2488,10 @@ test.describe('three-window sync scenarios', () => {
             } finally {
                 releaseAacuteCatchUp();
             }
-            await ownerAnchorEdit;
+            const ownerAnchorEditError = await ownerAnchorEdit;
+            if (ownerAnchorEditError) {
+                throw ownerAnchorEditError;
+            }
             await inviteeContext.unroute(isAacuteCatchUp);
             // The catch-up did come, and the stored layer replaced the
             // preview.

@@ -1074,6 +1074,45 @@ export async function readRoomCounters(
 }
 
 /** `after - before` per room, dropping rooms where nothing changed. */
+/**
+ * Start a traffic measurement once earlier work has settled: the room
+ * counters and every recorder are read again until a whole `quietMs` passed
+ * with no frame, request or room update. A send from an earlier step that
+ * lands while the counters are read (slow on staging, through the website
+ * relay) would otherwise count in the rooms but not in the frames.
+ */
+export async function settledRoomTrafficStart(
+    page: Page,
+    documentIds: string[],
+    recorders: CloudRoomTraffic[],
+    { quietMs = 2000, attempts = 10 } = {}
+): Promise<{ rooms: Record<string, RoomCounters>; mark: number[][] }> {
+    const updates = (rooms: Record<string, RoomCounters>) =>
+        JSON.stringify(
+            Object.entries(rooms).map(([id, room]) => [id, room.updatesApplied])
+        );
+    let mark = markCloudRoomTraffic(...recorders);
+    let rooms = await readRoomCounters(page, documentIds);
+    for (let attempt = 0; attempt < attempts; attempt++) {
+        await page.waitForTimeout(quietMs);
+        const beforeRead = JSON.stringify(markCloudRoomTraffic(...recorders));
+        const nextRooms = await readRoomCounters(page, documentIds);
+        const nextMark = markCloudRoomTraffic(...recorders);
+        const quiet =
+            beforeRead === JSON.stringify(mark) &&
+            JSON.stringify(nextMark) === beforeRead &&
+            updates(nextRooms) === updates(rooms);
+        mark = nextMark;
+        rooms = nextRooms;
+        if (quiet) {
+            return { rooms, mark };
+        }
+    }
+    throw new Error(
+        `Room traffic did not settle within ${attempts} checks of ${quietMs} ms`
+    );
+}
+
 export function diffRoomCounters(
     before: Record<string, RoomCounters>,
     after: Record<string, RoomCounters>
