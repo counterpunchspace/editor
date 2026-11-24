@@ -75,8 +75,8 @@ describe('get_editor_state text-buffer interpretation', () => {
             })
         );
 
+        expect(result.textBuffer).toBeUndefined();
         expect(result).toMatchObject({
-            textBuffer: '0/10',
             textBufferRaw: '0/10',
             textBufferDisplay: '0/10',
             textBufferInterpretationIsCurrent: true,

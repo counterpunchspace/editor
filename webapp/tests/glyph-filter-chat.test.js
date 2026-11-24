@@ -54,7 +54,7 @@ describe('glyph filter chat', () => {
         });
     });
 
-    test('the system prompt carries the description, code and guide', async () => {
+    test('the system prompt carries the guide, the context message the description and code', async () => {
         const fetchMock = jest.fn().mockResolvedValue({
             ok: true,
             text: () => Promise.resolve('# Writing glyph overview filters')
@@ -68,13 +68,21 @@ describe('glyph filter chat', () => {
             session,
             runTool: jest.fn()
         });
-        expect(prompt).toContain('CURRENT DESCRIPTION:\nShow small caps.');
-        expect(prompt).toContain('FILTER FILE: Filters/Small Caps.py');
-        expect(prompt).toContain(
-            'CURRENT CODE (revision r1):\n```python\n"""Show small caps."""\n'
-        );
         expect(prompt).toContain(
             'FILTER AUTHORING GUIDE:\n# Writing glyph overview filters'
+        );
+        expect(prompt).not.toContain('CURRENT CODE');
+        expect(prompt).not.toContain('Small Caps.py');
+        expect(session.markDocumentRead).not.toHaveBeenCalled();
+
+        const context = await FILTER_CHAT_PROFILE.buildContextMessage({
+            session,
+            runTool: jest.fn()
+        });
+        expect(context).toContain('CURRENT DESCRIPTION:\nShow small caps.');
+        expect(context).toContain('FILTER FILE: Filters/Small Caps.py');
+        expect(context).toContain(
+            'CURRENT CODE (revision r1):\n```python\n"""Show small caps."""\n'
         );
         // The model has seen this revision, so edits may rely on it.
         expect(session.markDocumentRead).toHaveBeenCalledWith('r1');
@@ -85,6 +93,119 @@ describe('glyph filter chat', () => {
             runTool: jest.fn()
         });
         expect(fetchMock).toHaveBeenCalledTimes(1);
+        delete global.fetch;
+    });
+
+    test('an edit changes only the context message, and a chat keeps its first guide', async () => {
+        jest.resetModules();
+        const chat = require('../js/glyph-filter-chat.ts');
+        let content = '"""Show small caps."""\nEVENT_TYPES = []\n';
+        let revision = 1;
+        const target = {
+            label: 'Filter',
+            getDocumentState: () => ({
+                content,
+                kind: 'glyph-filter',
+                path: 'Filters/Small Caps.py',
+                revision: `r${revision}`,
+                isModified: true
+            }),
+            replaceExactText: () => {
+                throw new Error('not used');
+            },
+            onDidChange: () => () => {}
+        };
+        const encoder = new TextEncoder();
+        const sse = (events) => {
+            const chunks = events.map((event) =>
+                encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
+            );
+            return {
+                ok: true,
+                status: 200,
+                body: {
+                    getReader: () => ({
+                        read: async () =>
+                            chunks.length
+                                ? { done: false, value: chunks.shift() }
+                                : { done: true, value: undefined }
+                    })
+                }
+            };
+        };
+        const requests = [];
+        let guideFetches = 0;
+        global.fetch = jest.fn(async (url, init) => {
+            if (String(url).endsWith('.md')) {
+                guideFetches++;
+                // The first fetch fails, later ones succeed.
+                return guideFetches === 1
+                    ? { ok: false, status: 500 }
+                    : { ok: true, text: async () => '# Full guide' };
+            }
+            requests.push(JSON.parse(init.body));
+            return requests.length === 1
+                ? sse([
+                      {
+                          type: 'tool_call',
+                          tool_calls: [
+                              {
+                                  id: 'edit',
+                                  function: {
+                                      name: 'replace_python_document_in_editor',
+                                      arguments: '{}'
+                                  }
+                              }
+                          ]
+                      },
+                      { type: 'done', usage: {} }
+                  ])
+                : sse([
+                      { type: 'chunk', content: 'Done.' },
+                      { type: 'done', usage: {} }
+                  ]);
+        });
+        const host = chat.createFilterChatHost({
+            preview: jest.fn(),
+            nameFilter: jest.fn(),
+            takenNames: () => [],
+            executeSharedTool: async () => {
+                content = '"""Show small caps."""\nEVENT_TYPES = ["x"]\n';
+                revision = 2;
+                return 'Replaced.';
+            }
+        });
+        const session = new chat.FilterChatRegistry().checkout(
+            'Filters/Small Caps.py',
+            target,
+            host
+        );
+        await session.send('Change it');
+        await session.send('And again');
+
+        expect(requests).toHaveLength(3);
+        expect(guideFetches).toBe(1);
+        const [first, second, third] = requests;
+        // The failed guide fetch gave the event list; the chat keeps it.
+        expect(first.systemPrompt).not.toContain('# Full guide');
+        expect(second.systemPrompt).toBe(first.systemPrompt);
+        expect(third.systemPrompt).toBe(first.systemPrompt);
+        expect(second.tools).toEqual(first.tools);
+        expect(first.messages.at(-1).content).toContain('(revision r1)');
+        expect(second.messages.at(-1).content).toContain('(revision r2)');
+        expect(second.messages.slice(0, first.messages.length - 1)).toEqual(
+            first.messages.slice(0, -1)
+        );
+
+        // A new chat picks up the guide.
+        const fresh = new chat.FilterChatRegistry().checkout(
+            null,
+            target,
+            host
+        );
+        await fresh.send('New chat');
+        expect(guideFetches).toBe(2);
+        expect(requests[3].systemPrompt).toContain('# Full guide');
         delete global.fetch;
     });
 

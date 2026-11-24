@@ -3102,39 +3102,34 @@ if '_assistant_original_stdout' in dir():
                       )
                     : s.editor_harfbuzz_cl || '';
 
-                return JSON.stringify(
-                    {
-                        textBuffer: textBufferRaw,
-                        textBufferRaw,
-                        textBufferDisplay,
-                        textBufferInterpretationIsCurrent: textRunStateMatches,
-                        explicitGlyphTokens,
-                        textBufferSyntax:
-                            'Raw syntax: // is one literal slash; /glyphname is an explicit glyph reference only when it resolves. Never infer // unless textBufferRaw contains it.',
-                        activeGlyphName,
-                        cursorPosition,
-                        glyphs,
-                        gids: Array.isArray(gids) ? gids.join(' ') : gids,
-                        advances: Array.isArray(advances)
-                            ? advances.join(' ')
-                            : advances,
-                        clusters: Array.isArray(clusters)
-                            ? clusters.join(' ')
-                            : clusters,
-                        shapingStateSource: hasLiveShapingState
-                            ? 'live-text-run'
-                            : 'state-manager',
-                        userspaceLocation,
-                        designspaceLocation,
-                        opentypeFeaturesExplanation:
-                            'Every feature listed below exists in the font. availableToActivate true means it is reachable in the current editing subset (from the current text buffer and active feature set) and can be turned on/off immediately. availableToActivate false means the sidebar shows it greyed out: the feature still exists, but the current subset cannot reach it yet. When that happens, explain the situation clearly and recommend enabling the feature with set_editor_opentype_features if its effect is wanted. active is true only when the feature is both reachable and currently on. enabled is the on/off preference even when the feature is not currently reachable.',
-                        featureStateByTag,
-                        features,
-                        file: s.editor_file || ''
-                    },
-                    null,
-                    2
-                );
+                return JSON.stringify({
+                    textBufferRaw,
+                    textBufferDisplay,
+                    textBufferInterpretationIsCurrent: textRunStateMatches,
+                    explicitGlyphTokens,
+                    textBufferSyntax:
+                        'Raw syntax: // is one literal slash; /glyphname is an explicit glyph reference only when it resolves. Never infer // unless textBufferRaw contains it.',
+                    activeGlyphName,
+                    cursorPosition,
+                    glyphs,
+                    gids: Array.isArray(gids) ? gids.join(' ') : gids,
+                    advances: Array.isArray(advances)
+                        ? advances.join(' ')
+                        : advances,
+                    clusters: Array.isArray(clusters)
+                        ? clusters.join(' ')
+                        : clusters,
+                    shapingStateSource: hasLiveShapingState
+                        ? 'live-text-run'
+                        : 'state-manager',
+                    userspaceLocation,
+                    designspaceLocation,
+                    opentypeFeaturesExplanation:
+                        'Every feature listed below exists in the font. availableToActivate true means it is reachable in the current editing subset (from the current text buffer and active feature set) and can be turned on/off immediately. availableToActivate false means the sidebar shows it greyed out: the feature still exists, but the current subset cannot reach it yet. When that happens, explain the situation clearly and recommend enabling the feature with set_editor_opentype_features if its effect is wanted. active is true only when the feature is both reachable and currently on. enabled is the on/off preference even when the feature is not currently reachable.',
+                    featureStateByTag,
+                    features,
+                    file: s.editor_file || ''
+                });
             }
             case 'set_prompt_history_summary': {
                 const summary = String(args.summary || '').trim();

@@ -6,7 +6,12 @@ import { resolveWebsiteURL } from '../website-url';
 import { Logger } from '../logger';
 import type { UsageMetrics } from '../assistant-config';
 import type { AssistantPromptExecutionContext } from '../assistant-execution-context';
-import type { AssistantEditPermissions, AssistantProfile } from './profile';
+import {
+    EDITOR_CONTEXT_LABEL,
+    type AssistantEditPermissions,
+    type AssistantProfile,
+    type AssistantSystemPromptContext
+} from './profile';
 import type {
     PythonDocumentState,
     PythonDocumentTarget
@@ -16,6 +21,12 @@ const console = new Logger('AssistantChat');
 
 export const DEFAULT_PROMPT_HISTORY_SUMMARY = 'Assistant changes';
 const MAX_RECONNECT_ATTEMPTS = 3;
+/**
+ * Server failures that a retry a moment later may get past. Not 429 (the
+ * user’s own rate limit) and not 502, which the server also returns for a
+ * bad provider key after it has already tried every model.
+ */
+const RETRYABLE_HTTP_STATUSES = new Set([503, 504]);
 
 export type AssistantToolCall = {
     id?: string;
@@ -204,6 +215,12 @@ export class AssistantChatSession {
     lastKnownDocumentRevision: string | null = null;
     /** The target changed after the model last read it. */
     documentStateInvalidated = false;
+    /**
+     * The provider endpoint that served this chat last, as the server named
+     * it. Sent with every request so the chat stays where its prompt is
+     * cached. Never part of the conversation.
+     */
+    providerPin: string | null = null;
 
     private streaming = false;
     /** Bumped by reset() so a turn stopped by New Chat cannot write back. */
@@ -211,6 +228,8 @@ export class AssistantChatSession {
     private controller: AbortController | null = null;
     private reconnectAttempts = 0;
     private promptPermissions: AssistantEditPermissions | null = null;
+    /** Built once per chat, so every request starts with the same bytes. */
+    private systemPrompt: string | null = null;
     private statusText: string | null = null;
     private readonly listeners = new Map<
         keyof AssistantChatEventMap,
@@ -342,6 +361,7 @@ export class AssistantChatSession {
 
         const permissions = this.editPermissions();
         this.promptPermissions = permissions;
+        this.reconnectAttempts = 0;
         this.activePromptContext = {
             id: `assistant-prompt-${Date.now()}-${Math.random().toString(36).slice(2)}`,
             allowFontEdits: permissions.fontEdits,
@@ -387,8 +407,8 @@ export class AssistantChatSession {
         };
 
         let reason: AssistantTurnEndReason = 'done';
+        let round = -1;
         try {
-            let round = -1;
             while (true) {
                 round++;
                 const currentRound = round;
@@ -425,7 +445,7 @@ export class AssistantChatSession {
                         : undefined
                 );
 
-                this.reconnectAttempts = 0;
+                if (!result.connectionDropped) this.reconnectAttempts = 0;
                 this.recordRoundUsage(result, previousGenerationIds);
                 if (entry && result.usage) {
                     const turn: ChatAssistantEntry = entry;
@@ -437,22 +457,28 @@ export class AssistantChatSession {
                 }
 
                 if (result.connectionDropped) {
-                    const partialText =
-                        roundTexts.filter(Boolean).join(' ').trim() ||
-                        result.text ||
-                        '';
-                    if (partialText) {
-                        conversationMessages.push({
-                            role: 'assistant',
-                            content: partialText
-                        });
-                        commit();
-                    }
                     if (result.generationId) {
                         previousGenerationIds.push(result.generationId);
                     }
                     this.reconnectAttempts++;
                     if (this.reconnectAttempts <= MAX_RECONNECT_ATTEMPTS) {
+                        // The retry asks for this step afresh, with the editor
+                        // context last, so the partial reply is dropped.
+                        if (roundTexts[currentRound]) {
+                            roundTexts[currentRound] = '';
+                            const turn = ensureEntry();
+                            const last = turn.items[turn.items.length - 1];
+                            if (
+                                last?.kind === 'text' &&
+                                last.round === currentRound
+                            ) {
+                                last.text = '';
+                                this.emit('item-updated', {
+                                    entry: turn,
+                                    item: last
+                                });
+                            }
+                        }
                         this.setStatus(
                             `Reconnecting... (attempt ${this.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`
                         );
@@ -460,14 +486,27 @@ export class AssistantChatSession {
                             setTimeout(resolve, 500 * this.reconnectAttempts)
                         );
                         this.setStatus(null);
-                        // Retry the same round; the conversation now ends
-                        // with the partial reply, so the model continues it.
                         round--;
                         continue;
                     }
+                    // Keep this step's partial reply so "continue" can pick it up.
+                    const partialText =
+                        (roundTexts[currentRound] || '').trim() ||
+                        result.text ||
+                        '';
+                    if (partialText) {
+                        conversationMessages.push({
+                            role: 'assistant',
+                            content: partialText
+                        });
+                    }
+                    commit();
+                    const cause = result.dropError
+                        ? ` (${result.dropError})`
+                        : '';
                     this.addItem(ensureEntry(), {
                         kind: 'notice',
-                        text: `Connection lost after ${MAX_RECONNECT_ATTEMPTS} retries. Type "continue" to resume.`
+                        text: `Connection lost after ${MAX_RECONNECT_ATTEMPTS} retries${cause}. Type “continue” to resume.`
                     });
                     reason = 'connection-lost';
                     break;
@@ -537,18 +576,21 @@ export class AssistantChatSession {
             }
         } catch (error) {
             this.setStatus(null);
+            // conversationMessages holds only completed rounds here. Keep
+            // them, so the model knows about the edits its tools already made.
             if (isAbortError(error)) {
-                // Keep what streamed so "continue" can pick it up.
-                const partialText = roundTexts.filter(Boolean).join(' ').trim();
+                // Keep what this step streamed so "continue" can pick it up.
+                const partialText = (roundTexts[round] || '').trim();
                 if (partialText) {
                     conversationMessages.push({
                         role: 'assistant',
                         content: partialText
                     });
-                    commit();
                 }
+                commit();
                 reason = 'stopped';
             } else {
+                commit();
                 this.appendEntry({
                     kind: 'error',
                     text: errorMessage(error, 'Network error')
@@ -583,6 +625,8 @@ export class AssistantChatSession {
         this.transcript = [];
         this.sessionTotals = {};
         this.reconnectAttempts = 0;
+        this.providerPin = null;
+        this.systemPrompt = null;
         this.setStatus(null);
         this.emit('reset', {});
         this.emit('usage', { totals: this.sessionTotals });
@@ -624,6 +668,8 @@ export class AssistantChatSession {
         copy.sessionTotals = snapshot.sessionTotals;
         copy.lastKnownDocumentRevision = this.lastKnownDocumentRevision;
         copy.documentStateInvalidated = this.documentStateInvalidated;
+        copy.providerPin = this.providerPin;
+        copy.systemPrompt = this.systemPrompt;
         return copy;
     }
 
@@ -701,24 +747,39 @@ export class AssistantChatSession {
         };
         if (sessionToken) headers['Authorization'] = `Bearer ${sessionToken}`;
 
-        const systemPrompt = await this.profile.buildSystemPrompt({
+        const promptContext: AssistantSystemPromptContext = {
             session: this,
             runTool: (name, args = {}) =>
                 this.host.executeToolCall(
                     { function: { name, arguments: JSON.stringify(args) } },
                     this
                 )
-        });
+        };
+        this.systemPrompt ??=
+            await this.profile.buildSystemPrompt(promptContext);
+        const context = await this.profile.buildContextMessage?.(promptContext);
+        // The context goes last and only into this request, so the stored
+        // history stays a stable, cacheable prefix.
+        const requestMessages: AssistantChatMessage[] = context
+            ? [
+                  ...messages,
+                  {
+                      role: 'user',
+                      content: `${EDITOR_CONTEXT_LABEL}\n\n${context}`
+                  }
+              ]
+            : messages;
         const body: Record<string, unknown> = {
-            messages,
+            messages: requestMessages,
             tools: this.profile.toolsFor?.(this) ?? this.profile.tools,
-            systemPrompt,
+            systemPrompt: this.systemPrompt,
             stream: true,
             billingRunId
         };
         if (previousGenerationIds && previousGenerationIds.length > 0) {
             body.previousGenerationIds = previousGenerationIds;
         }
+        if (this.providerPin) body.providerPin = this.providerPin;
 
         let response: Response;
         try {
@@ -745,7 +806,17 @@ export class AssistantChatSession {
             const errBody: unknown = await response
                 .json()
                 .catch(() => ({ error: 'Request failed' }));
-            throw new Error(assistantErrorMessage(errBody, response.status));
+            const message = assistantErrorMessage(errBody, response.status);
+            if (RETRYABLE_HTTP_STATUSES.has(response.status)) {
+                return {
+                    text: '',
+                    toolCalls: null,
+                    done: false,
+                    connectionDropped: true,
+                    dropError: message
+                };
+            }
+            throw new Error(message);
         }
 
         const reader = response.body?.getReader();
@@ -763,8 +834,7 @@ export class AssistantChatSession {
                 readResult = await reader.read();
             } catch (error) {
                 if (isAbortError(error)) throw error;
-                // Dropped mid-stream: return the partial text so send()
-                // can retry and the model continues from it.
+                // Dropped mid-stream: send() retries the step.
                 return {
                     text: streamedText,
                     toolCalls,
@@ -807,6 +877,13 @@ export class AssistantChatSession {
                 ) {
                     toolCalls = parsed.tool_calls as AssistantToolCall[];
                 } else if (parsed.type === 'done') {
+                    // Absent when the fallback model served: keep the pin.
+                    if (
+                        typeof parsed.providerPin === 'string' &&
+                        parsed.providerPin
+                    ) {
+                        this.providerPin = parsed.providerPin;
+                    }
                     return {
                         text: streamedText,
                         toolCalls,
@@ -817,12 +894,34 @@ export class AssistantChatSession {
                         done: true
                     };
                 } else if (parsed.type === 'error') {
-                    throw new Error(
-                        assistantErrorMessage(parsed, undefined, 'Stream error')
-                    );
+                    // The server failed after streaming began: retry like a
+                    // dropped connection.
+                    return {
+                        text: streamedText,
+                        toolCalls: null,
+                        done: false,
+                        connectionDropped: true,
+                        dropError: assistantErrorMessage(
+                            parsed,
+                            undefined,
+                            'Stream error'
+                        ),
+                        generationId
+                    };
                 }
             }
         }
-        return { text: streamedText, toolCalls, done: false, generationId };
+        // Tool calls that arrived without done are complete; run them.
+        if (toolCalls) {
+            return { text: streamedText, toolCalls, done: false, generationId };
+        }
+        return {
+            text: streamedText,
+            toolCalls: null,
+            done: false,
+            connectionDropped: true,
+            dropError: 'The reply ended early',
+            generationId
+        };
     }
 }

@@ -89,6 +89,26 @@ test("a thin AI route warns without blocking the release", () => {
   assert.deepEqual(stackWarnings(healthyStack()), []);
 });
 
+test("one model failing the live check warns; the website fails only when both do", () => {
+  const stack = healthyStack();
+  stack.website.ai = {
+    ok: true,
+    route: { ok: true, model: "deepseek/deepseek-v4.1-flash-1017", policy: "zdr-v1", providers: ["morph/fp8"], warnings: [] },
+    live: { flash: { ok: false, reason: "openrouter-status-503" }, luna: { ok: true } },
+    speedTable: { ok: false, reason: "no such table: ai_route_speed" },
+  };
+  assert.deepEqual(stackMismatches(stack, expected), []);
+  assert.deepEqual(stackWarnings(stack), [
+    "AI route (zdr-v1): deepseek/deepseek-v4.1-flash-1017 on morph/fp8",
+    "AI live: Flash did not answer (openrouter-status-503); the Assistant uses Luna",
+    "AI speed table: no such table: ai_route_speed",
+  ]);
+  stack.website.ai = { ok: false, reason: "AI live: Flash openrouter-status-503; Luna openrouter-status-404" };
+  assert.deepEqual(stackMismatches(stack, expected), [
+    "website AI: AI live: Flash openrouter-status-503; Luna openrouter-status-404",
+  ]);
+});
+
 test("each failed secret or binding check is named", () => {
   const stack = healthyStack();
   stack.website.config = {

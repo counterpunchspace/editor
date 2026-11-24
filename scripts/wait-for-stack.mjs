@@ -28,17 +28,32 @@ const REQUEST_TIMEOUT_MS = 20_000;
 
 /**
  * Notes that never block a release: the Assistant's DeepSeek Flash route
- * when it has no endpoints or few of them. OpenRouter's endpoints come and
- * go on their own, and the Assistant falls back to Luna meanwhile.
+ * when it has no endpoints or few of them, a live check where only one of
+ * Flash and Luna answered, and a missing speed table. OpenRouter's endpoints
+ * come and go on their own, and the Assistant falls back to Luna meanwhile.
+ * Both failing makes the website's AI check fail, which does block.
  */
 export function stackWarnings(observed) {
-  const route = observed.website?.ai?.route;
+  const ai = observed.website?.ai;
+  const route = ai?.route;
   if (!route) return [];
   const warnings = (route.warnings || []).map((text) => `AI route: ${text}`);
   if (route.model) {
+    const policy = route.policy ? ` (${route.policy})` : "";
     warnings.unshift(
-      `AI route: ${route.model} on ${route.providers?.join(", ") || "no endpoints"}`,
+      `AI route${policy}: ${route.model} on ${route.providers?.join(", ") || "no endpoints"}`,
     );
+  }
+  const flash = ai.live?.flash;
+  if (flash && !flash.ok) {
+    warnings.push(`AI live: Flash did not answer (${flash.reason}); the Assistant uses Luna`);
+  }
+  const luna = ai.live?.luna;
+  if (luna && !luna.ok) {
+    warnings.push(`AI live: Luna did not answer (${luna.reason}); Flash has no fallback`);
+  }
+  if (ai.speedTable && !ai.speedTable.ok) {
+    warnings.push(`AI speed table: ${ai.speedTable.reason}`);
   }
   return warnings;
 }

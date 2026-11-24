@@ -81,7 +81,7 @@ Use names and CSS colors the description asks for. When it asks for random color
 
 The file name is how the user finds the filter in the sidebar. When it is a default such as New Filter, or your change makes it wrong, call name_filter with a short descriptive name in the same turn.
 
-The current code and its revision are at the end of this prompt, so you need not read the document before your first edit. To write new code or change most of it, call replace_python_document_in_editor with the complete file, including the docstring. For a small change, call replace_python_text_in_editor. After every edit, call validate_python_document, then test_filter_on_font. Reply in one or two short sentences: what changed and what the filter now finds. No emoji, no code in the reply unless asked.
+The last message of every request, labelled “[Editor context, not a user request]”, holds the filter file, the current description and the current code with its revision. It comes from the editor, not from the user. You need not read the document before your first edit. To write new code or change most of it, call replace_python_document_in_editor with the complete file, including the docstring. For a small change, call replace_python_text_in_editor. After every edit, call validate_python_document, then test_filter_on_font. Reply in one or two short sentences: what changed and what the filter now finds. No emoji, no code in the reply unless asked.
 
 If a request is not about this glyph filter, the font, or how to use Counterpunch, politely decline and say what you can help with.`;
 
@@ -112,18 +112,24 @@ export const FILTER_CHAT_PROFILE: AssistantProfile = {
     },
     editPermissions: () => ({ fontEdits: false, documentEdits: true }),
     editDisabledHint: '',
-    async buildSystemPrompt({ session }) {
+    async buildSystemPrompt() {
+        const guide = await loadFilterAuthoringGuide();
+        return `${FILTER_SYSTEM_PROMPT}\n\nFILTER AUTHORING GUIDE:\n${guide}`;
+    },
+    async buildContextMessage({ session }) {
         const state = session.target?.getDocumentState();
         const description = state ? readFilterDescription(state.content) : '';
-        const file = state?.path ? `\n\nFILTER FILE: ${state.path}` : '';
-        let code = '';
+        const parts: string[] = [];
+        if (state?.path) parts.push(`FILTER FILE: ${state.path}`);
+        parts.push(`CURRENT DESCRIPTION:\n${description || '(empty)'}`);
         if (state) {
             // The model sees this revision, so an edit may rely on it.
             session.markDocumentRead(state.revision);
-            code = `\n\nCURRENT CODE (revision ${state.revision}):\n\`\`\`python\n${state.content}\n\`\`\``;
+            parts.push(
+                `CURRENT CODE (revision ${state.revision}):\n\`\`\`python\n${state.content}\n\`\`\``
+            );
         }
-        const guide = await loadFilterAuthoringGuide();
-        return `${FILTER_SYSTEM_PROMPT}\n\nFILTER AUTHORING GUIDE:\n${guide}${file}\n\nCURRENT DESCRIPTION:\n${description || '(empty)'}${code}`;
+        return parts.join('\n\n');
     }
 };
 
@@ -134,7 +140,8 @@ let filterGuide: Promise<string> | null = null;
 
 /**
  * The handbook's filter guide, which also lists the event types, loaded once.
- * Without it, the event list alone.
+ * Without it, the event list alone, and the next chat tries again; a chat
+ * keeps the text it got first, because its session builds the system prompt once.
  */
 function loadFilterAuthoringGuide(): Promise<string> {
     filterGuide ??= fetch(FILTER_GUIDE_PATH)

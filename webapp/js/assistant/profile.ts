@@ -35,11 +35,27 @@ export interface AssistantProfile {
     editPermissions(editToggle: boolean): AssistantEditPermissions;
     /** Completes "… before changing Python code." when document edits are off. */
     readonly editDisabledHint: string;
+    /**
+     * The same text every round of a chat, so the provider can cache it
+     * together with the history behind it. Per-round state belongs in
+     * `buildContextMessage`.
+     */
     buildSystemPrompt(context: AssistantSystemPromptContext): Promise<string>;
+    /**
+     * Editor state for this round. The session sends it as the last user
+     * message of the request, after EDITOR_CONTEXT_LABEL, and never stores it
+     * in the conversation.
+     */
+    buildContextMessage?(
+        context: AssistantSystemPromptContext
+    ): Promise<string | null>;
 }
 
+/** Starts the per-round context message, so the model never reads it as the user’s words. */
+export const EDITOR_CONTEXT_LABEL = '[Editor context, not a user request]';
+
 const STALE_SCRIPT_NOTICE =
-    '\n\nSCRIPT STATE NOTICE: The Script Editor changed after the Assistant last read it. The buffer is authoritative; read the active Python document before proposing or applying another script edit.';
+    'SCRIPT STATE NOTICE: The Script Editor changed after the Assistant last read it. The buffer is authoritative; read the active Python document before proposing or applying another script edit.';
 
 export const MAIN_ASSISTANT_PROFILE: AssistantProfile = {
     id: 'assistant',
@@ -49,14 +65,19 @@ export const MAIN_ASSISTANT_PROFILE: AssistantProfile = {
         documentEdits: editToggle
     }),
     editDisabledHint: 'Enable editing in the Assistant title bar',
-    async buildSystemPrompt({ session, runTool }) {
+    async buildSystemPrompt() {
+        return ASSISTANT_SYSTEM_PROMPT;
+    },
+    async buildContextMessage({ session, runTool }) {
         const editorState = await runTool('get_editor_state');
-        const staleScriptNotice = session.isDocumentStale()
-            ? STALE_SCRIPT_NOTICE
-            : '';
         const editing = session.activePromptContext?.allowFontEdits
             ? 'allowed'
             : 'disabled';
-        return `${ASSISTANT_SYSTEM_PROMPT}\n\nCURRENT PROMPT PERMISSION: Assistant editing is ${editing} for this prompt.${staleScriptNotice}\n\nCURRENT EDITOR STATE:\n${editorState}`;
+        const parts = [
+            `CURRENT PROMPT PERMISSION: Assistant editing is ${editing} for this prompt.`
+        ];
+        if (session.isDocumentStale()) parts.push(STALE_SCRIPT_NOTICE);
+        parts.push(`CURRENT EDITOR STATE:\n${editorState}`);
+        return parts.join('\n\n');
     }
 };
