@@ -1075,6 +1075,59 @@ export async function readRoomCounters(
 
 /** `after - before` per room, dropping rooms where nothing changed. */
 /**
+ * What each window still has running from earlier edits: glyph catch-ups
+ * (in flight, queued again or waiting to retry) and collaborator cascades
+ * (previews not yet stored, composites not yet checked). A cascade preview
+ * settles on its own after `REMOTE_CASCADE_PREVIEW_MAX_MS` and writes the
+ * glyph, so it lands in whatever is measured next.
+ */
+export async function unsettledCollabWork(pages: Page[]): Promise<string[]> {
+    const out: string[] = [];
+    for (const [index, page] of pages.entries()) {
+        const work: string[] = await page.evaluate(() => {
+            const w = window as any;
+            const plugin = w.cloudPlugin;
+            const preview = w.remoteCascadePreview;
+            return [
+                ...[...(plugin?._glyphCatchUpInFlight ?? [])].map(
+                    (id: string) => `catch-up ${id}`
+                ),
+                ...[...(plugin?._glyphCatchUpAgain ?? [])].map(
+                    (id: string) => `catch-up again ${id}`
+                ),
+                ...[...(plugin?._glyphCatchUpRetryIds ?? [])].map(
+                    (id: string) => `catch-up retry ${id}`
+                ),
+                ...(preview?.pendingTargets ?? []).map(
+                    (target: { glyphName: string; layerId: string }) =>
+                        `preview ${target.glyphName}/${target.layerId}`
+                ),
+                ...(preview?.pendingChecks ?? []).map(
+                    (glyphName: string) => `check ${glyphName}`
+                )
+            ];
+        });
+        out.push(...work.map((item) => `window ${index}: ${item}`));
+    }
+    return out;
+}
+
+/** Wait until no window has catch-ups or cascades left from earlier edits. */
+export async function waitForSettledCollabWork(
+    pages: Page[],
+    label: string,
+    timeoutMs = 90000
+): Promise<void> {
+    await expect
+        .poll(() => unsettledCollabWork(pages), {
+            timeout: timeoutMs,
+            intervals: [500, 1000],
+            message: `${label}: earlier catch-ups and cascades settle`
+        })
+        .toEqual([]);
+}
+
+/**
  * Start a traffic measurement once earlier work has settled: the room
  * counters and every recorder are read again until a whole `quietMs` passed
  * with no frame, request or room update. A send from an earlier step that
@@ -1085,8 +1138,15 @@ export async function settledRoomTrafficStart(
     page: Page,
     documentIds: string[],
     recorders: CloudRoomTraffic[],
-    { quietMs = 2000, attempts = 10 } = {}
+    {
+        quietMs = 2000,
+        attempts = 10,
+        settlePages = []
+    }: { quietMs?: number; attempts?: number; settlePages?: Page[] } = {}
 ): Promise<{ rooms: Record<string, RoomCounters>; mark: number[][] }> {
+    if (settlePages.length) {
+        await waitForSettledCollabWork(settlePages, 'traffic measurement');
+    }
     const updates = (rooms: Record<string, RoomCounters>) =>
         JSON.stringify(
             Object.entries(rooms).map(([id, room]) => [id, room.updatesApplied])
@@ -1101,7 +1161,9 @@ export async function settledRoomTrafficStart(
         const quiet =
             beforeRead === JSON.stringify(mark) &&
             JSON.stringify(nextMark) === beforeRead &&
-            updates(nextRooms) === updates(rooms);
+            updates(nextRooms) === updates(rooms) &&
+            (!settlePages.length ||
+                (await unsettledCollabWork(settlePages)).length === 0);
         mark = nextMark;
         rooms = nextRooms;
         if (quiet) {

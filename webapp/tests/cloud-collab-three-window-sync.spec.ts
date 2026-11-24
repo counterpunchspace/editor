@@ -83,6 +83,7 @@ import {
     expectMinimalRoomTraffic,
     recordCloudRoomTraffic,
     settledRoomTrafficStart,
+    waitForSettledCollabWork,
     expectGlyphEditOverWebSocket,
     overviewTileState,
     paintOverviewTiles,
@@ -1915,10 +1916,12 @@ test.describe('three-window sync scenarios', () => {
                         : id;
                 // Let earlier work settle so it is not counted here.
                 const { rooms: roomsBefore, mark } =
-                    await settledRoomTrafficStart(mainPage, roomDocs, [
-                        ownerTraffic,
-                        inviteeTraffic
-                    ]);
+                    await settledRoomTrafficStart(
+                        mainPage,
+                        roomDocs,
+                        [ownerTraffic, inviteeTraffic],
+                        { settlePages: allPages }
+                    );
                 await run();
                 // Late retries or catch-ups would show up in this window.
                 await mainPage.waitForTimeout(3000);
@@ -2353,32 +2356,7 @@ test.describe('three-window sync scenarios', () => {
             // before the next one is held: a fetch still in flight would
             // take the held request's place and the edit would only be
             // queued behind it.
-            const unsettledCatchUps = () =>
-                inviteePage.evaluate(() => {
-                    const plugin = (window as any).cloudPlugin;
-                    return [
-                        ...(plugin?._glyphCatchUpInFlight ?? []),
-                        ...[...(plugin?._glyphCatchUpAgain ?? [])].map(
-                            (id: string) => `${id} (again)`
-                        )
-                    ];
-                });
-            try {
-                await expect
-                    .poll(unsettledCatchUps, {
-                        timeout: 30000,
-                        message: 'invitee glyph catch-ups settle'
-                    })
-                    .toEqual([]);
-            } catch (error) {
-                const entries = await inviteePage.evaluate(
-                    () => (window as any).__collabTrace?.entries ?? []
-                );
-                console.log(
-                    `[trace] unsettled ${JSON.stringify(await unsettledCatchUps())}: ${JSON.stringify(entries.slice(-120))}`
-                );
-                throw error;
-            }
+            await waitForSettledCollabWork(allPages, 'before holding aacute');
             let releaseAacuteCatchUp: () => void = () => {};
             const aacuteCatchUpHeld = new Promise<void>((resolve) => {
                 releaseAacuteCatchUp = resolve;
