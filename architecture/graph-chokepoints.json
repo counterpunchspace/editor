@@ -46,7 +46,7 @@
             "query": "MATCH (caller)-[:CodeRelation {type:'CALLS'}]->(sink:Method {name:'seedWorkerYDocFromState'}) WHERE sink.filePath = 'webapp/js/font-compilation.ts' AND NOT caller.filePath STARTS WITH 'webapp/tests/' RETURN caller.name AS caller_name, caller.filePath AS caller_path",
             "allowedCallers": [
                 "webapp/js/change-bridge-init.ts::initializeBridge",
-                "webapp/js/cloud-adapter.ts::_scheduleWorkerBridgeSyncAfterServerState",
+                "webapp/js/cloud-adapter.ts::_sendWorkerBridgeSeed",
                 "webapp/js/cloud-adapter.ts::_reseedEditingWorkerFromBridgeAfterCheckpoint",
                 "webapp/js/font-compilation.ts::bootstrapWorkerCacheFromFontState",
                 "webapp/js/font-manager.ts::recoverWorkerCacheFromAuthoritativeState"
@@ -69,7 +69,7 @@
             "excludedPaths": ["webapp/js/fontc-worker.ts"],
             "messageTypes": ["seedYdoc", "storeFontJson"],
             "allowedSites": [
-                "webapp/js/cloud-adapter.ts::CloudAdapter._scheduleWorkerBridgeSyncAfterServerState::seedYdoc",
+                "webapp/js/cloud-adapter.ts::CloudAdapter._sendWorkerBridgeSeed::seedYdoc",
                 "webapp/js/cloud-adapter.ts::CloudAdapter._reseedEditingWorkerFromBridgeAfterCheckpoint::seedYdoc",
                 "webapp/js/font-compilation.ts::FontCompilation.seedWorkerDocumentSet::seedYdoc",
                 "webapp/js/font-compilation.ts::FontCompilation.seedWorkerYDocFromState::seedYdoc",
